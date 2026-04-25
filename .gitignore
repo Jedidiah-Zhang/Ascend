@@ -1,3 +1,8 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+
+# Claude files
+.claude/
+CLAUDE.md
+.mcp.json
