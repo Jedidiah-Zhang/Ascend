@@ -13,3 +13,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 logs/
+
+# 控制台历史
+.ascend_history

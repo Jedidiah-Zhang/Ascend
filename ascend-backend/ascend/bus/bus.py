@@ -9,6 +9,7 @@
 MVP 阶段同步调用，内存存储。
 """
 
+import threading
 from collections.abc import Callable
 
 from .event import Event
@@ -20,6 +21,7 @@ class EventBus:
 
     所有模块通过此总线通信。模块 A 发布事件时不关心模块 B 是否在监听，
     订阅者按 event_type 匹配接收。
+    线程安全：publish 和 subscribe 由内部锁保护。
 
     用法:
         bus = EventBus()
@@ -34,6 +36,7 @@ class EventBus:
         self._entity_index: dict[str, list[int]] = {}
         self._spatial_index: dict[tuple[int, int], list[int]] = {}
         self._graph: EventGraph = EventGraph()
+        self._lock: threading.RLock = threading.RLock()
 
     def __repr__(self) -> str:
         """返回总线状态摘要。
@@ -62,21 +65,22 @@ class EventBus:
         Args:
             event: 要发布的事件。
         """
-        log_index = len(self._event_log)
-        self._event_log.append(event)
+        with self._lock:
+            log_index = len(self._event_log)
+            self._event_log.append(event)
 
-        all_entities: set[str] = {event.initiator_id}
-        for ap in event.affected:
-            all_entities.add(ap.entity_id)
-        for eid in all_entities:
-            self._entity_index.setdefault(eid, []).append(log_index)
+            all_entities: set[str] = {event.initiator_id}
+            for ap in event.affected:
+                all_entities.add(ap.entity_id)
+            for eid in all_entities:
+                self._entity_index.setdefault(eid, []).append(log_index)
 
-        chunk_key = (event.location[0], event.location[1])
-        self._spatial_index.setdefault(chunk_key, []).append(log_index)
+            chunk_key = (event.location[0], event.location[1])
+            self._spatial_index.setdefault(chunk_key, []).append(log_index)
 
-        self._graph.add_event(event)
+            self._graph.add_event(event)
 
-        self._dispatch(event)
+            self._dispatch(event)
 
     def _dispatch(self, event: Event) -> None:
         """将事件同步分发给所有匹配的订阅者。
@@ -108,14 +112,16 @@ class EventBus:
         Returns:
             一个无参函数，调用后取消此订阅。
         """
-        self._subscriptions.setdefault(event_type, []).append(callback)
+        with self._lock:
+            self._subscriptions.setdefault(event_type, []).append(callback)
 
         def unsubscribe() -> None:
             """取消此订阅。若已取消则静默忽略。"""
-            try:
-                self._subscriptions[event_type].remove(callback)
-            except ValueError:
-                pass
+            with self._lock:
+                try:
+                    self._subscriptions[event_type].remove(callback)
+                except ValueError:
+                    pass
 
         return unsubscribe
 
@@ -280,8 +286,9 @@ class EventBus:
 
         仅用于测试重置，生产环境不调用。
         """
-        self._event_log.clear()
-        self._subscriptions.clear()
-        self._entity_index.clear()
-        self._spatial_index.clear()
-        self._graph = EventGraph()
+        with self._lock:
+            self._event_log.clear()
+            self._subscriptions.clear()
+            self._entity_index.clear()
+            self._spatial_index.clear()
+            self._graph = EventGraph()

@@ -15,11 +15,15 @@ from pathlib import Path
 # 日志目录
 LOG_DIR = Path(__file__).parent.parent.parent / "logs"
 
+# 防止重复初始化
+_setup_done = False
+
 
 def setup_logging(level: int = logging.DEBUG) -> str:
     """初始化日志系统，创建带时间戳的日志文件。
 
     日志同时输出到文件和控制台。
+    多次调用不会重复添加 handler。
 
     Args:
         level: 日志级别，默认 DEBUG。
@@ -27,6 +31,10 @@ def setup_logging(level: int = logging.DEBUG) -> str:
     Returns:
         日志文件的绝对路径。
     """
+    global _setup_done
+    if _setup_done:
+        return ""
+
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -55,7 +63,18 @@ def setup_logging(level: int = logging.DEBUG) -> str:
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
 
+    _setup_done = True
     return str(log_path)
+
+
+def quiet_console() -> None:
+    """将控制台 handler 级别提升到 WARNING，抑制 INFO/DEBUG 输出。
+
+    日志文件不受影响。用于交互式控制台等不希望日志干扰屏幕输出的场景。
+    """
+    for h in logging.getLogger("ascend").handlers:
+        if isinstance(h, logging.StreamHandler) and h.stream is sys.stdout:
+            h.setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:
