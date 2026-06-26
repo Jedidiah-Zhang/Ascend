@@ -358,8 +358,9 @@ class GameConsole:
 
         map [radius] [seed]         群系视图（默认 step=1）
         map climate [radius] [seed]   气候视图
+        map altitude [radius] [seed]  海拔等高线
         map detail [radius] [seed]    区域详情
-        map zoom [step] [radius]      指定采样步长（step 越大视野越广）
+        map zoom [step] [radius]      指定采样步长
 
         Args:
             args: 命令参数列表。
@@ -371,7 +372,7 @@ class GameConsole:
         seed = self._world_seed
 
         arg_idx = 0
-        if args and args[arg_idx] in ("biome", "climate", "detail", "zoom"):
+        if args and args[arg_idx] in ("biome", "climate", "altitude", "detail", "zoom"):
             if args[arg_idx] == "zoom":
                 mode = "biome"
                 arg_idx += 1
