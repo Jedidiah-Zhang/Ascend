@@ -13,8 +13,13 @@ _RESET = "\033[0m"
 
 # 群系颜色
 _BIOME_COLORS: dict[BiomeType, str] = {
+    # 陆地
     BiomeType.TEMPERATE_DECIDUOUS_FOREST: "\033[0;32m",  # 绿
     BiomeType.ARID_SHRUBLAND:            "\033[0;33m",  # 黄
+    # 海洋
+    BiomeType.WARM_OCEAN:                "\033[0;31m",  # 红
+    BiomeType.TEMPERATE_OCEAN:           "\033[0;34m",  # 蓝
+    BiomeType.COLD_OCEAN:                "\033[0;36m",  # 青
 }
 
 # 气候颜色
@@ -29,6 +34,9 @@ _CLIMATE_COLORS: dict[ClimateZone, str] = {
 _BIOME_CHARS: dict[BiomeType, str] = {
     BiomeType.TEMPERATE_DECIDUOUS_FOREST: "T",
     BiomeType.ARID_SHRUBLAND:            "~",
+    BiomeType.WARM_OCEAN:                "w",
+    BiomeType.TEMPERATE_OCEAN:           "o",
+    BiomeType.COLD_OCEAN:                "c",
 }
 
 # 气候字符
@@ -43,7 +51,10 @@ _CLIMATE_CHARS: dict[ClimateZone, str] = {
 
 # (上限m, 字符, ANSI颜色, 标签)
 _ALTITUDE_BANDS: list[tuple[float, str, str, str]] = [
-    (0,     "≈", "\033[0;36m", "<0m 洼地"),
+    (-300,  "█", "\033[0;34m", "-500~-300m 深海"),
+    (-100,  "▓", "\033[0;34m", "-300~-100m 洋底"),
+    (-30,   "▒", "\033[0;36m", "-100~-30m 浅海"),
+    (0,     "≈", "\033[0;36m", "-30~0m 近岸"),
     (200,   "_", "\033[0;32m", "0-200m 低地"),
     (500,   ".", "\033[0;32m", "200-500m"),
     (1000,  "-", "\033[0;33m", "500-1000m 丘陵"),
@@ -152,6 +163,12 @@ def render_map(
              BiomeType.TEMPERATE_DECIDUOUS_FOREST.label),
             ("~", _BIOME_COLORS[BiomeType.ARID_SHRUBLAND],
              BiomeType.ARID_SHRUBLAND.label),
+            ("w", _BIOME_COLORS[BiomeType.WARM_OCEAN],
+             BiomeType.WARM_OCEAN.label),
+            ("o", _BIOME_COLORS[BiomeType.TEMPERATE_OCEAN],
+             BiomeType.TEMPERATE_OCEAN.label),
+            ("c", _BIOME_COLORS[BiomeType.COLD_OCEAN],
+             BiomeType.COLD_OCEAN.label),
         ]
 
     lines: list[str] = []
@@ -206,9 +223,6 @@ def render_map(
         legend += f"{color}{ch}{_RESET}={label}  "
     legend += "\033[1;37m@\033[0m=当前"
     lines.append(legend)
-    # 海拔模式加提示
-    if mode == "altitude":
-        lines.append("   海拔范围为年均基线值，实际可能因季节/日波动略有差异")
 
     return "\n".join(lines)
 

@@ -184,12 +184,12 @@ class TestBiome:
 
     def test_temperate_biome(self):
         """温带 → 落叶林。"""
-        assert biome_from_climate(ClimateZone.TEMPERATE, 0.0, 0.0) == \
+        assert biome_from_climate(ClimateZone.TEMPERATE, 0.0, 0.0, 15.0) == \
             BiomeType.TEMPERATE_DECIDUOUS_FOREST
 
     def test_arid_biome(self):
         """干旱带 → 灌木地。"""
-        assert biome_from_climate(ClimateZone.ARID, 0.0, 0.0) == \
+        assert biome_from_climate(ClimateZone.ARID, 0.0, 0.0, 25.0) == \
             BiomeType.ARID_SHRUBLAND
 
     def test_get_template_known_biomes(self):
@@ -210,6 +210,47 @@ class TestBiome:
         """模板包含资源权重。"""
         t = get_template(BiomeType.ARID_SHRUBLAND)
         assert "exposed_mineral" in t.resource_weights
+
+    def test_ocean_biomes(self):
+        """海拔 <0 判定为海洋，温度决定暖/温/冷。"""
+        # 暖水（赤道）
+        assert biome_from_climate(
+            ClimateZone.TROPICAL, 0.0, -100.0, 28.0
+        ) == BiomeType.WARM_OCEAN
+        # 温带海洋
+        assert biome_from_climate(
+            ClimateZone.TEMPERATE, 0.0, -50.0, 15.0
+        ) == BiomeType.TEMPERATE_OCEAN
+        # 冷水（极地）
+        assert biome_from_climate(
+            ClimateZone.COLD, 0.0, -200.0, 2.0
+        ) == BiomeType.COLD_OCEAN
+
+    def test_ocean_vs_land_boundary(self):
+        """海拔准确 0m 时判定为陆地而非海洋。"""
+        assert biome_from_climate(
+            ClimateZone.TEMPERATE, 0.0, 0.0, 15.0
+        ) == BiomeType.TEMPERATE_DECIDUOUS_FOREST
+        # -1m 落入海洋
+        assert biome_from_climate(
+            ClimateZone.TEMPERATE, 0.0, -1.0, 15.0
+        ) == BiomeType.TEMPERATE_OCEAN
+
+    def test_biome_is_ocean(self):
+        """is_ocean 属性正确区分海陆。"""
+        assert BiomeType.WARM_OCEAN.is_ocean is True
+        assert BiomeType.COLD_OCEAN.is_ocean is True
+        assert BiomeType.TEMPERATE_DECIDUOUS_FOREST.is_ocean is False
+        assert BiomeType.ARID_SHRUBLAND.is_ocean is False
+
+    def test_ocean_templates_registered(self):
+        """三种海洋群系均有模板。"""
+        for bt in [BiomeType.WARM_OCEAN, BiomeType.TEMPERATE_OCEAN, BiomeType.COLD_OCEAN]:
+            t = get_template(bt)
+            assert t.water_ratio == 1.0
+            assert t.tree_density == 0.0
+            assert len(t.creature_weights) > 0
+            assert len(t.resource_weights) > 0
 
 
 # ══════════════════════════════════════════════════════════
@@ -322,10 +363,12 @@ class TestWorldGenerator:
         biomes1 = {gen1.get_biome(x, 0) for x in range(20)}
         biomes2 = {gen2.get_biome(x, 0) for x in range(20)}
         # 分布不同（不需要严格不等，但大概率不同；检查至少都产生有效值）
-        assert all(b in {BiomeType.TEMPERATE_DECIDUOUS_FOREST, BiomeType.ARID_SHRUBLAND}
-                   for b in biomes1)
-        assert all(b in {BiomeType.TEMPERATE_DECIDUOUS_FOREST, BiomeType.ARID_SHRUBLAND}
-                   for b in biomes2)
+        valid = {
+            BiomeType.TEMPERATE_DECIDUOUS_FOREST, BiomeType.ARID_SHRUBLAND,
+            BiomeType.WARM_OCEAN, BiomeType.TEMPERATE_OCEAN, BiomeType.COLD_OCEAN,
+        }
+        assert all(b in valid for b in biomes1)
+        assert all(b in valid for b in biomes2)
 
     def test_generate_chunk_returns_valid_data(self):
         """生成的分块包含有效数据。"""

@@ -52,7 +52,7 @@ _PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "temperature": (-30.0, 50.0),
     "rainfall":    (0.0, 5000.0),
     "sunshine":    (0.0, 24.0),
-    "altitude":    (-100.0, 5000.0),
+    "altitude":    (-500.0, 5000.0),
     "humidity":    (0.0, 100.0),
     "wind_speed":  (0.0, 50.0),
 }

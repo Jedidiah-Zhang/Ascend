@@ -30,14 +30,14 @@ from .chunk import ChunkData
 logger = get_logger(__name__)
 
 # 噪声频率配置 — 从宏观（大陆山脉）到微观（局地变化）
-_FREQ_ALTITUDE = 0.002     # 海拔：极低频，大陆-山脉尺度
-_FREQ_LATITUDE = 0.0005    # 纬度：极低频，南北温度梯度
+_FREQ_ALTITUDE = 0.0005    # 海拔：超低频，大陆-海洋尺度（半波长 ~2000 chunk）
+_FREQ_LATITUDE = 0.0003    # 纬度：超低频，暖/冷带宽 ~3000 chunk
 _FREQ_RAINFALL = 0.004     # 降雨：低频，区域降水模式
 _FREQ_DERIVED = 0.005      # 派生参数（日照/湿度/风速）：中频
 
-# 海拔范围
-_ALTITUDE_MIN: float = -100.0
-_ALTITUDE_MAX: float = 5000.0
+# 海拔边界（用于 clamp，实际范围由 _sample_altitude 的分段映射决定）
+_ALTITUDE_FLOOR: float = -500.0
+_ALTITUDE_CEIL: float = 5000.0
 
 
 class WorldGenerator:
@@ -101,7 +101,11 @@ class WorldGenerator:
     # ── 物理推导 ──────────────────────────────────────────
 
     def _sample_altitude(self, cx: int, cy: int) -> float:
-        """采样海拔噪声，映射到 [-100, 5000] m。
+        """采样海拔噪声，分段映射到 [-500, 5000] m。
+
+        采用海平面占优的地貌模型：
+          noise [-1, +0.4) → 海洋 [-500, 0]   (~70% 面积)
+          noise [+0.4, +1] → 陆地 [0, 5000]   (~30% 面积)
 
         Args:
             cx, cy: 分块坐标。
@@ -110,10 +114,20 @@ class WorldGenerator:
             海拔 (m)。
         """
         p = self._phase[0]
-        n = self._noise_altitude.octave(cx + p, cy + p, octaves=5, frequency=_FREQ_ALTITUDE)
+        n = self._noise_altitude.octave(cx + p, cy + p, octaves=2, frequency=_FREQ_ALTITUDE)
         from .climate import clamp
-        alt = _ALTITUDE_MIN + (n + 1.0) * 0.5 * (_ALTITUDE_MAX - _ALTITUDE_MIN)
-        return clamp(alt, _ALTITUDE_MIN, _ALTITUDE_MAX)
+
+        _SEA_CUTOFF = 0.08     # 噪声阈值：低于此值 → 海洋（约 60% 面积，海洋包围大陆）
+        _OCEAN_FLOOR = -500.0  # 最深海沟
+        _LAND_CEIL = 5000.0    # 最高山峰
+
+        if n < _SEA_CUTOFF:
+            # [-1, _SEA_CUTOFF) → [_OCEAN_FLOOR, 0)
+            alt = _OCEAN_FLOOR + (n + 1.0) / (_SEA_CUTOFF + 1.0) * (0.0 - _OCEAN_FLOOR)
+        else:
+            # [_SEA_CUTOFF, 1] → [0, _LAND_CEIL]
+            alt = (n - _SEA_CUTOFF) / (1.0 - _SEA_CUTOFF) * _LAND_CEIL
+        return clamp(alt, _OCEAN_FLOOR, _LAND_CEIL)
 
     def _sample_latitude_temp(self, cx: int, cy: int) -> float:
         """采样纬度噪声 → 海平面温度。
@@ -125,7 +139,7 @@ class WorldGenerator:
             海平面温度 (°C)。
         """
         p = self._phase[1]
-        n = self._noise_latitude.octave(cx + p, cy + p, octaves=3, frequency=_FREQ_LATITUDE)
+        n = self._noise_latitude.octave(cx + p, cy + p, octaves=2, frequency=_FREQ_LATITUDE)
         return sea_level_temperature(n)
 
     def _sample_rainfall(self, cx: int, cy: int) -> float:
@@ -187,10 +201,10 @@ class WorldGenerator:
         temperature = apply_lapse_rate(sea_temp, altitude)
         climate = climate_zone_from_values(temperature, rainfall)
 
-        # 5. 次级噪声 → 群系
+        # 5. 次级噪声 → 群系（海拔优先判定海洋/陆地）
         p = self._phase[6]
         moisture = self._noise_moisture.octave(cx + p, cy + p, octaves=2, frequency=0.005)
-        biome = biome_from_climate(climate, moisture, altitude)
+        biome = biome_from_climate(climate, moisture, altitude, sea_temp)
 
         # 6. 派生参数 → 完整气象数据
         params = annual_baseline(
@@ -275,7 +289,7 @@ class WorldGenerator:
         climate = climate_zone_from_values(temperature, rainfall)
         p = self._phase[6]
         moisture = self._noise_moisture.octave(cx + p, cy + p, octaves=2, frequency=0.005)
-        return biome_from_climate(climate, moisture, altitude)
+        return biome_from_climate(climate, moisture, altitude, sea_temp)
 
     def get_climate(self, cx: int, cy: int) -> ClimateZone:
         """快速查询分块气候档位。
