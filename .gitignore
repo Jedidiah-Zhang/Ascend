@@ -6,3 +6,9 @@
 .claude/
 CLAUDE.md
 .mcp.json
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
