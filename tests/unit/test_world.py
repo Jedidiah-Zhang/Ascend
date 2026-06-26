@@ -5,7 +5,7 @@ from ascend.world import (
     PerlinNoise,
     ClimateZone,
     WeatherParams,
-    climate_zone_from_noise,
+    climate_zone_from_values,
     annual_baseline,
     BiomeType,
     BiomeTemplate,
@@ -97,24 +97,38 @@ class TestClimateZone:
         assert ClimateZone.TEMPERATE.label == "温带"
         assert ClimateZone.ARID.label == "干旱带"
 
-    def test_from_noise_cold(self):
-        """低温噪声 → 寒带。"""
-        assert climate_zone_from_noise(-0.8, 0.0) == ClimateZone.COLD
-        assert climate_zone_from_noise(-0.4, 0.5) == ClimateZone.COLD
+    def test_from_values_cold(self):
+        """低温 → 寒带。"""
+        assert climate_zone_from_values(-5.0, 500.0) == ClimateZone.COLD
+        assert climate_zone_from_values(2.0, 800.0) == ClimateZone.COLD
 
-    def test_from_noise_arid(self):
-        """高温 + 低降雨 → 干旱带。"""
-        assert climate_zone_from_noise(0.5, -0.5) == ClimateZone.ARID
-        assert climate_zone_from_noise(0.8, -0.3) == ClimateZone.ARID
+    def test_from_values_arid(self):
+        """高温 + 极低降雨 → 干旱带。"""
+        assert climate_zone_from_values(25.0, 100.0) == ClimateZone.ARID
+        assert climate_zone_from_values(18.0, 200.0) == ClimateZone.ARID
 
-    def test_from_noise_tropical(self):
+    def test_from_values_tropical(self):
         """高温 + 高降雨 → 热带。"""
-        assert climate_zone_from_noise(0.5, 0.3) == ClimateZone.TROPICAL
-        assert climate_zone_from_noise(0.9, 0.8) == ClimateZone.TROPICAL
+        assert climate_zone_from_values(28.0, 2000.0) == ClimateZone.TROPICAL
+        assert climate_zone_from_values(22.0, 1500.0) == ClimateZone.TROPICAL
 
-    def test_from_noise_temperate(self):
-        """中等噪声 → 温带（默认）。"""
-        assert climate_zone_from_noise(0.0, 0.0) == ClimateZone.TEMPERATE
+    def test_from_values_temperate(self):
+        """中等温度 → 温带（默认）。"""
+        assert climate_zone_from_values(15.0, 800.0) == ClimateZone.TEMPERATE
+
+    def test_sea_level_temperature_range(self):
+        """纬度噪声映射到合理海平面温度范围。"""
+        from ascend.world.climate import sea_level_temperature
+        assert sea_level_temperature(-1.0) < 0.0    # 极地寒冷
+        assert sea_level_temperature(1.0) > 30.0    # 赤道炎热
+        assert sea_level_temperature(0.0) == pytest.approx(15.0)  # 中纬度
+
+    def test_lapse_rate(self):
+        """气温直减率：升高 1000m 应降 6.5°C。"""
+        from ascend.world.climate import apply_lapse_rate
+        t0 = apply_lapse_rate(20.0, 0.0)
+        t1 = apply_lapse_rate(20.0, 1000.0)
+        assert t0 - t1 == pytest.approx(6.5)
 
 
 class TestWeatherParams:
@@ -129,27 +143,31 @@ class TestWeatherParams:
         assert w.temperature == 15.0
         assert w.humidity == 60.0
 
-    def test_annual_baseline_temperate(self):
-        """温带气候 + 零噪声 → 参数在合理范围内。"""
-        noise = {
-            "temperature": 0.0, "rainfall": 0.0, "sunshine": 0.0,
-            "altitude": 0.0, "humidity": 0.0, "wind_speed": 0.0,
-        }
-        w = annual_baseline(ClimateZone.TEMPERATE, noise)
-        # 温带温度区间 [5, 20]，0 噪声 → 中点 12.5
-        assert 5.0 <= w.temperature <= 20.0
-        assert 30.0 <= w.humidity <= 100.0
-        assert w.altitude >= 0.0
+    def test_annual_baseline_new_api(self):
+        """新 API：海拔+海平面温度+降雨+气候 → 完整参数。"""
+        w = annual_baseline(
+            altitude=500.0,
+            sea_level_temp=20.0,
+            rainfall=1000.0,
+            climate=ClimateZone.TEMPERATE,
+            sunshine_noise=0.0,
+            humidity_noise=0.0,
+            wind_noise=0.0,
+        )
+        # 500m * 6.5/1000 = 3.25°C 下降
+        assert w.temperature == pytest.approx(16.75)
+        assert w.rainfall == 1000.0
+        assert w.altitude == 500.0
+        assert 40.0 <= w.humidity <= 85.0
 
-    def test_annual_baseline_clamp(self):
-        """极端噪声值不会超出绝对边界。"""
-        noise = {
-            "temperature": 100.0, "rainfall": 100.0, "sunshine": 100.0,
-            "altitude": 100.0, "humidity": 100.0, "wind_speed": 100.0,
-        }
-        w = annual_baseline(ClimateZone.TROPICAL, noise)
-        assert w.temperature <= 50.0  # 绝对上限
-        assert w.humidity <= 100.0
+    def test_high_altitude_cold(self):
+        """高海拔 → 即使赤道纬度也冷。"""
+        from ascend.world.climate import apply_lapse_rate, climate_zone_from_values
+        # 赤道海平面 35°C，在 4000m 处温度 ≈ 35 - 26 = 9°C
+        t = apply_lapse_rate(35.0, 4000.0)
+        assert t < 10.0
+        # 应该判定为温带而非热带
+        assert climate_zone_from_values(t, 2000.0) == ClimateZone.TEMPERATE
 
 
 # ══════════════════════════════════════════════════════════

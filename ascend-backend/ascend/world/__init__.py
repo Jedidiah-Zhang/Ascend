@@ -12,7 +12,12 @@
 """
 
 from .noise import PerlinNoise
-from .climate import ClimateZone, WeatherParams, climate_zone_from_noise, annual_baseline
+from .climate import (
+    ClimateZone, WeatherParams,
+    climate_zone_from_noise, climate_zone_from_values,
+    annual_baseline, sea_level_temperature, apply_lapse_rate,
+    rainfall_from_noise, LAPSE_RATE, clamp,
+)
 from .biome import BiomeType, BiomeTemplate, biome_from_climate, get_template
 from .chunk import ChunkData, TILE_MAP_SIZE
 from .generator import WorldGenerator

@@ -1,4 +1,12 @@
-"""世界生成器 — 协调噪声→气候→群系→分块的完整生成流程。
+"""世界生成器 — 协调噪声→海拔→温度→气候→群系的物理因果链。
+
+生成顺序：
+  1. 海拔噪声 → 海拔高度（第一性，地形）
+  2. 纬度噪声 → 海平面温度
+  3. 气温直减率: 实际温度 = 海平面温度 - 海拔 × LAPSE_RATE
+  4. 降雨噪声 → 年降雨量
+  5. 温度 + 降雨 → 气候档位
+  6. 气候档位 + 次级噪声 → 群系类型
 
 支持串行和并行生成，可注入外部线程池。
 每个分块的生成逻辑为纯函数链，不依赖外部可变状态。
@@ -11,37 +19,38 @@ from .noise import PerlinNoise
 from .climate import (
     ClimateZone,
     WeatherParams,
-    climate_zone_from_noise,
+    sea_level_temperature,
+    rainfall_from_noise,
+    climate_zone_from_values,
     annual_baseline,
 )
-from .biome import BiomeType, BiomeTemplate, biome_from_climate, get_template
+from .biome import BiomeType, biome_from_climate
 from .chunk import ChunkData
 
 logger = get_logger(__name__)
 
-# 默认噪声配置
-# 不同参数使用不同的频率偏移，避免温度/降雨完全正相关
-_PARAM_FREQUENCIES: dict[str, tuple[float, float]] = {
-    "temperature": (0.003, 0.001),
-    "rainfall":    (0.005, 0.002),
-    "sunshine":    (0.004, 0.003),
-    "altitude":    (0.006, 0.001),
-    "humidity":    (0.005, 0.004),
-    "wind_speed":  (0.007, 0.003),
-}
+# 噪声频率配置 — 从宏观（大陆山脉）到微观（局地变化）
+_FREQ_ALTITUDE = 0.002     # 海拔：极低频，大陆-山脉尺度
+_FREQ_LATITUDE = 0.0005    # 纬度：极低频，南北温度梯度
+_FREQ_RAINFALL = 0.004     # 降雨：低频，区域降水模式
+_FREQ_DERIVED = 0.005      # 派生参数（日照/湿度/风速）：中频
+
+# 海拔范围
+_ALTITUDE_MIN: float = -100.0
+_ALTITUDE_MAX: float = 5000.0
 
 
 class WorldGenerator:
     """世界生成器。
 
-    封装噪声生成器、群系模板和分块生成流程。
-    线程安全：除 _templates 缓存外无可变状态，缓存为只读。
+    封装噪声生成器和分块生成流程。
+    线程安全：除 _templates 缓存外无可变状态。
 
     用法:
         gen = WorldGenerator(seed=42)
         chunk = gen.generate_chunk(0, 0)
 
-        # 并行生成 9 个分块
+        # 并行生成
         chunks = gen.generate_parallel([(0,0), (0,1), (1,0)], max_workers=4)
     """
 
@@ -53,8 +62,7 @@ class WorldGenerator:
     ) -> None:
         """初始化世界生成器。
 
-        从 seed 派生 7 个噪声实例（1 个用于气候区 + 6 个用于气象参数），
-        每个使用不同的子种子确保参数噪声相互独立。
+        从 seed 派生 5 个独立噪声实例。
 
         Args:
             seed: 世界种子。相同种子生成相同世界。
@@ -63,26 +71,98 @@ class WorldGenerator:
         self._seed = seed
         self._executor = executor
 
-        # 气候区噪声（用于 climate_zone_from_noise）
-        self._climate_noise = PerlinNoise(seed + 1000)
+        # 种子衍生相位偏移 — 确保不同 seed 的 (0,0) 采样到不同噪声值。
+        # 偏移量 ~数百 chunk，相当于"种子在无限噪声空间中选择不同起点"。
+        # 黄金分割共轭 0.618... 保证各通道偏移均匀分布不集中。
+        import math
+        phi = (math.sqrt(5.0) - 1.0) / 2.0  # 0.618...
+        n_phases = 8
+        seed_float = float(abs(seed) % 100000)
+        self._phase = [
+            ((seed_float + i * 137.5) * phi * 1000.0) % 9973.0
+            for i in range(n_phases)
+        ]
 
-        # 各气象参数的独立噪声生成器
-        self._param_noises: dict[str, PerlinNoise] = {}
-        for i, param in enumerate(_PARAM_FREQUENCIES):
-            self._param_noises[param] = PerlinNoise(seed + 2000 + i)
+        # 7 个独立噪声通道，子种子不同 + 相位偏移保证去相关
+        self._noise_altitude = PerlinNoise(seed + 100)
+        self._noise_latitude = PerlinNoise(seed + 200)
+        self._noise_rainfall = PerlinNoise(seed + 300)
+        self._noise_sunshine = PerlinNoise(seed + 400)
+        self._noise_humidity = PerlinNoise(seed + 500)
+        self._noise_wind = PerlinNoise(seed + 600)
+        # 次级噪声（群系细分用）
+        self._noise_moisture = PerlinNoise(seed + 700)
 
-        # 群系模板缓存（只读）
-        self._templates: dict[BiomeType, BiomeTemplate] = {}
-
-        logger.info("WorldGenerator 就绪: seed=%d, params=%d", seed, len(self._param_noises))
+        logger.info("WorldGenerator 就绪: seed=%d, 噪声通道=7", seed)
 
     def __repr__(self) -> str:
         return f"WorldGenerator(seed={self._seed})"
 
+    # ── 物理推导 ──────────────────────────────────────────
+
+    def _sample_altitude(self, cx: int, cy: int) -> float:
+        """采样海拔噪声，映射到 [-100, 5000] m。
+
+        Args:
+            cx, cy: 分块坐标。
+
+        Returns:
+            海拔 (m)。
+        """
+        p = self._phase[0]
+        n = self._noise_altitude.octave(cx + p, cy + p, octaves=5, frequency=_FREQ_ALTITUDE)
+        from .climate import clamp
+        alt = _ALTITUDE_MIN + (n + 1.0) * 0.5 * (_ALTITUDE_MAX - _ALTITUDE_MIN)
+        return clamp(alt, _ALTITUDE_MIN, _ALTITUDE_MAX)
+
+    def _sample_latitude_temp(self, cx: int, cy: int) -> float:
+        """采样纬度噪声 → 海平面温度。
+
+        Args:
+            cx, cy: 分块坐标。
+
+        Returns:
+            海平面温度 (°C)。
+        """
+        p = self._phase[1]
+        n = self._noise_latitude.octave(cx + p, cy + p, octaves=3, frequency=_FREQ_LATITUDE)
+        return sea_level_temperature(n)
+
+    def _sample_rainfall(self, cx: int, cy: int) -> float:
+        """采样降雨噪声 → 年降雨量 (mm)。
+
+        Args:
+            cx, cy: 分块坐标。
+
+        Returns:
+            年降雨量 (mm)。
+        """
+        p = self._phase[2]
+        n = self._noise_rainfall.octave(cx + p, cy + p, octaves=4, frequency=_FREQ_RAINFALL)
+        return rainfall_from_noise(n)
+
+    def _sample_derived_noise(
+        self, noise: PerlinNoise, cx: int, cy: int, phase_idx: int
+    ) -> float:
+        """采样派生参数噪声。
+
+        Args:
+            noise: 噪声实例。
+            cx, cy: 分块坐标。
+            phase_idx: 相位偏移索引。
+
+        Returns:
+            噪声值 [-1, 1]。
+        """
+        p = self._phase[phase_idx]
+        return noise.octave(cx + p, cy + p, octaves=4, frequency=_FREQ_DERIVED)
+
     # ── 单分块同步生成 ───────────────────────────────────
 
     def generate_chunk(self, cx: int, cy: int) -> ChunkData:
-        """同步生成一个分块（大地图层 + 气候参数）。
+        """同步生成一个分块。
+
+        因果链：海拔 → 海平面温度 → 实际温度 → 气候 → 群系。
 
         不生成详细 tile 层（按需延迟生成）。
 
@@ -93,41 +173,43 @@ class WorldGenerator:
         Returns:
             完整的 ChunkData（tiles=None）。
         """
-        # 1. 采样气候噪声 → 确定气候档位
-        temp_noise = self._climate_noise.octave(cx, cy, octaves=3, frequency=0.003)
-        rain_noise = self._climate_noise.octave(cx + 1000, cy + 1000, octaves=3, frequency=0.004)
-        climate = climate_zone_from_noise(temp_noise, rain_noise)
+        # 1. 海拔（第一性）
+        altitude = self._sample_altitude(cx, cy)
 
-        # 2. 采样各参数噪声 → 年均基线
-        noise_values: dict[str, float] = {}
-        for param, (freq_x, freq_y) in _PARAM_FREQUENCIES.items():
-            noise = self._param_noises[param]
-            value = noise.octave(cx, cy, octaves=4, frequency=freq_x)
-            # 同一参数用偏移坐标采样以达到弱相关
-            value += noise.octave(cx + 500, cy + 500, octaves=4, frequency=freq_y) * 0.3
-            noise_values[param] = value
+        # 2. 纬度 → 海平面温度
+        sea_temp = self._sample_latitude_temp(cx, cy)
 
-        baseline = annual_baseline(climate, noise_values)
+        # 3. 降雨
+        rainfall = self._sample_rainfall(cx, cy)
 
-        # 3. 次级噪声 → 群系类型
-        moisture_noise = self._climate_noise.octave(cx + 2000, cy + 2000, octaves=2, frequency=0.005)
-        altitude_noise = noise_values["altitude"]
-        biome = biome_from_climate(climate, moisture_noise, altitude_noise)
+        # 4. 温度 + 降雨 → 气候档位
+        from .climate import apply_lapse_rate
+        temperature = apply_lapse_rate(sea_temp, altitude)
+        climate = climate_zone_from_values(temperature, rainfall)
 
-        # 4. 组装 ChunkData
-        chunk = ChunkData(
+        # 5. 次级噪声 → 群系
+        p = self._phase[6]
+        moisture = self._noise_moisture.octave(cx + p, cy + p, octaves=2, frequency=0.005)
+        biome = biome_from_climate(climate, moisture, altitude)
+
+        # 6. 派生参数 → 完整气象数据
+        params = annual_baseline(
+            altitude=altitude,
+            sea_level_temp=sea_temp,
+            rainfall=rainfall,
+            climate=climate,
+            sunshine_noise=self._sample_derived_noise(self._noise_sunshine, cx, cy, 3),
+            humidity_noise=self._sample_derived_noise(self._noise_humidity, cx, cy, 4),
+            wind_noise=self._sample_derived_noise(self._noise_wind, cx, cy, 5),
+        )
+
+        return ChunkData(
             cx=cx,
             cy=cy,
             biome=biome,
             climate_zone=climate,
-            annual_baseline=baseline,
+            annual_baseline=params,
         )
-
-        # 缓存模板引用
-        if biome not in self._templates:
-            self._templates[biome] = get_template(biome)
-
-        return chunk
 
     # ── 并行生成 ─────────────────────────────────────────
 
@@ -138,7 +220,7 @@ class WorldGenerator:
     ) -> list[ChunkData]:
         """并行生成多个分块。
 
-        每个分块独立生成，无共享可变状态。使用线程池并发执行。
+        每个分块独立生成，无共享可变状态。
 
         Args:
             chunks: 要生成的分块坐标列表。
@@ -151,10 +233,9 @@ class WorldGenerator:
             return []
 
         executor = self._executor or ThreadPoolExecutor(max_workers=max_workers)
-        own_executor = self._executor is None  # 是否自己创建的 executor
+        own_executor = self._executor is None
 
         try:
-            # 使用字典保持顺序
             future_to_idx: dict = {}
             for idx, (cx, cy) in enumerate(chunks):
                 future = executor.submit(self.generate_chunk, cx, cy)
@@ -175,39 +256,39 @@ class WorldGenerator:
             if own_executor:
                 executor.shutdown(wait=False)
 
-    # ── 群系查询 ─────────────────────────────────────────
+    # ── 轻量查询 ─────────────────────────────────────────
 
     def get_biome(self, cx: int, cy: int) -> BiomeType:
-        """快速查询分块群系（不生成完整 ChunkData）。
+        """快速查询分块群系（不保留中间结果）。
 
         Args:
-            cx: 分块 X 坐标。
-            cy: 分块 Y 坐标。
+            cx, cy: 分块坐标。
 
         Returns:
             群系类型。
         """
-        temp_noise = self._climate_noise.octave(cx, cy, octaves=3, frequency=0.003)
-        rain_noise = self._climate_noise.octave(cx + 1000, cy + 1000, octaves=3, frequency=0.004)
-        climate = climate_zone_from_noise(temp_noise, rain_noise)
-
-        # 需要海拔噪声来区分群系
-        alt_noise = self._param_noises["altitude"]
-        altitude_value = alt_noise.octave(cx, cy, octaves=4, frequency=0.006)
-        moisture_noise = self._climate_noise.octave(cx + 2000, cy + 2000, octaves=2, frequency=0.005)
-
-        return biome_from_climate(climate, moisture_noise, altitude_value)
+        altitude = self._sample_altitude(cx, cy)
+        sea_temp = self._sample_latitude_temp(cx, cy)
+        rainfall = self._sample_rainfall(cx, cy)
+        from .climate import apply_lapse_rate
+        temperature = apply_lapse_rate(sea_temp, altitude)
+        climate = climate_zone_from_values(temperature, rainfall)
+        p = self._phase[6]
+        moisture = self._noise_moisture.octave(cx + p, cy + p, octaves=2, frequency=0.005)
+        return biome_from_climate(climate, moisture, altitude)
 
     def get_climate(self, cx: int, cy: int) -> ClimateZone:
         """快速查询分块气候档位。
 
         Args:
-            cx: 分块 X 坐标。
-            cy: 分块 Y 坐标。
+            cx, cy: 分块坐标。
 
         Returns:
             气候档位。
         """
-        temp_noise = self._climate_noise.octave(cx, cy, octaves=3, frequency=0.003)
-        rain_noise = self._climate_noise.octave(cx + 1000, cy + 1000, octaves=3, frequency=0.004)
-        return climate_zone_from_noise(temp_noise, rain_noise)
+        altitude = self._sample_altitude(cx, cy)
+        sea_temp = self._sample_latitude_temp(cx, cy)
+        rainfall = self._sample_rainfall(cx, cy)
+        from .climate import apply_lapse_rate
+        temperature = apply_lapse_rate(sea_temp, altitude)
+        return climate_zone_from_values(temperature, rainfall)

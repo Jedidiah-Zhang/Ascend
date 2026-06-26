@@ -158,8 +158,9 @@ def biome_from_climate(
         # 热带雨林（待实现）
         return BiomeType.TEMPERATE_DECIDUOUS_FOREST  # fallback
     if climate == ClimateZone.COLD:
-        # 寒带苔原（待实现）
-        return BiomeType.ARID_SHRUBLAND  # fallback
+        # 寒带苔原/针叶林（待实现）
+        # fallback 到落叶林——湿冷是森林，干冷才是冻原
+        return BiomeType.TEMPERATE_DECIDUOUS_FOREST
     return BiomeType.TEMPERATE_DECIDUOUS_FOREST
 
 
