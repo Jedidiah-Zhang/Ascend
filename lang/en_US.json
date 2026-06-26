@@ -1,0 +1,17 @@
+{
+  "ui.save": "Save",
+  "ui.load": "Load",
+  "ui.settings": "Settings",
+  "ui.confirm": "Confirm",
+  "ui.cancel": "Cancel",
+  "ui.close": "Close",
+  "ui.back": "Back",
+
+  "item.wood": "Wood",
+  "item.stone": "Stone",
+  "item.fiber": "Fiber",
+
+  "event.weather_change": "Weather Change",
+  "event.rain_start": "Rain Started",
+  "event.rain_stop": "Rain Stopped"
+}

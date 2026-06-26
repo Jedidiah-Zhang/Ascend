@@ -1,0 +1,17 @@
+{
+  "ui.save": "保存",
+  "ui.load": "加载",
+  "ui.settings": "设置",
+  "ui.confirm": "确认",
+  "ui.cancel": "取消",
+  "ui.close": "关闭",
+  "ui.back": "返回",
+
+  "item.wood": "木材",
+  "item.stone": "石材",
+  "item.fiber": "纤维",
+
+  "event.weather_change": "天气变化",
+  "event.rain_start": "开始下雨",
+  "event.rain_stop": "雨停了"
+}
