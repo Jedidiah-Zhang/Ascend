@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 # 日志目录
-LOG_DIR = Path(__file__).parent.parent / "logs"
+LOG_DIR = Path(__file__).parent.parent.parent / "logs"
 
 
 def setup_logging(level: int = logging.DEBUG) -> str:
