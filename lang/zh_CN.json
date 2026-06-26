@@ -68,6 +68,10 @@
   "console.help_report": "显示运行报告",
   "console.help_help": "显示帮助",
   "console.help_quit": "退出游戏",
+  "console.help_map": "显示群系/气候地图",
+
+  "console.map_no_seed": "未设置种子，使用 seed=0，可通过 map <radius> <seed> 指定",
+  "console.map_generating": "正在生成 {count} 个分块...",
 
   "mode.realtime": "日常实时",
   "mode.sleep": "睡眠",

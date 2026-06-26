@@ -23,6 +23,7 @@ from ascend.bus import bus
 from ascend.time import WorldClock, GameCalendar, TimeMode, GAME_DAY, GAME_HOUR
 from ascend.log import setup_logging, quiet_console, get_logger
 from ascend.i18n import I18n
+from ascend.world import WorldGenerator, render_map, render_region_detail
 
 logger = get_logger(__name__)
 i18n = I18n()
@@ -49,6 +50,8 @@ class GameConsole:
 
         self.clock = WorldClock()
         self.calendar = GameCalendar()
+        self._world_gen: WorldGenerator | None = None
+        self._world_seed: int = 0
         self._running = False
         self._paused = False
         self._start_real_time: float = 0.0
@@ -350,6 +353,61 @@ class GameConsole:
    {i18n.t('console.report_events')}:    {bus.event_count:,}
   ══════════════════════════════════════""")
 
+    def _cmd_map(self, args: list[str]) -> None:
+        """显示世界地图（ASCII 渲染）。
+
+        map [radius] [seed]         群系视图（默认 step=1）
+        map climate [radius] [seed]   气候视图
+        map detail [radius] [seed]    区域详情
+        map zoom [step] [radius]      指定采样步长（step 越大视野越广）
+
+        Args:
+            args: 命令参数列表。
+        """
+        # 解析参数
+        mode = "biome"
+        radius = 15
+        step = 1
+        seed = self._world_seed
+
+        arg_idx = 0
+        if args and args[arg_idx] in ("biome", "climate", "detail", "zoom"):
+            if args[arg_idx] == "zoom":
+                mode = "biome"
+                arg_idx += 1
+                if arg_idx < len(args):
+                    try:
+                        step = int(args[arg_idx])
+                        arg_idx += 1
+                    except ValueError:
+                        step = 20  # 默认 zoom=20
+            else:
+                mode = args[arg_idx]
+                arg_idx += 1
+        if arg_idx < len(args):
+            try:
+                radius = int(args[arg_idx])
+                arg_idx += 1
+            except ValueError:
+                pass
+        if arg_idx < len(args):
+            try:
+                seed = int(args[arg_idx])
+            except ValueError:
+                print(f"  无效种子: {args[arg_idx]}")
+                return
+
+        # 创建/更新 WorldGenerator
+        if self._world_gen is None or seed != self._world_seed:
+            self._world_seed = seed
+            self._world_gen = WorldGenerator(seed=seed)
+
+        print(f"  种子: {seed}  |  半径: {radius}  |  步长: {step}")
+        if mode == "detail":
+            print(render_region_detail(self._world_gen, radius=min(radius, 5)))
+        else:
+            print(render_map(self._world_gen, radius=radius, mode=mode, step=step))
+
     def _cmd_help(self) -> None:
         """显示帮助。"""
         print(f"""  ┌─ {i18n.t('console.welcome')} ──────────────────────────────┐
@@ -363,6 +421,7 @@ class GameConsole:
   │ jump [n]          {i18n.t('console.help_jump'):<32s} │
   │ mode [name]       {i18n.t('console.help_mode'):<32s} │
   │ lang [code]       {i18n.t('console.help_lang'):<32s} │
+  │ map [r] [seed]    {i18n.t('console.help_map'):<32s} │
   │ events [n]        {i18n.t('console.help_events'):<32s} │
   │ rp, report        {i18n.t('console.help_report'):<32s} │
   │ ?, help           {i18n.t('console.help_help'):<32s} │
@@ -446,6 +505,8 @@ class GameConsole:
                     self._cmd_mode(args[0] if args else None)
                 elif cmd == "lang":
                     self._cmd_lang(args[0] if args else None)
+                elif cmd == "map":
+                    self._cmd_map(args)
                 elif cmd == "events":
                     n = int(args[0]) if args else 10
                     self._cmd_events(n)

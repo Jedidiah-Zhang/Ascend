@@ -68,6 +68,10 @@
   "console.help_report": "Show run report",
   "console.help_help": "Show help",
   "console.help_quit": "Quit game",
+  "console.help_map": "Show biome/climate map",
+
+  "console.map_no_seed": "No seed set, using seed=0. Use map <radius> <seed> to specify",
+  "console.map_generating": "Generating {count} chunks...",
 
   "mode.realtime": "Realtime",
   "mode.sleep": "Sleep",
