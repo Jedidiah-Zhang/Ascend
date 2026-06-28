@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>世界地图可视化 - Ascend</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --text: #e0e0e0;
+    --text-dim: #999;
+    --accent: #4fc3f7;
+    --border: #2a2a4a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  /* ── 工具栏 ── */
+  #toolbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 12px; background: var(--surface);
+    border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap;
+  }
+  #toolbar label { font-size:13px; color:var(--text-dim); }
+  #toolbar input[type="number"] {
+    width:80px; padding:4px 8px; border:1px solid var(--border);
+    border-radius:4px; background:var(--bg); color:var(--text); font-size:13px;
+  }
+  #toolbar button {
+    padding:4px 12px; border:1px solid var(--border); border-radius:4px;
+    background:var(--bg); color:var(--text); font-size:13px;
+    cursor:pointer; transition:background 0.15s;
+  }
+  #toolbar button:hover { background:#2a2a4a; }
+  #toolbar button.active { background:var(--accent); color:#000; border-color:var(--accent); }
+  #info {
+    margin-left:auto; font-size:12px; color:var(--text-dim); font-family:monospace;
+  }
+
+  /* ── 主区域 ── */
+  #main { display:flex; flex:1; overflow:hidden; }
+
+  /* ── 图例 ── */
+  #legend {
+    width:160px; padding:10px; background:var(--surface);
+    border-right:1px solid var(--border); overflow-y:auto; flex-shrink:0;
+  }
+  #legend h3 { font-size:13px; margin-bottom:8px; color:var(--text-dim); }
+  .legend-item { display:flex; align-items:center; gap:6px; margin-bottom:4px; font-size:12px; }
+  .legend-swatch { width:14px; height:14px; border-radius:2px; flex-shrink:0; }
+  #legend-gradient { width:100%; height:16px; border-radius:2px; margin-bottom:4px; }
+  #legend-range { display:flex; justify-content:space-between; font-size:11px; color:var(--text-dim); margin-bottom:8px; }
+
+  /* ── 画布容器 ── */
+  #canvas-wrap {
+    flex:1; overflow:hidden; cursor:grab; position:relative;
+    background:#0a0a1a; /* 超出缓存区域时显示的背景色 */
+  }
+  #canvas-wrap:active { cursor:grabbing; }
+  #canvas-wrap.panning { cursor:grabbing; }
+  canvas { display:block; position:absolute; }
+
+  /* ── 悬浮提示 ── */
+  #tooltip {
+    position:absolute; pointer-events:none;
+    background:rgba(0,0,0,0.85); border:1px solid var(--border);
+    border-radius:6px; padding:8px 10px; font-size:12px; line-height:1.5;
+    font-family:monospace; display:none; z-index:10; white-space:nowrap;
+  }
+
+  /* ── 加载指示器 ── */
+  #loading {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    background:rgba(0,0,0,0.7); padding:8px 16px; border-radius:4px;
+    font-size:13px; display:none; z-index:5; pointer-events:none;
+  }
+
+  /* ── 底部状态栏 ── */
+  #status {
+    padding:4px 12px; background:var(--surface); border-top:1px solid var(--border);
+    font-size:11px; color:var(--text-dim); flex-shrink:0; display:flex; gap:16px;
+  }
+</style>
+</head>
+<body>
+
+<!-- 工具栏 -->
+<div id="toolbar">
+  <label>Seed</label>
+  <input type="number" id="seed-input" value="0">
+  <button id="btn-apply">应用</button>
+
+  <span style="width:12px"></span>
+
+  <button data-mode="altitude">海拔</button>
+  <button data-mode="temperature">温度</button>
+  <button data-mode="rainfall">降雨</button>
+  <button data-mode="climate">气候</button>
+  <button data-mode="biome" class="active">群系</button>
+
+  <span id="info">--</span>
+</div>
+
+<!-- 主区域 -->
+<div id="main">
+  <div id="legend"><h3>图例</h3><div id="legend-body"></div></div>
+
+  <div id="canvas-wrap">
+    <canvas id="canvas"></canvas>
+    <div id="tooltip"></div>
+    <div id="loading">加载中...</div>
+  </div>
+</div>
+
+<!-- 状态栏 -->
+<div id="status">
+  <span id="status-mode">模式: 群系</span>
+  <span id="status-hover">悬停: --</span>
+  <span id="status-load">就绪</span>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+// 无界地图 — 多瓦片缓存架构
+// ══════════════════════════════════════════════════════════════════
+//
+// 世界被划分为固定大小的瓦片（TILE_SIZE × TILE_SIZE 区块）。
+// 访问过的瓦片保留在 tileCache 中，离开再回来直接命中，无需重载。
+//
+// 瓦片坐标对齐全局网格：瓦片 (tx,ty) 覆盖区块 [tx*TS, ty*TS] ~ [(tx+1)*TS-1, (ty+1)*TS-1]
+// 渲染时遍历所有缓存的瓦片，绘制与视口重叠的部分。
+// 视口移动后检查是否有新瓦片需要加载（视口 + 缓冲区域），仅请求缺失的。
+
+// ── 常量 ──────────────────────────────────────────────────────
+const TILE_SIZE = 100;       // 每瓦片 100×100 区块
+const MAX_TILES = 800;       // 瓦片上限（极远缩放 640 片 × 200KB ≈ 128MB）
+const BUFFER_CHUNKS = 30;    // 视口外预加载缓冲（区块数）
+const APP_VERSION = 'v22';    // 版本标记（浏览器 console 可见）
+
+// ── 固定值域（连续模式用，保证颜色一致） ──────────────────────
+const FIXED_RANGES = {
+  altitude:    { min: -500, max: 5000 },
+  temperature: { min: -30,  max: 50   },
+  rainfall:    { min: 0,    max: 5000 },
+  sunshine:    { min: 0,    max: 24   },
+  humidity:    { min: 0,    max: 100  },
+  wind_speed:  { min: 0,    max: 50   },
+};
+
+// ── DOM ────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('canvas-wrap');
+const tooltip = document.getElementById('tooltip');
+const legendBody = document.getElementById('legend-body');
+const loadingEl = document.getElementById('loading');
+
+// ── 全局状态 ──────────────────────────────────────────────────
+const S = {
+  seed: 0,
+  mode: 'biome',
+  cellSize: 12,
+  viewCX: -1050,
+  viewCY: -1050,
+  legend: null,       // 全局图例（离散模式；来自最后一次加载的瓦片）
+  generation: 0,      // 仅在 seed/mode 切换时递增，用于废弃旧请求
+};
+
+// ── 瓦片缓存 ──────────────────────────────────────────────────
+// Map<"tx,ty", {grid, accessTime}>
+const tileCache = new Map();
+const pendingTiles = new Set(); // 正在加载中的瓦片键（防止重复请求）
+let _accessCounter = 0;
+let _inFlight = 0;              // 当前进行中的请求数
+const MAX_IN_FLIGHT = 4;        // 全局并发上限（不超浏览器连接池）
+let _renderScheduled = false;   // render 防抖（每帧最多一次）
+
+function tileKey(cx, cy) {
+  const tx = Math.floor(cx / TILE_SIZE);
+  const ty = Math.floor(cy / TILE_SIZE);
+  return `${tx},${ty}`;
+}
+
+function tileOrigin(key) {
+  const [tx, ty] = key.split(',').map(Number);
+  return { cx: tx * TILE_SIZE, cy: ty * TILE_SIZE };
+}
+
+// ════════════════════════════════════════════════════════════════
+// 颜色映射
+// ════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════
+// 客户端颜色映射（从 float32 原始值 → RGBA）
+// ════════════════════════════════════════════════════════════════
+
+const BIOME_CMAP = {
+  0: [74,124,63], 1: [196,164,62],
+  10: [30,107,138], 11: [46,107,138], 12: [90,138,170],
+};
+const CLIMATE_CMAP = {0:[231,76,60], 1:[39,174,96], 2:[52,152,219], 3:[243,156,18]};
+
+function colorForValue(v, mode) {
+  if (mode === 'biome') return BIOME_CMAP[Math.round(v)] || [34,34,34];
+  if (mode === 'climate') return CLIMATE_CMAP[Math.round(v)] || [34,34,34];
+
+  // 连续值渐变
+  const range = FIXED_RANGES[mode] || {min:-500,max:5000};
+  const t = Math.max(0, Math.min(1, (v - range.min) / (range.max - range.min + 0.001)));
+
+  if (mode === 'altitude') {
+    const stops = [
+      [0.00,[10,20,80]],[0.20,[30,80,160]],[0.38,[60,140,200]],[0.45,[180,200,120]],
+      [0.50,[100,160,60]],[0.65,[60,120,30]],[0.80,[140,120,80]],[1.00,[240,240,240]],
+    ];
+    let lo=stops[0], hi=stops[stops.length-1];
+    for (let i=1;i<stops.length;i++){if(t<=stops[i][0]){lo=stops[i-1];hi=stops[i];break;}}
+    const dt=(t-lo[0])/(hi[0]-lo[0]+0.0001);
+    return [lo[1][0]+(hi[1][0]-lo[1][0])*dt, lo[1][1]+(hi[1][1]-lo[1][1])*dt, lo[1][2]+(hi[1][2]-lo[1][2])*dt].map(Math.round);
+  }
+  // 蓝(冷/低) → 青 → 绿 → 黄 → 红(热/高)
+  if (t < 0.25) { const s=t/0.25; return [Math.round(30+s*30), Math.round(60+s*140), Math.round(180)]; }
+  if (t < 0.5)  { const s=(t-0.25)/0.25; return [Math.round(60-s*20), Math.round(200-s*40), Math.round(180-s*120)]; }
+  if (t < 0.75) { const s=(t-0.5)/0.25; return [Math.round(40+s*160), Math.round(160+s*60), Math.round(60-s*30)]; }
+  { const s=(t-0.75)/0.25; return [Math.round(200+s*55), Math.round(220-s*180), Math.round(30)]; }
+}
+
+// ════════════════════════════════════════════════════════════════
+// 多瓦片渲染
+// ════════════════════════════════════════════════════════════════
+
+function scheduleRender() {
+  if (_renderScheduled) return;
+  _renderScheduled = true;
+  requestAnimationFrame(() => {
+    _renderScheduled = false;
+    _renderImpl();
+  });
+}
+
+function render() { scheduleRender(); }
+
+function _renderImpl() {
+  const W = wrap.clientWidth;
+  const H = wrap.clientHeight;
+  canvas.width = W;
+  canvas.height = H;
+  canvas.style.left = '0';
+  canvas.style.top = '0';
+  ctx.clearRect(0, 0, W, H);
+
+  const { cellSize, viewCX, viewCY } = S;
+  const ts = TILE_SIZE * cellSize; // 瓦片在屏幕上的像素尺寸
+  ctx.imageSmoothingEnabled = false; // 最近邻缩放，不模糊
+  let drewAny = false;
+
+  for (const [key, tile] of tileCache) {
+    if (!tile.offscreen) continue;
+    const { cx: tc, cy: tr } = tileOrigin(key);
+
+    // 瓦片在屏幕上的像素偏移
+    const sx = (tc - viewCX) * cellSize;
+    const sy = (tr - viewCY) * cellSize;
+
+    // 视口裁剪
+    if (sx + ts < 0 || sy + ts < 0 || sx > W || sy > H) continue;
+
+    ctx.drawImage(tile.offscreen, sx, sy, ts, ts);
+    drewAny = true;
+  }
+
+  // 网格线
+  if (cellSize >= 16 && drewAny) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 0.5;
+    const c0 = Math.floor(viewCX);
+    const r0 = Math.floor(viewCY);
+    const c1 = Math.ceil(viewCX + W / cellSize);
+    const r1 = Math.ceil(viewCY + H / cellSize);
+    for (let r = r0; r <= r1; r++) {
+      const y = (r - viewCY) * cellSize;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+    for (let c = c0; c <= c1; c++) {
+      const x = (c - viewCX) * cellSize;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+  }
+
+  // 坐标标记
+  if (cellSize >= 8 && drewAny) {
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.font = `${Math.max(9, cellSize*0.7)}px monospace`;
+    ctx.textAlign = 'center';
+    const step = Math.max(1, Math.ceil(50 / cellSize)) * 100;
+    const sc0 = Math.floor(viewCX / step) * step;
+    const sr0 = Math.floor(viewCY / step) * step;
+    for (let wx = sc0; wx <= viewCX + W/cellSize; wx += step) {
+      const sx = (wx - viewCX) * cellSize;
+      if (sx > 20 && sx < W - 20) {
+        for (let wy = sr0; wy <= viewCY + H/cellSize; wy += step) {
+          const sy = (wy - viewCY) * cellSize;
+          if (sy > 15 && sy < H - 5) {
+            ctx.fillText(`(${wx},${wy})`, sx, sy);
+          }
+        }
+      }
+    }
+  }
+
+  updateStatusBar();
+}
+
+// ════════════════════════════════════════════════════════════════
+// 瓦片加载
+// ════════════════════════════════════════════════════════════════
+
+/** 找出视口 + 缓冲覆盖的所有瓦片键 */
+function neededTileKeys() {
+  const { viewCX, viewCY, cellSize } = S;
+  const W = wrap.clientWidth;
+  const H = wrap.clientHeight;
+  const vw = Math.ceil(W / cellSize);
+  const vh = Math.ceil(H / cellSize);
+
+  const areaCX = Math.floor(viewCX) - BUFFER_CHUNKS;
+  const areaCY = Math.floor(viewCY) - BUFFER_CHUNKS;
+  const areaW = vw + BUFFER_CHUNKS * 2;
+  const areaH = vh + BUFFER_CHUNKS * 2;
+
+  const tx0 = Math.floor(areaCX / TILE_SIZE);
+  const ty0 = Math.floor(areaCY / TILE_SIZE);
+  const tx1 = Math.floor((areaCX + areaW - 1) / TILE_SIZE);
+  const ty1 = Math.floor((areaCY + areaH - 1) / TILE_SIZE);
+
+  const keys = new Set();
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      keys.add(`${tx},${ty}`);
+    }
+  }
+  return keys;
+}
+
+/** 加载单个瓦片 */
+async function fetchTile(key) {
+  if (pendingTiles.has(key)) return null; // 已在加载中
+  pendingTiles.add(key);
+  _inFlight++;
+
+  const { cx, cy } = tileOrigin(key);
+  const { seed, mode, generation } = S;
+
+  try {
+    // 二进制瓦片接口：服务端返回全部 5 层 float32，客户端选层涂色
+    const url = `/api/tile?seed=${seed}&cx=${cx}&cy=${cy}&w=${TILE_SIZE}&h=${TILE_SIZE}&mode=${S.mode}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    if (generation !== S.generation) return null;
+
+    const buf = await resp.arrayBuffer();
+    const all = new Float32Array(buf);
+    const layerN = TILE_SIZE * TILE_SIZE;
+
+    // 5 层：alt(0), temp(1), rain(2), climate(3), biome(4)
+    const layers = {
+      altitude:    all.subarray(0, layerN),
+      temperature: all.subarray(layerN, layerN * 2),
+      rainfall:    all.subarray(layerN * 2, layerN * 3),
+      climate:     all.subarray(layerN * 3, layerN * 4),
+      biome:       all.subarray(layerN * 4, layerN * 5),
+    };
+
+    // 当前模式涂色
+    const grid = layers[S.mode];
+    const imgData = new ImageData(TILE_SIZE, TILE_SIZE);
+    for (let i = 0; i < layerN; i++) {
+      const rgba = colorForValue(grid[i], S.mode);
+      const p = i * 4;
+      imgData.data[p] = rgba[0];
+      imgData.data[p+1] = rgba[1];
+      imgData.data[p+2] = rgba[2];
+      imgData.data[p+3] = 255;
+    }
+
+    const off = document.createElement('canvas');
+    off.width = TILE_SIZE;
+    off.height = TILE_SIZE;
+    off.getContext('2d').putImageData(imgData, 0, 0);
+
+    tileCache.set(key, {
+      layers,         // 全部 5 层 Float32Array
+      offscreen: off,
+      accessTime: ++_accessCounter,
+    });
+
+    if (!S.legend) fetchLegend();
+
+    return { key };
+  } catch (e) {
+    console.error(`瓦片 ${key} 加载失败:`, e);
+    return null;
+  } finally {
+    pendingTiles.delete(key);
+    _inFlight--;
+  }
+}
+
+/** 视口变化时触发加载 */
+function fetchMissingTiles() {
+  render();
+  fillSlots();
+}
+
+/** 填满并发槽位：每个完成自动链式补位，无锁无延迟 */
+function fillSlots() {
+  const needed = neededTileKeys();
+  const missing = [...needed].filter(k => !tileCache.has(k) && !pendingTiles.has(k));
+
+  if (missing.length === 0 && _inFlight === 0) {
+    evictLRU();
+    render();
+    loadingEl.style.display = 'none';
+    document.getElementById('status-load').textContent =
+      `就绪 — ${tileCache.size} 瓦片`;
+    return;
+  }
+
+  const slots = MAX_IN_FLIGHT - _inFlight;
+  if (slots <= 0) return;
+
+  const batch = missing.slice(0, slots);
+  if (batch.length === 0) return;
+
+  loadingEl.style.display = 'block';
+  document.getElementById('status-load').textContent =
+    `加载中... 已缓存${tileCache.size}  缺${missing.length}  并发${_inFlight}+${batch.length}`;
+
+  batch.forEach(k => {
+    fetchTile(k).then(result => {
+      if (result) { render(); evictLRU(); }
+      fillSlots(); // 完成立刻补位，不等
+    });
+  });
+}
+
+/** LRU 淘汰：超出上限时移除最旧的瓦片 */
+function evictLRU() {
+  if (tileCache.size <= MAX_TILES) return;
+
+  // 标记当前需要的瓦片，避免淘汰
+  const needed = neededTileKeys();
+
+  const entries = [...tileCache.entries()]
+    .filter(([k]) => !needed.has(k))
+    .sort((a, b) => a[1].accessTime - b[1].accessTime);
+
+  for (const [key] of entries) {
+    if (tileCache.size <= MAX_TILES) break;
+    tileCache.delete(key);
+  }
+}
+
+/** 清除所有缓存（seed 变更时） */
+function clearCache() {
+  tileCache.clear();
+  pendingTiles.clear();
+  S.legend = null;
+  S.generation++;
+  updateLegend();
+}
+
+/** 模式切换：从已缓存的 5 层数据重涂色，零网络请求 */
+function repaintAllTiles() {
+  const n = TILE_SIZE * TILE_SIZE;
+  for (const [, tile] of tileCache) {
+    if (!tile.layers) continue;
+    const grid = tile.layers[S.mode];
+    if (!grid) continue;
+    const imgData = new ImageData(TILE_SIZE, TILE_SIZE);
+    for (let i = 0; i < n; i++) {
+      const rgba = colorForValue(grid[i], S.mode);
+      const p = i * 4;
+      imgData.data[p] = rgba[0];
+      imgData.data[p+1] = rgba[1];
+      imgData.data[p+2] = rgba[2];
+      imgData.data[p+3] = 255;
+    }
+    const off = document.createElement('canvas');
+    off.width = TILE_SIZE;
+    off.height = TILE_SIZE;
+    off.getContext('2d').putImageData(imgData, 0, 0);
+    tile.offscreen = off;
+  }
+  updateLegend();
+  render();
+}
+
+/** hover 查询区块（返回包含全部 5 层和坐标的对象） */
+function lookupChunk(wcx, wcy) {
+  const key = tileKey(wcx, wcy);
+  const tile = tileCache.get(key);
+  if (!tile || !tile.layers) return null;
+  const { cx, cy } = tileOrigin(key);
+  const col = wcx - cx;
+  const row = wcy - cy;
+  if (row<0||row>=TILE_SIZE||col<0||col>=TILE_SIZE) return null;
+  const i = row * TILE_SIZE + col;
+  return {
+    altitude: tile.layers.altitude[i],
+    temperature: tile.layers.temperature[i],
+    rainfall: tile.layers.rainfall[i],
+    climate: Math.round(tile.layers.climate[i]),
+    biome: Math.round(tile.layers.biome[i]),
+  };
+}
+
+// ════════════════════════════════════════════════════════════════
+// 图例
+// ════════════════════════════════════════════════════════════════
+
+function updateLegend() {
+  legendBody.innerHTML = '';
+  const { mode, legend } = S;
+
+  if (mode === 'biome' || mode === 'climate') {
+    if (legend) {
+      for (const [id, entry] of Object.entries(legend)) {
+        const div = document.createElement('div');
+        div.className = 'legend-item';
+        div.innerHTML = `<span class="legend-swatch" style="background:${entry.color}"></span> ${entry.label}`;
+        legendBody.appendChild(div);
+      }
+    }
+  } else {
+    const grad = document.createElement('div');
+    grad.id = 'legend-gradient';
+    grad.style.background = mode === 'altitude'
+      ? 'linear-gradient(to bottom, #0a1450,#1e50a0,#3c8cc8,#b4c878,#64a03c,#3c781e,#8c7850,#f0f0f0)'
+      : 'linear-gradient(to bottom, #1e50a0,#3c8cc8,#64a03c,#c8b432,#c8401e)';
+    legendBody.appendChild(grad);
+
+    const rng = document.createElement('div');
+    rng.id = 'legend-range';
+    const range = FIXED_RANGES[mode] || { min: 0, max: 1 };
+    const u = mode==='altitude'?'m' : mode==='temperature'?'°C' : mode==='rainfall'?'mm' : '';
+    rng.innerHTML = `<span>${range.max}${u}</span><span>${range.min}${u}</span>`;
+    legendBody.appendChild(rng);
+
+    const note = document.createElement('div');
+    note.style.cssText = 'font-size:11px;color:var(--text-dim);margin-top:4px';
+    note.textContent = mode==='altitude' ? '深海→洋底→浅海→近岸→陆地→高地→高山' :
+      mode==='temperature' ? '热→冷' : '湿→干';
+    legendBody.appendChild(note);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// 状态栏
+// ════════════════════════════════════════════════════════════════
+
+function updateStatusBar() {
+  document.getElementById('status-mode').textContent =
+    `模式: ${{biome:'群系',climate:'气候',altitude:'海拔',temperature:'温度',rainfall:'降雨'}[S.mode]}`;
+  document.getElementById('info').textContent =
+    `视口 (${S.viewCX.toFixed(1)}, ${S.viewCY.toFixed(1)})  块:${S.cellSize}px  瓦片:${tileCache.size}  ${APP_VERSION}`;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 查找区块值（遍历所有瓦片）
+// ════════════════════════════════════════════════════════════════
+
+function isChunkCached(wcx, wcy) {
+  return tileCache.has(tileKey(wcx, wcy));
+}
+
+async function fetchLegend() {
+  try {
+    const resp = await fetch(`/api/map?seed=${S.seed}&cx=0&cy=0&w=1&h=1&mode=${S.mode}`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.legend) { S.legend = data.legend; updateLegend(); }
+  } catch (_) {}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 交互
+// ════════════════════════════════════════════════════════════════
+
+let dragging = false;
+let dragStartX = 0, dragStartY = 0;
+let dragStartVX = 0, dragStartVY = 0;
+
+wrap.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  dragging = true;
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+  dragStartVX = S.viewCX;
+  dragStartVY = S.viewCY;
+  wrap.classList.add('panning');
+});
+
+window.addEventListener('mouseup', () => {
+  if (!dragging) return;
+  dragging = false;
+  wrap.classList.remove('panning');
+  // 拖拽结束后加载可能缺失的瓦片
+  fetchMissingTiles();
+});
+
+window.addEventListener('mousemove', e => {
+  if (dragging) {
+    const dx = (e.clientX - dragStartX) / S.cellSize;
+    const dy = (e.clientY - dragStartY) / S.cellSize;
+    S.viewCX = dragStartVX - dx;
+    S.viewCY = dragStartVY - dy;
+    updateStatusBar();
+    render(); // 缓存内瞬时重绘
+    return;
+  }
+
+  // 悬停提示
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const wcx = Math.floor(S.viewCX + mx / S.cellSize);
+  const wcy = Math.floor(S.viewCY + my / S.cellSize);
+  const d = lookupChunk(wcx, wcy);
+
+  if (d) {
+    const clName = (S.legend && S.legend[d.climate]) ? S.legend[d.climate].label : d.climate;
+    const bioName = (S.legend && S.legend[d.biome]) ? S.legend[d.biome].label : d.biome;
+    const sx = (wcx - S.viewCX) * S.cellSize;
+    const sy = (wcy - S.viewCY) * S.cellSize;
+    tooltip.style.display = 'block';
+    tooltip.style.left = (sx + S.cellSize + 8) + 'px';
+    tooltip.style.top = (sy - 5) + 'px';
+    tooltip.innerHTML =
+      `<b>区块 (${wcx}, ${wcy})</b><br>` +
+      `海拔: ${d.altitude.toFixed(0)}m &emsp; 温度: ${d.temperature.toFixed(1)}°C<br>` +
+      `降雨: ${d.rainfall.toFixed(0)}mm &emsp; 气候: ${clName}<br>` +
+      `群系: ${bioName}`;
+    document.getElementById('status-hover').textContent =
+      `(${wcx},${wcy}) A${d.altitude.toFixed(0)}m T${d.temperature.toFixed(1)}°C R${d.rainfall.toFixed(0)}mm`;
+  } else {
+    tooltip.style.display = 'none';
+    document.getElementById('status-hover').textContent = '悬停: --';
+  }
+});
+
+wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const oldSize = S.cellSize;
+  // 缩放步长与当前比例成正比，小比例时更精细
+  const step = oldSize >= 16 ? 4 : oldSize >= 6 ? 2 : oldSize >= 2 ? 1 : 0.5;
+  const newSize = Math.max(0.5, Math.min(60, oldSize + (e.deltaY > 0 ? -step : step)));
+  if (newSize === oldSize) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const mxChunk = S.viewCX + (e.clientX - rect.left) / oldSize;
+  const myChunk = S.viewCY + (e.clientY - rect.top) / oldSize;
+
+  S.cellSize = newSize;
+  S.viewCX = mxChunk - (e.clientX - rect.left) / newSize;
+  S.viewCY = myChunk - (e.clientY - rect.top) / newSize;
+
+  render();
+  fetchMissingTiles();
+});
+
+// 点击区块查看详情
+canvas.addEventListener('click', async e => {
+  if (dragging) return;
+  const rect = canvas.getBoundingClientRect();
+  const wcx = Math.floor(S.viewCX + (e.clientX - rect.left) / S.cellSize);
+  const wcy = Math.floor(S.viewCY + (e.clientY - rect.top) / S.cellSize);
+
+  try {
+    const resp = await fetch(`/api/chunk?seed=${S.seed}&cx=${wcx}&cy=${wcy}`);
+    if (!resp.ok) return;
+    const d = await resp.json();
+    document.getElementById('status-hover').textContent =
+      `区块 (${d.cx},${d.cy}): ${d.biome.label} | ${d.climate_zone.label} | ` +
+      `${d.weather.temperature}°C | ${d.weather.altitude}m | ${d.weather.rainfall}mm`;
+  } catch (_) {}
+});
+
+// 触摸支持
+let touches0 = null;
+wrap.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) {
+    touches0 = { x: e.touches[0].clientX, y: e.touches[0].clientY, vx: S.viewCX, vy: S.viewCY };
+  }
+});
+wrap.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (e.touches.length === 1 && touches0) {
+    S.viewCX = touches0.vx - (e.touches[0].clientX - touches0.x) / S.cellSize;
+    S.viewCY = touches0.vy - (e.touches[0].clientY - touches0.y) / S.cellSize;
+    render();
+    updateStatusBar();
+  }
+});
+wrap.addEventListener('touchend', () => { touches0 = null; fetchMissingTiles(); });
+
+// ════════════════════════════════════════════════════════════════
+// 工具栏事件
+// ════════════════════════════════════════════════════════════════
+
+document.getElementById('btn-apply').addEventListener('click', () => {
+  S.seed = parseInt(document.getElementById('seed-input').value) || 0;
+  clearCache();
+  fetchMissingTiles();
+});
+
+document.getElementById('seed-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    S.seed = parseInt(e.target.value) || 0;
+    clearCache();
+    fetchMissingTiles();
+  }
+});
+
+document.querySelectorAll('#toolbar button[data-mode]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#toolbar button[data-mode]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const newMode = btn.dataset.mode;
+    if (S.mode === newMode) return;
+    S.mode = newMode;
+    // 重涂所有已缓存瓦片（零网络请求）
+    repaintAllTiles();
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// 窗口调整 & 键盘
+// ════════════════════════════════════════════════════════════════
+
+window.addEventListener('resize', () => {
+  render();
+  clearTimeout(S._resizeTimer);
+  S._resizeTimer = setTimeout(() => fetchMissingTiles(), 300);
+});
+
+window.addEventListener('keydown', e => {
+  const step = Math.max(1, 5 * 12 / S.cellSize);
+  switch (e.key) {
+    case 'ArrowLeft':  S.viewCX -= step; break;
+    case 'ArrowRight': S.viewCX += step; break;
+    case 'ArrowUp':    S.viewCY -= step; break;
+    case 'ArrowDown':  S.viewCY += step; break;
+    case '+': case '=': {
+      const s = S.cellSize >= 16 ? 4 : S.cellSize >= 6 ? 2 : S.cellSize >= 2 ? 1 : 0.5;
+      S.cellSize = Math.min(60, S.cellSize + s);
+      break;
+    }
+    case '-': {
+      const s = S.cellSize >= 16 ? 4 : S.cellSize >= 6 ? 2 : S.cellSize >= 2 ? 1 : 0.5;
+      S.cellSize = Math.max(0.5, S.cellSize - s);
+      break;
+    }
+    default: return;
+  }
+  render();
+  fetchMissingTiles();
+});
+
+// ════════════════════════════════════════════════════════════════
+// 启动
+// ════════════════════════════════════════════════════════════════
+
+fetchMissingTiles();
+</script>
+</body>
+</html>
