@@ -14,6 +14,7 @@ import threading
 from collections.abc import Callable
 
 from ascend.log import get_logger
+from .archive import EventArchive
 from .event import Event
 from .graph import EventGraph
 
@@ -31,11 +32,16 @@ class EventBus:
         bus.publish(Event(...))
     """
 
-    def __init__(self, *, validate: bool = True) -> None:
+    def __init__(
+        self, *, validate: bool = True, archive_path: str | None = None
+    ) -> None:
         """初始化空的事件总线。
 
         Args:
             validate: True 时在 publish 前校验事件必填字段。默认开启。
+            archive_path: SQLite 归档数据库路径。None 表示不启用归档，
+                         trim 时直接丢弃旧事件。传入路径则 trim 时归档到磁盘，
+                         查询方法自动从归档合并结果。
         """
         self._validate = validate
         self._event_log: list[Event] = []
@@ -44,6 +50,9 @@ class EventBus:
         self._spatial_index: dict[tuple[int, int], set[int]] = {}
         self._graph: EventGraph = EventGraph()
         self._lock: threading.RLock = threading.RLock()
+        self._archive: EventArchive | None = (
+            EventArchive(archive_path) if archive_path else None
+        )
 
     def __repr__(self) -> str:
         """返回总线状态摘要。
@@ -194,6 +203,7 @@ class EventBus:
         """按时间范围查询事件。
 
         使用二分查找定位时间边界，避免全量扫描。
+        若启用归档且查询范围超出内存窗口，自动从 SQLite 归档合并结果。
 
         Args:
             start_time: 起始时间（包含）。
@@ -216,7 +226,22 @@ class EventBus:
                 if initiator_type and ev.initiator_type != initiator_type:
                     continue
                 results.append(ev)
-            return results
+
+            earliest_ts = (
+                self._event_log[0].timestamp if self._event_log else None
+            )
+            archive = self._archive
+
+        # 若查询范围超出内存窗口，从归档合并
+        if archive and earliest_ts is not None and start_time < earliest_ts:
+            arch_end = min(end_time, earliest_ts - 0.001)
+            archived = archive.query_time_range(
+                start_time, arch_end,
+                event_type=event_type, initiator_type=initiator_type,
+            )
+            return archived + results
+
+        return results
 
     def _bisect_time(self, target: float, find_end: bool = False) -> int:
         """二分查找目标时间在事件日志中的插入位置。
@@ -253,6 +278,7 @@ class EventBus:
 
         在 center_chunk 及其周围 radius 个 chunk 的范围内搜索。
         预计算时间范围对应的日志索引区间，用整数比较代替浮点时间戳比较。
+        若启用归档且查询范围超出内存窗口，自动从 SQLite 归档合并结果。
 
         Args:
             center_chunk: 中心 chunk 坐标 (chunk_x, chunk_y)。
@@ -267,7 +293,6 @@ class EventBus:
             cx, cy = center_chunk
             results: list[Event] = []
 
-            # 预计算时间边界对应的日志索引范围
             time_lo = (
                 self._bisect_time(start_time) if start_time is not None else 0
             )
@@ -281,11 +306,32 @@ class EventBus:
                 for dy in range(-radius, radius + 1):
                     chunk_key = (cx + dx, cy + dy)
                     for log_idx in self._spatial_index.get(chunk_key, set()):
-                        # 整数比较，避免 O(1) 次的浮点属性访问
                         if log_idx < time_lo or log_idx >= time_hi:
                             continue
                         results.append(self._event_log[log_idx])
-            return results
+
+            earliest_ts = (
+                self._event_log[0].timestamp if self._event_log else None
+            )
+            archive = self._archive
+
+        # 若查询范围超出内存窗口，从归档合并
+        if (
+            archive and earliest_ts is not None
+            and start_time is not None
+            and start_time < earliest_ts
+        ):
+            arch_end = min(
+                end_time if end_time is not None else float("inf"),
+                earliest_ts - 0.001,
+            )
+            archived = archive.query_region(
+                center_chunk, radius,
+                start_time=start_time, end_time=arch_end,
+            )
+            return archived + results
+
+        return results
 
     def get_entity_events(
         self,
@@ -298,6 +344,7 @@ class EventBus:
         实体作为发起方或受影响方参与的事件均被索引。
         使用二分查找定位时间边界，O(log E + K)，E 为该实体事件总数，
         K 为时间范围内的事件数。
+        若启用归档且查询范围超出内存窗口，自动从 SQLite 归档合并结果。
 
         Args:
             entity_id: 实体唯一标识。
@@ -309,19 +356,31 @@ class EventBus:
         """
         with self._lock:
             indices = self._entity_index.get(entity_id, [])
-            if not indices:
-                return []
 
-            # 实体索引列表按时间有序（事件按时间顺序追加），二分定位
-            lo = bisect.bisect_left(
-                indices, start_time,
-                key=lambda i: self._event_log[i].timestamp,
+            in_memory: list[Event] = []
+            if indices:
+                lo = bisect.bisect_left(
+                    indices, start_time,
+                    key=lambda i: self._event_log[i].timestamp,
+                )
+                hi = bisect.bisect_right(
+                    indices, end_time,
+                    key=lambda i: self._event_log[i].timestamp,
+                )
+                in_memory = [self._event_log[i] for i in indices[lo:hi]]
+
+            earliest_ts = (
+                self._event_log[0].timestamp if self._event_log else None
             )
-            hi = bisect.bisect_right(
-                indices, end_time,
-                key=lambda i: self._event_log[i].timestamp,
-            )
-            return [self._event_log[i] for i in indices[lo:hi]]
+            archive = self._archive
+
+        # 若查询范围超出内存窗口，从归档合并
+        if archive and earliest_ts is not None and start_time < earliest_ts:
+            arch_end = min(end_time, earliest_ts - 0.001)
+            archived = archive.query_entity(entity_id, start_time, arch_end)
+            return archived + in_memory
+
+        return in_memory
 
     # ── 事件图代理 ────────────────────────────────────
 
@@ -361,6 +420,10 @@ class EventBus:
             cutoff = self._bisect_time(before_time, find_end=True)
             if cutoff == 0:
                 return 0
+
+            # 归档到磁盘（若启用）
+            if self._archive:
+                self._archive.archive(self._event_log[:cutoff])
 
             # 记录被移除的事件 ID（仅用于日志）
             removed_ids = [ev.id for ev in self._event_log[:cutoff]]

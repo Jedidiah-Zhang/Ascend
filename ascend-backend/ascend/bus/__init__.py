@@ -8,6 +8,7 @@
 """
 
 from .affected import AffectedParty
+from .archive import EventArchive
 from .event import Event
 from .graph import EventGraph
 from .bus import EventBus
@@ -15,4 +16,5 @@ from .bus import EventBus
 # 模块级总线单例，各模块通过此实例通信
 bus = EventBus()
 
-__all__ = ["bus", "Event", "AffectedParty", "EventGraph", "EventBus"]
+__all__ = ["bus", "Event", "AffectedParty", "EventGraph", "EventBus",
+           "EventArchive"]

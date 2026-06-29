@@ -1,9 +1,11 @@
 """事件总线单元测试。"""
 
+import os
+import tempfile
 import threading
 
 import pytest
-from ascend.bus import Event, AffectedParty, EventBus, EventGraph
+from ascend.bus import Event, AffectedParty, EventBus, EventGraph, EventArchive
 
 
 def make_event(timestamp=0.0, event_type="test", initiator_id="a",
@@ -440,3 +442,191 @@ class TestEventBusErrorIsolation:
         bus.publish(make_event(event_type="test"))
 
         assert len(results) == 2
+
+
+# ── 事件归档 ──────────────────────────────────────────
+
+
+class TestEventArchive:
+    """事件归档测试。"""
+
+    def _make_archive(self) -> tuple[EventArchive, str]:
+        """创建临时归档文件。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        return EventArchive(path), path
+
+    def test_archive_and_query_time_range(self):
+        archive, path = self._make_archive()
+        try:
+            events = [
+                make_event(timestamp=10.0, id="e1"),
+                make_event(timestamp=20.0, id="e2"),
+                make_event(timestamp=30.0, id="e3"),
+            ]
+            archive.archive(events)
+
+            results = archive.query_time_range(15.0, 35.0)
+            assert len(results) == 2
+            assert results[0].timestamp == 20.0
+            assert results[1].timestamp == 30.0
+        finally:
+            archive.close()
+            os.unlink(path)
+
+    def test_archive_and_query_entity(self):
+        archive, path = self._make_archive()
+        try:
+            e1 = make_event(timestamp=10.0, id="e1", initiator_id="npc_1")
+            e2 = make_event(timestamp=20.0, id="e2", initiator_id="npc_2")
+            e3 = make_event(
+                timestamp=30.0, id="e3", initiator_id="npc_1",
+                affected=[
+                    AffectedParty("npc_1", "subject"),
+                    AffectedParty("npc_3", "witness"),
+                ],
+            )
+            archive.archive([e1, e2, e3])
+
+            # 按 npc_1 查询
+            results = archive.query_entity("npc_1", 0, 100)
+            assert len(results) == 2
+            ids = {r.id for r in results}
+            assert ids == {"e1", "e3"}
+
+            # 按 npc_3（仅作为 affected 出现）查询
+            results = archive.query_entity("npc_3", 0, 100)
+            assert len(results) == 1
+            assert results[0].id == "e3"
+        finally:
+            archive.close()
+            os.unlink(path)
+
+    def test_archive_and_query_region(self):
+        archive, path = self._make_archive()
+        try:
+            events = [
+                make_event(timestamp=10.0, id="e1", location=(0, 0, None, None)),
+                make_event(timestamp=20.0, id="e2", location=(3, 3, None, None)),
+                make_event(timestamp=30.0, id="e3", location=(1, 0, None, None)),
+            ]
+            archive.archive(events)
+
+            # 查询 (0,0) 半径 1
+            results = archive.query_region((0, 0), radius=1)
+            assert len(results) == 2
+            ids = {r.id for r in results}
+            assert ids == {"e1", "e3"}
+
+            # 查询 (3,3) 半径 0
+            results = archive.query_region((3, 3), radius=0)
+            assert len(results) == 1
+            assert results[0].id == "e2"
+        finally:
+            archive.close()
+            os.unlink(path)
+
+    def test_archive_query_with_type_filter(self):
+        archive, path = self._make_archive()
+        try:
+            events = [
+                make_event(timestamp=10.0, id="e1", event_type="weather"),
+                make_event(timestamp=20.0, id="e2", event_type="combat"),
+                make_event(timestamp=30.0, id="e3", event_type="weather"),
+            ]
+            archive.archive(events)
+
+            results = archive.query_time_range(0, 100, event_type="weather")
+            assert len(results) == 2
+            assert {r.id for r in results} == {"e1", "e3"}
+        finally:
+            archive.close()
+            os.unlink(path)
+
+    def test_archive_idempotent(self):
+        archive, path = self._make_archive()
+        try:
+            events = [make_event(timestamp=10.0, id="e1")]
+            archive.archive(events)
+            archive.archive(events)  # 重复归档同 ID
+
+            results = archive.query_time_range(0, 100)
+            assert len(results) == 1  # 不重复
+        finally:
+            archive.close()
+            os.unlink(path)
+
+    def test_empty_archive_query(self):
+        archive, path = self._make_archive()
+        try:
+            assert archive.query_time_range(0, 100) == []
+            assert archive.query_entity("nobody", 0, 100) == []
+            assert archive.query_region((0, 0), radius=1) == []
+        finally:
+            archive.close()
+            os.unlink(path)
+
+    def test_archive_persistence(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        # 写入
+        a1 = EventArchive(path)
+        a1.archive([make_event(timestamp=10.0, id="e1")])
+        a1.close()
+
+        # 重新打开
+        a2 = EventArchive(path)
+        try:
+            results = a2.query_time_range(0, 100)
+            assert len(results) == 1
+            assert results[0].id == "e1"
+        finally:
+            a2.close()
+            os.unlink(path)
+
+    def test_trim_with_archive_transparent_query(self):
+        """trim 后查询自动合并内存和归档结果。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        bus = EventBus(validate=False, archive_path=path)
+        try:
+            # 发布 10 个事件
+            for t in range(10):
+                bus.publish(make_event(
+                    timestamp=float(t * 60),
+                    id=f"e{t}",
+                    initiator_id="npc_1",
+                ))
+
+            # trim 前 5 个
+            bus.trim(5.0 * 60)  # 移除 ts < 300 的: e0-e4
+
+            # 查询全部时间范围 — 应透明合并
+            results = bus.get_events_in_range(0, 1000)
+            assert len(results) == 10
+
+            # 查询实体 — 应透明合并
+            results = bus.get_entity_events("npc_1", 0, 1000)
+            assert len(results) == 10
+
+            # 确保归档中的事件按时间顺序排在前面
+            for i in range(9):
+                assert results[i].timestamp <= results[i + 1].timestamp
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_no_archive_path_behavior_unchanged(self):
+        """不传 archive_path 时行为与之前完全一致。"""
+        bus = EventBus()
+        for t in range(5):
+            bus.publish(make_event(timestamp=float(t * 60)))
+
+        bus.trim(120.0)  # 移除 ts=0,60,120 共 3 个事件
+        assert bus.event_count == 2
+
+        # 查询不应包含已 trim 的事件
+        results = bus.get_events_in_range(0, 60)
+        assert len(results) == 0  # ts=0,60 已被 trim 丢弃
