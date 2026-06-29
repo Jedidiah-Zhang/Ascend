@@ -1,6 +1,6 @@
 """游戏日历 — 追踪游戏日和整点，通过事件总线发布 day_change 和 hour_change。"""
 
-from ascend.bus import bus, Event, AffectedParty
+from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.log import get_logger
 from .mode import GAME_DAY, GAME_HOUR
 
@@ -40,8 +40,8 @@ class GameCalendar:
         self._last_game_time: float = 0.0
 
         # 订阅 game_minute 和 time_skip，检测日期和整点变更
-        self._unsub_tick = bus.subscribe("game_minute", self._on_time_advance)
-        self._unsub_skip = bus.subscribe("time_skip", self._on_time_advance)
+        self._unsub_tick = world_tree.subscribe("game_minute", self._on_time_advance)
+        self._unsub_skip = world_tree.subscribe("time_skip", self._on_time_advance)
 
         logger.debug("日历初始化: day=%d", self._day)
 
@@ -89,7 +89,7 @@ class GameCalendar:
             previous_day = self._day
 
             # 先发布 day_end（旧日结束）
-            bus.publish(Event(
+            world_tree.publish(Event(
                 timestamp=game_time,
                 location=(0, 0, None, None),
                 initiator_type="system",
@@ -106,7 +106,7 @@ class GameCalendar:
             self._day = current_day
             self._day_change_count += 1
 
-            bus.publish(Event(
+            world_tree.publish(Event(
                 timestamp=game_time,
                 location=(0, 0, None, None),
                 initiator_type="system",
@@ -135,7 +135,7 @@ class GameCalendar:
             self._hour = current_hour
             self._hour_change_count += 1
 
-            bus.publish(Event(
+            world_tree.publish(Event(
                 timestamp=game_time,
                 location=(0, 0, None, None),
                 initiator_type="system",

@@ -11,7 +11,7 @@
 import time as _real_time
 from dataclasses import dataclass, field
 
-from ascend.bus import bus
+from ascend.world_tree import bus
 from ascend.time import WorldClock, GameCalendar, TimeMode, GAME_DAY, GAME_HOUR
 from ascend.log import setup_logging, get_logger
 

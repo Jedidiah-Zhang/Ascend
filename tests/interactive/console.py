@@ -19,11 +19,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "ascend-backend"))
 _HISTORY_FILE = Path(__file__).parent.parent.parent / ".ascend_history"
 _HISTORY_MAX = 1000
 
-from ascend.bus import bus
+from ascend.world_tree import bus
 from ascend.time import WorldClock, GameCalendar, TimeMode, GAME_DAY, GAME_HOUR
 from ascend.log import setup_logging, quiet_console, get_logger
 from ascend.i18n import I18n
-from ascend.world import WorldGenerator, render_map, render_region_detail
+from ascend.space import WorldGenerator, render_map, render_region_detail
 
 logger = get_logger(__name__)
 i18n = I18n()

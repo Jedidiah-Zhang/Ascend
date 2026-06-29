@@ -1,7 +1,7 @@
 """世界生成模块单元测试。"""
 
 import pytest
-from ascend.world import (
+from ascend.space import (
     PerlinNoise,
     ClimateZone,
     WeatherParams,
@@ -118,14 +118,14 @@ class TestClimateZone:
 
     def test_sea_level_temperature_range(self):
         """纬度噪声映射到合理海平面温度范围。"""
-        from ascend.world.climate import sea_level_temperature
+        from ascend.space.climate import sea_level_temperature
         assert sea_level_temperature(-1.0) < 0.0    # 极地寒冷
         assert sea_level_temperature(1.0) > 30.0    # 赤道炎热
         assert sea_level_temperature(0.0) == pytest.approx(15.0)  # 中纬度
 
     def test_lapse_rate(self):
         """气温直减率：升高 1000m 应降 6.5°C。"""
-        from ascend.world.climate import apply_lapse_rate
+        from ascend.space.climate import apply_lapse_rate
         t0 = apply_lapse_rate(20.0, 0.0)
         t1 = apply_lapse_rate(20.0, 1000.0)
         assert t0 - t1 == pytest.approx(6.5)
@@ -162,7 +162,7 @@ class TestWeatherParams:
 
     def test_high_altitude_cold(self):
         """高海拔 → 即使赤道纬度也冷。"""
-        from ascend.world.climate import apply_lapse_rate, climate_zone_from_values
+        from ascend.space.climate import apply_lapse_rate, climate_zone_from_values
         # 赤道海平面 35°C，在 4000m 处温度 ≈ 35 - 26 = 9°C
         t = apply_lapse_rate(35.0, 4000.0)
         assert t < 10.0

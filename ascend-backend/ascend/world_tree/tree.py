@@ -19,7 +19,7 @@ from .event import Event
 from .graph import EventGraph
 
 
-class EventBus:
+class WorldTree:
     """事件总线。
 
     所有模块通过此总线通信。模块 A 发布事件时不关心模块 B 是否在监听，
@@ -27,9 +27,9 @@ class EventBus:
     线程安全：publish 和 subscribe 由内部锁保护。
 
     用法:
-        bus = EventBus()
-        bus.subscribe("weather_change", lambda e: print("天气变了"))
-        bus.publish(Event(...))
+        world_tree = WorldTree()
+        world_tree.subscribe("weather_change", lambda e: print("天气变了"))
+        world_tree.publish(Event(...))
     """
 
     def __init__(
@@ -61,7 +61,7 @@ class EventBus:
             含事件数、订阅数、图的 repr 字符串。
         """
         return (
-            f"EventBus(events={self.event_count}, "
+            f"WorldTree(events={self.event_count}, "
             f"subscribers={self.subscriber_count}, "
             f"graph={self._graph!r})"
         )

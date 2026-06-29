@@ -1,7 +1,7 @@
 """实体系统单元测试。"""
 
 from ascend.entity import Entity, EntityType, EntityManager
-from ascend.bus import EventBus, bus
+from ascend.world_tree import WorldTree, world_tree
 
 
 class TestEntity:
@@ -85,11 +85,11 @@ class TestEntityManager:
 
     def test_spawn(self):
         """创建实体，验证注册到管理器并发布事件。"""
-        bus = EventBus()
+        wt = WorldTree()
         events = []
-        bus.subscribe("entity_spawned", lambda e: events.append(e))
+        wt.subscribe("entity_spawned", lambda e: events.append(e))
 
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=wt)
         e = mgr.spawn(EntityType.NPC, 0, 0, 1, 2, game_time=50.0)
 
         assert e.entity_type == EntityType.NPC
@@ -100,13 +100,13 @@ class TestEntityManager:
 
     def test_spawn_with_data(self):
         """创建带数据的实体。"""
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=world_tree)
         e = mgr.spawn(EntityType.ITEM, 0, 0, data={"name": "石斧"})
         assert e.data["name"] == "石斧"
 
     def test_spawn_no_tile(self):
         """创建无 tile 坐标的实体。"""
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=world_tree)
         e = mgr.spawn(EntityType.STRUCTURE, 3, 5)
         assert e.tile_x is None
         assert e.tile_y is None
@@ -114,11 +114,11 @@ class TestEntityManager:
 
     def test_despawn(self):
         """移除实体，验证从管理器清除并发布事件。"""
-        bus = EventBus()
+        wt = WorldTree()
         events = []
-        bus.subscribe("entity_despawned", lambda e: events.append(e))
+        wt.subscribe("entity_despawned", lambda e: events.append(e))
 
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=wt)
         e = mgr.spawn(EntityType.NPC, 0, 0, 0, 0)
         removed = mgr.despawn(e.id)
 
@@ -130,17 +130,17 @@ class TestEntityManager:
 
     def test_despawn_nonexistent(self):
         """移除不存在的实体，返回 None。"""
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=world_tree)
         result = mgr.despawn("nonexistent")
         assert result is None
 
     def test_move(self):
         """移动实体，验证位置更新和事件发布。"""
-        bus = EventBus()
+        wt = WorldTree()
         events = []
-        bus.subscribe("entity_moved", lambda e: events.append(e))
+        wt.subscribe("entity_moved", lambda e: events.append(e))
 
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=wt)
         e = mgr.spawn(EntityType.NPC, 0, 0, 5, 5)
         success = mgr.move(e.id, 1, 0, 10, 10)
 
@@ -154,12 +154,12 @@ class TestEntityManager:
 
     def test_move_nonexistent(self):
         """移动不存在的实体，返回 False。"""
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=world_tree)
         assert mgr.move("nonexistent", 0, 0, 0, 0) is False
 
     def test_move_same_chunk(self):
         """在同一 chunk 内移动，不改变空间索引。"""
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=world_tree)
         e = mgr.spawn(EntityType.NPC, 0, 0, 1, 2)
         mgr.move(e.id, 0, 0, 3, 4)
         assert e.chunk == (0, 0)
@@ -167,7 +167,7 @@ class TestEntityManager:
 
     def test_by_type(self):
         """按类型查询实体。"""
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=world_tree)
         mgr.spawn(EntityType.NPC, 0, 0, 0, 0)
         mgr.spawn(EntityType.NPC, 0, 0, 1, 1)
         mgr.spawn(EntityType.ITEM, 0, 0, 2, 2)
@@ -182,7 +182,7 @@ class TestEntityManager:
 
     def test_in_region(self):
         """按空间区域查询实体。"""
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=world_tree)
         mgr.spawn(EntityType.NPC, 0, 0, 0, 0)
         mgr.spawn(EntityType.ITEM, 1, 0, 0, 0)
         mgr.spawn(EntityType.ITEM, 2, 2, 0, 0)
@@ -198,7 +198,7 @@ class TestEntityManager:
 
     def test_type_counts(self):
         """验证类型统计正确。"""
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=world_tree)
         mgr.spawn(EntityType.NPC, 0, 0, 0, 0)
         mgr.spawn(EntityType.NPC, 0, 0, 1, 1)
         mgr.spawn(EntityType.ITEM, 0, 0, 2, 2)
@@ -208,7 +208,7 @@ class TestEntityManager:
 
     def test_despawn_updates_indices(self):
         """移除实体后，类型和空间索引也清理。"""
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=world_tree)
         e = mgr.spawn(EntityType.NPC, 0, 0, 0, 0)
         mgr.despawn(e.id)
 
@@ -217,7 +217,7 @@ class TestEntityManager:
 
     def test_move_updates_spatial_index(self):
         """跨 chunk 移动后，空间索引正确更新。"""
-        mgr = EntityManager(event_bus=bus)
+        mgr = EntityManager(world_tree_arg=world_tree)
         e = mgr.spawn(EntityType.NPC, 0, 0, 0, 0)
         mgr.move(e.id, 5, 5, 0, 0)
 

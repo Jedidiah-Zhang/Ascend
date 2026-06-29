@@ -1,6 +1,6 @@
 """世界时钟 — 驱动游戏时间推进，通过事件总线发布 game_minute。"""
 
-from ascend.bus import bus, Event, AffectedParty
+from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.log import get_logger
 from .mode import TimeMode, GAME_SECONDS_PER_REAL_SECOND
 
@@ -89,7 +89,7 @@ class WorldClock:
                 "game_time": self._time,
             },
         )
-        bus.publish(event)
+        world_tree.publish(event)
         return event
 
     def fast_forward(self, target_time: float, mode: TimeMode | None = None) -> list[Event]:
@@ -162,7 +162,7 @@ class WorldClock:
                 "tick_count": self._tick_count,
             },
         )
-        bus.publish(event)
+        world_tree.publish(event)
         logger.info("跳转: %.0f → %.0f (跳过 %.0fs)", self._time - skipped, self._time, skipped)
         return event
 

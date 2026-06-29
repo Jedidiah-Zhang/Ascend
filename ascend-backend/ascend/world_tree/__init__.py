@@ -1,0 +1,26 @@
+"""世界树 — 连接所有模块的骨干。
+
+使用方式:
+    from ascend.world_tree import world_tree, Event, AffectedParty
+
+    world_tree.subscribe("weather_change", handle_weather)
+    world_tree.publish(Event(...))
+"""
+
+from .affected import AffectedParty
+from .archive import EventArchive
+from .event import Event
+from .graph import EventGraph
+from .tree import WorldTree
+
+# 模块级世界树单例，各模块通过此实例通信
+world_tree = WorldTree()
+
+# 兼容旧名称
+bus = world_tree  # type: ignore[assignment]
+
+__all__ = ["world_tree", "bus", "Event", "AffectedParty", "EventGraph",
+           "WorldTree", "EventBus", "EventArchive"]
+
+# 兼容旧类名
+EventBus = WorldTree  # type: ignore[assignment]

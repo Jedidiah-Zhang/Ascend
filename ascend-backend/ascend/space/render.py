@@ -5,7 +5,7 @@
 
 import shutil
 
-from ascend.world import WorldGenerator, BiomeType, ClimateZone
+from ascend.space import WorldGenerator, BiomeType, ClimateZone
 
 # ── ANSI 颜色 ────────────────────────────────────────────
 

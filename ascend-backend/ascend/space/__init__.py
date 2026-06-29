@@ -1,7 +1,7 @@
 """世界生成 — Perlin 噪声、气候、群系、分块生成与并行协调。
 
 用法:
-    from ascend.world import WorldGenerator, ChunkData, BiomeType, ClimateZone
+    from ascend.space import WorldGenerator, ChunkData, BiomeType, ClimateZone
 
     gen = WorldGenerator(seed=42)
     chunk = gen.generate_chunk(0, 0)       # 单分块

@@ -5,7 +5,7 @@ import tempfile
 import threading
 
 import pytest
-from ascend.bus import Event, AffectedParty, EventBus, EventGraph, EventArchive
+from ascend.world_tree import Event, AffectedParty, EventBus, EventGraph, EventArchive
 
 
 def make_event(timestamp=0.0, event_type="test", initiator_id="a",
@@ -151,12 +151,13 @@ class TestEventGraph:
 
 
 class TestModuleSingleton:
-    def test_bus_singleton(self):
-        from ascend.bus import bus
-        assert isinstance(bus, EventBus)
+    def test_world_tree_singleton(self):
+        from ascend.world_tree import world_tree
+        from ascend.world_tree import WorldTree
+        assert isinstance(world_tree, WorldTree)
         # 单例应该是同一个对象
-        from ascend.bus import bus as bus2
-        assert bus is bus2
+        from ascend.world_tree import world_tree as wt2
+        assert world_tree is wt2
 
 
 # ── 事件校验 ──────────────────────────────────────────

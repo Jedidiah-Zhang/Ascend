@@ -1,6 +1,6 @@
 """实体管理器 — 实体的创建、销毁、查询和移动，通过事件总线发布生命周期事件。"""
 
-from ascend.bus import bus, Event, AffectedParty
+from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.log import get_logger
 from .entity import Entity, EntityType
 
@@ -20,13 +20,15 @@ class EntityManager:
         mgr.despawn(npc.id)
     """
 
-    def __init__(self, event_bus=None) -> None:
+    def __init__(self, world_tree_arg=None) -> None:
         """初始化空的实体管理器。
 
         Args:
-            event_bus: 事件总线实例，默认使用模块级单例 bus。
+            world_tree_arg: 世界树实例，默认使用模块级单例。
         """
-        self._bus = event_bus if event_bus is not None else bus
+        self._world_tree = (
+            world_tree_arg if world_tree_arg is not None else world_tree
+        )
         self._entities: dict[str, Entity] = {}
         self._type_index: dict[int, set[str]] = {}
         self._spatial_index: dict[tuple[int, int], set[str]] = {}
@@ -81,7 +83,7 @@ class EntityManager:
         self._type_index.setdefault(entity_type, set()).add(entity.id)
         self._spatial_index.setdefault(entity.chunk, set()).add(entity.id)
 
-        self._bus.publish(Event(
+        self._world_tree.publish(Event(
             timestamp=game_time,
             location=entity.position,
             initiator_type="system",
@@ -115,7 +117,7 @@ class EntityManager:
         self._type_index.get(entity.entity_type, set()).discard(entity_id)
         self._spatial_index.get(entity.chunk, set()).discard(entity_id)
 
-        self._bus.publish(Event(
+        self._world_tree.publish(Event(
             timestamp=game_time,
             location=entity.position,
             initiator_type="system",
@@ -168,7 +170,7 @@ class EntityManager:
             self._spatial_index.get(old_chunk, set()).discard(entity_id)
             self._spatial_index.setdefault(new_chunk, set()).add(entity_id)
 
-        self._bus.publish(Event(
+        self._world_tree.publish(Event(
             timestamp=game_time,
             location=entity.position,
             initiator_type="system",

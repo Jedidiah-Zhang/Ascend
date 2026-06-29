@@ -25,7 +25,7 @@ _BACKEND = _HERE.parent.parent / "ascend-backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-from ascend.world import WorldGenerator, BiomeType, ClimateZone
+from ascend.space import WorldGenerator, BiomeType, ClimateZone
 
 # ── 颜色方案 ──────────────────────────────────────────────────
 
@@ -275,12 +275,12 @@ def _tile_worker(seed: int, cx: int, cy: int, w: int, h: int, mode: str) -> byte
     """
     import math
     import struct
-    from ascend.world.noise import PerlinNoise
-    from ascend.world.climate import (
+    from ascend.space.noise import PerlinNoise
+    from ascend.space.climate import (
         sea_level_temperature, rainfall_from_noise, apply_lapse_rate,
         climate_zone_from_values,
     )
-    from ascend.world.biome import biome_from_climate
+    from ascend.space.biome import biome_from_climate
 
     phi = (math.sqrt(5.0) - 1.0) / 2.0
     seed_float = float(abs(seed) % 100000)
