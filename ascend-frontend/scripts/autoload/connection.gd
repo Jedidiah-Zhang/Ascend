@@ -23,6 +23,14 @@ const DEFAULT_PORT: int = 9081
 const RECONNECT_INTERVAL: float = 2.0
 const MAX_MESSAGE_SIZE: int = 16 * 1024 * 1024  # 16 MiB
 
+## -- 后端进程管理 --
+## Python 虚拟环境相对路径（相对于项目根目录）
+const VENV_PYTHON_REL: String = ".venv/bin/python"
+## 后端脚本相对于项目根目录的路径
+const BACKEND_SCRIPT_REL: String = "ascend-backend/run_server.py"
+## 后端启动后等待端口就绪的超时时间（秒）
+const BACKEND_STARTUP_TIMEOUT: float = 10.0
+
 ## 连接状态
 enum Status { DISCONNECTED, CONNECTING, CONNECTED }
 var status: Status = Status.DISCONNECTED
@@ -48,14 +56,129 @@ var _reconnect_timer: float = 0.0
 var _host: String = DEFAULT_HOST
 var _port: int = DEFAULT_PORT
 
+## 后端进程 PID（-1 表示未启动）
+var _backend_pid: int = -1
+## 后端启动计时器
+var _backend_startup_timer: float = 0.0
+## 后端端口检查间隔计时器
+var _backend_check_timer: float = 0.0
+## 是否正在等待后端启动
+var _awaiting_backend: bool = false
+
 
 func _ready() -> void:
-	"""自动加载初始化。"""
-	set_process(false)
+	"""自动加载初始化。编辑器模式下跳过，游戏运行时自动启动后端。"""
+	if Engine.is_editor_hint():
+		set_process(false)
+		return
+	# 游戏运行时：启动后端
+	_start_backend()
+
+
+func _notification(what: int) -> void:
+	"""场景树通知：进程退出前关闭后端。
+
+	Args:
+		what: 通知类型。
+	"""
+	if what == NOTIFICATION_PREDELETE:
+		_kill_backend()
+
+
+func _start_backend() -> void:
+	"""启动 Python 后端进程。
+
+	使用 OS.create_process 异步启动，不阻塞 Godot 主循环。
+	如果端口已被占用（后端已在运行），则跳过启动。
+	"""
+	# 先检查端口是否已被占用（后端可能已在运行）
+	if _is_port_open(DEFAULT_HOST, DEFAULT_PORT):
+		print("Connection: backend already running on %s:%d" % [DEFAULT_HOST, DEFAULT_PORT])
+		return
+
+	var project_root: String = ProjectSettings.globalize_path("res://..")
+	var python_path: String = project_root.path_join(VENV_PYTHON_REL)
+	var backend_dir: String = project_root.path_join("ascend-backend")
+	var script_path: String = backend_dir.path_join("run_server.py")
+
+	# 校验路径
+	if not FileAccess.file_exists(python_path):
+		push_error("Connection: Python not found at %s" % python_path)
+		return
+	if not FileAccess.file_exists(script_path):
+		push_error("Connection: backend script not found at %s" % script_path)
+		return
+
+	# 启动后端进程，工作目录设为 ascend-backend/
+	var pid: int = OS.create_process(python_path, [script_path], false)
+	if pid == -1:
+		push_error("Connection: failed to start backend process")
+		return
+
+	_backend_pid = pid
+	_awaiting_backend = true
+	_backend_startup_timer = 0.0
+	set_process(true)
+	print("Connection: backend started (PID: %d), waiting for port..." % pid)
+
+
+func _kill_backend() -> void:
+	"""关闭后端进程。"""
+	if _backend_pid <= 0:
+		return
+	OS.kill(_backend_pid)
+	print("Connection: backend stopped (PID: %d)" % _backend_pid)
+	_backend_pid = -1
+	_awaiting_backend = false
+
+
+func _is_port_open(host: String, port: int) -> bool:
+	"""检查指定端口是否已开放（TCP 连接测试）。
+
+	Args:
+		host: 主机地址。
+		port: 端口号。
+
+	Returns:
+		True 如果端口可连接。
+	"""
+	var test := StreamPeerTCP.new()
+	var err: Error = test.connect_to_host(host, port)
+	if err != OK:
+		return false
+	# 轮询等待连接结果（最多 200ms）
+	var elapsed: float = 0.0
+	while elapsed < 0.2:
+		test.poll()
+		if test.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+			test.disconnect_from_host()
+			return true
+		if test.get_status() != StreamPeerTCP.STATUS_CONNECTING:
+			break
+		elapsed += 0.05
+	test.disconnect_from_host()
+	return false
 
 
 func _process(delta: float) -> void:
 	"""每帧轮询：检查连接、读数据、发数据。"""
+	# 等待后端启动（每 0.5 秒检查一次端口，避免每帧阻塞）
+	if _awaiting_backend:
+		_backend_startup_timer += delta
+		if _backend_startup_timer > BACKEND_STARTUP_TIMEOUT:
+			push_error("Connection: backend startup timed out after %.0fs" % BACKEND_STARTUP_TIMEOUT)
+			_awaiting_backend = false
+			_kill_backend()
+			return
+		_backend_check_timer -= delta
+		if _backend_check_timer > 0.0:
+			return
+		_backend_check_timer = 0.5
+		if _is_port_open(DEFAULT_HOST, DEFAULT_PORT):
+			print("Connection: backend ready on %s:%d (waited %.1fs)" % [DEFAULT_HOST, DEFAULT_PORT, _backend_startup_timer])
+			_awaiting_backend = false
+		return
+
 	match status:
 		Status.DISCONNECTED:
 			_reconnect_timer -= delta
