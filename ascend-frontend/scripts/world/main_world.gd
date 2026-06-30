@@ -1,15 +1,33 @@
 """主世界场景 — 游戏世界入口。
 
 负责:
+  - 管理 MapDisplay 子节点（地图显示 + 相机）
   - 监听 Connection 信号（连接状态 + 后端消息）
-  - 处理玩家输入并发送给后端
+  - 本地相机控制（平移/缩放）+ 玩家指令发送
 """
 
 extends Node2D
 
+## 相机平移速度（像素/秒）
+const CAMERA_PAN_SPEED: float = 600.0
+## 缩放步长
+const CAMERA_ZOOM_STEP: float = 0.15
+## 缩放范围
+const CAMERA_ZOOM_MIN: float = 0.15
+const CAMERA_ZOOM_MAX: float = 4.0
+
+## 地图显示节点
+var _map_display: MapDisplay = null
+
 
 func _ready() -> void:
-	"""场景加载时连接后端信号并发起连接。"""
+	"""场景加载时创建 MapDisplay、连接信号并发起连接。"""
+	# 创建地图显示节点
+	_map_display = MapDisplay.new()
+	_map_display.name = "MapDisplay"
+	add_child(_map_display)
+
+	# 连接信号
 	Connection.connection_established.connect(_on_connected)
 	Connection.connection_lost.connect(_on_disconnected)
 	Connection.message_received.connect(_on_message)
@@ -27,42 +45,56 @@ func _exit_tree() -> void:
 		Connection.message_received.disconnect(_on_message)
 
 
-func _process(_delta: float) -> void:
-	"""处理玩家输入并发送给后端。"""
+func _process(delta: float) -> void:
+	"""每帧：控制相机 + 流式地图块 + 处理玩家指令。"""
 	if Connection.status != Connection.Status.CONNECTED:
 		return
+
+	_process_camera(delta)
 	_process_input()
+
+	# 根据相机位置请求新块
+	if _map_display:
+		_map_display.stream_chunks_for_viewport()
+
+
+func _process_camera(delta: float) -> void:
+	"""本地相机平移和缩放（不经过后端）。
+
+	Args:
+		delta: 帧间隔时间。
+	"""
+	if _map_display == null:
+		return
+	var cam: Camera2D = _map_display.get_node_or_null("MapCamera")
+	if cam == null:
+		return
+
+	# WASD / 方向键平移
+	var pan := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	if pan != Vector2.ZERO:
+		cam.position += pan * CAMERA_PAN_SPEED * delta / cam.zoom
+
+	# 鼠标滚轮缩放
+	var zoom_delta: float = 0.0
+	if Input.is_action_just_pressed("zoom_in"):
+		zoom_delta = CAMERA_ZOOM_STEP
+	elif Input.is_action_just_pressed("zoom_out"):
+		zoom_delta = -CAMERA_ZOOM_STEP
+
+	if zoom_delta != 0.0:
+		var new_zoom := cam.zoom.x + zoom_delta
+		new_zoom = clampf(new_zoom, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+		cam.zoom = Vector2(new_zoom, new_zoom)
 
 
 func _process_input() -> void:
-	"""读取输入动作，打包发送。"""
-	var input_dir: Vector2 = Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	if input_dir != Vector2.ZERO:
-		Connection.send({
-			"type": "request",
-			"request_type": "player_move",
-			"payload": {"direction": [input_dir.x, input_dir.y]}
-		})
-
+	"""读取需要后端处理的玩家指令并发送。"""
 	if Input.is_action_just_pressed("interact"):
 		Connection.send({
 			"type": "request",
 			"request_type": "player_interact",
 			"payload": {}
-		})
-
-	if Input.is_action_just_pressed("zoom_in"):
-		Connection.send({
-			"type": "request",
-			"request_type": "camera_zoom",
-			"payload": {"delta": 0.1}
-		})
-
-	if Input.is_action_just_pressed("zoom_out"):
-		Connection.send({
-			"type": "request",
-			"request_type": "camera_zoom",
-			"payload": {"delta": -0.1}
 		})
 
 	if Input.is_action_just_pressed("menu"):
@@ -87,7 +119,7 @@ func _on_message(message: Dictionary) -> void:
 	"""处理后端消息。
 
 	Args:
-		message: 后端发来的消息字典
+		message: 后端发来的消息字典。
 	"""
 	var msg_type: String = message.get("type", "")
 
@@ -106,7 +138,7 @@ func _handle_event(message: Dictionary) -> void:
 	"""处理后端推送的事件。
 
 	Args:
-		message: 事件消息
+		message: 事件消息。
 	"""
 	var event_type: String = message.get("event_type", "")
 	print("MainWorld: event '%s'" % event_type)
@@ -116,17 +148,24 @@ func _handle_response(message: Dictionary) -> void:
 	"""处理后端对请求的响应。
 
 	Args:
-		message: 响应消息
+		message: 响应消息。
 	"""
 	var request_type: String = message.get("request_type", "")
-	print("MainWorld: response for '%s'" % request_type)
+	var payload: Dictionary = message.get("payload", {})
+
+	match request_type:
+		"get_chunks":
+			if _map_display:
+				_map_display.handle_chunk_response(payload)
+		_:
+			print("MainWorld: response for '%s'" % request_type)
 
 
 func _handle_error(message: Dictionary) -> void:
 	"""处理后端错误。
 
 	Args:
-		message: 错误消息
+		message: 错误消息。
 	"""
 	var error_msg: String = message.get("error", "unknown error")
 	push_error("MainWorld: server error: %s" % error_msg)
