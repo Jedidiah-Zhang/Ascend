@@ -1,11 +1,13 @@
 # Godot 4+ specific ignores
 .godot/
+*.uid
 /android/
 
-# Claude files
+# Claude / Agent 元文件（不在项目 git 中）
 .claude/
 CLAUDE.md
 .mcp.json
+agent*.md
 
 # Python
 __pycache__/
