@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "ascend-backend"))
 
 # 指令历史文件
-_HISTORY_FILE = Path(__file__).parent.parent.parent / ".ascend_history"
+_HISTORY_FILE = Path(__file__).parent / ".ascend_history"
 _HISTORY_MAX = 1000
 
 from ascend.world_tree import bus

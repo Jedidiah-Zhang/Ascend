@@ -5,11 +5,13 @@
 
 from ascend.net.server import GameServer
 from ascend.net.bridge import EventBridge
+from ascend.net.dispatcher import MessageDispatcher
 from ascend.net.protocol import encode_message, decode_message, read_frame, ProtocolError
 
 __all__ = [
     "GameServer",
     "EventBridge",
+    "MessageDispatcher",
     "encode_message",
     "decode_message",
     "read_frame",
