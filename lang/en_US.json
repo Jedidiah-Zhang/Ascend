@@ -76,5 +76,18 @@
   "mode.realtime": "Realtime",
   "mode.sleep": "Sleep",
   "mode.fast_travel": "Fast Travel",
-  "mode.long_jump": "Long Jump"
+  "mode.long_jump": "Long Jump",
+
+  "terminal.title": "Ascend Debug Terminal",
+  "terminal.clear": "Screen cleared",
+  "terminal.help_title": "Ascend Terminal Help",
+  "terminal.help_clear": "Clear the screen",
+  "terminal.help_map": "Switch map view mode (biome|climate|altitude|normal)",
+  "terminal.help_help": "Show this help",
+  "terminal.local_commands": "Local Commands",
+  "terminal.remote_commands": "Remote Commands",
+  "terminal.unknown_view": "Unknown view mode '{mode}', available: biome, climate, altitude, normal",
+  "terminal.unknown_cmd": "Unknown command '{cmd}', type help for help",
+  "terminal.map_switched": "Map view switched to: {view_mode}",
+  "terminal.input_hint": "Type help for commands"
 }

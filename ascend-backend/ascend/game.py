@@ -9,7 +9,11 @@ import time as _real_time
 from ascend.log import get_logger
 from ascend.net import GameServer, MessageDispatcher
 from ascend.net.handlers.map_handler import make_map_handlers
+from ascend.net.handlers.terminal_handler import make_terminal_handler
 from ascend.space import WorldGenerator
+from ascend.terminal import CommandExecutor
+from ascend.time import WorldClock, GameCalendar
+from ascend.i18n import I18n
 
 logger = get_logger(__name__)
 
@@ -39,6 +43,11 @@ class GameEngine:
         self.world_gen: WorldGenerator | None = None
         self.server: GameServer | None = None
         self.dispatcher: MessageDispatcher | None = None
+        self.clock: WorldClock = WorldClock()
+        self.calendar: GameCalendar = GameCalendar()
+        self.i18n: I18n = I18n()
+        self._paused: bool = False
+        self._executor: CommandExecutor | None = None
         self._running: bool = False
         self._thread: threading.Thread | None = None
 
@@ -52,8 +61,27 @@ class GameEngine:
         return (
             f"GameEngine(seed={self.seed}, "
             f"running={self._running}, "
+            f"paused={self._paused}, "
             f"clients={client_count})"
         )
+
+    @property
+    def paused(self) -> bool:
+        """游戏是否暂停。
+
+        Returns:
+            True 表示暂停。
+        """
+        return self._paused
+
+    @paused.setter
+    def paused(self, value: bool) -> None:
+        """设置暂停状态。
+
+        Args:
+            value: True 暂停，False 恢复。
+        """
+        self._paused = bool(value)
 
     def start(self) -> None:
         """初始化所有子系统并在后台启动 tick 循环。
@@ -77,9 +105,21 @@ class GameEngine:
         handlers = make_map_handlers(self.world_gen)
         for req_type, handler in handlers.items():
             self.dispatcher.register(req_type, handler)
-        logger.info("已注册处理程序: %s", list(handlers.keys()))
+        logger.info("已注册地图处理程序: %s", list(handlers.keys()))
 
-        # 4. 启动 tick 循环
+        # 4. 终端指令执行器
+        self._executor = CommandExecutor(
+            clock=self.clock,
+            calendar=self.calendar,
+            i18n=self.i18n,
+            world_gen=self.world_gen,
+        )
+        term_handlers = make_terminal_handler(self._executor)
+        for req_type, handler in term_handlers.items():
+            self.dispatcher.register(req_type, handler)
+        logger.info("已注册终端处理程序: %s", list(term_handlers.keys()))
+
+        # 5. 启动 tick 循环
         self._running = True
         self._thread = threading.Thread(
             target=self._run_loop, name="game-engine", daemon=True
@@ -101,8 +141,13 @@ class GameEngine:
         if self.server:
             self.server.stop()
             self.server = None
+        if self.calendar:
+            self.calendar.shutdown()
+            self.calendar = None  # type: ignore[assignment]
         if self.world_gen:
             self.world_gen = None
+        if self._executor:
+            self._executor = None
         logger.info("游戏引擎已停止")
 
     # ── 内部 ──────────────────────────────────────────
@@ -118,6 +163,11 @@ class GameEngine:
                 _real_time.sleep(sleep_time)
 
     def _tick(self) -> None:
-        """单个 tick：处理所有排队消息。"""
+        """单个 tick：推进时钟（非暂停时）+ 处理所有排队消息。"""
+        if self.clock and not self._paused:
+            self.clock.tick(TICK_DT)
+            # 累加活跃时间供 st/rp 指令显示
+            if hasattr(self, "_executor") and self._executor is not None:
+                self._executor._active_real_time += TICK_DT
         if self.dispatcher:
             self.dispatcher.process()

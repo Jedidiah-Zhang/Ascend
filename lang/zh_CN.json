@@ -76,5 +76,18 @@
   "mode.realtime": "日常实时",
   "mode.sleep": "睡眠",
   "mode.fast_travel": "快速旅行",
-  "mode.long_jump": "长跳/闭关"
+  "mode.long_jump": "长跳/闭关",
+
+  "terminal.title": "Ascend 调试终端",
+  "terminal.clear": "屏幕已清除",
+  "terminal.help_title": "Ascend 终端帮助",
+  "terminal.help_clear": "清除屏幕",
+  "terminal.help_map": "切换地图视图模式 (biome|climate|altitude|normal)",
+  "terminal.help_help": "显示此帮助",
+  "terminal.local_commands": "本地指令",
+  "terminal.remote_commands": "远程指令",
+  "terminal.unknown_view": "未知视图模式 '{mode}'，可用: biome, climate, altitude, normal",
+  "terminal.unknown_cmd": "未知指令 '{cmd}'，输入 help 查看帮助",
+  "terminal.map_switched": "地图视图已切换为: {view_mode}",
+  "terminal.input_hint": "输入 help 查看指令"
 }

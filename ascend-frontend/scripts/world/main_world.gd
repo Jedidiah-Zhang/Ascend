@@ -2,6 +2,7 @@
 
 负责:
   - 管理 MapDisplay 子节点（地图显示 + 相机）
+  - 管理 TerminalWidget 子节点（调试终端）
   - 监听 Connection 信号（连接状态 + 后端消息）
   - 本地相机控制（平移/缩放）+ 玩家指令发送
 """
@@ -18,16 +19,30 @@ const CAMERA_ZOOM_MAX: float = 4.0
 
 ## 地图显示节点
 var _map_display: MapDisplay = null
+## 终端节点
+var _terminal: TerminalWidget = null
 
 
 func _ready() -> void:
-	"""场景加载时创建 MapDisplay、连接信号并发起连接。"""
+	"""场景加载时创建子节点、连接信号并发起连接。"""
 	# 创建地图显示节点
 	_map_display = MapDisplay.new()
 	_map_display.name = "MapDisplay"
 	add_child(_map_display)
 
-	# 连接信号
+	# 创建终端节点（CanvasLayer 包裹，确保 UI 独立于 2D 世界坐标系）
+	var terminal_layer := CanvasLayer.new()
+	terminal_layer.name = "TerminalLayer"
+	terminal_layer.layer = 100  # 最顶层
+	add_child(terminal_layer)
+
+	_terminal = TerminalWidget.new()
+	_terminal.name = "TerminalWidget"
+	_terminal.remote_command.connect(_on_terminal_command)
+	_terminal.map_view_changed.connect(_on_terminal_map_view)
+	terminal_layer.add_child(_terminal)
+
+	# 连接网络信号
 	Connection.connection_established.connect(_on_connected)
 	Connection.connection_lost.connect(_on_disconnected)
 	Connection.message_received.connect(_on_message)
@@ -46,8 +61,16 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
-	"""每帧：控制相机 + 流式地图块 + 处理玩家指令。"""
+	"""每帧：控制相机 + 流式地图块 + 处理玩家指令。
+
+	终端打开时跳过相机控制和玩家输入，但保持 Connection 消息处理。
+	"""
+	# 无条件处理 Connection（即使终端打开，远程指令响应仍需接收）
 	if Connection.status != Connection.Status.CONNECTED:
+		return
+
+	# 终端打开时跳过相机和玩家输入
+	if _terminal and _terminal.is_open():
 		return
 
 	_process_camera(delta)
@@ -56,6 +79,19 @@ func _process(delta: float) -> void:
 	# 根据相机位置请求新块
 	if _map_display:
 		_map_display.stream_chunks_for_viewport()
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	"""处理 '/' 键切换终端。
+
+	Args:
+		event: 输入事件。
+	"""
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_SLASH and not event.shift_pressed and not event.ctrl_pressed and not event.alt_pressed:
+			if _terminal:
+				_terminal.toggle()
+			get_viewport().set_input_as_handled()
 
 
 func _process_camera(delta: float) -> void:
@@ -105,8 +141,45 @@ func _process_input() -> void:
 		})
 
 
+func _on_terminal_command(command: String) -> void:
+	"""终端远程指令发送。
+
+	Args:
+		command: 完整的指令文本。
+	"""
+	Connection.send({
+		"type": "request",
+		"request_type": "terminal_cmd",
+		"payload": {"command": command},
+	})
+
+
+func _on_terminal_map_view(view_mode: String) -> void:
+	"""终端地图视图切换请求。
+
+	Args:
+		view_mode: 视图模式（biome/climate/altitude/normal）。
+	"""
+	if _map_display == null:
+		return
+	match view_mode:
+		"biome":
+			_map_display.set_view_mode(MapDisplay.ViewMode.BIOME)
+		"climate":
+			_map_display.set_view_mode(MapDisplay.ViewMode.CLIMATE)
+		"altitude":
+			_map_display.set_view_mode(MapDisplay.ViewMode.ALTITUDE)
+		_:
+			_map_display.set_view_mode(MapDisplay.ViewMode.NORMAL)
+
+
 func _on_connected(host: String, port: int) -> void:
-	"""连接成功回调。"""
+	"""连接成功回调。
+
+	Args:
+		host: 服务器地址。
+		port: 端口号。
+	"""
 	print("MainWorld: connected to %s:%d" % [host, port])
 
 
@@ -157,6 +230,10 @@ func _handle_response(message: Dictionary) -> void:
 		"get_chunks":
 			if _map_display:
 				_map_display.handle_chunk_response(payload)
+		"terminal_cmd":
+			if _terminal:
+				var output: String = payload.get("output", "")
+				_terminal.write(output)
 		_:
 			print("MainWorld: response for '%s'" % request_type)
 
