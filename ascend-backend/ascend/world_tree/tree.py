@@ -45,6 +45,7 @@ class WorldTree:
         """
         self._validate = validate
         self._event_log: list[Event] = []
+        self._id_index: dict[str, int] = {}
         self._subscriptions: dict[str, list[Callable[[Event], None]]] = {}
         self._entity_index: dict[str, list[int]] = {}
         self._spatial_index: dict[tuple[int, int], set[int]] = {}
@@ -122,6 +123,7 @@ class WorldTree:
         with self._lock:
             log_index = len(self._event_log)
             self._event_log.append(event)
+            self._id_index[event.id] = log_index
 
             all_entities: set[str] = {event.initiator_id}
             for ap in event.affected:
@@ -382,6 +384,28 @@ class WorldTree:
 
         return in_memory
 
+    def get_event_by_id(self, event_id: str) -> Event | None:
+        """按 ID 查找事件，先查内存再查归档。
+
+        内存中 O(1) 查找；未命中时通过归档主键索引查询。
+        适用于 EventGraph 因果追溯后按 ID 获取事件体内容。
+
+        Args:
+            event_id: 事件唯一标识。
+
+        Returns:
+            重建的 Event 实例，不存在时返回 None。
+        """
+        with self._lock:
+            idx = self._id_index.get(event_id)
+            if idx is not None and idx < len(self._event_log):
+                return self._event_log[idx]
+
+        # 不在内存，查归档
+        if self._archive:
+            return self._archive.query_by_id(event_id)
+        return None
+
     # ── 事件图代理 ────────────────────────────────────
 
     @property
@@ -398,9 +422,9 @@ class WorldTree:
     def trim(self, before_time: float) -> int:
         """移除早于指定时间的事件体以回收内存。
 
-        只移除 _event_log 中的事件体和实体/空间索引中的引用，
-        **不动事件图**——图的节点（ID 字符串）和边全部保留，
-        因果链追溯不受影响。
+        移除 _event_log 中的事件体和所有索引中的引用，
+        **同时移除事件图中对应节点**——因果链追溯需通过
+        EventGraph.get_causal_chain(archive=...) 从归档补全。
 
         在锁内重建索引，锁外调用方看到一致状态。
 
@@ -425,11 +449,19 @@ class WorldTree:
             if self._archive:
                 self._archive.archive(self._event_log[:cutoff])
 
-            # 记录被移除的事件 ID（仅用于日志）
-            removed_ids = [ev.id for ev in self._event_log[:cutoff]]
+            # 记录被移除的事件 ID
+            removed_ids = {ev.id for ev in self._event_log[:cutoff]}
 
             # 截断事件日志
             self._event_log = self._event_log[cutoff:]
+
+            # 同步移除图中节点
+            self._graph.remove_nodes(removed_ids)
+
+            # 重建 ID 索引
+            self._id_index.clear()
+            for i, ev in enumerate(self._event_log):
+                self._id_index[ev.id] = i
 
             # 重建实体索引（索引值变为新日志中的位置）
             self._entity_index.clear()
@@ -446,12 +478,11 @@ class WorldTree:
                 chunk_key = (ev.location[0], ev.location[1])
                 self._spatial_index.setdefault(chunk_key, set()).add(i)
 
-            # 不动 _graph —— 因果链结构保留
-
             removed_count = len(removed_ids)
             logger = get_logger(__name__)
             logger.info(
-                "修剪事件: 移除 %d 条(时间 < %.0f)，剩余 %d 条，图结构保留",
+                "修剪事件: 移除 %d 条(时间 < %.0f)，剩余 %d 条，"
+                "图节点已同步移除，因果链可通过归档补全",
                 removed_count, before_time, len(self._event_log),
             )
             return removed_count
@@ -485,6 +516,7 @@ class WorldTree:
         """
         with self._lock:
             self._event_log.clear()
+            self._id_index.clear()
             self._subscriptions.clear()
             self._entity_index.clear()
             self._spatial_index.clear()

@@ -94,6 +94,29 @@ class TestEventBus:
         bus.publish(make_event())
         assert bus.event_count == 2
 
+    def test_get_event_by_id_memory(self):
+        """按 ID 查找内存中的事件。"""
+        bus = EventBus()
+        ev = make_event(id="target_1", timestamp=10.0)
+        bus.publish(ev)
+        result = bus.get_event_by_id("target_1")
+        assert result is not None
+        assert result.id == "target_1"
+        assert result.timestamp == 10.0
+
+    def test_get_event_by_id_not_found(self):
+        """查找不存在的事件返回 None。"""
+        bus = EventBus()
+        bus.publish(make_event(id="exists"))
+        result = bus.get_event_by_id("no_such_id")
+        assert result is None
+
+    def test_get_event_by_id_empty_bus(self):
+        """空总线上查找返回 None。"""
+        bus = EventBus()
+        result = bus.get_event_by_id("anything")
+        assert result is None
+
 
 class TestEventGraph:
     def test_causal_chain(self):
@@ -148,6 +171,70 @@ class TestEventGraph:
         # 不应死循环
         chain = g.get_causal_chain("a", max_depth=5)
         assert len(chain) <= 5
+
+    def test_node_count(self):
+        """空图节点数为 0。"""
+        g = EventGraph()
+        assert g.node_count == 0
+        g.add_event(make_event(id="a"))
+        g.add_event(make_event(id="b"))
+        assert g.node_count == 2
+
+    def test_remove_nodes_basic(self):
+        """移除部分节点，剩余节点和边正确。"""
+        g = EventGraph()
+        a = make_event(id="a")
+        b = make_event(id="b", caused_by=["a"])
+        c = make_event(id="c", caused_by=["b"])
+        for ev in [a, b, c]:
+            g.add_event(ev)
+
+        g.remove_nodes({"a", "b"})
+
+        assert g.node_count == 1
+        # c 的 causals 已无上游
+        assert g.get_causal_chain("c") == []
+        # a, b 不再存在于图中
+        assert g.get_consequences("a") == []
+        assert g.get_consequences("b") == []
+
+    def test_remove_nodes_cleans_reverse_edges(self):
+        """移除节点时同时清理反向邻接表中的边。"""
+        g = EventGraph()
+        cause = make_event(id="cause")
+        effect = make_event(id="effect", caused_by=["cause"])
+        g.add_event(cause)
+        g.add_event(effect)
+
+        g.remove_nodes({"cause"})
+
+        # effect 的入边应被清理
+        assert g.get_causal_chain("effect") == []
+        # 不应有残留引用
+        assert "cause" not in g._reverse.get("effect", [])
+
+    def test_remove_nodes_empty_set(self):
+        """移除空集合是安全的。"""
+        g = EventGraph()
+        g.add_event(make_event(id="a"))
+        g.remove_nodes(set())
+        assert g.node_count == 1
+
+    def test_remove_nodes_nonexistent(self):
+        """移��不存在的节点是安全的。"""
+        g = EventGraph()
+        g.add_event(make_event(id="a"))
+        g.remove_nodes({"nonexistent"})
+        assert g.node_count == 1
+        assert g.get_consequences("a") == []
+
+    def test_remove_nodes_idempotent(self):
+        """重复移除相同节点是安全的。"""
+        g = EventGraph()
+        g.add_event(make_event(id="a"))
+        g.remove_nodes({"a"})
+        g.remove_nodes({"a"})  # 不抛异常
+        assert g.node_count == 0
 
 
 class TestModuleSingleton:
@@ -301,8 +388,8 @@ class TestEventBusTrim:
         with pytest.raises(ValueError, match="清理时间不能为负"):
             bus.trim(-1.0)
 
-    def test_trim_preserves_causal_chain(self):
-        """Trim 后因果链仍可追溯。"""
+    def test_trim_preserves_causal_chain_with_lookup(self):
+        """Trim 后内存图节点移除，通过 lookup 可从内存事件体补全一级链。"""
         bus = EventBus()
         ev0 = make_event(timestamp=0.0, id="ev0")
         ev1 = make_event(timestamp=1.0, id="ev1", caused_by=["ev0"])
@@ -311,19 +398,113 @@ class TestEventBusTrim:
         bus.publish(ev1)
         bus.publish(ev2)
 
-        bus.trim(5.0)  # 移除 ev0, ev1 的事件体
+        bus.trim(5.0)  # 移除 ev0, ev1 的事件体和图节点（无归档，永久丢失）
 
-        # 因果链仍然完整
-        chain = bus.graph.get_causal_chain("ev2")
-        assert chain == ["ev0", "ev1"]
+        # 无 lookup 时因果链已断裂
+        chain_no_lookup = bus.graph.get_causal_chain("ev2")
+        assert chain_no_lookup == []
 
-        # ev2 的后果查询正常
-        consequences = bus.graph.get_consequences("ev1")
-        assert "ev2" in consequences
+        # 带 lookup 时从 ev2 的内存事件体可恢复 ev1 的边，
+        # 但 ev1 已被丢弃，其 caused_by 无法恢复
+        chain = bus.graph.get_causal_chain("ev2", lookup=bus.get_event_by_id)
+        assert chain == ["ev1"]
 
-        # 但 ev0, ev1 的事件体已不在日志中
+        # ev2 仍在内存；lookup 追溯时 ev1 被懒加载回图中
+        assert bus.graph.node_count == 2
         assert bus.event_count == 1
         assert bus.get_events_in_range(0, 5) == []
+
+    def test_get_event_by_id_archive_fallback(self):
+        """trim 后按 ID 查找从归档中取回事件体。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        bus = EventBus(validate=False, archive_path=path)
+        try:
+            ev = make_event(timestamp=0.0, id="ev_old")
+            bus.publish(ev)
+            bus.trim(10.0)  # 归档 ev_old
+
+            result = bus.get_event_by_id("ev_old")
+            assert result is not None
+            assert result.id == "ev_old"
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_get_event_by_id_memory_first(self):
+        """内存中有同 ID 事件时优先返回内存版本（不查归档）。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        bus = EventBus(validate=False, archive_path=path)
+        try:
+            # 发布并归档
+            ev = make_event(timestamp=1.0, id="dup_id", event_type="old")
+            bus.publish(ev)
+            bus.trim(10.0)
+
+            # 发布同名 ID 的新事件（内存中）
+            ev2 = make_event(timestamp=20.0, id="dup_id", event_type="new")
+            bus.publish(ev2)
+
+            result = bus.get_event_by_id("dup_id")
+            assert result is not None
+            # 应返回内存中的版本
+            assert result.event_type == "new"
+            assert result.timestamp == 20.0
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_trim_removes_graph_nodes(self):
+        """trim 事件体时同步移除图中对应节点。"""
+        bus = EventBus()
+        ev0 = make_event(timestamp=0.0, id="ev0")
+        ev1 = make_event(timestamp=1.0, id="ev1", caused_by=["ev0"])
+        ev2 = make_event(timestamp=10.0, id="ev2", caused_by=["ev1"])
+        bus.publish(ev0)
+        bus.publish(ev1)
+        bus.publish(ev2)
+
+        # 确认图有 3 个节点
+        assert bus.graph.node_count == 3
+
+        bus.trim(5.0)  # 移除 ev0, ev1
+
+        # ev0, ev1 从图中移除，ev2 保留
+        assert bus.graph.node_count == 1
+        # ev0 不再在图中有出边
+        assert bus.graph.get_consequences("ev0") == []
+        # ev1 不再在图中有入边
+        assert bus.graph.get_causal_chain("ev2") == []
+
+    def test_trim_with_archive_causal_chain_still_works(self):
+        """trim 后因果链从内存图消失，通过 lookup 从归档补全。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        bus = EventBus(validate=False, archive_path=path)
+        try:
+            ev0 = make_event(timestamp=0.0, id="ev0")
+            ev1 = make_event(timestamp=1.0, id="ev1", caused_by=["ev0"])
+            ev2 = make_event(timestamp=10.0, id="ev2", caused_by=["ev1"])
+            bus.publish(ev0)
+            bus.publish(ev1)
+            bus.publish(ev2)
+
+            bus.trim(5.0)  # ev0, ev1 归档且从图中移除
+
+            # 无 lookup 时因果链断裂
+            chain_no_lookup = bus.graph.get_causal_chain("ev2")
+            assert chain_no_lookup == []
+
+            # 带 lookup（覆盖内存+归档）时因果链完整恢复
+            chain = bus.graph.get_causal_chain("ev2", lookup=bus.get_event_by_id)
+            assert chain == ["ev0", "ev1"]
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
 
 
 # ── 线程安全 ──────────────────────────────────────────
@@ -563,6 +744,76 @@ class TestEventArchive:
             assert archive.query_time_range(0, 100) == []
             assert archive.query_entity("nobody", 0, 100) == []
             assert archive.query_region((0, 0), radius=1) == []
+        finally:
+            archive.close()
+            os.unlink(path)
+
+    def test_query_by_id_found(self):
+        """按 ID 点查归档中已存在的事件。"""
+        archive, path = self._make_archive()
+        try:
+            ev = make_event(timestamp=10.0, id="target", event_type="combat")
+            archive.archive([ev])
+            result = archive.query_by_id("target")
+            assert result is not None
+            assert result.id == "target"
+            assert result.timestamp == 10.0
+            assert result.event_type == "combat"
+        finally:
+            archive.close()
+            os.unlink(path)
+
+    def test_query_by_id_not_found(self):
+        """查询不存在的事件 ID 返回 None。"""
+        archive, path = self._make_archive()
+        try:
+            result = archive.query_by_id("nonexistent")
+            assert result is None
+        finally:
+            archive.close()
+            os.unlink(path)
+
+    def test_query_by_id_empty_archive(self):
+        """空归档查询返回 None。"""
+        archive, path = self._make_archive()
+        try:
+            result = archive.query_by_id("anything")
+            assert result is None
+        finally:
+            archive.close()
+            os.unlink(path)
+
+    def test_query_by_id_roundtrip_all_fields(self):
+        """归档事件按 ID 取回后所有字段完整还原。"""
+        archive, path = self._make_archive()
+        try:
+            ev = make_event(
+                timestamp=42.5,
+                id="full_test",
+                event_type="test_type",
+                initiator_id="npc_x",
+                location=(3, 7, 10, 20),
+                affected=[
+                    AffectedParty(entity_id="npc_y", role="witness"),
+                    AffectedParty(entity_id="npc_z", role="recipient"),
+                ],
+                caused_by=["cause_1", "cause_2"],
+                observes="observed_event",
+                co_participants=["partner_1"],
+                data={"key": "value", "num": 99},
+            )
+            archive.archive([ev])
+            result = archive.query_by_id("full_test")
+            assert result is not None
+            assert result.timestamp == 42.5
+            assert result.event_type == "test_type"
+            assert result.initiator_id == "npc_x"
+            assert result.location == (3, 7, 10, 20)
+            assert len(result.affected) == 2
+            assert result.caused_by == ["cause_1", "cause_2"]
+            assert result.observes == "observed_event"
+            assert result.co_participants == ["partner_1"]
+            assert result.data == {"key": "value", "num": 99}
         finally:
             archive.close()
             os.unlink(path)

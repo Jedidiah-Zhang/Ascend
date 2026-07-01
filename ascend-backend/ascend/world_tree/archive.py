@@ -125,6 +125,25 @@ class EventArchive:
 
     # ── 查询 ──────────────────────────────────────────
 
+    def query_by_id(self, event_id: str) -> Event | None:
+        """按事件 ID 查询归档中的单个事件。
+
+        利用主键索引，O(1) 查询。用于 trim 后按 ID 取回
+        已归档的事件体。
+
+        Args:
+            event_id: 事件唯一标识。
+
+        Returns:
+            重建的 Event 实例，不存在时返回 None。
+        """
+        row = self._db.execute(
+            "SELECT * FROM events WHERE id = ?", (event_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_event(row)
+
     def query_time_range(
         self,
         start_time: float,
