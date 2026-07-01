@@ -57,7 +57,8 @@
   .legend-item { display:flex; align-items:center; gap:6px; margin-bottom:4px; font-size:12px; }
   .legend-swatch { width:14px; height:14px; border-radius:2px; flex-shrink:0; }
   #legend-gradient { width:100%; height:16px; border-radius:2px; margin-bottom:4px; }
-  #legend-range { display:flex; justify-content:space-between; font-size:11px; color:var(--text-dim); margin-bottom:8px; }
+  #legend-range { display:flex; flex-direction:column; justify-content:space-between; font-size:11px; color:var(--text-dim); margin-bottom:8px; min-height:40px; }
+  #legend-range span:first-child { margin-bottom:auto; }
 
   /* ── 画布容器 ── */
   #canvas-wrap {
@@ -108,6 +109,12 @@
 
   <span class="sep"></span>
   <button data-mode="terrain" id="btn-terrain" title="详细地形（Tile 级别 + Chunk 边界）">🗺️ 地形</button>
+
+  <span class="sep"></span>
+  <label>跳转</label>
+  <input type="number" id="jump-x" value="0" style="width:60px" title="X 坐标">
+  <input type="number" id="jump-y" value="0" style="width:60px" title="Y 坐标">
+  <button id="btn-jump" title="跳转到指定坐标">→</button>
 
   <span id="info">--</span>
 </div>
@@ -241,21 +248,22 @@ function colorForValue(v, mode) {
   const t = Math.max(0, Math.min(1, (v - range.min) / (range.max - range.min + 0.001)));
 
   if (mode === 'altitude') {
-    // 海拔渐变：海平面(alt=0, t≈0.091)处有明显色断 — 海洋蓝→海岸沙色→陆地绿
+    // 海拔渐变 — 海平面(alt=0, t≈0.091)处冷暖分明
+    // 海洋侧: 纯蓝系；陆地侧: 暖色起步（沙色→绿→棕→灰→白）
     const stops = [
-      [0.000,[8,15,65]],     // -500m  深海
-      [0.045,[20,60,130]],   // -252m  大洋
-      [0.082,[45,110,185]],  // -50m   浅海
-      [0.090,[75,150,200]],  // -5m    近岸浅水
-      [0.092,[185,200,115]], // +10m   海岸沙地  ← 海平面色断
-      [0.100,[155,185,90]],  // +50m   沿海草地
-      [0.150,[110,160,60]],  // +325m  低地绿
-      [0.300,[65,125,40]],   // +1150m 森林绿
-      [0.500,[90,105,50]],   // +2250m 高地橄榄
-      [0.650,[135,118,72]],  // +3075m 山腰棕
-      [0.800,[172,162,147]], // +3900m 岩石灰
-      [0.920,[212,207,202]], // +4560m 高山
-      [1.000,[252,250,248]], // +5000m 雪峰白
+      [0.000,[5,12,60]],     // -500m  深海
+      [0.050,[18,55,130]],   // -225m  大洋
+      [0.082,[40,105,185]],  // -50m   浅海
+      [0.090,[65,150,230]],  // -5m    近岸(亮蓝)
+      [0.091,[215,195,105]], // 0m     海岸线 ← 暖沙色
+      [0.100,[155,182,85]],  // +50m   沿海草地
+      [0.160,[105,158,52]],  // +380m  低地绿
+      [0.320,[60,122,35]],   // +1260m 森林绿
+      [0.520,[88,106,48]],   // +2360m 高地橄榄
+      [0.680,[140,120,68]],  // +3240m 山腰棕
+      [0.820,[175,160,140]], // +4010m 岩石灰
+      [0.930,[215,208,200]], // +4615m 高山
+      [1.000,[252,250,245]], // +5000m 雪峰
     ];
     let lo=stops[0], hi=stops[stops.length-1];
     for (let i=1;i<stops.length;i++){if(t<=stops[i][0]){lo=stops[i-1];hi=stops[i];break;}}
@@ -767,7 +775,7 @@ function updateLegend() {
     const grad = document.createElement('div');
     grad.id = 'legend-gradient';
     grad.style.background = mode === 'altitude'
-      ? 'linear-gradient(to bottom, #fcfaf8,#aca293,#6ea03c,#b9c873,#4b96c8,#143c82,#080f41)'
+      ? 'linear-gradient(to bottom, #fcfaf5,#d7d0c8,#8c7844,#3c7a23,#99b655,#d7c369,#4196e6,#123782,#050c3c)'
       : 'linear-gradient(to bottom, #1e50a0,#3c8cc8,#64a03c,#c8b432,#c8401e)';
     legendBody.appendChild(grad);
 
@@ -1007,6 +1015,34 @@ document.getElementById('seed-input').addEventListener('keydown', e => {
 document.querySelectorAll('#toolbar button[data-mode]').forEach(btn => {
   btn.addEventListener('click', () => {
     switchMode(btn.dataset.mode);
+  });
+});
+
+// 坐标跳转
+document.getElementById('btn-jump').addEventListener('click', () => {
+  const jx = parseInt(document.getElementById('jump-x').value);
+  const jy = parseInt(document.getElementById('jump-y').value);
+  if (isNaN(jx) || isNaN(jy)) return;
+
+  if (isTerrainMode()) {
+    // 地形模式：直接跳转到 tile 坐标
+    S.viewCX = jx - wrap.clientWidth / S.cellSize / 2;
+    S.viewCY = jy - wrap.clientHeight / S.cellSize / 2;
+    render();
+    fetchMissingTerrainTiles();
+  } else {
+    // 普通模式：跳转到 chunk 坐标
+    S.viewCX = jx - wrap.clientWidth / S.cellSize / 2;
+    S.viewCY = jy - wrap.clientHeight / S.cellSize / 2;
+    render();
+    fetchMissingTiles();
+  }
+});
+
+// 跳转输入框回车
+['jump-x', 'jump-y'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-jump').click();
   });
 });
 
