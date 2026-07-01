@@ -41,6 +41,7 @@ from .tectonic import (
     WorldParams, PRESETS,
     tectonic_altitude, tectonic_altitude_batch,
 )
+from .erosion import hydraulic_erosion
 
 __all__ = [
     # 第一层：大地图
@@ -71,4 +72,6 @@ __all__ = [
     "PRESETS",
     "tectonic_altitude",
     "tectonic_altitude_batch",
+    # 水力侵蚀
+    "hydraulic_erosion",
 ]
