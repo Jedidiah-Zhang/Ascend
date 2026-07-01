@@ -713,10 +713,13 @@ class WorldTree:
                 ),
             }
 
-    def shutdown(self) -> None:
-        """关闭异步线程池，等待所有任务完成。
+    def await_async(self) -> None:
+        """等待所有正在执行的异步回调完成。
 
-        调用后异步订阅者不再接收新事件。应在游戏退出时调用。
+        阻塞直到线程池中所有已提交的 subscribe_async 回调执行完毕。
+        应在游戏退出前调用，避免异步任务被强制中断。
+
+        调用后异步订阅者不再接收新事件。
         """
         self._async_executor.shutdown(wait=True)
 

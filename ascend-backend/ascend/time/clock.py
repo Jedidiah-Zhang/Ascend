@@ -1,10 +1,31 @@
-"""世界时钟 — 驱动游戏时间推进，通过事件总线发布 game_minute。"""
+"""世界时钟 — 驱动游戏时间推进，通过事件总线发布 game_minute 和 time_skip。"""
 
 from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.log import get_logger
 from .mode import TimeMode, GAME_SECONDS_PER_REAL_SECOND
 
 logger = get_logger(__name__)
+
+world_tree.register_event_schema(
+    "game_minute",
+    required={
+        "step": (int, float),
+        "mode": str,
+        "tick_count": int,
+        "game_time": (int, float),
+    },
+    description="每 tick 发布一次，驱动日历等时间相关模块",
+)
+world_tree.register_event_schema(
+    "time_skip",
+    required={
+        "skipped": (int, float),
+        "game_time": (int, float),
+        "mode": str,
+        "tick_count": int,
+    },
+    description="快进/跳转时发布，通知模块时间发生了跃迁",
+)
 
 
 class WorldClock:

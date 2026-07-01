@@ -13,12 +13,10 @@ from .event import Event
 from .graph import EventGraph
 from .registry import SchemaRegistry
 from .schema import EventSchema
-from .schemas import register_all
 from .tree import WorldTree
 
 # 模块级世界树单例，各模块通过此实例通信
 world_tree = WorldTree()
-register_all(world_tree)
 
 # 兼容旧名称
 bus = world_tree  # type: ignore[assignment]

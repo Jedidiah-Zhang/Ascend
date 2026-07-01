@@ -150,6 +150,7 @@ class GameEngine:
         if self._thread:
             self._thread.join(timeout=3.0)
             self._thread = None
+        world_tree.await_async()
         if self.server:
             self.server.stop()
             self.server = None

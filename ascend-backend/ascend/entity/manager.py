@@ -1,10 +1,26 @@
-"""实体管理器 — 实体的创建、销毁、查询和移动，通过事件总线发布生命周期事件。"""
+"""实体管理器 — 实体的创建、销毁、查询和移动，发布生命周期事件。"""
 
 from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.log import get_logger
 from .entity import Entity, EntityType
 
 logger = get_logger(__name__)
+
+world_tree.register_event_schema(
+    "entity_spawned",
+    required={"entity_id": str, "entity_type": str, "position": tuple},
+    description="新实体生成时发布",
+)
+world_tree.register_event_schema(
+    "entity_despawned",
+    required={"entity_id": str, "entity_type": str},
+    description="实体销毁时发布",
+)
+world_tree.register_event_schema(
+    "entity_moved",
+    required={"entity_id": str, "old_position": tuple, "new_position": tuple},
+    description="实体位置变更时发布",
+)
 
 
 class EntityManager:

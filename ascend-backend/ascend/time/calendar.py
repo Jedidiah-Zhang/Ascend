@@ -1,10 +1,36 @@
-"""游戏日历 — 追踪游戏日和整点，通过事件总线发布 day_change 和 hour_change。"""
+"""游戏日历 — 追踪游戏日和整点，发布 day_end、day_change、hour_change。"""
 
 from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.log import get_logger
 from .mode import GAME_DAY, GAME_HOUR
 
 logger = get_logger(__name__)
+
+world_tree.register_event_schema(
+    "day_end",
+    required={"day": int, "elapsed_days": int},
+    description="每日结束时发布（day_change 之前），用于日终结算",
+)
+world_tree.register_event_schema(
+    "day_change",
+    required={
+        "day": int,
+        "previous_day": int,
+        "elapsed_days": int,
+        "day_change_count": int,
+    },
+    description="日期变更时发布，触发群体/生态等日更模块",
+)
+world_tree.register_event_schema(
+    "hour_change",
+    required={
+        "day": int,
+        "hour": int,
+        "previous_hour": int,
+        "hour_change_count": int,
+    },
+    description="整点变更时发布，用于高频定期任务",
+)
 
 
 class GameCalendar:
