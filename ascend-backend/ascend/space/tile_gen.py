@@ -9,10 +9,11 @@
   3. 阈值分类 → TerrainType
   4. 群系差异化调整
 
-当提供 get_altitude 回调时，chunk 基线海拔从常数变为
-per-tile 双线性插值，消除 chunk 边界的地形跳变。
+当提供 get_altitude 回调时，用 chunk 间海拔梯度驱动山脉生成 —
+相邻 chunk 海拔差越大，地形越陡峭，形成连片山脉而非碎片化山峰。
 """
 
+import math
 from collections.abc import Callable
 
 from .chunk import ChunkData
@@ -234,11 +235,17 @@ class TileGenerator:
         n: int,
         get_altitude: Callable[[int, int], float] | None,
     ) -> list[float]:
-        """为每个 tile 计算海拔偏置。
+        """为每个 tile 计算海拔梯度偏置。
 
-        有 get_altitude 回调时：取周围 4 个 chunk 中心做双线性插值，
-        chunk 边界处海拔平滑过渡，消除地形跳变。
-        无回调时：使用 chunk 自身常数海拔。
+        核心思想：山脉不应由局部随机噪声生成，而应由 chunk 间
+        的海拔差（梯度）驱动。相邻 chunk 海拔落差越大，该区域
+        地形越陡峭 → 形成连片山脉。平坦区域梯度为零 → 无偏置。
+
+        有 get_altitude 回调时：
+          取周围 4 个 chunk 中心的海拔构成双线性面，
+          计算每 tile 处的梯度幅值 → 映射为偏置。
+        无回调时：
+          无邻居海拔信息，偏置为 0（纯噪声，旧行为）。
 
         Args:
             chunk: 当前分块。
@@ -252,15 +259,19 @@ class TileGenerator:
             长度为 n 的偏置列表，每个值在 [0, 0.5] 范围。
         """
         _ALT_BIAS_MAX = 0.5
+        # 梯度缩放：校准到实际海拔噪声的量级
+        # 海拔噪声频率 0.0005，相邻 chunk 典型落差 1-10m，最大约 20m
+        #   5m 差  → bias≈0.08（微起伏）
+        #  10m 差  → bias≈0.17（明显坡地）
+        #  20m 差  → bias≈0.33（陡峭山地）
+        #  30m+差  → bias≈0.5 （山脉）
+        _GRADIENT_SCALE = 30.0  # m/chunk
 
         if get_altitude is None:
-            # 常数偏置 — 旧行为
-            base_altitude = chunk.annual_baseline.altitude
-            bias = max(0.0, min(_ALT_BIAS_MAX,
-                base_altitude / 5000.0 * _ALT_BIAS_MAX))
-            return [bias] * n
+            # 无邻居信息 → 偏置为 0 → 纯局部噪声
+            return [0.0] * n
 
-        # 双线性插值 — 取 4 个周围 chunk 中心的海拔
+        # 取 4 个 corner chunk 的海拔
         cx, cy = chunk.cx, chunk.cy
         a00 = get_altitude(cx, cy)
         a10 = get_altitude(cx + 1, cy)
@@ -271,19 +282,17 @@ class TileGenerator:
         for i in range(n):
             tx = i % size
             ty = i // size
-            # 双线性插值权重 (0..1)
-            fx = tx / size
-            fy = ty / size
-            # 双线性插值 → per-tile 海拔
-            alt = (
-                a00 * (1.0 - fx) * (1.0 - fy)
-                + a10 * fx * (1.0 - fy)
-                + a01 * (1.0 - fx) * fy
-                + a11 * fx * fy
-            )
-            # 海拔 → 偏置（仅陆地，负海拔钳制为 0）
+            fx = tx / size  # 0..1
+            fy = ty / size  # 0..1
+
+            # 双线性面的偏导数 (m/chunk)
+            grad_x = (a10 - a00) * (1.0 - fy) + (a11 - a01) * fy
+            grad_y = (a01 - a00) * (1.0 - fx) + (a11 - a10) * fx
+
+            # 梯度幅值 → 偏置
+            gradient = math.sqrt(grad_x * grad_x + grad_y * grad_y)
             bias = max(0.0, min(_ALT_BIAS_MAX,
-                alt / 5000.0 * _ALT_BIAS_MAX))
+                gradient / _GRADIENT_SCALE * _ALT_BIAS_MAX))
             biases.append(bias)
 
         return biases
