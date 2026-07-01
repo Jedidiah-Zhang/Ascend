@@ -33,7 +33,11 @@ class WorldTree:
     """
 
     def __init__(
-        self, *, validate: bool = True, archive_path: str | None = None
+        self,
+        *,
+        validate: bool = True,
+        archive_path: str | None = None,
+        max_memory_events: int | None = None,
     ) -> None:
         """初始化空的事件总线。
 
@@ -42,8 +46,12 @@ class WorldTree:
             archive_path: SQLite 归档数据库路径。None 表示不启用归档，
                          trim 时直接丢弃旧事件。传入路径则 trim 时归档到磁盘，
                          查询方法自动从归档合并结果。
+            max_memory_events: 内存中最大事件数。超过此阈值时 publish()
+                         自动触发 _trim() 将旧事件移出内存（若配了
+                         archive_path 则先归档）。None 表示不自动 trim。
         """
         self._validate = validate
+        self._max_memory_events = max_memory_events
         self._event_log: list[Event] = []
         self._id_index: dict[str, int] = {}
         self._subscriptions: dict[str, list[Callable[[Event], None]]] = {}
@@ -142,6 +150,17 @@ class WorldTree:
 
         if callbacks:
             self._dispatch(event, callbacks)
+
+        # 自动 trim：超过阈值时驱逐旧事件
+        if (
+            self._max_memory_events is not None
+            and len(self._event_log) > self._max_memory_events
+        ):
+            # trim 到阈值的一半，留出余量避免频繁触发
+            keep = self._max_memory_events // 2
+            if keep > 0 and len(self._event_log) > keep:
+                cutoff_time = self._event_log[-keep].timestamp
+                self._trim(cutoff_time)
 
     def _dispatch(
         self, event: Event, callbacks: list[Callable[[Event], None]]
@@ -419,12 +438,15 @@ class WorldTree:
 
     # ── 生命周期 ──────────────────────────────────────
 
-    def trim(self, before_time: float) -> int:
-        """移除早于指定时间的事件体以回收内存。
+    def _trim(self, before_time: float) -> int:
+        """移除早于指定时间的事件体以回收内存（内部方法）。
+
+        由 publish() 在事件数超过 max_memory_events 时自动调用，
+        模块外部不应直接调用。
 
         移除 _event_log 中的事件体和所有索引中的引用，
-        **同时移除事件图中对应节点**——因果链追溯需通过
-        EventGraph.get_causal_chain(archive=...) 从归档补全。
+        同时移除事件图中对应节点——因果链追溯需通过
+        EventGraph.get_causal_chain(lookup=...) 补全。
 
         在锁内重建索引，锁外调用方看到一致状态。
 

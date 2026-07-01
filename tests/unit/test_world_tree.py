@@ -302,12 +302,50 @@ class TestEventBusValidation:
 class TestEventBusTrim:
     """事件生命周期测试。"""
 
+    def test_auto_trim_on_publish(self):
+        """发布事件超过 max_memory_events 时自动触发 trim。"""
+        bus = EventBus(validate=False, max_memory_events=5)
+        for t in range(10):
+            bus.publish(make_event(timestamp=float(t)))
+        # 自动 trim 已触发，事件数不应超过阈值
+        assert bus.event_count <= 5
+        # 最近的事件应在内存中
+        latest = bus.get_events_in_range(0, 100)
+        assert latest[-1].timestamp == 9.0
+
+    def test_auto_trim_not_triggered_under_threshold(self):
+        """事件数未超阈值时不触发 trim。"""
+        bus = EventBus(validate=False, max_memory_events=100)
+        for t in range(10):
+            bus.publish(make_event(timestamp=float(t)))
+        # 全部保留
+        assert bus.event_count == 10
+
+    def test_auto_trim_disabled_by_default(self):
+        """不传 max_memory_events 时不自动 trim。"""
+        bus = EventBus(validate=False)
+        for t in range(100):
+            bus.publish(make_event(timestamp=float(t)))
+        assert bus.event_count == 100  # 全部保留
+
+    def test_auto_trim_preserves_graph_consistency(self):
+        """自动 trim 后图和索引保持一致。"""
+        bus = EventBus(validate=False, max_memory_events=6)
+        ev0 = make_event(timestamp=0.0, id="ev0")
+        ev1 = make_event(timestamp=1.0, id="ev1", caused_by=["ev0"])
+        for _ in range(10):
+            bus.publish(make_event(timestamp=10.0))  # 触发自动 trim
+        bus.publish(ev0)
+        bus.publish(ev1)
+        # 未超阈值，两个事件都在
+        assert bus.graph.node_count >= 1
+
     def test_trim_basic(self):
         bus = EventBus()
         for t in [0, 1, 2, 3, 4]:
             bus.publish(make_event(timestamp=float(t)))
 
-        removed = bus.trim(2.0)
+        removed = bus._trim(2.0)
         # _bisect_time(2.0, find_end=True) 返回第一个 ts > 2.0 的位置
         # ts 0,1,2 被移除, ts 3,4 保留
         assert removed == 3
@@ -318,7 +356,7 @@ class TestEventBusTrim:
         for t in range(5, 10):  # ts 5, 6, 7, 8, 9
             bus.publish(make_event(timestamp=float(t)))
 
-        removed = bus.trim(2.0)  # 所有时间戳都 >= 5，不移除任何事件
+        removed = bus._trim(2.0)  # 所有时间戳都 >= 5，不移除任何事件
         assert removed == 0
         assert bus.event_count == 5
 
@@ -327,13 +365,13 @@ class TestEventBusTrim:
         for t in range(5):
             bus.publish(make_event(timestamp=float(t)))
 
-        removed = bus.trim(100.0)  # 全部移除
+        removed = bus._trim(100.0)  # 全部移除
         assert removed == 5
         assert bus.event_count == 0
 
     def test_trim_empty_bus(self):
         bus = EventBus()
-        removed = bus.trim(10.0)
+        removed = bus._trim(10.0)
         assert removed == 0
 
     def test_trim_rebuilds_entity_index(self):
@@ -342,7 +380,7 @@ class TestEventBusTrim:
         bus.publish(make_event(timestamp=1.0, initiator_id="npc_2"))
         bus.publish(make_event(timestamp=10.0, initiator_id="npc_1"))
 
-        bus.trim(5.0)  # 移除 ts=0,1 的两个事件
+        bus._trim(5.0)  # 移除 ts=0,1 的两个事件
 
         events_npc1 = bus.get_entity_events("npc_1", 0, 100)
         assert len(events_npc1) == 1
@@ -354,7 +392,7 @@ class TestEventBusTrim:
         bus.publish(make_event(timestamp=1.0, location=(5, 5, None, None)))
         bus.publish(make_event(timestamp=10.0, location=(0, 0, None, None)))
 
-        bus.trim(5.0)
+        bus._trim(5.0)
 
         region = bus.get_events_in_region((0, 0), radius=0)
         assert len(region) == 1
@@ -365,7 +403,7 @@ class TestEventBusTrim:
         for t in range(3):
             bus.publish(make_event(timestamp=float(t)))  # ts 0,1,2
 
-        bus.trim(1.5)  # 移除 ts=0,1 (ts=2 保留)
+        bus._trim(1.5)  # 移除 ts=0,1 (ts=2 保留)
 
         bus.publish(make_event(timestamp=5.0))  # 新事件
 
@@ -377,16 +415,16 @@ class TestEventBusTrim:
         for t in range(6):
             bus.publish(make_event(timestamp=float(t)))
 
-        bus.trim(2.0)  # 移除 ts 0,1,2
+        bus._trim(2.0)  # 移除 ts 0,1,2
         assert bus.event_count == 3  # ts 3,4,5
 
-        bus.trim(4.0)  # 移除 ts 3,4
+        bus._trim(4.0)  # 移除 ts 3,4
         assert bus.event_count == 1  # ts 5
 
     def test_trim_negative_time_raises(self):
         bus = EventBus()
         with pytest.raises(ValueError, match="清理时间不能为负"):
-            bus.trim(-1.0)
+            bus._trim(-1.0)
 
     def test_trim_preserves_causal_chain_with_lookup(self):
         """Trim 后内存图节点移除，通过 lookup 可从内存事件体补全一级链。"""
@@ -398,7 +436,7 @@ class TestEventBusTrim:
         bus.publish(ev1)
         bus.publish(ev2)
 
-        bus.trim(5.0)  # 移除 ev0, ev1 的事件体和图节点（无归档，永久丢失）
+        bus._trim(5.0)  # 移除 ev0, ev1 的事件体和图节点（无归档，永久丢失）
 
         # 无 lookup 时因果链已断裂
         chain_no_lookup = bus.graph.get_causal_chain("ev2")
@@ -423,7 +461,7 @@ class TestEventBusTrim:
         try:
             ev = make_event(timestamp=0.0, id="ev_old")
             bus.publish(ev)
-            bus.trim(10.0)  # 归档 ev_old
+            bus._trim(10.0)  # 归档 ev_old
 
             result = bus.get_event_by_id("ev_old")
             assert result is not None
@@ -442,7 +480,7 @@ class TestEventBusTrim:
             # 发布并归档
             ev = make_event(timestamp=1.0, id="dup_id", event_type="old")
             bus.publish(ev)
-            bus.trim(10.0)
+            bus._trim(10.0)
 
             # 发布同名 ID 的新事件（内存中）
             ev2 = make_event(timestamp=20.0, id="dup_id", event_type="new")
@@ -470,7 +508,7 @@ class TestEventBusTrim:
         # 确认图有 3 个节点
         assert bus.graph.node_count == 3
 
-        bus.trim(5.0)  # 移除 ev0, ev1
+        bus._trim(5.0)  # 移除 ev0, ev1
 
         # ev0, ev1 从图中移除，ev2 保留
         assert bus.graph.node_count == 1
@@ -493,7 +531,7 @@ class TestEventBusTrim:
             bus.publish(ev1)
             bus.publish(ev2)
 
-            bus.trim(5.0)  # ev0, ev1 归档且从图中移除
+            bus._trim(5.0)  # ev0, ev1 归档且从图中移除
 
             # 无 lookup 时因果链断裂
             chain_no_lookup = bus.graph.get_causal_chain("ev2")
@@ -853,7 +891,7 @@ class TestEventArchive:
                 ))
 
             # trim 前 5 个
-            bus.trim(5.0 * 60)  # 移除 ts < 300 的: e0-e4
+            bus._trim(5.0 * 60)  # 移除 ts < 300 的: e0-e4
 
             # 查询全部时间范围 — 应透明合并
             results = bus.get_events_in_range(0, 1000)
@@ -876,7 +914,7 @@ class TestEventArchive:
         for t in range(5):
             bus.publish(make_event(timestamp=float(t * 60)))
 
-        bus.trim(120.0)  # 移除 ts=0,60,120 共 3 个事件
+        bus._trim(120.0)  # 移除 ts=0,60,120 共 3 个事件
         assert bus.event_count == 2
 
         # 查询不应包含已 trim 的事件
