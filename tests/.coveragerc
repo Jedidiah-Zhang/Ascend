@@ -1,0 +1,9 @@
+[run]
+data_file = tests/.coverage
+
+[report]
+# 不追踪的防御性代码行
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError

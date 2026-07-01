@@ -496,7 +496,7 @@ class CommandExecutor:
             except ValueError:
                 return f"  无效种子: {args[arg_idx]}"
 
-        from ascend.space import render_map, render_region_detail
+        from .render import render_map, render_region_detail
 
         output = f"  种子: {seed}  |  半径: {radius}  |  步长: {step}\n"
         if mode == "detail":

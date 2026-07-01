@@ -16,6 +16,10 @@ __pycache__/
 .venv/
 logs/
 
+# 覆盖率数据（生成在 tests/ 下）
+tests/.coverage
+tests/.coverage.*
+
 # 编译产物（从 .c 自动生成）
 *.so
 

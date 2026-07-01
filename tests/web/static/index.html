@@ -11,6 +11,7 @@
     --text: #e0e0e0;
     --text-dim: #999;
     --accent: #4fc3f7;
+    --accent2: #e94560;
     --border: #2a2a4a;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -38,6 +39,8 @@
   }
   #toolbar button:hover { background:#2a2a4a; }
   #toolbar button.active { background:var(--accent); color:#000; border-color:var(--accent); }
+  #toolbar button.terrain-active { background:var(--accent2); color:#fff; border-color:var(--accent2); }
+  #toolbar .sep { width:1px; height:20px; background:var(--border); }
   #info {
     margin-left:auto; font-size:12px; color:var(--text-dim); font-family:monospace;
   }
@@ -59,7 +62,7 @@
   /* ── 画布容器 ── */
   #canvas-wrap {
     flex:1; overflow:hidden; cursor:grab; position:relative;
-    background:#0a0a1a; /* 超出缓存区域时显示的背景色 */
+    background:#0a0a1a;
   }
   #canvas-wrap:active { cursor:grabbing; }
   #canvas-wrap.panning { cursor:grabbing; }
@@ -95,13 +98,16 @@
   <input type="number" id="seed-input" value="0">
   <button id="btn-apply">应用</button>
 
-  <span style="width:12px"></span>
+  <span class="sep"></span>
 
   <button data-mode="altitude">海拔</button>
   <button data-mode="temperature">温度</button>
   <button data-mode="rainfall">降雨</button>
   <button data-mode="climate">气候</button>
   <button data-mode="biome" class="active">群系</button>
+
+  <span class="sep"></span>
+  <button data-mode="terrain" id="btn-terrain" title="详细地形（Tile 级别 + Chunk 边界）">🗺️ 地形</button>
 
   <span id="info">--</span>
 </div>
@@ -129,20 +135,26 @@
 // 无界地图 — 多瓦片缓存架构
 // ══════════════════════════════════════════════════════════════════
 //
-// 世界被划分为固定大小的瓦片（TILE_SIZE × TILE_SIZE 区块）。
-// 访问过的瓦片保留在 tileCache 中，离开再回来直接命中，无需重载。
+// 两种视图模式：
+//   普通模式：chunk 粒度（biome/climate/altitude/temperature/rainfall）
+//     瓦片 = 100×100 chunks，每瓦片 100×100 像素
+//   地形模式：tile 粒度（terrain）
+//     瓦片 = 1 chunk × 200×200 tiles，每瓦片 200×200 像素
 //
-// 瓦片坐标对齐全局网格：瓦片 (tx,ty) 覆盖区块 [tx*TS, ty*TS] ~ [(tx+1)*TS-1, (ty+1)*TS-1]
-// 渲染时遍历所有缓存的瓦片，绘制与视口重叠的部分。
-// 视口移动后检查是否有新瓦片需要加载（视口 + 缓冲区域），仅请求缺失的。
+// 地形模式下显示 chunk 边界线。
+
+const APP_VERSION = 'v24';
 
 // ── 常量 ──────────────────────────────────────────────────────
-const TILE_SIZE = 100;       // 每瓦片 100×100 区块
-const MAX_TILES = 800;       // 瓦片上限（极远缩放 640 片 × 200KB ≈ 128MB）
+const TILE_SIZE = 100;       // 普通模式：每瓦片 100×100 区块
+const MAX_TILES = 800;       // 普通模式瓦片上限
 const BUFFER_CHUNKS = 30;    // 视口外预加载缓冲（区块数）
-const APP_VERSION = 'v22';    // 版本标记（浏览器 console 可见）
 
-// ── 固定值域（连续模式用，保证颜色一致） ──────────────────────
+const TERRAIN_TILE_SIZE = 200;  // 地形模式：每 chunk 200×200 tiles
+const MAX_TERRAIN_TILES = 120;  // 地形模式瓦片上限
+const TERRAIN_BUFFER = 1;       // 地形模式预加载缓冲（chunk 数）
+
+// ── 固定值域 ──────────────────────────────────────────────────
 const FIXED_RANGES = {
   altitude:    { min: -500, max: 5000 },
   temperature: { min: -30,  max: 50   },
@@ -150,6 +162,19 @@ const FIXED_RANGES = {
   sunshine:    { min: 0,    max: 24   },
   humidity:    { min: 0,    max: 100  },
   wind_speed:  { min: 0,    max: 50   },
+};
+
+// ── 地形颜色 ──────────────────────────────────────────────────
+const TERRAIN_COLORS = {
+  0:  { hex: '#7ec850', label: '草地',       rgb: [126,200,80]  },
+  1:  { hex: '#e8d5a3', label: '沙地',       rgb: [232,213,163] },
+  2:  { hex: '#5c3d2e', label: '沃土',       rgb: [92,61,46]    },
+  3:  { hex: '#8b8b8b', label: '岩石地',     rgb: [139,139,139] },
+  4:  { hex: '#6b6b6b', label: '陡坡',       rgb: [107,107,107] },
+  5:  { hex: '#e0e0e0', label: '山巅',       rgb: [224,224,224] },
+  6:  { hex: '#5b9ecf', label: '浅水',       rgb: [91,158,207]  },
+  7:  { hex: '#1a3a5c', label: '深水',       rgb: [26,58,92]    },
+  8:  { hex: '#4a6b3a', label: '沼泽',       rgb: [74,107,58]   },
 };
 
 // ── DOM ────────────────────────────────────────────────────────
@@ -165,38 +190,41 @@ const S = {
   seed: 0,
   mode: 'biome',
   cellSize: 12,
-  viewCX: -1050,
+  viewCX: -1050,       // 普通模式：视口左上角 chunk 坐标
   viewCY: -1050,
-  legend: null,       // 全局图例（离散模式；来自最后一次加载的瓦片）
-  generation: 0,      // 仅在 seed/mode 切换时递增，用于废弃旧请求
+  legend: null,
+  generation: 0,
 };
 
-// ── 瓦片缓存 ──────────────────────────────────────────────────
-// Map<"tx,ty", {grid, accessTime}>
-const tileCache = new Map();
-const pendingTiles = new Set(); // 正在加载中的瓦片键（防止重复请求）
+// ── 瓦片缓存（普通模式） ─────────────────────────────────────
+const tileCache = new Map();      // Map<"tx,ty", {layers, offscreen, accessTime}>
+const pendingTiles = new Set();
 let _accessCounter = 0;
-let _inFlight = 0;              // 当前进行中的请求数
-const MAX_IN_FLIGHT = 4;        // 全局并发上限（不超浏览器连接池）
-let _renderScheduled = false;   // render 防抖（每帧最多一次）
+let _inFlight = 0;
+const MAX_IN_FLIGHT = 4;
+let _renderScheduled = false;
+
+// ── 瓦片缓存（地形模式） ─────────────────────────────────────
+const terrainCache = new Map();   // Map<"cx,cy", {offscreen, accessTime}>
+const pendingTerrain = new Set();
+let _terrainAccessCounter = 0;
+let _terrainInFlight = 0;
+const MAX_TERRAIN_IN_FLIGHT = 6;
 
 function tileKey(cx, cy) {
   const tx = Math.floor(cx / TILE_SIZE);
   const ty = Math.floor(cy / TILE_SIZE);
   return `${tx},${ty}`;
 }
-
 function tileOrigin(key) {
   const [tx, ty] = key.split(',').map(Number);
   return { cx: tx * TILE_SIZE, cy: ty * TILE_SIZE };
 }
 
-// ════════════════════════════════════════════════════════════════
-// 颜色映射
-// ════════════════════════════════════════════════════════════════
+function isTerrainMode() { return S.mode === 'terrain'; }
 
 // ════════════════════════════════════════════════════════════════
-// 客户端颜色映射（从 float32 原始值 → RGBA）
+// 颜色映射
 // ════════════════════════════════════════════════════════════════
 
 const BIOME_CMAP = {
@@ -209,21 +237,31 @@ function colorForValue(v, mode) {
   if (mode === 'biome') return BIOME_CMAP[Math.round(v)] || [34,34,34];
   if (mode === 'climate') return CLIMATE_CMAP[Math.round(v)] || [34,34,34];
 
-  // 连续值渐变
   const range = FIXED_RANGES[mode] || {min:-500,max:5000};
   const t = Math.max(0, Math.min(1, (v - range.min) / (range.max - range.min + 0.001)));
 
   if (mode === 'altitude') {
+    // 海拔渐变：海平面(alt=0, t≈0.091)处有明显色断 — 海洋蓝→海岸沙色→陆地绿
     const stops = [
-      [0.00,[10,20,80]],[0.20,[30,80,160]],[0.38,[60,140,200]],[0.45,[180,200,120]],
-      [0.50,[100,160,60]],[0.65,[60,120,30]],[0.80,[140,120,80]],[1.00,[240,240,240]],
+      [0.000,[8,15,65]],     // -500m  深海
+      [0.045,[20,60,130]],   // -252m  大洋
+      [0.082,[45,110,185]],  // -50m   浅海
+      [0.090,[75,150,200]],  // -5m    近岸浅水
+      [0.092,[185,200,115]], // +10m   海岸沙地  ← 海平面色断
+      [0.100,[155,185,90]],  // +50m   沿海草地
+      [0.150,[110,160,60]],  // +325m  低地绿
+      [0.300,[65,125,40]],   // +1150m 森林绿
+      [0.500,[90,105,50]],   // +2250m 高地橄榄
+      [0.650,[135,118,72]],  // +3075m 山腰棕
+      [0.800,[172,162,147]], // +3900m 岩石灰
+      [0.920,[212,207,202]], // +4560m 高山
+      [1.000,[252,250,248]], // +5000m 雪峰白
     ];
     let lo=stops[0], hi=stops[stops.length-1];
     for (let i=1;i<stops.length;i++){if(t<=stops[i][0]){lo=stops[i-1];hi=stops[i];break;}}
     const dt=(t-lo[0])/(hi[0]-lo[0]+0.0001);
     return [lo[1][0]+(hi[1][0]-lo[1][0])*dt, lo[1][1]+(hi[1][1]-lo[1][1])*dt, lo[1][2]+(hi[1][2]-lo[1][2])*dt].map(Math.round);
   }
-  // 蓝(冷/低) → 青 → 绿 → 黄 → 红(热/高)
   if (t < 0.25) { const s=t/0.25; return [Math.round(30+s*30), Math.round(60+s*140), Math.round(180)]; }
   if (t < 0.5)  { const s=(t-0.25)/0.25; return [Math.round(60-s*20), Math.round(200-s*40), Math.round(180-s*120)]; }
   if (t < 0.75) { const s=(t-0.5)/0.25; return [Math.round(40+s*160), Math.round(160+s*60), Math.round(60-s*30)]; }
@@ -231,7 +269,7 @@ function colorForValue(v, mode) {
 }
 
 // ════════════════════════════════════════════════════════════════
-// 多瓦片渲染
+// 渲染调度
 // ════════════════════════════════════════════════════════════════
 
 function scheduleRender() {
@@ -242,46 +280,40 @@ function scheduleRender() {
     _renderImpl();
   });
 }
-
 function render() { scheduleRender(); }
 
-function _renderImpl() {
+// ════════════════════════════════════════════════════════════════
+// 普通模式渲染
+// ════════════════════════════════════════════════════════════════
+
+function _renderNormal() {
   const W = wrap.clientWidth;
   const H = wrap.clientHeight;
   canvas.width = W;
   canvas.height = H;
-  canvas.style.left = '0';
-  canvas.style.top = '0';
   ctx.clearRect(0, 0, W, H);
 
   const { cellSize, viewCX, viewCY } = S;
-  const ts = TILE_SIZE * cellSize; // 瓦片在屏幕上的像素尺寸
-  ctx.imageSmoothingEnabled = false; // 最近邻缩放，不模糊
+  const ts = TILE_SIZE * cellSize;
+  ctx.imageSmoothingEnabled = false;
   let drewAny = false;
 
   for (const [key, tile] of tileCache) {
     if (!tile.offscreen) continue;
     const { cx: tc, cy: tr } = tileOrigin(key);
-
-    // 瓦片在屏幕上的像素偏移
     const sx = (tc - viewCX) * cellSize;
     const sy = (tr - viewCY) * cellSize;
-
-    // 视口裁剪
     if (sx + ts < 0 || sy + ts < 0 || sx > W || sy > H) continue;
-
     ctx.drawImage(tile.offscreen, sx, sy, ts, ts);
     drewAny = true;
   }
 
-  // 网格线
+  // chunk 网格线
   if (cellSize >= 16 && drewAny) {
     ctx.strokeStyle = 'rgba(255,255,255,0.05)';
     ctx.lineWidth = 0.5;
-    const c0 = Math.floor(viewCX);
-    const r0 = Math.floor(viewCY);
-    const c1 = Math.ceil(viewCX + W / cellSize);
-    const r1 = Math.ceil(viewCY + H / cellSize);
+    const c0 = Math.floor(viewCX), r0 = Math.floor(viewCY);
+    const c1 = Math.ceil(viewCX + W / cellSize), r1 = Math.ceil(viewCY + H / cellSize);
     for (let r = r0; r <= r1; r++) {
       const y = (r - viewCY) * cellSize;
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
@@ -305,70 +337,138 @@ function _renderImpl() {
       if (sx > 20 && sx < W - 20) {
         for (let wy = sr0; wy <= viewCY + H/cellSize; wy += step) {
           const sy = (wy - viewCY) * cellSize;
-          if (sy > 15 && sy < H - 5) {
-            ctx.fillText(`(${wx},${wy})`, sx, sy);
-          }
+          if (sy > 15 && sy < H - 5) ctx.fillText(`(${wx},${wy})`, sx, sy);
         }
       }
     }
   }
+}
 
+// ════════════════════════════════════════════════════════════════
+// 地形模式渲染（tile 级别 + chunk 边界）
+// ════════════════════════════════════════════════════════════════
+
+function _renderTerrain() {
+  const W = wrap.clientWidth;
+  const H = wrap.clientHeight;
+  canvas.width = W;
+  canvas.height = H;
+  ctx.clearRect(0, 0, W, H);
+
+  const { cellSize, viewCX, viewCY } = S;
+  // 地形模式: viewCX/Y = 全局 tile 坐标
+  const T = TERRAIN_TILE_SIZE; // 200
+
+  ctx.imageSmoothingEnabled = cellSize < 4;
+
+  // 计算可见的 chunk 范围
+  const visibleTileW = Math.ceil(W / cellSize);
+  const visibleTileH = Math.ceil(H / cellSize);
+  const ccx0 = Math.floor(viewCX / T);
+  const ccy0 = Math.floor(viewCY / T);
+  const ccx1 = Math.floor((viewCX + visibleTileW - 1) / T);
+  const ccy1 = Math.floor((viewCY + visibleTileH - 1) / T);
+
+  for (let ccy = ccy0; ccy <= ccy1; ccy++) {
+    for (let ccx = ccx0; ccx <= ccx1; ccx++) {
+      const key = `${ccx},${ccy}`;
+      const tile = terrainCache.get(key);
+      if (!tile || !tile.offscreen) continue;
+
+      // chunk 在屏幕上的位置
+      const sx = (ccx * T - viewCX) * cellSize;
+      const sy = (ccy * T - viewCY) * cellSize;
+      const chunkScreenSize = T * cellSize;
+
+      ctx.drawImage(tile.offscreen, sx, sy, chunkScreenSize, chunkScreenSize);
+    }
+  }
+
+  // ── Chunk 边界线 ──
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  // 线宽随缩放调整：放大时更粗
+  ctx.lineWidth = Math.max(1.5, cellSize * 0.06);
+
+  for (let ccy = ccy0; ccy <= ccy1 + 1; ccy++) {
+    const y = (ccy * T - viewCY) * cellSize;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  for (let ccx = ccx0; ccx <= ccx1 + 1; ccx++) {
+    const x = (ccx * T - viewCX) * cellSize;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+
+  // ── Chunk 坐标标签 ──
+  if (cellSize >= 0.5) {
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    const fontSize = Math.max(10, Math.min(24, cellSize * 0.18));
+    ctx.font = `bold ${fontSize}px system-ui`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (let ccy = ccy0; ccy <= ccy1; ccy++) {
+      for (let ccx = ccx0; ccx <= ccx1; ccx++) {
+        const cx = (ccx * T + T/2 - viewCX) * cellSize;
+        const cy = (ccy * T + T/2 - viewCY) * cellSize;
+        if (cx > -T*cellSize && cx < W + T*cellSize && cy > -T*cellSize && cy < H + T*cellSize) {
+          // 半透明背景
+          const labelW = ctx.measureText(`(${ccx},${ccy})`).width;
+          ctx.fillStyle = 'rgba(0,0,0,0.45)';
+          ctx.fillRect(cx - labelW/2 - 6, cy - fontSize/2 - 4, labelW + 12, fontSize + 8);
+          ctx.fillStyle = 'rgba(255,255,255,0.7)';
+          ctx.fillText(`(${ccx},${ccy})`, cx, cy);
+          ctx.fillStyle = 'rgba(255,255,255,0.55)'; // reset for next bg
+        }
+      }
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// 统一渲染入口
+// ════════════════════════════════════════════════════════════════
+
+function _renderImpl() {
+  if (isTerrainMode()) _renderTerrain();
+  else _renderNormal();
   updateStatusBar();
 }
 
 // ════════════════════════════════════════════════════════════════
-// 瓦片加载
+// 普通模式瓦片加载
 // ════════════════════════════════════════════════════════════════
 
-/** 找出视口 + 缓冲覆盖的所有瓦片键 */
 function neededTileKeys() {
   const { viewCX, viewCY, cellSize } = S;
-  const W = wrap.clientWidth;
-  const H = wrap.clientHeight;
-  const vw = Math.ceil(W / cellSize);
-  const vh = Math.ceil(H / cellSize);
-
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  const vw = Math.ceil(W / cellSize), vh = Math.ceil(H / cellSize);
   const areaCX = Math.floor(viewCX) - BUFFER_CHUNKS;
   const areaCY = Math.floor(viewCY) - BUFFER_CHUNKS;
-  const areaW = vw + BUFFER_CHUNKS * 2;
-  const areaH = vh + BUFFER_CHUNKS * 2;
-
-  const tx0 = Math.floor(areaCX / TILE_SIZE);
-  const ty0 = Math.floor(areaCY / TILE_SIZE);
+  const areaW = vw + BUFFER_CHUNKS * 2, areaH = vh + BUFFER_CHUNKS * 2;
+  const tx0 = Math.floor(areaCX / TILE_SIZE), ty0 = Math.floor(areaCY / TILE_SIZE);
   const tx1 = Math.floor((areaCX + areaW - 1) / TILE_SIZE);
   const ty1 = Math.floor((areaCY + areaH - 1) / TILE_SIZE);
-
   const keys = new Set();
-  for (let ty = ty0; ty <= ty1; ty++) {
-    for (let tx = tx0; tx <= tx1; tx++) {
+  for (let ty = ty0; ty <= ty1; ty++)
+    for (let tx = tx0; tx <= tx1; tx++)
       keys.add(`${tx},${ty}`);
-    }
-  }
   return keys;
 }
 
-/** 加载单个瓦片 */
 async function fetchTile(key) {
-  if (pendingTiles.has(key)) return null; // 已在加载中
+  if (pendingTiles.has(key)) return null;
   pendingTiles.add(key);
   _inFlight++;
-
   const { cx, cy } = tileOrigin(key);
-  const { seed, mode, generation } = S;
-
+  const { seed, generation } = S;
   try {
-    // 二进制瓦片接口：服务端返回全部 5 层 float32，客户端选层涂色
     const url = `/api/tile?seed=${seed}&cx=${cx}&cy=${cy}&w=${TILE_SIZE}&h=${TILE_SIZE}&mode=${S.mode}`;
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
     if (generation !== S.generation) return null;
-
     const buf = await resp.arrayBuffer();
     const all = new Float32Array(buf);
     const layerN = TILE_SIZE * TILE_SIZE;
-
-    // 5 层：alt(0), temp(1), rain(2), climate(3), biome(4)
     const layers = {
       altitude:    all.subarray(0, layerN),
       temperature: all.subarray(layerN, layerN * 2),
@@ -376,32 +476,19 @@ async function fetchTile(key) {
       climate:     all.subarray(layerN * 3, layerN * 4),
       biome:       all.subarray(layerN * 4, layerN * 5),
     };
-
-    // 当前模式涂色
     const grid = layers[S.mode];
     const imgData = new ImageData(TILE_SIZE, TILE_SIZE);
     for (let i = 0; i < layerN; i++) {
       const rgba = colorForValue(grid[i], S.mode);
       const p = i * 4;
-      imgData.data[p] = rgba[0];
-      imgData.data[p+1] = rgba[1];
-      imgData.data[p+2] = rgba[2];
-      imgData.data[p+3] = 255;
+      imgData.data[p]=rgba[0]; imgData.data[p+1]=rgba[1];
+      imgData.data[p+2]=rgba[2]; imgData.data[p+3]=255;
     }
-
     const off = document.createElement('canvas');
-    off.width = TILE_SIZE;
-    off.height = TILE_SIZE;
+    off.width = TILE_SIZE; off.height = TILE_SIZE;
     off.getContext('2d').putImageData(imgData, 0, 0);
-
-    tileCache.set(key, {
-      layers,         // 全部 5 层 Float32Array
-      offscreen: off,
-      accessTime: ++_accessCounter,
-    });
-
+    tileCache.set(key, { layers, offscreen: off, accessTime: ++_accessCounter });
     if (!S.legend) fetchLegend();
-
     return { key };
   } catch (e) {
     console.error(`瓦片 ${key} 加载失败:`, e);
@@ -412,17 +499,26 @@ async function fetchTile(key) {
   }
 }
 
-/** 视口变化时触发加载 */
+function evictLRU() {
+  if (tileCache.size <= MAX_TILES) return;
+  const needed = neededTileKeys();
+  const entries = [...tileCache.entries()]
+    .filter(([k]) => !needed.has(k))
+    .sort((a, b) => a[1].accessTime - b[1].accessTime);
+  for (const [key] of entries) {
+    if (tileCache.size <= MAX_TILES) break;
+    tileCache.delete(key);
+  }
+}
+
 function fetchMissingTiles() {
   render();
   fillSlots();
 }
 
-/** 填满并发槽位：每个完成自动链式补位，无锁无延迟 */
 function fillSlots() {
   const needed = neededTileKeys();
   const missing = [...needed].filter(k => !tileCache.has(k) && !pendingTiles.has(k));
-
   if (missing.length === 0 && _inFlight === 0) {
     evictLRU();
     render();
@@ -431,52 +527,171 @@ function fillSlots() {
       `就绪 — ${tileCache.size} 瓦片`;
     return;
   }
-
   const slots = MAX_IN_FLIGHT - _inFlight;
   if (slots <= 0) return;
-
   const batch = missing.slice(0, slots);
   if (batch.length === 0) return;
-
   loadingEl.style.display = 'block';
   document.getElementById('status-load').textContent =
     `加载中... 已缓存${tileCache.size}  缺${missing.length}  并发${_inFlight}+${batch.length}`;
-
   batch.forEach(k => {
     fetchTile(k).then(result => {
       if (result) { render(); evictLRU(); }
-      fillSlots(); // 完成立刻补位，不等
+      fillSlots();
     });
   });
 }
 
-/** LRU 淘汰：超出上限时移除最旧的瓦片 */
-function evictLRU() {
-  if (tileCache.size <= MAX_TILES) return;
+// ════════════════════════════════════════════════════════════════
+// 地形模式瓦片加载
+// ════════════════════════════════════════════════════════════════
 
-  // 标记当前需要的瓦片，避免淘汰
-  const needed = neededTileKeys();
+function neededTerrainKeys() {
+  const { viewCX, viewCY, cellSize } = S;
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  const vw = Math.ceil(W / cellSize), vh = Math.ceil(H / cellSize);
+  const T = TERRAIN_TILE_SIZE;
+  const buf = TERRAIN_BUFFER;
+  const ccx0 = Math.floor(viewCX / T) - buf;
+  const ccy0 = Math.floor(viewCY / T) - buf;
+  const ccx1 = Math.floor((viewCX + vw - 1) / T) + buf;
+  const ccy1 = Math.floor((viewCY + vh - 1) / T) + buf;
+  const keys = new Set();
+  for (let cy = ccy0; cy <= ccy1; cy++)
+    for (let cx = ccx0; cx <= ccx1; cx++)
+      keys.add(`${cx},${cy}`);
+  return keys;
+}
 
-  const entries = [...tileCache.entries()]
-    .filter(([k]) => !needed.has(k))
-    .sort((a, b) => a[1].accessTime - b[1].accessTime);
-
-  for (const [key] of entries) {
-    if (tileCache.size <= MAX_TILES) break;
-    tileCache.delete(key);
+async function fetchTerrainTile(key) {
+  if (pendingTerrain.has(key)) return null;
+  pendingTerrain.add(key);
+  _terrainInFlight++;
+  const [cx, cy] = key.split(',').map(Number);
+  const { seed, generation } = S;
+  try {
+    const url = `/api/terrain-tile?seed=${seed}&cx=${cx}&cy=${cy}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (generation !== S.generation) return null;
+    const buf = await resp.arrayBuffer();
+    const imgData = new ImageData(TERRAIN_TILE_SIZE, TERRAIN_TILE_SIZE);
+    const src = new Uint8ClampedArray(buf);
+    imgData.data.set(src);
+    const off = document.createElement('canvas');
+    off.width = TERRAIN_TILE_SIZE; off.height = TERRAIN_TILE_SIZE;
+    off.getContext('2d').putImageData(imgData, 0, 0);
+    terrainCache.set(key, { offscreen: off, accessTime: ++_terrainAccessCounter });
+    return { key };
+  } catch (e) {
+    console.error(`地形瓦片 ${key} 加载失败:`, e);
+    return null;
+  } finally {
+    pendingTerrain.delete(key);
+    _terrainInFlight--;
   }
 }
 
-/** 清除所有缓存（seed 变更时） */
+function evictTerrainLRU() {
+  if (terrainCache.size <= MAX_TERRAIN_TILES) return;
+  const needed = neededTerrainKeys();
+  const entries = [...terrainCache.entries()]
+    .filter(([k]) => !needed.has(k))
+    .sort((a, b) => a[1].accessTime - b[1].accessTime);
+  for (const [key] of entries) {
+    if (terrainCache.size <= MAX_TERRAIN_TILES) break;
+    terrainCache.delete(key);
+  }
+}
+
+function fetchMissingTerrainTiles() {
+  render();
+  fillTerrainSlots();
+}
+
+function fillTerrainSlots() {
+  const needed = neededTerrainKeys();
+  const missing = [...needed].filter(k => !terrainCache.has(k) && !pendingTerrain.has(k));
+  if (missing.length === 0 && _terrainInFlight === 0) {
+    evictTerrainLRU();
+    render();
+    loadingEl.style.display = 'none';
+    document.getElementById('status-load').textContent =
+      `就绪 — ${terrainCache.size} 地形瓦片`;
+    return;
+  }
+  const slots = MAX_TERRAIN_IN_FLIGHT - _terrainInFlight;
+  if (slots <= 0) return;
+  const batch = missing.slice(0, slots);
+  if (batch.length === 0) return;
+  loadingEl.style.display = 'block';
+  document.getElementById('status-load').textContent =
+    `加载地形... 已缓存${terrainCache.size}  缺${missing.length}  并发${_terrainInFlight}+${batch.length}`;
+  batch.forEach(k => {
+    fetchTerrainTile(k).then(result => {
+      if (result) { render(); evictTerrainLRU(); }
+      fillTerrainSlots();
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════════
+// 缓存清理 & 模式切换
+// ════════════════════════════════════════════════════════════════
+
 function clearCache() {
   tileCache.clear();
   pendingTiles.clear();
+  terrainCache.clear();
+  pendingTerrain.clear();
   S.legend = null;
   S.generation++;
   updateLegend();
 }
 
-/** 模式切换：从已缓存的 5 层数据重涂色，零网络请求 */
+/** 模式切换：普通模式从缓存重涂色；地形模式清缓存切换视图 */
+function switchMode(newMode) {
+  const wasTerrain = isTerrainMode();
+  S.mode = newMode;
+  const isTerrain = isTerrainMode();
+
+  // 更新按钮样式
+  document.querySelectorAll('#toolbar button[data-mode]').forEach(b => {
+    b.classList.remove('active', 'terrain-active');
+    if (b.dataset.mode === newMode) {
+      b.classList.add(isTerrain ? 'terrain-active' : 'active');
+    }
+  });
+
+  if (wasTerrain && !isTerrain) {
+    // 地形 → 普通：作废旧的 terrain 请求，恢复普通视图
+    S.generation++;
+    pendingTiles.clear();
+    terrainCache.clear();
+    pendingTerrain.clear();
+    updateLegend();
+    fetchMissingTiles();
+  } else if (!wasTerrain && isTerrain) {
+    // 普通 → 地形：作废旧的普通 tile 请求，切换到 tile 级视图
+    S.generation++;
+    pendingTerrain.clear();
+    tileCache.clear();
+    pendingTiles.clear();
+    // 把当前视口中心从 chunk 坐标转为 tile 坐标
+    const W = wrap.clientWidth, H = wrap.clientHeight;
+    const centerCX = S.viewCX + (W / S.cellSize) / 2;
+    const centerCY = S.viewCY + (H / S.cellSize) / 2;
+    S.viewCX = centerCX * TERRAIN_TILE_SIZE - (W / 2) / 1.0;  // 默认 1px/tile
+    S.viewCY = centerCY * TERRAIN_TILE_SIZE - (H / 2) / 1.0;
+    S.cellSize = 1.0;  // 1 screen px = 1 tile
+    updateLegend();
+    fetchMissingTerrainTiles();
+  } else if (!isTerrain) {
+    // 普通模式之间切换：重涂色
+    repaintAllTiles();
+  }
+}
+
 function repaintAllTiles() {
   const n = TILE_SIZE * TILE_SIZE;
   for (const [, tile] of tileCache) {
@@ -487,14 +702,11 @@ function repaintAllTiles() {
     for (let i = 0; i < n; i++) {
       const rgba = colorForValue(grid[i], S.mode);
       const p = i * 4;
-      imgData.data[p] = rgba[0];
-      imgData.data[p+1] = rgba[1];
-      imgData.data[p+2] = rgba[2];
-      imgData.data[p+3] = 255;
+      imgData.data[p]=rgba[0]; imgData.data[p+1]=rgba[1];
+      imgData.data[p+2]=rgba[2]; imgData.data[p+3]=255;
     }
     const off = document.createElement('canvas');
-    off.width = TILE_SIZE;
-    off.height = TILE_SIZE;
+    off.width = TILE_SIZE; off.height = TILE_SIZE;
     off.getContext('2d').putImageData(imgData, 0, 0);
     tile.offscreen = off;
   }
@@ -502,14 +714,16 @@ function repaintAllTiles() {
   render();
 }
 
-/** hover 查询区块（返回包含全部 5 层和坐标的对象） */
+// ════════════════════════════════════════════════════════════════
+// 查询
+// ════════════════════════════════════════════════════════════════
+
 function lookupChunk(wcx, wcy) {
   const key = tileKey(wcx, wcy);
   const tile = tileCache.get(key);
   if (!tile || !tile.layers) return null;
   const { cx, cy } = tileOrigin(key);
-  const col = wcx - cx;
-  const row = wcy - cy;
+  const col = wcx - cx, row = wcy - cy;
   if (row<0||row>=TILE_SIZE||col<0||col>=TILE_SIZE) return null;
   const i = row * TILE_SIZE + col;
   return {
@@ -527,11 +741,22 @@ function lookupChunk(wcx, wcy) {
 
 function updateLegend() {
   legendBody.innerHTML = '';
-  const { mode, legend } = S;
+  const { mode } = S;
+
+  if (mode === 'terrain') {
+    // 地形图例 — 9 种颜色
+    for (const [id, c] of Object.entries(TERRAIN_COLORS)) {
+      const div = document.createElement('div');
+      div.className = 'legend-item';
+      div.innerHTML = `<span class="legend-swatch" style="background:${c.hex}"></span> ${c.label}`;
+      legendBody.appendChild(div);
+    }
+    return;
+  }
 
   if (mode === 'biome' || mode === 'climate') {
-    if (legend) {
-      for (const [id, entry] of Object.entries(legend)) {
+    if (S.legend) {
+      for (const [id, entry] of Object.entries(S.legend)) {
         const div = document.createElement('div');
         div.className = 'legend-item';
         div.innerHTML = `<span class="legend-swatch" style="background:${entry.color}"></span> ${entry.label}`;
@@ -542,7 +767,7 @@ function updateLegend() {
     const grad = document.createElement('div');
     grad.id = 'legend-gradient';
     grad.style.background = mode === 'altitude'
-      ? 'linear-gradient(to bottom, #0a1450,#1e50a0,#3c8cc8,#b4c878,#64a03c,#3c781e,#8c7850,#f0f0f0)'
+      ? 'linear-gradient(to bottom, #fcfaf8,#aca293,#6ea03c,#b9c873,#4b96c8,#143c82,#080f41)'
       : 'linear-gradient(to bottom, #1e50a0,#3c8cc8,#64a03c,#c8b432,#c8401e)';
     legendBody.appendChild(grad);
 
@@ -566,18 +791,17 @@ function updateLegend() {
 // ════════════════════════════════════════════════════════════════
 
 function updateStatusBar() {
-  document.getElementById('status-mode').textContent =
-    `模式: ${{biome:'群系',climate:'气候',altitude:'海拔',temperature:'温度',rainfall:'降雨'}[S.mode]}`;
-  document.getElementById('info').textContent =
-    `视口 (${S.viewCX.toFixed(1)}, ${S.viewCY.toFixed(1)})  块:${S.cellSize}px  瓦片:${tileCache.size}  ${APP_VERSION}`;
-}
-
-// ════════════════════════════════════════════════════════════════
-// 查找区块值（遍历所有瓦片）
-// ════════════════════════════════════════════════════════════════
-
-function isChunkCached(wcx, wcy) {
-  return tileCache.has(tileKey(wcx, wcy));
+  const modeNames = {biome:'群系',climate:'气候',altitude:'海拔',temperature:'温度',rainfall:'降雨',terrain:'地形'};
+  document.getElementById('status-mode').textContent = `模式: ${modeNames[S.mode]}`;
+  if (isTerrainMode()) {
+    const T = TERRAIN_TILE_SIZE;
+    document.getElementById('info').textContent =
+      `tile视口 (${S.viewCX.toFixed(1)}, ${S.viewCY.toFixed(1)})  ` +
+      `块:${S.cellSize.toFixed(1)}px/tile  地形瓦片:${terrainCache.size}  ${APP_VERSION}`;
+  } else {
+    document.getElementById('info').textContent =
+      `视口 (${S.viewCX.toFixed(1)}, ${S.viewCY.toFixed(1)})  块:${S.cellSize}px  瓦片:${tileCache.size}  ${APP_VERSION}`;
+  }
 }
 
 async function fetchLegend() {
@@ -590,7 +814,7 @@ async function fetchLegend() {
 }
 
 // ════════════════════════════════════════════════════════════════
-// 交互
+// 交互（统一处理普通/地形模式）
 // ════════════════════════════════════════════════════════════════
 
 let dragging = false;
@@ -611,8 +835,8 @@ window.addEventListener('mouseup', () => {
   if (!dragging) return;
   dragging = false;
   wrap.classList.remove('panning');
-  // 拖拽结束后加载可能缺失的瓦片
-  fetchMissingTiles();
+  if (isTerrainMode()) fetchMissingTerrainTiles();
+  else fetchMissingTiles();
 });
 
 window.addEventListener('mousemove', e => {
@@ -622,66 +846,112 @@ window.addEventListener('mousemove', e => {
     S.viewCX = dragStartVX - dx;
     S.viewCY = dragStartVY - dy;
     updateStatusBar();
-    render(); // 缓存内瞬时重绘
+    render();
     return;
   }
 
-  // 悬停提示
   const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-  const wcx = Math.floor(S.viewCX + mx / S.cellSize);
-  const wcy = Math.floor(S.viewCY + my / S.cellSize);
-  const d = lookupChunk(wcx, wcy);
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
 
-  if (d) {
-    const clName = (S.legend && S.legend[d.climate]) ? S.legend[d.climate].label : d.climate;
-    const bioName = (S.legend && S.legend[d.biome]) ? S.legend[d.biome].label : d.biome;
-    const sx = (wcx - S.viewCX) * S.cellSize;
-    const sy = (wcy - S.viewCY) * S.cellSize;
-    tooltip.style.display = 'block';
-    tooltip.style.left = (sx + S.cellSize + 8) + 'px';
-    tooltip.style.top = (sy - 5) + 'px';
-    tooltip.innerHTML =
-      `<b>区块 (${wcx}, ${wcy})</b><br>` +
-      `海拔: ${d.altitude.toFixed(0)}m &emsp; 温度: ${d.temperature.toFixed(1)}°C<br>` +
-      `降雨: ${d.rainfall.toFixed(0)}mm &emsp; 气候: ${clName}<br>` +
-      `群系: ${bioName}`;
-    document.getElementById('status-hover').textContent =
-      `(${wcx},${wcy}) A${d.altitude.toFixed(0)}m T${d.temperature.toFixed(1)}°C R${d.rainfall.toFixed(0)}mm`;
+  if (isTerrainMode()) {
+    // 地形模式悬停
+    const T = TERRAIN_TILE_SIZE;
+    const gtx = Math.floor(S.viewCX + mx / S.cellSize);
+    const gty = Math.floor(S.viewCY + my / S.cellSize);
+    const ccx = Math.floor(gtx / T);
+    const ccy = Math.floor(gty / T);
+    const ltx = ((gtx % T) + T) % T;
+    const lty = ((gty % T) + T) % T;
+    const key = `${ccx},${ccy}`;
+    const tile = terrainCache.get(key);
+    if (tile && tile.offscreen) {
+      const sx = (ccx * T - S.viewCX) * S.cellSize;
+      const sy = (ccy * T - S.viewCY) * S.cellSize;
+      tooltip.style.display = 'block';
+      tooltip.style.left = (sx + (ltx + 1) * S.cellSize + 8) + 'px';
+      tooltip.style.top = (sy + lty * S.cellSize - 5) + 'px';
+      // 从 offscreen canvas 读颜色反查地形
+      const pxData = tile.offscreen.getContext('2d').getImageData(ltx, lty, 1, 1).data;
+      const tileId = Object.entries(TERRAIN_COLORS).find(([,c]) =>
+        c.rgb[0]===pxData[0] && c.rgb[1]===pxData[1] && c.rgb[2]===pxData[2]
+      );
+      const terrainName = tileId ? TERRAIN_COLORS[tileId[0]].label : '?';
+      tooltip.innerHTML =
+        `<b>${terrainName}</b><br>` +
+        `全局 tile (${gtx}, ${gty})<br>` +
+        `Chunk (${ccx}, ${ccy}) · 局部 (${ltx}, ${lty})`;
+      document.getElementById('status-hover').textContent =
+        `tile(${gtx},${gty}) chunk(${ccx},${ccy}) local(${ltx},${lty}) ${terrainName}`;
+    } else {
+      tooltip.style.display = 'none';
+      document.getElementById('status-hover').textContent = '悬停: --';
+    }
   } else {
-    tooltip.style.display = 'none';
-    document.getElementById('status-hover').textContent = '悬停: --';
+    // 普通模式悬停
+    const wcx = Math.floor(S.viewCX + mx / S.cellSize);
+    const wcy = Math.floor(S.viewCY + my / S.cellSize);
+    const d = lookupChunk(wcx, wcy);
+    if (d) {
+      const clName = (S.legend && S.legend[d.climate]) ? S.legend[d.climate].label : d.climate;
+      const bioName = (S.legend && S.legend[d.biome]) ? S.legend[d.biome].label : d.biome;
+      const sx = (wcx - S.viewCX) * S.cellSize;
+      const sy = (wcy - S.viewCY) * S.cellSize;
+      tooltip.style.display = 'block';
+      tooltip.style.left = (sx + S.cellSize + 8) + 'px';
+      tooltip.style.top = (sy - 5) + 'px';
+      tooltip.innerHTML =
+        `<b>区块 (${wcx}, ${wcy})</b><br>` +
+        `海拔: ${d.altitude.toFixed(0)}m &emsp; 温度: ${d.temperature.toFixed(1)}°C<br>` +
+        `降雨: ${d.rainfall.toFixed(0)}mm &emsp; 气候: ${clName}<br>` +
+        `群系: ${bioName}`;
+      document.getElementById('status-hover').textContent =
+        `(${wcx},${wcy}) A${d.altitude.toFixed(0)}m T${d.temperature.toFixed(1)}°C R${d.rainfall.toFixed(0)}mm`;
+    } else {
+      tooltip.style.display = 'none';
+      document.getElementById('status-hover').textContent = '悬停: --';
+    }
   }
 });
 
 wrap.addEventListener('wheel', e => {
   e.preventDefault();
-  const oldSize = S.cellSize;
-  // 缩放步长与当前比例成正比，小比例时更精细
-  const step = oldSize >= 16 ? 4 : oldSize >= 6 ? 2 : oldSize >= 2 ? 1 : 0.5;
-  const newSize = Math.max(0.5, Math.min(60, oldSize + (e.deltaY > 0 ? -step : step)));
-  if (newSize === oldSize) return;
-
-  const rect = canvas.getBoundingClientRect();
-  const mxChunk = S.viewCX + (e.clientX - rect.left) / oldSize;
-  const myChunk = S.viewCY + (e.clientY - rect.top) / oldSize;
-
-  S.cellSize = newSize;
-  S.viewCX = mxChunk - (e.clientX - rect.left) / newSize;
-  S.viewCY = myChunk - (e.clientY - rect.top) / newSize;
-
-  render();
-  fetchMissingTiles();
+  if (isTerrainMode()) {
+    // 地形模式缩放 — 更精细的步长
+    const oldSize = S.cellSize;
+    const step = oldSize >= 8 ? 2 : oldSize >= 3 ? 1 : oldSize >= 1 ? 0.5 : 0.25;
+    const newSize = Math.max(0.1, Math.min(30, oldSize + (e.deltaY > 0 ? -step : step)));
+    if (newSize === oldSize) return;
+    const rect = canvas.getBoundingClientRect();
+    const mxTile = S.viewCX + (e.clientX - rect.left) / oldSize;
+    const myTile = S.viewCY + (e.clientY - rect.top) / oldSize;
+    S.cellSize = newSize;
+    S.viewCX = mxTile - (e.clientX - rect.left) / newSize;
+    S.viewCY = myTile - (e.clientY - rect.top) / newSize;
+    render();
+    fetchMissingTerrainTiles();
+  } else {
+    const oldSize = S.cellSize;
+    const step = oldSize >= 16 ? 4 : oldSize >= 6 ? 2 : oldSize >= 2 ? 1 : 0.5;
+    const newSize = Math.max(0.5, Math.min(60, oldSize + (e.deltaY > 0 ? -step : step)));
+    if (newSize === oldSize) return;
+    const rect = canvas.getBoundingClientRect();
+    const mxChunk = S.viewCX + (e.clientX - rect.left) / oldSize;
+    const myChunk = S.viewCY + (e.clientY - rect.top) / oldSize;
+    S.cellSize = newSize;
+    S.viewCX = mxChunk - (e.clientX - rect.left) / newSize;
+    S.viewCY = myChunk - (e.clientY - rect.top) / newSize;
+    render();
+    fetchMissingTiles();
+  }
 });
 
 // 点击区块查看详情
 canvas.addEventListener('click', async e => {
   if (dragging) return;
+  if (isTerrainMode()) return; // 地形模式不请求 chunk 详情
   const rect = canvas.getBoundingClientRect();
   const wcx = Math.floor(S.viewCX + (e.clientX - rect.left) / S.cellSize);
   const wcy = Math.floor(S.viewCY + (e.clientY - rect.top) / S.cellSize);
-
   try {
     const resp = await fetch(`/api/chunk?seed=${S.seed}&cx=${wcx}&cy=${wcy}`);
     if (!resp.ok) return;
@@ -708,7 +978,11 @@ wrap.addEventListener('touchmove', e => {
     updateStatusBar();
   }
 });
-wrap.addEventListener('touchend', () => { touches0 = null; fetchMissingTiles(); });
+wrap.addEventListener('touchend', () => {
+  touches0 = null;
+  if (isTerrainMode()) fetchMissingTerrainTiles();
+  else fetchMissingTiles();
+});
 
 // ════════════════════════════════════════════════════════════════
 // 工具栏事件
@@ -717,26 +991,22 @@ wrap.addEventListener('touchend', () => { touches0 = null; fetchMissingTiles(); 
 document.getElementById('btn-apply').addEventListener('click', () => {
   S.seed = parseInt(document.getElementById('seed-input').value) || 0;
   clearCache();
-  fetchMissingTiles();
+  if (isTerrainMode()) fetchMissingTerrainTiles();
+  else fetchMissingTiles();
 });
 
 document.getElementById('seed-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') {
     S.seed = parseInt(e.target.value) || 0;
     clearCache();
-    fetchMissingTiles();
+    if (isTerrainMode()) fetchMissingTerrainTiles();
+    else fetchMissingTiles();
   }
 });
 
 document.querySelectorAll('#toolbar button[data-mode]').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('#toolbar button[data-mode]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    const newMode = btn.dataset.mode;
-    if (S.mode === newMode) return;
-    S.mode = newMode;
-    // 重涂所有已缓存瓦片（零网络请求）
-    repaintAllTiles();
+    switchMode(btn.dataset.mode);
   });
 });
 
@@ -747,30 +1017,48 @@ document.querySelectorAll('#toolbar button[data-mode]').forEach(btn => {
 window.addEventListener('resize', () => {
   render();
   clearTimeout(S._resizeTimer);
-  S._resizeTimer = setTimeout(() => fetchMissingTiles(), 300);
+  S._resizeTimer = setTimeout(() => {
+    if (isTerrainMode()) fetchMissingTerrainTiles();
+    else fetchMissingTiles();
+  }, 300);
 });
 
 window.addEventListener('keydown', e => {
-  const step = Math.max(1, 5 * 12 / S.cellSize);
-  switch (e.key) {
-    case 'ArrowLeft':  S.viewCX -= step; break;
-    case 'ArrowRight': S.viewCX += step; break;
-    case 'ArrowUp':    S.viewCY -= step; break;
-    case 'ArrowDown':  S.viewCY += step; break;
-    case '+': case '=': {
-      const s = S.cellSize >= 16 ? 4 : S.cellSize >= 6 ? 2 : S.cellSize >= 2 ? 1 : 0.5;
-      S.cellSize = Math.min(60, S.cellSize + s);
-      break;
+  if (isTerrainMode()) {
+    const step = Math.max(10, 200 / S.cellSize);
+    switch (e.key) {
+      case 'ArrowLeft':  S.viewCX -= step; break;
+      case 'ArrowRight': S.viewCX += step; break;
+      case 'ArrowUp':    S.viewCY -= step; break;
+      case 'ArrowDown':  S.viewCY += step; break;
+      case '+': case '=': S.cellSize = Math.min(30, S.cellSize + (S.cellSize>=8?2:S.cellSize>=3?1:0.5)); break;
+      case '-': S.cellSize = Math.max(0.1, S.cellSize - (S.cellSize>=8?2:S.cellSize>=3?1:0.5)); break;
+      default: return;
     }
-    case '-': {
-      const s = S.cellSize >= 16 ? 4 : S.cellSize >= 6 ? 2 : S.cellSize >= 2 ? 1 : 0.5;
-      S.cellSize = Math.max(0.5, S.cellSize - s);
-      break;
+    render();
+    fetchMissingTerrainTiles();
+  } else {
+    const step = Math.max(1, 5 * 12 / S.cellSize);
+    switch (e.key) {
+      case 'ArrowLeft':  S.viewCX -= step; break;
+      case 'ArrowRight': S.viewCX += step; break;
+      case 'ArrowUp':    S.viewCY -= step; break;
+      case 'ArrowDown':  S.viewCY += step; break;
+      case '+': case '=': {
+        const s = S.cellSize >= 16 ? 4 : S.cellSize >= 6 ? 2 : S.cellSize >= 2 ? 1 : 0.5;
+        S.cellSize = Math.min(60, S.cellSize + s);
+        break;
+      }
+      case '-': {
+        const s = S.cellSize >= 16 ? 4 : S.cellSize >= 6 ? 2 : S.cellSize >= 2 ? 1 : 0.5;
+        S.cellSize = Math.max(0.5, S.cellSize - s);
+        break;
+      }
+      default: return;
     }
-    default: return;
+    render();
+    fetchMissingTiles();
   }
-  render();
-  fetchMissingTiles();
 });
 
 // ════════════════════════════════════════════════════════════════

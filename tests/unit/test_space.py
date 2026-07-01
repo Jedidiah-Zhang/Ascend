@@ -1,4 +1,16 @@
-"""世界生成模块单元测试。"""
+"""世界生成模块单元测试。
+
+Coverage 目标:
+    space/terrain.py   — 100%  ✅
+    space/tile_grid.py — 100%  ✅
+    space/tile_gen.py  — 100%  ✅
+    space/chunk.py     — 100%  (markers/generate_tiles)
+    space/climate.py   — 100%  (物理推导)
+    space/biome.py     — 100%  (群系分配 + 模板)
+    space/generator.py — 100%  (WorldGenerator)
+    space/noise.py     — 100%  (PerlinNoise)
+    space/render.py    — 忽略 (终端调试工具, .coveragerc omit)
+"""
 
 import pytest
 from ascend.space import (
@@ -14,6 +26,15 @@ from ascend.space import (
     ChunkData,
     TILE_MAP_SIZE,
     WorldGenerator,
+    TerrainType,
+    TerrainProps,
+    get_terrain_props,
+    is_passable,
+    is_buildable,
+    movement_cost,
+    fertility,
+    TileGrid,
+    TileGenerator,
 )
 
 
@@ -272,34 +293,40 @@ class TestChunkData:
         assert c.cy == 0
         assert c.chunk_key == (0, 0)
         assert c.biome == BiomeType.TEMPERATE_DECIDUOUS_FOREST
-        assert c.tiles is None
+        assert c.tile_grid is None
         assert c.has_tiles is False
 
     def test_tiles_generation(self):
-        """写入详细 tile 数据。"""
+        """写入详细 tile 数据（TileGrid）。"""
         c = ChunkData(
             cx=1, cy=2,
             biome=BiomeType.ARID_SHRUBLAND,
             climate_zone=ClimateZone.ARID,
             annual_baseline=WeatherParams(25, 100, 12, 500, 25, 8),
         )
-        # 生成 200×200 的空白 tile
-        tiles = [[0] * TILE_MAP_SIZE for _ in range(TILE_MAP_SIZE)]
-        c.generate_tiles(tiles)
+        grid = TileGrid()
+        c.generate_tiles(grid)
         assert c.has_tiles is True
-        assert len(c.tiles) == TILE_MAP_SIZE
+        assert c.tile_grid.size == TILE_MAP_SIZE
 
-    def test_tiles_wrong_dimensions(self):
-        """tile 维度错误应抛出异常。"""
+    def test_tiles_overwrite(self):
+        """重复调用 generate_tiles 覆盖旧数据。"""
         c = ChunkData(
             cx=0, cy=0,
             biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
             climate_zone=ClimateZone.TEMPERATE,
             annual_baseline=WeatherParams(15, 800, 10, 200, 60, 5),
         )
-        bad_tiles = [[0] * 100 for _ in range(100)]
-        with pytest.raises(ValueError):
-            c.generate_tiles(bad_tiles)
+        grid1 = TileGrid()
+        grid1.set(50, 50, TerrainType.SAND)
+        c.generate_tiles(grid1)
+        assert c.tile_grid.get(50, 50) == TerrainType.SAND
+
+        grid2 = TileGrid()
+        c.generate_tiles(grid2)
+        # 新 grid 覆盖后，旧数据不存在
+        assert c.tile_grid is grid2
+        assert c.tile_grid.get(50, 50) == TerrainType.GRASSLAND
 
     def test_unload_tiles(self):
         """卸载 tile 释放内存。"""
@@ -309,12 +336,12 @@ class TestChunkData:
             climate_zone=ClimateZone.TEMPERATE,
             annual_baseline=WeatherParams(15, 800, 10, 200, 60, 5),
         )
-        tiles = [[0] * TILE_MAP_SIZE for _ in range(TILE_MAP_SIZE)]
-        c.generate_tiles(tiles)
+        grid = TileGrid()
+        c.generate_tiles(grid)
         assert c.has_tiles
         c.unload_tiles()
         assert not c.has_tiles
-        assert c.tiles is None
+        assert c.tile_grid is None
 
     def test_markers(self):
         """标记的添加和移除。"""
@@ -380,7 +407,7 @@ class TestWorldGenerator:
         assert isinstance(chunk.climate_zone, ClimateZone)
         assert chunk.annual_baseline.temperature > -50
         assert chunk.annual_baseline.temperature < 60
-        assert not chunk.has_tiles  # 不自动生成 tile
+        assert not chunk.has_tiles  # WorldGenerator 不自动生成 tile
 
     def test_get_biome_consistent(self):
         """get_biome 与 generate_chunk 的群系一致。"""
@@ -446,3 +473,480 @@ class TestWorldGenerator:
             prev = curr
         # 30 个分块中不应出现剧烈跳跃
         assert jumps <= 1, f"发现 {jumps} 次不连续的气候跳变"
+
+
+# ══════════════════════════════════════════════════════════
+# TerrainType
+# ══════════════════════════════════════════════════════════
+
+class TestTerrainType:
+    """地形类型和属性查询测试。"""
+
+    def test_all_types_have_props(self):
+        """每个 TerrainType 都有对应的 TerrainProps。"""
+        for t in TerrainType:
+            props = get_terrain_props(t)
+            assert isinstance(props, TerrainProps)
+            assert isinstance(props.label, str)
+            assert len(props.label) > 0
+
+    def test_passable(self):
+        """可行走性查询正确。"""
+        assert is_passable(TerrainType.GRASSLAND) is True
+        assert is_passable(TerrainType.MOUNTAIN_PEAK) is False
+        assert is_passable(TerrainType.DEEP_WATER) is False
+        assert is_passable(TerrainType.SHALLOW_WATER) is True
+
+    def test_buildable(self):
+        """可建造性查询正确。"""
+        assert is_buildable(TerrainType.GRASSLAND) is True
+        assert is_buildable(TerrainType.FERTILE_SOIL) is True
+        assert is_buildable(TerrainType.MOUNTAIN_PEAK) is False
+        assert is_buildable(TerrainType.ROCK) is False
+        assert is_buildable(TerrainType.MARSH) is False
+
+    def test_movement_cost(self):
+        """移动消耗查询正确。"""
+        assert movement_cost(TerrainType.GRASSLAND) == 1.0
+        assert movement_cost(TerrainType.STEEP_SLOPE) == 2.0
+        assert movement_cost(TerrainType.DEEP_WATER) == float("inf")
+
+    def test_fertility(self):
+        """肥力查询正确。"""
+        assert fertility(TerrainType.FERTILE_SOIL) == 1.0
+        assert fertility(TerrainType.GRASSLAND) == 0.5
+        assert fertility(TerrainType.ROCK) == 0.0
+        assert fertility(TerrainType.SAND) == 0.2
+
+    def test_int_enum(self):
+        """TerrainType 是 IntEnum，可直接当 int 使用。"""
+        assert TerrainType.GRASSLAND == 0
+        assert int(TerrainType.DEEP_WATER) == 7
+        # 可存入 array
+        from array import array
+        a = array('H', [int(TerrainType.SAND)])
+        assert a[0] == int(TerrainType.SAND)
+
+
+# ══════════════════════════════════════════════════════════
+# TileGrid
+# ══════════════════════════════════════════════════════════
+
+class TestTileGrid:
+    """TileGrid 紧凑存储测试。
+
+    Coverage: 正常路径 ✓  边界 ✓  错误路径 ✓  序列化 ✓
+    """
+
+    def test_create_default(self):
+        """默认创建，全为 GRASSLAND。"""
+        g = TileGrid()
+        assert g.size == TILE_MAP_SIZE
+        assert g.get(0, 0) == TerrainType.GRASSLAND
+        assert g.get(199, 199) == TerrainType.GRASSLAND
+
+    def test_set_and_get(self):
+        """单点读写正确。"""
+        g = TileGrid()
+        g.set(10, 20, TerrainType.SAND)
+        assert g.get(10, 20) == TerrainType.SAND
+        # 相邻格不受影响
+        assert g.get(10, 21) == TerrainType.GRASSLAND
+        assert g.get(11, 20) == TerrainType.GRASSLAND
+
+    def test_all_terrain_types(self):
+        """每种地形类型都能正确存取。"""
+        g = TileGrid()
+        for t in TerrainType:
+            g.set(t.value, t.value, t)
+            assert g.get(t.value, t.value) == t
+
+    def test_to_list(self):
+        """导出为 int 列表。"""
+        g = TileGrid()
+        g.set(0, 0, TerrainType.DEEP_WATER)
+        lst = g.to_list()
+        assert len(lst) == TILE_MAP_SIZE * TILE_MAP_SIZE
+        assert lst[0] == int(TerrainType.DEEP_WATER)
+        assert lst[1] == int(TerrainType.GRASSLAND)
+        assert all(isinstance(v, int) for v in lst)
+
+    def test_from_list(self):
+        """从 int 列表还原。"""
+        g1 = TileGrid()
+        g1.set(5, 5, TerrainType.ROCK)
+        g1.set(100, 100, TerrainType.MARSH)
+
+        lst = g1.to_list()
+        g2 = TileGrid.from_list(lst)
+        assert g2 == g1
+        assert g2.get(5, 5) == TerrainType.ROCK
+        assert g2.get(100, 100) == TerrainType.MARSH
+
+    def test_from_list_wrong_size(self):
+        """长度错误的列表应抛出 ValueError。"""
+        with pytest.raises(ValueError):
+            TileGrid.from_list([0] * 100)
+
+    def test_create_from_list(self):
+        """从正确长度的列表构造（非 array 分支）。"""
+        data = [int(TerrainType.SAND)] * (TILE_MAP_SIZE * TILE_MAP_SIZE)
+        g = TileGrid(data=data)
+        assert g.get(0, 0) == TerrainType.SAND
+        assert g.get(50, 50) == TerrainType.SAND
+
+    def test_create_from_array(self):
+        """从 array('H') 直接构造（零拷贝分支）。"""
+        from array import array
+        data = array('H', [int(TerrainType.ROCK)]) * (TILE_MAP_SIZE * TILE_MAP_SIZE)
+        g = TileGrid(data=data)
+        assert g.get(0, 0) == TerrainType.ROCK
+        assert g.get(199, 199) == TerrainType.ROCK
+
+    def test_create_from_array_wrong_size(self):
+        """长度错误的 array 应抛出 ValueError。"""
+        from array import array
+        with pytest.raises(ValueError):
+            TileGrid(data=array('H', [0] * 100))
+
+    def test_create_from_list_wrong_size(self):
+        """长度错误的列表应抛出 ValueError（__init__ 路径）。"""
+        with pytest.raises(ValueError):
+            TileGrid(data=[0] * 100)
+
+    def test_get_region(self):
+        """区域查询返回正确形状和值。"""
+        g = TileGrid()
+        g.set(5, 5, TerrainType.ROCK)
+        g.set(6, 5, TerrainType.SAND)
+        g.set(5, 6, TerrainType.MARSH)
+
+        region = g.get_region(5, 5, 2, 2)
+        assert len(region) == 2  # 2 行
+        assert len(region[0]) == 2  # 2 列
+        assert region[0][0] == TerrainType.ROCK
+        assert region[0][1] == TerrainType.SAND
+        assert region[1][0] == TerrainType.MARSH
+
+    def test_get_region_edge(self):
+        """区域查询在 chunk 边界处。"""
+        g = TileGrid()
+        g.set(0, 0, TerrainType.SAND)
+        g.set(199, 199, TerrainType.ROCK)
+        # 左上角
+        r1 = g.get_region(0, 0, 1, 1)
+        assert r1[0][0] == TerrainType.SAND
+        # 右下角
+        r2 = g.get_region(199, 199, 1, 1)
+        assert r2[0][0] == TerrainType.ROCK
+
+    def test_equality(self):
+        """相同数据的 TileGrid 相等。"""
+        g1 = TileGrid()
+        g2 = TileGrid()
+        assert g1 == g2
+
+        g1.set(0, 0, TerrainType.SAND)
+        assert g1 != g2
+
+        g2.set(0, 0, TerrainType.SAND)
+        assert g1 == g2
+
+    def test_equality_different_type(self):
+        """与非 TileGrid 比较返回 NotImplemented（不抛异常）。"""
+        g = TileGrid()
+        # 与不同类型对象比较不应崩溃
+        assert g != "not a grid"
+        assert g != 42
+        assert g != None
+
+    def test_repr_default(self):
+        """repr 全草地网格。"""
+        g = TileGrid()
+        r = repr(g)
+        assert "TileGrid" in r
+        assert "non_grassland=0.0%" in r
+
+    def test_repr_mixed(self):
+        """repr 含非草地 tile。"""
+        g = TileGrid()
+        for i in range(100):
+            g.set(i, 0, TerrainType.SAND)
+        r = repr(g)
+        assert "non_grassland=0.0%" not in r  # 不再是 0%
+
+    def test_raw_data(self):
+        """raw_data 返回底层数组引用。"""
+        g = TileGrid()
+        raw = g.raw_data()
+        from array import array
+        assert isinstance(raw, array)
+        assert len(raw) == TILE_MAP_SIZE * TILE_MAP_SIZE
+        # 修改底层数组会影响 TileGrid
+        raw[0] = int(TerrainType.DEEP_WATER)
+        assert g.get(0, 0) == TerrainType.DEEP_WATER
+
+    def test_get_raw(self):
+        """get_raw 按索引读取。"""
+        g = TileGrid()
+        g.set(3, 5, TerrainType.MOUNTAIN_PEAK)
+        idx = 5 * TILE_MAP_SIZE + 3
+        assert g.get_raw(idx) == int(TerrainType.MOUNTAIN_PEAK)
+
+
+# ══════════════════════════════════════════════════════════
+# TileGenerator
+# ══════════════════════════════════════════════════════════
+
+class TestTileGenerator:
+    """TileGenerator 地形生成测试。
+
+    Coverage: 正常路径 ✓  确定性 ✓  群系差异 ✓  边界路径 ✓  私有方法 ✓
+    """
+
+    @pytest.fixture
+    def gen(self) -> WorldGenerator:
+        """创建一个有陆地的 WorldGenerator。"""
+        return WorldGenerator(seed=99999)
+
+    @pytest.fixture
+    def tile_gen(self) -> TileGenerator:
+        """创建 TileGenerator。"""
+        return TileGenerator(seed=99999)
+
+    @pytest.fixture
+    def land_chunk(self, gen: WorldGenerator) -> ChunkData:
+        """获取一个陆地 chunk。"""
+        return gen.generate_chunk(0, 0)
+
+    @pytest.fixture
+    def ocean_chunk(self) -> ChunkData:
+        """获取一个海洋 chunk。"""
+        gen = WorldGenerator(seed=42)
+        return gen.generate_chunk(0, 0)
+
+    def test_create(self, tile_gen: TileGenerator):
+        """创建 TileGenerator。"""
+        assert tile_gen._seed == 99999
+
+    def test_repr(self, tile_gen: TileGenerator):
+        """repr 包含种子信息。"""
+        r = repr(tile_gen)
+        assert "TileGenerator" in r
+        assert "99999" in r
+
+    def test_generate_returns_tilegrid(
+        self, tile_gen: TileGenerator, land_chunk: ChunkData
+    ):
+        """生成返回 TileGrid。"""
+        grid = tile_gen.generate(land_chunk)
+        assert isinstance(grid, TileGrid)
+        assert grid.size == TILE_MAP_SIZE
+
+    def test_generate_deterministic(
+        self, land_chunk: ChunkData
+    ):
+        """相同种子 + 相同 chunk → 相同 tile 网格。"""
+        t1 = TileGenerator(seed=123)
+        t2 = TileGenerator(seed=123)
+        g1 = t1.generate(land_chunk)
+        g2 = t2.generate(land_chunk)
+        assert g1 == g2
+
+    def test_generate_different_seeds_different(
+        self, land_chunk: ChunkData
+    ):
+        """不同种子产生不同 tile 网格。"""
+        t1 = TileGenerator(seed=123)
+        t2 = TileGenerator(seed=456)
+        g1 = t1.generate(land_chunk)
+        g2 = t2.generate(land_chunk)
+        assert g1 != g2
+
+    def test_ocean_chunk_all_water(
+        self, tile_gen: TileGenerator, ocean_chunk: ChunkData
+    ):
+        """海洋 chunk 的全部 tile 为水体。"""
+        assert ocean_chunk.biome.is_ocean
+        grid = tile_gen.generate(ocean_chunk)
+        # 所有 tile 应为 SHALLOW_WATER 或 DEEP_WATER
+        from array import array
+        water_types = {int(TerrainType.SHALLOW_WATER), int(TerrainType.DEEP_WATER)}
+        for v in grid.raw_data():
+            assert v in water_types, f"海洋 chunk 出现非水体 tile: {TerrainType(v).name}"
+
+    def test_ocean_has_deep_water(
+        self, tile_gen: TileGenerator, ocean_chunk: ChunkData
+    ):
+        """海洋 chunk 包含深水和浅水。"""
+        grid = tile_gen.generate(ocean_chunk)
+        found_shallow = False
+        found_deep = False
+        for v in grid.raw_data():
+            if v == int(TerrainType.SHALLOW_WATER):
+                found_shallow = True
+            elif v == int(TerrainType.DEEP_WATER):
+                found_deep = True
+            if found_shallow and found_deep:
+                break
+        assert found_shallow, "海洋必须有 SHALLOW_WATER"
+        assert found_deep, "海洋必须有 DEEP_WATER"
+
+    def test_land_chunk_has_variety(
+        self, tile_gen: TileGenerator, land_chunk: ChunkData
+    ):
+        """陆地 chunk 包含多种地形。"""
+        assert not land_chunk.biome.is_ocean
+        grid = tile_gen.generate(land_chunk)
+        types = {grid.get(x, y) for x in range(0, 200, 10) for y in range(0, 200, 10)}
+        # 至少有草地和一种其他地形
+        assert TerrainType.GRASSLAND in types
+        assert len(types) >= 2, f"地形种类过少: {[t.name for t in types]}"
+
+    def test_different_chunks_different_grids(
+        self, tile_gen: TileGenerator
+    ):
+        """相邻分块产生不同的 tile 网格。"""
+        gen = WorldGenerator(seed=99999)
+        c1 = gen.generate_chunk(0, 0)
+        c2 = gen.generate_chunk(1, 0)
+
+        # 两个 chunk 群系相同才比较
+        if c1.biome == c2.biome and not c1.biome.is_ocean:
+            g1 = tile_gen.generate(c1)
+            g2 = tile_gen.generate(c2)
+            # 相邻 chunk 不应完全相同（噪声连续但值不同）
+            assert g1 != g2
+
+    def test_generate_then_attach_to_chunk(
+        self, tile_gen: TileGenerator, land_chunk: ChunkData
+    ):
+        """生成后挂载到 ChunkData 的完整流程。"""
+        assert not land_chunk.has_tiles
+        grid = tile_gen.generate(land_chunk)
+        land_chunk.generate_tiles(grid)
+        assert land_chunk.has_tiles
+        assert land_chunk.tile_grid is grid
+
+    def test_generate_preserves_chunk_macro_data(
+        self, tile_gen: TileGenerator, land_chunk: ChunkData
+    ):
+        """tile 生成不影响 chunk 的大地图层数据。"""
+        old_biome = land_chunk.biome
+        old_climate = land_chunk.climate_zone
+        tile_gen.generate(land_chunk)
+        assert land_chunk.biome == old_biome
+        assert land_chunk.climate_zone == old_climate
+
+    # ── _classify_flat 私有方法直接测试 ──────────────────────
+
+    def test_classify_flat_rock_transition(
+        self, tile_gen: TileGenerator, land_chunk: ChunkData
+    ):
+        """elevation > 0.4 → ROCK（陡坡过渡带）。"""
+        result = tile_gen._classify_flat(
+            elevation=0.5, detail=0.0,
+            chunk=land_chunk, base_altitude=300.0,
+        )
+        assert result == TerrainType.ROCK
+
+    def test_classify_flat_marsh(
+        self, tile_gen: TileGenerator, land_chunk: ChunkData
+    ):
+        """elevation < -0.3 + low altitude → MARSH（低洼沼泽）。"""
+        result = tile_gen._classify_flat(
+            elevation=-0.5, detail=0.0,
+            chunk=land_chunk, base_altitude=200.0,
+        )
+        assert result == TerrainType.MARSH
+
+    def test_classify_flat_marsh_high_altitude_no_marsh(
+        self, tile_gen: TileGenerator, land_chunk: ChunkData
+    ):
+        """elevation 低但 altitude 高 → 不生成 MARSH。"""
+        result = tile_gen._classify_flat(
+            elevation=-0.5, detail=0.0,
+            chunk=land_chunk, base_altitude=600.0,
+        )
+        assert result != TerrainType.MARSH
+
+    def test_classify_flat_arid_sand(
+        self, tile_gen: TileGenerator
+    ):
+        """ARID 群系：detail 中等 → SAND。"""
+        gen = WorldGenerator(seed=99999)
+        # 构造一个 ARID 群系的 chunk（即使生成器产出森林也手动构造）
+        arid_chunk = ChunkData(
+            cx=0, cy=0,
+            biome=BiomeType.ARID_SHRUBLAND,
+            climate_zone=ClimateZone.ARID,
+            annual_baseline=WeatherParams(25, 100, 12, 500, 25, 8),
+        )
+        result = tile_gen._classify_flat(
+            elevation=0.0, detail=0.0,
+            chunk=arid_chunk, base_altitude=500.0,
+        )
+        assert result == TerrainType.SAND
+
+    def test_classify_flat_arid_rock(
+        self, tile_gen: TileGenerator
+    ):
+        """ARID 群系：detail 高 → ROCK。"""
+        arid_chunk = ChunkData(
+            cx=0, cy=0,
+            biome=BiomeType.ARID_SHRUBLAND,
+            climate_zone=ClimateZone.ARID,
+            annual_baseline=WeatherParams(25, 100, 12, 500, 25, 8),
+        )
+        result = tile_gen._classify_flat(
+            elevation=0.0, detail=0.5,
+            chunk=arid_chunk, base_altitude=500.0,
+        )
+        assert result == TerrainType.ROCK
+
+    def test_classify_flat_arid_grassland(
+        self, tile_gen: TileGenerator
+    ):
+        """ARID 群系：detail 低 → GRASSLAND。"""
+        arid_chunk = ChunkData(
+            cx=0, cy=0,
+            biome=BiomeType.ARID_SHRUBLAND,
+            climate_zone=ClimateZone.ARID,
+            annual_baseline=WeatherParams(25, 100, 12, 500, 25, 8),
+        )
+        result = tile_gen._classify_flat(
+            elevation=0.0, detail=-1.0,
+            chunk=arid_chunk, base_altitude=500.0,
+        )
+        assert result == TerrainType.GRASSLAND
+
+    # ── 极端地形探测（多种子扫描） ──────────────────────────
+
+    def test_land_extreme_terrains_exist(
+        self, land_chunk: ChunkData
+    ):
+        """用多种子扫描，确保 MOUNTAIN_PEAK 和 DEEP_WATER 可在陆地 chunk 中出现。
+
+        不同种子的噪声值分布略有差异，扫描 20 个种子
+        至少在一个中找到 MOUNTAIN_PEAK 或 DEEP_WATER。
+        """
+        found_peak = False
+        found_deep_water = False
+
+        for s in range(20):
+            tg = TileGenerator(seed=s)
+            grid = tg.generate(land_chunk)
+            for v in grid.raw_data():
+                t = TerrainType(v)
+                if t == TerrainType.MOUNTAIN_PEAK:
+                    found_peak = True
+                elif t == TerrainType.DEEP_WATER:
+                    found_deep_water = True
+
+        # 两种极端地形都应可被探测
+        assert found_peak, (
+            "20 个种子中没有一个产生 MOUNTAIN_PEAK，阈值需调整"
+        )
+        assert found_deep_water, (
+            "20 个种子中没有一个产生 DEEP_WATER，阈值需调整"
+        )

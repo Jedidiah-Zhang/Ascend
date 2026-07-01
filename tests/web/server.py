@@ -25,7 +25,7 @@ _BACKEND = _HERE.parent.parent / "ascend-backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-from ascend.space import WorldGenerator, BiomeType, ClimateZone
+from ascend.space import WorldGenerator, BiomeType, ClimateZone, TileGenerator
 
 # ── 颜色方案 ──────────────────────────────────────────────────
 
@@ -44,6 +44,19 @@ CLIMATE_COLORS = {
     ClimateZone.ARID: "#f39c12",
 }
 
+# 地形颜色映射 — 9 种 TerrainType → RGB
+TERRAIN_COLORS: dict[int, tuple[int, int, int]] = {
+    0: (126, 200, 80),    # 草地
+    1: (232, 213, 163),   # 沙地
+    2: (92, 61, 46),      # 沃土
+    3: (139, 139, 139),   # 岩石地
+    4: (107, 107, 107),   # 陡坡
+    5: (224, 224, 224),   # 山巅
+    6: (91, 158, 207),    # 浅水
+    7: (26, 58, 92),      # 深水
+    8: (74, 107, 58),     # 沼泽
+}
+
 # ── WorldGenerator 缓存 ─────────────────────────────────────
 
 _lock = threading.Lock()
@@ -60,6 +73,11 @@ _tile_cache: dict[tuple, bytes] = {}   # key: (seed, cx, cy, w, h) → 5层 raw 
 _tile_cache_lock = threading.Lock()
 _MAX_SERVER_TILES = 500
 _LAYER_SIZE = None  # 运行时计算
+
+# 地形瓦片缓存 — key: (seed, cx, cy) → RGBA bytes (200×200×4)
+_terrain_cache: dict[tuple, bytes] = {}
+_terrain_cache_lock = threading.Lock()
+_MAX_TERRAIN_TILES = 200
 
 
 def _get_generator(seed: int) -> WorldGenerator:
@@ -231,12 +249,21 @@ def _color_for_continuous(v: float, mode: str) -> tuple[int, int, int]:
     lo, hi = _TILE_RANGES.get(mode, (-500.0, 5000.0))
     t = max(0.0, min(1.0, (v - lo) / (hi - lo + 0.001)))
     if mode == "altitude":
-        # 8 档海拔渐变
+        # 海拔渐变：海平面(alt=0, t≈0.091)处有明显色断 — 海洋蓝→海岸沙色→陆地绿
         stops = [
-            (0.00, (10, 20, 80)), (0.20, (30, 80, 160)),
-            (0.38, (60, 140, 200)), (0.45, (180, 200, 120)),
-            (0.50, (100, 160, 60)), (0.65, (60, 120, 30)),
-            (0.80, (140, 120, 80)), (1.00, (240, 240, 240)),
+            (0.000, (8, 15, 65)),     # -500m  深海
+            (0.045, (20, 60, 130)),   # -252m  大洋
+            (0.082, (45, 110, 185)),  # -50m   浅海
+            (0.090, (75, 150, 200)),  # -5m    近岸浅水
+            (0.092, (185, 200, 115)), # +10m   海岸沙地  ← 海平面色断
+            (0.100, (155, 185, 90)),  # +50m   沿海草地
+            (0.150, (110, 160, 60)),  # +325m  低地绿
+            (0.300, (65, 125, 40)),   # +1150m 森林绿
+            (0.500, (90, 105, 50)),   # +2250m 高地橄榄
+            (0.650, (135, 118, 72)),  # +3075m 山腰棕
+            (0.800, (172, 162, 147)), # +3900m 岩石灰
+            (0.920, (212, 207, 202)), # +4560m 高山
+            (1.000, (252, 250, 248)), # +5000m 雪峰白
         ]
     else:
         # 蓝→青→绿→黄→红 HSL 模拟
@@ -343,6 +370,106 @@ def _tile_worker(seed: int, cx: int, cy: int, w: int, h: int, mode: str) -> byte
     )
 
 
+def _terrain_worker(seed: int, cx: int, cy: int) -> bytes:
+    """在子进程中生成单个 chunk 的 200×200 地形 RGBA 像素数据。
+
+    使用 TileGenerator 从大地图层参数生成详细 tile 网格，
+    然后按 TERRAIN_COLORS 映射为 RGBA。
+
+    Args:
+        seed: 世界种子。
+        cx, cy: 分块坐标。
+
+    Returns:
+        200×200×4 = 160000 字节的 RGBA 数据。
+    """
+    import math
+    from ascend.space.noise import PerlinNoise
+    from ascend.space.climate import (
+        sea_level_temperature, rainfall_from_noise, apply_lapse_rate,
+        climate_zone_from_values, annual_baseline,
+    )
+    from ascend.space.biome import biome_from_climate
+    from ascend.space.tile_gen import TileGenerator
+    from ascend.space.chunk import ChunkData
+
+    phi = (math.sqrt(5.0) - 1.0) / 2.0
+    seed_float = float(abs(seed) % 100000)
+    phases = [
+        ((seed_float + i * 137.5) * phi * 1000.0) % 9973.0
+        for i in range(8)
+    ]
+
+    noise_alt = PerlinNoise(seed + 100)
+    noise_lat = PerlinNoise(seed + 200)
+    noise_rain = PerlinNoise(seed + 300)
+    noise_moist = PerlinNoise(seed + 700)
+    noise_sun = PerlinNoise(seed + 400)
+    noise_hum = PerlinNoise(seed + 500)
+    noise_wind = PerlinNoise(seed + 600)
+
+    p = [phases[0], phases[1], phases[2], phases[3], phases[4], phases[5], phases[6]]
+
+    SEA_CUTOFF = 0.08
+    FREQ_ALT = 0.0005
+
+    def _sample_alt(qx: int, qy: int) -> float:
+        """采样指定 chunk 的海拔（与 WorldGenerator._sample_altitude 等价）。"""
+        n = noise_alt.octave(float(qx) + p[0], float(qy) + p[0], octaves=2, frequency=FREQ_ALT)
+        if n < SEA_CUTOFF:
+            return -500.0 + (n + 1.0) / (SEA_CUTOFF + 1.0) * 500.0
+        else:
+            return (n - SEA_CUTOFF) / (1.0 - SEA_CUTOFF) * 5000.0
+
+    altitude = _sample_alt(cx, cy)
+
+    n_lat = noise_lat.octave(float(cx) + p[1], float(cy) + p[1], octaves=2, frequency=0.0003)
+    n_rain = noise_rain.octave(float(cx) + p[2], float(cy) + p[2], octaves=4, frequency=0.004)
+    n_moist = noise_moist.octave(float(cx) + p[6], float(cy) + p[6], octaves=2, frequency=0.005)
+
+    sea_temp = sea_level_temperature(n_lat)
+    rainfall = rainfall_from_noise(n_rain)
+    temperature = apply_lapse_rate(sea_temp, altitude)
+    climate = climate_zone_from_values(temperature, rainfall)
+    biome = biome_from_climate(climate, n_moist, altitude, sea_temp)
+
+    n_sun = noise_sun.octave(float(cx) + p[3], float(cy) + p[3], octaves=4, frequency=0.005)
+    n_hum = noise_hum.octave(float(cx) + p[4], float(cy) + p[4], octaves=4, frequency=0.005)
+    n_wind = noise_wind.octave(float(cx) + p[5], float(cy) + p[5], octaves=4, frequency=0.005)
+
+    weather = annual_baseline(
+        altitude=altitude, sea_level_temp=sea_temp, rainfall=rainfall,
+        climate=climate,
+        sunshine_noise=n_sun, humidity_noise=n_hum, wind_noise=n_wind,
+    )
+
+    chunk = ChunkData(
+        cx=cx, cy=cy,
+        biome=biome, climate_zone=climate,
+        annual_baseline=weather,
+    )
+
+    tile_gen = TileGenerator(seed)
+    grid = tile_gen.generate(chunk, get_altitude=_sample_alt)
+
+    size = 200
+    rgba = bytearray(size * size * 4)
+    terrain_colors = {
+        0: (126, 200, 80), 1: (232, 213, 163), 2: (92, 61, 46),
+        3: (139, 139, 139), 4: (107, 107, 107), 5: (224, 224, 224),
+        6: (91, 158, 207), 7: (26, 58, 92), 8: (74, 107, 58),
+    }
+    for i in range(size * size):
+        v = grid._data[i]
+        r, g, b = terrain_colors.get(v, (0, 0, 0))
+        p = i * 4
+        rgba[p] = r
+        rgba[p + 1] = g
+        rgba[p + 2] = b
+        rgba[p + 3] = 255
+
+    return bytes(rgba)
+
 
 # ── HTTP Handler ─────────────────────────────────────────────
 
@@ -372,6 +499,8 @@ class MapHandler(BaseHTTPRequestHandler):
             self._handle_tile(flat)
         elif parsed.path == "/api/chunk":
             self._handle_chunk(flat)
+        elif parsed.path == "/api/terrain-tile":
+            self._handle_terrain_tile(flat)
         else:
             self.send_error(404, "Not Found")
 
@@ -529,6 +658,46 @@ class MapHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
+
+    def _handle_terrain_tile(self, params: dict):
+        """处理 /api/terrain-tile 请求 — 返回单 chunk 的 200×200 地形 RGBA。
+
+        Query 参数:
+            seed: 世界种子（默认 0）。
+            cx: 区块 X。
+            cy: 区块 Y。
+        """
+        try:
+            seed = int(params.get("seed", 0))
+            cx = int(params.get("cx", 0))
+            cy = int(params.get("cy", 0))
+        except (ValueError, TypeError):
+            self.send_error(400, "Invalid numeric parameter")
+            return
+
+        cache_key = (seed, cx, cy)
+        with _terrain_cache_lock:
+            rgba = _terrain_cache.get(cache_key)
+
+        if rgba is None:
+            try:
+                future = _proc_pool.submit(_terrain_worker, seed, cx, cy)
+                rgba = future.result(timeout=30)
+            except Exception as exc:
+                self.send_error(500, f"Terrain generation error: {exc}")
+                return
+            with _terrain_cache_lock:
+                if len(_terrain_cache) >= _MAX_TERRAIN_TILES:
+                    _terrain_cache.pop(next(iter(_terrain_cache)))
+                _terrain_cache[cache_key] = rgba
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(rgba)))
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Tile-Size", "200")
+        self.end_headers()
+        self.wfile.write(rgba)
 
 
 # ── 入口 ──────────────────────────────────────────────────────
