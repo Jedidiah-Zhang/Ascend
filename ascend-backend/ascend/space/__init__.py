@@ -37,6 +37,10 @@ from .terrain import (
 )
 from .tile_grid import TileGrid
 from .tile_gen import TileGenerator
+from .tectonic import (
+    WorldParams, PRESETS,
+    tectonic_altitude, tectonic_altitude_batch,
+)
 
 __all__ = [
     # 第一层：大地图
@@ -62,4 +66,9 @@ __all__ = [
     "fertility",
     "TileGrid",
     "TileGenerator",
+    # 构造模拟
+    "WorldParams",
+    "PRESETS",
+    "tectonic_altitude",
+    "tectonic_altitude_batch",
 ]
