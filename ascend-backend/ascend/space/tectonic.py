@@ -49,14 +49,14 @@ class WorldParams:
     """
 
     # 构造
-    cell_size: int = 400
-    jitter_range: float = 0.35
-    uplift_scale: float = 2000.0
-    drift_scale: float = 2.0
-    elevation_min: float = -1500.0
-    elevation_max: float = 3500.0
+    cell_size: int = 600
+    jitter_range: float = 0.30
+    uplift_scale: float = 400.0
+    drift_scale: float = 1.5
+    elevation_min: float = -1200.0
+    elevation_max: float = 1500.0
     altitude_floor: float = -500.0
-    altitude_ceil: float = 8000.0
+    altitude_ceil: float = 6000.0
 
     # 侵蚀
     erosion_droplets: int = 5000
@@ -276,10 +276,10 @@ def tectonic_altitude(
     gx = int(math.floor(world_x / cell_size))
     gy = int(math.floor(world_y / cell_size))
 
-    # 3×3 邻域 — 收集所有候选单元
+    # 3×3 邻域 — 收集所有候选单元，高斯加权
     candidates: list[tuple[float, float, float, float, float]] = []
-    for dy in (-1, 0, 1):
-        for dx in (-1, 0, 1):
+    for dy in (-2, -1, 0, 1, 2):
+        for dx in (-2, -1, 0, 1, 2):
             nx, ny = gx + dx, gy + dy
             cx, cy = _cell_center(nx, ny, cell_size, params.jitter_range, seed)
             elev = _cell_elevation(nx, ny, seed, params)
@@ -287,40 +287,24 @@ def tectonic_altitude(
             d2 = (world_x - cx) ** 2 + (world_y - cy) ** 2
             candidates.append((d2, cx, cy, elev, drx, dry))
 
-    # 手动追踪最近 4 个
-    t1 = [float("inf"), 0, 0, 0, 0, 0]
-    t2 = [float("inf"), 0, 0, 0, 0, 0]
-    t3 = [float("inf"), 0, 0, 0, 0, 0]
-    t4 = [float("inf"), 0, 0, 0, 0, 0]
-    for (d2, cx, cy, elev, drx, dry) in candidates:
-        if d2 < t1[0]:
-            t4, t3, t2, t1 = t3, t2, t1, [d2, cx, cy, elev, drx, dry]
-        elif d2 < t2[0]:
-            t4, t3, t2 = t3, t2, [d2, cx, cy, elev, drx, dry]
-        elif d2 < t3[0]:
-            t4, t3 = t3, [d2, cx, cy, elev, drx, dry]
-        elif d2 < t4[0]:
-            t4 = [d2, cx, cy, elev, drx, dry]
+    # 高斯加权混合所有 9 个单元（平滑过渡）
+    sigma = cell_size * 0.55
+    sigma2 = 2.0 * sigma * sigma
 
-    # IDW 混合基础海拔（反距离平方加权）
     weighted_sum = 0.0
     weight_sum = 0.0
-    epsilon = 1e-3
-    for t in (t1, t2, t3, t4):
-        dist = math.sqrt(t[0])
-        elev = t[3]
-        w = 1.0 / (dist * dist + epsilon)
+    for d2, cx, cy, elev, drx, dry in candidates:
+        w = math.exp(-d2 / sigma2)
         weighted_sum += elev * w
         weight_sum += w
 
-    altitude = weighted_sum / weight_sum
+    altitude = weighted_sum / (weight_sum + 1e-10)
 
-    # 收敛隆起 — 对最近 2 个单元之间计算
-    d1 = math.sqrt(t1[0])
-    d2 = math.sqrt(t2[0])
-    denom = d1 + d2
-    cx1, cy1, e1, drx1, dry1 = t1[1:]
-    cx2, cy2, e2, drx2, dry2 = t2[1:]
+    # 收敛隆起 — 仅对最重的 2 个单元（保持尖锐的山脉边界）
+    candidates.sort(key=lambda c: math.exp(-c[0] / sigma2), reverse=True)
+    c1, c2 = candidates[0], candidates[1]
+    d2_1, cx1, cy1, e1, drx1, dry1 = c1
+    d2_2, cx2, cy2, e2, drx2, dry2 = c2
 
     abx = cx2 - cx1
     aby = cy2 - cy1
@@ -335,9 +319,12 @@ def tectonic_altitude(
         convergence = max(0.0, -v_proj) / (2.0 * params.drift_scale + 1e-6)
         convergence = min(1.0, convergence)
 
+        d1 = math.sqrt(d2_1)
+        d2 = math.sqrt(d2_2)
+        denom = d1 + d2
         if denom > 1e-10:
             t = d1 / denom
-            boundary_t = 1.0 - abs(t - 0.5) * 2.0
+            boundary_t = math.exp(-((t - 0.5) ** 2) / 0.25)
         else:
             boundary_t = 1.0
 
@@ -388,10 +375,10 @@ def tectonic_altitude_batch(
     cell_size = params.cell_size
 
     # ── 预计算所有可能被引用的单元属性 ──
-    gx_min = int(math.floor(world_x / cell_size)) - 1
-    gx_max = int(math.floor((world_x + width - 1) / cell_size)) + 1
-    gy_min = int(math.floor(world_y / cell_size)) - 1
-    gy_max = int(math.floor((world_y + height - 1) / cell_size)) + 1
+    gx_min = int(math.floor(world_x / cell_size)) - 2
+    gx_max = int(math.floor((world_x + width - 1) / cell_size)) + 2
+    gy_min = int(math.floor(world_y / cell_size)) - 2
+    gy_max = int(math.floor((world_y + height - 1) / cell_size)) + 2
 
     cells: dict[tuple[int, int], tuple[float, float, float, float, float]] = {}
     for gy in range(gy_min, gy_max + 1):
@@ -406,50 +393,35 @@ def tectonic_altitude_batch(
     cell_data = list(cells.values())
     n_cells = len(cell_data)
 
+    sigma = params.cell_size * 0.55
+    sigma2 = 2.0 * sigma * sigma
+
     for ty in range(height):
         wy = world_y + ty
         for tx in range(width):
             wx = world_x + tx
 
-            # 手动追踪最近 4 个（O(12) vs 排序 O(12 log 12)，避免 40K 次排序）
-            t1 = [float("inf"), 0, 0, 0, 0, 0]  # (d2, cx, cy, elev, drx, dry)
-            t2 = [float("inf"), 0, 0, 0, 0, 0]
-            t3 = [float("inf"), 0, 0, 0, 0, 0]
-            t4 = [float("inf"), 0, 0, 0, 0, 0]
-            for (cx, cy, elev, drx, dry) in cell_data:
-                d2 = (wx - cx) ** 2 + (wy - cy) ** 2
-                if d2 < t1[0]:
-                    t4, t3, t2, t1 = t3, t2, t1, [d2, cx, cy, elev, drx, dry]
-                elif d2 < t2[0]:
-                    t4, t3, t2 = t3, t2, [d2, cx, cy, elev, drx, dry]
-                elif d2 < t3[0]:
-                    t4, t3 = t3, [d2, cx, cy, elev, drx, dry]
-                elif d2 < t4[0]:
-                    t4 = [d2, cx, cy, elev, drx, dry]
-            top4 = (t1, t2, t3, t4)
-
-            # IDW 混合（反距离平方加权）
+            # 高斯加权混合所有候选单元
             weighted_sum = 0.0
             weight_sum = 0.0
-            epsilon = 1e-3
-            for t in top4:
-                d2 = t[0]
-                elev = t[3]
-                dist = math.sqrt(d2)
-                w = 1.0 / (dist * dist + epsilon)
+            best_w1 = -1.0; best_i1 = 0
+            best_w2 = -1.0; best_i2 = 0
+            for i, (cx, cy, elev, drx, dry) in enumerate(cell_data):
+                d2 = (wx - cx) ** 2 + (wy - cy) ** 2
+                w = math.exp(-d2 / sigma2)
                 weighted_sum += elev * w
                 weight_sum += w
+                if w > best_w1:
+                    best_w2, best_i2 = best_w1, best_i1
+                    best_w1, best_i1 = w, i
+                elif w > best_w2:
+                    best_w2, best_i2 = w, i
 
-            altitude = weighted_sum / weight_sum
+            altitude = weighted_sum / (weight_sum + 1e-10)
 
-            # 收敛隆起 — 最近 2 个单元之间
-            t1, t2, t3, t4 = top4
-            d1 = math.sqrt(t1[0])
-            d2 = math.sqrt(t2[0])
-            denom = d1 + d2
-            d2_0, cx1, cy1, e1, drx1, dry1 = t1
-            d2_1, cx2, cy2, e2, drx2, dry2 = t2
-
+            # 收敛隆起 — 仅最重的 2 个单元
+            cx1, cy1, e1, drx1, dry1 = cell_data[best_i1]
+            cx2, cy2, e2, drx2, dry2 = cell_data[best_i2]
             abx = cx2 - cx1
             aby = cy2 - cy1
             dist_ab = math.sqrt(abx * abx + aby * aby)
@@ -461,8 +433,13 @@ def tectonic_altitude_batch(
                 v_proj = rel_vx * nx + rel_vy * ny
                 convergence = max(0.0, -v_proj) / (2.0 * params.drift_scale + 1e-6)
                 convergence = min(1.0, convergence)
+                d2_1 = (wx - cx1)**2 + (wy - cy1)**2
+                d2_2 = (wx - cx2)**2 + (wy - cy2)**2
+                d1 = math.sqrt(d2_1)
+                d2 = math.sqrt(d2_2)
+                denom = d1 + d2
                 t = d1 / (denom + 1e-10)
-                boundary_t = 1.0 - abs(t - 0.5) * 2.0
+                boundary_t = math.exp(-((t - 0.5) ** 2) / 0.25)
                 uplift = convergence * boundary_t * params.uplift_scale
                 altitude += uplift
 

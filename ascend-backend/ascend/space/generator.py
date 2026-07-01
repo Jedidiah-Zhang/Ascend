@@ -16,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ascend.log import get_logger
 from .noise import PerlinNoise
+from .tectonic import tectonic_altitude
+from .tile_grid import TILE_MAP_SIZE
 from .climate import (
     ClimateZone,
     WeatherParams,
@@ -29,15 +31,10 @@ from .chunk import ChunkData
 
 logger = get_logger(__name__)
 
-# 噪声频率配置 — 从宏观（大陆山脉）到微观（局地变化）
-_FREQ_ALTITUDE = 0.0005    # 海拔：超低频，大陆-海洋尺度（半波长 ~2000 chunk）
+# 噪声频率配置
 _FREQ_LATITUDE = 0.0003    # 纬度：超低频，暖/冷带宽 ~3000 chunk
 _FREQ_RAINFALL = 0.004     # 降雨：低频，区域降水模式
 _FREQ_DERIVED = 0.005      # 派生参数（日照/湿度/风速）：中频
-
-# 海拔边界（用于 clamp，实际范围由 _sample_altitude 的分段映射决定）
-_ALTITUDE_FLOOR: float = -500.0
-_ALTITUDE_CEIL: float = 5000.0
 
 
 class WorldGenerator:
@@ -83,8 +80,7 @@ class WorldGenerator:
             for i in range(n_phases)
         ]
 
-        # 7 个独立噪声通道，子种子不同 + 相位偏移保证去相关
-        self._noise_altitude = PerlinNoise(seed + 100)
+        # 6 个噪声通道（海拔改用构造模拟）
         self._noise_latitude = PerlinNoise(seed + 200)
         self._noise_rainfall = PerlinNoise(seed + 300)
         self._noise_sunshine = PerlinNoise(seed + 400)
@@ -93,41 +89,41 @@ class WorldGenerator:
         # 次级噪声（群系细分用）
         self._noise_moisture = PerlinNoise(seed + 700)
 
-        logger.info("WorldGenerator 就绪: seed=%d, 噪声通道=7", seed)
+        logger.info("WorldGenerator 就绪: seed=%d, 构造海拔 + 6 噪声通道", seed)
 
     def __repr__(self) -> str:
         return f"WorldGenerator(seed={self._seed})"
 
-    # ── 物理推导 ──────────────────────────────────────────
+    # ── 海拔查询 ──────────────────────────────────────────
 
-    def _sample_altitude(self, cx: int, cy: int) -> float:
-        """采样海拔噪声，分段映射到 [-500, 5000] m。
-
-        采用海平面占优的地貌模型：
-          noise [-1, +0.4) → 海洋 [-500, 0]   (~70% 面积)
-          noise [+0.4, +1] → 陆地 [0, 5000]   (~30% 面积)
+    def get_altitude(self, world_x: float, world_y: float) -> float:
+        """查询任意世界坐标的构造海拔。
 
         Args:
-            cx, cy: 分块坐标。
+            world_x: 世界 tile X。
+            world_y: 世界 tile Y。
 
         Returns:
             海拔 (m)。
         """
-        p = self._phase[0]
-        n = self._noise_altitude.octave(cx + p, cy + p, octaves=2, frequency=_FREQ_ALTITUDE)
-        from .climate import clamp
+        return tectonic_altitude(world_x, world_y, self._seed)
 
-        _SEA_CUTOFF = 0.08     # 噪声阈值：低于此值 → 海洋（约 60% 面积，海洋包围大陆）
-        _OCEAN_FLOOR = -500.0  # 最深海沟
-        _LAND_CEIL = 5000.0    # 最高山峰
+    def _sample_altitude_at_chunk(self, cx: int, cy: int) -> float:
+        """采样 chunk 中心的海拔（chunk 坐标 → tile 坐标转换后调用构造模拟）。
 
-        if n < _SEA_CUTOFF:
-            # [-1, _SEA_CUTOFF) → [_OCEAN_FLOOR, 0)
-            alt = _OCEAN_FLOOR + (n + 1.0) / (_SEA_CUTOFF + 1.0) * (0.0 - _OCEAN_FLOOR)
-        else:
-            # [_SEA_CUTOFF, 1] → [0, _LAND_CEIL]
-            alt = (n - _SEA_CUTOFF) / (1.0 - _SEA_CUTOFF) * _LAND_CEIL
-        return clamp(alt, _OCEAN_FLOOR, _LAND_CEIL)
+        Args:
+            cx, cy: chunk 坐标。
+
+        Returns:
+            chunk 中心海拔 (m)。
+        """
+        return tectonic_altitude(
+            cx * TILE_MAP_SIZE + TILE_MAP_SIZE // 2,
+            cy * TILE_MAP_SIZE + TILE_MAP_SIZE // 2,
+            self._seed,
+        )
+
+    # ── 物理推导 ──────────────────────────────────────────
 
     def _sample_latitude_temp(self, cx: int, cy: int) -> float:
         """采样纬度噪声 → 海平面温度。
@@ -188,7 +184,7 @@ class WorldGenerator:
             完整的 ChunkData（tiles=None）。
         """
         # 1. 海拔（第一性）
-        altitude = self._sample_altitude(cx, cy)
+        altitude = self._sample_altitude_at_chunk(cx, cy)
 
         # 2. 纬度 → 海平面温度
         sea_temp = self._sample_latitude_temp(cx, cy)
@@ -281,7 +277,7 @@ class WorldGenerator:
         Returns:
             群系类型。
         """
-        altitude = self._sample_altitude(cx, cy)
+        altitude = self._sample_altitude_at_chunk(cx, cy)
         sea_temp = self._sample_latitude_temp(cx, cy)
         rainfall = self._sample_rainfall(cx, cy)
         from .climate import apply_lapse_rate
@@ -300,7 +296,7 @@ class WorldGenerator:
         Returns:
             气候档位。
         """
-        altitude = self._sample_altitude(cx, cy)
+        altitude = self._sample_altitude_at_chunk(cx, cy)
         sea_temp = self._sample_latitude_temp(cx, cy)
         rainfall = self._sample_rainfall(cx, cy)
         from .climate import apply_lapse_rate
