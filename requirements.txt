@@ -1,4 +1,5 @@
 # Ascend 后端依赖
 # 安装: python -m venv .venv && .venv/bin/pip install -r requirements.txt
 
+msgpack>=1.0
 pytest>=8.0

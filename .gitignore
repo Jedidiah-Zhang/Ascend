@@ -25,3 +25,9 @@ tests/.coverage.*
 
 # 控制台历史
 .ascend_history
+
+# 运行数据（归档、存档等）
+save/
+
+# Godot 编辑器插件（开发工具，非游戏代码）
+ascend-frontend/addons/
