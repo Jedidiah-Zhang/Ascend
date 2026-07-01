@@ -726,12 +726,14 @@ class TestTileGenerator:
 
     @pytest.fixture
     def ocean_chunk(self, gen: WorldGenerator) -> ChunkData:
-        """获取一个海洋 chunk（搜索附近区域）。"""
-        for cx in range(-5, 6):
-            for cy in range(-5, 6):
-                c = gen.generate_chunk(cx, cy)
-                if c.biome.is_ocean:
-                    return c
+        """获取一个海洋 chunk（大范围搜索，大陆可能很宽）。"""
+        for r in [10, 50, 200, 500, 1000]:
+            step = max(1, r // 10)
+            for cx in range(-r, r + 1, step):
+                for cy in range(-r, r + 1, step):
+                    c = gen.generate_chunk(cx, cy)
+                    if c.biome.is_ocean:
+                        return c
         return gen.generate_chunk(0, 0)
 
     def test_create(self, tile_gen: TileGenerator):
