@@ -16,8 +16,44 @@
     alts = tectonic_altitude_batch(0, 0, 200, 200, 42, params=PRESETS["mountainous"])
 """
 
+import ctypes
 import math
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
+
+# ════════════════════════════════════════════════════════════════
+# C 扩展加载（仿 noise.py 模式）
+# ════════════════════════════════════════════════════════════════
+
+_HERE = Path(__file__).resolve().parent
+_SO = _HERE / "_tectonic.so"
+_C = _HERE / "_tectonic.c"
+
+if not _SO.exists() or _C.stat().st_mtime > _SO.stat().st_mtime:
+    subprocess.run(
+        ["gcc", "-O3", "-shared", "-fPIC", "-o", str(_SO), str(_C), "-lm"],
+        check=True, cwd=str(_HERE),
+    )
+
+_LIB = ctypes.CDLL(str(_SO))
+_LIB.tectonic_altitude_batch_c.argtypes = [
+    ctypes.POINTER(ctypes.c_double),  # cell_cx
+    ctypes.POINTER(ctypes.c_double),  # cell_cy
+    ctypes.POINTER(ctypes.c_double),  # cell_elev
+    ctypes.POINTER(ctypes.c_double),  # cell_drx
+    ctypes.POINTER(ctypes.c_double),  # cell_dry
+    ctypes.c_int,                      # n_cells
+    ctypes.c_int, ctypes.c_int,        # world_x, world_y
+    ctypes.c_int, ctypes.c_int,        # w, h
+    ctypes.c_double,                   # sigma2
+    ctypes.c_double, ctypes.c_double,  # drift_scale, uplift_scale
+    ctypes.c_double, ctypes.c_double,  # altitude_floor, altitude_ceil
+    ctypes.POINTER(ctypes.c_double),   # output
+]
+_LIB.tectonic_altitude_batch_c.restype = None
+
+_USE_C_EXTENSION = _SO.exists()
 
 
 # ════════════════════════════════════════════════════════════════
@@ -339,6 +375,59 @@ def tectonic_altitude(
 # 批量查询
 # ════════════════════════════════════════════════════════════════
 
+def _tectonic_batch_c(
+    world_x: int, world_y: int, w: int, h: int, seed: int, params: WorldParams,
+) -> list[float]:
+    """C 扩展批量计算（ctypes 调用 _tectonic.so）。"""
+    cell_size = params.cell_size
+
+    # 预计算单元属性（与 Python 路径相同）
+    gx_min = int(math.floor(world_x / cell_size)) - 2
+    gx_max = int(math.floor((world_x + w - 1) / cell_size)) + 2
+    gy_min = int(math.floor(world_y / cell_size)) - 2
+    gy_max = int(math.floor((world_y + h - 1) / cell_size)) + 2
+
+    cell_cx: list[float] = []
+    cell_cy: list[float] = []
+    cell_elev: list[float] = []
+    cell_drx: list[float] = []
+    cell_dry: list[float] = []
+
+    for gy in range(gy_min, gy_max + 1):
+        for gx in range(gx_min, gx_max + 1):
+            cx, cy = _cell_center(gx, gy, cell_size, params.jitter_range, seed)
+            elev = _cell_elevation(gx, gy, seed, params)
+            drx, dry = _cell_drift(gx, gy, seed, params)
+            cell_cx.append(cx)
+            cell_cy.append(cy)
+            cell_elev.append(elev)
+            cell_drx.append(drx)
+            cell_dry.append(dry)
+
+    n_cells = len(cell_cx)
+    sigma2 = 2.0 * (cell_size * 0.55) ** 2
+
+    # 转换为 ctypes 数组
+    arr_cx = (ctypes.c_double * n_cells)(*cell_cx)
+    arr_cy = (ctypes.c_double * n_cells)(*cell_cy)
+    arr_elev = (ctypes.c_double * n_cells)(*cell_elev)
+    arr_drx = (ctypes.c_double * n_cells)(*cell_drx)
+    arr_dry = (ctypes.c_double * n_cells)(*cell_dry)
+
+    n_out = w * h
+    arr_out = (ctypes.c_double * n_out)()
+
+    _LIB.tectonic_altitude_batch_c(
+        arr_cx, arr_cy, arr_elev, arr_drx, arr_dry,
+        n_cells, world_x, world_y, w, h,
+        sigma2, params.drift_scale, params.uplift_scale,
+        params.altitude_floor, params.altitude_ceil,
+        arr_out,
+    )
+
+    return list(arr_out)
+
+
 def tectonic_altitude_batch(
     world_x: int,
     world_y: int,
@@ -372,6 +461,11 @@ def tectonic_altitude_batch(
     if params is None:
         params = PRESETS["earthlike"]
 
+    # ── C 扩展快速路径 ──
+    if _USE_C_EXTENSION:
+        return _tectonic_batch_c(world_x, world_y, width, height, seed, params)
+
+    # ── 纯 Python 路径 ──
     cell_size = params.cell_size
 
     # ── 预计算所有可能被引用的单元属性 ──
