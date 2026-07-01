@@ -47,7 +47,7 @@ _LIB.tectonic_altitude_batch_c.argtypes = [
     ctypes.c_int, ctypes.c_int,        # world_x, world_y
     ctypes.c_int, ctypes.c_int,        # w, h
     ctypes.c_double,                   # sigma2
-    ctypes.c_double, ctypes.c_double,  # drift_scale, uplift_scale
+    ctypes.c_double, ctypes.c_double,  # faults_per_region, uplift_scale
     ctypes.c_double,                   # sea_level_offset
     ctypes.c_double, ctypes.c_double,  # altitude_floor, altitude_ceil
     ctypes.POINTER(ctypes.c_double),   # output
@@ -72,7 +72,7 @@ class WorldParams:
         jitter_range: 中心抖动幅度 [0, 0.5)。越大边界越不规则，
                       必须 < 0.5 以保证单元不重叠。
         uplift_scale: 板块碰撞隆起量 (m)。越大山脉越高。
-        drift_scale: 板块漂移速度。越大碰撞越频繁。
+        faults_per_region: 板块漂移速度。越大碰撞越频繁。
         elevation_min: 板块基础海拔下限 (m)。
         elevation_max: 板块基础海拔上限 (m)。
         altitude_floor: 最终海拔钳制下限 (m)。
@@ -86,12 +86,22 @@ class WorldParams:
     """
 
     # 构造
-    cell_size: int = 600
-    jitter_range: float = 0.30
-    uplift_scale: float = 400.0
-    drift_scale: float = 1.5
-    elevation_min: float = -1200.0
-    elevation_max: float = 1500.0
+    # 大尺度（海陆框架）
+    cell_size: int = 400000         # ~2000 chunks
+    jitter_range: float = 0.25
+    blend_sigma: float = 0.015      # 交界带宽度 (×cell_size, ~30 chunks)
+    elevation_min: float = -3000.0  # 深海盆地
+    elevation_max: float = 3000.0   # 高原台地
+    # 中尺度（地形细节）
+    detail_cell_size: int = 600     # ~3 chunks
+    detail_jitter: float = 0.35
+    detail_amplitude: float = 400.0 # 中尺度起伏幅度 (m)
+    # 断层山脉
+    uplift_scale: float = 2000.0
+    faults_per_region: int = 5
+    drift_scale: float = 1.5  # 兼容 C 扩展
+    fault_length: float = 0.6
+    fault_width: float = 0.02
     altitude_floor: float = -500.0
     altitude_ceil: float = 6000.0
 
@@ -130,7 +140,7 @@ class WorldParams:
     def __repr__(self) -> str:
         return (
             f"WorldParams(cell={self.cell_size}, uplift={self.uplift_scale:.0f}, "
-            f"drift={self.drift_scale:.1f})"
+            f"drift={self.faults_per_region:.1f})"
         )
 
 
@@ -140,45 +150,35 @@ PRESETS: dict[str, WorldParams] = {
     "earthlike": WorldParams(),
 
     "pangaea": WorldParams(
-        cell_size=800,
-        elevation_min=-500.0,
-        elevation_max=4000.0,
-        uplift_scale=2500.0,
+        cell_size=1000, elevation_min=-500.0, elevation_max=2500.0,
+        uplift_scale=600.0, jitter_range=0.20,
     ),
 
     "archipelago": WorldParams(
-        cell_size=250,
-        elevation_min=-2000.0,
-        elevation_max=1500.0,
-        uplift_scale=1000.0,
-        drift_scale=3.0,
+        cell_size=350, elevation_min=-1800.0, elevation_max=1000.0,
+        uplift_scale=300.0, faults_per_region=3, jitter_range=0.35,
+        detail_cell_size=300,
     ),
 
     "mountainous": WorldParams(
-        uplift_scale=4000.0,
-        drift_scale=3.5,
-        elevation_max=4000.0,
+        uplift_scale=2500.0, faults_per_region=8, elevation_max=3000.0,
+        cell_size=300000, detail_cell_size=400,
     ),
 
     "flat": WorldParams(
-        uplift_scale=500.0,
-        drift_scale=0.5,
-        elevation_min=-800.0,
-        elevation_max=2000.0,
+        uplift_scale=100.0, faults_per_region=1, jitter_range=0.20,
+        elevation_min=-600.0, elevation_max=1200.0, cell_size=600000,
+        detail_amplitude=100.0,
     ),
 
     "canyon": WorldParams(
-        erosion_rate=0.7,
-        erosion_droplets=15000,
-        evaporation_rate=0.005,
-        erosion_iterations=3,
+        erosion_rate=0.7, erosion_droplets=15000,
+        evaporation_rate=0.005, erosion_iterations=3,
     ),
 
     "ocean_world": WorldParams(
-        elevation_min=-3000.0,
-        elevation_max=500.0,
-        cell_size=300,
-        drift_scale=2.5,
+        elevation_min=-2500.0, elevation_max=300.0, cell_size=400,
+        faults_per_region=2.0, jitter_range=0.30,
     ),
 }
 
@@ -278,9 +278,142 @@ def _cell_drift(
     Returns:
         (drift_x, drift_y)。
     """
-    dx = _hash_float(gx, gy, seed + 4000, -params.drift_scale, params.drift_scale)
-    dy = _hash_float(gx, gy, seed + 5000, -params.drift_scale, params.drift_scale)
+    dx = _hash_float(gx, gy, seed + 4000, -params.faults_per_region, params.faults_per_region)
+    dy = _hash_float(gx, gy, seed + 5000, -params.faults_per_region, params.faults_per_region)
     return (dx, dy)
+
+
+# ════════════════════════════════════════════════════════════════
+# 断层线系统 — 连绵山脉
+# ════════════════════════════════════════════════════════════════
+
+_FAULT_REGION_FACTOR = 2.0  # 断层区域 = cell_size × factor
+
+
+def _region_faults(
+    rx: int, ry: int, seed: int, params: WorldParams
+) -> list[tuple[float, float, float, float, float]]:
+    """生成区域内确定性断层线列表。
+
+    Args:
+        rx, ry: 断层区域坐标。
+        seed: 世界种子。
+        params: 世界参数。
+
+    Returns:
+        (fx, fy, angle, length, strength) 列表。
+        fx, fy: 断层中点（世界 tile 坐标）。
+        angle: 断层走向 (弧度)。
+        length: 断层半长 (tiles)。
+        strength: 隆起强度 (m)。
+    """
+    region_size = params.cell_size * _FAULT_REGION_FACTOR
+    n = params.faults_per_region
+
+    # 用 hash 决定该区域是否有断层（约 60% 区域有）
+    has_faults = _hash_float(rx, ry, seed + 6000, 0, 1) < 0.85
+    if not has_faults:
+        return []
+
+    faults = []
+    for fi in range(n):
+        # 断层中点（区域内随机位置）
+        fx = (rx + _hash_float(rx, ry, seed + 7000 + fi * 10, -0.3, 0.3)) * region_size
+        fy = (ry + _hash_float(rx, ry, seed + 8000 + fi * 10, -0.3, 0.3)) * region_size
+
+        # 走向角度
+        angle = _hash_float(rx, ry, seed + 9000 + fi * 10, 0, math.pi)
+
+        # 长度
+        halflen = _hash_float(rx, ry, seed + 10000 + fi * 10, 0.3, params.fault_length) * region_size
+
+        # 强度
+        strength = _hash_float(rx, ry, seed + 11000 + fi * 10, 0.3, 1.0) * params.uplift_scale
+
+        faults.append((fx, fy, angle, halflen, strength))
+
+    return faults
+
+
+def _fault_uplift(
+    world_x: float, world_y: float, seed: int, params: WorldParams
+) -> float:
+    """累加附近所有断层线的隆起贡献。
+
+    每条断层是一个线段，沿线添加高斯剖面隆起：
+      uplift = strength × exp(-d_perp² / (2 × width²))
+    线段两端逐渐衰减。
+
+    Args:
+        world_x, world_y: 查询点。
+        seed: 世界种子。
+        params: 世界参数。
+
+    Returns:
+        总隆起量 (m)。
+    """
+    region_size = params.cell_size * _FAULT_REGION_FACTOR
+    width = params.fault_width * params.cell_size  # 高斯 sigma
+    width2 = 2.0 * width * width
+
+    gx = int(math.floor(world_x / region_size))
+    gy = int(math.floor(world_y / region_size))
+
+    total_uplift = 0.0
+
+    # 检查 3×3 邻域
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            rx, ry = gx + dx, gy + dy
+            for (fx, fy, angle, halflen, strength) in _region_faults(rx, ry, seed, params):
+                # 点到断层的垂直距离
+                dpx = world_x - fx
+                dpy = world_y - fy
+
+                # 沿断层方向投影
+                along = math.cos(angle) * dpx + math.sin(angle) * dpy
+                if abs(along) > halflen:
+                    continue  # 超出断层长度
+
+                # 垂直距离
+                perp = -math.sin(angle) * dpx + math.cos(angle) * dpy
+
+                # 高斯剖面
+                ridge = math.exp(-perp * perp / width2)
+
+                # 端点渐变
+                end_taper = 1.0 - abs(along) / halflen
+                ridge *= end_taper
+
+                total_uplift += strength * ridge
+
+    return total_uplift
+
+
+def _detail_elevation(
+    world_x: float, world_y: float, seed: int, params: WorldParams
+) -> float:
+    """中尺度地形细节：小单元 Voronoi，零中心。"""
+    d_cell = params.detail_cell_size
+    sigma = d_cell * 0.45
+    sigma2 = 2.0 * sigma * sigma
+
+    gx = int(math.floor(world_x / d_cell))
+    gy = int(math.floor(world_y / d_cell))
+
+    w_sum = 0.0
+    e_sum = 0.0
+    for dy in (-2, -1, 0, 1, 2):
+        for dx in (-2, -1, 0, 1, 2):
+            nx, ny = gx + dx, gy + dy
+            cx, cy = _cell_center(nx, ny, d_cell, params.detail_jitter, seed + 100000)
+            elev = _hash_float(nx, ny, seed + 103000, -1.0, 1.0)
+            d2 = (world_x - cx) ** 2 + (world_y - cy) ** 2
+            w = math.exp(-d2 / sigma2)
+            e_sum += elev * w
+            w_sum += w
+
+    return (e_sum / (w_sum + 1e-10)) * params.detail_amplitude
 
 
 # ════════════════════════════════════════════════════════════════
@@ -328,7 +461,7 @@ def tectonic_altitude(
             candidates.append((d2, cx, cy, elev, drx, dry))
 
     # 高斯加权混合所有 9 个单元（平滑过渡）
-    sigma = cell_size * 0.55
+    sigma = cell_size * params.blend_sigma
     sigma2 = 2.0 * sigma * sigma
 
     weighted_sum = 0.0
@@ -340,36 +473,11 @@ def tectonic_altitude(
 
     altitude = weighted_sum / (weight_sum + 1e-10)
 
-    # 收敛隆起 — 仅对最重的 2 个单元（保持尖锐的山脉边界）
-    candidates.sort(key=lambda c: math.exp(-c[0] / sigma2), reverse=True)
-    c1, c2 = candidates[0], candidates[1]
-    d2_1, cx1, cy1, e1, drx1, dry1 = c1
-    d2_2, cx2, cy2, e2, drx2, dry2 = c2
+    # 中尺度地形细节
+    altitude += _detail_elevation(world_x, world_y, seed, params)
 
-    abx = cx2 - cx1
-    aby = cy2 - cy1
-    dist_ab = math.sqrt(abx * abx + aby * aby)
-
-    if dist_ab > 1e-6:
-        nx = abx / dist_ab
-        ny = aby / dist_ab
-        rel_vx = drx2 - drx1
-        rel_vy = dry2 - dry1
-        v_proj = rel_vx * nx + rel_vy * ny
-        convergence = max(0.0, -v_proj) / (2.0 * params.drift_scale + 1e-6)
-        convergence = min(1.0, convergence)
-
-        d1 = math.sqrt(d2_1)
-        d2 = math.sqrt(d2_2)
-        denom = d1 + d2
-        if denom > 1e-10:
-            t = d1 / denom
-            boundary_t = math.exp(-((t - 0.5) ** 2) / 0.25)
-        else:
-            boundary_t = 1.0
-
-        uplift = convergence * boundary_t * params.uplift_scale
-        altitude += uplift
+    # 断层线隆起 — 连绵山脉
+    altitude += _fault_uplift(world_x, world_y, seed, params)
 
     altitude += params.sea_level_offset
     altitude = max(params.altitude_floor, min(params.altitude_ceil, altitude))
@@ -410,7 +518,7 @@ def _tectonic_batch_c(
             cell_dry.append(dry)
 
     n_cells = len(cell_cx)
-    sigma2 = 2.0 * (cell_size * 0.55) ** 2
+    sigma2 = 2.0 * (cell_size * params.blend_sigma) ** 2
 
     # 转换为 ctypes 数组
     arr_cx = (ctypes.c_double * n_cells)(*cell_cx)
@@ -425,13 +533,25 @@ def _tectonic_batch_c(
     _LIB.tectonic_altitude_batch_c(
         arr_cx, arr_cy, arr_elev, arr_drx, arr_dry,
         n_cells, world_x, world_y, w, h,
-        sigma2, params.drift_scale, params.uplift_scale,
-        params.sea_level_offset,
+        sigma2, 0.0, 0.0,          # drift_scale, uplift_scale (C skip)
+        0.0,                        # sea_level_offset (Python handles)
         params.altitude_floor, params.altitude_ceil,
         arr_out,
     )
 
-    return list(arr_out)
+    result = list(arr_out)
+    # Python 后处理：细节 + 断层 + offset
+    for i in range(w * h):
+        wx = world_x + (i % w)
+        wy = world_y + (i // w)
+        result[i] += _detail_elevation(wx, wy, seed, params)
+        result[i] += _fault_uplift(wx, wy, seed, params)
+        result[i] += params.sea_level_offset
+        r = result[i]
+        if r < params.altitude_floor: r = params.altitude_floor
+        elif r > params.altitude_ceil: r = params.altitude_ceil
+        result[i] = r
+    return result
 
 
 def tectonic_altitude_batch(
@@ -519,29 +639,9 @@ def tectonic_altitude_batch(
 
             altitude = weighted_sum / (weight_sum + 1e-10)
 
-            # 收敛隆起 — 仅最重的 2 个单元
-            cx1, cy1, e1, drx1, dry1 = cell_data[best_i1]
-            cx2, cy2, e2, drx2, dry2 = cell_data[best_i2]
-            abx = cx2 - cx1
-            aby = cy2 - cy1
-            dist_ab = math.sqrt(abx * abx + aby * aby)
-            if dist_ab > 1e-6:
-                nx = abx / dist_ab
-                ny = aby / dist_ab
-                rel_vx = drx2 - drx1
-                rel_vy = dry2 - dry1
-                v_proj = rel_vx * nx + rel_vy * ny
-                convergence = max(0.0, -v_proj) / (2.0 * params.drift_scale + 1e-6)
-                convergence = min(1.0, convergence)
-                d2_1 = (wx - cx1)**2 + (wy - cy1)**2
-                d2_2 = (wx - cx2)**2 + (wy - cy2)**2
-                d1 = math.sqrt(d2_1)
-                d2 = math.sqrt(d2_2)
-                denom = d1 + d2
-                t = d1 / (denom + 1e-10)
-                boundary_t = math.exp(-((t - 0.5) ** 2) / 0.25)
-                uplift = convergence * boundary_t * params.uplift_scale
-                altitude += uplift
+            # 中尺度细节 + 断层线隆起
+            altitude += _detail_elevation(wx, wy, seed, params)
+            altitude += _fault_uplift(wx, wy, seed, params)
 
             altitude += params.sea_level_offset
             altitude = max(params.altitude_floor,
@@ -559,7 +659,7 @@ def calibrate_ocean_ratio(
     target_ratio: float = 0.5,
     seed: int = 0,
     params: WorldParams | None = None,
-    sample_size: int = 2000,
+    sample_size: int = 0,  # 0 = 自动按 cell_size 计算
 ) -> float:
     """计算使海陆比接近目标的 sea_level_offset。
 
@@ -577,6 +677,8 @@ def calibrate_ocean_ratio(
     if params is None:
         params = PRESETS["earthlike"]
 
+    if sample_size <= 0:
+        sample_size = params.cell_size * 5  # 覆盖 ~25 个单元
     half = sample_size // 2
     samples = tectonic_altitude_batch(-half, -half, sample_size, sample_size, seed, params=params)
     sorted_alts = sorted(samples)
