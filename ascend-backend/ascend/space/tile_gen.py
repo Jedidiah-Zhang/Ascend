@@ -47,11 +47,17 @@ class TileGenerator:
 
     # ── 主入口 ──────────────────────────────────────────────
 
-    def generate(self, chunk: ChunkData) -> TileGrid:
+    def generate(
+        self,
+        chunk: ChunkData,
+        *,
+        erosion_droplets: int = 0,
+    ) -> TileGrid:
         """为给定分块生成详细 tile 网格。
 
         Args:
             chunk: 大地图层分块数据。
+            erosion_droplets: 水力侵蚀水滴数。0=跳过, 1000=轻度, 5000=中度。
 
         Returns:
             200×200 的 TileGrid。
@@ -59,22 +65,23 @@ class TileGenerator:
         if chunk.biome.is_ocean:
             return self._generate_ocean(chunk)
         else:
-            return self._generate_land(chunk)
+            return self._generate_land(chunk, erosion_droplets=erosion_droplets)
 
     # ── 陆地生成 ────────────────────────────────────────────
 
-    def _generate_land(self, chunk: ChunkData) -> TileGrid:
+    def _generate_land(
+        self,
+        chunk: ChunkData,
+        *,
+        erosion_droplets: int = 0,
+    ) -> TileGrid:
         """陆地群系的 tile 生成。
 
-        构造海拔决定宏观分带：
-          ta < 0      → 海洋（浅水/深水）
-          0 ≤ ta < 100  → 海岸平地（微噪声产生水塘/沼泽/草地）
-          100 ≤ ta < 800 → 丘陵（草地+岩石露头）
-          800 ≤ ta < 2000 → 山腰（陡坡+岩石）
-          ta ≥ 2000    → 高山（山巅+陡坡）
+        构造海拔决定宏观分带，可选水力侵蚀细化地形。
 
         Args:
             chunk: 大陆群系的 ChunkData。
+            erosion_droplets: 侵蚀水滴数，0=跳过。
 
         Returns:
             TileGrid。
@@ -87,6 +94,15 @@ class TileGenerator:
         # 1. 构造海拔 — tile 粒度，确定性
         tectonic_alts = tectonic_altitude_batch(
             world_x, world_y, size, size, self._seed)
+
+        # 1.5. 可选水力侵蚀 — 塑造河谷和冲积地形
+        if erosion_droplets > 0:
+            from .erosion import hydraulic_erosion
+            tectonic_alts = hydraulic_erosion(
+                tectonic_alts, size, size,
+                seed=self._seed,
+                droplets=erosion_droplets,
+            )
 
         # 2. 微地形噪声
         elevation = self._noise_elevation.octave_grid(

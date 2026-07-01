@@ -435,7 +435,7 @@ def _terrain_worker(seed: int, cx: int, cy: int) -> bytes:
     )
 
     tile_gen = TileGenerator(seed)
-    grid = tile_gen.generate(chunk)
+    grid = tile_gen.generate(chunk, erosion_droplets=1000)
 
     # ── 河流生成：流量累积法 ──
     # 在构造海拔上计算流向 → 累积流量 → 高流量 tile 标为浅水
