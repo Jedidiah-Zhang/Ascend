@@ -48,6 +48,7 @@ _LIB.tectonic_altitude_batch_c.argtypes = [
     ctypes.c_int, ctypes.c_int,        # w, h
     ctypes.c_double,                   # sigma2
     ctypes.c_double, ctypes.c_double,  # drift_scale, uplift_scale
+    ctypes.c_double,                   # sea_level_offset
     ctypes.c_double, ctypes.c_double,  # altitude_floor, altitude_ceil
     ctypes.POINTER(ctypes.c_double),   # output
 ]
@@ -93,6 +94,9 @@ class WorldParams:
     elevation_max: float = 1500.0
     altitude_floor: float = -500.0
     altitude_ceil: float = 6000.0
+
+    # 海平面校准（正=降低海平面=更多陆地，负=升高海平面=更多海洋）
+    sea_level_offset: float = 0.0
 
     # 侵蚀
     erosion_droplets: int = 5000
@@ -367,6 +371,7 @@ def tectonic_altitude(
         uplift = convergence * boundary_t * params.uplift_scale
         altitude += uplift
 
+    altitude += params.sea_level_offset
     altitude = max(params.altitude_floor, min(params.altitude_ceil, altitude))
     return altitude
 
@@ -421,6 +426,7 @@ def _tectonic_batch_c(
         arr_cx, arr_cy, arr_elev, arr_drx, arr_dry,
         n_cells, world_x, world_y, w, h,
         sigma2, params.drift_scale, params.uplift_scale,
+        params.sea_level_offset,
         params.altitude_floor, params.altitude_ceil,
         arr_out,
     )
@@ -537,6 +543,7 @@ def tectonic_altitude_batch(
                 uplift = convergence * boundary_t * params.uplift_scale
                 altitude += uplift
 
+            altitude += params.sea_level_offset
             altitude = max(params.altitude_floor,
                          min(params.altitude_ceil, altitude))
             result.append(altitude)
@@ -548,9 +555,41 @@ def tectonic_altitude_batch(
 # 模块文档
 # ════════════════════════════════════════════════════════════════
 
+def calibrate_ocean_ratio(
+    target_ratio: float = 0.5,
+    seed: int = 0,
+    params: WorldParams | None = None,
+    sample_size: int = 2000,
+) -> float:
+    """计算使海陆比接近目标的 sea_level_offset。
+
+    扫描大样本区域，找到海拔分位数，计算需要的偏移量。
+
+    Args:
+        target_ratio: 目标海洋占比 [0, 1]。
+        seed: 世界种子。
+        params: 世界参数。
+        sample_size: 采样边长 (tiles)。
+
+    Returns:
+        推荐设置的 sea_level_offset 值。
+    """
+    if params is None:
+        params = PRESETS["earthlike"]
+
+    half = sample_size // 2
+    samples = tectonic_altitude_batch(-half, -half, sample_size, sample_size, seed, params=params)
+    sorted_alts = sorted(samples)
+    idx = int(len(sorted_alts) * target_ratio)
+    current_sea_level_alt = sorted_alts[idx]
+    # 要使得 current_sea_level_alt 处的海拔变为 0
+    return -current_sea_level_alt
+
+
 __all__ = [
     "WorldParams",
     "PRESETS",
     "tectonic_altitude",
     "tectonic_altitude_batch",
+    "calibrate_ocean_ratio",
 ]

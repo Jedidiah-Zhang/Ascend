@@ -7,7 +7,6 @@
 */
 
 #include <math.h>
-#include <stdlib.h>
 
 #define MAX_CELLS 49  /* 7x7 max */
 
@@ -18,6 +17,7 @@ void tectonic_altitude_batch_c(
     int n_cells,
     int world_x, int world_y, int w, int h,
     double sigma2, double drift_scale, double uplift_scale,
+    double sea_level_offset,
     double altitude_floor, double altitude_ceil,
     double* output
 ) {
@@ -75,6 +75,7 @@ void tectonic_altitude_batch_c(
                 altitude += convergence * boundary_t * uplift_scale;
             }
 
+            altitude += sea_level_offset;
             if (altitude < altitude_floor) altitude = altitude_floor;
             if (altitude > altitude_ceil)  altitude = altitude_ceil;
 
