@@ -42,6 +42,7 @@ from .tectonic import (
     tectonic_altitude, tectonic_altitude_batch,
 )
 from .erosion import hydraulic_erosion
+from .storage import WorldStore
 
 __all__ = [
     # 第一层：大地图
@@ -74,4 +75,6 @@ __all__ = [
     "tectonic_altitude_batch",
     # 水力侵蚀
     "hydraulic_erosion",
+    # 持久化
+    "WorldStore",
 ]
