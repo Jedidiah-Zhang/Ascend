@@ -12,11 +12,13 @@ MVP 阶段同步调用，内存存储。
 import bisect
 import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 
 from ascend.log import get_logger
 from .archive import EventArchive
 from .event import Event
 from .graph import EventGraph
+from .registry import SchemaRegistry
 
 
 class WorldTree:
@@ -38,6 +40,7 @@ class WorldTree:
         validate: bool = True,
         archive_path: str | None = None,
         max_memory_events: int | None = None,
+        schema_registry: SchemaRegistry | None = None,
     ) -> None:
         """初始化空的事件总线。
 
@@ -49,18 +52,28 @@ class WorldTree:
             max_memory_events: 内存中最大事件数。超过此阈值时 publish()
                          自动触发 _trim() 将旧事件移出内存（若配了
                          archive_path 则先归档）。None 表示不自动 trim。
+            schema_registry: 可选的 SchemaRegistry。传入后 publish 会
+                        对已注册的事件类型执行 data 字段类型校验。
         """
         self._validate = validate
         self._max_memory_events = max_memory_events
+        self._schema_registry = schema_registry
+        self._trim_cycle: int = 0
+        self._publish_count: int = 0
+        self._trim_count: int = 0
+        self._async_dispatch_count: int = 0
         self._event_log: list[Event] = []
-        self._id_index: dict[str, int] = {}
+        self._id_index: dict[str, Event] = {}
         self._subscriptions: dict[str, list[Callable[[Event], None]]] = {}
-        self._entity_index: dict[str, list[int]] = {}
-        self._spatial_index: dict[tuple[int, int], set[int]] = {}
+        self._entity_index: dict[str, list[Event]] = {}
+        self._spatial_index: dict[tuple[int, int], set[Event]] = {}
         self._graph: EventGraph = EventGraph()
         self._lock: threading.RLock = threading.RLock()
         self._archive: EventArchive | None = (
             EventArchive(archive_path) if archive_path else None
+        )
+        self._async_executor: ThreadPoolExecutor = ThreadPoolExecutor(
+            thread_name_prefix="worldtree",
         )
 
     def __repr__(self) -> str:
@@ -79,16 +92,7 @@ class WorldTree:
 
     @staticmethod
     def _validate_event(event: Event) -> None:
-        """校验事件必填字段。
-
-        在校验开启时由 publish() 在锁外调用，快速失败。
-
-        Args:
-            event: 要校验的事件。
-
-        Raises:
-            ValueError: 必填字段无效时抛出。
-        """
+        """校验事件必填字段。"""
         if not event.event_type or not event.event_type.strip():
             raise ValueError(f"事件类型不能为空: {event}")
         if not event.initiator_id or not event.initiator_id.strip():
@@ -102,9 +106,45 @@ class WorldTree:
             raise ValueError(f"时间戳不能为负: {event.timestamp}")
         location = event.location
         if not isinstance(location, tuple) or len(location) < 2:
+            raise ValueError(f"位置格式无效: {location}")
+
+    def _validate_schema(self, event: Event) -> None:
+        """校验事件 data 字段是否符合注册的 schema。"""
+        if self._schema_registry is None:
+            return
+        errors = self._schema_registry.validate(
+            event.event_type, event.data
+        )
+        if errors:
             raise ValueError(
-                f"位置格式无效: {location}"
+                f"事件 schema 校验失败 (event_type={event.event_type}, "
+                f"id={event.id}):\n  " + "\n  ".join(errors)
             )
+
+    # ── Schema 注册 ────────────────────────────────────
+
+    @property
+    def schema_registry(self) -> SchemaRegistry | None:
+        """事件 schema 注册表。"""
+        return self._schema_registry
+
+    def register_event_schema(
+        self,
+        event_type: str,
+        *,
+        required: dict[str, type | tuple[type, ...]] | None = None,
+        optional: dict[str, type | tuple[type, ...]] | None = None,
+        description: str = "",
+    ) -> None:
+        """注册一个事件类型的 schema，若未配置 registry 则自动创建。"""
+        if self._schema_registry is None:
+            self._schema_registry = SchemaRegistry()
+        self._schema_registry.register(
+            event_type,
+            required=required,
+            optional=optional,
+            description=description,
+        )
 
     # ── 发布 ──────────────────────────────────────────
 
@@ -127,20 +167,22 @@ class WorldTree:
         """
         if self._validate:
             self._validate_event(event)
+            self._validate_schema(event)
+
+        self._publish_count += 1
 
         with self._lock:
-            log_index = len(self._event_log)
             self._event_log.append(event)
-            self._id_index[event.id] = log_index
+            self._id_index[event.id] = event
 
             all_entities: set[str] = {event.initiator_id}
             for ap in event.affected:
                 all_entities.add(ap.entity_id)
             for eid in all_entities:
-                self._entity_index.setdefault(eid, []).append(log_index)
+                self._entity_index.setdefault(eid, []).append(event)
 
             chunk_key = (event.location[0], event.location[1])
-            self._spatial_index.setdefault(chunk_key, set()).add(log_index)
+            self._spatial_index.setdefault(chunk_key, set()).add(event)
 
             self._graph.add_event(event)
 
@@ -210,6 +252,47 @@ class WorldTree:
                     pass
 
         return unsubscribe
+
+    def subscribe_async(
+        self, event_type: str, callback: Callable[[Event], None]
+    ) -> Callable[[], None]:
+        """订阅某类事件，回调在后台线程中执行。
+
+        异步回调不阻塞 publish()，适合网络 I/O、文件写入等
+        耗时操作。回调异常由 _safe_async_call 隔离，不影响线程池。
+
+        Args:
+            event_type: 事件类型字符串。"*" 表示订阅所有事件。
+            callback: 在后台线程中调用的函数。
+
+        Returns:
+            一个无参函数，调用后取消此订阅。
+        """
+        def _async_wrapper(event: Event) -> None:
+            """将回调提交到线程池执行。"""
+            self._async_executor.submit(self._safe_async_call, callback, event)
+
+        return self.subscribe(event_type, _async_wrapper)
+
+    def _safe_async_call(
+        self, callback: Callable[[Event], None], event: Event
+    ) -> None:
+        """在异步上下文中安全调用回调，异常隔离。
+
+        Args:
+            callback: 异步订阅者回调。
+            event: 要传递的事件。
+        """
+        try:
+            callback(event)
+        except Exception:
+            logger = get_logger(__name__)
+            logger.exception(
+                "异步回调执行失败: event_id=%s event_type=%s callback=%s",
+                event.id, event.event_type, callback.__name__,
+            )
+        finally:
+            self._async_dispatch_count += 1
 
     # ── 查询 ──────────────────────────────────────────
 
@@ -314,22 +397,15 @@ class WorldTree:
             cx, cy = center_chunk
             results: list[Event] = []
 
-            time_lo = (
-                self._bisect_time(start_time) if start_time is not None else 0
-            )
-            time_hi = (
-                self._bisect_time(end_time, find_end=True)
-                if end_time is not None
-                else len(self._event_log)
-            )
-
             for dx in range(-radius, radius + 1):
                 for dy in range(-radius, radius + 1):
                     chunk_key = (cx + dx, cy + dy)
-                    for log_idx in self._spatial_index.get(chunk_key, set()):
-                        if log_idx < time_lo or log_idx >= time_hi:
+                    for ev in self._spatial_index.get(chunk_key, set()):
+                        if start_time is not None and ev.timestamp < start_time:
                             continue
-                        results.append(self._event_log[log_idx])
+                        if end_time is not None and ev.timestamp > end_time:
+                            continue
+                        results.append(ev)
 
             earliest_ts = (
                 self._event_log[0].timestamp if self._event_log else None
@@ -376,19 +452,17 @@ class WorldTree:
             该实体在时间范围内参与的事件列表，按时间排序。
         """
         with self._lock:
-            indices = self._entity_index.get(entity_id, [])
+            events = self._entity_index.get(entity_id, [])
 
             in_memory: list[Event] = []
-            if indices:
+            if events:
                 lo = bisect.bisect_left(
-                    indices, start_time,
-                    key=lambda i: self._event_log[i].timestamp,
+                    events, start_time, key=lambda e: e.timestamp,
                 )
                 hi = bisect.bisect_right(
-                    indices, end_time,
-                    key=lambda i: self._event_log[i].timestamp,
+                    events, end_time, key=lambda e: e.timestamp,
                 )
-                in_memory = [self._event_log[i] for i in indices[lo:hi]]
+                in_memory = events[lo:hi]
 
             earliest_ts = (
                 self._event_log[0].timestamp if self._event_log else None
@@ -416,9 +490,9 @@ class WorldTree:
             重建的 Event 实例，不存在时返回 None。
         """
         with self._lock:
-            idx = self._id_index.get(event_id)
-            if idx is not None and idx < len(self._event_log):
-                return self._event_log[idx]
+            ev = self._id_index.get(event_id)
+            if ev is not None:
+                return ev
 
         # 不在内存，查归档
         if self._archive:
@@ -438,20 +512,69 @@ class WorldTree:
 
     # ── 生命周期 ──────────────────────────────────────
 
+    def warmup_graph(self, max_events: int = 10000) -> int:
+        """从归档边表预热事件图。
+
+        将 SQLite event_edges 表中最近 max_events 个事件的边
+        批量加载到内存邻接表，加速重启后因果追溯和路径查询。
+
+        Args:
+            max_events: 从归档取最近多少个事件来预热。
+
+        Returns:
+            成功加载的边数。无归档时返回 0。
+        """
+        if self._archive is None:
+            return 0
+
+        rows = self._archive._db.execute(
+            "SELECT id FROM events ORDER BY timestamp DESC LIMIT ?",
+            (max_events,),
+        ).fetchall()
+        event_ids = [r[0] for r in rows]
+        if not event_ids:
+            return 0
+
+        edges = self._archive.query_edges_bulk(event_ids)
+        return self._graph.warmup(edges)
+
+    def configure(
+        self,
+        *,
+        archive_path: str | None = None,
+        max_memory_events: int | None = None,
+    ) -> None:
+        """在构造后配置归档和内存限制。
+
+        用于在 GameEngine.start() 中根据运行环境配置世界树，
+        避免在模块导入时就需要确定这些参数。
+
+        Args:
+            archive_path: SQLite 归档路径。None 保持现状。
+            max_memory_events: 内存事件上限。None 保持现状。
+        """
+        if archive_path is not None and self._archive is None:
+            self._archive = EventArchive(archive_path)
+        if max_memory_events is not None:
+            self._max_memory_events = max_memory_events
+
     def _trim(self, before_time: float) -> int:
-        """移除早于指定时间的事件体以回收内存（内部方法）。
+        """移除早于指定时间的事件体以回收内存（内部方法，权重感知）。
 
         由 publish() 在事件数超过 max_memory_events 时自动调用，
         模块外部不应直接调用。
 
-        移除 _event_log 中的事件体和所有索引中的引用，
-        同时移除事件图中对应节点——因果链追溯需通过
+        每调用一次 _trim_cycle 递增 1。事件仅当其 weight ≤ cycle
+        时才被移除——高权重事件存活更多 trim 周期：
+          - weight 1: 第 1 次 trim 即移除
+          - weight 3: 存活 2 次 trim，第 3 次移除
+          - weight 5: 存活 4 次 trim，第 5 次移除
+
+        同时维护事件图的一致性，移除的节点可通过
         EventGraph.get_causal_chain(lookup=...) 补全。
 
-        在锁内重建索引，锁外调用方看到一致状态。
-
         Args:
-            before_time: 时间戳 < before_time 的事件将被移除。
+            before_time: 时间戳 < before_time 的事件候选移除。
 
         Returns:
             移除的事件数量。
@@ -467,45 +590,71 @@ class WorldTree:
             if cutoff == 0:
                 return 0
 
-            # 归档到磁盘（若启用）
-            if self._archive:
-                self._archive.archive(self._event_log[:cutoff])
+            self._trim_cycle += 1
+            cycle = self._trim_cycle
+            self._trim_count += 1
+
+            # 权重分层：按 weight 分别处理前缀中的事件
+            to_archive: list[Event] = []
+            to_keep: list[Event] = []
+            for ev in self._event_log[:cutoff]:
+                if ev.weight <= cycle:
+                    to_archive.append(ev)
+                else:
+                    to_keep.append(ev)
+
+            # 归档到磁盘（仅归档符合条件的低权重事件）
+            if self._archive and to_archive:
+                self._archive.archive(to_archive)
 
             # 记录被移除的事件 ID
-            removed_ids = {ev.id for ev in self._event_log[:cutoff]}
+            removed_ids = {ev.id for ev in to_archive}
 
-            # 截断事件日志
-            self._event_log = self._event_log[cutoff:]
+            # 重建日志：保留的高权重旧事件 + 新事件
+            self._event_log = to_keep + self._event_log[cutoff:]
 
             # 同步移除图中节点
-            self._graph.remove_nodes(removed_ids)
+            if removed_ids:
+                self._graph.remove_nodes(removed_ids)
 
-            # 重建 ID 索引
-            self._id_index.clear()
-            for i, ev in enumerate(self._event_log):
-                self._id_index[ev.id] = i
+            # 增量清理索引（仅移除被归档事件，无需 O(N) 全量重建）
+            # 1. _id_index：直接按 key 删除
+            for ev in to_archive:
+                del self._id_index[ev.id]
 
-            # 重建实体索引（索引值变为新日志中的位置）
-            self._entity_index.clear()
-            for i, ev in enumerate(self._event_log):
-                all_entities = {ev.initiator_id}
+            # 2. _entity_index：被 trim 的事件总是位于列表前缀（时间有序）
+            affected_entities: set[str] = set()
+            for ev in to_archive:
+                affected_entities.add(ev.initiator_id)
                 for ap in ev.affected:
-                    all_entities.add(ap.entity_id)
-                for eid in all_entities:
-                    self._entity_index.setdefault(eid, []).append(i)
+                    affected_entities.add(ap.entity_id)
+            for eid in affected_entities:
+                events = self._entity_index.get(eid)
+                if not events:
+                    continue
+                cut = 0
+                for ev in events:
+                    if ev.id in removed_ids:
+                        cut += 1
+                    else:
+                        break
+                if cut:
+                    self._entity_index[eid] = events[cut:]
 
-            # 重建空间索引
-            self._spatial_index.clear()
-            for i, ev in enumerate(self._event_log):
+            # 3. _spatial_index：逐事件从集合中移除
+            for ev in to_archive:
                 chunk_key = (ev.location[0], ev.location[1])
-                self._spatial_index.setdefault(chunk_key, set()).add(i)
+                chunk_set = self._spatial_index.get(chunk_key)
+                if chunk_set:
+                    chunk_set.discard(ev)
 
             removed_count = len(removed_ids)
             logger = get_logger(__name__)
             logger.info(
-                "修剪事件: 移除 %d 条(时间 < %.0f)，剩余 %d 条，"
-                "图节点已同步移除，因果链可通过归档补全",
-                removed_count, before_time, len(self._event_log),
+                "修剪事件(cycle=%d): 移除 %d 条(时间 < %.0f)，"
+                "保留 %d 条高权重，剩余 %d 条",
+                cycle, removed_count, before_time,
+                len(to_keep), len(self._event_log),
             )
             return removed_count
 
@@ -531,6 +680,46 @@ class WorldTree:
         with self._lock:
             return sum(len(cbs) for cbs in self._subscriptions.values())
 
+    @property
+    def stats(self) -> dict[str, int]:
+        """运行统计指标。"""
+        with self._lock:
+            archive_count = 0
+            if self._archive:
+                try:
+                    row = self._archive._db.execute(
+                        "SELECT COUNT(*) FROM events"
+                    ).fetchone()
+                    if row:
+                        archive_count = row[0]
+                except Exception:
+                    pass
+
+            return {
+                "publish_count": self._publish_count,
+                "event_count": len(self._event_log),
+                "trim_count": self._trim_count,
+                "trim_cycle": self._trim_cycle,
+                "subscriber_count": sum(
+                    len(cbs) for cbs in self._subscriptions.values()
+                ),
+                "graph_nodes": self._graph.node_count,
+                "async_dispatch_count": self._async_dispatch_count,
+                "archive_event_count": archive_count,
+                "max_memory_events": (
+                    self._max_memory_events
+                    if self._max_memory_events is not None
+                    else 0
+                ),
+            }
+
+    def shutdown(self) -> None:
+        """关闭异步线程池，等待所有任务完成。
+
+        调用后异步订阅者不再接收新事件。应在游戏退出时调用。
+        """
+        self._async_executor.shutdown(wait=True)
+
     def clear(self) -> None:
         """清空所有事件和订阅。
 
@@ -543,3 +732,7 @@ class WorldTree:
             self._entity_index.clear()
             self._spatial_index.clear()
             self._graph = EventGraph()
+            self._trim_cycle = 0
+            self._publish_count = 0
+            self._trim_count = 0
+            self._async_dispatch_count = 0

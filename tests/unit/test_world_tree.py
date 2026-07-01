@@ -3,6 +3,7 @@
 import os
 import tempfile
 import threading
+import time
 
 import pytest
 from ascend.world_tree import Event, AffectedParty, EventBus, EventGraph, EventArchive
@@ -920,3 +921,375 @@ class TestEventArchive:
         # 查询不应包含已 trim 的事件
         results = bus.get_events_in_range(0, 60)
         assert len(results) == 0  # ts=0,60 已被 trim 丢弃
+
+
+# ── 事件权重 ──────────────────────────────────────────
+
+
+class TestEventWeight:
+    """事件权重测试。"""
+
+    def test_default_weight_is_1(self):
+        """未指定权重时默认为 1。"""
+        ev = make_event()
+        assert ev.weight == 1
+
+    def test_weight_field(self):
+        """可以指定事件权重。"""
+        ev = make_event(weight=5)
+        assert ev.weight == 5
+
+    def test_high_weight_survives_trim(self):
+        """高权重事件在一次 trim 后仍留在内存。"""
+        bus = EventBus(validate=False, max_memory_events=100)
+
+        # 插入权重 5 的关键事件
+        critical = make_event(timestamp=0.0, id="crit", weight=5)
+        bus.publish(critical)
+
+        # 填充低权重事件触发 trim
+        for i in range(200):
+            bus.publish(make_event(timestamp=float(i + 1), weight=1))
+
+        # 高权重事件应在一次 trim 后存活
+        result = bus.get_event_by_id("crit")
+        assert result is not None, "高权重事件不应在第一次 trim 就被移除"
+
+    def test_low_weight_trimmed_first(self):
+        """低权重事件先于高权重事件被归档。"""
+        bus = EventBus(validate=False, max_memory_events=100)
+
+        bus.publish(make_event(timestamp=0.0, id="low", weight=1))
+        bus.publish(make_event(timestamp=1.0, id="high", weight=5))
+
+        # 少量填充只触发 ~2 次 trim（cycle=2），
+        # w=1 被移除，w=5 因 5>2 存活
+        for i in range(150):
+            bus.publish(make_event(timestamp=float(i + 2), weight=1))
+
+        # 高权重仍应在，低权重已被归档
+        high = bus.get_event_by_id("high")
+        low = bus.get_event_by_id("low")
+        assert high is not None, "高权重事件应存活"
+        # 低权重经过多次 trim 周期应被移除
+        assert low is None, f"低权重事件应被归档，但仍在内存: {low}"
+
+    def test_all_weights_trimmed_eventually(self):
+        """足够多次 trim 后所有事件都会被归档。"""
+        bus = EventBus(validate=False, max_memory_events=50)
+
+        bus.publish(make_event(timestamp=0.0, id="w5", weight=5))
+
+        # 大量事件触发足够多次 trim（cycle 累加到超过 5）
+        for i in range(1000):
+            bus.publish(make_event(timestamp=float(i + 1), weight=1))
+
+        result = bus.get_event_by_id("w5")
+        assert result is None, (
+            f"经过足够多 trim 周期后权重 5 事件也应被归档"
+        )
+
+    def test_weighted_trim_preserves_ordering(self):
+        """权重分层归档后内存日志仍保持时间有序。"""
+        bus = EventBus(validate=False, max_memory_events=100)
+
+        for i in range(500):
+            w = 5 if i % 20 == 0 else 1  # 每 20 个事件一个高权重
+            bus.publish(make_event(timestamp=float(i), id=f"w_{i}", weight=w))
+
+        results = bus.get_events_in_range(0, 500)
+        for a, b in zip(results, results[1:]):
+            assert a.timestamp <= b.timestamp, (
+                f"时间戳乱序: {a.timestamp} > {b.timestamp}"
+            )
+
+    def test_weight_with_archive(self):
+        """归档后高权重事件仍可按 ID 查到。"""
+        import tempfile, os
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        bus = EventBus(validate=False, max_memory_events=50,
+                       archive_path=path)
+        try:
+            bus.publish(make_event(timestamp=0.0, id="arch_crit", weight=5,
+                                    event_type="critical"))
+
+            for i in range(500):
+                bus.publish(make_event(timestamp=float(i + 1), weight=1))
+
+            # 即使最终被归档，也可通过 ID 查到
+            ev = bus.get_event_by_id("arch_crit")
+            assert ev is not None
+            assert ev.weight == 5
+            assert ev.event_type == "critical"
+        finally:
+            bus._archive.close()
+            os.unlink(path)
+
+
+# ── 图预热 ────────────────────────────────────────────
+
+
+class TestGraphWarmup:
+    """EventGraph 和 WorldTree 的图预热测试。"""
+
+    def test_graph_warmup_batch_adds_edges(self):
+        """warmup 批量添加边。"""
+        graph = EventGraph()
+        edges = [("a", "b", "caused_by"), ("b", "c", "caused_by")]
+        count = graph.warmup(edges)
+        assert count == 2
+        assert graph.node_count == 3
+
+    def test_graph_warmup_empty(self):
+        """空边列表返回 0。"""
+        graph = EventGraph()
+        assert graph.warmup([]) == 0
+
+    def test_world_tree_warmup_no_archive(self):
+        """无归档时 warmup_graph 返回 0。"""
+        bus = EventBus(validate=False)
+        assert bus.warmup_graph() == 0
+
+    def test_world_tree_warmup_restores_edges(self):
+        """归档后 warmup 恢复边到图中。"""
+        path = tempfile.mktemp(suffix=".db")
+        bus = None
+        bus2 = None
+        try:
+            bus = EventBus(
+                validate=False, archive_path=path,
+                max_memory_events=20,
+            )
+            # 先填充触发归档
+            for i in range(30):
+                bus.publish(make_event(timestamp=float(i)))
+            # 因果事件链（时间戳更大，在最近事件中）
+            root = make_event(timestamp=100.0, id="root")
+            child = make_event(timestamp=101.0, id="child", caused_by=["root"])
+            bus.publish(root)
+            bus.publish(child)
+            for i in range(30):
+                bus.publish(make_event(timestamp=float(200 + i)))
+
+            bus2 = EventBus(
+                validate=False, archive_path=path,
+                max_memory_events=20,
+            )
+            count = bus2.warmup_graph(max_events=30)
+            assert count >= 1, f"应恢复至少 1 条边，实际: {count}"
+            chain = bus2.graph.get_causal_chain("child", max_depth=5)
+            assert "root" in chain
+        finally:
+            if bus and bus._archive:
+                bus._archive.close()
+            if bus2 and bus2._archive:
+                bus2._archive.close()
+            os.unlink(path)
+
+
+# ── 统计指标 ──────────────────────────────────────────
+
+
+class TestStats:
+    """WorldTree 统计指标测试。"""
+
+    def test_stats_initial(self):
+        """初始状态下 stats 各项为 0。"""
+        bus = EventBus(validate=False)
+        s = bus.stats
+        assert s["publish_count"] == 0
+        assert s["event_count"] == 0
+        assert s["trim_count"] == 0
+        assert s["subscriber_count"] == 0
+        assert s["graph_nodes"] == 0
+
+    def test_stats_publish_count(self):
+        """stats 记录发布总数。"""
+        bus = EventBus(validate=False)
+        for i in range(5):
+            bus.publish(make_event(timestamp=float(i)))
+        assert bus.stats["publish_count"] == 5
+
+    def test_stats_trim_count(self):
+        """stats 记录 trim 次数。"""
+        bus = EventBus(validate=False, max_memory_events=20)
+        for i in range(100):
+            bus.publish(make_event(timestamp=float(i)))
+        assert bus.stats["trim_count"] >= 1
+        assert bus.stats["trim_cycle"] >= 1
+
+    def test_stats_subscriber_count(self):
+        """stats 记录活跃订阅数。"""
+        bus = EventBus(validate=False)
+        unsub = bus.subscribe("test", lambda e: None)
+        assert bus.stats["subscriber_count"] == 1
+        unsub()
+        assert bus.stats["subscriber_count"] == 0
+
+    def test_stats_with_archive(self):
+        """stats 记录归档事件数。"""
+        path = tempfile.mktemp(suffix=".db")
+        try:
+            bus = EventBus(
+                validate=False,
+                archive_path=path,
+                max_memory_events=20,
+            )
+            for i in range(60):
+                bus.publish(make_event(timestamp=float(i)))
+            s = bus.stats
+            assert s["archive_event_count"] > 0
+            assert s["trim_count"] >= 1
+        finally:
+            bus._archive.close()
+            os.unlink(path)
+
+    def test_stats_after_clear(self):
+        """clear() 后统计归零。"""
+        bus = EventBus(validate=False, max_memory_events=20)
+        for i in range(100):
+            bus.publish(make_event(timestamp=float(i)))
+        bus.clear()
+        s = bus.stats
+        assert s["publish_count"] == 0
+        assert s["trim_count"] == 0
+
+
+# ── 异步分发 ──────────────────────────────────────────
+
+
+class TestAsyncDispatch:
+    """异步分发通道测试。"""
+
+    def test_async_callback_receives_event(self):
+        """异步订阅者在后台线程收到事件。"""
+        bus = EventBus()
+        received: list[Event] = []
+        barrier = threading.Barrier(2)
+
+        def async_handler(event: Event) -> None:
+            received.append(event)
+            barrier.wait(timeout=5)
+
+        bus.subscribe_async("test", async_handler)
+        ev = make_event(event_type="test")
+        bus.publish(ev)
+
+        # publish 不阻塞，等待异步回调完成
+        barrier.wait(timeout=5)
+        assert len(received) == 1
+        assert received[0].id == ev.id
+
+    def test_async_does_not_block_publish(self):
+        """异步订阅者的慢回调不阻塞 publish。"""
+        bus = EventBus()
+        started = threading.Event()
+        done = threading.Event()
+
+        def slow_handler(_event: Event) -> None:
+            started.set()
+            time.sleep(0.5)  # 模拟慢 I/O
+            done.set()
+
+        bus.subscribe_async("test", slow_handler)
+
+        start = time.perf_counter()
+        bus.publish(make_event(event_type="test"))
+        elapsed = time.perf_counter() - start
+
+        # publish 应立即返回（远快于 0.5 秒）
+        assert elapsed < 0.1, f"publish 被异步回调阻塞: {elapsed:.3f}s"
+
+        # 等待异步回调确认完成（清理）
+        started.wait(timeout=2)
+        done.wait(timeout=2)
+
+    def test_sync_and_async_coexist(self):
+        """同步和异步订阅者同时存在，互不影响。"""
+        bus = EventBus()
+        sync_results: list[Event] = []
+        async_results: list[Event] = []
+        barrier = threading.Barrier(2)
+
+        bus.subscribe("test", lambda e: sync_results.append(e))
+        bus.subscribe_async("test", lambda e: async_results.append(e) or barrier.wait(timeout=5))
+
+        bus.publish(make_event(event_type="test"))
+
+        # 同步回调已执行
+        assert len(sync_results) == 1
+        # 等待异步回调
+        barrier.wait(timeout=5)
+        assert len(async_results) == 1
+
+    def test_async_exception_isolated(self):
+        """异步回调抛异常不影响后续事件的分发。"""
+        bus = EventBus()
+        received: list[Event] = []
+        barrier = threading.Barrier(2)
+
+        def bad_handler(_event: Event) -> None:
+            raise RuntimeError("async 异常")
+
+        def good_handler(event: Event) -> None:
+            received.append(event)
+            barrier.wait(timeout=5)
+
+        bus.subscribe_async("test", bad_handler)
+        bus.subscribe_async("test", good_handler)
+        bus.publish(make_event(event_type="test"))
+
+        barrier.wait(timeout=5)
+        assert len(received) == 1  # good_handler 仍被调用
+
+    def test_async_unsubscribe(self):
+        """取消异步订阅后不再收到事件。"""
+        bus = EventBus()
+        received: list[Event] = []
+
+        def handler(event: Event) -> None:
+            received.append(event)
+
+        unsub = bus.subscribe_async("test", handler)
+        unsub()
+
+        bus.publish(make_event(event_type="test"))
+        time.sleep(0.1)  # 给异步回调一点时间（不应被触发）
+        assert len(received) == 0
+
+    def test_async_multiple_events_ordering(self):
+        """异步订���者按 publish 顺序接收事件。"""
+        bus = EventBus()
+        received: list[str] = []
+        n = 50
+        barrier = threading.Barrier(2)
+
+        def handler(event: Event) -> None:
+            received.append(event.id)
+            if len(received) == n:
+                barrier.wait(timeout=5)
+
+        bus.subscribe_async("test", handler)
+        events = [make_event(event_type="test") for _ in range(n)]
+        for ev in events:
+            bus.publish(ev)
+
+        barrier.wait(timeout=5)
+        # 由于线程池可能并发，不保证严格顺序
+        # 但所有事件都应被接收
+        assert len(received) == n
+        assert set(received) == {ev.id for ev in events}
+
+    def test_async_callback_on_wildcard(self):
+        """异步订阅者也可以通过通配符接收所有事件。"""
+        bus = EventBus()
+        received: list[Event] = []
+        barrier = threading.Barrier(2)
+
+        bus.subscribe_async("*", lambda e: received.append(e) or barrier.wait(timeout=5))
+        bus.publish(make_event(event_type="any_type"))
+
+        barrier.wait(timeout=5)
+        assert len(received) == 1

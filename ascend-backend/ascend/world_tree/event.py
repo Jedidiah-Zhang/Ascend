@@ -35,6 +35,7 @@ class Event:
     initiator_id: str
     affected: list[AffectedParty]
     event_type: str
+    weight: int = 1
     data: dict[str, Any] = field(default_factory=dict)
 
     caused_by: list[str] = field(default_factory=list)

@@ -35,10 +35,13 @@ class EventArchive:
         Args:
             path: SQLite 数据库文件路径。
         """
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self._db = sqlite3.connect(path)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
+        self._db.execute("PRAGMA mmap_size=268435456")   # 256MB 内存映射
+        self._db.execute("PRAGMA cache_size=-8000")      # 8MB 页缓存
         self._create_schema()
 
     def __repr__(self) -> str:
@@ -56,17 +59,43 @@ class EventArchive:
     # ── Schema ────────────────────────────────────────
 
     def _create_schema(self) -> None:
-        """创建表和索引（幂等）。
+        """创建表和索引（幂等），迁移旧 schema。
 
         DDL 定义在 schema.sqlite.sql 中，使用标准 SQL 语法。
         幂等性由 Python 层保证——若表已存在则静默跳过。
+        对旧表自动添加缺失的 weight 列。
         """
         with open(_SCHEMA_PATH, encoding="utf-8") as f:
             ddl = f.read()
         try:
             self._db.executescript(ddl)
         except sqlite3.OperationalError:
-            # 表或索引已存在，幂等跳过
+            pass
+
+        # 迁移：旧 schema 可能缺少 weight 列
+        try:
+            self._db.execute("ALTER TABLE events ADD COLUMN weight INTEGER DEFAULT 1")
+        except sqlite3.OperationalError:
+            pass  # 列已存在
+
+        # 迁移：旧 schema 可能缺少 event_edges 表
+        try:
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS event_edges ("
+                "from_id TEXT NOT NULL, "
+                "to_id TEXT NOT NULL, "
+                "relation_type TEXT NOT NULL, "
+                "PRIMARY KEY (from_id, to_id, relation_type))"
+            )
+            self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_event_edges_from "
+                "ON event_edges(from_id)"
+            )
+            self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_event_edges_to "
+                "ON event_edges(to_id)"
+            )
+        except sqlite3.OperationalError:
             pass
 
     # ── 写入 ──────────────────────────────────────────
@@ -84,6 +113,7 @@ class EventArchive:
 
         event_rows: list[tuple] = []
         entity_rows: list[tuple] = []
+        edge_rows: list[tuple] = []
 
         for ev in events:
             event_rows.append((
@@ -96,6 +126,7 @@ class EventArchive:
                 ev.initiator_type,
                 ev.initiator_id,
                 ev.event_type,
+                ev.weight,
                 json.dumps(ev.data, ensure_ascii=False),
                 json.dumps(ev.caused_by, ensure_ascii=False),
                 ev.observes,
@@ -106,15 +137,23 @@ class EventArchive:
                     ensure_ascii=False,
                 ),
             ))
-            # 实体索引：initiator + affected
+            # 实体索引
             entity_rows.append((ev.id, ev.initiator_id, "initiator"))
             for ap in ev.affected:
                 entity_rows.append((ev.id, ap.entity_id, ap.role))
+            # 图边：一并存储，支持懒加载和预热
+            for cause_id in ev.caused_by:
+                edge_rows.append((cause_id, ev.id, "caused_by"))
+            if ev.observes:
+                edge_rows.append((ev.id, ev.observes, "observes"))
+            for pid in ev.co_participants:
+                if pid != ev.initiator_id:
+                    edge_rows.append((ev.id, pid, "co_participant"))
 
         with self._db:
             self._db.executemany(
                 "INSERT OR IGNORE INTO events VALUES ("
-                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
                 ")",
                 event_rows,
             )
@@ -122,6 +161,11 @@ class EventArchive:
                 "INSERT OR IGNORE INTO event_entities VALUES (?, ?, ?)",
                 entity_rows,
             )
+            if edge_rows:
+                self._db.executemany(
+                    "INSERT OR IGNORE INTO event_edges VALUES (?, ?, ?)",
+                    edge_rows,
+                )
 
     # ── 查询 ──────────────────────────────────────────
 
@@ -249,6 +293,59 @@ class EventArchive:
         rows = self._db.execute(sql, params).fetchall()
         return [self._row_to_event(r) for r in rows]
 
+    def query_edges(
+        self, event_id: str, *, direction: str = "both"
+    ) -> list[tuple[str, str, str]]:
+        """查询归档中某事件的所有关联边。
+
+        Args:
+            event_id: 事件 ID。
+            direction: "out"（出边）、"in"（入边）或 "both"（默认）。
+
+        Returns:
+            (from_id, to_id, relation_type) 元组列表。
+        """
+        if direction == "out":
+            rows = self._db.execute(
+                "SELECT from_id, to_id, relation_type "
+                "FROM event_edges WHERE from_id = ?",
+                (event_id,),
+            ).fetchall()
+        elif direction == "in":
+            rows = self._db.execute(
+                "SELECT from_id, to_id, relation_type "
+                "FROM event_edges WHERE to_id = ?",
+                (event_id,),
+            ).fetchall()
+        else:
+            rows = self._db.execute(
+                "SELECT from_id, to_id, relation_type "
+                "FROM event_edges WHERE from_id = ? OR to_id = ?",
+                (event_id, event_id),
+            ).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+
+    def query_edges_bulk(
+        self, event_ids: list[str]
+    ) -> list[tuple[str, str, str]]:
+        """批量查询多个事件的所有关联边，用于图预热。
+
+        Args:
+            event_ids: 事件 ID 列表。
+
+        Returns:
+            (from_id, to_id, relation_type) 元组列表。
+        """
+        if not event_ids:
+            return []
+        placeholders = ",".join(["?"] * len(event_ids))
+        rows = self._db.execute(
+            f"SELECT from_id, to_id, relation_type FROM event_edges "
+            f"WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})",
+            event_ids * 2,
+        ).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+
     # ── 反序列化 ──────────────────────────────────────
 
     @staticmethod
@@ -279,6 +376,7 @@ class EventArchive:
             initiator_type=row["initiator_type"],
             initiator_id=row["initiator_id"],
             event_type=row["event_type"],
+            weight=row["weight"] if "weight" in row.keys() else 1,
             data=json.loads(row["data_json"]),
             caused_by=json.loads(row["caused_by_json"]),
             observes=row["observes"],

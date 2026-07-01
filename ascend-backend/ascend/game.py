@@ -14,6 +14,7 @@ from ascend.space import WorldGenerator
 from ascend.terminal import CommandExecutor
 from ascend.time import WorldClock, GameCalendar
 from ascend.i18n import I18n
+from ascend.world_tree import world_tree
 
 logger = get_logger(__name__)
 
@@ -119,7 +120,18 @@ class GameEngine:
             self.dispatcher.register(req_type, handler)
         logger.info("已注册终端处理程序: %s", list(term_handlers.keys()))
 
-        # 5. 启动 tick 循环
+        # 5. 世界树：归档 + 内存限制 + 图预热
+        world_tree.configure(
+            archive_path="save/events.db",
+            max_memory_events=100_000,
+        )
+        world_tree.warmup_graph(max_events=10_000)
+        logger.info(
+            "已配置世界树: archive=save/events.db max_memory=%d",
+            100_000,
+        )
+
+        # 6. 启动 tick 循环
         self._running = True
         self._thread = threading.Thread(
             target=self._run_loop, name="game-engine", daemon=True

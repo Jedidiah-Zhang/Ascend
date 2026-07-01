@@ -93,6 +93,29 @@ class EventGraph:
         self._forward.setdefault(from_id, []).append((to_id, relation_type))
         self._reverse.setdefault(to_id, []).append((from_id, relation_type))
 
+    def warmup(self, edges: list[tuple[str, str, str]]) -> int:
+        """批量添加边，用于从归档恢复图结构。
+
+        启动时调用，将 SQLite event_edges 表中的边批量加载到
+        内存邻接表，加速重启后的因果追溯。
+
+        Args:
+            edges: (from_id, to_id, relation_type) 元组列表。
+
+        Returns:
+            成功添加的边数量。
+        """
+        for from_id, to_id, relation_type in edges:
+            self._node_ids.add(from_id)
+            self._node_ids.add(to_id)
+            self._forward.setdefault(from_id, []).append(
+                (to_id, relation_type)
+            )
+            self._reverse.setdefault(to_id, []).append(
+                (from_id, relation_type)
+            )
+        return len(edges)
+
     # ── 删除 ──────────────────────────────────────────
 
     def remove_nodes(self, event_ids: set[str]) -> None:

@@ -444,6 +444,7 @@ class CommandExecutor:
         Returns:
             包含各项统计的运行报告文本。
         """
+        stats = bus.stats
         lines = [
             f"  {self._i18n.t('console.report_active')}:    {self._fmt_active_time()}",
             f"  {self._i18n.t('console.report_game_time')}:    {self._clock.time:,.0f}s",
@@ -453,6 +454,12 @@ class CommandExecutor:
             f"  {self._i18n.t('console.report_mode')}:    {self._mode_name(self._clock.mode)}",
             f"  {self._i18n.t('console.report_ticks')}:   {self._clock.tick_count:,}",
             f"  {self._i18n.t('console.report_events')}:    {bus.event_count:,}",
+            f"  ---",
+            f"  publish:     {stats['publish_count']:,}",
+            f"  trim:        {stats['trim_count']} (cycle={stats['trim_cycle']})",
+            f"  subscribers: {stats['subscriber_count']}",
+            f"  graph nodes: {stats['graph_nodes']}",
+            f"  archive:     {stats['archive_event_count']:,}",
         ]
         return "\n".join(lines)
 
