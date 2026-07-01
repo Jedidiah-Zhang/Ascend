@@ -1,620 +1,598 @@
-"""构造海拔模块 — 完整测试台（TDD 先行）。
+"""Voronoi 构造模拟 — 测试基准。
 
-测试范围:
-  - 确定性 & 正确性
-  - 边界条件（单元中心、边界线、极端坐标）
-  - 覆盖所有预设风格
-  - 性能和压力
+测试范围：
+  1. API 基础 — 导入、预设、参数校验
+  2. 确定性 — 同 seed 同坐标 = 同结果
+  3. 值域边界 — 海拔在 [altitude_floor, altitude_ceil] 内
+  4. 海陆并存 — 世界中同时存在海洋和陆地
+  5. 连续性 — 相邻 tile 海拔差有上限（无悬崖式跳变）
+  6. 批量一致性 — batch 结果与单点调用完全一致
+  7. 预设差异化 — 不同预设产生不同海陆比例
+  8. 边界情况 — 大坐标、负坐标、零坐标
+
+未覆盖项（待算法稳定后补充）：
+  - 山脉连贯性定量检测（需定义"连贯"的度量）
+  - 性能回归（C 扩展实现后添加）
+  - 多线程安全性
+  - 板块边界具体形态验证
+
+待商定项（见文件末尾 Q: 标记）：
+  Q1: 海陆比例目标 — ocean_ratio 参数 vs 实际产出
+  Q2: 相邻 tile 最大海拔差阈值
+  Q3: Voronoi 边界隆起的具体机制
 """
 
 import math
-import random
-import sys
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
-
 import pytest
-
-# 确保 ascend-backend 在 sys.path 中
-_HERE = Path(__file__).resolve().parent
-_BACKEND = _HERE.parent.parent / "ascend-backend"
-if str(_BACKEND) not in sys.path:
-    sys.path.insert(0, str(_BACKEND))
-
-from ascend.space.tectonic import (
-    tectonic_altitude,
-    tectonic_altitude_batch,
-    WorldParams,
-    PRESETS,
-)
+from dataclasses import dataclass
 
 
 # ════════════════════════════════════════════════════════════════
-# 辅助函数
+# 类型前向声明（实际实现在 ascend.space.tectonic）
 # ════════════════════════════════════════════════════════════════
-
-def _sample_grid(seed: int, x0: int, y0: int, w: int, h: int) -> list[float]:
-    """逐点采样网格，用于与 batch 对比。"""
-    result = []
-    for y in range(y0, y0 + h):
-        for x in range(x0, x0 + w):
-            result.append(tectonic_altitude(x, y, seed))
-    return result
-
-
-def _stats(values: list[float]) -> dict:
-    """快速统计。"""
-    n = len(values)
-    mean = sum(values) / n
-    sorted_v = sorted(values)
-    return {
-        "min": sorted_v[0],
-        "max": sorted_v[-1],
-        "mean": mean,
-        "median": sorted_v[n // 2],
-        "below_zero": sum(1 for v in values if v < 0),
-        "above_zero": sum(1 for v in values if v > 0),
-    }
 
 
 # ════════════════════════════════════════════════════════════════
-# 1. 确定性
+# 1. API 基础 & 导入
+# ════════════════════════════════════════════════════════════════
+
+class TestImports:
+    """模块导入和 API 存在性。"""
+
+    def test_import_tectonic(self):
+        """可以导入 tectonic 模块。"""
+        from ascend.space import tectonic
+        assert tectonic is not None
+
+    def test_world_params_exists(self):
+        """WorldParams 类可导入。"""
+        from ascend.space.tectonic import WorldParams
+        assert callable(WorldParams) or hasattr(WorldParams, '__dataclass_fields__')
+
+    def test_world_params_defaults(self):
+        """WorldParams 默认值合理。"""
+        from ascend.space.tectonic import WorldParams
+        p = WorldParams()
+        assert p.seed_spacing > 0
+        assert p.uplift_scale > 0
+        assert p.altitude_floor < p.altitude_ceil
+        assert 0.0 <= p.ocean_ratio <= 1.0
+        assert 0.0 < p.boundary_width < p.seed_spacing
+        assert p.ocean_depth_typical < 0  # 海洋深度为负值
+        assert p.land_elevation_typical > 0  # 陆地海拔为正值
+        # 默认 70% 海洋板块概率
+        assert p.ocean_ratio == pytest.approx(0.70)
+
+    def test_presets_exist(self):
+        """所有预设可访问且合法。"""
+        from ascend.space.tectonic import PRESETS, WorldParams
+        required = {"earthlike", "pangaea", "archipelago", "mountainous", "flat", "ocean_world"}
+        for name in required:
+            assert name in PRESETS, f"缺少预设: {name}"
+            p = PRESETS[name]
+            assert isinstance(p, WorldParams)
+
+    def test_tectonic_altitude_callable(self):
+        """单点查询函数可调用。"""
+        from ascend.space.tectonic import tectonic_altitude
+        result = tectonic_altitude(0.0, 0.0, 42)
+        assert isinstance(result, float)
+
+    def test_tectonic_altitude_batch_callable(self):
+        """批量查询函数可调用。"""
+        from ascend.space.tectonic import tectonic_altitude_batch
+        result = tectonic_altitude_batch(0, 0, 3, 3, 42)
+        assert isinstance(result, list)
+        assert len(result) == 9
+        assert all(isinstance(v, float) for v in result)
+
+
+# ════════════════════════════════════════════════════════════════
+# 2. 确定性
 # ════════════════════════════════════════════════════════════════
 
 class TestDeterminism:
-    """相同输入 → 相同输出。"""
+    """确定性：相同输入 → 相同输出。"""
 
-    def test_same_seed_same_coord_same_result(self):
-        a1 = tectonic_altitude(100, 200, 42)
-        a2 = tectonic_altitude(100, 200, 42)
-        assert a1 == a2
+    def test_same_seed_same_result(self):
+        """同一 seed + 同一坐标 → 完全相同的海拔。"""
+        from ascend.space.tectonic import tectonic_altitude
+        for wx, wy in [(0, 0), (100, -200), (-500, 300), (1.5, 2.3)]:
+            a = tectonic_altitude(wx, wy, seed=42)
+            b = tectonic_altitude(wx, wy, seed=42)
+            assert a == pytest.approx(b), f"({wx}, {wy}): {a} != {b}"
 
     def test_different_seed_different_result(self):
-        a1 = tectonic_altitude(100, 200, 42)
-        a2 = tectonic_altitude(100, 200, 99)
-        # 极小概率碰撞（hash 空间巨大）
-        assert a1 != a2
-
-    def test_different_coord_different_result(self):
-        a1 = tectonic_altitude(0, 0, 42)
-        a2 = tectonic_altitude(500, 500, 42)
-        assert a1 != a2
+        """不同 seed → 海拔不同（大概率，至少某些坐标不同）。"""
+        from ascend.space.tectonic import tectonic_altitude
+        results_1 = [tectonic_altitude(i * 10, i * 10, seed=1) for i in range(20)]
+        results_2 = [tectonic_altitude(i * 10, i * 10, seed=2) for i in range(20)]
+        assert results_1 != results_2, "两个 seed 产生完全相同的结果"
 
     def test_batch_deterministic(self):
-        b1 = tectonic_altitude_batch(0, 0, 50, 50, 42)
-        b2 = tectonic_altitude_batch(0, 0, 50, 50, 42)
-        assert b1 == b2
-
-    def test_large_seed(self):
-        """极端 seed 值不应崩溃。"""
-        for s in [0, -1, 2**31 - 1, -(2**31), 2**63 - 1]:
-            result = tectonic_altitude(0, 0, s)
-            assert isinstance(result, float)
+        """相同参数的 batch 调用产生相同结果。"""
+        from ascend.space.tectonic import tectonic_altitude_batch
+        a = tectonic_altitude_batch(0, 0, 10, 10, seed=42)
+        b = tectonic_altitude_batch(0, 0, 10, 10, seed=42)
+        assert len(a) == len(b)
+        for i, (va, vb) in enumerate(zip(a, b)):
+            assert va == pytest.approx(vb), f"index {i}: {va} != {vb}"
 
 
 # ════════════════════════════════════════════════════════════════
-# 2. 范围 & 基本属性
+# 3. 值域边界
 # ════════════════════════════════════════════════════════════════
 
-class TestRange:
-    """所有输出在配置范围内。"""
+class TestValueRange:
+    """输出值域在声明范围内。"""
 
     def test_single_point_in_range(self):
-        for seed in [0, 42, 99, 123]:
-            for x, y in [(0, 0), (1000, -500), (-3000, 2000)]:
-                alt = tectonic_altitude(x, y, seed)
-                assert -500.0 <= alt <= 8000.0, f"alt={alt} at ({x},{y}) seed={seed}"
+        """单点海拔在 [altitude_floor, altitude_ceil] 内。"""
+        from ascend.space.tectonic import tectonic_altitude, PRESETS
+        for name, params in PRESETS.items():
+            floor = params.altitude_floor
+            ceil = params.altitude_ceil
+            # 扫描每个预设在多个坐标
+            for wx in range(0, 500, 50):
+                for wy in range(0, 500, 50):
+                    alt = tectonic_altitude(wx, wy, seed=0, params=params)
+                    assert floor <= alt <= ceil, (
+                        f"[{name}] ({wx}, {wy}): {alt} not in [{floor}, {ceil}]"
+                    )
 
     def test_batch_in_range(self):
-        result = tectonic_altitude_batch(-1000, -1000, 200, 200, 42)
-        for i, alt in enumerate(result):
-            assert -500.0 <= alt <= 8000.0, f"alt={alt} at index {i}"
+        """批量海拔全部在值域内。"""
+        from ascend.space.tectonic import tectonic_altitude_batch, PRESETS
+        for name, params in PRESETS.items():
+            alts = tectonic_altitude_batch(0, 0, 20, 20, seed=0, params=params)
+            floor = params.altitude_floor
+            ceil = params.altitude_ceil
+            for i, a in enumerate(alts):
+                assert floor <= a <= ceil, (
+                    f"[{name}] batch[{i}]: {a} not in [{floor}, {ceil}]"
+                )
 
-    def test_ocean_values_are_negative(self):
-        """扫描应找到负海拔（海洋）。"""
-        # 大范围扫描确保覆盖足够多的构造单元
-        for seed in [0, 42, 99, 123]:
-            result = tectonic_altitude_batch(-600, -600, 800, 800, seed)
-            negatives = [v for v in result if v < 0]
-            if len(negatives) > 0:
-                return
-        pytest.fail("所有测试 seed 均未找到负海拔（海洋）")
+    def test_no_nan_or_inf(self):
+        """海拔值不含 NaN 或 Inf。"""
+        from ascend.space.tectonic import tectonic_altitude_batch, PRESETS
+        for name, params in PRESETS.items():
+            alts = tectonic_altitude_batch(0, 0, 20, 20, seed=0, params=params)
+            for i, a in enumerate(alts):
+                assert not math.isnan(a), f"[{name}] batch[{i}] is NaN"
+                assert not math.isinf(a), f"[{name}] batch[{i}] is Inf"
 
-    def test_land_values_are_positive(self):
-        """扫描应找到正海拔（陆地）。"""
-        result = tectonic_altitude_batch(0, 0, 300, 300, seed=42)
-        positives = [v for v in result if v > 0]
-        assert len(positives) > 0, "应为陆地（正海拔）存在于网格中"
 
-    def test_ocean_land_ratio_reasonable(self):
-        """多 seed 综合海洋占比在合理范围内（部分 seed 可能极端）。"""
-        ratios = []
-        for seed in [0, 42, 99, 123, 777]:
-            result = tectonic_altitude_batch(-600, -600, 1200, 1200, seed)
-            stats = _stats(result)
-            ratios.append(stats["below_zero"] / len(result) * 100)
-        # 至少有一些 seed 产生合理的海洋比例
-        assert any(10 <= r <= 90 for r in ratios), (
-            f"所有 seed 的海洋比例均不在 [10, 90]%: {[f'{r:.0f}%' for r in ratios]}"
+# ════════════════════════════════════════════════════════════════
+# 4. 海陆并存
+# ════════════════════════════════════════════════════════════════
+
+class TestOceanLandCoexistence:
+    """世界中同时存在海洋（海拔<0）和陆地（海拔>0）。
+
+    ocean_ratio 参数直接控制海陆比例：默认 0.70 = 70% 海洋。
+    """
+
+    def _scan_for_ocean_and_land(self, params, seed, *, region_size=16000):
+        """扫描 region_size×region_size 区域，返回 (has_ocean, has_land)。
+
+        步长 = seed_spacing/4，确保跨越多个板块。
+        """
+        from ascend.space.tectonic import tectonic_altitude
+        step = max(50, int(params.seed_spacing / 4))
+        has_ocean = False
+        has_land = False
+        for wx in range(0, region_size, step):
+            for wy in range(0, region_size, step):
+                alt = tectonic_altitude(wx, wy, seed, params=params)
+                if alt < 0:
+                    has_ocean = True
+                if alt > 0:
+                    has_land = True
+                if has_ocean and has_land:
+                    return True, True
+        return has_ocean, has_land
+
+    def test_earthlike_has_both(self):
+        """earthlike 预设：16km×16km 区域内海陆并存。"""
+        from ascend.space.tectonic import PRESETS
+        has_ocean, has_land = self._scan_for_ocean_and_land(
+            PRESETS["earthlike"], seed=42)
+        assert has_ocean, "earthlike 应包含海洋"
+        assert has_land, "earthlike 应包含陆地"
+
+    def test_default_ocean_ratio_approx_70(self):
+        """默认 ocean_ratio=0.7：有效海洋面积 > 60%。
+
+        注意：bimodal 分布 + 边界混合导致有效海洋比例略高于板块概率。
+        """
+        from ascend.space.tectonic import tectonic_altitude, WorldParams
+        params = WorldParams()
+        ocean = 0
+        total = 0
+        step = max(50, int(params.seed_spacing / 4))
+        for wx in range(0, int(params.seed_spacing * 2), step):
+            for wy in range(0, int(params.seed_spacing * 2), step):
+                if tectonic_altitude(wx, wy, seed=42, params=params) < 0:
+                    ocean += 1
+                total += 1
+        ratio = ocean / total
+        assert ratio > 0.55, (
+            f"海洋比例 {ratio:.1%} 应 > 55%（ocean_ratio=0.7 板块概率）"
         )
 
+    def test_ocean_ratio_90(self):
+        """ocean_ratio=0.9 → 海洋占绝大多数。"""
+        from ascend.space.tectonic import tectonic_altitude, WorldParams
+        params = WorldParams(ocean_ratio=0.9)
+        ocean = 0
+        total = 0
+        step = max(50, int(params.seed_spacing / 4))
+        for wx in range(0, int(params.seed_spacing * 2), step):
+            for wy in range(0, int(params.seed_spacing * 2), step):
+                if tectonic_altitude(wx, wy, seed=42, params=params) < 0:
+                    ocean += 1
+                total += 1
+        ratio = ocean / total
+        assert ratio > 0.80, f"ocean_ratio=0.9 时海洋比例 {ratio:.1%} 应 > 80%"
+
+    def test_ocean_ratio_30(self):
+        """ocean_ratio=0.3 → 陆地占主导。"""
+        from ascend.space.tectonic import tectonic_altitude, WorldParams
+        params = WorldParams(ocean_ratio=0.3)
+        land = 0
+        total = 0
+        step = max(50, int(params.seed_spacing / 4))
+        for wx in range(0, int(params.seed_spacing * 2), step):
+            for wy in range(0, int(params.seed_spacing * 2), step):
+                if tectonic_altitude(wx, wy, seed=42, params=params) > 0:
+                    land += 1
+                total += 1
+        ratio = land / total
+        assert ratio > 0.30, f"ocean_ratio=0.3 时陆地比例 {ratio:.1%} 应 > 30%"
+
 
 # ════════════════════════════════════════════════════════════════
-# 3. 批量一致性
-# ════════════════════════════════════════════════════════════════
-
-class TestBatchConsistency:
-    """batch 与逐点调用结果一致。"""
-
-    def test_batch_matches_individual(self):
-        for seed in [0, 42, 99]:
-            batch = tectonic_altitude_batch(100, 200, 30, 25, seed)
-            individual = _sample_grid(seed, 100, 200, 30, 25)
-            # 5×5 批量预计算与逐点 ±2 搜索可能有微小差异
-            max_diff = max(abs(b - i) for b, i in zip(batch, individual))
-            assert max_diff < 1.0, (
-                f"batch vs individual 最大差异 {max_diff:.2f} > 1.0m"
-            )
-
-    def test_batch_1x1(self):
-        """1×1 批量约等于单点（5×5 预计算可能有微小差异）。"""
-        batch = tectonic_altitude_batch(42, 99, 1, 1, 7)
-        single = tectonic_altitude(42, 99, 7)
-        assert abs(batch[0] - single) < 1.0, f"batch={batch[0]}, single={single}"
-
-    def test_batch_large(self):
-        """200×200 批量（典型 chunk 大小）。"""
-        result = tectonic_altitude_batch(0, 0, 200, 200, 42)
-        assert len(result) == 40000
-
-
-# ════════════════════════════════════════════════════════════════
-# 4. 连续性（相邻 tile 海拔差不跳跃）
+# 5. 连续性
 # ════════════════════════════════════════════════════════════════
 
 class TestContinuity:
-    """构造海拔应平滑变化，无突变。"""
+    """相邻 tile 的海拔变化有物理意义上的上限。
 
-    def test_adjacent_difference_bounded(self):
-        """相邻 tile 海拔差 < 100m（避免悬崖式跳变）。"""
-        result = tectonic_altitude_batch(0, 0, 100, 100, 42)
-        w, h = 100, 100
-        max_diff = 0.0
+    Q2 (待商定): 相邻 tile 最大海拔差？
+      假设 cell_size=400，cell 间海拔差可达 ~elevation_max-elevation_min=5000m。
+      但在 cell 内部不应有突变。暂定相邻 tile 差 < 500m。
+      板块边界处（Voronoi edge）的高差是所有地形中最陡的，
+      这个值决定了山脉的"陡峭程度"。
+    """
+
+    # 1 tile = 1m。自然地形中，即使陡坡也很少超过 2m/m（~63°）。
+    # 板块边界处可能更陡，但不应超过 5m/m（近乎垂直）。
+    MAX_ADJACENT_DIFF = 3.0   # 正常地形 3m/m
+    MAX_CLIFF_DIFF = 10.0      # 绝对上限 10m/m（悬崖）
+
+    def test_adjacent_tiles_not_too_steep(self):
+        """相邻 tile 海拔差不超过 3m（正常地形，板块边界处除外）。"""
+        from ascend.space.tectonic import tectonic_altitude, PRESETS
+        params = PRESETS["earthlike"]
+        # 在板块内部区域的连续采样（偏移半个 seed_spacing 远离边界）
+        offset = params.seed_spacing * 0.5
+        prev = tectonic_altitude(offset, offset, seed=42, params=params)
+        violations = 0
+        for i in range(1, 100):
+            curr = tectonic_altitude(offset + i, offset, seed=42, params=params)
+            diff = abs(curr - prev)
+            if diff > self.MAX_ADJACENT_DIFF:
+                violations += 1
+            prev = curr
+        # 普通区域（cell 内部）不应有剧烈跳变
+        assert violations <= 5, (
+            f"相邻 tile 海拔差超过 {self.MAX_ADJACENT_DIFF}m 共 {violations} 次"
+        )
+
+    def test_scan_line_no_cliffs(self):
+        """沿对角线扫描：不应出现单步 > 10m 的悬崖。"""
+        from ascend.space.tectonic import tectonic_altitude, PRESETS
+        params = PRESETS["earthlike"]
+        prev = tectonic_altitude(0, 0, seed=0, params=params)
+        cliff_count = 0
+        for i in range(1, 500):
+            curr = tectonic_altitude(i, i, seed=0, params=params)
+            if abs(curr - prev) > self.MAX_CLIFF_DIFF:
+                cliff_count += 1
+            prev = curr
+        # 500m 中悬崖不超过 3 处（仅板块边界可能产生）
+        assert cliff_count <= 3, f"发现 {cliff_count} 处悬崖 (>{self.MAX_CLIFF_DIFF}m/tile)"
+
+    def test_batch_adjacent_continuity(self):
+        """批量网格：4-邻域内相邻 tile 海拔差 > 3m 的比例 < 5%。"""
+        from ascend.space.tectonic import tectonic_altitude_batch, PRESETS
+        params = PRESETS["earthlike"]
+        # 采样板块内部区域
+        offset = int(params.seed_spacing * 0.5)
+        w, h = 40, 40
+        alts = tectonic_altitude_batch(offset, offset, w, h, seed=42, params=params)
+
+        def idx(x, y):
+            return y * w + x
+
+        violations = 0
         for y in range(h):
             for x in range(w):
-                idx = y * w + x
-                if x + 1 < w:
-                    diff = abs(result[idx] - result[y * w + (x + 1)])
-                    max_diff = max(max_diff, diff)
-                if y + 1 < h:
-                    diff = abs(result[idx] - result[(y + 1) * w + x])
-                    max_diff = max(max_diff, diff)
-        assert max_diff < 400.0, (
-            f"相邻 tile 最大海拔差 {max_diff:.1f}m > 400m "
-            f"(Voronoi 边界处可出现短距离剧烈变化)"
+                if x < w - 1:
+                    diff = abs(alts[idx(x, y)] - alts[idx(x + 1, y)])
+                    if diff > self.MAX_ADJACENT_DIFF:
+                        violations += 1
+                if y < h - 1:
+                    diff = abs(alts[idx(x, y)] - alts[idx(x, y + 1)])
+                    if diff > self.MAX_ADJACENT_DIFF:
+                        violations += 1
+        total_edges = (w - 1) * h + w * (h - 1)
+        violation_rate = violations / total_edges
+        assert violation_rate < 0.05, (
+            f"相邻 tile 跳变率 {violation_rate:.1%} ({violations}/{total_edges})"
         )
 
-    def test_no_nan_or_inf(self):
-        result = tectonic_altitude_batch(0, 0, 50, 50, 42)
-        for v in result:
-            assert not math.isnan(v), f"NaN 在结果中"
-            assert not math.isinf(v), f"Inf 在结果中"
-
 
 # ════════════════════════════════════════════════════════════════
-# 5. 山脉连贯性
+# 6. 批量一致性
 # ════════════════════════════════════════════════════════════════
 
-class TestMountainCoherence:
-    """板块边界处应有持续高海拔区域。"""
+class TestBatchConsistency:
+    """batch 结果 = 逐个调用单点结果。"""
 
-    def test_mountains_exist(self):
-        """扫描应找到高海拔（>1000m）区域（参数更平缓后阈值降低）。"""
-        result = tectonic_altitude_batch(-500, -500, 500, 500, 42)
-        high = [v for v in result if v > 1000.0]
-        assert len(high) > 0, "应存在海拔 >1000m 的区域"
-
-    def test_high_altitude_clusters(self):
-        """高海拔 tile 应成片聚集（非孤立散点）。"""
-        batch = tectonic_altitude_batch(0, 0, 300, 300, 42)
-        w, h = 300, 300
-        high_mask = [v > 1000.0 for v in batch]
-
-        # 统计每个高海拔 tile 的邻居中高海拔的占比
-        clustered = 0
-        total_high = 0
-        for y in range(1, h - 1):
-            for x in range(1, w - 1):
-                idx = y * w + x
-                if not high_mask[idx]:
-                    continue
-                total_high += 1
-                neighbors = 0
-                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                    if high_mask[(y + dy) * w + (x + dx)]:
-                        neighbors += 1
-                if neighbors >= 2:  # 至少 2 个高海拔邻居
-                    clustered += 1
-
-        if total_high > 0:
-            cluster_ratio = clustered / total_high
-            assert cluster_ratio > 0.3, (
-                f"高海拔聚类比例 {cluster_ratio:.2f}（应有 >30% 的高海拔 tile 有 ≥2 个高海拔邻居）"
-            )
-
-    def test_plate_interiors_are_flat(self):
-        """板块内部（远离边界）应相对平坦 — 方差小。"""
-        # 采样板块中心附近 → 抖动网格中单元中心约在 CELL_SIZE 整数倍处
-        centers = [
-            (200, 200),    # CELL_SIZE=400 的中心
-            (600, 600),
-            (-200, 600),
-        ]
-        for cx, cy in centers:
-            values = _sample_grid(42, cx - 30, cy - 30, 60, 60)
-            mean = sum(values) / len(values)
-            variance = sum((v - mean) ** 2 for v in values) / len(values)
-            std = math.sqrt(variance)
-            # 板块内部标准差应较小（<300m）
-            assert std < 500.0, (
-                f"板块中心 ({cx},{cy}) 附近标准差 {std:.0f}m > 500m，不够平坦"
-            )
-
-
-# ════════════════════════════════════════════════════════════════
-# 6. 边界条件
-# ════════════════════════════════════════════════════════════════
-
-class TestBoundaries:
-    """极端输入和数值边界。"""
-
-    def test_zero_coordinate(self):
-        """原点正常工作。"""
-        alt = tectonic_altitude(0, 0, 42)
-        assert isinstance(alt, float)
-        assert -500.0 <= alt <= 8000.0
-
-    def test_negative_coordinates(self):
-        """负坐标正常工作。"""
-        for x, y in [(-1, -1), (-10000, 0), (0, -20000)]:
-            alt = tectonic_altitude(x, y, 42)
-            assert -500.0 <= alt <= 8000.0, f"alt={alt} at ({x},{y})"
-
-    def test_large_coordinates(self):
-        """极大坐标不崩溃、不溢出。"""
-        for x, y in [(10**6, 10**6), (-10**7, 10**7), (2**30, 2**30)]:
-            alt = tectonic_altitude(x, y, 42)
-            assert math.isfinite(alt), f"非有限值 at ({x},{y}): {alt}"
-
-    def test_exact_cell_boundary(self):
-        """精确的单元边界处结果应合理（两单元等距）。"""
-        # CELL_SIZE=400，所以 (200, 0) 在两个单元中心之间
-        # 不一定精确，但应在合理范围内
-        alt = tectonic_altitude(200, 0, 42)
-        assert -500.0 <= alt <= 8000.0
-
-    def test_exact_cell_center(self):
-        """精确的单元中心。"""
-        # 单元 (0,0) 中心约在抖动偏移处
-        alt = tectonic_altitude(0, 0, 42)
-        assert isinstance(alt, float)
-
-    def test_batch_at_negative_origin(self):
-        """批次从负坐标开始。"""
-        result = tectonic_altitude_batch(-500, -500, 100, 100, 42)
-        assert len(result) == 10000
-        for v in result:
-            assert math.isfinite(v)
-
-    def test_batch_zero_size(self):
-        """0×0 批次。"""
-        result = tectonic_altitude_batch(0, 0, 0, 0, 42)
-        assert result == []
-
-    def test_batch_single_row(self):
-        """单行批次。"""
-        result = tectonic_altitude_batch(0, 0, 100, 1, 42)
-        assert len(result) == 100
-        for i, (b, expected) in enumerate(
-            zip(result, _sample_grid(42, 0, 0, 100, 1))
-        ):
-            assert abs(b - expected) < 1.0, f"row 差异在索引 {i}: {b} vs {expected}"
-
-    def test_batch_single_col(self):
-        """单列批次。"""
-        result = tectonic_altitude_batch(0, 0, 1, 100, 42)
-        assert len(result) == 100
-        for i, (b, expected) in enumerate(
-            zip(result, _sample_grid(42, 0, 0, 1, 100))
-        ):
-            assert abs(b - expected) < 1.0, f"col 差异在索引 {i}: {b} vs {expected}"
-
-    def test_batch_at_wrap_boundary(self):
-        """批次跨越单元边界 — 边界两侧无突变跳跃。"""
-        hw = 400 // 2  # CELL_SIZE 的一半
-        result = tectonic_altitude_batch(hw - 10, 0, 20, 1, 42)
-        diffs = [abs(result[i+1] - result[i]) for i in range(len(result) - 1)]
-        max_diff = max(diffs)
-        # 允许边界处有较大但非极端的差异
-        assert max_diff < 500.0, f"跨越边界处最大差 {max_diff:.1f}m > 500m"
-
-
-# ════════════════════════════════════════════════════════════════
-# 7. 所有预设风格
-# ════════════════════════════════════════════════════════════════
-
-class TestPresets:
-    """每个预设应产生合理且风格各异的结果。"""
-
-    def test_all_presets_valid(self):
-        for name, params in PRESETS.items():
-            alt = tectonic_altitude(500, 500, 42, params=params)
-            assert -params.altitude_floor <= params.altitude_ceil, (
-                f"预设 {name}: 海拔边界无效"
-            )
-            assert isinstance(alt, float)
-
-    def test_presets_produce_different_worlds(self):
-        """不同预设应产生不同海拔分布。"""
-        medians = {}
-        for name, params in PRESETS.items():
-            result = tectonic_altitude_batch(0, 0, 100, 100, 42, params=params)
-            s = _stats(result)
-            medians[name] = s["median"]
-
-        # 至少某些预设产生显著不同的中位海拔
-        vals = list(medians.values())
-        assert max(vals) - min(vals) > 50.0, (
-            f"预设之间中位海拔差太小: {medians}"
+    def test_batch_matches_single(self):
+        """同一区域的 batch 与单点逐个调用一致。"""
+        from ascend.space.tectonic import (
+            tectonic_altitude, tectonic_altitude_batch, PRESETS,
         )
+        params = PRESETS["earthlike"]
+        w, h = 10, 10
+        origin_x, origin_y = 100, -50
+        batch = tectonic_altitude_batch(origin_x, origin_y, w, h, seed=42, params=params)
+        for ty in range(h):
+            for tx in range(w):
+                single = tectonic_altitude(
+                    origin_x + tx, origin_y + ty, seed=42, params=params)
+                assert single == pytest.approx(batch[ty * w + tx]), (
+                    f"({origin_x + tx}, {origin_y + ty}): "
+                    f"batch={batch[ty * w + tx]:.2f}, single={single:.2f}"
+                )
 
-    def test_pangaea_less_ocean(self):
-        """盘古大陆预设的海洋应少于默认。"""
-        # 大范围扫描确保覆盖足够单元
-        earth = tectonic_altitude_batch(-800, -800, 1600, 1600, 42, params=PRESETS["earthlike"])
-        pangaea = tectonic_altitude_batch(-800, -800, 1600, 1600, 42, params=PRESETS["pangaea"])
-        earth_neg = sum(1 for v in earth if v < 0) / len(earth)
-        pangaea_neg = sum(1 for v in pangaea if v < 0) / len(pangaea)
-        # 盘古大陆 elevation_min=-500, 陆地更多
-        assert pangaea_neg <= earth_neg * 1.2, (
-            f"盘古大陆负海拔 {pangaea_neg:.1%} 不应远超默认 {earth_neg:.1%}"
+    def test_batch_matches_single_different_seeds(self):
+        """多 seed 下 batch 与 single 一致。"""
+        from ascend.space.tectonic import (
+            tectonic_altitude, tectonic_altitude_batch, PRESETS,
+        )
+        params = PRESETS["earthlike"]
+        for seed in [0, 42, 99999]:
+            batch = tectonic_altitude_batch(0, 0, 5, 5, seed=seed, params=params)
+            for ty in range(5):
+                for tx in range(5):
+                    single = tectonic_altitude(tx, ty, seed=seed, params=params)
+                    assert single == pytest.approx(batch[ty * 5 + tx])
+
+
+# ════════════════════════════════════════════════════════════════
+# 7. 预设差异化
+# ════════════════════════════════════════════════════════════════
+
+class TestPresetDifferentiation:
+    """不同预设产生明显不同的世界特征，通过 ocean_ratio 滑块控制。"""
+
+    def _ocean_ratio(self, params, seed):
+        """计算 2×seed_spacing 区域的海洋比例。"""
+        from ascend.space.tectonic import tectonic_altitude
+        step = max(50, int(params.seed_spacing / 4))
+        size = int(params.seed_spacing * 2)
+        ocean = 0
+        total = 0
+        for wx in range(0, size, step):
+            for wy in range(0, size, step):
+                if tectonic_altitude(wx, wy, seed, params=params) < 0:
+                    ocean += 1
+                total += 1
+        return ocean / total if total > 0 else 0.0
+
+    def test_ocean_ratio_monotonic(self):
+        """ocean_ratio 增大 → 海洋比例单调增大。"""
+        from ascend.space.tectonic import WorldParams
+        ratios = []
+        for or_val in [0.2, 0.5, 0.8]:
+            p = WorldParams(ocean_ratio=or_val)
+            ratios.append(self._ocean_ratio(p, seed=42))
+        assert ratios[0] < ratios[1] < ratios[2], (
+            f"ocean_ratio 增大但海洋比例未单调增大: {ratios}"
         )
 
     def test_mountainous_has_higher_peaks(self):
-        """山地预设应有更高峰值。"""
-        default = tectonic_altitude_batch(0, 0, 300, 300, 42, params=PRESETS["earthlike"])
-        mountain = tectonic_altitude_batch(0, 0, 300, 300, 42, params=PRESETS["mountainous"])
-        assert max(mountain) > max(default), (
-            f"山地预设最大海拔 {max(mountain):.0f} 应高于默认 {max(default):.0f}"
+        """mountainous 预设的最高海拔高于 earthlike。"""
+        from ascend.space.tectonic import tectonic_altitude, PRESETS
+        def max_alt(params, seed):
+            step = max(50, int(params.seed_spacing / 4))
+            size = int(params.seed_spacing * 2)
+            best = params.altitude_floor
+            for wx in range(0, size, step):
+                for wy in range(0, size, step):
+                    alt = tectonic_altitude(wx, wy, seed, params=params)
+                    if alt > best:
+                        best = alt
+            return best
+        max_earth = max_alt(PRESETS["earthlike"], seed=42)
+        max_mountain = max_alt(PRESETS["mountainous"], seed=42)
+        assert max_mountain > max_earth, (
+            f"mountainous 最高峰 {max_mountain:.0f}m 应 > earthlike {max_earth:.0f}m"
         )
 
-    def test_ocean_world_mostly_water(self):
-        """海洋世界应绝大部分是水。"""
-        # 多 seed 测试，因为单 seed 可能恰好落在高海拔板块
-        found = False
-        for seed in [42, 99, 123, 777]:
-            result = tectonic_altitude_batch(-800, -800, 1600, 1600, seed,
-                params=PRESETS["ocean_world"])
-            ocean_pct = sum(1 for v in result if v < 0) / len(result)
-            if ocean_pct > 0.50:
-                found = True
+    def test_flat_has_lower_relief(self):
+        """flat 预设的海拔方差小于 earthlike。"""
+        from ascend.space.tectonic import tectonic_altitude_batch, PRESETS
+        import statistics
+        def relief(params, seed):
+            # 采样板块内部区域（偏移避免边界）
+            offset = int(params.seed_spacing * 0.5)
+            alts = tectonic_altitude_batch(offset, offset, 40, 40,
+                                           seed=seed, params=params)
+            return statistics.stdev(alts)
+        std_flat = relief(PRESETS["flat"], seed=42)
+        std_earth = relief(PRESETS["earthlike"], seed=42)
+        assert std_flat < std_earth, (
+            f"flat stdev {std_flat:.0f}m 应 < earthlike stdev {std_earth:.0f}m"
+        )
+
+
+# ════════════════════════════════════════════════════════════════
+# 8. 边界情况
+# ════════════════════════════════════════════════════════════════
+
+class TestEdgeCases:
+    """极端输入不崩溃。"""
+
+    def test_large_coordinates(self):
+        """大坐标（±10^6 tiles）正常返回。"""
+        from ascend.space.tectonic import tectonic_altitude
+        for wx, wy in [(1_000_000, 0), (-1_000_000, 0), (0, 1_000_000)]:
+            result = tectonic_altitude(wx, wy, seed=42)
+            assert isinstance(result, float)
+            assert not math.isnan(result)
+
+    def test_negative_coordinates(self):
+        """负坐标正常处理。"""
+        from ascend.space.tectonic import tectonic_altitude
+        for wx, wy in [(-1000, -1000), (-500, 300), (200, -600)]:
+            result = tectonic_altitude(wx, wy, seed=42)
+            assert isinstance(result, float)
+            assert not math.isnan(result)
+
+    def test_zero_batch_dimensions(self):
+        """w=0 或 h=0 的 batch 返回空列表。"""
+        from ascend.space.tectonic import tectonic_altitude_batch
+        assert tectonic_altitude_batch(0, 0, 0, 10, seed=42) == []
+        assert tectonic_altitude_batch(0, 0, 10, 0, seed=42) == []
+        assert tectonic_altitude_batch(0, 0, 0, 0, seed=42) == []
+
+    def test_negative_batch_dimensions(self):
+        """负尺寸 batch 返回空列表（或抛出 ValueError）。"""
+        from ascend.space.tectonic import tectonic_altitude_batch
+        try:
+            result = tectonic_altitude_batch(0, 0, -1, 10, seed=42)
+            # 如果没抛异常，应返回空列表
+            assert result == []
+        except ValueError:
+            pass  # 抛异常也可以
+
+    def test_fractional_coordinates(self):
+        """浮点坐标正常处理（用于平滑采样）。"""
+        from ascend.space.tectonic import tectonic_altitude
+        for wx, wy in [(0.5, 0.5), (-3.7, 12.2), (100.123, -50.456)]:
+            result = tectonic_altitude(wx, wy, seed=42)
+            assert isinstance(result, float)
+            assert not math.isnan(result)
+
+    def test_seed_negative(self):
+        """负 seed 正常处理。"""
+        from ascend.space.tectonic import tectonic_altitude
+        pos = tectonic_altitude(100, 100, seed=42)
+        neg = tectonic_altitude(100, 100, seed=-42)
+        assert isinstance(pos, float)
+        assert isinstance(neg, float)
+        # 不同 seed 大概率不同
+        # 注意：seed=-42 vs seed=42 如果被 abs() 处理则相同，否则不同
+        # 此用例验证负 seed 不崩溃，不强求不同
+
+
+# ════════════════════════════════════════════════════════════════
+# 9. 山脉结构（定性检测）
+# ════════════════════════════════════════════════════════════════
+
+class TestMountainStructure:
+    """山脉应沿板块边界形成连贯高海拔带，而非随机散点。
+
+    注意：这是最难定量化的测试。当前用以下代理指标：
+      a) 高海拔 tile 不应是孤立的（周围应有其他高海拔 tile）
+      b) 高海拔 tile 的聚类大小应超过一定阈值
+      c) 沿扫描线的海拔剖面显示"上升→高峰→下降"而非振荡
+    """
+
+    def test_high_altitude_not_isolated(self):
+        """海拔 > 2000m 的 tile 至少有一个邻居也 > 2000m。
+
+        孤立的单峰说明山脉不是板块边界的产物。
+        """
+        from ascend.space.tectonic import tectonic_altitude_batch, PRESETS
+        params = PRESETS["earthlike"]
+        # 扫描足够大的区域以覆盖碰撞边界
+        w, h = 100, 100
+        alts = tectonic_altitude_batch(0, 0, w, h, seed=42, params=params)
+
+        high_threshold = 2000.0
+
+        def idx(x, y):
+            return y * w + x
+
+        isolated_count = 0
+        high_count = 0
+        for y in range(h):
+            for x in range(w):
+                if alts[idx(x, y)] <= high_threshold:
+                    continue
+                high_count += 1
+                # 检查 8-邻域
+                has_high_neighbor = False
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        if dx == 0 and dy == 0:
+                            continue
+                        nx, ny = x + dx, y + dy
+                        if 0 <= nx < w and 0 <= ny < h:
+                            if alts[idx(nx, ny)] > high_threshold:
+                                has_high_neighbor = True
+                                break
+                    if has_high_neighbor:
+                        break
+                if not has_high_neighbor:
+                    isolated_count += 1
+
+        # 如果没有高海拔 tile，跳过（seed+区域可能全在海洋）
+        if high_count > 0:
+            isolation_rate = isolated_count / high_count
+            assert isolation_rate < 0.3, (
+                f"高海拔 tile 孤立率 {isolation_rate:.1%} "
+                f"({isolated_count}/{high_count}) 应 < 30%"
+            )
+
+    def test_profile_has_sustained_ridges(self):
+        """沿扫描线的海拔剖面中，存在至少一段连续 10+ tile > 1000m。
+
+        这验证山脉不是单峰，而是有长度的脊线。
+        """
+        from ascend.space.tectonic import tectonic_altitude, PRESETS
+        params = PRESETS["earthlike"]
+        # 沿多条扫描线，覆盖 2×seed_spacing 范围
+        scan_size = int(params.seed_spacing * 2)
+        found_ridge = False
+        for line_y in range(0, scan_size, 200):
+            run = 0
+            max_run = 0
+            for x in range(0, scan_size, 5):
+                alt = tectonic_altitude(x, line_y, seed=42, params=params)
+                if alt > 1000:
+                    run += 1
+                    max_run = max(max_run, run)
+                else:
+                    run = 0
+            if max_run >= 10:
+                found_ridge = True
                 break
-        assert found, "海洋世界在测试 seed 中未达到 50% 水体"
-
-    def test_flat_world_lower_variance(self):
-        """平坦世界预设不崩溃且产生有限值。"""
-        result = tectonic_altitude_batch(0, 0, 100, 100, 42, params=PRESETS["flat"])
-        assert len(result) == 10000
-        assert all(v == pytest.approx(v, abs=1e-6) for v in result)  # 有限值
-        # 5×5 高斯平滑会平均化局部差异，预设间方差差异不如参数级差明显
+        assert found_ridge, "未找到连续 10+ tile > 1000m 的山脉"
 
 
 # ════════════════════════════════════════════════════════════════
-# 8. 性能
+# 待商定问题（Q3）
 # ════════════════════════════════════════════════════════════════
-
-class TestPerformance:
-    """生成应在合理时间内完成。"""
-
-    def test_single_point_fast(self):
-        """单点查询 <1ms。"""
-        import time
-        start = time.perf_counter()
-        for _ in range(1000):
-            tectonic_altitude(42, 99, 7)
-        elapsed = time.perf_counter() - start
-        avg_us = elapsed / 1000 * 1_000_000
-        assert avg_us < 100, f"单点查询平均 {avg_us:.0f}μs，应 <100μs"
-
-    def test_batch_200x200_fast(self):
-        """200×200 批次 <500ms（5×5 高斯，C 扩展将 <5ms）。"""
-        import time
-        start = time.perf_counter()
-        tectonic_altitude_batch(0, 0, 200, 200, 42)
-        elapsed = time.perf_counter() - start
-        assert elapsed < 0.500, f"200×200 批次耗时 {elapsed*1000:.0f}ms，应 <500ms"
-
-    def test_batch_500x500_fast(self):
-        """500×500 批次 <3000ms（5×5 高斯，C 扩展将 <30ms）。"""
-        import time
-        start = time.perf_counter()
-        tectonic_altitude_batch(0, 0, 500, 500, 42)
-        elapsed = time.perf_counter() - start
-        assert elapsed < 3.000, f"500×500 批次耗时 {elapsed*1000:.0f}ms，应 <3000ms"
-
-
-# ════════════════════════════════════════════════════════════════
-# 9. 线程安全
-# ════════════════════════════════════════════════════════════════
-
-class TestThreadSafety:
-    """纯函数应支持并发调用。"""
-
-    def test_concurrent_single_point(self):
-        """并发单点查询不崩溃。"""
-        def query(seed):
-            results = []
-            for x in range(100):
-                for y in range(100):
-                    results.append(tectonic_altitude(x, y, seed))
-            return results
-
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            futures = [ex.submit(query, s) for s in [0, 42, 99, 123]]
-            for f in as_completed(futures):
-                result = f.result()
-                assert len(result) == 10000
-
-    def test_concurrent_batch(self):
-        """并发批量查询不崩溃。"""
-        def batch_query(seed, ox, oy):
-            return tectonic_altitude_batch(ox, oy, 50, 50, seed)
-
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            futures = [
-                ex.submit(batch_query, s, ox, oy)
-                for s in [0, 42, 99, 123]
-                for ox, oy in [(0, 0), (200, 0), (0, 200), (-200, 0)]
-            ]
-            for f in as_completed(futures):
-                result = f.result()
-                assert len(result) == 2500
-                for v in result:
-                    assert math.isfinite(v)
-
-    def test_mixed_single_and_batch_concurrent(self):
-        """混合单点和批量并发调用。"""
-        def worker(seed):
-            single = [tectonic_altitude(i, i, seed) for i in range(50)]
-            batch = tectonic_altitude_batch(0, 0, 20, 20, seed)
-            return single, batch
-
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            futures = [ex.submit(worker, s) for s in range(4)]
-            for f in as_completed(futures):
-                single, batch = f.result()
-                assert len(single) == 50
-                assert len(batch) == 400
-
-
-# ════════════════════════════════════════════════════════════════
-# 10. WorldParams 正确性
-# ════════════════════════════════════════════════════════════════
-
-class TestWorldParams:
-    """参数 dataclass 行为正确。"""
-
-    def test_default_params_valid(self):
-        p = WorldParams()
-        assert p.cell_size > 0
-        assert 0 <= p.jitter_range < 0.5
-        assert p.uplift_scale >= 0
-        assert p.altitude_floor < p.altitude_ceil
-
-    def test_custom_params_respected(self):
-        """自定义参数应改变输出。"""
-        default = tectonic_altitude(500, 500, 42)
-        custom = tectonic_altitude(
-            500, 500, 42,
-            params=WorldParams(cell_size=100, uplift_scale=5000)
-        )
-        # 参数不同，结果应不同
-        assert default != custom
-
-    def test_jitter_range_limit(self):
-        """jitter_range >= 0.5 应抛出（单元会重叠）。"""
-        with pytest.raises(ValueError):
-            WorldParams(jitter_range=0.6)
-
-    def test_cell_size_minimum(self):
-        """cell_size 至少为 1。"""
-        with pytest.raises(ValueError):
-            WorldParams(cell_size=0)
-
-    def test_all_presets_have_valid_params(self):
-        """所有预设有合法参数。"""
-        for name, params in PRESETS.items():
-            assert params.cell_size >= 1, f"{name}: cell_size 无效"
-            assert 0 <= params.jitter_range < 0.5, f"{name}: jitter_range 无效"
-            assert params.altitude_floor <= params.altitude_ceil, f"{name}: 海拔范围无效"
-            assert params.elevation_min <= params.elevation_max, f"{name}: 基础海拔范围无效"
-
-
-# ════════════════════════════════════════════════════════════════
-# 11. 覆盖率 — 确保每个代码路径被触及
-# ════════════════════════════════════════════════════════════════
-
-class TestCoverage:
-    """系统性地覆盖所有代码路径。"""
-
-    def test_multiple_seeds(self):
-        """多种 seed：0, 正, 负, 大数。"""
-        for seed in [0, 1, -1, 42, 2**16, -(2**16), 2**31 - 1]:
-            alt = tectonic_altitude(100, 100, seed)
-            assert math.isfinite(alt)
-
-    def test_multiple_quadrants(self):
-        """覆盖四个象限 + 原点。"""
-        quadrants = [
-            (100, 100), (-100, 100), (100, -100), (-100, -100),
-            (0, 0), (1, -1), (-1, 1),
-        ]
-        for x, y in quadrants:
-            alt = tectonic_altitude(x, y, 42)
-            assert math.isfinite(alt), f"quadrant ({x},{y}) 失败"
-
-    def test_grid_aligned_and_offset(self):
-        """网格对齐坐标和偏移坐标。"""
-        cell = 400
-        positions = [
-            0, 1, cell // 2, cell - 1, cell, cell + 1,
-            cell * 2, -cell, -cell // 2,
-        ]
-        for x in positions:
-            for y in positions[:3]:  # 减少组合数
-                alt = tectonic_altitude(x, y, 42)
-                assert math.isfinite(alt)
-
-    def test_batch_various_sizes(self):
-        """各种批次尺寸。"""
-        sizes = [(1, 1), (1, 50), (50, 1), (10, 10), (100, 100), (200, 200)]
-        for w, h in sizes:
-            result = tectonic_altitude_batch(0, 0, w, h, 42)
-            assert len(result) == w * h
-
-    def test_batch_various_origins(self):
-        """各种起始坐标。"""
-        origins = [
-            (0, 0), (-200, 0), (0, -200), (-400, -400),
-            (1000, -500), (-3000, 2000),
-        ]
-        for ox, oy in origins:
-            result = tectonic_altitude_batch(ox, oy, 30, 30, 42)
-            assert len(result) == 900
-            assert all(math.isfinite(v) for v in result)
-
-    def test_params_all_fields_used(self):
-        """修改每个参数字段都应改变输出。"""
-        base = tectonic_altitude_batch(0, 0, 50, 50, 42)
-        p = WorldParams()
-
-        # 修改 cell_size
-        alt = tectonic_altitude_batch(0, 0, 50, 50, 42,
-            params=WorldParams(cell_size=100))
-        assert alt != base, "cell_size 改变应影响输出"
-
-        # 修改 uplift_scale
-        alt = tectonic_altitude_batch(0, 0, 50, 50, 42,
-            params=WorldParams(uplift_scale=5000))
-        assert alt != base, "uplift_scale 改变应影响输出"
-
-        # 修改 drift_scale
-        alt = tectonic_altitude_batch(0, 0, 50, 50, 42,
-            params=WorldParams(drift_scale=5.0))
-        assert alt != base, "drift_scale 改变应影响输出"
-
-        # 修改 elevation range
-        alt = tectonic_altitude_batch(0, 0, 50, 50, 42,
-            params=WorldParams(elevation_min=500, elevation_max=600))
-        assert alt != base, "elevation 范围改变应影响输出"
+#
+# Q1 ✅ 已解决: ocean_ratio 是 WorldParams 的直接滑块参数，默认 0.70。
+#     实现时对该参数做后处理偏移，使实际海洋比例趋近目标值。
+#
+# Q2 ✅ 已解决: 1 tile = 1m。MAX_ADJACENT_DIFF = 3m, MAX_CLIFF_DIFF = 10m。
+#
+# Q3: 板块边界隆起机制（待展开说明 → 见下面详细解释）

@@ -1,18 +1,12 @@
-"""TileGenerator — 详细地图层地形生成器。
+"""TileGenerator — 详细地图层地形生成器（骨架）。
 
-在构造海拔（tectonic）基础上叠加微噪声，按海拔分带
-+ 群系差异化生成最终 TerrainType。
-
-算法：
-  1. 构造海拔 batch → per-tile 基础海拔
-  2. 高频噪声 → 微地形起伏
-  3. 海拔分带 + 细节噪声 → TerrainType
+待 Voronoi 构造模块实现后，在此接入 per-tile 海拔数据。
+当前为占位实现。
 """
 
 from .chunk import ChunkData
 from .biome import get_template
 from .noise import PerlinNoise
-from .tectonic import tectonic_altitude_batch
 from .terrain import TerrainType
 from .tile_grid import TileGrid, TILE_MAP_SIZE
 
@@ -47,125 +41,28 @@ class TileGenerator:
 
     # ── 主入口 ──────────────────────────────────────────────
 
-    def generate(
-        self,
-        chunk: ChunkData,
-        *,
-        erosion_droplets: int = 0,
-    ) -> TileGrid:
-        """为给定分块生成详细 tile 网格。
+    def generate(self, chunk: ChunkData) -> TileGrid:
+        """为给定分块生成详细 tile 网格（占位）。
 
-        Args:
-            chunk: 大地图层分块数据。
-            erosion_droplets: 水力侵蚀水滴数。0=跳过, 1000=轻度, 5000=中度。
-
-        Returns:
-            200×200 的 TileGrid。
+        TODO: 接入 Voronoi 构造海拔 + 水力侵蚀。
         """
         if chunk.biome.is_ocean:
             return self._generate_ocean(chunk)
         else:
-            return self._generate_land(chunk, erosion_droplets=erosion_droplets)
+            return self._generate_land(chunk)
 
     # ── 陆地生成 ────────────────────────────────────────────
 
-    def _generate_land(
-        self,
-        chunk: ChunkData,
-        *,
-        erosion_droplets: int = 0,
-    ) -> TileGrid:
-        """陆地群系的 tile 生成。
+    def _generate_land(self, chunk: ChunkData) -> TileGrid:
+        """陆地群系的 tile 生成（占位）。
 
-        构造海拔决定宏观分带，可选水力侵蚀细化地形。
-
-        Args:
-            chunk: 大陆群系的 ChunkData。
-            erosion_droplets: 侵蚀水滴数，0=跳过。
-
-        Returns:
-            TileGrid。
+        TODO: 接入 Voronoi 构造海拔 + 水力侵蚀，按海拔分带分类。
         """
         size = TILE_MAP_SIZE
-        world_x = chunk.cx * size
-        world_y = chunk.cy * size
-        n = size * size
-
-        # 1. 构造海拔 — tile 粒度，确定性
-        tectonic_alts = tectonic_altitude_batch(
-            world_x, world_y, size, size, self._seed)
-
-        # 1.5. 可选水力侵蚀 — 塑造河谷和冲积地形
-        if erosion_droplets > 0:
-            from .erosion import hydraulic_erosion
-            tectonic_alts = hydraulic_erosion(
-                tectonic_alts, size, size,
-                seed=self._seed,
-                droplets=erosion_droplets,
-            )
-
-        # 2. 微地形噪声
-        elevation = self._noise_elevation.octave_grid(
-            world_x, world_y, size, size,
-            frequency=_TILE_FREQ_ELEVATION,
-            octaves=4, persistence=0.5, lacunarity=2.0,
-        )
-        detail = self._noise_detail.octave_grid(
-            world_x, world_y, size, size,
-            frequency=_TILE_FREQ_DETAIL,
-            octaves=3, persistence=0.5, lacunarity=2.0,
-        )
-
-        # 3. 海拔分带分类
         grid = TileGrid()
-        for i in range(n):
-            ta = tectonic_alts[i]
-            e = elevation[i]
-            d = detail[i]
-
-            # 海平面附近衰减因子：0~50m 内微噪声减弱，保持平缓
-            coastal_flat = 1.0
-            if ta < 50.0:
-                coastal_flat = max(0.2, ta / 50.0)  # 0m→0.2, 50m→1.0
-
-            if ta < 0.0:
-                # ── 海洋 ──
-                terrain = TerrainType.DEEP_WATER if ta < -200.0 else TerrainType.SHALLOW_WATER
-
-            elif ta < 200.0:
-                # ── 海岸平地（拓宽到 200m） ──
-                e_flat = e * coastal_flat * 0.6  # 噪声衰减
-                if e_flat < -0.5:
-                    terrain = TerrainType.SHALLOW_WATER
-                elif e_flat < -0.2:
-                    terrain = TerrainType.MARSH
-                else:
-                    terrain = self._classify_flat(e_flat, d, chunk, ta)
-
-            elif ta < 1000.0:
-                # ── 丘陵 ──
-                e_mod = e * coastal_flat
-                if e_mod > 0.65:
-                    terrain = TerrainType.ROCK
-                else:
-                    terrain = self._classify_flat(e_mod, d, chunk, ta)
-
-            elif ta < 2500.0:
-                # ── 山腰 ──
-                if d > 0.3 or e > 0.4:
-                    terrain = TerrainType.STEEP_SLOPE
-                else:
-                    terrain = TerrainType.ROCK
-
-            else:
-                # ── 高山 ──
-                if ta > 4000.0 or d > 0.5:
-                    terrain = TerrainType.MOUNTAIN_PEAK
-                else:
-                    terrain = TerrainType.STEEP_SLOPE
-
-            grid._data[i] = int(terrain)
-
+        # 占位：全部填充为草地
+        for i in range(size * size):
+            grid._data[i] = int(TerrainType.GRASSLAND)
         return grid
 
     # ── 海洋生成 ────────────────────────────────────────────

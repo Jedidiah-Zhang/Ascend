@@ -37,12 +37,10 @@ from .terrain import (
 )
 from .tile_grid import TileGrid
 from .tile_gen import TileGenerator
-from .tectonic import (
-    WorldParams, PRESETS,
-    tectonic_altitude, tectonic_altitude_batch,
-)
-from .erosion import hydraulic_erosion
-from .storage import WorldStore
+# 构造模拟和侵蚀模块待实现
+# from .tectonic import ...
+# from .erosion import hydraulic_erosion
+# from .storage import WorldStore
 
 __all__ = [
     # 第一层：大地图
@@ -68,13 +66,7 @@ __all__ = [
     "fertility",
     "TileGrid",
     "TileGenerator",
-    # 构造模拟
-    "WorldParams",
-    "PRESETS",
-    "tectonic_altitude",
-    "tectonic_altitude_batch",
-    # 水力侵蚀
-    "hydraulic_erosion",
-    # 持久化
-    "WorldStore",
+    # 构造模拟 — 待实现
+    # 水力侵蚀 — 待实现
+    # 持久化 — 待实现
 ]

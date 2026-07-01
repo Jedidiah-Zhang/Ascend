@@ -295,208 +295,25 @@ def _value_to_rgb(v: float | int, mode: str) -> tuple[int, int, int]:
 
 
 def _tile_worker(seed: int, cx: int, cy: int, w: int, h: int, mode: str) -> bytes:
-    """在子进程中生成瓦片原始数据（float32 数组）。
-
-    返回所有 5 种模式的值一起算好，客户端自己涂色。
-    格式：w*h*4*5 bytes = [海拔][温度][降雨][气候][群系] 各 float32。
-    """
-    import math
+    """占位：世界生成模块待重建。返回零填充数据。"""
     import struct
-    from ascend.space.noise import PerlinNoise
-    from ascend.space.tectonic import tectonic_altitude
-    from ascend.space.climate import (
-        sea_level_temperature, rainfall_from_noise, apply_lapse_rate,
-        climate_zone_from_values,
-    )
-    from ascend.space.biome import biome_from_climate
-
-    phi = (math.sqrt(5.0) - 1.0) / 2.0
-    seed_float = float(abs(seed) % 100000)
-    phases = [
-        ((seed_float + i * 137.5) * phi * 1000.0) % 9973.0
-        for i in range(8)
-    ]
-
-    noise_lat = PerlinNoise(seed + 200)
-    noise_rain = PerlinNoise(seed + 300)
-    noise_moist = PerlinNoise(seed + 700)
-
-    p_t = phases[1]
-    lat_noise = noise_lat.octave_grid(int(cx + p_t), int(cy + p_t), w, h, frequency=0.0003, octaves=2)
-    p_r = phases[2]
-    rain_noise = noise_rain.octave_grid(int(cx + p_r), int(cy + p_r), w, h, frequency=0.004, octaves=4)
-    p_m = phases[4]
-    moist_noise = noise_moist.octave_grid(int(cx + p_m), int(cy + p_m), w, h, frequency=0.005, octaves=2)
-
     size = w * h
     packer = struct.Struct(f'{size}f')
-
-    altitudes = [0.0] * size
-    temps = [0.0] * size
-    rains = [0.0] * size
-    climates = [0.0] * size
-    biomes = [0.0] * size
-
-    for idx in range(size):
-        # chunk 坐标 → tile 坐标（每 chunk = 200 tiles，取中心）
-        world_tx = (cx + (idx % w)) * 200 + 100
-        world_ty = (cy + (idx // w)) * 200 + 100
-        altitude = tectonic_altitude(float(world_tx), float(world_ty), seed)
-
-        sea_temp = sea_level_temperature(lat_noise[idx])
-        rainfall = rainfall_from_noise(rain_noise[idx])
-        temp = apply_lapse_rate(sea_temp, altitude)
-        climate = climate_zone_from_values(temp, rainfall)
-        m = moist_noise[idx]
-        biome = biome_from_climate(climate, m, altitude, sea_temp)
-
-        altitudes[idx] = altitude
-        temps[idx] = temp
-        rains[idx] = rainfall
-        climates[idx] = float(int(climate))
-        biomes[idx] = float(int(biome))
-
-    return (
-        packer.pack(*altitudes) +
-        packer.pack(*temps) +
-        packer.pack(*rains) +
-        packer.pack(*climates) +
-        packer.pack(*biomes)
-    )
+    zeros = packer.pack(*([0.0] * size))
+    return zeros + zeros + zeros + zeros + zeros
 
 
 def _terrain_worker(seed: int, cx: int, cy: int) -> bytes:
-    """在子进程中生成单个 chunk 的 200×200 地形 RGBA 像素数据。
-
-    使用 TileGenerator 从大地图层参数生成详细 tile 网格，
-    然后按 TERRAIN_COLORS 映射为 RGBA。
-
-    Args:
-        seed: 世界种子。
-        cx, cy: 分块坐标。
-
-    Returns:
-        200×200×4 = 160000 字节的 RGBA 数据。
-    """
-    import math
-    from ascend.space.noise import PerlinNoise
-    from ascend.space.tectonic import tectonic_altitude
-    from ascend.space.climate import (
-        sea_level_temperature, rainfall_from_noise, apply_lapse_rate,
-        climate_zone_from_values, annual_baseline,
-    )
-    from ascend.space.biome import biome_from_climate
-    from ascend.space.tile_gen import TileGenerator
-    from ascend.space.chunk import ChunkData
-
-    phi = (math.sqrt(5.0) - 1.0) / 2.0
-    seed_float = float(abs(seed) % 100000)
-    phases = [
-        ((seed_float + i * 137.5) * phi * 1000.0) % 9973.0
-        for i in range(8)
-    ]
-
-    noise_lat = PerlinNoise(seed + 200)
-    noise_rain = PerlinNoise(seed + 300)
-    noise_moist = PerlinNoise(seed + 700)
-    noise_sun = PerlinNoise(seed + 400)
-    noise_hum = PerlinNoise(seed + 500)
-    noise_wind = PerlinNoise(seed + 600)
-
-    p = phases  # [0..7]
-
-    altitude = tectonic_altitude(
-        float(cx * 200 + 100), float(cy * 200 + 100), seed)
-
-    n_lat = noise_lat.octave(float(cx) + p[1], float(cy) + p[1], octaves=2, frequency=0.0003)
-    n_rain = noise_rain.octave(float(cx) + p[2], float(cy) + p[2], octaves=4, frequency=0.004)
-    n_moist = noise_moist.octave(float(cx) + p[6], float(cy) + p[6], octaves=2, frequency=0.005)
-
-    sea_temp = sea_level_temperature(n_lat)
-    rainfall = rainfall_from_noise(n_rain)
-    temperature = apply_lapse_rate(sea_temp, altitude)
-    climate = climate_zone_from_values(temperature, rainfall)
-    biome = biome_from_climate(climate, n_moist, altitude, sea_temp)
-
-    n_sun = noise_sun.octave(float(cx) + p[3], float(cy) + p[3], octaves=4, frequency=0.005)
-    n_hum = noise_hum.octave(float(cx) + p[4], float(cy) + p[4], octaves=4, frequency=0.005)
-    n_wind = noise_wind.octave(float(cx) + p[5], float(cy) + p[5], octaves=4, frequency=0.005)
-
-    weather = annual_baseline(
-        altitude=altitude, sea_level_temp=sea_temp, rainfall=rainfall,
-        climate=climate,
-        sunshine_noise=n_sun, humidity_noise=n_hum, wind_noise=n_wind,
-    )
-
-    chunk = ChunkData(
-        cx=cx, cy=cy,
-        biome=biome, climate_zone=climate,
-        annual_baseline=weather,
-    )
-
-    tile_gen = TileGenerator(seed)
-    grid = tile_gen.generate(chunk, erosion_droplets=1000)
-
-    # ── 河流生成：流量累积法 ──
-    # 在构造海拔上计算流向 → 累积流量 → 高流量 tile 标为浅水
+    """占位：世界生成模块待重建。返回灰色填充。"""
     size = 200
     n = size * size
-    from ascend.space.tectonic import tectonic_altitude_batch
-    heights = tectonic_altitude_batch(
-        chunk.cx * size, chunk.cy * size, size, size, seed)
-
-    # 计算每个 tile 的流向（8 方向中最低邻居）
-    flow_to: list[int] = [-1] * n  # 下游 tile 索引
-    dirs = [(-1,-1),(0,-1),(1,-1),(-1,0),(1,0),(-1,1),(0,1),(1,1)]
-    for y in range(size):
-        for x in range(size):
-            idx = y * size + x
-            best_d = -float("inf")
-            best_to = -1
-            h = heights[idx]
-            for dx, dy in dirs:
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < size and 0 <= ny < size:
-                    ni = ny * size + nx
-                    drop = h - heights[ni]
-                    if drop > best_d:
-                        best_d = drop
-                        best_to = ni
-            flow_to[idx] = best_to if best_d > 0 else -1
-
-    # 流量累积（汇入计数）
-    flow = [0] * n
-    for i in range(n):
-        to = flow_to[i]
-        if to >= 0 and to < n:
-            flow[to] += 1
-
-    # 传递累积（按高度降序，确保上游先处理）
-    order = sorted(range(n), key=lambda i: -heights[i])
-    for i in order:
-        to = flow_to[i]
-        if to >= 0 and to < n:
-            flow[to] += flow[i]
-
-    # 流量超过阈值的 tile → 标为浅水（河流）
-    river_threshold = max(5, sorted(flow)[int(n * 0.97)])  # top 3%
-    terrain_colors = {
-        0: (126, 200, 80), 1: (232, 213, 163), 2: (92, 61, 46),
-        3: (139, 139, 139), 4: (107, 107, 107), 5: (224, 224, 224),
-        6: (91, 158, 207), 7: (26, 58, 92), 8: (74, 107, 58),
-        9: (70, 140, 210),  # 河流蓝（额外颜色）
-    }
     rgba = bytearray(n * 4)
     for i in range(n):
-        v = grid._data[i]
-        # 河流覆盖：高流量 + 非海洋
-        if flow[i] >= river_threshold and v not in (6, 7):
-            r, g, b = terrain_colors[9]
-        else:
-            r, g, b = terrain_colors.get(v, (0, 0, 0))
         p = i * 4
-        rgba[p] = r; rgba[p + 1] = g; rgba[p + 2] = b; rgba[p + 3] = 255
-
+        rgba[p] = 128
+        rgba[p + 1] = 128
+        rgba[p + 2] = 128
+        rgba[p + 3] = 255
     return bytes(rgba)
 
 

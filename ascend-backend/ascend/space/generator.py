@@ -109,7 +109,7 @@ class WorldGenerator:
         return tectonic_altitude(world_x, world_y, self._seed)
 
     def _sample_altitude_at_chunk(self, cx: int, cy: int) -> float:
-        """采样 chunk 中心的海拔（chunk 坐标 → tile 坐标转换后调用构造模拟）。
+        """采样 chunk 中心的海拔（chunk 坐标 → tile 坐标转换）。
 
         Args:
             cx, cy: chunk 坐标。
