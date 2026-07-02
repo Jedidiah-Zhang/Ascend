@@ -37,9 +37,13 @@ from .terrain import (
 )
 from .tile_grid import TileGrid
 from .tile_gen import TileGenerator
-# 构造模拟和侵蚀模块待实现
-# from .tectonic import ...
-# from .erosion import hydraulic_erosion
+from .continent import ContinentParams, ContinentData, ContinentGenerator
+from .hydrology import (
+    fill_depressions, compute_d8, compute_dinf,
+    flow_accumulation, flow_accumulation_dinf,
+    extract_rivers, extract_rivers_dinf,
+    strahler_order, erode, carve_rivers,
+)
 # from .storage import WorldStore
 
 __all__ = [
@@ -66,7 +70,16 @@ __all__ = [
     "fertility",
     "TileGrid",
     "TileGenerator",
-    # 构造模拟 — 待实现
-    # 水力侵蚀 — 待实现
+    # 构造模拟
+    "ContinentParams",
+    "ContinentData",
+    "ContinentGenerator",
+    # 水文侵蚀
+    "fill_depressions",
+    "compute_d8",
+    "flow_accumulation",
+    "extract_rivers",
+    "strahler_order",
+    "erode",
     # 持久化 — 待实现
 ]

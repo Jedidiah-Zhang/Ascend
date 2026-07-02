@@ -295,25 +295,132 @@ def _value_to_rgb(v: float | int, mode: str) -> tuple[int, int, int]:
 
 
 def _tile_worker(seed: int, cx: int, cy: int, w: int, h: int, mode: str) -> bytes:
-    """占位：世界生成模块待重建。返回零填充数据。"""
+    """在子进程中生成瓦片原始数据（float32 数组）。
+
+    返回 5 层: [海拔][温度][降雨][气候][群系] 各 float32。
+    海拔使用 Voronoi 构造模拟，其余为零（待气候管线接入）。
+    """
+    import math
     import struct
+    from ascend.space.tectonic import tectonic_altitude
+    from ascend.space.climate import (
+        sea_level_temperature, rainfall_from_noise, apply_lapse_rate,
+        climate_zone_from_values,
+    )
+    from ascend.space.biome import biome_from_climate
+    from ascend.space.noise import PerlinNoise
+
+    phi = (math.sqrt(5.0) - 1.0) / 2.0
+    seed_float = float(abs(seed) % 100000)
+    phases = [
+        ((seed_float + i * 137.5) * phi * 1000.0) % 9973.0
+        for i in range(8)
+    ]
+
+    noise_lat = PerlinNoise(seed + 200)
+    noise_rain = PerlinNoise(seed + 300)
+    noise_moist = PerlinNoise(seed + 700)
+
+    p_t = phases[1]
+    lat_noise = noise_lat.octave_grid(int(cx + p_t), int(cy + p_t), w, h,
+                                       frequency=0.0003, octaves=2)
+    p_r = phases[2]
+    rain_noise = noise_rain.octave_grid(int(cx + p_r), int(cy + p_r), w, h,
+                                         frequency=0.004, octaves=4)
+    p_m = phases[4]
+    moist_noise = noise_moist.octave_grid(int(cx + p_m), int(cy + p_m), w, h,
+                                           frequency=0.005, octaves=2)
+
     size = w * h
     packer = struct.Struct(f'{size}f')
-    zeros = packer.pack(*([0.0] * size))
-    return zeros + zeros + zeros + zeros + zeros
+
+    altitudes = [0.0] * size
+    temps = [0.0] * size
+    rains = [0.0] * size
+    climates = [0.0] * size
+    biomes = [0.0] * size
+
+    for idx in range(size):
+        world_tx = (cx + (idx % w)) * 200 + 100
+        world_ty = (cy + (idx // w)) * 200 + 100
+        altitude = tectonic_altitude(float(world_tx), float(world_ty), seed)
+
+        sea_temp = sea_level_temperature(lat_noise[idx])
+        rainfall = rainfall_from_noise(rain_noise[idx])
+        temp = apply_lapse_rate(sea_temp, altitude)
+        climate = climate_zone_from_values(temp, rainfall)
+        m = moist_noise[idx]
+        biome = biome_from_climate(climate, m, altitude, sea_temp)
+
+        altitudes[idx] = altitude
+        temps[idx] = temp
+        rains[idx] = rainfall
+        climates[idx] = float(int(climate))
+        biomes[idx] = float(int(biome))
+
+    return (
+        packer.pack(*altitudes) +
+        packer.pack(*temps) +
+        packer.pack(*rains) +
+        packer.pack(*climates) +
+        packer.pack(*biomes)
+    )
 
 
 def _terrain_worker(seed: int, cx: int, cy: int) -> bytes:
-    """占位：世界生成模块待重建。返回灰色填充。"""
+    """生成单 chunk 的 200×200 地形 RGBA 像素数据。
+
+    使用 Voronoi 构造海拔 + 简单的海拔分带着色。
+    """
+    from ascend.space.tectonic import tectonic_altitude_batch
+
     size = 200
     n = size * size
+    world_x = cx * size
+    world_y = cy * size
+
+    # 构造海拔 — tile 粒度
+    alts = tectonic_altitude_batch(world_x, world_y, size, size, seed)
+
+    # 简单海拔分带着色
+    terrain_colors = {
+        0: (126, 200, 80),    # 草地
+        1: (232, 213, 163),   # 沙地
+        2: (92, 61, 46),      # 沃土
+        3: (139, 139, 139),   # 岩石地
+        4: (107, 107, 107),   # 陡坡
+        5: (224, 224, 224),   # 山巅
+        6: (91, 158, 207),    # 浅水
+        7: (26, 58, 92),      # 深水
+        8: (74, 107, 58),     # 沼泽
+        9: (70, 140, 210),    # 河流蓝
+    }
+
     rgba = bytearray(n * 4)
-    for i in range(n):
+    for i, alt in enumerate(alts):
+        if alt < -500:
+            t = 7  # 深水
+        elif alt < 0:
+            t = 6  # 浅水
+        elif alt < 2:
+            t = 1  # 沙地（海滩）
+        elif alt < 80:
+            t = 0  # 草地
+        elif alt < 300:
+            t = 2  # 沃土（低坡）
+        elif alt < 800:
+            t = 3  # 岩石地
+        elif alt < 2000:
+            t = 4  # 陡坡
+        else:
+            t = 5  # 山巅
+        r, g, b = terrain_colors.get(t, (0, 0, 0))
         p = i * 4
-        rgba[p] = 128
-        rgba[p + 1] = 128
-        rgba[p + 2] = 128
+        rgba[p] = r
+        rgba[p + 1] = g
+        rgba[p + 2] = b
         rgba[p + 3] = 255
+
     return bytes(rgba)
 
 

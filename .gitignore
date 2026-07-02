@@ -29,5 +29,8 @@ tests/.coverage.*
 # 运行数据（归档、存档等）
 save/
 
+# 可视化输出（测试生成的 PNG，不提交）
+tests/visual/output/
+
 # Godot 编辑器插件（开发工具，非游戏代码）
 ascend-frontend/addons/

@@ -16,8 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ascend.log import get_logger
 from .noise import PerlinNoise
-from .tectonic import tectonic_altitude
 from .tile_grid import TILE_MAP_SIZE
+from .continent import ContinentGenerator
 from .climate import (
     ClimateZone,
     WeatherParams,
@@ -67,6 +67,7 @@ class WorldGenerator:
         """
         self._seed = seed
         self._executor = executor
+        self._continent = None  # ContinentGenerator 惰性创建
 
         # 种子衍生相位偏移 — 确保不同 seed 的 (0,0) 采样到不同噪声值。
         # 偏移量 ~数百 chunk，相当于"种子在无限噪声空间中选择不同起点"。
@@ -106,7 +107,9 @@ class WorldGenerator:
         Returns:
             海拔 (m)。
         """
-        return tectonic_altitude(world_x, world_y, self._seed)
+        if self._continent is None:
+            self._continent = ContinentGenerator(seed=self._seed).generate()
+        return self._continent.sample_altitude(world_x, world_y)
 
     def _sample_altitude_at_chunk(self, cx: int, cy: int) -> float:
         """采样 chunk 中心的海拔（chunk 坐标 → tile 坐标转换）。
@@ -117,10 +120,9 @@ class WorldGenerator:
         Returns:
             chunk 中心海拔 (m)。
         """
-        return tectonic_altitude(
+        return self.get_altitude(
             cx * TILE_MAP_SIZE + TILE_MAP_SIZE // 2,
             cy * TILE_MAP_SIZE + TILE_MAP_SIZE // 2,
-            self._seed,
         )
 
     # ── 物理推导 ──────────────────────────────────────────
