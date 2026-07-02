@@ -36,7 +36,7 @@ _LIB.perlin_octave.argtypes = [
 _LIB.perlin_octave.restype = ctypes.c_double
 _LIB.perlin_octave_grid.argtypes = [
     ctypes.POINTER(ctypes.c_int),
-    ctypes.c_int, ctypes.c_int,  # cx, cy
+    ctypes.c_double, ctypes.c_double,  # cx, cy (float — 支持半像素偏移)
     ctypes.c_int, ctypes.c_int,  # w, h
     ctypes.c_double,             # frequency
     ctypes.POINTER(ctypes.c_double),  # output array
@@ -116,19 +116,20 @@ class PerlinNoise:
 
     def octave_grid(
         self,
-        cx: int, cy: int, w: int, h: int,
+        cx: float, cy: float, w: int, h: int,
         *,
         frequency: float = 1.0,
         octaves: int = 4,
         persistence: float = 0.5,
         lacunarity: float = 2.0,
     ) -> list[float]:
-        """在整数坐标网格上批量采样多八度噪声。
+        """在网格上批量采样多八度噪声。
 
         一次性计算 w×h 个坐标，仅一次 ctypes 跨语言调用。
+        cx, cy 支持浮点偏移（如 +0.5），避免采样在整数网格点（噪声零点）。
 
         Args:
-            cx, cy: 起始整型坐标。
+            cx, cy: 起始坐标（支持浮点偏移）。
             w, h: 网格宽高。
             frequency: 噪声频率。
             octaves: 八度数量。

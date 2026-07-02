@@ -61,17 +61,18 @@ double perlin_octave(const int perm[512], double x, double y,
 /* ── 批量网格接口 ──────────────────────────────────────────── */
 
 void perlin_octave_grid(const int perm[512],
-                        int cx, int cy, int w, int h,
+                        double cx, double cy, int w, int h,
                         double frequency,
                         double *output,
                         int octaves, double persistence,
                         double lacunarity) {
-    /* 在整数网格上批量采样多八度噪声，避免逐像素 ctypes 开销。
+    /* 在网格上批量采样多八度噪声，避免逐像素 ctypes 开销。
+       cx, cy 为浮点起始坐标，可加 0.5 偏移避开整数网格点（噪声零点）。
        output 必须预分配 w*h 个 double。 */
     for (int row = 0; row < h; row++) {
         for (int col = 0; col < w; col++) {
-            double x = (double)(cx + col) * frequency;
-            double y = (double)(cy + row) * frequency;
+            double x = (cx + (double)col) * frequency;
+            double y = (cy + (double)row) * frequency;
             double total = 0.0, amp = 1.0, max_val = 0.0;
             double freq = 1.0;
             for (int i = 0; i < octaves; i++) {

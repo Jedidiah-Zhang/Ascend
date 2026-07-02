@@ -39,9 +39,11 @@ from .tile_grid import TileGrid
 from .tile_gen import TileGenerator
 from .continent import ContinentParams, ContinentData, ContinentGenerator
 from .hydrology import (
+    ErosionResult, RiverNode, RiverTree, LakeBasin, HydrologyData,
     fill_depressions, compute_d8, compute_dinf,
     flow_accumulation, flow_accumulation_dinf,
     extract_rivers, extract_rivers_dinf,
+    build_river_tree, extract_lake_basins,
     strahler_order, erode, carve_rivers,
 )
 # from .storage import WorldStore
@@ -75,10 +77,17 @@ __all__ = [
     "ContinentData",
     "ContinentGenerator",
     # 水文侵蚀
+    "ErosionResult",
+    "RiverNode",
+    "RiverTree",
+    "LakeBasin",
+    "HydrologyData",
     "fill_depressions",
     "compute_d8",
     "flow_accumulation",
     "extract_rivers",
+    "build_river_tree",
+    "extract_lake_basins",
     "strahler_order",
     "erode",
     # 持久化 — 待实现

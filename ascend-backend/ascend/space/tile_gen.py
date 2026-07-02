@@ -1,138 +1,172 @@
-"""TileGenerator — 详细地图层地形生成器（骨架）。
+"""TileGenerator — 层2 详细地图 tile 生成器。
 
-待 Voronoi 构造模块实现后，在此接入 per-tile 海拔数据。
-当前为占位实现。
+对每个 200×200 chunk，从层1宏观场采样 + 叠加高频细节噪声，
+按海拔带分类为 TerrainType。
+
+用法:
+    from ascend.space.tile_gen import TileGenerator
+    from ascend.space.continent import ContinentGenerator
+
+    continent = ContinentGenerator(seed=42).generate()
+    tile_gen = TileGenerator(seed=42, continent=continent)
+    grid = tile_gen.generate_chunk(cx=10, cy=5)
 """
 
-from .chunk import ChunkData
-from .biome import get_template
-from .noise import PerlinNoise
 from .terrain import TerrainType
 from .tile_grid import TileGrid, TILE_MAP_SIZE
-
-# tile 层噪声频率
-_TILE_FREQ_ELEVATION: float = 0.015
-_TILE_FREQ_DETAIL: float = 0.04
+from .noise import PerlinNoise
 
 
 class TileGenerator:
     """详细地图地形生成器。
 
-    构造海拔提供宏观结构（海洋/平原/山脉），
-    微噪声提供局部纹理（草地/沙地/岩石）。
-
-    用法:
-        gen = TileGenerator(seed=42)
-        grid = gen.generate(chunk)
+    从 ContinentData 层1宏观场采样宏观海拔、河流宽度，
+    叠加高频细节噪声后按带分类地形。
+    线程安全：每个实例持有独立 PerlinNoise，无共享可变状态。
     """
 
-    def __init__(self, seed: int) -> None:
+    def __init__(
+        self,
+        seed: int,
+        continent,  # ContinentData
+    ) -> None:
         """初始化 tile 生成器。
 
         Args:
-            seed: 世界种子，派生独立的噪声子种子。
+            seed: 世界种子。
+            continent: 层1宏观场数据。
         """
-        self._noise_elevation = PerlinNoise(seed + 800)
-        self._noise_detail = PerlinNoise(seed + 900)
         self._seed = seed
+        self._continent = continent
+        self._detail_noise = PerlinNoise(seed + 80000)
 
     def __repr__(self) -> str:
         return f"TileGenerator(seed={self._seed})"
 
     # ── 主入口 ──────────────────────────────────────────────
 
-    def generate(self, chunk: ChunkData) -> TileGrid:
-        """为给定分块生成详细 tile 网格（占位）。
+    def generate_chunk(self, cx: int, cy: int) -> TileGrid:
+        """生成一个 200×200 chunk 的详细地形。
 
-        TODO: 接入 Voronoi 构造海拔 + 水力侵蚀。
-        """
-        if chunk.biome.is_ocean:
-            return self._generate_ocean(chunk)
-        else:
-            return self._generate_land(chunk)
-
-    # ── 陆地生成 ────────────────────────────────────────────
-
-    def _generate_land(self, chunk: ChunkData) -> TileGrid:
-        """陆地群系的 tile 生成（占位）。
-
-        TODO: 接入 Voronoi 构造海拔 + 水力侵蚀，按海拔分带分类。
-        """
-        size = TILE_MAP_SIZE
-        grid = TileGrid()
-        # 占位：全部填充为草地
-        for i in range(size * size):
-            grid._data[i] = int(TerrainType.GRASSLAND)
-        return grid
-
-    # ── 海洋生成 ────────────────────────────────────────────
-
-    def _generate_ocean(self, chunk: ChunkData) -> TileGrid:
-        """海洋群系的 tile 生成。"""
-        size = TILE_MAP_SIZE
-        world_x = chunk.cx * size
-        world_y = chunk.cy * size
-
-        depth = self._noise_elevation.octave_grid(
-            world_x, world_y, size, size,
-            frequency=_TILE_FREQ_ELEVATION,
-            octaves=3, persistence=0.5, lacunarity=2.0,
-        )
-
-        grid = TileGrid()
-        n = size * size
-        sorted_depth = sorted(depth)
-        deep_cutoff = sorted_depth[int(n * 0.3)]
-
-        for i in range(n):
-            grid._data[i] = int(
-                TerrainType.DEEP_WATER if depth[i] < deep_cutoff
-                else TerrainType.SHALLOW_WATER
-            )
-        return grid
-
-    # ── 平地细分 ────────────────────────────────────────────
-
-    def _classify_flat(
-        self,
-        elevation: float,
-        detail: float,
-        chunk: ChunkData,
-        base_altitude: float,
-    ) -> TerrainType:
-        """在平坦区域中按群系和细节噪声细分地形。
+        管线：
+          1. 宏观海拔采样 + 细节噪声 → 基础地形分类
+          2. 叠加河流（蛇曲路径 + 河道雕刻）
+          3. 叠加湖泊（水面平整 + 湿地）
 
         Args:
-            elevation: 微地形噪声值。
-            detail: 细节噪声值。
-            chunk: 所属分块。
-            base_altitude: per-tile 构造海拔。
+            cx: chunk X 坐标。
+            cy: chunk Y 坐标。
 
         Returns:
-            细分后的 TerrainType。
+            200×200 TileGrid。
         """
-        biome = chunk.biome
+        size = TILE_MAP_SIZE
+        world_x0 = cx * size
+        world_y0 = cy * size
 
-        # 陡坡过渡带
-        if elevation > 0.4:
+        grid = TileGrid()
+        cont = self._continent
+        detail_freq = 0.005  # 波长 ~200m，大面积连续地貌
+
+        # 批量采样细节噪声——一次 C 调用替代 40K 次 ctypes 跨越
+        # +0.5 偏移避免采样在整数网格点（Perlin 噪声在整数点恒为 0）
+        # 低频低幅：宏观海拔主导地形，噪声仅添加 ±50m 微妙起伏
+        noise_field = self._detail_noise.octave_grid(
+            world_x0 + 0.5, world_y0 + 0.5, size, size,
+            frequency=detail_freq, octaves=4,
+        )
+
+        for ty in range(size):
+            for tx in range(size):
+                wx = world_x0 + tx
+                wy = world_y0 + ty
+
+                # 1. 宏观海拔（双线性插值，消除 100m 网格块状伪影）
+                macro_elev = cont.sample_altitude_bilinear(wx, wy)
+
+                # 2. 细节噪声（±50m，波长 200m → 自然过渡，不过度碎化）
+                detail = noise_field[ty * size + tx] * 50.0
+                elev = macro_elev + detail
+
+                # 3. 地形分类（海拔 + 温度 + 积雪，水体由后续步骤叠加）
+                terrain = self._classify(elev, wx, wy)
+
+                grid.set(tx, ty, terrain)
+
+        # 4. 叠加水体（河流 + 湖泊）—— 覆盖在基础地形之上
+        if cont.hydrology is not None:
+            hyd = cont.hydrology
+            if hyd.river_tree is not None and hyd.river_tree.nodes:
+                from .river_render import render_river_chunk
+                render_river_chunk(
+                    grid, world_x0, world_y0,
+                    hyd.river_tree,
+                    hyd.flow_acc, hyd.directions,
+                    cont.cell_size, cont.grid_width,
+                    seed=self._seed,
+                )
+            if hyd.lake_basins:
+                from .lake_render import render_lake_chunk
+                render_lake_chunk(
+                    grid, world_x0, world_y0,
+                    hyd.lake_basins, cont,
+                )
+
+        return grid
+
+    # ── 地形分类 ──────────────────────────────────────────
+
+    def _classify(
+        self,
+        elev: float,
+        wx: float, wy: float,
+    ) -> TerrainType:
+        """根据海拔、积雪等条件分类 tile 基础地形。
+
+        水体（河流/湖泊）由后续步骤叠加覆盖——不在此处判定。
+
+        Args:
+            elev: 最终海拔 (m)。
+            wx, wy: 世界坐标。
+
+        Returns:
+            TerrainType。
+        """
+        # 海洋（海拔 < 0 = 水体）
+        if elev < -100:
+            return TerrainType.DEEP_WATER
+        if elev < 0:
+            return TerrainType.SHALLOW_WATER
+
+        # 海滩/海岸
+        if elev < 10:
+            return TerrainType.SAND
+
+        # 积雪（温度 < 0°C 且海拔 > 800m → 雪顶）
+        cont = self._continent
+        if cont.temperature_field:
+            gx = int(wx / cont.cell_size)
+            gy = int(wy / cont.cell_size)
+            if 0 <= gx < cont.grid_width and 0 <= gy < cont.grid_height:
+                t = cont.temperature_field[gy * cont.grid_width + gx]
+                if t < 0 and elev > 800:
+                    return TerrainType.MOUNTAIN_PEAK
+
+        # 按海拔带分类（窄带 → 噪声能跨越多带）
+        if elev > 2000:
+            return TerrainType.MOUNTAIN_PEAK
+        if elev > 1200:
+            return TerrainType.STEEP_SLOPE
+        if elev > 600:
             return TerrainType.ROCK
+        if elev > 300:
+            return TerrainType.GRASSLAND
+        if elev > 100:
+            return TerrainType.FERTILE_SOIL
+        if elev > 20:
+            return TerrainType.GRASSLAND
 
-        # 低洼沼泽
-        if elevation < -0.3 and base_altitude < 500.0:
-            return TerrainType.MARSH
+        return TerrainType.SAND
 
-        # 群系差异化
-        if biome.name == "ARID_SHRUBLAND":
-            if detail > 0.4:
-                return TerrainType.ROCK
-            elif detail > -0.3:
-                return TerrainType.SAND
-            else:
-                return TerrainType.GRASSLAND
-        else:
-            if detail > 0.5:
-                return TerrainType.FERTILE_SOIL
-            elif detail > -0.3:
-                return TerrainType.GRASSLAND
-            else:
-                return TerrainType.SAND
+
+__all__ = ["TileGenerator"]
