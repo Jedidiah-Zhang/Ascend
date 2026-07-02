@@ -74,6 +74,46 @@ def render_temperature(
     print(f"[visual] 温度渲染已保存: {output_path}")
 
 
+def render_rainfall(
+    rainfall: list[float],
+    width: int,
+    height: int,
+    output_path: str,
+    *,
+    title: str = "",
+) -> None:
+    """渲染降雨量场——棕（干）→ 绿 → 蓝（湿）。
+
+    Args:
+        rainfall: 行优先降雨量数组 (mm/yr)。
+        width, height: 网格尺寸。
+        output_path: 输出路径。
+        title: 标题。
+    """
+    _ensure_pillow()
+    from PIL import Image
+
+    def rain_to_rgb(r: float) -> tuple[int, int, int]:
+        """0mm→棕色, 2000mm→绿色, 3500+mm→蓝色"""
+        r = max(0.0, min(4000.0, r))
+        if r < 500:
+            t = r / 500.0
+            return (int(160 - 60 * t), int(120 - 40 * t), int(60 + 40 * t))
+        elif r < 1500:
+            t = (r - 500) / 1000.0
+            return (int(100 + 60 * t), int(80 + 100 * t), int(100))
+        else:
+            t = min(1.0, (r - 1500) / 2000.0)
+            return (int(160 - 80 * t), int(180 - 30 * t), int(100 + 155 * t))
+
+    pixels = [rain_to_rgb(r) for r in rainfall]
+    img = Image.new("RGB", (width, height))
+    img.putdata(pixels)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    img.save(output_path)
+    print(f"[visual] 降雨渲染已保存: {output_path}")
+
+
 _COLOR_STOPS: list[tuple[float, tuple[int, int, int]]] = [
     (-4000.0, (10, 20, 60)),     # 深海 — 深蓝黑
     (-2000.0, (26, 58, 92)),     # 深海 — 深蓝

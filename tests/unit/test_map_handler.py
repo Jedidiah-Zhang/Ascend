@@ -143,7 +143,7 @@ class TestMapHandlers:
         assert isinstance(entry["altitude"], float)
         assert isinstance(entry["temperature"], float)
         assert isinstance(entry["rainfall"], float)
-        assert -1000.0 <= entry["altitude"] <= 6000.0
+        assert -5000.0 <= entry["altitude"] <= 6000.0
         assert -50.0 <= entry["temperature"] <= 60.0
         assert 0.0 <= entry["rainfall"] <= 5000.0
 

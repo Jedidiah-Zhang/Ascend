@@ -773,6 +773,7 @@ def build_river_tree(
     threshold: float = 30.0,
     land_only: bool = False,
     dem: list[float] | None = None,
+    min_length: int = 5,
 ) -> RiverTree:
     """从 D8 流向和水流累积量构建河流拓扑树。
 
@@ -909,12 +910,99 @@ def build_river_tree(
     # 计算 Strahler 级别（拓扑：从叶子向上）
     _compute_strahler(tree)
 
+    # 剪除海边短河（源头到入海口 < min_length 格 = 噪声）
+    _prune_short_rivers(tree, min_length=min_length)
+
     # 初始化扰动坐标 = 网格坐标（蜿蜒在 Tile 级渲染时叠加）
     for node in tree.nodes:
         node.px = float(node.x)
         node.py = float(node.y)
 
     return tree
+
+
+def _prune_short_rivers(tree: RiverTree, min_length: int = 5) -> None:
+    """删除过短的河流支流（海边噪声）。
+
+    从每个叶子（源头）沿 parent 向上走到根（入海口），
+    总长 < min_length 的路径上的节点全部移除。
+    共享节点（被其他更长路径使用）不受影响。
+
+    Args:
+        tree: 河流树（原地修改）。
+        min_length: 最小河流长度（网格格数，默认 5 = 500m）。
+    """
+    n = len(tree.nodes)
+    if n == 0:
+        return
+
+    # 找叶子：没有子节点的节点
+    leaves = [i for i in range(n) if not tree.nodes[i].children]
+
+    # 对每个叶子，计算到根（入海口）的路径长度
+    # short_leaves = 需要剪除的叶子
+    short_path_nodes: set[int] = set()
+
+    for leaf_idx in leaves:
+        path: list[int] = []
+        idx = leaf_idx
+        seen: set[int] = set()
+        while idx >= 0 and idx < n and idx not in seen:
+            seen.add(idx)
+            path.append(idx)
+            parent = tree.nodes[idx].parent
+            if parent < 0 or parent >= n:
+                break
+            idx = parent
+
+        if len(path) >= min_length:
+            continue  # 够长，保留
+
+        short_path_nodes.update(path)
+
+    if not short_path_nodes:
+        return
+
+    # 检查哪些节点被长路径共享——共享节点的特征是 children 中至少有一个不在 short_path_nodes 中
+    protected: set[int] = set()
+    for i in short_path_nodes:
+        node = tree.nodes[i]
+        for child_idx in node.children:
+            if child_idx < n and child_idx not in short_path_nodes:
+                protected.add(i)
+                break
+        # 如果它的 parent 也不在 short_path_nodes 中，这个节点在长路径下游→保护
+        if node.parent >= 0 and node.parent < n and node.parent not in short_path_nodes:
+            protected.add(i)
+
+    remove = short_path_nodes - protected
+    if not remove:
+        return
+
+    # 重建节点列表，映射 old_idx → new_idx
+    old_to_new: dict[int, int] = {}
+    new_nodes: list[RiverNode] = []
+    for i, node in enumerate(tree.nodes):
+        if i not in remove:
+            old_to_new[i] = len(new_nodes)
+            new_nodes.append(node)
+
+    # 更新 parent/children 引用
+    for node in new_nodes:
+        if node.parent >= 0 and node.parent in old_to_new:
+            node.parent = old_to_new[node.parent]
+        else:
+            node.parent = -1
+        new_children = []
+        for c in node.children:
+            if c in old_to_new:
+                new_children.append(old_to_new[c])
+        node.children = new_children
+
+    tree.nodes = new_nodes
+    tree.node_index = {}
+    for i, node in enumerate(tree.nodes):
+        tree.node_index[node.y * tree.width + node.x] = i
 
 def _compute_strahler(tree: RiverTree) -> None:
     """在 RiverTree 上计算 Strahler 级别（拓扑正确版）。

@@ -584,5 +584,176 @@ class TestTileGrid:
 
 
 # ══════════════════════════════════════════════════════════
-# TileGenerator — 待 Voronoi 构造模块实现后恢复测试
+# TileGenerator — 层2 chunk tile 生成
 # ══════════════════════════════════════════════════════════
+
+
+class TestTileGenerator:
+    """TileGenerator 单元测试 — 200×200 chunk 地形生成。"""
+
+    def test_tile_gen_exists(self):
+        """TileGenerator 可实例化。"""
+        from ascend.space.continent import ContinentGenerator
+        from ascend.space.tile_gen import TileGenerator
+
+        cont = ContinentGenerator(seed=42).generate()
+        gen = TileGenerator(seed=42, continent=cont)
+        assert gen is not None
+        assert repr(gen) != ""
+
+    def test_generate_chunk_returns_tilegrid(self):
+        """generate_chunk 返回 200×200 TileGrid。"""
+        from ascend.space.continent import ContinentGenerator
+        from ascend.space.tile_gen import TileGenerator
+
+        cont = ContinentGenerator(seed=42).generate()
+        gen = TileGenerator(seed=42, continent=cont)
+        grid = gen.generate_chunk(0, 0)
+        assert grid.size == 200
+        assert grid.get(0, 0) is not None
+
+    def test_ocean_chunk_all_water(self):
+        """远离陆地的 chunk 全为水体。"""
+        from ascend.space.continent import ContinentGenerator
+        from ascend.space.tile_gen import TileGenerator
+        from ascend.space.terrain import TerrainType
+
+        cont = ContinentGenerator(seed=42).generate()
+        gen = TileGenerator(seed=42, continent=cont)
+        # 在海洋深处找一个 chunk（远离大陆中心）
+        grid = gen.generate_chunk(450, 250)  # 右下角深海区
+        water_count = sum(
+            1 for y in range(200) for x in range(200)
+            if grid.get(x, y) in (TerrainType.DEEP_WATER, TerrainType.SHALLOW_WATER)
+        )
+        assert water_count > 39000, f"深海 chunk 水体应 >97%，实际 {water_count/400}%"
+
+    def test_land_chunk_has_variety(self):
+        """海陆过渡 chunk 包含多种地形类型。"""
+        from ascend.space.continent import ContinentGenerator
+        from ascend.space.tile_gen import TileGenerator
+        from ascend.space.terrain import TerrainType
+
+        cont = ContinentGenerator(seed=42).generate()
+        gen = TileGenerator(seed=42, continent=cont)
+        # 海岸附近的 chunk — 海陆过渡带，必然有多种地形
+        grid = gen.generate_chunk(30, 20)
+        types: set[int] = set()
+        for y in range(200):
+            for x in range(200):
+                types.add(int(grid.get(x, y)))
+        assert len(types) >= 2, f"海陆过渡 chunk 应有 >=2 种地形，实际 {len(types)}"
+
+    def test_chunk_deterministic(self):
+        """同参数 → 同结果。"""
+        from ascend.space.continent import ContinentGenerator
+        from ascend.space.tile_gen import TileGenerator
+
+        cont1 = ContinentGenerator(seed=42).generate()
+        cont2 = ContinentGenerator(seed=42).generate()
+        g1 = TileGenerator(seed=42, continent=cont1).generate_chunk(10, 5)
+        g2 = TileGenerator(seed=42, continent=cont2).generate_chunk(10, 5)
+        assert g1 == g2
+
+    def test_chunk_boundary_continuous(self):
+        """相邻 chunk 边界连续。"""
+        from ascend.space.continent import ContinentGenerator
+        from ascend.space.tile_gen import TileGenerator
+
+        cont = ContinentGenerator(seed=42).generate()
+        gen = TileGenerator(seed=42, continent=cont)
+        left = gen.generate_chunk(10, 5)
+        right = gen.generate_chunk(11, 5)
+        # 左 chunk 右边缘 vs 右 chunk 左边缘
+        jumps = 0
+        for y in range(200):
+            t1 = int(left.get(199, y))
+            t2 = int(right.get(0, y))
+            if abs(t1 - t2) > 2:  # 允许小跳跃（水体→陆地边界）
+                jumps += 1
+        assert jumps <= 20, f"chunk 边界跳变 {jumps}/200 处"
+
+    def test_slope_distribution_reasonable(self):
+        """Tile 级坡度分布合理：中位数 <15°, P90 <30°, 极少 >45°。
+
+        在多个代表性 chunk 中采样相邻 tile 之间的海拔差，
+        验证地形坡度不会过于陡峭。
+        """
+        import math
+        from ascend.space.continent import ContinentGenerator
+        from ascend.space.tile_gen import TileGenerator
+        from ascend.space.tile_grid import TILE_MAP_SIZE
+
+        cont = ContinentGenerator(seed=42).generate()
+        gen = TileGenerator(seed=42, continent=cont)
+
+        # 与 generate_chunk 保持一致的参数
+        detail_freq = 0.005
+        detail_amp = 50.0  # 目标振幅：±50m（不再是 ±100m）
+
+        # 多个代表性位置
+        test_chunks = [
+            (50, 30, "内陆山地"),
+            (30, 20, "海岸过渡"),
+            (22, 16, "大陆架"),
+        ]
+
+        all_slopes: list[float] = []
+        for cx, cy, _name in test_chunks:
+            world_x0 = cx * TILE_MAP_SIZE
+            world_y0 = cy * TILE_MAP_SIZE
+
+            noise_field = gen._detail_noise.octave_grid(
+                world_x0 + 0.5, world_y0 + 0.5,
+                TILE_MAP_SIZE, TILE_MAP_SIZE,
+                frequency=detail_freq, octaves=4,
+            )
+
+            # 每 2m 采样一次水平相邻 tile 的坡度
+            for ty in range(0, TILE_MAP_SIZE, 2):
+                row_base = ty * TILE_MAP_SIZE
+                wy = world_y0 + ty
+                for tx in range(0, TILE_MAP_SIZE - 1, 2):
+                    wx = world_x0 + tx
+
+                    macro0 = cont.sample_altitude_bilinear(wx, wy)
+                    detail0 = noise_field[row_base + tx] * detail_amp
+                    e0 = macro0 + detail0
+
+                    macro1 = cont.sample_altitude_bilinear(wx + 1, wy)
+                    detail1 = noise_field[row_base + tx + 1] * detail_amp
+                    e1 = macro1 + detail1
+
+                    all_slopes.append(abs(e1 - e0))  # m/m（1m 间距）
+
+        assert len(all_slopes) > 5000, "样本数不足"
+
+        all_slopes.sort()
+        n = len(all_slopes)
+
+        # 目标 1：中位数坡度 < 15°（常规地形平缓）
+        p50_deg = math.degrees(math.atan(all_slopes[n // 2]))
+        assert p50_deg < 15.0, (
+            f"中位数坡度 {p50_deg:.1f}° 应 < 15°"
+        )
+
+        # 目标 2：P90 < 30°（大多数地形可通行）
+        p90_deg = math.degrees(math.atan(all_slopes[n * 9 // 10]))
+        assert p90_deg < 30.0, (
+            f"P90 坡度 {p90_deg:.1f}° 应 < 30°"
+        )
+
+        # 目标 3：极少悬崖（>45° 的 tile 边缘 < 1%）
+        cliff_count = sum(
+            1 for s in all_slopes if math.degrees(math.atan(s)) > 45
+        )
+        cliff_pct = cliff_count / n * 100
+        assert cliff_pct < 1.0, (
+            f">45° 坡度比例 {cliff_pct:.1f}% 应 < 1%"
+        )
+
+        # 目标 4：最大坡度 < 50°（无垂直绝壁）
+        max_deg = math.degrees(math.atan(all_slopes[-1]))
+        assert max_deg < 50.0, (
+            f"最大坡度 {max_deg:.1f}° 应 < 50°"
+        )

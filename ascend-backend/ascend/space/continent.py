@@ -259,6 +259,7 @@ class ContinentGenerator:
             threshold=500.0,
             land_only=True,
             dem=elevation,
+            min_length=20,
         )
         lake_basins = extract_lake_basins(
             elevation, erosion_result.filled_dem, land_mask, w, h,
