@@ -739,20 +739,30 @@ class TestTileGenerator:
         assert water_count > 39000, f"深海 chunk 水体应 >97%，实际 {water_count/400}%"
 
     def test_land_chunk_has_variety(self):
-        """海陆过渡 chunk 包含多种地形类型。"""
+        """有流线河流穿过的 chunk 包含多种地形类型。"""
         from ascend.space.continent import ContinentGenerator
         from ascend.space.tile_gen import TileGenerator
         from ascend.space.terrain import TerrainType
 
         cont = ContinentGenerator(seed=42).generate()
         gen = TileGenerator(seed=42, continent=cont)
-        # 海岸附近的 chunk — 海陆过渡带，必然有多种地形
-        grid = gen.generate_chunk(0, 60)
+        # 找一个有流线河流穿过的 chunk — 必然有水体+陆地多种地形
+        net = cont.hydrology.river_network
+        from collections import Counter
+        chunk_counts = Counter()
+        for river in net.rivers:
+            for p in river.points:
+                cx = int(p.x * cont.cell_size / 200)
+                cy = int(p.y * cont.cell_size / 200)
+                chunk_counts[(cx, cy)] += 1
+        best_chunk = chunk_counts.most_common(1)[0][0]
+
+        grid = gen.generate_chunk(best_chunk[0], best_chunk[1])
         types: set[int] = set()
         for y in range(200):
             for x in range(200):
                 types.add(int(grid.get(x, y)))
-        assert len(types) >= 2, f"海陆过渡 chunk 应有 >=2 种地形，实际 {len(types)}"
+        assert len(types) >= 2, f"有河流的 chunk 应有 >=2 种地形，实际 {len(types)}"
 
     def test_chunk_deterministic(self):
         """同参数 → 同结果。"""

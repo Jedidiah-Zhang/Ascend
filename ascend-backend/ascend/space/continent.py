@@ -285,12 +285,23 @@ class ContinentGenerator:
             elevation, erosion_result.filled_dem, land_mask, w, h,
             min_size=5,
         )
+
+        # Step 4b: 流线河流网络 — RK4 沿海拔梯度场追踪自然弯曲流线
+        from .streamlines import build_river_network
+        river_network = build_river_network(
+            elevation, erosion_result.filled_dem,
+            erosion_result.directions, erosion_result.flow_acc,
+            land_mask, w, h,
+            threshold=500.0, min_length=20,
+        )
+
         hydrology = HydrologyData(
             river_tree=river_tree,
             lake_basins=lake_basins,
             flow_acc=erosion_result.flow_acc,
             directions=erosion_result.directions,
             filled_dem=erosion_result.filled_dem,
+            river_network=river_network,
         )
 
         # Step 5: 河流宽度场（复用侵蚀+水文数据，避免重复计算）

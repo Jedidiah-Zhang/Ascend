@@ -264,7 +264,8 @@ class HydrologyData:
     """层1 水文数据 — 统一传递到 Tile 层的结构化水体信息。
 
     Attributes:
-        river_tree: 河流拓扑（可能为 None 表示无河流）。
+        river_tree: 河流拓扑（D8,可能为 None）。
+        river_network: 流线河流网络（RK4 积分,可能为 None）。
         lake_basins: 湖泊盆地列表。
         flow_acc: 水流累积量场（行优先）。
         directions: D8 流向场（行优先）。
@@ -276,11 +277,16 @@ class HydrologyData:
     flow_acc: list[float]
     directions: list[int]
     filled_dem: list[float]
+    river_network: object | None = None  # RiverNetwork(避免循环导入)
 
     def __repr__(self) -> str:
         rivers = self.river_tree.nodes if self.river_tree else []
+        network_pts = 0
+        if self.river_network is not None:
+            network_pts = sum(len(r.points) for r in self.river_network.rivers)
         return (
-            f"HydrologyData(rivers={len(rivers)}, "
+            f"HydrologyData(d8_nodes={len(rivers)}, "
+            f"streamlines={network_pts}, "
             f"lakes={len(self.lake_basins)})"
         )
 

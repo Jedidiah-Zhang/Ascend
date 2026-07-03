@@ -42,6 +42,10 @@ from .terrain import (
 from .tile_grid import TileGrid
 from .tile_gen import TileGenerator
 from .continent import ContinentParams, ContinentData, ContinentGenerator
+from .streamlines import (
+    RiverPoint, River, RiverNetwork,
+    trace_streamline, build_river_network, rivers_in_region,
+)
 from .hydrology import (
     ErosionResult, RiverNode, RiverTree, LakeBasin, HydrologyData,
     fill_depressions, compute_d8, compute_dinf,
@@ -91,6 +95,13 @@ __all__ = [
     "ContinentParams",
     "ContinentData",
     "ContinentGenerator",
+    # 流线河流网络
+    "RiverPoint",
+    "River",
+    "RiverNetwork",
+    "trace_streamline",
+    "build_river_network",
+    "rivers_in_region",
     # 水文侵蚀
     "ErosionResult",
     "RiverNode",
