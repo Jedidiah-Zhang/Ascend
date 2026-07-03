@@ -247,26 +247,14 @@ class ContinentGenerator:
         temp_field, rain_field, climate_field = (
             self._compute_climate(elevation, land_mask, w, h))
 
-        # Step 2b: 降雨校准 — 保证沙漠（<200mm）存在
-        self._ensure_rainfall_range(rain_field, land_mask)
-
-        # Step 2c: 温度校准 — 保证热带（≥20°C）和极地（<-5°C）跨度
-        self._ensure_temperature_range(temp_field, land_mask)
-
-        # Step 2d: 温度-降雨交叉校准 — 保证热区有湿润带、冷区有潮带
-        self._ensure_rainfall_temperature_coverage(temp_field, rain_field, land_mask)
-
-        # Step 2e: 基于校准后的三场重算气候带
-        from .climate import classify
-        for i in range(w * h):
-            if land_mask[i]:
-                climate_field[i] = int(
-                    classify(temp_field[i], rain_field[i], elevation[i])
-                )
+        # Step 2b-2e: 气候校准 + 重分类（合并为单次遍历）
+        self._calibrate_climate_merged(
+            elevation, temp_field, rain_field, land_mask, climate_field, w, h,
+        )
 
         # Step 3: 侵蚀（降雨驱动水流累积）—— 提取完整水文状态
         from .hydrology import erode, build_river_tree, extract_lake_basins, HydrologyData
-        erosion_result = erode(elevation, rain_field, w, h, iterations=12)
+        erosion_result = erode(elevation, rain_field, w, h, iterations=10)
 
         # 用侵蚀后的海拔替换原始海拔（河流已雕刻，地形已塑形）
         elevation = erosion_result.dem
@@ -345,6 +333,124 @@ class ContinentGenerator:
         hi = min(lo + 1, n - 1)
         frac = pos - lo
         return sorted_vals[lo] * (1 - frac) + sorted_vals[hi] * frac
+
+    def _calibrate_climate_merged(
+        self,
+        elevation: list[float],
+        temp: list[float],
+        rain: list[float],
+        land_mask: list[bool],
+        climate_field: list[int],
+        w: int, h: int,
+    ) -> None:
+        """合并气候校准 — 单次数据收集 + 合并应用循环。
+
+        将原来的四次独立 O(N) 遍历（_ensure_rainfall_range、
+        _ensure_temperature_range、_ensure_rainfall_temperature_coverage、
+        重算气候带）合并为两次 O(N) 遍历 + 共享排序，
+        消除 3 次冗余的 600K 元素扫描。
+        """
+        from .climate import classify
+        n = w * h
+
+        # Phase 1: 一次遍历收集所有排序所需数据
+        land_temps: list[float] = []
+        land_rains: list[float] = []
+
+        for i in range(n):
+            if land_mask[i]:
+                land_temps.append(temp[i])
+                land_rains.append(rain[i])
+
+        if not land_temps:
+            return
+
+        # Phase 2: 排序 + 计算校准参数
+        land_temps.sort()
+        land_rains.sort()
+
+        # 降雨校准参数 (原 _ensure_rainfall_range)
+        rain_p3 = self._percentile(land_rains, 0.03)
+        rain_p10 = self._percentile(land_rains, 0.10)
+        do_rain_cal = not (rain_p3 <= 100.0 or rain_p10 <= rain_p3)
+
+        # 温度校准参数 (原 _ensure_temperature_range)
+        temp_p2 = self._percentile(land_temps, 0.02)
+        temp_p98 = self._percentile(land_temps, 0.98)
+        do_temp_cal = (
+            temp_p98 - temp_p2 >= 1.0
+            and not (temp_p2 <= -12.0 and temp_p98 >= 30.0)
+        )
+
+        # Phase 3: 应用降雨和温度校准，同时收集交叉校准所需数据
+        # （交叉校准需要在温度校准之后收集，因为用校准后的温度分区）
+        if do_rain_cal:
+            rain_scale = (rain_p10 - 100.0) / (rain_p10 - rain_p3)
+        if do_temp_cal:
+            temp_scale = (30.0 - (-12.0)) / (temp_p98 - temp_p2)
+            temp_offset = -12.0 - temp_p2 * temp_scale
+
+        hot_rains: list[float] = []   # 热区(T>=20) 的降雨值
+        cold_rains: list[float] = []  # 冷区(-5<=T<5) 的降雨值
+
+        for i in range(n):
+            if not land_mask[i]:
+                continue
+
+            # 降雨校准（必须在温度校准之前）
+            if do_rain_cal and rain[i] < rain_p10:
+                rain[i] = max(0.0, 100.0 + (rain[i] - rain_p3) * rain_scale)
+
+            # 温度校准
+            if do_temp_cal:
+                temp[i] = temp[i] * temp_scale + temp_offset
+
+            # 收集校准后的交叉校准数据
+            t = temp[i]
+            r = rain[i]
+            if t >= 20.0:
+                hot_rains.append(r)
+            elif -5.0 <= t < 5.0:
+                cold_rains.append(r)
+
+        # Phase 4: 排序交叉校准数据 + 计算参数
+        hot_rains.sort()
+        cold_rains.sort()
+
+        do_hot_cal = len(hot_rains) > 100
+        hot_p20 = 0.0
+        hot_max = 0.0
+        if do_hot_cal:
+            hot_p20 = hot_rains[int(len(hot_rains) * 0.20)]
+            hot_max = hot_rains[-1]
+            do_hot_cal = hot_max < 1500.0 and hot_max > hot_p20
+
+        do_cold_cal = len(cold_rains) > 100
+        cold_p40 = 0.0
+        cold_max = 0.0
+        if do_cold_cal:
+            cold_p40 = cold_rains[int(len(cold_rains) * 0.40)]
+            cold_max = cold_rains[-1]
+            do_cold_cal = cold_max < 500.0 and cold_max > cold_p40
+
+        # Phase 5: 应用交叉校准 + 重分类（单次遍历）
+        for i in range(n):
+            if not land_mask[i]:
+                continue
+
+            t = temp[i]
+            r = rain[i]
+
+            # 交叉校准——使用已校准的温湿度值
+            if do_hot_cal and t >= 20.0 and r > hot_p20:
+                frac = (r - hot_p20) / (hot_max - hot_p20)
+                rain[i] = 200.0 + frac * 1600.0
+            elif do_cold_cal and -5.0 <= t < 5.0 and r > cold_p40:
+                frac = (r - cold_p40) / (cold_max - cold_p40)
+                rain[i] = 300.0 + frac * 300.0
+
+            # 重分类
+            climate_field[i] = int(classify(temp[i], rain[i], elevation[i]))
 
     def _ensure_elevation_range(
         self, elevation: list[float], land_mask: list[bool],

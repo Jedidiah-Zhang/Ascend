@@ -97,6 +97,21 @@ class WorldGenerator:
 
     # ── 海拔查询 ──────────────────────────────────────────
 
+    def ensure_continent(self):
+        """主动生成并缓存宏观大陆数据，返回 ContinentData。
+
+        默认 get_altitude 是惰性生成，首次调用才跑（侵蚀慢）。
+        本方法强制预生成，供 GameEngine 在启动时主动触发，
+        并把 ContinentData 暴露给出生点选择 / TileGenerator。
+
+        Returns:
+            ContinentData 宏观场（缓存于 self._continent）。
+        """
+        if self._continent is None:
+            self._continent = ContinentGenerator(seed=self._seed).generate()
+            logger.info("大陆生成完成: %s", self._continent)
+        return self._continent
+
     def get_altitude(self, world_x: float, world_y: float) -> float:
         """查询任意世界坐标的构造海拔。
 

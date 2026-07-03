@@ -32,7 +32,8 @@ _HYDRO_C = _HERE / "_hydrology.c"
 
 if not _HYDRO_SO.exists() or _HYDRO_C.stat().st_mtime > _HYDRO_SO.stat().st_mtime:
     subprocess.run(
-        ["gcc", "-O3", "-shared", "-fPIC", "-o", str(_HYDRO_SO), str(_HYDRO_C), "-lm"],
+        ["gcc", "-O3", "-march=native", "-ffast-math", "-funroll-loops",
+         "-shared", "-fPIC", "-o", str(_HYDRO_SO), str(_HYDRO_C), "-lm"],
         check=True, cwd=str(_HERE),
     )
 
@@ -75,6 +76,15 @@ _HYDRO.hydrology_fill_depressions.argtypes = [
     ctypes.POINTER(ctypes.c_double),  # result (out)
 ]
 _HYDRO.hydrology_fill_depressions.restype = None
+
+# apply_erosion
+_HYDRO.hydrology_apply_erosion.argtypes = [
+    ctypes.POINTER(ctypes.c_double),  # dem (in/out)
+    ctypes.POINTER(ctypes.c_double),  # sediment_net (in/out)
+    ctypes.POINTER(ctypes.c_double),  # delta
+    ctypes.c_int,                      # n
+]
+_HYDRO.hydrology_apply_erosion.restype = ctypes.c_double
 
 
 def _compute_d8_c(dem: list[float], w: int, h: int) -> list[int]:
@@ -123,6 +133,24 @@ def _erode_step_c(
         delta_arr, sed_arr,
     )
     return list(delta_arr), list(sed_arr)
+
+
+def _apply_erosion_c(
+    dem: list[float], sediment_net: list[float],
+    delta: list[float], n: int,
+) -> float:
+    """C 加速侵蚀 delta 应用 — 原地修改 dem 和 sediment_net，返回 max_delta。"""
+    dem_arr = (ctypes.c_double * n)(*dem)
+    sed_arr = (ctypes.c_double * n)(*sediment_net)
+    delta_arr = (ctypes.c_double * n)(*delta)
+
+    max_delta = _HYDRO.hydrology_apply_erosion(dem_arr, sed_arr, delta_arr, n)
+
+    # 写回 dem 和 sediment_net
+    for i in range(n):
+        dem[i] = dem_arr[i]
+        sediment_net[i] = sed_arr[i]
+    return max_delta
 
 
 
@@ -332,7 +360,7 @@ def fill_depressions(dem: list[float], w: int, h: int) -> list[float]:
 
 
 def compute_d8(dem: list[float], w: int, h: int) -> list[int]:
-    """计算 D8 流向。
+    """计算 D8 流向（C 加速）。
 
     每个像素指向 8 邻域中最陡下坡方向。
     方向编码：0=E, 1=W, 2=S, 3=N, 4=SE, 5=SW, 6=NE, 7=NW
@@ -346,31 +374,7 @@ def compute_d8(dem: list[float], w: int, h: int) -> list[int]:
     Returns:
         行优先方向数组（int）。
     """
-    n = w * h
-    directions: list[int] = [-1] * n
-
-    for y in range(h):
-        for x in range(w):
-            idx = y * w + x
-            elev = dem[idx]
-            best_d = -1
-            best_slope = -float("inf")
-
-            for d in range(8):
-                nx, ny = x + _DX[d], y + _DY[d]
-                if not (0 <= nx < w and 0 <= ny < h):
-                    continue
-                ne = dem[ny * w + nx]
-                if ne < elev:
-                    dist = math.sqrt(2.0) if d >= 4 else 1.0
-                    slope = (elev - ne) / dist
-                    if slope > best_slope:
-                        best_slope = slope
-                        best_d = d
-
-            directions[idx] = best_d
-
-    return directions
+    return _compute_d8_c(dem, w, h)
 
 
 def compute_dinf(
@@ -1126,14 +1130,8 @@ def erode(
         delta, _ = _erode_step_c(
             result, directions, acc, flow_source, w, h, erodibility)
 
-        # 应用侵蚀 + 累积沉积 + 跟踪最大变化
-        max_delta = 0.0
-        for idx in range(n):
-            result[idx] += delta[idx]
-            sediment_net[idx] += delta[idx]
-            abs_d = delta[idx] if delta[idx] >= 0 else -delta[idx]
-            if abs_d > max_delta:
-                max_delta = abs_d
+        # 应用侵蚀 + 累积沉积 + 跟踪最大变化（C 加速）
+        max_delta = _apply_erosion_c(result, sediment_net, delta, n)
 
         # 自适应收敛：地形变化微小时提前退出
         if iteration >= min_iterations and max_delta < tolerance:

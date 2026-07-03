@@ -300,6 +300,28 @@ void hydrology_erode_step(
     }
 }
 
+/* ── apply_erosion ────────────────────────────────────────── */
+
+double hydrology_apply_erosion(
+    double *dem,
+    double *sediment_net,
+    const double *delta,
+    int n)
+{
+    /* 将侵蚀 delta 应用到 dem 和 sediment_net，返回 max|delta|。
+       替代 Python 层的逐元素循环，消除 12 轮 × 600K 的 Python 迭代开销。
+    */
+    double max_delta = 0.0;
+    for (int i = 0; i < n; i++) {
+        double d = delta[i];
+        dem[i] += d;
+        sediment_net[i] += d;
+        double abs_d = d >= 0.0 ? d : -d;
+        if (abs_d > max_delta) max_delta = abs_d;
+    }
+    return max_delta;
+}
+
 /* ── hillslope_erosion_step ─────────────────────────────── */
 
 void hydrology_hillslope_step(

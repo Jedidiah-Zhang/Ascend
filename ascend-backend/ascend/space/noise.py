@@ -18,7 +18,8 @@ _C = _HERE / "_perlin.c"
 # 按需编译（.so 不存在或比 .c 旧）
 if not _SO.exists() or _C.stat().st_mtime > _SO.stat().st_mtime:
     subprocess.run(
-        ["gcc", "-O3", "-shared", "-fPIC", "-o", str(_SO), str(_C), "-lm"],
+        ["gcc", "-O3", "-march=native", "-ffast-math", "-funroll-loops",
+         "-shared", "-fPIC", "-o", str(_SO), str(_C), "-lm"],
         check=True, cwd=str(_HERE),
     )
 
