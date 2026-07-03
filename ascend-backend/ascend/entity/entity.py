@@ -27,12 +27,18 @@ class Entity:
     实体是所有存在物的基类：NPC、物品、建筑、玩家等。
     使用 __slots__ 存储，无 __dict__ 开销；data 为 None 时不分配字典。
 
+    Z 轴通过 layer_id 离散化：0=地表，负数=地下层（-1=浅洞，-2=深洞）。
+    每层内部是纯 2D 平面，layer_id 是枚举式的层标识而非连续坐标。
+    渲染高度（tile elevation）与 layer_id 正交：同一层内 tile 仍有连续
+    高度差供 2.5D 渲染抬升，但事件/寻路/碰撞只认 layer_id。
+
     Attributes:
         id: 实体唯一标识（UUID hex）。
         entity_type: 实体类型（EntityType 枚举）。
         chunk_x, chunk_y: 所在 chunk 坐标。
         tile_x, tile_y: chunk 内 tile 坐标，可为 None。
         spawned_at: 实体被创建时的游戏时间（秒）。
+        layer_id: 所在 Z 层（0=地表，负数=地下层），默认 0。
         data: 实体附加数据，首次写入时自动创建；没有数据时为 None。
     """
 
@@ -43,24 +49,29 @@ class Entity:
     tile_y: int | None
     spawned_at: int
 
+    layer_id: int = 0
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     data: dict | None = None
 
     @property
     def chunk(self) -> tuple[int, int]:
-        """实体所在 chunk 坐标。
-
-        Returns:
-            (chunk_x, chunk_y)。
-        """
+        """实体所在 chunk 坐标（层内平面）。"""
         return (self.chunk_x, self.chunk_y)
 
     @property
-    def position(self) -> tuple[int, int, int | None, int | None]:
-        """实体完整位置，方便传递。
+    def layer_chunk(self) -> tuple[int, int, int]:
+        """(layer_id, chunk_x, chunk_y) — 空间索引用的三元组键。
 
-        Returns:
-            (chunk_x, chunk_y, tile_x, tile_y)。
+        layer_id 在前，保证不同层的实体落入不同桶，天然隔离。
+        """
+        return (self.layer_id, self.chunk_x, self.chunk_y)
+
+    @property
+    def position(self) -> tuple[int, int, int | None, int | None]:
+        """层内平面位置 (chunk_x, chunk_y, tile_x, tile_y)。
+
+        不含 layer_id——层是正交维度，用 layer_id 字段单独表达。
+        这样 location = position 时平面语义自洽。
         """
         return (self.chunk_x, self.chunk_y, self.tile_x, self.tile_y)
 

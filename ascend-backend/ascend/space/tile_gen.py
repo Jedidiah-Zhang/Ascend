@@ -132,6 +132,7 @@ class TileGenerator:
                 # 地形分类
                 terrain = self._classify_fast(elev, tx, ty, size)
                 grid.set(tx, ty, terrain)
+                grid.set_elevation(tx, ty, elev)
 
                 # 缓存宏观海拔（供湖泊渲染复用）
                 if macro_cache is not None:

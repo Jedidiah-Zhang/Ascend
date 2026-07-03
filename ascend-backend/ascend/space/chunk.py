@@ -55,6 +55,10 @@ class ChunkData:
     travel_speed: float = 1.0
 
     # 详细层 — 按需生成
+    # tile_grid 代表地表层（layer_id=0）的详细 tile。
+    # 未来洞穴层（layer_id<0）的 chunk 数据结构待定，
+    # 可能是 ChunkData 内嵌 caves: dict[int, TileGrid]，
+    # 或独立的 CaveChunkData。当前不预留字段，避免过早抽象。
     tile_grid: TileGrid | None = None
 
     @property

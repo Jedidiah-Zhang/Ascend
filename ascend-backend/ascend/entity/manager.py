@@ -47,7 +47,7 @@ class EntityManager:
         )
         self._entities: dict[str, Entity] = {}
         self._type_index: dict[int, set[str]] = {}
-        self._spatial_index: dict[tuple[int, int], set[str]] = {}
+        self._spatial_index: dict[tuple[int, int, int], set[str]] = {}
 
     def __repr__(self) -> str:
         """返回管理器状态摘要。
@@ -71,6 +71,7 @@ class EntityManager:
         tile_x: int | None = None,
         tile_y: int | None = None,
         *,
+        layer_id: int = 0,
         data: dict | None = None,
         game_time: int = 0,
     ) -> Entity:
@@ -80,6 +81,7 @@ class EntityManager:
             entity_type: 实体类型。
             chunk_x, chunk_y: 所在 chunk 坐标。
             tile_x, tile_y: chunk 内 tile 坐标，可为 None。
+            layer_id: 所在 Z 层（0=地表，负数=地下层），默认 0。
             data: 附加数据。
             game_time: 当前游戏时间（tick 数）。
 
@@ -93,15 +95,17 @@ class EntityManager:
             tile_x=tile_x,
             tile_y=tile_y,
             spawned_at=game_time,
+            layer_id=layer_id,
             data=data,
         )
         self._entities[entity.id] = entity
         self._type_index.setdefault(entity_type, set()).add(entity.id)
-        self._spatial_index.setdefault(entity.chunk, set()).add(entity.id)
+        self._spatial_index.setdefault(entity.layer_chunk, set()).add(entity.id)
 
         self._world_tree.publish(Event(
             timestamp=game_time,
             location=entity.position,
+            layer_id=entity.layer_id,
             initiator_type="system",
             initiator_id="entity_manager",
             affected=[AffectedParty(entity.id, "subject")],
@@ -110,6 +114,7 @@ class EntityManager:
                 "entity_id": entity.id,
                 "entity_type": entity_type.name,
                 "position": entity.position,
+                "layer_id": entity.layer_id,
             },
         ))
         logger.debug("spawn: %s type=%s at chunk %s", entity.id, entity_type.name, entity.chunk)
@@ -131,11 +136,12 @@ class EntityManager:
             return None
 
         self._type_index.get(entity.entity_type, set()).discard(entity_id)
-        self._spatial_index.get(entity.chunk, set()).discard(entity_id)
+        self._spatial_index.get(entity.layer_chunk, set()).discard(entity_id)
 
         self._world_tree.publish(Event(
             timestamp=game_time,
             location=entity.position,
+            layer_id=entity.layer_id,
             initiator_type="system",
             initiator_id="entity_manager",
             affected=[AffectedParty(entity_id, "subject")],
@@ -158,7 +164,10 @@ class EntityManager:
         *,
         game_time: int = 0,
     ) -> bool:
-        """移动实体到新位置，发布 entity_moved 事件。
+        """移动实体到新位置（同层内），发布 entity_moved 事件。
+
+        跨层移动不在本方法职责内——跨层是离散动作（进入洞穴/出洞穴），
+        应通过 despawn + spawn 或专用 transition API 实现，避免误操作。
 
         Args:
             entity_id: 实体 ID。
@@ -174,21 +183,22 @@ class EntityManager:
             logger.warning("move: 实体 %s 不存在", entity_id)
             return False
 
-        old_chunk = entity.chunk
+        old_layer_chunk = entity.layer_chunk
         old_pos = entity.position
         entity.chunk_x = chunk_x
         entity.chunk_y = chunk_y
         entity.tile_x = tile_x
         entity.tile_y = tile_y
-        new_chunk = entity.chunk
+        new_layer_chunk = entity.layer_chunk
 
-        if old_chunk != new_chunk:
-            self._spatial_index.get(old_chunk, set()).discard(entity_id)
-            self._spatial_index.setdefault(new_chunk, set()).add(entity_id)
+        if old_layer_chunk != new_layer_chunk:
+            self._spatial_index.get(old_layer_chunk, set()).discard(entity_id)
+            self._spatial_index.setdefault(new_layer_chunk, set()).add(entity_id)
 
         self._world_tree.publish(Event(
             timestamp=game_time,
             location=entity.position,
+            layer_id=entity.layer_id,
             initiator_type="system",
             initiator_id="entity_manager",
             affected=[AffectedParty(entity_id, "subject")],
@@ -197,6 +207,7 @@ class EntityManager:
                 "entity_id": entity_id,
                 "old_position": old_pos,
                 "new_position": entity.position,
+                "layer_id": entity.layer_id,
             },
         ))
         logger.debug("move: %s %s → %s", entity_id, old_pos, entity.position)
@@ -231,22 +242,28 @@ class EntityManager:
         self,
         center_chunk: tuple[int, int],
         radius: int = 1,
+        *,
+        layer_id: int = 0,
     ) -> list[Entity]:
-        """按空间区域查询实体。
+        """按空间区域查询实体（限定单层）。
 
         Args:
-            center_chunk: 中心 chunk 坐标。
+            center_chunk: 中心 chunk 坐标 (chunk_x, chunk_y)。
             radius: 搜索半径（chunk 数），默认 1。
+            layer_id: 只查询该层的实体，默认 0（地表）。
+                跨层查询不在此支持——层间隔离是设计意图。
 
         Returns:
-            区域内的实体列表。
+            该层区域内的实体列表。
         """
         cx, cy = center_chunk
         results: list[Entity] = []
         seen: set[str] = set()
         for dx in range(-radius, radius + 1):
             for dy in range(-radius, radius + 1):
-                for eid in self._spatial_index.get((cx + dx, cy + dy), set()):
+                for eid in self._spatial_index.get(
+                    (layer_id, cx + dx, cy + dy), set()
+                ):
                     if eid not in seen:
                         seen.add(eid)
                         ent = self._entities.get(eid)

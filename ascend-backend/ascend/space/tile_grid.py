@@ -1,7 +1,8 @@
 """TileGrid — 详细地图层紧凑存储结构。
 
-使用 array('H')（uint16）存储 200×200 地形类型网格。
-TerrainType 的 int 值直接存入数组，每 chunk 仅 80KB。
+使用 array('H')（uint16）存储 200×200 地形类型网格，
+array('f')（float32）存储对应高度场。
+TerrainType 的 int 值直接存入数组，每 chunk 80KB 地形 + 160KB 高度。
 """
 
 from array import array
@@ -13,23 +14,30 @@ TILE_MAP_SIZE: int = 200
 
 
 class TileGrid:
-    """200×200 地形网格，紧凑数组存储。
+    """200×200 地形网格 + 高度场，紧凑数组存储。
 
-    使用 Python 标准库 array('H')（无符号 short），
-    比 list[list[int]] 节省约 13 倍内存（80KB vs 1.1MB）。
+    地形类型用 array('H')（uint16），高度用 array('f')（float32）。
+    高度场供 2.5D 渲染抬升 tile 顶面，及游戏逻辑的精确高度查询。
 
     线程安全：每个 TileGrid 归属单个 chunk，由该 chunk 的生成线程独占。
     """
 
-    def __init__(self, data: array | list[int] | None = None) -> None:
+    def __init__(
+        self,
+        data: array | list[int] | None = None,
+        elevation: array | list[float] | None = None,
+    ) -> None:
         """初始化网格。
 
-        若 data 为 None，初始化为全 GRASSLAND。
-        若 data 为 list，转换为 array('H')。
-        若 data 为 array('H')，直接引用（需确保长度正确）。
+        若 data 为 None，地形初始化为全 GRASSLAND，高度初始化为全 0。
+        elevation 可选，提供时长度需与地形一致（40000）。
 
         Args:
-            data: 初始数据，长度应为 40000 (200×200)。
+            data: 地形数据，长度应为 40000 (200×200)。
+            elevation: 高度数据 (m)，长度应为 40000。未提供则全 0。
+
+        Raises:
+            ValueError: 数据长度与 200×200 不匹配。
         """
         self._size: int = TILE_MAP_SIZE
         self._length: int = self._size * self._size
@@ -49,12 +57,23 @@ class TileGrid:
                 )
             self._data = array('H', data)
 
-    def __repr__(self) -> str:
-        """返回网格摘要。
+        if elevation is None:
+            self._elevation = array('f', [0.0]) * self._length
+        elif isinstance(elevation, array):
+            if len(elevation) != self._length:
+                raise ValueError(
+                    f"高度 array 长度需为 {self._length}，实际为 {len(elevation)}"
+                )
+            self._elevation = elevation
+        else:
+            if len(elevation) != self._length:
+                raise ValueError(
+                    f"高度列表长度需为 {self._length}，实际为 {len(elevation)}"
+                )
+            self._elevation = array('f', elevation)
 
-        Returns:
-            含尺寸和非默认 tile 占比的 repr 字符串。
-        """
+    def __repr__(self) -> str:
+        """返回网格摘要。"""
         grassland = int(TerrainType.GRASSLAND)
         non_default = sum(1 for v in self._data if v != grassland)
         pct = non_default / self._length * 100
@@ -66,26 +85,20 @@ class TileGrid:
     # ── 单点访问 ──────────────────────────────────────────
 
     def get(self, x: int, y: int) -> TerrainType:
-        """读取 (x, y) 处的地形类型。
-
-        Args:
-            x: tile X 坐标 [0, 199]。
-            y: tile Y 坐标 [0, 199]。
-
-        Returns:
-            TerrainType 枚举值。
-        """
+        """读取 (x, y) 处的地形类型。"""
         return TerrainType(self._data[y * self._size + x])
 
     def set(self, x: int, y: int, terrain: TerrainType) -> None:
-        """写入 (x, y) 处的地形类型。
-
-        Args:
-            x: tile X 坐标 [0, 199]。
-            y: tile Y 坐标 [0, 199]。
-            terrain: 地形类型。
-        """
+        """写入 (x, y) 处的地形类型。"""
         self._data[y * self._size + x] = int(terrain)
+
+    def get_elevation(self, x: int, y: int) -> float:
+        """读取 (x, y) 处的高度 (m)，供 2.5D 渲染和游戏逻辑查询。"""
+        return self._elevation[y * self._size + x]
+
+    def set_elevation(self, x: int, y: int, elevation: float) -> None:
+        """写入 (x, y) 处的高度 (m)。"""
+        self._elevation[y * self._size + x] = elevation
 
     # ── 区域查询 ──────────────────────────────────────────
 
@@ -96,20 +109,7 @@ class TileGrid:
         w: int,
         h: int,
     ) -> list[list[TerrainType]]:
-        """读取矩形区域的地形类型。
-
-        返回 Python 列表，便于调用方遍历和序列化。
-        对于高性能场景，使用 get_raw() 直接访问底层数组。
-
-        Args:
-            x: 区域左上角 X。
-            y: 区域左上角 Y。
-            w: 区域宽度。
-            h: 区域高度。
-
-        Returns:
-            二维 TerrainType 列表，形状 (h, w)。
-        """
+        """读取矩形区域的地形类型。"""
         result: list[list[TerrainType]] = []
         for row in range(y, y + h):
             start = row * self._size + x
@@ -120,47 +120,40 @@ class TileGrid:
     # ── 整体序列化 ────────────────────────────────────────
 
     def to_list(self) -> list[int]:
-        """导出为 Python int 列表（用于 JSON 序列化发往 Godot）。
-
-        Returns:
-            长度为 40000 的 int 列表。
-        """
+        """导出地形类型为 Python int 列表（用于 JSON 发往 Godot）。"""
         return list(self._data)
 
+    def to_elevation_list(self) -> list[float]:
+        """导出高度场为 Python float 列表（用于 2.5D 渲染发往 Godot）。"""
+        return list(self._elevation)
+
     @classmethod
-    def from_list(cls, data: list[int]) -> "TileGrid":
-        """从 int 列表还原（用于从 Godot 接收或存档加载）。
+    def from_list(
+        cls,
+        data: list[int],
+        elevation: list[float] | None = None,
+    ) -> "TileGrid":
+        """从 int 列表还原。可选 elevation 列表同步还原高度。
 
         Args:
-            data: 长度为 40000 的 int 列表。
-
-        Returns:
-            TileGrid 实例。
+            data: 长度为 40000 的 int 列表（地形）。
+            elevation: 长度为 40000 的 float 列表（高度），未提供则全 0。
         """
-        return cls(data=data)
+        return cls(data=data, elevation=elevation)
 
     # ── 低级访问 ──────────────────────────────────────────
 
     def get_raw(self, index: int) -> int:
-        """读取底层数组指定索引的 int 值。
-
-        用于批量扫描等需要高性能的场景。
-
-        Args:
-            index: 底层数组索引（y * 200 + x）。
-
-        Returns:
-            TerrainType 的 int 值。
-        """
+        """读取底层数组指定索引的地形 int 值。"""
         return self._data[index]
 
     def raw_data(self) -> array:
-        """返回底层 array('H') 的引用（零拷贝）。
-
-        Returns:
-            底层 uint16 数组。
-        """
+        """返回底层地形 array('H') 的引用（零拷贝）。"""
         return self._data
+
+    def elevation_raw(self) -> array:
+        """返回底层高度 array('f') 的引用（零拷贝）。"""
+        return self._elevation
 
     @property
     def size(self) -> int:
@@ -168,7 +161,7 @@ class TileGrid:
         return self._size
 
     def __eq__(self, other: object) -> bool:
-        """比较两个 TileGrid 是否数据相等。"""
+        """比较两个 TileGrid 是否地形和高度均相等。"""
         if not isinstance(other, TileGrid):
             return NotImplemented
-        return self._data == other._data
+        return self._data == other._data and self._elevation == other._elevation

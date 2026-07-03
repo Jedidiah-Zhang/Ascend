@@ -66,7 +66,7 @@ class WorldTree:
         self._id_index: dict[str, Event] = {}
         self._subscriptions: dict[str, list[Callable[[Event], None]]] = {}
         self._entity_index: dict[str, list[Event]] = {}
-        self._spatial_index: dict[tuple[int, int], set[Event]] = {}
+        self._spatial_index: dict[tuple[int, int, int], set[Event]] = {}
         self._graph: EventGraph = EventGraph()
         self._lock: threading.RLock = threading.RLock()
         self._archive: EventArchive | None = (
@@ -181,7 +181,7 @@ class WorldTree:
             for eid in all_entities:
                 self._entity_index.setdefault(eid, []).append(event)
 
-            chunk_key = (event.location[0], event.location[1])
+            chunk_key = (event.layer_id, event.location[0], event.location[1])
             self._spatial_index.setdefault(chunk_key, set()).add(event)
 
             self._graph.add_event(event)
@@ -375,10 +375,11 @@ class WorldTree:
         center_chunk: tuple[int, int],
         radius: int = 1,
         *,
+        layer_id: int = 0,
         start_time: int | None = None,
         end_time: int | None = None,
     ) -> list[Event]:
-        """按空间区域查询事件。
+        """按空间区域查询事件（限定单层）。
 
         在 center_chunk 及其周围 radius 个 chunk 的范围内搜索。
         预计算时间范围对应的日志索引区间，用整数比较代替浮点时间戳比较。
@@ -387,11 +388,13 @@ class WorldTree:
         Args:
             center_chunk: 中心 chunk 坐标 (chunk_x, chunk_y)。
             radius: 搜索半径（chunk 数），默认 1 即 3×3 区域。
+            layer_id: 只查询该层的事件，默认 0（地表）。
+                跨层查询不在此支持——层间隔离是设计意图。
             start_time: 可选，时间下界。
             end_time: 可选，时间上界。
 
         Returns:
-            区域内满足条件的事件列表。
+            该层区域内满足条件的事件列表。
         """
         with self._lock:
             cx, cy = center_chunk
@@ -399,7 +402,7 @@ class WorldTree:
 
             for dx in range(-radius, radius + 1):
                 for dy in range(-radius, radius + 1):
-                    chunk_key = (cx + dx, cy + dy)
+                    chunk_key = (layer_id, cx + dx, cy + dy)
                     for ev in self._spatial_index.get(chunk_key, set()):
                         if start_time is not None and ev.timestamp < start_time:
                             continue
@@ -424,6 +427,7 @@ class WorldTree:
             )
             archived = archive.query_region(
                 center_chunk, radius,
+                layer_id=layer_id,
                 start_time=start_time, end_time=arch_end,
             )
             return archived + results
@@ -643,7 +647,7 @@ class WorldTree:
 
             # 3. _spatial_index：逐事件从集合中移除
             for ev in to_archive:
-                chunk_key = (ev.location[0], ev.location[1])
+                chunk_key = (ev.layer_id, ev.location[0], ev.location[1])
                 chunk_set = self._spatial_index.get(chunk_key)
                 if chunk_set:
                     chunk_set.discard(ev)

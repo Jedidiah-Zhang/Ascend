@@ -16,9 +16,14 @@ class Event:
 
     由各系统生成，事件系统只负责记录和路由，不校验 data 内容。
 
+    Z 轴通过 layer_id 离散化（0=地表，负数=地下层）。location 保持
+    层内平面坐标 (chunk_x, chunk_y, tile_x?, tile_y?)，layer_id 作为
+    正交字段单独存在。空间索引 key = (layer_id, chunk_x, chunk_y)。
+
     Attributes:
         timestamp: 世界时间（整数，单位：tick）。
-        location: 事件位置 (chunk_x, chunk_y, tile_x?, tile_y?)。
+        location: 事件层内平面位置 (chunk_x, chunk_y, tile_x?, tile_y?)。
+        layer_id: 所在 Z 层（0=地表，负数=地下层），默认 0。
         initiator_type: 发起方类型 "system" | "npc" | "player"。
         initiator_id: 发起方唯一标识。
         affected: 受影响方列表。
@@ -35,6 +40,8 @@ class Event:
     initiator_id: str
     affected: list[AffectedParty]
     event_type: str
+
+    layer_id: int = 0
     weight: int = 1
     data: dict[str, Any] = field(default_factory=dict)
 

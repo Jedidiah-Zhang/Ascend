@@ -78,6 +78,18 @@ class EventArchive:
         except sqlite3.OperationalError:
             pass  # 列已存在
 
+        # 迁移：旧 schema 可能缺少 layer_id 列
+        try:
+            self._db.execute(
+                "ALTER TABLE events ADD COLUMN layer_id INTEGER NOT NULL DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass  # 列已存在
+        self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_layer_chunk "
+            "ON events(layer_id, chunk_x, chunk_y)"
+        )
+
         # 迁移：旧 schema 可能缺少 event_edges 表
         try:
             self._db.execute(
@@ -119,6 +131,7 @@ class EventArchive:
             event_rows.append((
                 ev.id,
                 ev.timestamp,
+                ev.layer_id,
                 ev.location[0],
                 ev.location[1],
                 ev.location[2] if len(ev.location) > 2 else None,
@@ -153,7 +166,7 @@ class EventArchive:
         with self._db:
             self._db.executemany(
                 "INSERT OR IGNORE INTO events VALUES ("
-                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
                 ")",
                 event_rows,
             )
@@ -257,27 +270,31 @@ class EventArchive:
         center_chunk: tuple[int, int],
         radius: int = 1,
         *,
+        layer_id: int = 0,
         start_time: int | None = None,
         end_time: int | None = None,
     ) -> list[Event]:
-        """按空间区域查询归档事件。
+        """按空间区域查询归档事件（限定单层）。
 
         Args:
             center_chunk: 中心 chunk 坐标 (chunk_x, chunk_y)。
             radius: 搜索半径（chunk 数），默认 1 即 3×3 区域。
+            layer_id: 只查询该层的事件，默认 0（地表）。
             start_time: 可选，时间下界。
             end_time: 可选，时间上界。
 
         Returns:
-            区域内满足条件的事件列表。
+            该层区域内满足条件的事件列表。
         """
         cx, cy = center_chunk
         sql = """
             SELECT * FROM events
-            WHERE chunk_x >= ? AND chunk_x <= ?
+            WHERE layer_id = ?
+              AND chunk_x >= ? AND chunk_x <= ?
               AND chunk_y >= ? AND chunk_y <= ?
         """
         params: list = [
+            layer_id,
             cx - radius, cx + radius,
             cy - radius, cy + radius,
         ]
@@ -376,6 +393,7 @@ class EventArchive:
             initiator_type=row["initiator_type"],
             initiator_id=row["initiator_id"],
             event_type=row["event_type"],
+            layer_id=row["layer_id"] if "layer_id" in row.keys() else 0,
             weight=row["weight"] if "weight" in row.keys() else 1,
             data=json.loads(row["data_json"]),
             caused_by=json.loads(row["caused_by_json"]),

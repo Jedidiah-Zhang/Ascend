@@ -4,6 +4,7 @@
 CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
     timestamp INTEGER NOT NULL,
+    layer_id INTEGER NOT NULL DEFAULT 0,
     chunk_x INTEGER NOT NULL,
     chunk_y INTEGER NOT NULL,
     tile_x INTEGER,
@@ -33,6 +34,8 @@ CREATE INDEX idx_events_initiator
     ON events(initiator_id);
 CREATE INDEX idx_events_chunk
     ON events(chunk_x, chunk_y);
+CREATE INDEX idx_events_layer_chunk
+    ON events(layer_id, chunk_x, chunk_y);
 CREATE INDEX idx_events_type
     ON events(event_type);
 CREATE INDEX idx_event_entities_entity
