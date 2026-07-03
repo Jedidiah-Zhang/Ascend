@@ -41,7 +41,7 @@ class Entity:
     chunk_y: int
     tile_x: int | None
     tile_y: int | None
-    spawned_at: float
+    spawned_at: int
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     data: dict | None = None

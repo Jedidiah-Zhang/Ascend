@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
-    timestamp REAL NOT NULL,
+    timestamp INTEGER NOT NULL,
     chunk_x INTEGER NOT NULL,
     chunk_y INTEGER NOT NULL,
     tile_x INTEGER,

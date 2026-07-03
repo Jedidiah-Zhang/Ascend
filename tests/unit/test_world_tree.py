@@ -9,7 +9,7 @@ import pytest
 from ascend.world_tree import Event, AffectedParty, EventBus, EventGraph, EventArchive
 
 
-def make_event(timestamp=0.0, event_type="test", initiator_id="a",
+def make_event(timestamp=0, event_type="test", initiator_id="a",
                location=(0, 0, None, None), **kwargs) -> Event:
     affected = kwargs.pop("affected", None)
     if affected is None:
@@ -57,17 +57,17 @@ class TestEventBus:
     def test_time_range_query(self):
         bus = EventBus()
         for t in range(5):
-            bus.publish(make_event(timestamp=float(t)))
-        results = bus.get_events_in_range(1.0, 3.0)
+            bus.publish(make_event(timestamp=t))
+        results = bus.get_events_in_range(1, 3)
         assert len(results) == 3
-        assert {e.timestamp for e in results} == {1.0, 2.0, 3.0}
+        assert {e.timestamp for e in results} == {1, 2, 3}
 
     def test_time_range_with_filter(self):
         bus = EventBus()
-        bus.publish(make_event(timestamp=0.0, event_type="rain"))
-        bus.publish(make_event(timestamp=1.0, event_type="snow"))
-        bus.publish(make_event(timestamp=2.0, event_type="rain"))
-        results = bus.get_events_in_range(0.0, 2.0, event_type="rain")
+        bus.publish(make_event(timestamp=0, event_type="rain"))
+        bus.publish(make_event(timestamp=1, event_type="snow"))
+        bus.publish(make_event(timestamp=2, event_type="rain"))
+        results = bus.get_events_in_range(0, 2, event_type="rain")
         assert len(results) == 2
 
     def test_entity_index(self):
@@ -75,8 +75,8 @@ class TestEventBus:
         ev = make_event(initiator_id="npc_1",
                         affected=[AffectedParty(entity_id="npc_2", role="witness")])
         bus.publish(ev)
-        events_1 = bus.get_entity_events("npc_1", -1.0, 1.0)
-        events_2 = bus.get_entity_events("npc_2", -1.0, 1.0)
+        events_1 = bus.get_entity_events("npc_1", -1, 1)
+        events_2 = bus.get_entity_events("npc_2", -1, 1)
         assert len(events_1) == 1
         assert len(events_2) == 1
 
@@ -98,12 +98,12 @@ class TestEventBus:
     def test_get_event_by_id_memory(self):
         """按 ID 查找内存中的事件。"""
         bus = EventBus()
-        ev = make_event(id="target_1", timestamp=10.0)
+        ev = make_event(id="target_1", timestamp=10)
         bus.publish(ev)
         result = bus.get_event_by_id("target_1")
         assert result is not None
         assert result.id == "target_1"
-        assert result.timestamp == 10.0
+        assert result.timestamp == 10
 
     def test_get_event_by_id_not_found(self):
         """查找不存在的事件返回 None。"""
@@ -277,7 +277,7 @@ class TestEventBusValidation:
     def test_negative_timestamp(self):
         bus = EventBus()
         with pytest.raises(ValueError, match="时间戳不能为负"):
-            bus.publish(make_event(timestamp=-1.0))
+            bus.publish(make_event(timestamp=-1))
 
     def test_invalid_location_type(self):
         bus = EventBus()
@@ -307,18 +307,18 @@ class TestEventBusTrim:
         """发布事件超过 max_memory_events 时自动触发 trim。"""
         bus = EventBus(validate=False, max_memory_events=5)
         for t in range(10):
-            bus.publish(make_event(timestamp=float(t)))
+            bus.publish(make_event(timestamp=t))
         # 自动 trim 已触发，事件数不应超过阈值
         assert bus.event_count <= 5
         # 最近的事件应在内存中
         latest = bus.get_events_in_range(0, 100)
-        assert latest[-1].timestamp == 9.0
+        assert latest[-1].timestamp == 9
 
     def test_auto_trim_not_triggered_under_threshold(self):
         """事件数未超阈值时不触发 trim。"""
         bus = EventBus(validate=False, max_memory_events=100)
         for t in range(10):
-            bus.publish(make_event(timestamp=float(t)))
+            bus.publish(make_event(timestamp=t))
         # 全部保留
         assert bus.event_count == 10
 
@@ -326,16 +326,16 @@ class TestEventBusTrim:
         """不传 max_memory_events 时不自动 trim。"""
         bus = EventBus(validate=False)
         for t in range(100):
-            bus.publish(make_event(timestamp=float(t)))
+            bus.publish(make_event(timestamp=t))
         assert bus.event_count == 100  # 全部保留
 
     def test_auto_trim_preserves_graph_consistency(self):
         """自动 trim 后图和索引保持一致。"""
         bus = EventBus(validate=False, max_memory_events=6)
-        ev0 = make_event(timestamp=0.0, id="ev0")
-        ev1 = make_event(timestamp=1.0, id="ev1", caused_by=["ev0"])
+        ev0 = make_event(timestamp=0, id="ev0")
+        ev1 = make_event(timestamp=1, id="ev1", caused_by=["ev0"])
         for _ in range(10):
-            bus.publish(make_event(timestamp=10.0))  # 触发自动 trim
+            bus.publish(make_event(timestamp=10))  # 触发自动 trim
         bus.publish(ev0)
         bus.publish(ev1)
         # 未超阈值，两个事件都在
@@ -344,10 +344,10 @@ class TestEventBusTrim:
     def test_trim_basic(self):
         bus = EventBus()
         for t in [0, 1, 2, 3, 4]:
-            bus.publish(make_event(timestamp=float(t)))
+            bus.publish(make_event(timestamp=t))
 
-        removed = bus._trim(2.0)
-        # _bisect_time(2.0, find_end=True) 返回第一个 ts > 2.0 的位置
+        removed = bus._trim(2)
+        # _bisect_time(2, find_end=True) 返回第一个 ts > 2 的位置
         # ts 0,1,2 被移除, ts 3,4 保留
         assert removed == 3
         assert bus.event_count == 2
@@ -355,58 +355,58 @@ class TestEventBusTrim:
     def test_trim_removes_nothing(self):
         bus = EventBus()
         for t in range(5, 10):  # ts 5, 6, 7, 8, 9
-            bus.publish(make_event(timestamp=float(t)))
+            bus.publish(make_event(timestamp=t))
 
-        removed = bus._trim(2.0)  # 所有时间戳都 >= 5，不移除任何事件
+        removed = bus._trim(2)  # 所有时间戳都 >= 5，不移除任何事件
         assert removed == 0
         assert bus.event_count == 5
 
     def test_trim_removes_everything(self):
         bus = EventBus()
         for t in range(5):
-            bus.publish(make_event(timestamp=float(t)))
+            bus.publish(make_event(timestamp=t))
 
-        removed = bus._trim(100.0)  # 全部移除
+        removed = bus._trim(100)  # 全部移除
         assert removed == 5
         assert bus.event_count == 0
 
     def test_trim_empty_bus(self):
         bus = EventBus()
-        removed = bus._trim(10.0)
+        removed = bus._trim(10)
         assert removed == 0
 
     def test_trim_rebuilds_entity_index(self):
         bus = EventBus()
-        bus.publish(make_event(timestamp=0.0, initiator_id="npc_1"))
-        bus.publish(make_event(timestamp=1.0, initiator_id="npc_2"))
-        bus.publish(make_event(timestamp=10.0, initiator_id="npc_1"))
+        bus.publish(make_event(timestamp=0, initiator_id="npc_1"))
+        bus.publish(make_event(timestamp=1, initiator_id="npc_2"))
+        bus.publish(make_event(timestamp=10, initiator_id="npc_1"))
 
-        bus._trim(5.0)  # 移除 ts=0,1 的两个事件
+        bus._trim(5)  # 移除 ts=0,1 的两个事件
 
         events_npc1 = bus.get_entity_events("npc_1", 0, 100)
         assert len(events_npc1) == 1
-        assert events_npc1[0].timestamp == 10.0
+        assert events_npc1[0].timestamp == 10
 
     def test_trim_rebuilds_spatial_index(self):
         bus = EventBus()
-        bus.publish(make_event(timestamp=0.0, location=(0, 0, None, None)))
-        bus.publish(make_event(timestamp=1.0, location=(5, 5, None, None)))
-        bus.publish(make_event(timestamp=10.0, location=(0, 0, None, None)))
+        bus.publish(make_event(timestamp=0, location=(0, 0, None, None)))
+        bus.publish(make_event(timestamp=1, location=(5, 5, None, None)))
+        bus.publish(make_event(timestamp=10, location=(0, 0, None, None)))
 
-        bus._trim(5.0)
+        bus._trim(5)
 
         region = bus.get_events_in_region((0, 0), radius=0)
         assert len(region) == 1
-        assert region[0].timestamp == 10.0
+        assert region[0].timestamp == 10
 
     def test_trim_and_publish(self):
         bus = EventBus()
         for t in range(3):
-            bus.publish(make_event(timestamp=float(t)))  # ts 0,1,2
+            bus.publish(make_event(timestamp=t))  # ts 0,1,2
 
-        bus._trim(1.5)  # 移除 ts=0,1 (ts=2 保留)
+        bus._trim(1)  # 移除 ts=0,1 (ts=2 保留)
 
-        bus.publish(make_event(timestamp=5.0))  # 新事件
+        bus.publish(make_event(timestamp=5))  # 新事件
 
         results = bus.get_events_in_range(0, 10)
         assert len(results) == 2  # ts=2 + ts=5
@@ -414,30 +414,30 @@ class TestEventBusTrim:
     def test_trim_twice(self):
         bus = EventBus()
         for t in range(6):
-            bus.publish(make_event(timestamp=float(t)))
+            bus.publish(make_event(timestamp=t))
 
-        bus._trim(2.0)  # 移除 ts 0,1,2
+        bus._trim(2)  # 移除 ts 0,1,2
         assert bus.event_count == 3  # ts 3,4,5
 
-        bus._trim(4.0)  # 移除 ts 3,4
+        bus._trim(4)  # 移除 ts 3,4
         assert bus.event_count == 1  # ts 5
 
     def test_trim_negative_time_raises(self):
         bus = EventBus()
         with pytest.raises(ValueError, match="清理时间不能为负"):
-            bus._trim(-1.0)
+            bus._trim(-1)
 
     def test_trim_preserves_causal_chain_with_lookup(self):
         """Trim 后内存图节点移除，通过 lookup 可从内存事件体补全一级链。"""
         bus = EventBus()
-        ev0 = make_event(timestamp=0.0, id="ev0")
-        ev1 = make_event(timestamp=1.0, id="ev1", caused_by=["ev0"])
-        ev2 = make_event(timestamp=10.0, id="ev2", caused_by=["ev1"])
+        ev0 = make_event(timestamp=0, id="ev0")
+        ev1 = make_event(timestamp=1, id="ev1", caused_by=["ev0"])
+        ev2 = make_event(timestamp=10, id="ev2", caused_by=["ev1"])
         bus.publish(ev0)
         bus.publish(ev1)
         bus.publish(ev2)
 
-        bus._trim(5.0)  # 移除 ev0, ev1 的事件体和图节点（无归档，永久丢失）
+        bus._trim(5)  # 移除 ev0, ev1 的事件体和图节点（无归档，永久丢失）
 
         # 无 lookup 时因果链已断裂
         chain_no_lookup = bus.graph.get_causal_chain("ev2")
@@ -460,9 +460,9 @@ class TestEventBusTrim:
 
         bus = EventBus(validate=False, archive_path=path)
         try:
-            ev = make_event(timestamp=0.0, id="ev_old")
+            ev = make_event(timestamp=0, id="ev_old")
             bus.publish(ev)
-            bus._trim(10.0)  # 归档 ev_old
+            bus._trim(10)  # 归档 ev_old
 
             result = bus.get_event_by_id("ev_old")
             assert result is not None
@@ -479,19 +479,19 @@ class TestEventBusTrim:
         bus = EventBus(validate=False, archive_path=path)
         try:
             # 发布并归档
-            ev = make_event(timestamp=1.0, id="dup_id", event_type="old")
+            ev = make_event(timestamp=1, id="dup_id", event_type="old")
             bus.publish(ev)
-            bus._trim(10.0)
+            bus._trim(10)
 
             # 发布同名 ID 的新事件（内存中）
-            ev2 = make_event(timestamp=20.0, id="dup_id", event_type="new")
+            ev2 = make_event(timestamp=20, id="dup_id", event_type="new")
             bus.publish(ev2)
 
             result = bus.get_event_by_id("dup_id")
             assert result is not None
             # 应返回内存中的版本
             assert result.event_type == "new"
-            assert result.timestamp == 20.0
+            assert result.timestamp == 20
         finally:
             bus._archive.close()  # type: ignore[union-attr]
             os.unlink(path)
@@ -499,9 +499,9 @@ class TestEventBusTrim:
     def test_trim_removes_graph_nodes(self):
         """trim 事件体时同步移除图中对应节点。"""
         bus = EventBus()
-        ev0 = make_event(timestamp=0.0, id="ev0")
-        ev1 = make_event(timestamp=1.0, id="ev1", caused_by=["ev0"])
-        ev2 = make_event(timestamp=10.0, id="ev2", caused_by=["ev1"])
+        ev0 = make_event(timestamp=0, id="ev0")
+        ev1 = make_event(timestamp=1, id="ev1", caused_by=["ev0"])
+        ev2 = make_event(timestamp=10, id="ev2", caused_by=["ev1"])
         bus.publish(ev0)
         bus.publish(ev1)
         bus.publish(ev2)
@@ -509,7 +509,7 @@ class TestEventBusTrim:
         # 确认图有 3 个节点
         assert bus.graph.node_count == 3
 
-        bus._trim(5.0)  # 移除 ev0, ev1
+        bus._trim(5)  # 移除 ev0, ev1
 
         # ev0, ev1 从图中移除，ev2 保留
         assert bus.graph.node_count == 1
@@ -525,14 +525,14 @@ class TestEventBusTrim:
 
         bus = EventBus(validate=False, archive_path=path)
         try:
-            ev0 = make_event(timestamp=0.0, id="ev0")
-            ev1 = make_event(timestamp=1.0, id="ev1", caused_by=["ev0"])
-            ev2 = make_event(timestamp=10.0, id="ev2", caused_by=["ev1"])
+            ev0 = make_event(timestamp=0, id="ev0")
+            ev1 = make_event(timestamp=1, id="ev1", caused_by=["ev0"])
+            ev2 = make_event(timestamp=10, id="ev2", caused_by=["ev1"])
             bus.publish(ev0)
             bus.publish(ev1)
             bus.publish(ev2)
 
-            bus._trim(5.0)  # ev0, ev1 归档且从图中移除
+            bus._trim(5)  # ev0, ev1 归档且从图中移除
 
             # 无 lookup 时因果链断裂
             chain_no_lookup = bus.graph.get_causal_chain("ev2")
@@ -578,7 +578,7 @@ class TestEventBusThreadSafety:
             for i in range(200):
                 if stop.is_set():
                     break
-                bus.publish(make_event(timestamp=float(i)))
+                bus.publish(make_event(timestamp=i))
 
         def querier():
             for _ in range(100):
@@ -681,16 +681,16 @@ class TestEventArchive:
         archive, path = self._make_archive()
         try:
             events = [
-                make_event(timestamp=10.0, id="e1"),
-                make_event(timestamp=20.0, id="e2"),
-                make_event(timestamp=30.0, id="e3"),
+                make_event(timestamp=10, id="e1"),
+                make_event(timestamp=20, id="e2"),
+                make_event(timestamp=30, id="e3"),
             ]
             archive.archive(events)
 
-            results = archive.query_time_range(15.0, 35.0)
+            results = archive.query_time_range(15, 35)
             assert len(results) == 2
-            assert results[0].timestamp == 20.0
-            assert results[1].timestamp == 30.0
+            assert results[0].timestamp == 20
+            assert results[1].timestamp == 30
         finally:
             archive.close()
             os.unlink(path)
@@ -698,10 +698,10 @@ class TestEventArchive:
     def test_archive_and_query_entity(self):
         archive, path = self._make_archive()
         try:
-            e1 = make_event(timestamp=10.0, id="e1", initiator_id="npc_1")
-            e2 = make_event(timestamp=20.0, id="e2", initiator_id="npc_2")
+            e1 = make_event(timestamp=10, id="e1", initiator_id="npc_1")
+            e2 = make_event(timestamp=20, id="e2", initiator_id="npc_2")
             e3 = make_event(
-                timestamp=30.0, id="e3", initiator_id="npc_1",
+                timestamp=30, id="e3", initiator_id="npc_1",
                 affected=[
                     AffectedParty("npc_1", "subject"),
                     AffectedParty("npc_3", "witness"),
@@ -727,9 +727,9 @@ class TestEventArchive:
         archive, path = self._make_archive()
         try:
             events = [
-                make_event(timestamp=10.0, id="e1", location=(0, 0, None, None)),
-                make_event(timestamp=20.0, id="e2", location=(3, 3, None, None)),
-                make_event(timestamp=30.0, id="e3", location=(1, 0, None, None)),
+                make_event(timestamp=10, id="e1", location=(0, 0, None, None)),
+                make_event(timestamp=20, id="e2", location=(3, 3, None, None)),
+                make_event(timestamp=30, id="e3", location=(1, 0, None, None)),
             ]
             archive.archive(events)
 
@@ -751,9 +751,9 @@ class TestEventArchive:
         archive, path = self._make_archive()
         try:
             events = [
-                make_event(timestamp=10.0, id="e1", event_type="weather"),
-                make_event(timestamp=20.0, id="e2", event_type="combat"),
-                make_event(timestamp=30.0, id="e3", event_type="weather"),
+                make_event(timestamp=10, id="e1", event_type="weather"),
+                make_event(timestamp=20, id="e2", event_type="combat"),
+                make_event(timestamp=30, id="e3", event_type="weather"),
             ]
             archive.archive(events)
 
@@ -767,7 +767,7 @@ class TestEventArchive:
     def test_archive_idempotent(self):
         archive, path = self._make_archive()
         try:
-            events = [make_event(timestamp=10.0, id="e1")]
+            events = [make_event(timestamp=10, id="e1")]
             archive.archive(events)
             archive.archive(events)  # 重复归档同 ID
 
@@ -791,12 +791,12 @@ class TestEventArchive:
         """按 ID 点查归档中已存在的事件。"""
         archive, path = self._make_archive()
         try:
-            ev = make_event(timestamp=10.0, id="target", event_type="combat")
+            ev = make_event(timestamp=10, id="target", event_type="combat")
             archive.archive([ev])
             result = archive.query_by_id("target")
             assert result is not None
             assert result.id == "target"
-            assert result.timestamp == 10.0
+            assert result.timestamp == 10
             assert result.event_type == "combat"
         finally:
             archive.close()
@@ -827,7 +827,7 @@ class TestEventArchive:
         archive, path = self._make_archive()
         try:
             ev = make_event(
-                timestamp=42.5,
+                timestamp=42,
                 id="full_test",
                 event_type="test_type",
                 initiator_id="npc_x",
@@ -844,7 +844,7 @@ class TestEventArchive:
             archive.archive([ev])
             result = archive.query_by_id("full_test")
             assert result is not None
-            assert result.timestamp == 42.5
+            assert result.timestamp == 42
             assert result.event_type == "test_type"
             assert result.initiator_id == "npc_x"
             assert result.location == (3, 7, 10, 20)
@@ -863,7 +863,7 @@ class TestEventArchive:
 
         # 写入
         a1 = EventArchive(path)
-        a1.archive([make_event(timestamp=10.0, id="e1")])
+        a1.archive([make_event(timestamp=10, id="e1")])
         a1.close()
 
         # 重新打开
@@ -886,13 +886,13 @@ class TestEventArchive:
             # 发布 10 个事件
             for t in range(10):
                 bus.publish(make_event(
-                    timestamp=float(t * 60),
+                    timestamp=t * 60,
                     id=f"e{t}",
                     initiator_id="npc_1",
                 ))
 
             # trim 前 5 个
-            bus._trim(5.0 * 60)  # 移除 ts < 300 的: e0-e4
+            bus._trim(5 * 60)  # 移除 ts < 300 的: e0-e4
 
             # 查询全部时间范围 — 应透明合并
             results = bus.get_events_in_range(0, 1000)
@@ -913,9 +913,9 @@ class TestEventArchive:
         """不传 archive_path 时行为与之前完全一致。"""
         bus = EventBus()
         for t in range(5):
-            bus.publish(make_event(timestamp=float(t * 60)))
+            bus.publish(make_event(timestamp=t * 60))
 
-        bus._trim(120.0)  # 移除 ts=0,60,120 共 3 个事件
+        bus._trim(120)  # 移除 ts=0,60,120 共 3 个事件
         assert bus.event_count == 2
 
         # 查询不应包含已 trim 的事件
@@ -944,12 +944,12 @@ class TestEventWeight:
         bus = EventBus(validate=False, max_memory_events=100)
 
         # 插入权重 5 的关键事件
-        critical = make_event(timestamp=0.0, id="crit", weight=5)
+        critical = make_event(timestamp=0, id="crit", weight=5)
         bus.publish(critical)
 
         # 填充低权重事件触发 trim
         for i in range(200):
-            bus.publish(make_event(timestamp=float(i + 1), weight=1))
+            bus.publish(make_event(timestamp=i + 1, weight=1))
 
         # 高权重事件应在一次 trim 后存活
         result = bus.get_event_by_id("crit")
@@ -959,13 +959,13 @@ class TestEventWeight:
         """低权重事件先于高权重事件被归档。"""
         bus = EventBus(validate=False, max_memory_events=100)
 
-        bus.publish(make_event(timestamp=0.0, id="low", weight=1))
-        bus.publish(make_event(timestamp=1.0, id="high", weight=5))
+        bus.publish(make_event(timestamp=0, id="low", weight=1))
+        bus.publish(make_event(timestamp=1, id="high", weight=5))
 
         # 少量填充只触发 ~2 次 trim（cycle=2），
         # w=1 被移除，w=5 因 5>2 存活
         for i in range(150):
-            bus.publish(make_event(timestamp=float(i + 2), weight=1))
+            bus.publish(make_event(timestamp=i + 2, weight=1))
 
         # 高权重仍应在，低权重已被归档
         high = bus.get_event_by_id("high")
@@ -978,11 +978,11 @@ class TestEventWeight:
         """足够多次 trim 后所有事件都会被归档。"""
         bus = EventBus(validate=False, max_memory_events=50)
 
-        bus.publish(make_event(timestamp=0.0, id="w5", weight=5))
+        bus.publish(make_event(timestamp=0, id="w5", weight=5))
 
         # 大量事件触发足够多次 trim（cycle 累加到超过 5）
         for i in range(1000):
-            bus.publish(make_event(timestamp=float(i + 1), weight=1))
+            bus.publish(make_event(timestamp=i + 1, weight=1))
 
         result = bus.get_event_by_id("w5")
         assert result is None, (
@@ -995,7 +995,7 @@ class TestEventWeight:
 
         for i in range(500):
             w = 5 if i % 20 == 0 else 1  # 每 20 个事件一个高权重
-            bus.publish(make_event(timestamp=float(i), id=f"w_{i}", weight=w))
+            bus.publish(make_event(timestamp=i, id=f"w_{i}", weight=w))
 
         results = bus.get_events_in_range(0, 500)
         for a, b in zip(results, results[1:]):
@@ -1012,11 +1012,11 @@ class TestEventWeight:
         bus = EventBus(validate=False, max_memory_events=50,
                        archive_path=path)
         try:
-            bus.publish(make_event(timestamp=0.0, id="arch_crit", weight=5,
+            bus.publish(make_event(timestamp=0, id="arch_crit", weight=5,
                                     event_type="critical"))
 
             for i in range(500):
-                bus.publish(make_event(timestamp=float(i + 1), weight=1))
+                bus.publish(make_event(timestamp=i + 1, weight=1))
 
             # 即使最终被归档，也可通过 ID 查到
             ev = bus.get_event_by_id("arch_crit")
@@ -1064,14 +1064,14 @@ class TestGraphWarmup:
             )
             # 先填充触发归档
             for i in range(30):
-                bus.publish(make_event(timestamp=float(i)))
+                bus.publish(make_event(timestamp=i))
             # 因果事件链（时间戳更大，在最近事件中）
-            root = make_event(timestamp=100.0, id="root")
-            child = make_event(timestamp=101.0, id="child", caused_by=["root"])
+            root = make_event(timestamp=100, id="root")
+            child = make_event(timestamp=101, id="child", caused_by=["root"])
             bus.publish(root)
             bus.publish(child)
             for i in range(30):
-                bus.publish(make_event(timestamp=float(200 + i)))
+                bus.publish(make_event(timestamp=200 + i))
 
             bus2 = EventBus(
                 validate=False, archive_path=path,
@@ -1109,14 +1109,14 @@ class TestStats:
         """stats 记录发布总数。"""
         bus = EventBus(validate=False)
         for i in range(5):
-            bus.publish(make_event(timestamp=float(i)))
+            bus.publish(make_event(timestamp=i))
         assert bus.stats["publish_count"] == 5
 
     def test_stats_trim_count(self):
         """stats 记录 trim 次数。"""
         bus = EventBus(validate=False, max_memory_events=20)
         for i in range(100):
-            bus.publish(make_event(timestamp=float(i)))
+            bus.publish(make_event(timestamp=i))
         assert bus.stats["trim_count"] >= 1
         assert bus.stats["trim_cycle"] >= 1
 
@@ -1138,7 +1138,7 @@ class TestStats:
                 max_memory_events=20,
             )
             for i in range(60):
-                bus.publish(make_event(timestamp=float(i)))
+                bus.publish(make_event(timestamp=i))
             s = bus.stats
             assert s["archive_event_count"] > 0
             assert s["trim_count"] >= 1
@@ -1150,7 +1150,7 @@ class TestStats:
         """clear() 后统计归零。"""
         bus = EventBus(validate=False, max_memory_events=20)
         for i in range(100):
-            bus.publish(make_event(timestamp=float(i)))
+            bus.publish(make_event(timestamp=i))
         bus.clear()
         s = bus.stats
         assert s["publish_count"] == 0

@@ -11,7 +11,7 @@ from typing import Optional
 from ascend.world_tree import bus
 from ascend.log import get_logger
 from ascend.i18n import I18n
-from ascend.time import WorldClock, GameCalendar, TimeMode, GAME_DAY, GAME_HOUR
+from ascend.time import WorldClock, GameCalendar, GAME_DAY, GAME_HOUR, GAME_MINUTE
 
 logger = get_logger(__name__)
 
@@ -47,7 +47,7 @@ class CommandExecutor:
     _QUIT_CMDS: frozenset = frozenset({"q", "quit", "exit"})
 
     # 用于 mode 指令的快速验证集
-    _VALID_MODES: frozenset = frozenset({"realtime", "sleep", "travel", "jump"})
+    _VALID_MODES: frozenset = frozenset({"realtime", "fast", "paused"})
 
     def __init__(
         self,
@@ -68,14 +68,7 @@ class CommandExecutor:
         self._calendar = calendar
         self._i18n = i18n
         self._world_gen = world_gen
-        self._paused: bool = False
         self._active_real_time: float = 0.0
-        self._mode_name_cache = {
-            TimeMode.REALTIME: "mode.realtime",
-            TimeMode.SLEEP: "mode.sleep",
-            TimeMode.FAST_TRAVEL: "mode.fast_travel",
-            TimeMode.LONG_JUMP: "mode.long_jump",
-        }
 
         # 指令路由表：{cmd_name: handler_func(args) -> CommandResult}
         # 可被外部扩展（mod 注入）
@@ -116,8 +109,9 @@ class CommandExecutor:
             含类名、模式、暂停状态的字符串。
         """
         return (
-            f"CommandExecutor(mode={self._clock.mode.key}, "
-            f"paused={self._paused})"
+            f"CommandExecutor(time={self._clock.time}t, "
+            f"speed=×{self._clock.speed:.1f}, "
+            f"paused={self._clock.paused})"
         )
 
     # ── 公共接口 ────────────────────────────────────────
@@ -214,17 +208,18 @@ class CommandExecutor:
 
     # ── 内部实现 ────────────────────────────────────────
 
-    def _mode_name(self, mode: TimeMode) -> str:
-        """获取模式的中文名称。
-
-        Args:
-            mode: 时间模式。
+    def _speed_label(self) -> str:
+        """获取当前速度标签。
 
         Returns:
-            翻译后的模式名称。
+            格式化的速度文本。
         """
-        key = self._mode_name_cache.get(mode, "")
-        return self._i18n.t(key) if key else mode.key
+        if self._clock.paused:
+            return self._i18n.t("mode.paused")
+        s = self._clock.speed
+        if s == 1.0:
+            return self._i18n.t("mode.realtime")
+        return f"×{s:.1f}"
 
     def _fmt_active_time(self) -> str:
         """格式化活跃时间为 'Xh Ym Zs'。
@@ -248,15 +243,15 @@ class CommandExecutor:
         day = self._calendar.day
         tod = self._calendar.time_of_day(t)
         hour = int(tod / GAME_HOUR)
-        minute = int((tod % GAME_HOUR) / 60)
-        second = int(tod % 60)
-        state = self._i18n.t("console.state_paused" if self._paused else "console.state_running")
+        minute = int((tod % GAME_HOUR) / GAME_MINUTE)
+        second = int((tod % GAME_MINUTE) * 60 / GAME_MINUTE)
+        state = self._i18n.t("console.state_paused" if self._clock.paused else "console.state_running")
         return self._i18n.t(
             "console.status",
             active=self._fmt_active_time(),
             day=day,
             time=f"{hour:02d}:{minute:02d}:{second:02d}",
-            mode=self._mode_name(self._clock.mode),
+            mode=self._speed_label(),
             state=state,
         )
 
@@ -266,9 +261,9 @@ class CommandExecutor:
         Returns:
             暂停确认文本。
         """
-        if self._paused:
+        if self._clock.paused:
             return self._i18n.t("console.already_paused")
-        self._paused = True
+        self._clock.pause()
         return self._i18n.t("console.paused")
 
     def _cmd_resume(self) -> str:
@@ -277,27 +272,26 @@ class CommandExecutor:
         Returns:
             恢复确认文本。
         """
-        if not self._paused:
+        if not self._clock.paused:
             return self._i18n.t("console.already_running")
-        self._paused = False
+        self._clock.resume()
         return self._i18n.t("console.resumed")
 
     def _cmd_tick(self, count: int = 1) -> str:
-        """手动推进 N 帧。
+        """手动推进 N tick（忽略暂停和速度，调试用）。
 
         Args:
-            count: 要推进的帧数。
+            count: 要推进的 tick 数。
 
         Returns:
             推进确认文本。
         """
-        dt = 1.0 / 60.0
         for _ in range(count):
-            self._clock.tick(dt)
-        return self._i18n.t("console.ticked", count=count, time=f"{self._clock.time:,.0f}")
+            self._clock.step()
+        return self._i18n.t("console.ticked", count=count, time=f"{self._clock.time:,}")
 
     def _cmd_sleep(self, hours: float = 8.0) -> str:
-        """睡眠指定小时数。
+        """睡眠指定小时数，以高速模拟中间过程。
 
         Args:
             hours: 睡眠小时数。
@@ -305,12 +299,16 @@ class CommandExecutor:
         Returns:
             睡眠后状态文本。
         """
-        target = self._clock.time + hours * GAME_HOUR
-        self._clock.fast_forward(target, mode=TimeMode.SLEEP)
+        old_speed = self._clock.speed
+        self._clock.speed = 120
+        target = int(self._clock.time + hours * GAME_HOUR)
+        self._clock.run_to(target)
+        self._clock.speed = old_speed
+
         day = self._calendar.day
         tod = self._calendar.time_of_day(self._clock.time)
         h = int(tod / GAME_HOUR)
-        m = int((tod % GAME_HOUR) / 60)
+        m = int((tod % GAME_HOUR) / GAME_MINUTE)
         return self._i18n.t("console.slept", hours=hours, day=day, time=f"{h:02d}:{m:02d}")
 
     def _cmd_travel(self, hours: float = 1.0) -> str:
@@ -320,14 +318,18 @@ class CommandExecutor:
             hours: 旅行小时数。
 
         Returns:
-            旅行后状态文本。
+             旅行后状态文本。
         """
-        target = self._clock.time + hours * GAME_HOUR
-        self._clock.fast_forward(target, mode=TimeMode.FAST_TRAVEL)
+        old_speed = self._clock.speed
+        self._clock.speed = 120
+        target = int(self._clock.time + hours * GAME_HOUR)
+        self._clock.run_to(target)
+        self._clock.speed = old_speed
+
         day = self._calendar.day
         tod = self._calendar.time_of_day(self._clock.time)
         h = int(tod / GAME_HOUR)
-        m = int((tod % GAME_HOUR) / 60)
+        m = int((tod % GAME_HOUR) / GAME_MINUTE)
         return self._i18n.t("console.traveled", hours=hours, day=day, time=f"{h:02d}:{m:02d}")
 
     def _cmd_jump(self, days: int = 1) -> str:
@@ -341,29 +343,28 @@ class CommandExecutor:
         """
         target_day = self._calendar.day + days
         target = (target_day - 1) * GAME_DAY + 6 * GAME_HOUR
-        self._clock.skip_to(target)
+        skipped = target - self._clock.time
+        self._clock.skip(skipped)
         return self._i18n.t("console.jumped", days=days, day=self._calendar.day)
 
     def _cmd_mode(self, mode_name: str | None = None) -> str:
-        """查看或切换时间模式。
+        """查看或设置时间速度。
 
         Args:
-            mode_name: 模式名称，None 则查看当前。
+            mode_name: 速度预设或数值，None 则查看当前。
 
         Returns:
-            模式信息或切换确认文本。
+            速度信息或设置确认文本。
         """
         mode_map = {
-            "realtime": TimeMode.REALTIME,
-            "sleep": TimeMode.SLEEP,
-            "travel": TimeMode.FAST_TRAVEL,
-            "jump": TimeMode.LONG_JUMP,
+            "realtime": 1.0,
+            "fast": 120.0,
+            "paused": 0.0,
         }
         if mode_name is None:
             current = self._i18n.t(
                 "console.mode_current",
-                desc=self._mode_name(self._clock.mode),
-                mode_key=self._clock.mode.key,
+                desc=self._speed_label(),
             )
             available = self._i18n.t(
                 "console.mode_available",
@@ -371,16 +372,35 @@ class CommandExecutor:
             )
             return current + "\n" + available
 
-        mode = mode_map.get(mode_name.lower())
-        if mode is None:
+        mode_name_lower = mode_name.lower()
+        if mode_name_lower in mode_map:
+            speed = mode_map[mode_name_lower]
+            if speed == 0:
+                self._clock.pause()
+            else:
+                if self._clock.paused:
+                    self._clock.resume()
+                self._clock.speed = speed
+            return self._i18n.t("console.mode_set", mode=mode_name_lower)
+
+        try:
+            speed = float(mode_name)
+            if speed < 0:
+                return self._i18n.t("console.mode_unknown",
+                    name=mode_name, modes=", ".join(mode_map.keys()))
+            if speed == 0:
+                self._clock.pause()
+            else:
+                if self._clock.paused:
+                    self._clock.resume()
+                self._clock.speed = speed
+            return self._i18n.t("console.mode_set", mode=f"×{speed}")
+        except ValueError:
             return self._i18n.t(
                 "console.mode_unknown",
                 name=mode_name,
                 modes=", ".join(mode_map.keys()),
             )
-
-        self._clock.set_mode(mode)
-        return self._i18n.t("console.mode_switched", desc=self._mode_name(mode))
 
     def _cmd_lang(self, lang_code: str | None = None) -> str:
         """查看或切换语言。
@@ -432,7 +452,7 @@ class CommandExecutor:
         for ev in log[-count:]:
             summary = ", ".join(f"{k}={v}" for k, v in list(ev.data.items())[:3])
             lines.append(
-                f"  {ev.timestamp:>10.0f}  {ev.event_type:<20s}  "
+                f"  {ev.timestamp:>10d}  {ev.event_type:<20s}  "
                 f"{ev.initiator_id:<15s}  {summary}"
             )
 
@@ -447,11 +467,11 @@ class CommandExecutor:
         stats = bus.stats
         lines = [
             f"  {self._i18n.t('console.report_active')}:    {self._fmt_active_time()}",
-            f"  {self._i18n.t('console.report_game_time')}:    {self._clock.time:,.0f}s",
+            f"  {self._i18n.t('console.report_game_time')}:    {self._clock.time:,}t",
             f"  {self._i18n.t('console.report_day')}:       {self._calendar.day}",
             f"  {self._i18n.t('console.report_elapsed')}:    {self._calendar.elapsed_days}",
             f"  {self._i18n.t('console.report_day_changes')}:    {self._calendar.day_change_count}",
-            f"  {self._i18n.t('console.report_mode')}:    {self._mode_name(self._clock.mode)}",
+            f"  {self._i18n.t('console.report_mode')}:    {self._speed_label()}",
             f"  {self._i18n.t('console.report_ticks')}:   {self._clock.tick_count:,}",
             f"  {self._i18n.t('console.report_events')}:    {bus.event_count:,}",
             f"  ---",

@@ -190,8 +190,8 @@ class EventArchive:
 
     def query_time_range(
         self,
-        start_time: float,
-        end_time: float,
+        start_time: int,
+        end_time: int,
         *,
         event_type: str | None = None,
         initiator_type: str | None = None,
@@ -199,8 +199,8 @@ class EventArchive:
         """按时间范围查询归档事件。
 
         Args:
-            start_time: 起始时间（包含）。
-            end_time: 结束时间（包含）。
+            start_time: 起始 tick（包含）。
+            end_time: 结束 tick（包含）。
             event_type: 可选，按事件类型过滤。
             initiator_type: 可选，按发起方类型过滤。
 
@@ -224,8 +224,8 @@ class EventArchive:
     def query_entity(
         self,
         entity_id: str,
-        start_time: float,
-        end_time: float,
+        start_time: int,
+        end_time: int,
     ) -> list[Event]:
         """查询实体在归档中的事件。
 
@@ -233,8 +233,8 @@ class EventArchive:
 
         Args:
             entity_id: 实体唯一标识。
-            start_time: 起始时间（包含）。
-            end_time: 结束时间（包含）。
+            start_time: 起始 tick（包含）。
+            end_time: 结束 tick（包含）。
 
         Returns:
             该实体在时间范围内的事件列表，按时间排序。
@@ -257,8 +257,8 @@ class EventArchive:
         center_chunk: tuple[int, int],
         radius: int = 1,
         *,
-        start_time: float | None = None,
-        end_time: float | None = None,
+        start_time: int | None = None,
+        end_time: int | None = None,
     ) -> list[Event]:
         """按空间区域查询归档事件。
 

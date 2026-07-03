@@ -5,6 +5,7 @@
 
 import pytest
 from ascend.terminal import CommandExecutor, CommandResult
+from ascend.time import GAME_HOUR
 
 
 @pytest.fixture
@@ -56,7 +57,7 @@ class TestStatus:
         for cmd in ("st", "status"):
             result = executor.execute(cmd)
             assert result.success is True
-            assert "日" in result.output or "day" in result.output
+            assert "天" in result.output or "day" in result.output
             assert ":" in result.output  # 时间格式 HH:MM:SS
             assert executor._i18n.t("mode.realtime") in result.output
 
@@ -80,11 +81,11 @@ class TestPauseResume:
         """
         r1 = executor.execute("pause")
         assert r1.success is True
-        assert executor._paused is True
+        assert executor._clock.paused is True
 
         r2 = executor.execute("resume")
         assert r2.success is True
-        assert executor._paused is False
+        assert executor._clock.paused is False
 
     def test_T3_pause_twice(self, executor):
         """连续两次 pause，第二次返回 "already paused"。
@@ -188,12 +189,12 @@ class TestSleep:
         Act:
             执行 "sleep"。
         Assert:
-            游戏时间推进约 8 小时 (28800 游戏秒)，输出包含时间。
+            游戏时间推进约 8 小时，输出包含时间。
         """
         before = executor._clock.time
         result = executor.execute("sleep")
         assert result.success is True
-        assert executor._clock.time >= before + 8 * 3600 - 60  # 允许 1 分钟误差
+        assert executor._clock.time >= before + 8 * GAME_HOUR - 60
         assert "8" in result.output or "小时" in result.output
 
     def test_T9_sleep_with_hours(self, executor):
@@ -209,7 +210,7 @@ class TestSleep:
         before = executor._clock.time
         result = executor.execute("sleep 3.5")
         assert result.success is True
-        assert executor._clock.time >= before + 3.5 * 3600 - 60
+        assert executor._clock.time >= before + 3.5 * GAME_HOUR - 60
 
 
 # ══════════════════════════════════════════════════════════
@@ -232,7 +233,7 @@ class TestTravel:
         before = executor._clock.time
         result = executor.execute("travel")
         assert result.success is True
-        assert executor._clock.time >= before + 3600 - 60
+        assert executor._clock.time >= before + GAME_HOUR - 60
 
     def test_T11_travel_with_hours(self, executor):
         """execute("travel 2") 快进 2 小时。
@@ -247,7 +248,7 @@ class TestTravel:
         before = executor._clock.time
         result = executor.execute("travel 2")
         assert result.success is True
-        assert executor._clock.time >= before + 2 * 3600 - 60
+        assert executor._clock.time >= before + 2 * GAME_HOUR - 60
 
 
 # ══════════════════════════════════════════════════════════
@@ -310,7 +311,7 @@ class TestMode:
         result = executor.execute("mode")
         assert result.success is True
         assert "realtime" in result.output or "当前" in result.output
-        assert "sleep" in result.output or "travel" in result.output
+        assert "fast" in result.output or "paused" in result.output
 
     def test_T15_mode_switch(self, executor):
         """execute("mode sleep") 切换模式。
@@ -322,10 +323,9 @@ class TestMode:
         Assert:
             executor 的模式切换为 SLEEP，输出包含确认。
         """
-        result = executor.execute("mode sleep")
+        result = executor.execute("mode fast")
         assert result.success is True
-        from ascend.time import TimeMode
-        assert executor._clock.mode == TimeMode.SLEEP
+        assert executor._clock.speed == 120.0
 
     def test_T16_mode_invalid(self, executor):
         """execute("mode invalid") 未知模式。
@@ -409,7 +409,7 @@ class TestEvents:
         Assert:
             输出包含事件列表。
         """
-        # 先 tick 以产生 game_minute 事件
+        # 先 tick 以产生 game_tick 事件
         executor.execute("tick")
         executor.execute("tick")
         result = executor.execute("events")
@@ -612,4 +612,4 @@ class TestRepr:
         """
         r = repr(executor)
         assert "CommandExecutor" in r
-        assert str(executor._clock.mode.key) in r
+        assert "×1.0" in r

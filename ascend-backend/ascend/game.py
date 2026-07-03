@@ -18,7 +18,7 @@ from ascend.world_tree import world_tree
 
 logger = get_logger(__name__)
 
-TICK_RATE: float = 30.0        # 后端 tick 频率（Hz）
+TICK_RATE: float = 24.0        # 后端 tick 频率（Hz）
 TICK_DT: float = 1.0 / TICK_RATE
 SERVER_HOST: str = "127.0.0.1"
 SERVER_PORT: int = 9081
@@ -47,7 +47,6 @@ class GameEngine:
         self.clock: WorldClock = WorldClock()
         self.calendar: GameCalendar = GameCalendar()
         self.i18n: I18n = I18n()
-        self._paused: bool = False
         self._executor: CommandExecutor | None = None
         self._running: bool = False
         self._thread: threading.Thread | None = None
@@ -73,7 +72,7 @@ class GameEngine:
         Returns:
             True 表示暂停。
         """
-        return self._paused
+        return self.clock.paused
 
     @paused.setter
     def paused(self, value: bool) -> None:
@@ -82,7 +81,10 @@ class GameEngine:
         Args:
             value: True 暂停，False 恢复。
         """
-        self._paused = bool(value)
+        if value:
+            self.clock.pause()
+        else:
+            self.clock.resume()
 
     def start(self) -> None:
         """初始化所有子系统并在后台启动 tick 循环。
@@ -176,10 +178,9 @@ class GameEngine:
                 _real_time.sleep(sleep_time)
 
     def _tick(self) -> None:
-        """单个 tick：推进时钟（非暂停时）+ 处理所有排队消息。"""
-        if self.clock and not self._paused:
-            self.clock.tick(TICK_DT)
-            # 累加活跃时间供 st/rp 指令显示
+        """单个 tick：推进时钟 + 处理所有排队消息。"""
+        if self.clock:
+            self.clock.tick()
             if hasattr(self, "_executor") and self._executor is not None:
                 self._executor._active_real_time += TICK_DT
         if self.dispatcher:

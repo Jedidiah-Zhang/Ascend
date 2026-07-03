@@ -298,8 +298,8 @@ class WorldTree:
 
     def get_events_in_range(
         self,
-        start_time: float,
-        end_time: float,
+        start_time: int,
+        end_time: int,
         *,
         event_type: str | None = None,
         initiator_type: str | None = None,
@@ -347,7 +347,7 @@ class WorldTree:
 
         return results
 
-    def _bisect_time(self, target: float, find_end: bool = False) -> int:
+    def _bisect_time(self, target: int, find_end: bool = False) -> int:
         """二分查找目标时间在事件日志中的插入位置。
 
         Args:
@@ -375,8 +375,8 @@ class WorldTree:
         center_chunk: tuple[int, int],
         radius: int = 1,
         *,
-        start_time: float | None = None,
-        end_time: float | None = None,
+        start_time: int | None = None,
+        end_time: int | None = None,
     ) -> list[Event]:
         """按空间区域查询事件。
 
@@ -420,7 +420,7 @@ class WorldTree:
         ):
             arch_end = min(
                 end_time if end_time is not None else float("inf"),
-                earliest_ts - 0.001,
+                earliest_ts - 1,
             )
             archived = archive.query_region(
                 center_chunk, radius,
@@ -433,8 +433,8 @@ class WorldTree:
     def get_entity_events(
         self,
         entity_id: str,
-        start_time: float,
-        end_time: float,
+        start_time: int,
+        end_time: int,
     ) -> list[Event]:
         """查询实体参与的所有事件。
 
@@ -558,7 +558,7 @@ class WorldTree:
         if max_memory_events is not None:
             self._max_memory_events = max_memory_events
 
-    def _trim(self, before_time: float) -> int:
+    def _trim(self, before_time: int) -> int:
         """移除早于指定时间的事件体以回收内存（内部方法，权重感知）。
 
         由 publish() 在事件数超过 max_memory_events 时自动调用，

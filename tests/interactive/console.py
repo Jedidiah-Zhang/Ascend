@@ -114,7 +114,7 @@ class GameConsole:
             last = now
 
             if not self._executor.paused:
-                self.clock.tick(dt)
+                self.clock.tick()
                 # 上限 2×dt，防止计入主线程耗时
                 self._executor._active_real_time += min(elapsed, dt * 2)
 

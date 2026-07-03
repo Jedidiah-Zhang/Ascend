@@ -17,7 +17,7 @@ class Event:
     由各系统生成，事件系统只负责记录和路由，不校验 data 内容。
 
     Attributes:
-        timestamp: 世界时间（浮点，单位：游戏秒）。
+        timestamp: 世界时间（整数，单位：tick）。
         location: 事件位置 (chunk_x, chunk_y, tile_x?, tile_y?)。
         initiator_type: 发起方类型 "system" | "npc" | "player"。
         initiator_id: 发起方唯一标识。
@@ -29,7 +29,7 @@ class Event:
         co_participants: 共同参与方 ID 列表。
         id: 事件唯一标识（UUID hex，自动生成）。
     """
-    timestamp: float
+    timestamp: int
     location: tuple[int, int, int | None, int | None]
     initiator_type: str
     initiator_id: str

@@ -59,7 +59,7 @@ _SCALES: dict[str, dict] = {
 _params = _SCALES[_STRESS_SCALE]
 
 
-def make_event(timestamp=0.0, event_type="test", initiator_id="a",
+def make_event(timestamp=0, event_type="test", initiator_id="a",
                location=(0, 0, None, None), **kwargs) -> Event:
     """快捷构造测试事件。"""
     affected = kwargs.pop("affected", None)
@@ -90,7 +90,7 @@ class TestMemoryBound:
         bus = EventBus(validate=False, max_memory_events=max_n)
 
         for i in range(n):
-            bus.publish(make_event(timestamp=float(i), id=f"e{i}"))
+            bus.publish(make_event(timestamp=i, id=f"e{i}"))
 
         assert bus.event_count <= max_n
         # 最近的事件应在内存中
@@ -102,9 +102,9 @@ class TestMemoryBound:
         n = _params["publish_n"]
 
         for i in range(n):
-            bus.publish(make_event(timestamp=float(i)))
+            bus.publish(make_event(timestamp=i))
 
-        results = bus.get_events_in_range(0, float(n))
+        results = bus.get_events_in_range(0, n)
         for a, b in zip(results, results[1:]):
             assert a.timestamp <= b.timestamp
 
@@ -114,7 +114,7 @@ class TestMemoryBound:
         n = _params["publish_n"]
 
         for i in range(n):
-            bus.publish(make_event(timestamp=float(i), id=f"e{i}"))
+            bus.publish(make_event(timestamp=i, id=f"e{i}"))
 
         # 最近的事件应可通过 ID 查到
         for i in range(n - 100, n):
@@ -141,7 +141,7 @@ class TestArchiveIntegrity:
         try:
             for i in range(n):
                 bus.publish(make_event(
-                    timestamp=float(i), id=f"e{i}",
+                    timestamp=i, id=f"e{i}",
                     initiator_id=f"entity_{i % 1000}",
                     location=(i % 50, (i // 50) % 50, None, None),
                 ))
@@ -151,7 +151,7 @@ class TestArchiveIntegrity:
             assert len(earliest) > 0, "早期事件应从归档中检索"
 
             # 按实体查询归档
-            entity_events = bus.get_entity_events("entity_0", 0, float(n))
+            entity_events = bus.get_entity_events("entity_0", 0, n)
             assert len(entity_events) > 0
 
             # 按区域查询归档
@@ -176,7 +176,7 @@ class TestArchiveIntegrity:
                        archive_path=path)
         try:
             special = make_event(
-                timestamp=0.0, id="special",
+                timestamp=0, id="special",
                 event_type="ritual",
                 initiator_id="npc_1",
                 location=(10, 20, 5, 5),
@@ -189,7 +189,7 @@ class TestArchiveIntegrity:
 
             # 触发自动 trim
             for i in range(max_n + 10):
-                bus.publish(make_event(timestamp=float(i + 1)))
+                bus.publish(make_event(timestamp=i + 1))
 
             ev = bus.get_event_by_id("special")
             assert ev is not None
@@ -224,13 +224,13 @@ class TestCausalChainStress:
             for i, cid in enumerate(chain_ids):
                 caused = [chain_ids[i - 1]] if i > 0 else []
                 bus.publish(make_event(
-                    timestamp=float(i * 10), id=cid,
+                    timestamp=i * 10, id=cid,
                     caused_by=caused,
                 ))
 
             # 填充大量事件触发多次 trim
             for i in range(_params["publish_n"]):
-                bus.publish(make_event(timestamp=float(chain_len * 10 + i)))
+                bus.publish(make_event(timestamp=chain_len * 10 + i))
 
             # 追溯因果链（通过 lookup 从归档补全）
             chain = bus.graph.get_causal_chain(
@@ -264,7 +264,7 @@ class TestCausalChainStress:
                     cid = f"chain{c}_e{i}"
                     caused = [f"chain{c}_e{i - 1}"] if i > 0 else []
                     bus.publish(make_event(
-                        timestamp=float(c * 100 + i), id=cid,
+                        timestamp=c * 100 + i, id=cid,
                         caused_by=caused,
                     ))
                     if i == chain_length - 1:
@@ -272,7 +272,7 @@ class TestCausalChainStress:
 
             # 填充触发 trim
             for i in range(_params["publish_n"]):
-                bus.publish(make_event(timestamp=float(10000 + i)))
+                bus.publish(make_event(timestamp=10000 + i))
 
             # 验证每条链
             for leaf_id in leaf_ids:
@@ -305,7 +305,7 @@ class TestConcurrentStress:
             try:
                 for i in range(per_thread):
                     bus.publish(make_event(
-                        timestamp=float(start_id + i),
+                        timestamp=start_id + i,
                         id=f"t{start_id}_{i}",
                     ))
             except Exception as e:
@@ -336,7 +336,7 @@ class TestConcurrentStress:
                 if stop.is_set():
                     break
                 bus.publish(make_event(
-                    timestamp=float(i), id=f"pq_{i}",
+                    timestamp=i, id=f"pq_{i}",
                 ))
 
         def querier():
@@ -344,7 +344,7 @@ class TestConcurrentStress:
                 if stop.is_set():
                     break
                 try:
-                    bus.get_events_in_range(0, float(n_publish))
+                    bus.get_events_in_range(0, n_publish)
                     bus.get_event_by_id(f"pq_{n_publish // 2}")
                     bus.event_count
                 except Exception as e:
@@ -375,7 +375,7 @@ class TestConcurrentStress:
             for i in range(n):
                 parent = f"g{thread_id}_{i - 1}" if i > 0 else None
                 bus.publish(make_event(
-                    timestamp=float(thread_id * n + i),
+                    timestamp=thread_id * n + i,
                     id=f"g{thread_id}_{i}",
                     caused_by=[parent] if parent else [],
                 ))
@@ -405,7 +405,7 @@ class TestThroughput:
         start = time.perf_counter()
         for i in range(n):
             bus.publish(make_event(
-                timestamp=float(i), id=f"tp_{i}",
+                timestamp=i, id=f"tp_{i}",
             ))
         elapsed = time.perf_counter() - start
 
@@ -425,7 +425,7 @@ class TestThroughput:
         start = time.perf_counter()
         for i in range(n):
             bus.publish(make_event(
-                timestamp=float(i), id=f"atp_{i}",
+                timestamp=i, id=f"atp_{i}",
             ))
         elapsed = time.perf_counter() - start
 
@@ -445,14 +445,14 @@ class TestThroughput:
 
         for i in range(n):
             bus.publish(make_event(
-                timestamp=float(i), id=f"q_{i}",
+                timestamp=i, id=f"q_{i}",
                 initiator_id=f"e_{i % 100}",
                 location=(i % 50, (i // 50) % 50, None, None),
             ))
 
         # 时间范围查询
         start = time.perf_counter()
-        results = bus.get_events_in_range(0, float(n))
+        results = bus.get_events_in_range(0, n)
         elapsed = time.perf_counter() - start
         print(f"\n  时间范围查询: {len(results)} 结果 / {elapsed:.4f}秒")
 
@@ -465,7 +465,7 @@ class TestThroughput:
 
         # 实体查询
         start = time.perf_counter()
-        entity_events = bus.get_entity_events("e_0", 0, float(n))
+        entity_events = bus.get_entity_events("e_0", 0, n)
         elapsed = time.perf_counter() - start
         print(f"  实体查询: {len(entity_events)} 结果 / {elapsed:.4f}秒")
 
@@ -484,7 +484,7 @@ class TestGraphConsistency:
 
         for i in range(n):
             bus.publish(make_event(
-                timestamp=float(i), id=f"gc_{i}",
+                timestamp=i, id=f"gc_{i}",
                 caused_by=[f"gc_{i - 1}"] if i > 0 and i % 10 == 0 else [],
             ))
 
@@ -498,7 +498,7 @@ class TestGraphConsistency:
         bus = EventBus(validate=False,
                        max_memory_events=_params["max_events"])
         for i in range(10000):
-            bus.publish(make_event(timestamp=float(i)))
+            bus.publish(make_event(timestamp=i))
         r = repr(bus.graph)
         assert "EventGraph" in r
         assert "nodes=" in r

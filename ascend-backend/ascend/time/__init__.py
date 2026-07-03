@@ -1,22 +1,21 @@
-"""时间系统 — 世界时钟、时间模式与游戏日历。
+"""时间系统 — 世界时钟、游戏日历。
 
-用法:
-    from ascend.time import WorldClock, GameCalendar, TimeMode, GAME_SECONDS_PER_REAL_SECOND
+Usage:
+    from ascend.time import WorldClock, GameCalendar, GAME_MINUTE, GAME_HOUR
 
     clock = WorldClock()
-    calendar = GameCalendar()
-    clock.tick(0.016)  # 约 60fps
+    clock.tick()        # 每帧调用
+    clock.speed = 2.0   # 双倍速
+    clock.pause()
 """
 
-from .mode import TimeMode, GAME_SECONDS_PER_REAL_SECOND, GAME_MINUTE, GAME_HOUR, GAME_DAY, GAME_YEAR
+from .mode import GAME_MINUTE, GAME_HOUR, GAME_DAY, GAME_YEAR
 from .clock import WorldClock
 from .calendar import GameCalendar
 
 __all__ = [
     "WorldClock",
     "GameCalendar",
-    "TimeMode",
-    "GAME_SECONDS_PER_REAL_SECOND",
     "GAME_MINUTE",
     "GAME_HOUR",
     "GAME_DAY",

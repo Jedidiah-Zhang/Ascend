@@ -72,7 +72,7 @@ class EntityManager:
         tile_y: int | None = None,
         *,
         data: dict | None = None,
-        game_time: float = 0.0,
+        game_time: int = 0,
     ) -> Entity:
         """创建并注册一个实体，发布 entity_spawned 事件。
 
@@ -81,7 +81,7 @@ class EntityManager:
             chunk_x, chunk_y: 所在 chunk 坐标。
             tile_x, tile_y: chunk 内 tile 坐标，可为 None。
             data: 附加数据。
-            game_time: 当前游戏时间。
+            game_time: 当前游戏时间（tick 数）。
 
         Returns:
             创建的实体。
@@ -115,7 +115,7 @@ class EntityManager:
         logger.debug("spawn: %s type=%s at chunk %s", entity.id, entity_type.name, entity.chunk)
         return entity
 
-    def despawn(self, entity_id: str, *, game_time: float = 0.0) -> Entity | None:
+    def despawn(self, entity_id: str, *, game_time: int = 0) -> Entity | None:
         """移除实体，发布 entity_despawned 事件。
 
         Args:
@@ -156,7 +156,7 @@ class EntityManager:
         tile_x: int | None = None,
         tile_y: int | None = None,
         *,
-        game_time: float = 0.0,
+        game_time: int = 0,
     ) -> bool:
         """移动实体到新位置，发布 entity_moved 事件。
 

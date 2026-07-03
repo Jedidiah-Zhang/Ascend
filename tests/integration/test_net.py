@@ -203,7 +203,7 @@ class TestEventForwarding:
 
         # 发布事件
         event = Event(
-            timestamp=100.0,
+            timestamp=100,
             location=(0, 0, None, None),
             initiator_type="system",
             initiator_id="test_system",
@@ -229,7 +229,7 @@ class TestEventForwarding:
 
         for i in range(3):
             event = Event(
-                timestamp=float(i * 10),
+                timestamp=i * 10,
                 location=(i, 0, None, None),
                 initiator_type="system",
                 initiator_id=f"sys_{i}",
@@ -308,7 +308,7 @@ if __name__ == "__main__":
     bridge.install()
 
     event = Event(
-        timestamp=0.0,
+        timestamp=0,
         location=(0, 0, None, None),
         initiator_type="system",
         initiator_id="test",

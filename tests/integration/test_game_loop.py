@@ -12,7 +12,7 @@ import time as _real_time
 from dataclasses import dataclass, field
 
 from ascend.world_tree import bus
-from ascend.time import WorldClock, GameCalendar, TimeMode, GAME_DAY, GAME_HOUR
+from ascend.time import WorldClock, GameCalendar, GAME_DAY, GAME_HOUR
 from ascend.log import setup_logging, get_logger
 
 logger = get_logger(__name__)
@@ -82,7 +82,7 @@ class GameLoop:
                 self.session.day_changes.append(event.data)
             logger.info("📅 新的一天: 第 %d 天", event.data["day"])
 
-        self._unsubscribers.append(bus.subscribe("game_minute", on_tick))
+        self._unsubscribers.append(bus.subscribe("game_tick", on_tick))
         self._unsubscribers.append(bus.subscribe("day_change", on_day_change))
 
     # ── 生命周期 ──────────────────────────────────────────────────
@@ -99,8 +99,8 @@ class GameLoop:
             start_real_time=_real_time.monotonic(),
         )
         logger.info(
-            "会话开始 | 模式=%s 第 %d 天",
-            self.clock.mode.key, self.calendar.day,
+            "会话开始 | speed=×%.1f 第 %d 天",
+            self.clock.speed, self.calendar.day,
         )
         return self.session
 
@@ -129,7 +129,7 @@ class GameLoop:
         logger.info("实时运行 %.1fs (%d frames, %.0f fps)", real_seconds, total_frames, fps)
 
         for frame in range(total_frames):
-            self.clock.tick(dt)
+            self.clock.tick()
 
             # 每 10 游戏分钟打印一次状态
             if frame % 600 == 0 and frame > 0:
@@ -139,33 +139,38 @@ class GameLoop:
                     self.calendar.time_of_day(self.clock.time) / GAME_HOUR,
                 )
 
-    def run_days(self, days: int, mode: TimeMode = TimeMode.SLEEP) -> None:
+    def run_days(self, days: int) -> None:
         """模拟指定游戏天数。
 
         Args:
             days: 要模拟的游戏天数。
-            mode: 时间模式，默认 SLEEP。
         """
         if self.session is None:
             self.start()
 
         target = self.clock.time + days * GAME_DAY
-        logger.info("快进 %d 天 (mode=%s)", days, mode.key)
-        self.clock.fast_forward(target, mode=mode)
+        logger.info("快进 %d 天", days)
+        old_speed = self.clock.speed
+        self.clock.speed = 120
+        self.clock.run_to(target)
+        self.clock.speed = old_speed
 
-    def run_until(self, game_time: float, mode: TimeMode = TimeMode.SLEEP) -> None:
+    def run_until(self, game_time: int, speed: float = 120.0) -> None:
         """模拟到指定游戏时间。
 
         Args:
             game_time: 目标游戏时间（秒）。
-            mode: 时间模式，默认 SLEEP。
+            speed: 时间速度，默认 120。
         """
         if self.session is None:
             self.start()
 
         days = (game_time - self.clock.time) / GAME_DAY
         logger.info("快进 %.1f 天 → 目标时间 %.0f", days, game_time)
-        self.clock.fast_forward(game_time, mode=mode)
+        old_speed = self.clock.speed
+        self.clock.speed = speed
+        self.clock.run_to(game_time)
+        self.clock.speed = old_speed
 
     # ── 报告 ──────────────────────────────────────────────────────
 
@@ -183,11 +188,11 @@ class GameLoop:
             "=" * 50,
             "  Ascend 游戏运行报告",
             "=" * 50,
-            f"  游戏时间:      {s.clock.time:,.0f} 秒",
+            f"  游戏时间:      {s.clock.time:,} tick",
             f"  当前日:        第 {s.calendar.day} 天",
             f"  经过天数:      {s.calendar.elapsed_days} 天",
             f"  日期变更:      {s.calendar.day_change_count} 次",
-            f"  时间模式:      {s.clock.mode.key} ({s.clock.mode.description})",
+            f"  速度:          ×{s.clock.speed:.1f}" + (" (暂停)" if s.clock.paused else ""),
             f"  累计 tick:     {s.clock.tick_count:,}",
             f"  真实耗时:      {s.elapsed_real():.2f}s",
             f"  总线事件数:    {bus.event_count:,}",
@@ -226,10 +231,10 @@ class TestGameLoop:
 
             # 验证：时钟时间应该接近 initial + 3 * GAME_DAY
             expected = initial_time + 3 * GAME_DAY
-            assert abs(loop.clock.time - expected) < 1.0, \
-                f"期望 time≈{expected}，实际 time={loop.clock.time}"
+            assert loop.clock.time == expected, \
+                f"期望 time={expected}，实际 time={loop.clock.time}"
 
-            # 验证：总线上应该有 game_minute 事件和 day_change 事件
+            # 验证：总线上应该有 game_tick 事件和 day_change 事件
             assert bus.event_count > 0, "总线应该有事件"
             assert len(session.day_changes) == 3, \
                 f"应该有 3 次 day_change，实际 {len(session.day_changes)}"
@@ -251,12 +256,11 @@ class TestGameLoop:
 
         try:
             loop.start()
-            loop.clock.set_mode(TimeMode.REALTIME)
+            loop.clock.speed = 1.0
 
-            # tick 600 帧（约 10 游戏秒真实时间）
-            # 600 * 0.016 * 12 = 115.2 游戏秒，远不到一天
+            # tick 600 帧（600 tick，约 5 游戏分钟）
             for _ in range(600):
-                loop.clock.tick(0.016)
+                loop.clock.tick()
 
             # 应该没有触发日期变更
             assert loop.calendar.day == 1
@@ -287,24 +291,21 @@ class TestGameLoop:
         finally:
             loop.stop()
 
-    def test_mode_switch_during_session(self):
-        """运行时切换时间模式。"""
+    def test_speed_switch_during_session(self):
+        """运行时切换时间速度。"""
         loop = GameLoop()
 
         try:
             loop.start()
 
-            # SLEEP 模式快进
-            loop.run_days(1, mode=TimeMode.SLEEP)
+            # 高速模式快进
+            loop.clock.speed = 120
+            loop.run_days(1)
             assert loop.calendar.day == 2
 
-            # 切换到 FAST_TRAVEL 模式快进
-            loop.run_days(1, mode=TimeMode.FAST_TRAVEL)
-            assert loop.calendar.day == 3
-
-            # 恢复实时模式
-            loop.clock.set_mode(TimeMode.REALTIME)
-            assert loop.clock.mode == TimeMode.REALTIME
+            # 恢复实时速度
+            loop.clock.speed = 1.0
+            assert loop.clock.speed == 1.0
 
         finally:
             loop.stop()
@@ -319,13 +320,13 @@ if __name__ == "__main__":
     try:
         loop.start()
 
-        print("\n  ▶ 实时运行 2 秒（约 24 游戏秒）...")
+        print("\n  ▶ 实时运行 2 秒（约 120 tick）...")
         loop.run_realtime(2.0)
-        print(f"     游戏时间: {loop.clock.time:.0f}s, 第 {loop.calendar.day} 天")
+        print(f"     游戏时间: {loop.clock.time} tick, 第 {loop.calendar.day} 天")
 
         print("\n  ▶ 快进到第 2 天...")
         loop.run_days(1)
-        print(f"     游戏时间: {loop.clock.time:.0f}s, 第 {loop.calendar.day} 天")
+        print(f"     游戏时间: {loop.clock.time} tick, 第 {loop.calendar.day} 天")
 
         print("\n  ▶ 快进 4 天（到第 6 天）...")
         loop.run_days(4)
