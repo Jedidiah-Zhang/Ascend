@@ -1,7 +1,7 @@
 """大陆生成模块 — 层1 全局低分辨率大陆生成。
 
 在世界创建时调用一次，生成低分辨率（100m/采样点）宏观场：
-  - 海拔场（5 octave Perlin 噪声 + 10×6 权重网格）
+   - 海拔场（两层 Perlin：低频大陆轮廓 + 高频地形细节）
   - 温度场（纬度渐变 + 海拔降温）
   - 降雨场（噪声 + 雨影效应）
   - 气候带（热/温/寒/干）
@@ -21,7 +21,6 @@
     is_land = data.is_land(1200.5, 3400.2)
 """
 
-import math
 from array import array
 from dataclasses import dataclass, field
 from typing import Union, Sequence
@@ -38,16 +37,12 @@ class ContinentParams:
         height_km: 大陆南北高度 (km)。
         sample_resolution: 层1采样分辨率 (m/采样点)。
         land_ratio: 目标陆地比例 [0-1]。
-        weight_cols: 权重区域列数。
-        weight_rows: 权重区域行数。
     """
 
     width_km: float = 100.0
     height_km: float = 60.0
     sample_resolution: float = 100.0
     land_ratio: float = 0.55
-    weight_cols: int = 10
-    weight_rows: int = 6
 
     def __repr__(self) -> str:
         return (
@@ -303,81 +298,52 @@ class ContinentGenerator:
     def _generate_elevation(
         self, w: int, h: int,
     ) -> tuple[list[bool], list[float]]:
-        """5 octave Perlin + 10×6 权重网格 → 海拔 + 陆地。
+        """两层 Perlin 噪声 → 海拔 + 陆地。
 
-        改用 perlin_octave_grid() 批量接口——一次 C 调用替代 600K 次 ctypes
-        逐像素跨越，约 30-50x 加速。
+        大陆轮廓层（低频）：决定海陆分布的大洲形状。
+        地形细节层（高频）：叠加山地丘陵等局部变化。
+        温和的中心倾向避免"四周陆地中间海洋"的环形分布。
+        分位数校准确保陆地比例稳定在 land_ratio。
         """
-        noise = PerlinNoise(self._seed + 10002)
-        # 批量采样：sample_resolution / 30000 作为等效频率
-        effective_freq = self._params.sample_resolution / 30000.0
-        noise_field = noise.octave_grid(
-            0.5, 0.5, w, h, frequency=effective_freq, octaves=5,
+        noise_terrain = PerlinNoise(self._seed + 10002)
+        noise_continent = PerlinNoise(self._seed + 10003)
+
+        terrain_freq = self._params.sample_resolution / 30000.0
+        terrain_field = noise_terrain.octave_grid(
+            0.5, 0.5, w, h, frequency=terrain_freq, octaves=5,
         )
 
-        weight_grid = self._generate_weight_grid(
-            self._params.weight_cols, self._params.weight_rows)
-        cell_w = w / self._params.weight_cols
-        cell_h = h / self._params.weight_rows
+        continent_freq = 1.5 / w
+        continent_field = noise_continent.octave_grid(
+            0.5, 0.5, w, h, frequency=continent_freq, octaves=2,
+        )
+
+        n = w * h
+        mixed = [0.0] * n
+        for i in range(n):
+            x = i % w
+            y = i // w
+
+            dx = (x / w - 0.5) * 2.0
+            dy = (y / h - 0.5) * 2.0
+            dist = max(abs(dx), abs(dy))
+            center = max(0.0, 1.0 - dist * 2.5)
+
+            mixed[i] = continent_field[i] * 0.7 + terrain_field[i] * 0.3 + center * 0.12
+
+        target = self._params.land_ratio
+        sorted_vals = sorted(mixed)
+        sea_idx = int(n * (1.0 - target))
+        sea_idx = max(0, min(n - 1, sea_idx))
+        sea_level = sorted_vals[sea_idx]
 
         elevation: list[float] = []
-        for y in range(h):
-            for x in range(w):
-                val = noise_field[y * w + x]
-
-                gx = x / cell_w - 0.5
-                gy = y / cell_h - 0.5
-                weight = self._sample_weight(weight_grid,
-                                              self._params.weight_cols,
-                                              self._params.weight_rows, gx, gy)
-                sea_level = (0.5 - weight) * 2.0
-                adjusted = val - sea_level
-                elevation.append(adjusted * 4000.0)
+        for i in range(n):
+            elev = (mixed[i] - sea_level) * 4000.0
+            elevation.append(elev)
 
         land_mask = [e > 0 for e in elevation]
         return land_mask, elevation
-
-    def _generate_weight_grid(self, cols: int, rows: int) -> list[list[float]]:
-        """10×6 随机权重网格 + 边缘衰减。"""
-        import random
-        rng = random.Random(self._seed + 7777777)
-
-        grid: list[list[float]] = []
-        for r in range(rows):
-            row: list[float] = []
-            nr = r / (rows - 1) if rows > 1 else 0.5
-            for c in range(cols):
-                nc = c / (cols - 1) if cols > 1 else 0.5
-                w = rng.gauss(0.55, 0.12)
-                w = max(0.25, min(0.82, w))
-
-                dist_to_edge = min(nc, nr, 1.0 - nc, 1.0 - nr)
-                if dist_to_edge < 0.15:
-                    t = dist_to_edge / 0.15
-                    edge_factor = 0.75 + 0.25 * t * t * (3.0 - 2.0 * t)
-                else:
-                    edge_factor = 1.0
-                w *= edge_factor
-                row.append(w)
-            grid.append(row)
-        return grid
-
-    @staticmethod
-    def _sample_weight(
-        grid: list[list[float]], cols: int, rows: int,
-        gx: float, gy: float,
-    ) -> float:
-        """双线性插值采样权重网格。"""
-        gx = max(0.0, min(cols - 1.001, gx))
-        gy = max(0.0, min(rows - 1.001, gy))
-        x0, y0 = int(gx), int(gy)
-        x1, y1 = min(x0 + 1, cols - 1), min(y0 + 1, rows - 1)
-        tx, ty = gx - x0, gy - y0
-        w00, w10 = grid[y0][x0], grid[y0][x1]
-        w01, w11 = grid[y1][x0], grid[y1][x1]
-        w0 = w00 + (w10 - w00) * tx
-        w1 = w01 + (w11 - w01) * tx
-        return w0 + (w1 - w0) * ty
 
     # ── 气候计算 ──────────────────────────────────────────
 
@@ -389,31 +355,43 @@ class ContinentGenerator:
         温度 = 海平面纬度温度 - 海拔 × 6.5°C/km
         降雨 = 噪声 × 雨影因子
 
-        改用 perlin_octave_grid() 批量接口——两次 C 调用替代 1.2M 次 ctypes 跨越。
+        温度基线由 seed 决定的方向梯度给出，往某方向走持续变暖、反方向变冷。
+        叠加微量噪声使气候带边界自然蜿蜒。
         """
-        from .climate import rainfall_from_noise, climate_zone_from_values
+        import math
+        from .climate import rainfall_from_noise, climate_zone_from_values, LAPSE_RATE
 
-        # 批量采样纬度噪声（1 octave）和降雨噪声（3 octaves）
-        lat_noise = PerlinNoise(self._seed + 99999)
-        rain_noise = PerlinNoise(self._seed + 88888)
-        lat_field = lat_noise.octave_grid(
+        # seed → 随机温度梯度方向
+        angle = ((self._seed * 2654435761) & 0xFFFFFFFF) / 0xFFFFFFFF * 2.0 * math.pi
+        gx = math.cos(angle)
+        gy = math.sin(angle)
+
+        lat_wiggle = PerlinNoise(self._seed + 99999)
+        lat_wiggle_field = lat_wiggle.octave_grid(
             0.5, 0.5, w, h,
-            frequency=self._params.sample_resolution / 40000.0, octaves=1,
+            frequency=self._params.sample_resolution / 15000.0, octaves=1,
         )
+
+        rain_noise = PerlinNoise(self._seed + 88888)
         rain_field_raw = rain_noise.octave_grid(
             0.5, 0.5, w, h,
             frequency=self._params.sample_resolution / 25000.0, octaves=3,
         )
 
         rain_shadow = self._compute_rain_shadow(elevation, w, h)
-        LAPSE = 6.5 / 1000.0
+        LAPSE = LAPSE_RATE / 1000.0
 
         temp_field: list[float] = []
         rain_field: list[float] = []
         climate_field: list[int] = []
 
         for i in range(w * h):
-            lat_n = lat_field[i]
+            x = i % w
+            y = i // w
+            px = (x / w - 0.5) * 2.0
+            py = (y / h - 0.5) * 2.0
+            lat_n = (px * gx + py * gy) * 0.6 + lat_wiggle_field[i] * 0.15
+
             sea_temp = lat_n * 25.0 + 10.0
             sea_temp = max(-20.0, min(38.0, sea_temp))
 
@@ -434,45 +412,136 @@ class ContinentGenerator:
     def _compute_rain_shadow(
         self, elevation: list[float], w: int, h: int,
     ) -> list[float]:
-        """雨影因子：盛行西风，山脉背风面降雨锐减。
+        """雨影因子：山脉背风面降雨锐减，盛行风向由 seed 决定。
 
-        原算法每像素向西回溯 20 步（O(n×20)），改为滑动窗口前缀扫描（O(n)）：
-        1. 每行计算向西上坡量的前缀和
-        2. 滑动窗口 = pref[x] - pref[x-WINDOW]（x>WINDOW 时）
+        支持四个盛行风向（西、东、南、北）。风向按 seed 确定。
+        滑动窗口前缀扫描：从迎风侧向背风侧累加上坡量，
+        累积爬升越多 → 背风侧降雨衰减越大。
+        """
+        # seed 决定盛行风向: 0=西风, 1=东风, 2=南风, 3=北风
+        wind = (self._seed % 37 * 13) % 4
+
+        if wind == 0:
+            return self._rain_shadow_westerly(elevation, w, h)
+        elif wind == 1:
+            return self._rain_shadow_easterly(elevation, w, h)
+        elif wind == 2:
+            return self._rain_shadow_southerly(elevation, w, h)
+        else:
+            return self._rain_shadow_northerly(elevation, w, h)
+
+    def _rain_shadow_westerly(
+        self, elevation: list[float], w: int, h: int,
+    ) -> list[float]:
+        """盛行西风：西侧迎风多雨，东侧背风干旱。
+        扫描每行从左到右，累加上坡量。"""
+        return self._rain_shadow_along_axis(
+            elevation, w, h, scan_axis=0, windward=0,
+        )
+
+    def _rain_shadow_easterly(
+        self, elevation: list[float], w: int, h: int,
+    ) -> list[float]:
+        """盛行东风：东侧迎风多雨，西侧背风干旱。
+        扫描每行从右到左，累加上坡量。"""
+        return self._rain_shadow_along_axis(
+            elevation, w, h, scan_axis=0, windward=1,
+        )
+
+    def _rain_shadow_southerly(
+        self, elevation: list[float], w: int, h: int,
+    ) -> list[float]:
+        """盛行南风：南侧迎风多雨，北侧背风干旱。
+        扫描每列从下到上，累加上坡量。"""
+        return self._rain_shadow_along_axis(
+            elevation, w, h, scan_axis=1, windward=0,
+        )
+
+    def _rain_shadow_northerly(
+        self, elevation: list[float], w: int, h: int,
+    ) -> list[float]:
+        """盛行北风：北侧迎风多雨，南侧背风干旱。
+        扫描每列从上到下，累加上坡量。"""
+        return self._rain_shadow_along_axis(
+            elevation, w, h, scan_axis=1, windward=1,
+        )
+
+    @staticmethod
+    def _rain_shadow_along_axis(
+        elevation: list[float], w: int, h: int,
+        scan_axis: int, windward: int,
+    ) -> list[float]:
+        """沿主轴扫描计算雨影因子。
+
+        Args:
+            scan_axis: 0=沿行扫描（风向东西），1=沿列扫描（风向南北）。
+            windward: 0=迎风侧在起点（如西风扫描从左→右），1=迎风侧在终点。
         """
         factors: list[float] = [0.0] * (w * h)
-        WINDOW = 20
+        WINDOW = 40
 
-        for y in range(h):
-            row_base = y * w
+        if scan_axis == 0:
+            outer, inner = h, w
+        else:
+            outer, inner = w, h
 
-            # Pass 1: 前缀和 — west_up[x] = max(0, h[x-1] - h[x])
+        for o in range(outer):
+            # 前缀和：沿扫描方向累加上坡量
             pref: list[float] = []
             running = 0.0
-            for x in range(w):
-                if x > 0:
-                    gain = elevation[row_base + x - 1] - elevation[row_base + x]
-                    if gain > 0:
-                        running += gain
+
+            for i in range(inner):
+                if scan_axis == 0:
+                    if windward == 0:
+                        idx = o * w + i
+                        prev_idx = o * w + (i - 1)
+                        gain = elevation[prev_idx] - elevation[idx] if i > 0 else 0.0
+                    else:
+                        j = inner - 1 - i
+                        idx = o * w + j
+                        next_idx = o * w + (j + 1)
+                        gain = elevation[next_idx] - elevation[idx] if j < inner - 1 else 0.0
+                else:
+                    if windward == 0:
+                        idx = i * h + o
+                        prev_idx = (i - 1) * h + o
+                        gain = elevation[prev_idx] - elevation[idx] if i > 0 else 0.0
+                    else:
+                        j = inner - 1 - i
+                        idx = j * h + o
+                        next_idx = (j + 1) * h + o
+                        gain = elevation[next_idx] - elevation[idx] if j < inner - 1 else 0.0
+
+                if gain > 0:
+                    running += gain
                 pref.append(running)
 
-            # Pass 2: 滑动窗口求和 → 雨影因子
-            for x in range(w):
-                idx = row_base + x
-                if x <= WINDOW:
-                    total_uplift = pref[x]
+            # 滑动窗口求和 → 雨影因子
+            for i in range(inner):
+                if scan_axis == 0:
+                    if windward == 0:
+                        idx = o * w + i
+                    else:
+                        idx = o * w + (inner - 1 - i)
                 else:
-                    total_uplift = pref[x] - pref[x - WINDOW]
+                    if windward == 0:
+                        idx = i * h + o
+                    else:
+                        idx = (inner - 1 - i) * h + o
 
-                # 映射到雨影因子（与原算法一致）
-                if total_uplift < 50:
-                    f = 1.0
-                elif total_uplift < 200:
-                    f = 1.0 - (total_uplift - 50) / 150 * 0.3
-                elif total_uplift < 500:
-                    f = 0.7 - (total_uplift - 200) / 300 * 0.3
+                if i <= WINDOW:
+                    total_uplift = pref[i]
                 else:
-                    f = max(0.3, 0.4 - (total_uplift - 500) / 2000 * 0.2)
+                    total_uplift = pref[i] - pref[i - WINDOW]
+
+                if total_uplift < 30:
+                    f = 1.0
+                elif total_uplift < 150:
+                    f = 1.0 - (total_uplift - 30) / 120 * 0.4
+                elif total_uplift < 400:
+                    f = 0.6 - (total_uplift - 150) / 250 * 0.35
+                else:
+                    f = max(0.15, 0.25 - (total_uplift - 400) / 2000 * 0.15)
                 factors[idx] = f
 
         return factors

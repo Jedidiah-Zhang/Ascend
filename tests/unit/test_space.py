@@ -621,7 +621,7 @@ class TestTileGenerator:
         cont = ContinentGenerator(seed=42).generate()
         gen = TileGenerator(seed=42, continent=cont)
         # 在海洋深处找一个 chunk（远离大陆中心）
-        grid = gen.generate_chunk(450, 250)  # 右下角深海区
+        grid = gen.generate_chunk(300, 300)  # 深海区
         water_count = sum(
             1 for y in range(200) for x in range(200)
             if grid.get(x, y) in (TerrainType.DEEP_WATER, TerrainType.SHALLOW_WATER)
@@ -637,7 +637,7 @@ class TestTileGenerator:
         cont = ContinentGenerator(seed=42).generate()
         gen = TileGenerator(seed=42, continent=cont)
         # 海岸附近的 chunk — 海陆过渡带，必然有多种地形
-        grid = gen.generate_chunk(30, 20)
+        grid = gen.generate_chunk(0, 60)
         types: set[int] = set()
         for y in range(200):
             for x in range(200):

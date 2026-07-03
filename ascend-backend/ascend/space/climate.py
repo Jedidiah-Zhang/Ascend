@@ -37,7 +37,7 @@ class ClimateZone(IntEnum):
 # ── 物理常量 ──────────────────────────────────────────────
 
 # 气温直减率: 海拔每升高 1000m 温度下降的度数
-LAPSE_RATE: float = 6.5  # °C / 1000m
+LAPSE_RATE: float = 9.0  # °C / 1000m
 
 # 海平面温度范围（由纬度噪声映射）
 _SEA_LEVEL_TEMP_MIN: float = -5.0   # 极地

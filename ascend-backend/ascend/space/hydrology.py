@@ -68,15 +68,6 @@ _HYDRO.hydrology_erode_step.argtypes = [
 ]
 _HYDRO.hydrology_erode_step.restype = None
 
-# hillslope_step
-_HYDRO.hydrology_hillslope_step.argtypes = [
-    ctypes.POINTER(ctypes.c_double),  # dem
-    ctypes.c_int, ctypes.c_int,       # w, h
-    ctypes.c_double,                  # rate
-    ctypes.POINTER(ctypes.c_double),  # delta_out
-]
-_HYDRO.hydrology_hillslope_step.restype = None
-
 # fill_depressions
 _HYDRO.hydrology_fill_depressions.argtypes = [
     ctypes.POINTER(ctypes.c_double),  # dem
@@ -133,17 +124,6 @@ def _erode_step_c(
     )
     return list(delta_arr), list(sed_arr)
 
-
-def _hillslope_step_c(
-    dem: list[float], w: int, h: int, rate: float,
-) -> list[float]:
-    """C 加速山坡扩散 delta。"""
-    n = w * h
-    dem_arr = (ctypes.c_double * n)(*dem)
-    delta_arr = (ctypes.c_double * n)()
-
-    _HYDRO.hydrology_hillslope_step(dem_arr, w, h, rate, delta_arr)
-    return list(delta_arr)
 
 
 def _fill_depressions_c(dem: list[float], w: int, h: int) -> list[float]:
@@ -1497,110 +1477,6 @@ def compute_river_width(
     return widths
 
 
-def hillslope_erosion(
-    dem: list[float],
-    w: int, h: int,
-    *,
-    iterations: int = 20,
-    rate: float = 0.1,
-) -> list[float]:
-    """降雨驱动的山坡侵蚀——陡坡物质向下扩散，圆滑地形。
-
-    每轮迭代：每个像素将其一小部分海拔差分配给更低的邻居。
-    效果：削峰填谷，尖峰变圆，坡面变缓。
-
-    Args:
-        dem: 行优先海拔数组。
-        w: 宽度。
-        h: 高度。
-        iterations: 迭代轮数（越多越平滑）。
-        rate: 扩散速率 [0-1]（越大越快）。
-
-    Returns:
-        侵蚀后的海拔数组。
-    """
-    result = dem[:]
-    n = w * h
-
-    for _ in range(iterations):
-        delta = _hillslope_step_c(result, w, h, rate)
-        # 应用
-        for i in range(n):
-            result[i] += delta[i]
-
-    return result
-
-
-def carve_rivers(
-    dem: list[float],
-    w: int, h: int,
-    *,
-    threshold: float = 30.0,
-    depth_scale: float = 50.0,
-    width: int = 3,
-) -> list[float]:
-    """沿河流网络雕刻河道。
-
-    使用 D∞ 流向获得更自然的河道路径。
-
-    Args:
-        dem: 行优先海拔数组。
-        w: 宽度。
-        h: 高度。
-        threshold: 河流提取阈值。
-        depth_scale: 河道深度缩放系数（越大越深）。
-        width: 河道半宽（像素），1=仅河床，2=含河岸。
-
-    Returns:
-        雕刻后的海拔数组（新列表）。
-    """
-    # 填洼 + D8 流向 + 累积
-    filled = fill_depressions(dem, w, h)
-    directions = compute_d8(filled, w, h)
-    acc = flow_accumulation(directions, w, h)
-
-    # D8 河流追踪
-    rivers = extract_rivers(directions, acc, w, h, threshold=threshold)
-
-    # 标记河流像素及其流量
-    max_acc = max(acc) if acc else 1.0
-    river_depth: dict[int, float] = {}
-    for river in rivers:
-        for x, y in river:
-            idx = y * w + x
-            # 深度 = log(流量) 缩放
-            flow = acc[idx] / max_acc  # [0, 1]
-            depth = math.log(1.0 + flow * 10.0) * depth_scale
-            river_depth[idx] = max(river_depth.get(idx, 0.0), depth)
-
-    # 应用雕刻（仅陆地，河床压到负海拔 → 渲染蓝色水体）
-    result = dem[:]
-
-    for idx, depth in river_depth.items():
-        # 只雕刻陆地
-        if result[idx] <= 0:
-            continue
-
-        x, y = idx % w, idx // w
-        # 河床下切
-        result[idx] -= depth
-
-        # 降低两岸（也仅陆地）
-        for dy in range(-width, width + 1):
-            for dx in range(-width, width + 1):
-                if dx == 0 and dy == 0:
-                    continue
-                d = max(abs(dx), abs(dy))
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < w and 0 <= ny < h:
-                    ni = ny * w + nx
-                    if result[ni] > 0:  # 仅陆地
-                        bank_factor = 0.5 / (1.0 + d)
-                        result[ni] -= depth * bank_factor
-
-    return result
-
-
 __all__ = [
     "ErosionResult",
     "RiverNode",
@@ -1619,7 +1495,5 @@ __all__ = [
     "strahler_order",
     "erode",
     "find_lakes",
-    "hillslope_erosion",
-    "carve_rivers",
     "compute_river_width",
 ]

@@ -245,86 +245,46 @@ class TestVisualOutput:
             title="Step 2: Base Elevation",
         )
 
-    def test_visual_weight_grid(self):
-        """输出权重网格 → visual/output/weight_grid.png"""
-        from ascend.space.continent import ContinentGenerator
-        from tests.visual.render import render_elevation
-
-        gen = ContinentGenerator(seed=CANONICAL_SEED)
-        grid = gen._generate_weight_grid(10, 6)
-        rows, cols = len(grid), len(grid[0])
-        # 把小网格放大到可看尺寸 ×50
-        scale = 50
-        flat = []
-        for r in range(rows):
-            for _ in range(scale):
-                for c in range(cols):
-                    w = grid[r][c]
-                    for _ in range(scale):
-                        flat.append(w * 5000.0 - 2000.0)  # 映射到海拔范围便于看颜色
-        out_path = os.path.join(self._OUTPUT_DIR, "weight_grid.png")
-        render_elevation(flat, cols * scale, rows * scale, out_path,
-                         title="Weight Grid (10×6)")
-        print(f"[visual] 权重网格: {cols}×{rows} → {cols*scale}×{rows*scale}px")
-
-    def test_visual_03_eroded(self):
-        """步骤3：山坡+河道侵蚀 → visual/output/03_eroded.png"""
-        from ascend.space.continent import ContinentData
-        from ascend.space.hydrology import hillslope_erosion, carve_rivers
-        from tests.visual.render import render_elevation
-
-        data = _get_data(seed=CANONICAL_SEED)
-        w, h = data.grid_width, data.grid_height
-        dem = data.elevation_field
-
-        # 先山坡侵蚀 — 平滑微地形，促进水流汇聚
-        eroded = hillslope_erosion(dem, w, h, iterations=50, rate=0.10)
-        # 再河道雕刻 — 低阈值捕获更多支流，汇成大河
-        carved = carve_rivers(eroded, w, h, threshold=15.0, depth_scale=60.0, width=3)
-
-        out_path = os.path.join(self._OUTPUT_DIR, "03_eroded.png")
-        render_elevation(carved, w, h, out_path, title="Step 3: Eroded Elevation")
-        print(f"[visual] 侵蚀后海拔已保存, range=[{min(carved):.0f}, {max(carved):.0f}]")
-
-    def test_visual_09_rainfall(self):
-        """步骤9：年降雨量 → visual/output/09_rainfall.png"""
-        from ascend.space.continent import ContinentData
-        from tests.visual.render import render_rainfall
-
-        data = _get_data(seed=CANONICAL_SEED)
-        w, h = data.grid_width, data.grid_height
-        rf = data.rainfall_field
-        out_path = os.path.join(self._OUTPUT_DIR, "09_rainfall.png")
-        render_rainfall(rf, w, h, out_path, title="Annual Rainfall (mm)")
-        print(f"[visual] 降雨场已保存, range=[{min(rf):.0f}, {max(rf):.0f}]mm/yr")
-
-        """步骤7：温度场 → visual/output/07_temperature.png"""
+    def test_visual_03_temperature(self):
+        """步骤3：温度场 → visual/output/03_temperature.png"""
         from ascend.space.continent import ContinentData
         from tests.visual.render import render_temperature
 
         data = _get_data(seed=CANONICAL_SEED)
         w, h = data.grid_width, data.grid_height
         temp = data.temperature_field
-        out_path = os.path.join(self._OUTPUT_DIR, "07_temperature.png")
+        out_path = os.path.join(self._OUTPUT_DIR, "03_temperature.png")
         render_temperature(temp, w, h, out_path, title="Temperature (°C)")
         print(f"[visual] 温度场已保存, range=[{min(temp):.0f}, {max(temp):.0f}]°C")
 
-    def test_visual_08_climate(self):
-        """步骤8：气候带 → visual/output/08_climate.png"""
+    def test_visual_04_climate(self):
+        """步骤4：气候带 → visual/output/04_climate.png"""
         from ascend.space.continent import ContinentData
         from tests.visual.render import render_blocks
 
         data = _get_data(seed=CANONICAL_SEED)
         w, h = data.grid_width, data.grid_height
         climate = data.climate_zone
-        out_path = os.path.join(self._OUTPUT_DIR, "08_climate.png")
+        out_path = os.path.join(self._OUTPUT_DIR, "04_climate.png")
         render_blocks(climate, w, h, out_path, title="Climate Zones")
         zones = set(climate)
         names = {0: '热带', 1: '温带', 2: '寒带', 3: '干旱'}
         print(f"[visual] 气候带已保存, zones={[names.get(z,str(z)) for z in sorted(zones)]}")
 
-    def test_visual_12_flow_acc(self):
-        """步骤12：水流累积场（降雨驱动） → visual/output/12_flow_acc.png"""
+    def test_visual_05_rainfall(self):
+        """步骤5：年降雨量 → visual/output/05_rainfall.png"""
+        from ascend.space.continent import ContinentData
+        from tests.visual.render import render_rainfall
+
+        data = _get_data(seed=CANONICAL_SEED)
+        w, h = data.grid_width, data.grid_height
+        rf = data.rainfall_field
+        out_path = os.path.join(self._OUTPUT_DIR, "05_rainfall.png")
+        render_rainfall(rf, w, h, out_path, title="Annual Rainfall (mm)")
+        print(f"[visual] 降雨场已保存, range=[{min(rf):.0f}, {max(rf):.0f}]mm/yr")
+
+    def test_visual_06_flow_acc(self):
+        """步骤6：水流累积场 → visual/output/06_flow_acc.png"""
         from ascend.space.continent import ContinentData
         from tests.visual.render import render_elevation
 
@@ -336,22 +296,20 @@ class TestVisualOutput:
             print("[visual] 水流累积场不可用（hydrology=None），跳过")
             return
 
-        # 累积量映射到海拔范围，海洋像素设为 0
         max_acc = max(hyd.flow_acc) if hyd.flow_acc else 1.0
         visual = []
         for i, v in enumerate(hyd.flow_acc):
             if not data.land_mask[i]:
-                visual.append(-3500.0)  # 海洋 → 深蓝
+                visual.append(-3500.0)
             else:
                 visual.append(v / max_acc * 6000.0 - 2000.0)
-        out_path = os.path.join(self._OUTPUT_DIR, "12_flow_acc.png")
+        out_path = os.path.join(self._OUTPUT_DIR, "06_flow_acc.png")
         render_elevation(visual, w, h, out_path, title="Flow Accumulation (land only)")
         print(f"[visual] 水流累积已保存, max_acc={max_acc:.0f}")
 
-    def test_visual_14_river_tree(self):
-        """步骤14：河流树（扰动+连线） → visual/output/14_river_tree.png"""
+    def test_visual_07_river_tree(self):
+        """步骤7：河流树 → visual/output/07_river_tree.png"""
         from ascend.space.continent import ContinentData
-        from tests.visual.render import render_elevation, render_overlay_lines
 
         data = _get_data(seed=CANONICAL_SEED)
         w, h = data.grid_width, data.grid_height
@@ -361,12 +319,6 @@ class TestVisualOutput:
             print("[visual] 河流树不可用，跳过")
             return
 
-        # 基础海拔渲染
-        base_path = os.path.join(self._OUTPUT_DIR, "_14_base.png")
-        render_elevation(data.elevation_field, w, h, base_path,
-                         title="River Tree")
-
-        # 收集河流连线（father→child pairs，使用扰动后坐标）
         lines: list[list[tuple[float, float]]] = []
         for node in hyd.river_tree.nodes:
             for child_idx in node.children:
@@ -376,7 +328,6 @@ class TestVisualOutput:
                     (child.px, child.py),
                 ])
 
-        # 颜色：主流深蓝（Strahler高），支流浅蓝
         max_order = max(n.strahler for n in hyd.river_tree.nodes) if hyd.river_tree.nodes else 1
         colors = []
         for node in hyd.river_tree.nodes:
@@ -384,18 +335,17 @@ class TestVisualOutput:
                 child = hyd.river_tree.nodes[child_idx]
                 order = max(node.strahler, child.strahler)
                 t = order / max(max_order, 1)
-                # 深蓝(主流) → 浅蓝(支流)
                 r = int(20 + 100 * (1 - t))
                 g = int(60 + 140 * (1 - t))
                 b = int(200 + 55 * t)
                 colors.append((r, g, b))
 
-        out_path = os.path.join(self._OUTPUT_DIR, "14_river_tree.png")
-        render_overlay_lines(base_path, lines, out_path,
-                             colors=colors, line_width=2,
-                             title="River Tree (perturbed + connected)")
+        out_path = os.path.join(self._OUTPUT_DIR, "07_river_tree.png")
+        _render_elevation_with_lines(
+            data.elevation_field, w, h, lines, colors, out_path,
+            title="River Tree",
+        )
 
-        # 统计
         order_counts: dict[int, int] = {}
         for node in hyd.river_tree.nodes:
             o = node.strahler
@@ -403,8 +353,8 @@ class TestVisualOutput:
         print(f"[visual] 河流树已保存, {len(hyd.river_tree.nodes)} 节点, "
               f"{len(lines)} 连线, Strahler分布={order_counts}")
 
-    def test_visual_15_lake_basins(self):
-        """步骤15：湖泊盆地 → visual/output/15_lake_basins.png"""
+    def test_visual_08_lake_basins(self):
+        """步骤8：湖泊盆地 → visual/output/08_lake_basins.png"""
         from ascend.space.continent import ContinentData
         from tests.visual.render import render_elevation_with_rivers
 
@@ -416,13 +366,12 @@ class TestVisualOutput:
             print("[visual] 水文数据不可用，跳过")
             return
 
-        # 湖泊盆地像素 → 蓝标
         water_pixels: set[int] = set()
         for basin in hyd.lake_basins:
             for ci in basin.cells:
                 water_pixels.add(ci)
 
-        out_path = os.path.join(self._OUTPUT_DIR, "15_lake_basins.png")
+        out_path = os.path.join(self._OUTPUT_DIR, "08_lake_basins.png")
         render_elevation_with_rivers(
             data.elevation_field, w, h, water_pixels, out_path,
             title="Lake Basins",
@@ -430,8 +379,8 @@ class TestVisualOutput:
         print(f"[visual] 湖泊盆地已保存, {len(hyd.lake_basins)} 个湖, "
               f"{len(water_pixels)} 像素")
 
-    def test_visual_16_tile_water(self):
-        """步骤16：Tile级水体渲染 → visual/output/16_tile_water.png"""
+    def test_visual_09_tile_water(self):
+        """步骤9：Tile级水体渲染 → visual/output/09_tile_water.png"""
         from ascend.space.continent import ContinentGenerator
         from ascend.space.tile_gen import TileGenerator
         from ascend.space.terrain import TerrainType
@@ -440,11 +389,9 @@ class TestVisualOutput:
         cont = ContinentGenerator(seed=CANONICAL_SEED).generate()
         gen = TileGenerator(seed=CANONICAL_SEED, continent=cont)
 
-        # 渲染中等河流 chunk（154,52: flow~6.5K）
-        cx, cy = 154, 52  # 中等河流
+        cx, cy = 154, 52
         grid = gen.generate_chunk(cx, cy)
 
-        # TerrainType → 伪海拔
         type_to_elev = {
             TerrainType.DEEP_WATER: -3000, TerrainType.SHALLOW_WATER: -500,
             TerrainType.SAND: 50, TerrainType.FERTILE_SOIL: 200,
@@ -454,10 +401,9 @@ class TestVisualOutput:
         }
         visual = [type_to_elev.get(grid.get(x, y), 0)
                   for y in range(200) for x in range(200)]
-        out_path = os.path.join(self._OUTPUT_DIR, "16_tile_water.png")
+        out_path = os.path.join(self._OUTPUT_DIR, "09_tile_water.png")
         render_elevation(visual, 200, 200, out_path,
                          title=f"Tile Water ({cx},{cy})")
-        # 统计水体比例
         water = sum(1 for y in range(200) for x in range(200)
                     if grid.get(x, y) in (TerrainType.DEEP_WATER,
                                           TerrainType.SHALLOW_WATER))
@@ -465,8 +411,8 @@ class TestVisualOutput:
                     if grid.get(x, y) == TerrainType.MARSH)
         print(f"[visual] Tile水体已保存, water={water/400:.1f}%, marsh={marsh/400:.1f}%")
 
-    def test_visual_17_tile_boundary(self):
-        """步骤17：相邻chunk边界一致性 → visual/output/17_tile_boundary.png"""
+    def test_visual_10_tile_boundary(self):
+        """步骤10：相邻chunk边界一致性 → visual/output/10_tile_boundary.png"""
         from ascend.space.continent import ContinentGenerator
         from ascend.space.tile_gen import TileGenerator
         from ascend.space.terrain import TerrainType
@@ -475,8 +421,7 @@ class TestVisualOutput:
         cont = ContinentGenerator(seed=CANONICAL_SEED).generate()
         gen = TileGenerator(seed=CANONICAL_SEED, continent=cont)
 
-        # 两个相邻 chunk 在河流区域各取一半拼接
-        cx, cy = 154, 52  # 中等河流
+        cx, cy = 154, 52
         left = gen.generate_chunk(cx, cy)
         right = gen.generate_chunk(cx + 1, cy)
 
@@ -495,9 +440,7 @@ class TestVisualOutput:
             for x in range(100):
                 visual.append(type_to_elev.get(right.get(x, y), 0))
 
-        # 在接缝处画红线（检查不连续）
-        # 简化：直接渲染拼接图
-        out_path = os.path.join(self._OUTPUT_DIR, "17_tile_boundary.png")
+        out_path = os.path.join(self._OUTPUT_DIR, "10_tile_boundary.png")
         render_elevation(visual, 200, 200, out_path,
                          title="Chunk Boundary (L: 22,14 / R: 23,14)")
         print(f"[visual] 边界拼接已保存")
@@ -506,17 +449,42 @@ class TestVisualOutput:
         """一键生成所有当前可用的可视化。"""
         self.test_visual_01_outline()
         self.test_visual_02_elevation()
-        self.test_visual_03_eroded()
-        self.test_visual_weight_grid()
-        self.test_visual_08_climate()
-        self.test_visual_09_rainfall()
-        self.test_visual_12_flow_acc()
-        self.test_visual_14_river_tree()
-        self.test_visual_15_lake_basins()
-        self.test_visual_16_tile_water()
-        self.test_visual_17_tile_boundary()
-        self.test_visual_05_river_width()
-        self.test_visual_06_lakes()
-        self.test_visual_08_climate()
-        self.test_visual_09_rainfall()
-        self.test_visual_11_chunk()
+        self.test_visual_03_temperature()
+        self.test_visual_04_climate()
+        self.test_visual_05_rainfall()
+        self.test_visual_06_flow_acc()
+        self.test_visual_07_river_tree()
+        self.test_visual_08_lake_basins()
+        self.test_visual_09_tile_water()
+        self.test_visual_10_tile_boundary()
+
+
+def _render_elevation_with_lines(
+    dem: list[float],
+    w: int, h: int,
+    lines: list[list[tuple[float, float]]],
+    colors: list[tuple[int, int, int]],
+    output_path: str,
+    *,
+    title: str = "",
+) -> None:
+    """渲染海拔底图并在其上叠加折线（内存合成，无中间文件）。"""
+    from tests.visual.render import _elevation_to_rgb
+    from PIL import Image, ImageDraw
+
+    pixels = [_elevation_to_rgb(e) for e in dem]
+    img = Image.new("RGB", (w, h))
+    img.putdata(pixels)
+
+    draw = ImageDraw.Draw(img)
+    for i, line in enumerate(lines):
+        if len(line) < 2:
+            continue
+        color = colors[i % len(colors)]
+        points = [(p[0], p[1]) for p in line]
+        draw.line(points, fill=color, width=2)
+
+    from pathlib import Path
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    img.save(output_path)
+    print(f"[visual] 海拔+线条渲染已保存: {output_path}")

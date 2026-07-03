@@ -44,7 +44,7 @@ from .hydrology import (
     flow_accumulation, flow_accumulation_dinf,
     extract_rivers, extract_rivers_dinf,
     build_river_tree, extract_lake_basins,
-    strahler_order, erode, carve_rivers,
+    strahler_order, erode,
 )
 # from .storage import WorldStore
 
