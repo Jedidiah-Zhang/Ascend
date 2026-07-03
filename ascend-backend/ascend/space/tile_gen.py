@@ -49,9 +49,9 @@ class TileGenerator:
         """生成一个 200×200 chunk 的详细地形。
 
         管线：
-          1. 宏观海拔采样 + 细节噪声 → 基础地形分类
+          1. 宏观海拔 + 细节噪声 → 基础地形分类（同时缓存宏观海拔供后续复用）
           2. 叠加河流（蛇曲路径 + 河道雕刻）
-          3. 叠加湖泊（水面平整 + 湿地）
+          3. 叠加湖泊（水面平整 + 湿地，复用步骤1的宏观海拔）
 
         Args:
             cx: chunk X 坐标。
@@ -66,36 +66,42 @@ class TileGenerator:
 
         grid = TileGrid()
         cont = self._continent
-        detail_freq = 0.005  # 波长 ~200m，大面积连续地貌
+        detail_freq = 0.005
 
         # 批量采样细节噪声——一次 C 调用替代 40K 次 ctypes 跨越
-        # +0.5 偏移避免采样在整数网格点（Perlin 噪声在整数点恒为 0）
-        # 低频低幅：宏观海拔主导地形，噪声仅添加 ±50m 微妙起伏
         noise_field = self._detail_noise.octave_grid(
             world_x0 + 0.5, world_y0 + 0.5, size, size,
             frequency=detail_freq, octaves=4,
         )
 
+        # 预分配宏观海拔缓存（仅在有湖泊时用于后续复用）
+        hyd = cont.hydrology
+        has_lakes = hyd is not None and hyd.lake_basins
+        macro_cache = [0.0] * (size * size) if has_lakes else None
+
         for ty in range(size):
             for tx in range(size):
+                idx = ty * size + tx
                 wx = world_x0 + tx
                 wy = world_y0 + ty
 
-                # 1. 宏观海拔（双线性插值，消除 100m 网格块状伪影）
+                # 宏观海拔（双线性插值）
                 macro_elev = cont.sample_altitude_bilinear(wx, wy)
 
-                # 2. 细节噪声（±50m，波长 200m → 自然过渡，不过度碎化）
-                detail = noise_field[ty * size + tx] * 50.0
+                # 细节噪声（±50m，波长 200m → 自然过渡）
+                detail = noise_field[idx] * 50.0
                 elev = macro_elev + detail
 
-                # 3. 地形分类（海拔 + 温度 + 积雪，水体由后续步骤叠加）
-                terrain = self._classify(elev, wx, wy)
-
+                # 地形分类
+                terrain = self._classify_fast(elev, tx, ty, size)
                 grid.set(tx, ty, terrain)
 
-        # 4. 叠加水体（河流 + 湖泊）—— 覆盖在基础地形之上
-        if cont.hydrology is not None:
-            hyd = cont.hydrology
+                # 缓存宏观海拔（供湖泊渲染复用）
+                if macro_cache is not None:
+                    macro_cache[idx] = macro_elev
+
+        # 叠加水体（河流 + 湖泊）
+        if hyd is not None:
             if hyd.river_tree is not None and hyd.river_tree.nodes:
                 from .river_render import render_river_chunk
                 render_river_chunk(
@@ -105,11 +111,12 @@ class TileGenerator:
                     cont.cell_size, cont.grid_width,
                     seed=self._seed,
                 )
-            if hyd.lake_basins:
+            if has_lakes:
                 from .lake_render import render_lake_chunk
                 render_lake_chunk(
                     grid, world_x0, world_y0,
                     hyd.lake_basins, cont,
+                    macro_elev_grid=macro_cache,
                 )
 
         return grid
@@ -166,6 +173,46 @@ class TileGenerator:
         if elev > 20:
             return TerrainType.GRASSLAND
 
+        return TerrainType.SAND
+
+    def _classify_fast(
+        self,
+        elev: float,
+        tx: int, ty: int,
+        size: int,
+    ) -> TerrainType:
+        """基于最终海拔的地形分类（简化版，跳过积雪温度查询）。
+
+        与 _classify 逻辑相同但不做温度->积雪判定。
+        高海拔区域（>1200m）自然映射到 STEEP_SLOPE/MOUNTAIN_PEAK。
+        如需精确积雪判定，使用 _classify()。
+
+        Args:
+            elev: 最终海拔 (m)。
+            tx, ty: chunk 内 tile 坐标（未使用，保留签名兼容）。
+            size: 网格尺寸（未使用，保留签名兼容）。
+
+        Returns:
+            TerrainType。
+        """
+        if elev < -100:
+            return TerrainType.DEEP_WATER
+        if elev < 0:
+            return TerrainType.SHALLOW_WATER
+        if elev < 10:
+            return TerrainType.SAND
+        if elev > 2000:
+            return TerrainType.MOUNTAIN_PEAK
+        if elev > 1200:
+            return TerrainType.STEEP_SLOPE
+        if elev > 600:
+            return TerrainType.ROCK
+        if elev > 300:
+            return TerrainType.GRASSLAND
+        if elev > 100:
+            return TerrainType.FERTILE_SOIL
+        if elev > 20:
+            return TerrainType.GRASSLAND
         return TerrainType.SAND
 
 

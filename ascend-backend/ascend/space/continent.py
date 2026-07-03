@@ -22,7 +22,9 @@
 """
 
 import math
+from array import array
 from dataclasses import dataclass, field
+from typing import Union, Sequence
 
 from .noise import PerlinNoise
 
@@ -79,11 +81,11 @@ class ContinentData:
     seed: int
 
     land_mask: list[bool] = field(default_factory=list)
-    elevation_field: list[float] = field(default_factory=list)
-    temperature_field: list[float] = field(default_factory=list)
-    rainfall_field: list[float] = field(default_factory=list)
+    elevation_field: Union[list[float], "array[float]"] = field(default_factory=lambda: array('d'))
+    temperature_field: Union[list[float], "array[float]"] = field(default_factory=lambda: array('d'))
+    rainfall_field: Union[list[float], "array[float]"] = field(default_factory=lambda: array('d'))
     climate_zone: list[int] = field(default_factory=list)
-    river_width: list[float] = field(default_factory=list)
+    river_width: Union[list[float], "array[float]"] = field(default_factory=lambda: array('d'))
     hydrology: "HydrologyData | None" = None
 
     def __repr__(self) -> str:
@@ -273,21 +275,26 @@ class ContinentGenerator:
             filled_dem=erosion_result.filled_dem,
         )
 
-        # Step 5: 河流宽度场（保留兼容，从水文数据导出）
+        # Step 5: 河流宽度场（复用侵蚀+水文数据，避免重复计算）
         from .hydrology import compute_river_width
-        river_width = compute_river_width(elevation, w, h,
-                                          land_mask=land_mask, threshold=20.0)
+        river_width = compute_river_width(
+            elevation, w, h,
+            land_mask=land_mask, threshold=20.0,
+            directions=erosion_result.directions,
+            flow_acc=erosion_result.flow_acc,
+            lake_basins=lake_basins,
+        )
 
         return ContinentData(
             grid_width=w, grid_height=h,
             cell_size=self._params.sample_resolution,
             seed=self._seed,
             land_mask=land_mask,
-            elevation_field=elevation,
-            temperature_field=temp_field,
-            rainfall_field=rain_field,
+            elevation_field=array('d', elevation),
+            temperature_field=array('d', temp_field),
+            rainfall_field=array('d', rain_field),
             climate_zone=climate_field,
-            river_width=river_width,
+            river_width=array('d', river_width),
             hydrology=hydrology,
         )
 

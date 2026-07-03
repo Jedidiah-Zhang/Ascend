@@ -77,6 +77,14 @@ _HYDRO.hydrology_hillslope_step.argtypes = [
 ]
 _HYDRO.hydrology_hillslope_step.restype = None
 
+# fill_depressions
+_HYDRO.hydrology_fill_depressions.argtypes = [
+    ctypes.POINTER(ctypes.c_double),  # dem
+    ctypes.c_int, ctypes.c_int,       # w, h
+    ctypes.POINTER(ctypes.c_double),  # result (out)
+]
+_HYDRO.hydrology_fill_depressions.restype = None
+
 
 def _compute_d8_c(dem: list[float], w: int, h: int) -> list[int]:
     """C 加速 D8 流向计算。"""
@@ -136,6 +144,16 @@ def _hillslope_step_c(
 
     _HYDRO.hydrology_hillslope_step(dem_arr, w, h, rate, delta_arr)
     return list(delta_arr)
+
+
+def _fill_depressions_c(dem: list[float], w: int, h: int) -> list[float]:
+    """C 加速填洼。"""
+    n = w * h
+    dem_arr = (ctypes.c_double * n)(*dem)
+    result_arr = (ctypes.c_double * n)()
+
+    _HYDRO.hydrology_fill_depressions(dem_arr, w, h, result_arr)
+    return list(result_arr)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -306,7 +324,7 @@ def _dem_at(dem: list[float], w: int, h: int, x: int, y: int) -> float:
 
 
 def fill_depressions(dem: list[float], w: int, h: int) -> list[float]:
-    """填平 DEM 中的局部洼地。
+    """填平 DEM 中的局部洼地（C 加速优先队列）。
 
     使用优先队列（Planchon-Darboux 算法简化版）：
     从边界最低点出发，向内灌水，确保每个像素都有向边界的下坡路径。
@@ -319,47 +337,7 @@ def fill_depressions(dem: list[float], w: int, h: int) -> list[float]:
     Returns:
         填洼后的海拔数组（新列表）。
     """
-    result = dem[:]
-    n = w * h
-
-    # 标记所有像素为未处理
-    processed = [False] * n
-    heap: list[tuple[float, int, int]] = []
-
-    # 所有边界像素入堆
-    for x in range(w):
-        for y in (0, h - 1):
-            idx = y * w + x
-            heappush(heap, (dem[idx], x, y))
-            processed[idx] = True
-    for y in range(1, h - 1):
-        for x in (0, w - 1):
-            idx = y * w + x
-            heappush(heap, (dem[idx], x, y))
-            processed[idx] = True
-
-    # 从边界向内蔓延
-    while heap:
-        elev, x, y = heappop(heap)
-        idx = y * w + x
-
-        for d in range(8):
-            nx, ny = x + _DX[d], y + _DY[d]
-            if not (0 <= nx < w and 0 <= ny < h):
-                continue
-            ni = ny * w + nx
-            if processed[ni]:
-                continue
-
-            # 如果需要，抬高到至少比当前像素高一丁点
-            spill = elev + 0.001
-            if result[ni] < spill:
-                result[ni] = spill
-
-            processed[ni] = True
-            heappush(heap, (result[ni], nx, ny))
-
-    return result
+    return _fill_depressions_c(dem, w, h)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1103,6 +1081,8 @@ def erode(
     *,
     iterations: int = 20,
     erodibility: float = 0.01,
+    tolerance: float = 0.05,
+    min_iterations: int = 3,
 ) -> ErosionResult:
     """简化水力侵蚀模型 — 降雨驱动的水流累积 + 侵蚀/沉积。
 
@@ -1114,22 +1094,23 @@ def erode(
       5. 更新海拔（沉积在下游）
 
     物质从陡坡 + 高流量处侵蚀，沿流路沉积在低处。
+    自适应收敛：当最大海拔变化 < tolerance 时提前退出。
 
     Args:
         dem: 行优先海拔数组。
         rainfall: 降雨量数组（同尺寸，mm/yr，>0）。
         w: 宽度。
         h: 高度。
-        iterations: 侵蚀迭代轮数（默认 20，足够河网收敛）。
+        iterations: 侵蚀最大迭代轮数。
         erodibility: 侵蚀系数 K。
+        tolerance: 收敛容差 (m)，单轮最大变化小于此值即停止。
+        min_iterations: 最少迭代轮数（收敛检测前至少运行这些轮数）。
 
     Returns:
         ErosionResult 包含最终海拔、流向、累积量、沉积场。
     """
     result = dem[:]
     n = w * h
-    m_exp = 0.5   # 流量指数
-    n_exp = 1.0   # 坡度指数
 
     # 归一化降雨量作为水流累积的源（全球平均 ~1000mm/yr → ~1.0）
     flow_source = [max(0.0, rainfall[i] / 1000.0) for i in range(n)]
@@ -1142,8 +1123,8 @@ def erode(
     last_directions: list[int] = []
     last_acc: list[float] = []
 
-    for _ in range(iterations):
-        # 填洼（Python，因为优先队列涉及复杂逻辑）
+    for iteration in range(iterations):
+        # 填洼（C 加速优先队列）
         filled = fill_depressions(result, w, h)
 
         # D8 + 累积 + 侵蚀 ← C 加速
@@ -1159,10 +1140,18 @@ def erode(
         delta, _ = _erode_step_c(
             result, directions, acc, flow_source, w, h, erodibility)
 
-        # 应用侵蚀并累积沉积记录
+        # 应用侵蚀 + 累积沉积 + 跟踪最大变化
+        max_delta = 0.0
         for idx in range(n):
             result[idx] += delta[idx]
             sediment_net[idx] += delta[idx]
+            abs_d = delta[idx] if delta[idx] >= 0 else -delta[idx]
+            if abs_d > max_delta:
+                max_delta = abs_d
+
+        # 自适应收敛：地形变化微小时提前退出
+        if iteration >= min_iterations and max_delta < tolerance:
+            break
 
     return ErosionResult(
         dem=result,
@@ -1415,56 +1404,76 @@ def compute_river_width(
     threshold: float = 30.0,
     min_width: float = 2.0,
     max_width: float = 80.0,
+    # 预计算水文数据 — 传入则跳过 fill_depressions + D8 + flow_accumulation
+    directions: list[int] | None = None,
+    flow_acc: list[float] | None = None,
+    # 预提取湖泊盆地 — 传入则跳过 find_lakes + BFS
+    lake_basins: list[LakeBasin] | None = None,
 ) -> list[float]:
     """计算河流+湖泊宽度场（层1分辨率 → 供层2 tile查询）。
 
     河流宽度正比于 log(累积流量)。
     湖泊宽度基于湖面积（sqrt(面积)）。
 
+    支持传入预计算的水文数据以避免重复计算：
+      - directions + flow_acc：跳过 fill_depressions + D8 + flow_accumulation
+      - lake_basins：跳过 find_lakes + BFS 连通分量检测
+
     Args:
         dem: 行优先海拔数组。
         w: 宽度。
         h: 高度。
-        land_mask: 陆地掩码（用于湖泊检测）。
+        land_mask: 陆地掩码（用于湖泊检测，lake_basins 未提供时必需）。
         threshold: 河流提取阈值。
         min_width: 最小宽度 (m)。
         max_width: 最大宽度 (m)。
+        directions: 预计算 D8 流向（可选，与 flow_acc 配对使用）。
+        flow_acc: 预计算水流累积量（可选，与 directions 配对使用）。
+        lake_basins: 预提取湖泊盆地列表（可选，传入后跳过湖泊检测）。
 
     Returns:
         行优先宽度数组 (m)，非水体像素 = 0。
     """
-    filled = fill_depressions(dem, w, h)
-    directions = compute_d8(filled, w, h)
-    acc = flow_accumulation(directions, w, h)
-    rivers = extract_rivers(directions, acc, w, h, threshold=threshold)
-
     n = w * h
     widths: list[float] = [0.0] * n
 
-    # 河流宽度
-    river_flow: dict[int, float] = {}
-    for river in rivers:
-        for x, y in river:
-            idx = y * w + x
-            river_flow[idx] = max(river_flow.get(idx, 0.0), acc[idx])
+    # ── 河流宽度 ──
+    # 复用预计算数据或从头计算
+    if directions is not None and flow_acc is not None:
+        dirs = directions
+        acc = flow_acc
+    else:
+        filled = fill_depressions(dem, w, h)
+        dirs = compute_d8(filled, w, h)
+        acc = flow_accumulation(dirs, w, h)
 
-    max_acc = max(river_flow.values()) if river_flow else 1.0
-    for idx, flow in river_flow.items():
-        ratio = flow / max_acc
-        log_ratio = math.log(1.0 + ratio * 20.0) / math.log(21.0)
-        if dem[idx] > 0:
-            widths[idx] = min_width + (max_width - min_width) * log_ratio
+    # 直接筛选河流像素（O(n)），代替 extract_rivers 的 O(n²) 源头检测
+    river_indices = [i for i in range(n)
+                     if dirs[i] >= 0 and acc[i] >= threshold and dem[i] > 0]
+    if river_indices:
+        max_acc = max(acc[i] for i in river_indices)
+        for i in river_indices:
+            ratio = acc[i] / max_acc
+            log_ratio = math.log(1.0 + ratio * 20.0) / math.log(21.0)
+            widths[i] = min_width + (max_width - min_width) * log_ratio
 
-    # 湖泊宽度 → 复用已填充的 DEM，避免重复 fill_depressions
-    if land_mask is not None:
+    # ── 湖泊宽度 ──
+    if lake_basins is not None:
+        # 直接从 LakeBasin 对象计算宽度（无需 BFS）
+        for basin in lake_basins:
+            lake_width = math.sqrt(len(basin.cells)) * 100.0  # 100m/px
+            lake_width = max(min_width, min(max_width * 3, lake_width))
+            for ci in basin.cells:
+                widths[ci] = lake_width
+    elif land_mask is not None:
+        # 兜底：从头计算湖泊
+        filled = fill_depressions(dem, w, h)
         lake_surface, _ = find_lakes(dem, land_mask, w, h,
                                       min_size=5, filled_dem=filled)
-        # 找湖泊连通分量
         visited = [False] * n
         for i in range(n):
             if lake_surface[i] <= 0 or visited[i]:
                 continue
-            # BFS 收集湖连通分量
             comp: list[int] = []
             q = deque([i])
             visited[i] = True
@@ -1480,8 +1489,7 @@ def compute_river_width(
                             visited[ni] = True
                             q.append(ni)
 
-            # 湖宽度 = sqrt(面积) * 像素尺寸
-            lake_width = math.sqrt(len(comp)) * 100.0  # 100m/px
+            lake_width = math.sqrt(len(comp)) * 100.0
             lake_width = max(min_width, min(max_width * 3, lake_width))
             for ci in comp:
                 widths[ci] = lake_width

@@ -26,6 +26,8 @@ def render_lake_chunk(
     world_x0: int, world_y0: int,
     lake_basins: list,  # list[LakeBasin]
     continent,  # ContinentData (for bilinear elevation sampling)
+    *,
+    macro_elev_grid: list[float] | None = None,
 ) -> None:
     """在 chunk 内渲染湖泊：水面平整 + 边缘湿地。
 
@@ -40,7 +42,9 @@ def render_lake_chunk(
         world_x0: chunk 左上角世界 X 坐标。
         world_y0: chunk 左上角世界 Y 坐标。
         lake_basins: 层1 湖泊盆地列表（LakeBasin 对象）。
-        continent: ContinentData（用于海拔采样）。
+        continent: ContinentData（用于海拔采样，macro_elev_grid 提供时可省略）。
+        macro_elev_grid: 预计算的 chunk 宏观海拔网格（200×200 行优先），
+                         提供后跳过逐 tile 双线性插值。
     """
     if not lake_basins:
         return
@@ -71,9 +75,9 @@ def render_lake_chunk(
 
         # 在 chunk 内渲染此湖泊
         _flatten_lake_surface(tile_grid, world_x0, world_y0, surface,
-                              basin.area_km2, continent)
+                              basin.area_km2, continent, macro_elev_grid)
         _generate_wetland_fringe(tile_grid, world_x0, world_y0, surface,
-                                 continent)
+                                 continent, macro_elev_grid)
 
 
 def _flatten_lake_surface(
@@ -82,6 +86,7 @@ def _flatten_lake_surface(
     surface_elev: float,
     area_km2: float,
     continent,
+    macro_elev_grid: list[float] | None = None,
 ) -> None:
     """将湖面以下的 tile 标记为水体。
 
@@ -94,19 +99,21 @@ def _flatten_lake_surface(
         world_x0, world_y0: chunk 世界坐标。
         surface_elev: 湖面海拔 (m)。
         area_km2: 湖面面积 (km²)。
-        continent: ContinentData。
+        continent: ContinentData（macro_elev_grid 提供时可省略）。
+        macro_elev_grid: 预计算宏观海拔网格（行优先，200×200）。
     """
     size = tile_grid.size
-    # 大湖（>1km²）允许深水区
     has_deep_zone = area_km2 > 1.0
 
     for ty in range(size):
-        wy = world_y0 + ty
         for tx in range(size):
-            wx = world_x0 + tx
-
-            # 获取宏观海拔（湖面判定使用宏观场，避免细节噪声干扰）
-            macro_elev = continent.sample_altitude_bilinear(wx, wy)
+            # 获取宏观海拔（优先使用预计算网格）
+            if macro_elev_grid is not None:
+                macro_elev = macro_elev_grid[ty * size + tx]
+            else:
+                wx = world_x0 + tx
+                wy = world_y0 + ty
+                macro_elev = continent.sample_altitude_bilinear(wx, wy)
 
             if macro_elev >= surface_elev:
                 continue  # 高于湖面，不处理
@@ -114,13 +121,9 @@ def _flatten_lake_surface(
             # 水面以下 → 水体
             depth = surface_elev - macro_elev
 
-            # 计算到湖岸的估计距离（基于水深推断）
-            # 浅水（0-3m）→ SHALLOW_WATER
-            # 深水（>3m）→ DEEP_WATER（仅限大湖）
             if depth > 3.0 and has_deep_zone:
                 tile_grid.set(tx, ty, TerrainType.DEEP_WATER)
             else:
-                # 避免覆盖已经设置的深水
                 current = tile_grid.get(tx, ty)
                 if current != TerrainType.DEEP_WATER:
                     tile_grid.set(tx, ty, TerrainType.SHALLOW_WATER)
@@ -131,6 +134,7 @@ def _generate_wetland_fringe(
     world_x0: int, world_y0: int,
     surface_elev: float,
     continent,
+    macro_elev_grid: list[float] | None = None,
 ) -> None:
     """在湖面边缘生成湿地（MARSH）。
 
@@ -141,16 +145,19 @@ def _generate_wetland_fringe(
         tile_grid: 地形网格。
         world_x0, world_y0: chunk 世界坐标。
         surface_elev: 湖面海拔 (m)。
-        continent: ContinentData。
+        continent: ContinentData（macro_elev_grid 提供时可省略）。
+        macro_elev_grid: 预计算宏观海拔网格（行优先，200×200）。
     """
     size = tile_grid.size
 
     for ty in range(size):
-        wy = world_y0 + ty
         for tx in range(size):
-            wx = world_x0 + tx
-
-            macro_elev = continent.sample_altitude_bilinear(wx, wy)
+            if macro_elev_grid is not None:
+                macro_elev = macro_elev_grid[ty * size + tx]
+            else:
+                wx = world_x0 + tx
+                wy = world_y0 + ty
+                macro_elev = continent.sample_altitude_bilinear(wx, wy)
 
             # 湿地 = 湖面以上 0-2m
             wetland_depth = macro_elev - surface_elev
@@ -164,8 +171,9 @@ def _generate_wetland_fringe(
                 continue
 
             # 越接近湖面，越大概率是湿地（概率 = 1 - wetland_depth/2）
-            # 使用确定性判定：基于坐标 hash 的伪随机
-            prob_threshold = 1.0 - wetland_depth / 2.0  # depth=0 → 100%, depth=2 → 0%
+            prob_threshold = 1.0 - wetland_depth / 2.0
+            wx = world_x0 + tx
+            wy = world_y0 + ty
             hash_val = ((wx * 2654435761 + wy * 1597334677) & 0xFFFFFFFF) / 0xFFFFFFFF
 
             if hash_val < prob_threshold:

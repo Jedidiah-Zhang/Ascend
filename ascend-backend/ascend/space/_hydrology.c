@@ -1,6 +1,6 @@
 /* _hydrology.c — 水文计算 C 加速模块。
 
-   实现 D8 流向、水流累积、侵蚀 delta 的批量计算。
+   实现 D8 流向、水流累积、侵蚀 delta、填洼的批量计算。
    与 _perlin.c 相同的编译/加载模式。
 
    编译:
@@ -16,6 +16,140 @@ static const int DX[8] = {1, -1, 0, 0, 1, -1, 1, -1};
 static const int DY[8] = {0, 0, 1, -1, 1, 1, -1, -1};
 static const double DIST[8] = {1.0, 1.0, 1.0, 1.0,
                                 1.41421356, 1.41421356, 1.41421356, 1.41421356};
+
+/* ── 二叉最小堆（用于填洼优先队列） ─────────────────────── */
+
+/* 堆排序键：(elev, idx) 复合键，保证确定性。
+   将 elev*1000 量化为 int，与 idx 组成 64 位键避免同高程的不确定性。 */
+typedef struct {
+    double elev;
+    int idx;  /* y*w + x */
+} HeapEntry;
+
+typedef struct {
+    HeapEntry *data;
+    int size;
+    int capacity;
+} MinHeap;
+
+/* 复合比较：先比 elev，同 elev 时比 idx（确定性平局决胜） */
+static int heap_less(HeapEntry *a, HeapEntry *b) {
+    if (a->elev != b->elev)
+        return a->elev < b->elev;
+    return a->idx < b->idx;
+}
+
+static MinHeap *heap_create(int capacity) {
+    MinHeap *h = (MinHeap *)malloc(sizeof(MinHeap));
+    if (!h) return NULL;
+    h->data = (HeapEntry *)malloc((size_t)capacity * sizeof(HeapEntry));
+    if (!h->data) { free(h); return NULL; }
+    h->size = 0;
+    h->capacity = capacity;
+    return h;
+}
+
+static void heap_free(MinHeap *h) {
+    if (h) {
+        free(h->data);
+        free(h);
+    }
+}
+
+static void heap_push(MinHeap *h, double elev, int idx) {
+    /* 上滤 */
+    int i = h->size++;
+    HeapEntry entry = {elev, idx};
+    while (i > 0) {
+        int parent = (i - 1) / 2;
+        if (!heap_less(&entry, &h->data[parent])) break;
+        h->data[i] = h->data[parent];
+        i = parent;
+    }
+    h->data[i] = entry;
+}
+
+static HeapEntry heap_pop(MinHeap *h) {
+    /* 下滤 */
+    HeapEntry result = h->data[0];
+    HeapEntry last = h->data[--h->size];
+    int i = 0;
+    while (1) {
+        int left = 2 * i + 1;
+        int right = 2 * i + 2;
+        int smallest = i;
+        if (left < h->size && heap_less(&h->data[left], &h->data[smallest]))
+            smallest = left;
+        if (right < h->size && heap_less(&h->data[right], &h->data[smallest]))
+            smallest = right;
+        if (smallest == i) break;
+        h->data[i] = h->data[smallest];
+        i = smallest;
+    }
+    h->data[i] = last;
+    return result;
+}
+
+/* ── fill_depressions ────────────────────────────────────── */
+
+void hydrology_fill_depressions(
+    const double *dem, int w, int h, double *result)
+{
+    /* 优先队列填洼（Planchon-Darboux 变体）。
+       从边界最低点出发向内灌水，确保每个像素都有向边界的下坡路径。
+       result 预分配为 w*h 个 double。 */
+    int n = w * h;
+    memcpy(result, dem, (size_t)n * sizeof(double));
+
+    /* 已处理标记 */
+    unsigned char *processed = (unsigned char *)calloc((size_t)n, 1);
+    if (!processed) return;
+
+    /* 最坏情况所有像素入堆 */
+    MinHeap *heap = heap_create(n);
+    if (!heap) { free(processed); return; }
+
+    /* 所有边界像素入堆 */
+    for (int x = 0; x < w; x++) {
+        for (int y = 0; y < h; y += (h - 1)) {
+            int idx = y * w + x;
+            heap_push(heap, dem[idx], idx);
+            processed[idx] = 1;
+        }
+    }
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 0; x < w; x += (w - 1)) {
+            int idx = y * w + x;
+            heap_push(heap, dem[idx], idx);
+            processed[idx] = 1;
+        }
+    }
+
+    /* 从最低边界点向内蔓延 */
+    while (heap->size > 0) {
+        HeapEntry e = heap_pop(heap);
+        int x = e.idx % w;
+        int y = e.idx / w;
+        double spill = e.elev + 0.001;
+
+        for (int d = 0; d < 8; d++) {
+            int nx = x + DX[d];
+            int ny = y + DY[d];
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            int ni = ny * w + nx;
+            if (processed[ni]) continue;
+
+            if (result[ni] < spill)
+                result[ni] = spill;
+
+            processed[ni] = 1;
+            heap_push(heap, result[ni], ni);
+        }
+    }
+
+    heap_free(heap);
+    free(processed);
+}
 
 /* ── compute_d8 ─────────────────────────────────────────── */
 
