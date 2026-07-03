@@ -6,7 +6,6 @@
   13_tile_river_meander.png   — 该河流穿过的 chunk 的 tile 级渲染
 """
 import math
-import os
 import sys
 from pathlib import Path
 
