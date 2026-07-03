@@ -16,11 +16,16 @@ import pytest
 from ascend.space import (
     PerlinNoise,
     ClimateZone,
+    ClimateTemplate,
+    SeasonalityMode,
     WeatherParams,
+    classify,
     climate_zone_from_values,
     annual_baseline,
+    get_climate_template,
     BiomeType,
     BiomeTemplate,
+    biome_from_attrs,
     biome_from_climate,
     get_template,
     ChunkData,
@@ -104,50 +109,103 @@ class TestPerlinNoise:
 # ══════════════════════════════════════════════════════════
 
 class TestClimateZone:
-    """气候档位测试。"""
+    """8 档气候分类测试。"""
 
     def test_int_enum(self):
-        """ClimateZone 是 IntEnum。"""
-        assert ClimateZone.TEMPERATE == 1
-        assert ClimateZone.TROPICAL < ClimateZone.COLD
+        """ClimateZone 是 IntEnum，值 0-7。"""
+        assert ClimateZone.EQUATORIAL_RAINFOREST == 0
+        assert ClimateZone.ALPINE == 7
+        assert int(ClimateZone.TEMPERATE_FOREST) == 4
 
     def test_label(self):
         """每个气候档位有中文标签。"""
-        assert ClimateZone.TEMPERATE.label == "温带"
-        assert ClimateZone.ARID.label == "干旱带"
+        assert ClimateZone.EQUATORIAL_RAINFOREST.label == "热带雨林"
+        assert ClimateZone.POLAR_TUNDRA.label == "极地苔原"
+        assert ClimateZone.ALPINE.label == "高山"
 
-    def test_from_values_cold(self):
-        """低温 → 寒带。"""
-        assert climate_zone_from_values(-5.0, 500.0) == ClimateZone.COLD
-        assert climate_zone_from_values(2.0, 800.0) == ClimateZone.COLD
+    def test_all_zones_have_templates(self):
+        """8 档气候均有 ClimateTemplate。"""
+        for cz in ClimateZone:
+            tmpl = get_climate_template(cz)
+            assert isinstance(tmpl, ClimateTemplate)
+            assert tmpl.climate == cz
+            assert tmpl.display_color.startswith("#")
 
-    def test_from_values_arid(self):
-        """高温 + 极低降雨 → 干旱带。"""
-        assert climate_zone_from_values(25.0, 100.0) == ClimateZone.ARID
-        assert climate_zone_from_values(18.0, 200.0) == ClimateZone.ARID
+    def test_template_has_seasonality(self):
+        """模板携带季节性模式预留字段。"""
+        tmpl = get_climate_template(ClimateZone.TEMPERATE_FOREST)
+        assert tmpl.seasonality == SeasonalityMode.FOUR_SEASON
+        tmpl2 = get_climate_template(ClimateZone.TROPICAL_SAVANNA)
+        assert tmpl2.seasonality == SeasonalityMode.MONSOON
 
-    def test_from_values_tropical(self):
-        """高温 + 高降雨 → 热带。"""
-        assert climate_zone_from_values(28.0, 2000.0) == ClimateZone.TROPICAL
-        assert climate_zone_from_values(22.0, 1500.0) == ClimateZone.TROPICAL
+    @pytest.mark.parametrize("temp, rain, alt, expected", [
+        # 高山（海拔优先，覆盖纬度气候）
+        (25.0, 2000.0, 2500.0, ClimateZone.ALPINE),
+        (-5.0, 100.0, 2000.0, ClimateZone.ALPINE),
+        # 极地（温度 < -5 优先于干旱）
+        (-10.0, 2000.0, 0.0, ClimateZone.POLAR_TUNDRA),
+        (-8.0, 100.0, 0.0, ClimateZone.POLAR_TUNDRA),
+        # 沙漠（降雨 < 200，温度 >= -5）
+        (25.0, 100.0, 0.0, ClimateZone.DESERT),
+        (15.0, 150.0, 0.0, ClimateZone.DESERT),
+        # 草原（200<=R<600，温度 > 5）
+        (25.0, 400.0, 0.0, ClimateZone.STEPPE),
+        (10.0, 500.0, 0.0, ClimateZone.STEPPE),
+        # 热带雨林（T>=20, R>=1500）
+        (28.0, 2000.0, 0.0, ClimateZone.EQUATORIAL_RAINFOREST),
+        (22.0, 1500.0, 0.0, ClimateZone.EQUATORIAL_RAINFOREST),
+        # 热带草原（T>=20, 600<=R<1500）
+        (28.0, 800.0, 0.0, ClimateZone.TROPICAL_SAVANNA),
+        (22.0, 1200.0, 0.0, ClimateZone.TROPICAL_SAVANNA),
+        # 温带森林（5<=T<20, R>=600）
+        (15.0, 800.0, 0.0, ClimateZone.TEMPERATE_FOREST),
+        (8.0, 1000.0, 0.0, ClimateZone.TEMPERATE_FOREST),
+        # 亚寒带针叶林（-5<=T<5, R>=400）
+        (-2.0, 600.0, 0.0, ClimateZone.SUBARCTIC_TAIGA),
+        (0.0, 500.0, 0.0, ClimateZone.SUBARCTIC_TAIGA),
+        # 极地苔原（-5<=T<5, R<400 — 冷干合并）
+        (-2.0, 200.0, 0.0, ClimateZone.POLAR_TUNDRA),
+        (4.0, 300.0, 0.0, ClimateZone.POLAR_TUNDRA),
+    ])
+    def test_classify(self, temp, rain, alt, expected):
+        """classify 8 档判定表驱动。"""
+        assert classify(temp, rain, alt) == expected
 
-    def test_from_values_temperate(self):
-        """中等温度 → 温带（默认）。"""
-        assert climate_zone_from_values(15.0, 800.0) == ClimateZone.TEMPERATE
+    def test_alpine_overrides_tropical(self):
+        """高山海拔覆盖热带纬度气候。"""
+        assert classify(30.0, 3000.0, 2500.0) == ClimateZone.ALPINE
+
+    def test_polar_overrides_desert(self):
+        """极地严寒优先于沙漠干旱判定。"""
+        assert classify(-10.0, 50.0, 0.0) == ClimateZone.POLAR_TUNDRA
+
+    def test_climate_zone_from_values_compat(self):
+        """climate_zone_from_values 兼容旧 API（海拔默认 0）。"""
+        assert climate_zone_from_values(28.0, 2000.0) == ClimateZone.EQUATORIAL_RAINFOREST
+        assert climate_zone_from_values(15.0, 800.0) == ClimateZone.TEMPERATE_FOREST
+        assert climate_zone_from_values(-10.0, 500.0) == ClimateZone.POLAR_TUNDRA
 
     def test_sea_level_temperature_range(self):
         """纬度噪声映射到合理海平面温度范围。"""
         from ascend.space.climate import sea_level_temperature
-        assert sea_level_temperature(-1.0) < 0.0    # 极地寒冷
-        assert sea_level_temperature(1.0) > 30.0    # 赤道炎热
-        assert sea_level_temperature(0.0) == pytest.approx(15.0)  # 中纬度
+        assert sea_level_temperature(-1.0) < 0.0
+        assert sea_level_temperature(1.0) > 30.0
+        assert sea_level_temperature(0.0) == pytest.approx(15.0)
 
     def test_lapse_rate(self):
-        """气温直减率：升高 1000m 应降 6.5°C。"""
-        from ascend.space.climate import apply_lapse_rate
+        """气温直减率：升高 1000m 应降 9.0°C（游戏性放大值）。"""
+        from ascend.space.climate import apply_lapse_rate, LAPSE_RATE
+        assert LAPSE_RATE == 9.0
         t0 = apply_lapse_rate(20.0, 0.0)
         t1 = apply_lapse_rate(20.0, 1000.0)
-        assert t0 - t1 == pytest.approx(6.5)
+        assert t0 - t1 == pytest.approx(9.0)
+
+    def test_high_altitude_alpine(self):
+        """高海拔 → 即使赤道纬度也判高山而非热带。"""
+        from ascend.space.climate import apply_lapse_rate
+        t = apply_lapse_rate(35.0, 4000.0)
+        assert t < 10.0
+        assert classify(t, 2000.0, 4000.0) == ClimateZone.ALPINE
 
 
 class TestWeatherParams:
@@ -168,25 +226,32 @@ class TestWeatherParams:
             altitude=500.0,
             sea_level_temp=20.0,
             rainfall=1000.0,
-            climate=ClimateZone.TEMPERATE,
+            climate=ClimateZone.TEMPERATE_FOREST,
             sunshine_noise=0.0,
             humidity_noise=0.0,
             wind_noise=0.0,
         )
-        # 500m * 6.5/1000 = 3.25°C 下降
-        assert w.temperature == pytest.approx(16.75)
+        # 500m * 9.0/1000 = 4.5°C 下降
+        assert w.temperature == pytest.approx(15.5)
         assert w.rainfall == 1000.0
         assert w.altitude == 500.0
-        assert 40.0 <= w.humidity <= 85.0
+        assert 45.0 <= w.humidity <= 80.0
 
-    def test_high_altitude_cold(self):
-        """高海拔 → 即使赤道纬度也冷。"""
-        from ascend.space.climate import apply_lapse_rate, climate_zone_from_values
-        # 赤道海平面 35°C，在 4000m 处温度 ≈ 35 - 26 = 9°C
-        t = apply_lapse_rate(35.0, 4000.0)
-        assert t < 10.0
-        # 应该判定为温带而非热带
-        assert climate_zone_from_values(t, 2000.0) == ClimateZone.TEMPERATE
+    def test_annual_baseline_uses_template_ranges(self):
+        """annual_baseline 使用 ClimateTemplate 区间。"""
+        w = annual_baseline(
+            altitude=0.0,
+            sea_level_temp=28.0,
+            rainfall=2000.0,
+            climate=ClimateZone.EQUATORIAL_RAINFOREST,
+            sunshine_noise=1.0,
+            humidity_noise=1.0,
+            wind_noise=1.0,
+        )
+        tmpl = get_climate_template(ClimateZone.EQUATORIAL_RAINFOREST)
+        assert w.sunshine == pytest.approx(tmpl.sunshine_range[1])
+        assert w.humidity == pytest.approx(tmpl.humidity_range[1])
+        assert w.wind_speed == pytest.approx(tmpl.wind_speed_range[1])
 
 
 # ══════════════════════════════════════════════════════════
@@ -194,30 +259,72 @@ class TestWeatherParams:
 # ══════════════════════════════════════════════════════════
 
 class TestBiome:
-    """群系系统测试。"""
+    """群系系统测试 — 8 陆地群系 + 3 海洋群系。"""
 
     def test_biome_type_labels(self):
         """群系类型有中文标签。"""
         assert BiomeType.TEMPERATE_DECIDUOUS_FOREST.label == "温带落叶林"
-        assert BiomeType.ARID_SHRUBLAND.label == "干旱灌木地"
+        assert BiomeType.TROPICAL_RAINFOREST.label == "热带雨林"
+        assert BiomeType.DESERT.label == "沙漠"
+        assert BiomeType.TAIGA.label == "针叶林"
+        assert BiomeType.TUNDRA.label == "苔原"
+        assert BiomeType.ALPINE_MEADOW.label == "高山草甸"
 
-    def test_temperate_biome(self):
-        """温带 → 落叶林。"""
-        assert biome_from_climate(ClimateZone.TEMPERATE, 0.0, 0.0, 15.0) == \
-            BiomeType.TEMPERATE_DECIDUOUS_FOREST
+    def test_land_biome_from_attrs(self):
+        """biome_from_attrs 从连续属性映射陆地群系。"""
+        # 热带雨林
+        assert biome_from_attrs(28.0, 2000.0, 100.0, 29.0) == BiomeType.TROPICAL_RAINFOREST
+        # 热带草原
+        assert biome_from_attrs(28.0, 800.0, 100.0, 29.0) == BiomeType.TROPICAL_SAVANNA
+        # 沙漠
+        assert biome_from_attrs(25.0, 100.0, 100.0, 26.0) == BiomeType.DESERT
+        # 灌木草原
+        assert biome_from_attrs(15.0, 400.0, 100.0, 16.0) == BiomeType.STEPPE_SHRUBLAND
+        # 温带落叶林
+        assert biome_from_attrs(15.0, 800.0, 100.0, 16.0) == BiomeType.TEMPERATE_DECIDUOUS_FOREST
+        # 针叶林
+        assert biome_from_attrs(-2.0, 600.0, 100.0, 1.0) == BiomeType.TAIGA
+        # 苔原
+        assert biome_from_attrs(-10.0, 500.0, 100.0, -9.0) == BiomeType.TUNDRA
+        # 高山草甸
+        assert biome_from_attrs(10.0, 800.0, 2500.0, 32.5) == BiomeType.ALPINE_MEADOW
 
-    def test_arid_biome(self):
-        """干旱带 → 灌木地。"""
-        assert biome_from_climate(ClimateZone.ARID, 0.0, 0.0, 25.0) == \
-            BiomeType.ARID_SHRUBLAND
+    def test_biome_from_climate_compat(self):
+        """biome_from_climate 兼容旧 API。"""
+        assert biome_from_climate(
+            ClimateZone.TEMPERATE_FOREST, 0.0, 100.0, 16.0
+        ) == BiomeType.TEMPERATE_DECIDUOUS_FOREST
+        assert biome_from_climate(
+            ClimateZone.DESERT, 0.0, 100.0, 26.0
+        ) == BiomeType.DESERT
 
-    def test_get_template_known_biomes(self):
-        """已知群系有模板。"""
-        t1 = get_template(BiomeType.TEMPERATE_DECIDUOUS_FOREST)
-        t2 = get_template(BiomeType.ARID_SHRUBLAND)
-        assert t1.biome_type == BiomeType.TEMPERATE_DECIDUOUS_FOREST
-        assert t2.biome_type == BiomeType.ARID_SHRUBLAND
-        assert t1.tree_density > t2.tree_density  # 森林比灌木地树多
+    def test_all_land_biomes_have_templates(self):
+        """8 种陆地群系均有模板。"""
+        land_biomes = [
+            BiomeType.TEMPERATE_DECIDUOUS_FOREST,
+            BiomeType.TROPICAL_RAINFOREST,
+            BiomeType.TROPICAL_SAVANNA,
+            BiomeType.DESERT,
+            BiomeType.STEPPE_SHRUBLAND,
+            BiomeType.TAIGA,
+            BiomeType.TUNDRA,
+            BiomeType.ALPINE_MEADOW,
+        ]
+        for bt in land_biomes:
+            t = get_template(bt)
+            assert t.biome_type == bt
+            assert len(t.creature_weights) > 0
+            assert len(t.resource_weights) > 0
+
+    def test_template_tree_density_ordering(self):
+        """雨林树密度 > 温带 > 草原 > 沙漠。"""
+        rainforest = get_template(BiomeType.TROPICAL_RAINFOREST)
+        temperate = get_template(BiomeType.TEMPERATE_DECIDUOUS_FOREST)
+        steppe = get_template(BiomeType.STEPPE_SHRUBLAND)
+        desert = get_template(BiomeType.DESERT)
+        assert rainforest.tree_density > temperate.tree_density
+        assert temperate.tree_density > steppe.tree_density
+        assert steppe.tree_density > desert.tree_density
 
     def test_template_has_creatures(self):
         """模板包含生物权重。"""
@@ -227,40 +334,26 @@ class TestBiome:
 
     def test_template_has_resources(self):
         """模板包含资源权重。"""
-        t = get_template(BiomeType.ARID_SHRUBLAND)
+        t = get_template(BiomeType.DESERT)
         assert "exposed_mineral" in t.resource_weights
 
     def test_ocean_biomes(self):
         """海拔 <0 判定为海洋，温度决定暖/温/冷。"""
-        # 暖水（赤道）
-        assert biome_from_climate(
-            ClimateZone.TROPICAL, 0.0, -100.0, 28.0
-        ) == BiomeType.WARM_OCEAN
-        # 温带海洋
-        assert biome_from_climate(
-            ClimateZone.TEMPERATE, 0.0, -50.0, 15.0
-        ) == BiomeType.TEMPERATE_OCEAN
-        # 冷水（极地）
-        assert biome_from_climate(
-            ClimateZone.COLD, 0.0, -200.0, 2.0
-        ) == BiomeType.COLD_OCEAN
+        assert biome_from_attrs(28.0, 2000.0, -100.0, 28.0) == BiomeType.WARM_OCEAN
+        assert biome_from_attrs(15.0, 800.0, -50.0, 15.0) == BiomeType.TEMPERATE_OCEAN
+        assert biome_from_attrs(2.0, 500.0, -200.0, 2.0) == BiomeType.COLD_OCEAN
 
     def test_ocean_vs_land_boundary(self):
         """海拔准确 0m 时判定为陆地而非海洋。"""
-        assert biome_from_climate(
-            ClimateZone.TEMPERATE, 0.0, 0.0, 15.0
-        ) == BiomeType.TEMPERATE_DECIDUOUS_FOREST
-        # -1m 落入海洋
-        assert biome_from_climate(
-            ClimateZone.TEMPERATE, 0.0, -1.0, 15.0
-        ) == BiomeType.TEMPERATE_OCEAN
+        assert biome_from_attrs(15.0, 800.0, 0.0, 16.0) == BiomeType.TEMPERATE_DECIDUOUS_FOREST
+        assert biome_from_attrs(15.0, 800.0, -1.0, 16.0) == BiomeType.TEMPERATE_OCEAN
 
     def test_biome_is_ocean(self):
         """is_ocean 属性正确区分海陆。"""
         assert BiomeType.WARM_OCEAN.is_ocean is True
         assert BiomeType.COLD_OCEAN.is_ocean is True
         assert BiomeType.TEMPERATE_DECIDUOUS_FOREST.is_ocean is False
-        assert BiomeType.ARID_SHRUBLAND.is_ocean is False
+        assert BiomeType.DESERT.is_ocean is False
 
     def test_ocean_templates_registered(self):
         """三种海洋群系均有模板。"""
@@ -284,7 +377,7 @@ class TestChunkData:
         c = ChunkData(
             cx=0, cy=0,
             biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
-            climate_zone=ClimateZone.TEMPERATE,
+            climate_zone=ClimateZone.TEMPERATE_FOREST,
             annual_baseline=WeatherParams(15, 800, 10, 200, 60, 5),
         )
         assert c.cx == 0
@@ -298,8 +391,8 @@ class TestChunkData:
         """写入详细 tile 数据（TileGrid）。"""
         c = ChunkData(
             cx=1, cy=2,
-            biome=BiomeType.ARID_SHRUBLAND,
-            climate_zone=ClimateZone.ARID,
+            biome=BiomeType.DESERT,
+            climate_zone=ClimateZone.DESERT,
             annual_baseline=WeatherParams(25, 100, 12, 500, 25, 8),
         )
         grid = TileGrid()
@@ -312,7 +405,7 @@ class TestChunkData:
         c = ChunkData(
             cx=0, cy=0,
             biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
-            climate_zone=ClimateZone.TEMPERATE,
+            climate_zone=ClimateZone.TEMPERATE_FOREST,
             annual_baseline=WeatherParams(15, 800, 10, 200, 60, 5),
         )
         grid1 = TileGrid()
@@ -331,7 +424,7 @@ class TestChunkData:
         c = ChunkData(
             cx=0, cy=0,
             biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
-            climate_zone=ClimateZone.TEMPERATE,
+            climate_zone=ClimateZone.TEMPERATE_FOREST,
             annual_baseline=WeatherParams(15, 800, 10, 200, 60, 5),
         )
         grid = TileGrid()
@@ -345,8 +438,8 @@ class TestChunkData:
         """标记的添加和移除。"""
         c = ChunkData(
             cx=3, cy=4,
-            biome=BiomeType.ARID_SHRUBLAND,
-            climate_zone=ClimateZone.ARID,
+            biome=BiomeType.DESERT,
+            climate_zone=ClimateZone.DESERT,
             annual_baseline=WeatherParams(25, 100, 12, 500, 25, 8),
         )
         c.add_marker("settlement", "一个聚落")
@@ -357,6 +450,23 @@ class TestChunkData:
         c.remove_marker("ruin")
         assert "ruin" not in c.markers
         assert "settlement" in c.markers
+
+    def test_continuous_climate_attrs(self):
+        """ChunkData 携带连续气候属性字段。"""
+        c = ChunkData(
+            cx=0, cy=0,
+            biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
+            climate_zone=ClimateZone.TEMPERATE_FOREST,
+            annual_baseline=WeatherParams(15, 800, 10, 200, 60, 5),
+            mean_temp=15.0,
+            annual_rainfall=800.0,
+            sea_level_temp=16.75,
+            altitude=200.0,
+        )
+        assert c.mean_temp == 15.0
+        assert c.annual_rainfall == 800.0
+        assert c.sea_level_temp == 16.75
+        assert c.altitude == 200.0
 
 
 # ══════════════════════════════════════════════════════════

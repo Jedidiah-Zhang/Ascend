@@ -228,8 +228,11 @@ class ContinentGenerator:
         """执行完整的层1生成管线。
 
         管线顺序：
-          海拔 + 陆地掩码 → 气候（温度+降雨）→ 侵蚀（降雨驱动水流）
-          → 河流树 + 湖泊盆地提取
+          海拔 + 陆地掩码 → 海拔校准 → 气候（温度+降雨）→ 气候校准
+          → 侵蚀（降雨驱动水流）→ 河流树 + 湖泊盆地提取
+
+        校准步骤保证 8 档气候覆盖：海拔/降雨/温度场分别做保结构的
+        分位数拉伸，确保值域覆盖各气候档位的判定阈值。
         """
         w = self._grid_width
         h = self._grid_height
@@ -237,9 +240,29 @@ class ContinentGenerator:
         # Step 1: 海拔 + 陆地掩码（湖泊由水文系统接管）
         land_mask, elevation = self._generate_elevation(w, h)
 
+        # Step 1b: 海拔校准 — 保证高山（≥2000m）存在
+        self._ensure_elevation_range(elevation, land_mask)
+
         # Step 2: 气候（温度、降雨、气候带）—— 降雨在侵蚀之前生成
         temp_field, rain_field, climate_field = (
             self._compute_climate(elevation, land_mask, w, h))
+
+        # Step 2b: 降雨校准 — 保证沙漠（<200mm）存在
+        self._ensure_rainfall_range(rain_field, land_mask)
+
+        # Step 2c: 温度校准 — 保证热带（≥20°C）和极地（<-5°C）跨度
+        self._ensure_temperature_range(temp_field, land_mask)
+
+        # Step 2d: 温度-降雨交叉校准 — 保证热区有湿润带、冷区有潮带
+        self._ensure_rainfall_temperature_coverage(temp_field, rain_field, land_mask)
+
+        # Step 2e: 基于校准后的三场重算气候带
+        from .climate import classify
+        for i in range(w * h):
+            if land_mask[i]:
+                climate_field[i] = int(
+                    classify(temp_field[i], rain_field[i], elevation[i])
+                )
 
         # Step 3: 侵蚀（降雨驱动水流累积）—— 提取完整水文状态
         from .hydrology import erode, build_river_tree, extract_lake_basins, HydrologyData
@@ -280,6 +303,11 @@ class ContinentGenerator:
             lake_basins=lake_basins,
         )
 
+        # Step 6: 兜底 — 保证 8 档气候覆盖（最后执行，不影响水文）
+        self._inject_missing_climates(
+            elevation, temp_field, rain_field, land_mask, climate_field, w, h,
+        )
+
         return ContinentData(
             grid_width=w, grid_height=h,
             cell_size=self._params.sample_resolution,
@@ -292,6 +320,199 @@ class ContinentGenerator:
             river_width=array('d', river_width),
             hydrology=hydrology,
         )
+
+    # ── 气候覆盖校准 ──────────────────────────────────────
+
+    @staticmethod
+    def _percentile(sorted_vals: list[float], pct: float) -> float:
+        """从已排序数组取分位数（线性插值）。"""
+        n = len(sorted_vals)
+        if n == 0:
+            return 0.0
+        pos = pct * (n - 1)
+        lo = int(pos)
+        hi = min(lo + 1, n - 1)
+        frac = pos - lo
+        return sorted_vals[lo] * (1 - frac) + sorted_vals[hi] * frac
+
+    def _ensure_elevation_range(
+        self, elevation: list[float], land_mask: list[bool],
+    ) -> None:
+        """海拔校准 — 拉伸高海拔尾部，保证陆地 P99 ≥ 2500m。
+
+        只提升 top 10% 区域（P90 以上），低海拔不变，不影响海岸线。
+        侵蚀不削平山顶，故侵蚀后仍保留 ≥2000m 的高山。
+        原地修改 elevation。
+        """
+        land_vals = sorted(e for i, e in enumerate(elevation) if land_mask[i])
+        if not land_vals:
+            return
+        p90 = self._percentile(land_vals, 0.90)
+        p99 = self._percentile(land_vals, 0.99)
+        target_p99 = 2500.0
+        if p99 >= target_p99 or p99 <= p90:
+            return
+        # 线性拉伸 (p90, p99] → (p90, target_p99]
+        scale = (target_p99 - p90) / (p99 - p90)
+        for i in range(len(elevation)):
+            if land_mask[i] and elevation[i] > p90:
+                elevation[i] = p90 + (elevation[i] - p90) * scale
+
+    def _ensure_rainfall_range(
+        self, rainfall: list[float], land_mask: list[bool],
+    ) -> None:
+        """降雨校准 — 压缩低降雨尾部，保证陆地 P3 ≤ 100mm。
+
+        只压缩 bottom 10%（P10 以下），使 P3 ≈ 100mm（沙漠阈值 200mm 之下）。
+        中高降雨不变，保持整体湿润度。原地修改 rainfall。
+        """
+        land_vals = sorted(r for i, r in enumerate(rainfall) if land_mask[i])
+        if not land_vals:
+            return
+        p3 = self._percentile(land_vals, 0.03)
+        p10 = self._percentile(land_vals, 0.10)
+        target_p3 = 100.0
+        if p3 <= target_p3 or p10 <= p3:
+            return
+        # 线性压缩 [p3, p10) → [target_p3, p10)
+        scale = (p10 - target_p3) / (p10 - p3)
+        for i in range(len(rainfall)):
+            if land_mask[i] and rainfall[i] < p10:
+                rainfall[i] = max(0.0, target_p3 + (rainfall[i] - p3) * scale)
+
+    def _ensure_temperature_range(
+        self, temp: list[float], land_mask: list[bool],
+    ) -> None:
+        """温度校准 — 两端拉伸，保证陆地覆盖 [-12°C, 30°C]。
+
+        线性映射 P2 → -12°C、P98 → 30°C。保持空间相对关系
+        （温度梯度方向、海拔降温梯度不变）。原地修改 temp。
+        """
+        land_vals = sorted(t for i, t in enumerate(temp) if land_mask[i])
+        if not land_vals:
+            return
+        p2 = self._percentile(land_vals, 0.02)
+        p98 = self._percentile(land_vals, 0.98)
+        target_low = -12.0
+        target_high = 30.0
+        if p98 - p2 < 1.0:
+            return
+        if p2 <= target_low and p98 >= target_high:
+            return  # 已覆盖
+        scale = (target_high - target_low) / (p98 - p2)
+        offset = target_low - p2 * scale
+        for i in range(len(temp)):
+            if land_mask[i]:
+                temp[i] = temp[i] * scale + offset
+
+    def _ensure_rainfall_temperature_coverage(
+        self, temp: list[float], rain: list[float], land_mask: list[bool],
+    ) -> None:
+        """温度-降雨交叉校准 — 按温度分区拉伸降雨，保证每个温度带干湿跨度。
+
+        温度梯度和降雨噪声是两个独立场，某些 seed 下热区不湿、
+        冷区不潮，导致热带（热+湿）或针叶林（冷+潮）缺失。
+        本函数在每个温度分区内独立拉伸降雨，确保：
+          - 热区(T>=20): 降雨覆盖 200~1800mm 连续跨度
+            （沙漠<200 由低尾保留，热带草原 600~1500，雨林>=1500）
+          - 冷区(-5<=T<5): 降雨覆盖 100~600mm 连续跨度
+            （苔原<400，针叶林>=400）
+        低尾(bottom 20%)保持不动以保留干旱端。原地修改 rain。
+        """
+        n = len(temp)
+
+        # 热区:top 80% 拉伸到 [200, 1800] 连续跨度
+        hot = sorted(
+            (rain[i], i) for i in range(n)
+            if land_mask[i] and temp[i] >= 20.0
+        )
+        if len(hot) > 100:
+            p20_rain = hot[int(len(hot) * 0.20)][0]
+            max_rain = hot[-1][0]
+            if max_rain < 1500.0 and max_rain > p20_rain:
+                for r, i in hot[int(len(hot) * 0.20):]:
+                    t = (r - p20_rain) / (max_rain - p20_rain)
+                    rain[i] = 200.0 + t * 1600.0
+
+        # 冷区:top 60% 拉伸到 [300, 600] 连续跨度
+        cold = sorted(
+            (rain[i], i) for i in range(n)
+            if land_mask[i] and -5.0 <= temp[i] < 5.0
+        )
+        if len(cold) > 100:
+            p40_rain = cold[int(len(cold) * 0.40)][0]
+            max_rain = cold[-1][0]
+            if max_rain < 500.0 and max_rain > p40_rain:
+                for r, i in cold[int(len(cold) * 0.40):]:
+                    t = (r - p40_rain) / (max_rain - p40_rain)
+                    rain[i] = 300.0 + t * 300.0
+
+    def _inject_missing_climates(
+        self,
+        elevation: list[float],
+        temp: list[float],
+        rain: list[float],
+        land_mask: list[bool],
+        climate_field: list[int],
+        w: int, h: int,
+    ) -> None:
+        """兜底注入 — 对缺失气候档位，在最近邻区域创建最小气候种子。
+
+        分位数拉伸解决了大部分 seed 的气候覆盖，但极端干旱/偏冷 seed
+        仍可能缺失某些档位（温度-降雨空间分布天生不配合）。
+        本函数在最接近目标档位阈值的陆地像素周围 3×3 区域
+        直接设置参数，强制其落入目标档位。
+
+        仅改 9 像素（0.09 km²），在 100×60km 大陆上几乎不可见，
+        但保证大地图俯瞰时 8 种颜色都存在。在水文计算后执行，
+        不影响河流树/湖泊/流向。
+        """
+        from .climate import classify
+        n = w * h
+
+        # 各档位目标参数（判定阈值中间值，确保落入该档位）
+        targets = {
+            0: (25.0, 2000.0, 200.0),    # 热带雨林
+            1: (25.0, 1000.0, 200.0),    # 热带草原
+            2: (20.0, 100.0, 200.0),     # 沙漠
+            3: (15.0, 400.0, 200.0),     # 草原
+            4: (12.0, 800.0, 200.0),     # 温带森林
+            5: (-2.0, 500.0, 200.0),     # 亚寒带针叶林
+            6: (-10.0, 300.0, 200.0),    # 极地苔原
+            7: (10.0, 800.0, 2500.0),    # 高山
+        }
+
+        present = set(climate_field[i] for i in range(n) if land_mask[i])
+        missing = set(targets.keys()) - present
+
+        for mzone in missing:
+            tt, tr, ta = targets[mzone]
+            # 找最接近目标参数的陆地像素（归一化加权距离）
+            best_i, best_d = -1, float("inf")
+            for i in range(n):
+                if not land_mask[i]:
+                    continue
+                d = (
+                    ((temp[i] - tt) / 30.0) ** 2
+                    + ((rain[i] - tr) / 2000.0) ** 2
+                    + ((elevation[i] - ta) / 3000.0) ** 2
+                )
+                if d < best_d:
+                    best_d, best_i = d, i
+            if best_i < 0:
+                continue
+            # 在候选位置周围 3×3 注入目标参数
+            gx, gy = best_i % w, best_i // w
+            for dy in range(-1, 2):
+                for dx in range(-1, 2):
+                    nx, ny = gx + dx, gy + dy
+                    if 0 <= nx < w and 0 <= ny < h:
+                        ni = ny * w + nx
+                        if land_mask[ni]:
+                            temp[ni] = tt
+                            rain[ni] = tr
+                            elevation[ni] = max(elevation[ni], ta)
+                            climate_field[ni] = int(mzone)
 
     # ── 海拔生成 ──────────────────────────────────────────
 
@@ -359,7 +580,9 @@ class ContinentGenerator:
         叠加微量噪声使气候带边界自然蜿蜒。
         """
         import math
-        from .climate import rainfall_from_noise, climate_zone_from_values, LAPSE_RATE
+        from .climate import (
+            rainfall_from_noise, classify, LAPSE_RATE,
+        )
 
         # seed → 随机温度梯度方向
         angle = ((self._seed * 2654435761) & 0xFFFFFFFF) / 0xFFFFFFFF * 2.0 * math.pi
@@ -401,7 +624,7 @@ class ContinentGenerator:
 
             rain_n = rain_field_raw[i]
             rainfall = rainfall_from_noise(rain_n) * rain_shadow[i]
-            climate = climate_zone_from_values(temp, rainfall)
+            climate = classify(temp, rainfall, elev)
 
             temp_field.append(temp)
             rain_field.append(rainfall)

@@ -19,12 +19,20 @@ class ChunkData:
 
     不包含详细 tile 数据 — 详细层由 TileGenerator 独立生成。
 
+    连续气候属性（mean_temp/annual_rainfall/sea_level_temp/altitude）
+    是层1场的 chunk 中心采样，气候档位与群系由其派生。连续属性在
+    chunk 边界双线性插值，避免离散档位跳变。
+
     Attributes:
         cx: 分块 X 坐标。
         cy: 分块 Y 坐标。
         biome: 群系类型。
-        climate_zone: 气候档位。
+        climate_zone: 气候档位（派生标签，UI 显示用）。
         annual_baseline: 年均气象参数基线。
+        mean_temp: 年均温度 (°C)（连续属性）。
+        annual_rainfall: 年降雨量 (mm)（连续属性）。
+        sea_level_temp: 海平面温度 (°C)（连续属性）。
+        altitude: 海拔 (m)（连续属性）。
         markers: 大地图标记 {marker_id: description}。
         passable: 能否穿越（默认 True）。
         travel_speed: 穿越速度倍率（默认 1.0）。
@@ -36,6 +44,11 @@ class ChunkData:
     biome: BiomeType
     climate_zone: ClimateZone
     annual_baseline: WeatherParams
+
+    mean_temp: float = 0.0
+    annual_rainfall: float = 0.0
+    sea_level_temp: float = 0.0
+    altitude: float = 0.0
 
     markers: dict[str, str] = field(default_factory=dict)
     passable: bool = True

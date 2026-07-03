@@ -15,7 +15,13 @@ _RESET = "\033[0m"
 _BIOME_COLORS: dict[BiomeType, str] = {
     # 陆地
     BiomeType.TEMPERATE_DECIDUOUS_FOREST: "\033[0;32m",  # 绿
-    BiomeType.ARID_SHRUBLAND:            "\033[0;33m",  # 黄
+    BiomeType.TROPICAL_RAINFOREST:       "\033[0;42m",  # 亮绿
+    BiomeType.TROPICAL_SAVANNA:          "\033[0;33m",  # 黄
+    BiomeType.DESERT:                    "\033[1;33m",  # 亮黄
+    BiomeType.STEPPE_SHRUBLAND:          "\033[0;33m",  # 黄
+    BiomeType.TAIGA:                     "\033[0;36m",  # 青
+    BiomeType.TUNDRA:                    "\033[1;37m",  # 白
+    BiomeType.ALPINE_MEADOW:             "\033[0;35m",  # 紫
     # 海洋
     BiomeType.WARM_OCEAN:                "\033[0;31m",  # 红
     BiomeType.TEMPERATE_OCEAN:           "\033[0;34m",  # 蓝
@@ -24,16 +30,26 @@ _BIOME_COLORS: dict[BiomeType, str] = {
 
 # 气候颜色
 _CLIMATE_COLORS: dict[ClimateZone, str] = {
-    ClimateZone.TROPICAL:  "\033[0;31m",  # 红
-    ClimateZone.TEMPERATE: "\033[0;32m",  # 绿
-    ClimateZone.COLD:      "\033[0;36m",  # 青
-    ClimateZone.ARID:      "\033[0;33m",  # 黄
+    ClimateZone.EQUATORIAL_RAINFOREST: "\033[0;42m",  # 亮绿
+    ClimateZone.TROPICAL_SAVANNA:      "\033[0;33m",  # 黄
+    ClimateZone.DESERT:                "\033[1;33m",  # 亮黄
+    ClimateZone.STEPPE:                "\033[0;33m",  # 黄
+    ClimateZone.TEMPERATE_FOREST:      "\033[0;32m",  # 绿
+    ClimateZone.SUBARCTIC_TAIGA:       "\033[0;36m",  # 青
+    ClimateZone.POLAR_TUNDRA:          "\033[1;37m",  # 白
+    ClimateZone.ALPINE:                "\033[0;35m",  # 紫
 }
 
 # 群系字符
 _BIOME_CHARS: dict[BiomeType, str] = {
     BiomeType.TEMPERATE_DECIDUOUS_FOREST: "T",
-    BiomeType.ARID_SHRUBLAND:            "~",
+    BiomeType.TROPICAL_RAINFOREST:       "R",
+    BiomeType.TROPICAL_SAVANNA:          "S",
+    BiomeType.DESERT:                    "D",
+    BiomeType.STEPPE_SHRUBLAND:          "~",
+    BiomeType.TAIGA:                     "A",
+    BiomeType.TUNDRA:                    "U",
+    BiomeType.ALPINE_MEADOW:             "^",
     BiomeType.WARM_OCEAN:                "w",
     BiomeType.TEMPERATE_OCEAN:           "o",
     BiomeType.COLD_OCEAN:                "c",
@@ -41,10 +57,14 @@ _BIOME_CHARS: dict[BiomeType, str] = {
 
 # 气候字符
 _CLIMATE_CHARS: dict[ClimateZone, str] = {
-    ClimateZone.TROPICAL:  "H",
-    ClimateZone.TEMPERATE: "M",
-    ClimateZone.COLD:      "C",
-    ClimateZone.ARID:      "A",
+    ClimateZone.EQUATORIAL_RAINFOREST: "R",
+    ClimateZone.TROPICAL_SAVANNA:      "S",
+    ClimateZone.DESERT:                "D",
+    ClimateZone.STEPPE:                "P",
+    ClimateZone.TEMPERATE_FOREST:      "M",
+    ClimateZone.SUBARCTIC_TAIGA:       "A",
+    ClimateZone.POLAR_TUNDRA:          "U",
+    ClimateZone.ALPINE:                "^",
 }
 
 # ── 海拔等高线 ────────────────────────────────────────────
@@ -133,10 +153,14 @@ def render_map(
             ch = _CLIMATE_CHARS.get(v, "?")
             return color, ch
         legend_items = [
-            ("H", _CLIMATE_COLORS[ClimateZone.TROPICAL], ClimateZone.TROPICAL.label),
-            ("M", _CLIMATE_COLORS[ClimateZone.TEMPERATE], ClimateZone.TEMPERATE.label),
-            ("C", _CLIMATE_COLORS[ClimateZone.COLD], ClimateZone.COLD.label),
-            ("A", _CLIMATE_COLORS[ClimateZone.ARID], ClimateZone.ARID.label),
+            ("R", _CLIMATE_COLORS[ClimateZone.EQUATORIAL_RAINFOREST], ClimateZone.EQUATORIAL_RAINFOREST.label),
+            ("S", _CLIMATE_COLORS[ClimateZone.TROPICAL_SAVANNA], ClimateZone.TROPICAL_SAVANNA.label),
+            ("D", _CLIMATE_COLORS[ClimateZone.DESERT], ClimateZone.DESERT.label),
+            ("P", _CLIMATE_COLORS[ClimateZone.STEPPE], ClimateZone.STEPPE.label),
+            ("M", _CLIMATE_COLORS[ClimateZone.TEMPERATE_FOREST], ClimateZone.TEMPERATE_FOREST.label),
+            ("A", _CLIMATE_COLORS[ClimateZone.SUBARCTIC_TAIGA], ClimateZone.SUBARCTIC_TAIGA.label),
+            ("U", _CLIMATE_COLORS[ClimateZone.POLAR_TUNDRA], ClimateZone.POLAR_TUNDRA.label),
+            ("^", _CLIMATE_COLORS[ClimateZone.ALPINE], ClimateZone.ALPINE.label),
         ]
 
     elif mode == "altitude":
@@ -161,8 +185,20 @@ def render_map(
         legend_items = [
             ("T", _BIOME_COLORS[BiomeType.TEMPERATE_DECIDUOUS_FOREST],
              BiomeType.TEMPERATE_DECIDUOUS_FOREST.label),
-            ("~", _BIOME_COLORS[BiomeType.ARID_SHRUBLAND],
-             BiomeType.ARID_SHRUBLAND.label),
+            ("R", _BIOME_COLORS[BiomeType.TROPICAL_RAINFOREST],
+             BiomeType.TROPICAL_RAINFOREST.label),
+            ("S", _BIOME_COLORS[BiomeType.TROPICAL_SAVANNA],
+             BiomeType.TROPICAL_SAVANNA.label),
+            ("D", _BIOME_COLORS[BiomeType.DESERT],
+             BiomeType.DESERT.label),
+            ("~", _BIOME_COLORS[BiomeType.STEPPE_SHRUBLAND],
+             BiomeType.STEPPE_SHRUBLAND.label),
+            ("A", _BIOME_COLORS[BiomeType.TAIGA],
+             BiomeType.TAIGA.label),
+            ("U", _BIOME_COLORS[BiomeType.TUNDRA],
+             BiomeType.TUNDRA.label),
+            ("^", _BIOME_COLORS[BiomeType.ALPINE_MEADOW],
+             BiomeType.ALPINE_MEADOW.label),
             ("w", _BIOME_COLORS[BiomeType.WARM_OCEAN],
              BiomeType.WARM_OCEAN.label),
             ("o", _BIOME_COLORS[BiomeType.TEMPERATE_OCEAN],

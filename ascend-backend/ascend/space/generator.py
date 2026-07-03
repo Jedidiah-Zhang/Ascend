@@ -23,10 +23,10 @@ from .climate import (
     WeatherParams,
     sea_level_temperature,
     rainfall_from_noise,
-    climate_zone_from_values,
+    classify,
     annual_baseline,
 )
-from .biome import BiomeType, biome_from_climate
+from .biome import BiomeType, biome_from_attrs
 from .chunk import ChunkData
 
 logger = get_logger(__name__)
@@ -194,15 +194,13 @@ class WorldGenerator:
         # 3. 降雨
         rainfall = self._sample_rainfall(cx, cy)
 
-        # 4. 温度 + 降雨 → 气候档位
+        # 4. 温度 + 降雨 → 气候档位（纯静态判定）
         from .climate import apply_lapse_rate
         temperature = apply_lapse_rate(sea_temp, altitude)
-        climate = climate_zone_from_values(temperature, rainfall)
+        climate = classify(temperature, rainfall, altitude)
 
-        # 5. 次级噪声 → 群系（海拔优先判定海洋/陆地）
-        p = self._phase[6]
-        moisture = self._noise_moisture.octave(cx + p, cy + p, octaves=2, frequency=0.005)
-        biome = biome_from_climate(climate, moisture, altitude, sea_temp)
+        # 5. 群系 — 从连续属性映射（不经离散档位主键，边界自然渐变）
+        biome = biome_from_attrs(temperature, rainfall, altitude, sea_temp)
 
         # 6. 派生参数 → 完整气象数据
         params = annual_baseline(
@@ -221,6 +219,10 @@ class WorldGenerator:
             biome=biome,
             climate_zone=climate,
             annual_baseline=params,
+            mean_temp=temperature,
+            annual_rainfall=rainfall,
+            sea_level_temp=sea_temp,
+            altitude=altitude,
         )
 
     # ── 并行生成 ─────────────────────────────────────────
@@ -284,10 +286,7 @@ class WorldGenerator:
         rainfall = self._sample_rainfall(cx, cy)
         from .climate import apply_lapse_rate
         temperature = apply_lapse_rate(sea_temp, altitude)
-        climate = climate_zone_from_values(temperature, rainfall)
-        p = self._phase[6]
-        moisture = self._noise_moisture.octave(cx + p, cy + p, octaves=2, frequency=0.005)
-        return biome_from_climate(climate, moisture, altitude, sea_temp)
+        return biome_from_attrs(temperature, rainfall, altitude, sea_temp)
 
     def get_climate(self, cx: int, cy: int) -> ClimateZone:
         """快速查询分块气候档位。
@@ -303,4 +302,4 @@ class WorldGenerator:
         rainfall = self._sample_rainfall(cx, cy)
         from .climate import apply_lapse_rate
         temperature = apply_lapse_rate(sea_temp, altitude)
-        return climate_zone_from_values(temperature, rainfall)
+        return classify(temperature, rainfall, altitude)

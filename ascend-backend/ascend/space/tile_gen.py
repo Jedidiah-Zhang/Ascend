@@ -15,6 +15,7 @@
 from .terrain import TerrainType
 from .tile_grid import TileGrid, TILE_MAP_SIZE
 from .noise import PerlinNoise
+from .climate import LAPSE_RATE
 
 
 class TileGenerator:
@@ -42,6 +43,42 @@ class TileGenerator:
 
     def __repr__(self) -> str:
         return f"TileGenerator(seed={self._seed})"
+
+    # ── 气候属性采样（供未来 tile 级生理/作物计算）──────────────
+
+    def sample_climate_attrs(
+        self, world_x: float, world_y: float,
+    ) -> tuple[float, float, float, float]:
+        """从层1宏观场双线性插值采样 tile 粒度气候属性。
+
+        返回连续气候属性，供未来 tile 级生理需求/作物生长计算使用。
+        当前仅提供接口，未接入任何逻辑。
+
+        Args:
+            world_x: 世界 tile X 坐标。
+            world_y: 世界 tile Y 坐标。
+
+        Returns:
+            (mean_temp, annual_rainfall, sea_level_temp, altitude)：
+            年均温 (°C)、年降雨 (mm)、海平面温度 (°C)、海拔 (m)。
+        """
+        cont = self._continent
+        gx = int(world_x / cont.cell_size)
+        gy = int(world_y / cont.cell_size)
+        gw, gh = cont.grid_width, cont.grid_height
+
+        altitude = cont.sample_altitude_bilinear(world_x, world_y)
+
+        if 0 <= gx < gw and 0 <= gy < gh:
+            idx = gy * gw + gx
+            temp = cont.temperature_field[idx]
+            rain = cont.rainfall_field[idx]
+        else:
+            temp = -20.0
+            rain = 0.0
+
+        sea_level_temp = temp + altitude * LAPSE_RATE / 1000.0
+        return temp, rain, sea_level_temp, altitude
 
     # ── 主入口 ──────────────────────────────────────────────
 

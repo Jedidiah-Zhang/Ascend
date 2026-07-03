@@ -31,17 +31,27 @@ from ascend.space import WorldGenerator, BiomeType, ClimateZone, TileGenerator
 
 BIOME_COLORS = {
     BiomeType.TEMPERATE_DECIDUOUS_FOREST: "#4a7c3f",
-    BiomeType.ARID_SHRUBLAND: "#c4a43e",
+    BiomeType.TROPICAL_RAINFOREST: "#1a6b3a",
+    BiomeType.TROPICAL_SAVANNA: "#c4a43e",
+    BiomeType.DESERT: "#e6c878",
+    BiomeType.STEPPE_SHRUBLAND: "#b8a060",
+    BiomeType.TAIGA: "#3a6a8a",
+    BiomeType.TUNDRA: "#d8d8e8",
+    BiomeType.ALPINE_MEADOW: "#b0b0c0",
     BiomeType.WARM_OCEAN: "#1e6b8a",
     BiomeType.TEMPERATE_OCEAN: "#2e6b8a",
     BiomeType.COLD_OCEAN: "#5a8aaa",
 }
 
 CLIMATE_COLORS = {
-    ClimateZone.TROPICAL: "#e74c3c",
-    ClimateZone.TEMPERATE: "#27ae60",
-    ClimateZone.COLD: "#3498db",
-    ClimateZone.ARID: "#f39c12",
+    ClimateZone.EQUATORIAL_RAINFOREST: "#1a6b3a",
+    ClimateZone.TROPICAL_SAVANNA: "#c4a43e",
+    ClimateZone.DESERT: "#e6c878",
+    ClimateZone.STEPPE: "#b8a060",
+    ClimateZone.TEMPERATE_FOREST: "#4a7c3f",
+    ClimateZone.SUBARCTIC_TAIGA: "#3a6a8a",
+    ClimateZone.POLAR_TUNDRA: "#d8d8e8",
+    ClimateZone.ALPINE: "#b0b0c0",
 }
 
 # 地形颜色映射 — 9 种 TerrainType → RGB
@@ -225,7 +235,13 @@ def _color_for_biome(v: int) -> tuple[int, int, int]:
     """群系值 → RGB。"""
     colors = {
         0:  (74, 124, 63),    # 温带落叶林
-        1:  (196, 164, 62),   # 干旱灌木地
+        1:  (26, 107, 58),    # 热带雨林
+        2:  (196, 164, 62),   # 热带草原
+        3:  (230, 200, 120),  # 沙漠
+        4:  (184, 160, 96),   # 灌木草原
+        5:  (58, 106, 138),   # 针叶林
+        6:  (216, 216, 232),  # 苔原
+        7:  (176, 176, 192),  # 高山草甸
         10: (30, 107, 138),   # 暖水海洋
         11: (46, 107, 138),   # 温带海洋
         12: (90, 138, 170),   # 冷水海洋
@@ -236,10 +252,14 @@ def _color_for_biome(v: int) -> tuple[int, int, int]:
 def _color_for_climate(v: int) -> tuple[int, int, int]:
     """气候值 → RGB。"""
     colors = {
-        0: (231, 76, 60),     # 热带
-        1: (39, 174, 96),     # 温带
-        2: (52, 152, 219),    # 寒带
-        3: (243, 156, 18),    # 干旱带
+        0: (26, 107, 58),    # 热带雨林
+        1: (196, 164, 62),   # 热带草原
+        2: (230, 200, 120),  # 沙漠
+        3: (184, 160, 96),   # 草原
+        4: (74, 124, 63),    # 温带森林
+        5: (58, 106, 138),   # 亚寒带针叶林
+        6: (216, 216, 232),  # 极地苔原
+        7: (176, 176, 192),  # 高山
     }
     return colors.get(v, (34, 34, 34))
 

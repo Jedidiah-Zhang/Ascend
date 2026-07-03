@@ -257,31 +257,40 @@ class TestVisualOutput:
         render_temperature(temp, w, h, out_path, title="Temperature (°C)")
         print(f"[visual] 温度场已保存, range=[{min(temp):.0f}, {max(temp):.0f}]°C")
 
-    def test_visual_04_climate(self):
-        """步骤4：气候带 → visual/output/04_climate.png"""
-        from ascend.space.continent import ContinentData
-        from tests.visual.render import render_blocks
+    def test_visual_04_rainfall(self):
+        """步骤4：年降雨量 → visual/output/04_rainfall.png
 
-        data = _get_data(seed=CANONICAL_SEED)
-        w, h = data.grid_width, data.grid_height
-        climate = data.climate_zone
-        out_path = os.path.join(self._OUTPUT_DIR, "04_climate.png")
-        render_blocks(climate, w, h, out_path, title="Climate Zones")
-        zones = set(climate)
-        names = {0: '热带', 1: '温带', 2: '寒带', 3: '干旱'}
-        print(f"[visual] 气候带已保存, zones={[names.get(z,str(z)) for z in sorted(zones)]}")
-
-    def test_visual_05_rainfall(self):
-        """步骤5：年降雨量 → visual/output/05_rainfall.png"""
+        降雨在校准后、气候带判定前确定，是气候的输入。
+        """
         from ascend.space.continent import ContinentData
         from tests.visual.render import render_rainfall
 
         data = _get_data(seed=CANONICAL_SEED)
         w, h = data.grid_width, data.grid_height
         rf = data.rainfall_field
-        out_path = os.path.join(self._OUTPUT_DIR, "05_rainfall.png")
+        out_path = os.path.join(self._OUTPUT_DIR, "04_rainfall.png")
         render_rainfall(rf, w, h, out_path, title="Annual Rainfall (mm)")
         print(f"[visual] 降雨场已保存, range=[{min(rf):.0f}, {max(rf):.0f}]mm/yr")
+
+    def test_visual_05_climate(self):
+        """步骤5：气候带 → visual/output/05_climate.png
+
+        气候带由校准后的温度+降雨+海拔三场派生。
+        """
+        from ascend.space.continent import ContinentData
+        from tests.visual.render import render_blocks
+
+        data = _get_data(seed=CANONICAL_SEED)
+        w, h = data.grid_width, data.grid_height
+        climate = data.climate_zone
+        out_path = os.path.join(self._OUTPUT_DIR, "05_climate.png")
+        render_blocks(climate, w, h, out_path, title="Climate Zones")
+        zones = set(climate)
+        names = {
+            0: '热带雨林', 1: '热带草原', 2: '沙漠', 3: '草原',
+            4: '温带森林', 5: '亚寒带针叶林', 6: '极地苔原', 7: '高山',
+        }
+        print(f"[visual] 气候带已保存, zones={[names.get(z,str(z)) for z in sorted(zones)]}")
 
     def test_visual_06_flow_acc(self):
         """步骤6：水流累积场 → visual/output/06_flow_acc.png"""
@@ -450,8 +459,8 @@ class TestVisualOutput:
         self.test_visual_01_outline()
         self.test_visual_02_elevation()
         self.test_visual_03_temperature()
-        self.test_visual_04_climate()
-        self.test_visual_05_rainfall()
+        self.test_visual_04_rainfall()
+        self.test_visual_05_climate()
         self.test_visual_06_flow_acc()
         self.test_visual_07_river_tree()
         self.test_visual_08_lake_basins()

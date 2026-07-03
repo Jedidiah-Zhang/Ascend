@@ -24,20 +24,30 @@ const STREAM_MARGIN: int = 4              ## 可见区域外的额外块以预�
 
 ## 群系颜色（与 tests/web/server.py 保持一致）
 const BIOME_COLORS: Dictionary = {
-	0:  Color(0.29, 0.49, 0.25),   ## TEMPERATE_DECIDUOUS_FOREST — 绿色
-	1:  Color(0.77, 0.64, 0.24),   ## ARID_SHRUBLAND — 黄色
+	0:  Color(0.29, 0.49, 0.25),   ## TEMPERATE_DECIDUOUS_FOREST — 绿
+	1:  Color(0.10, 0.42, 0.23),   ## TROPICAL_RAINFOREST — 深绿
+	2:  Color(0.77, 0.64, 0.24),   ## TROPICAL_SAVANNA — 黄绿
+	3:  Color(0.90, 0.78, 0.47),   ## DESERT — 沙黄
+	4:  Color(0.72, 0.63, 0.38),   ## STEPPE_SHRUBLAND — 褐黄
+	5:  Color(0.23, 0.42, 0.54),   ## TAIGA — 暗青
+	6:  Color(0.85, 0.85, 0.91),   ## TUNDRA — 灰白
+	7:  Color(0.69, 0.69, 0.75),   ## ALPINE_MEADOW — 灰紫
 	10: Color(0.12, 0.42, 0.54),   ## WARM_OCEAN — 深蓝
 	11: Color(0.18, 0.42, 0.54),   ## TEMPERATE_OCEAN — 中蓝
 	12: Color(0.35, 0.54, 0.67),   ## COLD_OCEAN — 浅蓝
 }
 const UNKNOWN_CHUNK_COLOR: Color = Color(0.08, 0.08, 0.10)  ## 未请求/加载中的块
 
-## 气候颜色（ClimateZone IntEnum: 0=TROPICAL, 1=TEMPERATE, 2=COLD, 3=ARID）
+## 气候颜色（ClimateZone IntEnum: 0-7 共 8 档）
 const CLIMATE_COLORS: Dictionary = {
-	0: Color(0.85, 0.30, 0.20),   ## TROPICAL — 红
-	1: Color(0.30, 0.70, 0.35),   ## TEMPERATE — 绿
-	2: Color(0.30, 0.60, 0.75),   ## COLD — 青
-	3: Color(0.75, 0.65, 0.20),   ## ARID — 黄
+	0: Color(0.10, 0.42, 0.23),   ## EQUATORIAL_RAINFOREST — 深绿
+	1: Color(0.77, 0.64, 0.24),   ## TROPICAL_SAVANNA — 黄绿
+	2: Color(0.90, 0.78, 0.47),   ## DESERT — 沙黄
+	3: Color(0.72, 0.63, 0.38),   ## STEPPE — 褐黄
+	4: Color(0.29, 0.49, 0.25),   ## TEMPERATE_FOREST — 绿
+	5: Color(0.23, 0.42, 0.54),   ## SUBARCTIC_TAIGA — 暗青
+	6: Color(0.85, 0.85, 0.91),   ## POLAR_TUNDRA — 灰白
+	7: Color(0.69, 0.69, 0.75),   ## ALPINE — 灰紫
 }
 
 ## 海拔等高线: [上限(m), 颜色]

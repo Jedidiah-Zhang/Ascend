@@ -22,12 +22,16 @@
 
 from .noise import PerlinNoise
 from .climate import (
-    ClimateZone, WeatherParams,
-    climate_zone_from_noise, climate_zone_from_values,
+    ClimateZone, ClimateTemplate, SeasonalityMode,
+    WeatherParams,
+    classify, climate_zone_from_noise, climate_zone_from_values,
     annual_baseline, sea_level_temperature, apply_lapse_rate,
-    rainfall_from_noise, LAPSE_RATE, clamp,
+    rainfall_from_noise, get_climate_template, LAPSE_RATE, clamp,
 )
-from .biome import BiomeType, BiomeTemplate, biome_from_climate, get_template
+from .biome import (
+    BiomeType, BiomeTemplate,
+    biome_from_attrs, biome_from_climate, get_template,
+)
 from .chunk import ChunkData, TILE_MAP_SIZE
 from .generator import WorldGenerator
 from .terrain import (
@@ -53,11 +57,22 @@ __all__ = [
     "WorldGenerator",
     "PerlinNoise",
     "ClimateZone",
+    "ClimateTemplate",
+    "SeasonalityMode",
     "WeatherParams",
+    "classify",
     "climate_zone_from_noise",
+    "climate_zone_from_values",
+    "get_climate_template",
     "annual_baseline",
+    "sea_level_temperature",
+    "apply_lapse_rate",
+    "rainfall_from_noise",
+    "LAPSE_RATE",
+    "clamp",
     "BiomeType",
     "BiomeTemplate",
+    "biome_from_attrs",
     "biome_from_climate",
     "get_template",
     "ChunkData",
