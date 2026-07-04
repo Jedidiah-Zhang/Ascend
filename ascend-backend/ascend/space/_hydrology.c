@@ -7,6 +7,7 @@
        gcc -O3 -shared -fPIC -o _hydrology.so _hydrology.c -lm
 */
 
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -78,21 +79,20 @@ static void heap_push(MinHeap *h, double elev, int idx) {
 }
 
 static HeapEntry heap_pop(MinHeap *h) {
-    /* 下滤 */
+    /* 下滤：始终用 last 与较小子节点比较，找到其最终位置后放入。 */
     HeapEntry result = h->data[0];
     HeapEntry last = h->data[--h->size];
     int i = 0;
     while (1) {
         int left = 2 * i + 1;
         int right = 2 * i + 2;
-        int smallest = i;
-        if (left < h->size && heap_less(&h->data[left], &h->data[smallest]))
-            smallest = left;
-        if (right < h->size && heap_less(&h->data[right], &h->data[smallest]))
-            smallest = right;
-        if (smallest == i) break;
-        h->data[i] = h->data[smallest];
-        i = smallest;
+        if (left >= h->size) break;  /* 无子节点 */
+        int sc = left;
+        if (right < h->size && heap_less(&h->data[right], &h->data[left]))
+            sc = right;
+        if (!heap_less(&h->data[sc], &last)) break;
+        h->data[i] = h->data[sc];
+        i = sc;
     }
     h->data[i] = last;
     return result;
@@ -103,41 +103,34 @@ static HeapEntry heap_pop(MinHeap *h) {
 void hydrology_fill_depressions(
     const double *dem, int w, int h, double *result)
 {
-    /* 优先队列填洼（Planchon-Darboux 变体）。
-       从边界最低点出发向内灌水，确保每个像素都有向边界的下坡路径。
-       result 预分配为 w*h 个 double。 */
+    /* Planchon-Darboux 填洼（海洋为边界，单次访问 + 堆保证最优）。
+       海洋格 (dem < 0) 作为固定边界入堆，陆地向内传播。
+       堆按水位升序弹出，保证每个格首次被访问时即得到最低水位路径。 */
     int n = w * h;
-    memcpy(result, dem, (size_t)n * sizeof(double));
+    for (int i = 0; i < n; i++) {
+        result[i] = dem[i];
+    }
 
-    /* 已处理标记 */
     unsigned char *processed = (unsigned char *)calloc((size_t)n, 1);
     if (!processed) return;
 
-    /* 最坏情况所有像素入堆 */
     MinHeap *heap = heap_create(n);
     if (!heap) { free(processed); return; }
 
-    /* 所有边界像素入堆 */
-    for (int x = 0; x < w; x++) {
-        for (int y = 0; y < h; y += (h - 1)) {
-            int idx = y * w + x;
-            heap_push(heap, dem[idx], idx);
-            processed[idx] = 1;
-        }
-    }
-    for (int y = 1; y < h - 1; y++) {
-        for (int x = 0; x < w; x += (w - 1)) {
-            int idx = y * w + x;
-            heap_push(heap, dem[idx], idx);
-            processed[idx] = 1;
+    /* 仅海洋格入堆作为边界 */
+    for (int i = 0; i < n; i++) {
+        if (dem[i] < 0.0) {
+            heap_push(heap, dem[i], i);
+            processed[i] = 1;
         }
     }
 
-    /* 从最低边界点向内蔓延 */
+    /* 从最低海洋格向外单次传播 */
     while (heap->size > 0) {
         HeapEntry e = heap_pop(heap);
-        int x = e.idx % w;
-        int y = e.idx / w;
+        int idx = e.idx;
+        int x = idx % w;
+        int y = idx / w;
         double spill = e.elev + 0.001;
 
         for (int d = 0; d < 8; d++) {
@@ -147,8 +140,9 @@ void hydrology_fill_depressions(
             int ni = ny * w + nx;
             if (processed[ni]) continue;
 
-            if (result[ni] < spill)
+            if (result[ni] < spill) {
                 result[ni] = spill;
+            }
 
             processed[ni] = 1;
             heap_push(heap, result[ni], ni);
@@ -497,7 +491,295 @@ void hydrology_dijkstra_to_ocean(
     heap_free(heap);
 }
 
-/* ── rain_shadow ──────────────────────────────────────────── */
+/* ── distance_to_ocean ────────────────────────────────────── */
+
+void hydrology_distance_to_ocean(
+    const double *elevation, int w, int h,
+    double *dist_out)
+{
+    /* 多源 BFS 计算每个陆地格到最近海洋的 Chebyshev 距离（格数）。
+       海洋格（dem < 0）距离为 0，陆地距离 = 到最近海洋的 D8 步数。
+       循环队列，O(N)，每个格入队/出队一次。
+    */
+    int n = w * h;
+    int *dist = (int *)malloc((size_t)n * sizeof(int));
+    int *queue = (int *)malloc((size_t)n * sizeof(int));
+    int head = 0, tail = 0;
+
+    /* 初始化：海洋距离 0 并入队，陆地初始化为大数 */
+    for (int i = 0; i < n; i++) {
+        if (elevation[i] < 0.0) {
+            dist[i] = 0;
+            queue[tail++] = i;
+        } else {
+            dist[i] = INT_MAX / 2;
+        }
+    }
+
+    /* BFS */
+    while (head < tail) {
+        int idx = queue[head++];
+        int x = idx % w;
+        int y = idx / w;
+        int nd = dist[idx] + 1;
+
+        for (int d = 0; d < 8; d++) {
+            int nx = x + DX[d];
+            int ny = y + DY[d];
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            int ni = ny * w + nx;
+            if (nd < dist[ni]) {
+                dist[ni] = nd;
+                queue[tail++] = ni;
+            }
+        }
+    }
+
+    /* 转换为 double 输出 */
+    for (int i = 0; i < n; i++) {
+        dist_out[i] = (double)dist[i];
+    }
+
+    free(dist);
+    free(queue);
+}
+
+/* ── rain_shadow (omnidirectional moisture budget) ────────── */
+
+/* 投影排序条目：风向投影 + 原始索引 */
+typedef struct {
+    double proj;
+    int idx;
+} ProjEntry;
+
+static int _proj_compare(const void *a, const void *b) {
+    double pa = ((const ProjEntry *)a)->proj;
+    double pb = ((const ProjEntry *)b)->proj;
+    if (pa < pb) return -1;
+    if (pa > pb) return 1;
+    /* 平局决胜：idx 保证确定性输出（qsort 非稳定排序） */
+    int ia = ((const ProjEntry *)a)->idx;
+    int ib = ((const ProjEntry *)b)->idx;
+    return (ia < ib) ? -1 : (ia > ib) ? 1 : 0;
+}
+
+/* 双线性插值，边界钳制（不在网格内则钳到边缘像素） */
+static double _bilinear_clamp(const double *grid, int w, int h,
+                               double x, double y) {
+    if (x < 0.0) x = 0.0;
+    if (x >= (double)(w - 1)) x = (double)(w - 1) - 1e-10;
+    if (y < 0.0) y = 0.0;
+    if (y >= (double)(h - 1)) y = (double)(h - 1) - 1e-10;
+
+    int x0 = (int)x;
+    int y0 = (int)y;
+    int x1 = x0 + 1;
+    int y1 = y0 + 1;
+
+    double fx = x - (double)x0;
+    double fy = y - (double)y0;
+
+    double v00 = grid[y0 * w + x0];
+    double v10 = grid[y0 * w + x1];
+    double v01 = grid[y1 * w + x0];
+    double v11 = grid[y1 * w + x1];
+
+    double v0 = v00 + (v10 - v00) * fx;
+    double v1 = v01 + (v11 - v01) * fx;
+    return v0 + (v1 - v0) * fy;
+}
+
+/* ── 抬升 → 雨影因子映射（与旧 1D 算法相同，保证平滑）────── */
+
+static double _uplift_to_factor(double total_uplift, double min_factor) {
+    /* 分段线性：累积抬升越大 → 因子越小。
+       阈值与旧 hydrology_rain_shadow 一致，保证输出连续。 */
+    if (total_uplift < 30.0)
+        return 1.0;
+    else if (total_uplift < 150.0)
+        return 1.0 - (total_uplift - 30.0) / 120.0 * 0.4;
+    else if (total_uplift < 400.0)
+        return 0.6 - (total_uplift - 150.0) / 250.0 * 0.35;
+    else {
+        double f = 0.25 - (total_uplift - 400.0) / 2000.0 * 0.15;
+        return (f < min_factor) ? min_factor : f;
+    }
+}
+
+/* 前向声明 */
+static void _gaussian_blur_inplace(double *arr, int w, int h, double sigma);
+
+/* 单风向抬升累积追踪 — 排序扫描 DP + 指数衰减 */
+static void _rain_shadow_single_dir(
+    const double *elevation, int w, int h,
+    double angle_rad,
+    double decay_length_km, double cell_size_km, double min_factor,
+    double *factors)
+{
+    int n = w * h;
+    double wx = cos(angle_rad);
+    double wy = sin(angle_rad);
+
+    /* 归一化步长 ≈ 1 格，配合最近邻采样（避免双线性自依赖） */
+    double norm = fmax(1e-10, fmax(fabs(wx), fabs(wy)));
+    double step_scale = 1.0 / norm;
+    double step_x = wx * step_scale;
+    double step_y = wy * step_scale;
+
+    /* 每步的指数衰减系数 */
+    double step_mag = sqrt(step_x * step_x + step_y * step_y);
+    double step_km = step_mag * cell_size_km;
+    double decay = exp(-step_km / decay_length_km);
+
+    /* 分配 */
+    ProjEntry *entries = (ProjEntry *)malloc((size_t)n * sizeof(ProjEntry));
+    double *uplift_eff = (double *)malloc((size_t)n * sizeof(double));
+
+    /* 计算投影 */
+    for (int i = 0; i < n; i++) {
+        entries[i].idx = i;
+        entries[i].proj = (double)(i % w) * wx + (double)(i / w) * wy;
+    }
+
+    /* 按投影升序（上风 → 下风） */
+    qsort(entries, n, sizeof(ProjEntry), _proj_compare);
+
+    /* DP 扫描 */
+    for (int j = 0; j < n; j++) {
+        int idx = entries[j].idx;
+        int x = idx % w;
+        int y = idx / w;
+
+        double src_x = (double)x - step_x;
+        double src_y = (double)y - step_y;
+
+        double src_uplift;
+        double src_elev;
+
+        if (src_x < 0.0 || src_x >= (double)(w - 1) ||
+            src_y < 0.0 || src_y >= (double)(h - 1)) {
+            /* 出界 → 开洋，抬升归零 */
+            src_uplift = 0.0;
+            src_elev = 0.0;
+        } else {
+            src_elev = _bilinear_clamp(elevation, w, h, src_x, src_y);
+            if (src_elev < 0.0) {
+                /* 上风是海洋 → 抬升归零 */
+                src_uplift = 0.0;
+            } else {
+                /* 最近邻采样（步长=1时避免自依赖，且比双线性更好处理海岸） */
+                int sx = (int)(src_x + 0.5);
+                int sy = (int)(src_y + 0.5);
+                if (sx < 0) sx = 0;
+                if (sx >= w) sx = w - 1;
+                if (sy < 0) sy = 0;
+                if (sy >= h) sy = h - 1;
+                src_uplift = uplift_eff[sy * w + sx];
+                if (src_uplift < 0.0) src_uplift = 0.0;
+            }
+        }
+
+        double cur_elev = elevation[idx];
+
+        /* 上坡量（仅正高程差） */
+        double uplift = (cur_elev < src_elev) ? (src_elev - cur_elev) : 0.0;
+
+        /* 有效抬升 = 上风抬升衰减 + 当前步抬升 */
+        uplift_eff[idx] = src_uplift * decay + uplift;
+
+        /* 映射到雨影因子 */
+        factors[idx] = _uplift_to_factor(uplift_eff[idx], min_factor);
+    }
+
+    free(entries);
+    free(uplift_eff);
+
+    /* 高斯模糊平滑（消除海陆边界和其他局部跳变） */
+    _gaussian_blur_inplace(factors, w, h, 2.0);
+}
+
+/* 原地可分离高斯模糊（用于雨影因子后处理） */
+static void _gaussian_blur_inplace(double *arr, int w, int h, double sigma) {
+    int n = w * h;
+    double *tmp = (double *)malloc((size_t)n * sizeof(double));
+    if (!tmp) return;
+
+    int radius = (int)(sigma * 3.0);
+    if (radius < 1) radius = 1;
+
+    /* 水平 pass */
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            double sum = 0.0, weight = 0.0;
+            for (int dx = -radius; dx <= radius; dx++) {
+                int sx = x + dx;
+                if (sx < 0) sx = 0;
+                if (sx >= w) sx = w - 1;
+                double g = exp(-(double)(dx * dx) / (2.0 * sigma * sigma));
+                sum += arr[y * w + sx] * g;
+                weight += g;
+            }
+            tmp[y * w + x] = sum / weight;
+        }
+    }
+
+    /* 垂直 pass */
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            double sum = 0.0, weight = 0.0;
+            for (int dy = -radius; dy <= radius; dy++) {
+                int sy = y + dy;
+                if (sy < 0) sy = 0;
+                if (sy >= h) sy = h - 1;
+                double g = exp(-(double)(dy * dy) / (2.0 * sigma * sigma));
+                sum += tmp[sy * w + x] * g;
+                weight += g;
+            }
+            arr[y * w + x] = sum / weight;
+        }
+    }
+
+    free(tmp);
+}
+
+void hydrology_rain_shadow_omnidirectional(
+    const double *elevation, int w, int h,
+    double primary_angle,
+    double secondary_angle,
+    double secondary_weight,
+    double decay_length_km,
+    double cell_size_km,
+    double min_factor,
+    double *factors)
+{
+    /* 多风向抬升累积雨影因子。
+       primary_angle: 主风向（弧度）。
+       secondary_angle: 次风向（弧度），仅当 secondary_weight > 0 时使用。
+       secondary_weight: 次风权重 [0, 1]。
+       decay_length_km: 抬升指数衰减距离 (km)，替代滑动窗口。
+       因子输出范围：[min_factor, 1.0]。
+    */
+    _rain_shadow_single_dir(elevation, w, h, primary_angle,
+                            decay_length_km, cell_size_km, min_factor,
+                            factors);
+
+    if (secondary_weight > 0.0 && secondary_weight < 1.0) {
+        int n = w * h;
+        double *tmp = (double *)malloc((size_t)n * sizeof(double));
+        if (tmp) {
+            _rain_shadow_single_dir(elevation, w, h, secondary_angle,
+                                    decay_length_km, cell_size_km, min_factor,
+                                    tmp);
+            double pw = 1.0 - secondary_weight;
+            for (int i = 0; i < n; i++) {
+                factors[i] = pw * factors[i] + secondary_weight * tmp[i];
+            }
+            free(tmp);
+        }
+    }
+}
+
+/* ── 旧 rain_shadow（保留兼容，不再使用）────────────────── */
 
 void hydrology_rain_shadow(
     const double *elevation, int w, int h,
@@ -627,14 +909,22 @@ void hydrology_compute_climate(
     const double *elevation,
     const double *lat_wiggle, const double *rain_raw,
     const double *rain_shadow,
+    const double *dist_to_ocean,
     int w, int h,
     double gx, double gy,
+    double continentality_k,
+    double continentality_d0,
+    double cell_size_km,
     double *temp_out, double *rain_out, int *climate_out)
 {
     /* 单次 C 遍历替代 Python 600K 循环。
-       温度 = 纬度梯度 + 微量摆动 - 海拔 × 直减率
+       温度 = 纬度梯度 + 微量摆动 - 海拔 × 直减率 - 大陆度修正
        降雨 = 降雨噪声 × 雨影因子
        气候 = classify()
+
+       大陆度修正：距海越远 → 年均温越低（大陆性气候，冬季降温主导年均值）。
+       饱和指数曲线：接近海岸修正 ≈0，远海内陆修正 → continentality_k。
+       dist_to_ocean == NULL 时跳过大 clo 陆度修正（向后兼容）。
     */
     double inv_w = 1.0 / (double)w;
     double inv_h = 1.0 / (double)h;
@@ -654,6 +944,14 @@ void hydrology_compute_climate(
 
         double elev = elevation[i];
         double temp = sea_temp - elev * lapse;
+
+        /* 大陆度修正：距海距离 → 饱和指数衰减 */
+        if (dist_to_ocean != NULL && continentality_k > 0.0) {
+            double d_km = dist_to_ocean[i] * cell_size_km;
+            double cont_factor = 1.0 - exp(-d_km / continentality_d0);
+            temp -= continentality_k * cont_factor;
+        }
+
         if (temp < -20.0) temp = -20.0;
         if (temp > 36.0) temp = 36.0;
 

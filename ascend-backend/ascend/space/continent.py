@@ -384,18 +384,20 @@ class ContinentGenerator:
         cold_rains: list[float] = []  # 冷区(-5<=T<5) 的降雨值
 
         for i in range(n):
-            if not land_mask[i]:
-                continue
+            is_land = land_mask[i]
 
-            # 降雨校准（必须在温度校准之前）
-            if do_rain_cal and rain[i] < rain_p10:
+            # 降雨校准（仅陆地）
+            if is_land and do_rain_cal and rain[i] < rain_p10:
                 rain[i] = max(0.0, 100.0 + (rain[i] - rain_p3) * rain_scale)
 
-            # 温度校准
+            # 温度校准（陆地+海洋统一应用，消除海陆边界跳变）
             if do_temp_cal:
                 temp[i] = temp[i] * temp_scale + temp_offset
 
-            # 收集校准后的交叉校准数据
+            if not is_land:
+                continue
+
+            # 收集校准后的交叉校准数据（仅陆地）
             t = temp[i]
             r = rain[i]
             if t >= 20.0:
@@ -610,10 +612,11 @@ class ContinentGenerator:
     ) -> tuple[list[float], list[float], list[int]]:
         """计算温度、降雨、气候带。
 
-        温度 = 海平面纬度温度 - 海拔 × 6.5°C/km
-        降雨 = 噪声 × 雨影因子
+        温度 = 海平面纬度温度 - 海拔 × 9.0°C/km - 大陆度修正
+        降雨 = 噪声 × 雨影因子（水分预算追踪）
 
         温度基线由 seed 决定的方向梯度给出，往某方向走持续变暖、反方向变冷。
+        大陆度修正：距海越远年均温越低（海洋调节缺失，冬季降温主导年均值）。
         叠加微量噪声使气候带边界自然蜿蜒。
         """
         import math
@@ -637,15 +640,22 @@ class ContinentGenerator:
 
         rain_shadow = self._compute_rain_shadow(elevation, w, h)
 
+        # 距海距离（BFS，C 加速）
+        from .hydrology import _distance_to_ocean_c
+        elev_arr = array('d', elevation)
+        dist_to_ocean = _distance_to_ocean_c(elev_arr, w, h)
+
         # climate computation → C (single pass over 600K cells, 零拷贝)
         from .hydrology import _compute_climate_c
-        elev_arr = array('d', elevation)
         lat_arr = array('d', lat_wiggle_field)
         rain_raw_arr = array('d', rain_field_raw)
         shadow_arr = array('d', rain_shadow)
         temp_field, rain_field, climate_field = _compute_climate_c(
-            elev_arr, lat_arr, rain_raw_arr, shadow_arr,
+            elev_arr, lat_arr, rain_raw_arr, shadow_arr, dist_to_ocean,
             w, h, gx, gy,
+            continentality_k=3.0,
+            continentality_d0=200.0,
+            cell_size_km=self._params.sample_resolution / 1000.0,
         )
 
         # convert climate to int (from array)
@@ -656,75 +666,33 @@ class ContinentGenerator:
     def _compute_rain_shadow(
         self, elevation: list[float], w: int, h: int,
     ) -> list[float]:
-        """雨影因子：山脉背风面降雨锐减，盛行风向由 seed 决定。
+        """雨影因子：万向盛行风 + 水分预算追踪。
 
-        支持四个盛行风向（西、东、南、北）。风向按 seed 确定。
-        滑动窗口前缀扫描：从迎风侧向背风侧累加上坡量，
-        累积爬升越多 → 背风侧降雨衰减越大。
+        seed 决定连续风向角 [0, 2π)，主风向（80%）+ 次风向偏移 45°（20%）混合。
+        使用水分预算模型：风携带水汽从海岸向内陆移动，
+        地形抬升消耗水汽 → 背风面干燥。
+        因子范围 [MIN_FACTOR, 1.0]，保证基础降水。
         """
-        # seed 决定盛行风向: 0=西风, 1=东风, 2=南风, 3=北风
-        wind = (self._seed % 37 * 13) % 4
+        import math
+        from .hydrology import _rain_shadow_omnidirectional_c
 
-        if wind == 0:
-            return self._rain_shadow_westerly(elevation, w, h)
-        elif wind == 1:
-            return self._rain_shadow_easterly(elevation, w, h)
-        elif wind == 2:
-            return self._rain_shadow_southerly(elevation, w, h)
-        else:
-            return self._rain_shadow_northerly(elevation, w, h)
+        # seed → 连续风向角（与温度梯度相同的 Knuth 乘法哈希）
+        wind_angle = ((self._seed * 2654435761) & 0xFFFFFFFF) / 0xFFFFFFFF * 2.0 * math.pi
 
-    def _rain_shadow_westerly(
-        self, elevation: list[float], w: int, h: int,
-    ) -> list[float]:
-        """盛行西风：西侧迎风多雨，东侧背风干旱。
-        扫描每行从左到右，累加上坡量。"""
-        return self._rain_shadow_along_axis(
-            elevation, w, h, scan_axis=0, windward=0,
-        )
+        # 次风向：偏移 45°，模拟环境风切变
+        secondary_angle = wind_angle + math.pi / 4.0
 
-    def _rain_shadow_easterly(
-        self, elevation: list[float], w: int, h: int,
-    ) -> list[float]:
-        """盛行东风：东侧迎风多雨，西侧背风干旱。
-        扫描每行从右到左，累加上坡量。"""
-        return self._rain_shadow_along_axis(
-            elevation, w, h, scan_axis=0, windward=1,
-        )
-
-    def _rain_shadow_southerly(
-        self, elevation: list[float], w: int, h: int,
-    ) -> list[float]:
-        """盛行南风：南侧迎风多雨，北侧背风干旱。
-        扫描每列从下到上，累加上坡量。"""
-        return self._rain_shadow_along_axis(
-            elevation, w, h, scan_axis=1, windward=0,
-        )
-
-    def _rain_shadow_northerly(
-        self, elevation: list[float], w: int, h: int,
-    ) -> list[float]:
-        """盛行北风：北侧迎风多雨，南侧背风干旱。
-        扫描每列从上到下，累加上坡量。"""
-        return self._rain_shadow_along_axis(
-            elevation, w, h, scan_axis=1, windward=1,
-        )
-
-    @staticmethod
-    def _rain_shadow_along_axis(
-        elevation: list[float], w: int, h: int,
-        scan_axis: int, windward: int,
-    ) -> list[float]:
-        """沿主轴扫描计算雨影因子 — C 加速。
-
-        Args:
-            scan_axis: 0=沿行扫描（风向东西），1=沿列扫描（风向南北）。
-            windward: 0=迎风侧在起点（如西风扫描从左→右），1=迎风侧在终点。
-        """
-        from .hydrology import _rain_shadow_c
         elev_arr = array('d', elevation)
-        result = _rain_shadow_c(elev_arr, w, h, scan_axis, windward)
-        return result.tolist()
+        factors = _rain_shadow_omnidirectional_c(
+            elev_arr, w, h,
+            primary_angle=wind_angle,
+            secondary_angle=secondary_angle,
+            secondary_weight=0.2,
+            decay_length_km=4.0,   # 抬升衰减距离 ≈ 旧 40 格滑动窗口
+            cell_size_km=self._params.sample_resolution / 1000.0,
+            min_factor=0.15,
+        )
+        return factors.tolist()
 
 
 __all__ = ["ContinentParams", "ContinentData", "ContinentGenerator"]

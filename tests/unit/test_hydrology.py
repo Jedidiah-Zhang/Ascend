@@ -219,74 +219,6 @@ class TestFlowAccumulation:
 
 
 # ════════════════════════════════════════════════════════════════
-# 3. TestRiverExtraction
-# ════════════════════════════════════════════════════════════════
-
-
-class TestRiverExtraction:
-    """河流提取测试。"""
-
-    def test_rivers_exist(self):
-        """至少可以提取到一条河流。"""
-        from ascend.space.hydrology import compute_d8, flow_accumulation, extract_rivers
-        w, h = 30, 30
-        dem = _make_cone_dem(w, h)
-        directions = compute_d8(dem, w, h)
-        acc = flow_accumulation(directions, w, h)
-        rivers = extract_rivers(directions, acc, w, h, threshold=3.0)
-        assert len(rivers) > 0, "应至少提取到一条河流"
-
-    def test_river_downhill(self):
-        """河流沿流向海拔单调下降。"""
-        from ascend.space.hydrology import compute_d8, flow_accumulation, extract_rivers
-        w, h = 30, 30
-        dem = _make_cone_dem(w, h)
-        directions = compute_d8(dem, w, h)
-        acc = flow_accumulation(directions, w, h)
-        rivers = extract_rivers(directions, acc, w, h, threshold=5.0)
-        for river in rivers:
-            for i in range(len(river) - 1):
-                x1, y1 = river[i]
-                x2, y2 = river[i + 1]
-                idx1 = y1 * w + x1
-                idx2 = y2 * w + x2
-                assert dem[idx2] <= dem[idx1] + 0.001, (
-                    f"河流 ({x1},{y1})→({x2},{y2}) 海拔上升"
-                )
-
-    def test_river_connected(self):
-        """河流中相邻点的切比雪夫距离为 1。"""
-        from ascend.space.hydrology import compute_d8, flow_accumulation, extract_rivers
-        w, h = 30, 30
-        dem = _make_cone_dem(w, h)
-        directions = compute_d8(dem, w, h)
-        acc = flow_accumulation(directions, w, h)
-        rivers = extract_rivers(directions, acc, w, h, threshold=5.0)
-        for river in rivers:
-            for i in range(len(river) - 1):
-                x1, y1 = river[i]
-                x2, y2 = river[i + 1]
-                d = max(abs(x1 - x2), abs(y1 - y2))
-                assert d == 1, f"河流不连续: ({x1},{y1})→({x2},{y2}) 距离={d}"
-
-    def test_strahler_order_diversity(self):
-        """存在不同级别的河流（至少 2 个 Strahler 级别）。"""
-        from ascend.space.hydrology import (
-            compute_d8, flow_accumulation, extract_rivers, strahler_order,
-        )
-        w, h = 40, 40
-        dem = _make_cone_dem(w, h)
-        directions = compute_d8(dem, w, h)
-        acc = flow_accumulation(directions, w, h)
-        rivers = extract_rivers(directions, acc, w, h, threshold=3.0)
-        if len(rivers) < 2:
-            pytest.skip("河流少于 2 条，skip Strahler 测试")
-        orders = strahler_order(rivers)
-        unique = set(orders)
-        assert len(unique) >= 2, f"仅 {len(unique)} 个 Strahler 级别: {unique}"
-
-
-# ════════════════════════════════════════════════════════════════
 # 4. TestHydraulicErosion
 # ════════════════════════════════════════════════════════════════
 
@@ -382,16 +314,204 @@ class TestIntegration:
             assert not math.isinf(v)
 
     def test_rivers_from_continent(self):
-        """从大陆海拔提取河流。"""
+        """从大陆生成 RK4 流线河流网络（实际游戏使用的河流）。"""
         from ascend.space.continent import ContinentGenerator
-        from ascend.space.hydrology import compute_d8, flow_accumulation, extract_rivers
 
         gen = ContinentGenerator(seed=CANONICAL_SEED)
         data = gen.generate()
-        w, h = data.grid_width, data.grid_height
-        dem = data.elevation_field
+        hyd = data.hydrology
+        assert hyd is not None, "水文数据应存在"
+        assert hyd.river_network is not None, "河流网络应存在"
+        assert len(hyd.river_network.rivers) > 0, "大陆上应能生成河流"
 
-        directions = compute_d8(dem, w, h)
-        acc = flow_accumulation(directions, w, h)
-        rivers = extract_rivers(directions, acc, w, h, threshold=50.0)
-        assert len(rivers) > 0, "大陆上应能提取到河流"
+
+# ════════════════════════════════════════════════════════════════
+# 6. TestDistanceToOcean — 距海距离 BFS
+# ════════════════════════════════════════════════════════════════
+
+
+class TestDistanceToOcean:
+    """距海距离 BFS 测试。"""
+
+    def test_import_exists(self):
+        """_distance_to_ocean_c 可导入。"""
+        from ascend.space.hydrology import _distance_to_ocean_c
+        assert _distance_to_ocean_c is not None
+
+    def test_ocean_distance_zero(self):
+        """海洋格距离为 0。"""
+        from array import array
+        from ascend.space.hydrology import _distance_to_ocean_c
+        w, h = 10, 10
+        elev = array('d', [-100.0]) * (w * h)
+        dist = _distance_to_ocean_c(elev, w, h)
+        for d in dist:
+            assert d == 0.0
+
+    def test_land_increasing_from_coast(self):
+        """陆地格距离随距海岸距离单调增加。"""
+        from array import array
+        from ascend.space.hydrology import _distance_to_ocean_c
+        w, h = 10, 5
+        elev = array('d', [0.0]) * (w * h)
+        for y in range(h):
+            for x in range(w):
+                elev[y * w + x] = -10.0 if x < 2 else 100.0
+        dist = _distance_to_ocean_c(elev, w, h)
+        # 同列内陆方向距离应递增
+        for y in range(h):
+            for x in range(2, w):
+                assert dist[y * w + x] >= dist[y * w + (x - 1)], (
+                    f"({x},{y}) 距离 {dist[y*w+x]} < 左邻 {dist[y*w+(x-1)]}"
+                )
+
+    def test_deterministic(self):
+        """同输入 → 同输出。"""
+        from array import array
+        from ascend.space.hydrology import _distance_to_ocean_c
+        w, h = 10, 10
+        elev = array('d', [0.0]) * (w * h)
+        for i in range(w * h):
+            elev[i] = -10.0 if (i % w) < 3 else 200.0
+        d1 = _distance_to_ocean_c(elev, w, h)
+        d2 = _distance_to_ocean_c(elev, w, h)
+        for i in range(w * h):
+            assert d1[i] == d2[i]
+
+    def test_all_land_positive_distance(self):
+        """全陆地网格中所有格距离 > 0（被海洋包围 → 距海距离递增）。"""
+        from array import array
+        from ascend.space.hydrology import _distance_to_ocean_c
+        w, h = 8, 8
+        # 边缘一圈海洋，内部陆地
+        elev = array('d', [200.0]) * (w * h)
+        for y in range(h):
+            for x in range(w):
+                if x == 0 or x == w - 1 or y == 0 or y == h - 1:
+                    elev[y * w + x] = -10.0
+        dist = _distance_to_ocean_c(elev, w, h)
+        # 中心应距离 > 0
+        center = (h // 2) * w + (w // 2)
+        assert dist[center] > 0.0, f"中心距海距离应为正数，实为 {dist[center]}"
+
+
+# ════════════════════════════════════════════════════════════════
+# 7. TestRainShadowOmni — 万向水分预算雨影
+# ════════════════════════════════════════════════════════════════
+
+
+class TestRainShadowOmni:
+    """万向雨影测试。"""
+
+    def test_import_exists(self):
+        """_rain_shadow_omnidirectional_c 可导入。"""
+        from ascend.space.hydrology import _rain_shadow_omnidirectional_c
+        assert _rain_shadow_omnidirectional_c is not None
+
+    def test_factor_range(self):
+        """所有因子在 [min_factor, 1.0] 范围内。"""
+        from array import array
+        from ascend.space.hydrology import _rain_shadow_omnidirectional_c
+        w, h = 20, 15
+        elev = array('d', [0.0]) * (w * h)
+        for y in range(h):
+            for x in range(w):
+                elev[y * w + x] = -10.0 if x < 4 else max(0.0, (x - 4) * 50.0)
+        factors = _rain_shadow_omnidirectional_c(
+            elev, w, h, primary_angle=0.0, min_factor=0.15,
+        )
+        for f in factors:
+            assert 0.15 <= f <= 1.0 + 1e-10, f"因子 {f} 超范围"
+
+    def test_deterministic(self):
+        """同输入 + 同风向角 → 同输出。"""
+        from array import array
+        from ascend.space.hydrology import _rain_shadow_omnidirectional_c
+        w, h = 15, 10
+        elev = array('d', [0.0]) * (w * h)
+        for y in range(h):
+            for x in range(w):
+                elev[y * w + x] = -5.0 if x < 3 else (x - 3) * 100.0
+        f1 = _rain_shadow_omnidirectional_c(elev, w, h, primary_angle=1.2)
+        f2 = _rain_shadow_omnidirectional_c(elev, w, h, primary_angle=1.2)
+        for i in range(w * h):
+            assert f1[i] == pytest.approx(f2[i]), f"索引 {i}: {f1[i]} ≠ {f2[i]}"
+
+    def test_mountain_leeward_drier(self):
+        """山脉背风面比迎风面干燥（水汽预算耗尽）。
+
+        使用缓坡山脉（50m/px），步长 2 格时每步抬升 ~100m，
+        水汽逐步消耗而非瞬间耗尽，背风面仍有剩余但比迎风面少。
+        """
+        from array import array
+        from ascend.space.hydrology import _rain_shadow_omnidirectional_c
+        w, h = 50, 10
+        elev = array('d', [0.0]) * (w * h)
+        for y in range(h):
+            for x in range(w):
+                if x < 8:
+                    elev[y * w + x] = -10.0  # 海洋
+                elif 8 <= x < 28:
+                    elev[y * w + x] = (x - 8) * 50.0  # 缓坡迎风坡 (0→1000m)
+                elif 28 <= x < 33:
+                    elev[y * w + x] = 1000.0  # 山顶台地
+                else:
+                    elev[y * w + x] = max(0.0, 1000.0 - (x - 33) * 30.0)  # 缓坡背风坡
+        factors = _rain_shadow_omnidirectional_c(
+            elev, w, h, primary_angle=0.0,  # 西风
+            min_factor=0.15,
+        )
+        # 迎风坡中部（x=18）vs 背风坡中部（x=40）
+        windward_factor = factors[5 * w + 18]
+        leeward_factor = factors[5 * w + 40]
+        assert leeward_factor < windward_factor, (
+            f"背风面 {leeward_factor:.3f} 应 < 迎风面 {windward_factor:.3f}"
+        )
+        # 背风面仍高于最小因子（水汽未完全耗尽）
+        assert leeward_factor > 0.15, (
+            f"背风面 {leeward_factor:.3f} 应 > min_factor 0.15"
+        )
+
+    def test_ocean_coast_factor_near_one(self):
+        """海岸线附近因子接近 1.0（水汽充足）。"""
+        from array import array
+        from ascend.space.hydrology import _rain_shadow_omnidirectional_c
+        w, h = 20, 10
+        elev = array('d', [0.0]) * (w * h)
+        for y in range(h):
+            for x in range(w):
+                elev[y * w + x] = -10.0 if x < 5 else 100.0
+        factors = _rain_shadow_omnidirectional_c(
+            elev, w, h, primary_angle=0.0,
+        )
+        # 紧邻海岸的陆地格（x=5）因子应接近 1.0
+        for y in range(h):
+            assert factors[y * w + 5] > 0.9, (
+                f"海岸 ({5},{y}) 因子 {factors[y*w+5]:.3f} 应 > 0.9"
+            )
+
+    def test_secondary_wind_blending(self):
+        """次风向混合后因子介于两单独风向之间。"""
+        from array import array
+        from ascend.space.hydrology import _rain_shadow_omnidirectional_c
+        import math
+        w, h = 15, 10
+        elev = array('d', [0.0]) * (w * h)
+        for y in range(h):
+            for x in range(w):
+                elev[y * w + x] = -10.0 if x < 3 else max(0.0, (x - 3) * 80.0)
+        f0 = _rain_shadow_omnidirectional_c(elev, w, h, primary_angle=0.0)
+        f45 = _rain_shadow_omnidirectional_c(elev, w, h, primary_angle=math.pi / 4)
+        f_blend = _rain_shadow_omnidirectional_c(
+            elev, w, h,
+            primary_angle=0.0,
+            secondary_angle=math.pi / 4,
+            secondary_weight=0.5,
+        )
+        # 混合结果应介于两纯方向之间（或等于其一）
+        for i in range(w * h):
+            lo = min(f0[i], f45[i])
+            hi = max(f0[i], f45[i])
+            assert lo - 1e-10 <= f_blend[i] <= hi + 1e-10, (
+                f"混合 {f_blend[i]:.3f} 不在 [{lo:.3f}, {hi:.3f}] 内"
+            )

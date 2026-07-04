@@ -22,7 +22,6 @@ import subprocess
 from array import array
 from collections import deque
 from dataclasses import dataclass, field
-from heapq import heappush, heappop
 from pathlib import Path
 
 # ── C 扩展加载（与 _perlin.so 相同模式） ───────────────────
@@ -105,6 +104,14 @@ _HYDRO.hydrology_dijkstra_to_ocean.argtypes = [
 ]
 _HYDRO.hydrology_dijkstra_to_ocean.restype = None
 
+# distance_to_ocean
+_HYDRO.hydrology_distance_to_ocean.argtypes = [
+    ctypes.POINTER(ctypes.c_double),  # elevation
+    ctypes.c_int, ctypes.c_int,       # w, h
+    ctypes.POINTER(ctypes.c_double),  # dist_out
+]
+_HYDRO.hydrology_distance_to_ocean.restype = None
+
 # rain_shadow
 _HYDRO.hydrology_rain_shadow.argtypes = [
     ctypes.POINTER(ctypes.c_double),  # elevation
@@ -115,15 +122,33 @@ _HYDRO.hydrology_rain_shadow.argtypes = [
 ]
 _HYDRO.hydrology_rain_shadow.restype = None
 
+# rain_shadow_omnidirectional
+_HYDRO.hydrology_rain_shadow_omnidirectional.argtypes = [
+    ctypes.POINTER(ctypes.c_double),  # elevation
+    ctypes.c_int, ctypes.c_int,       # w, h
+    ctypes.c_double,                   # primary_angle
+    ctypes.c_double,                   # secondary_angle
+    ctypes.c_double,                   # secondary_weight
+    ctypes.c_double,                   # decay_length_km
+    ctypes.c_double,                   # cell_size_km
+    ctypes.c_double,                   # min_factor
+    ctypes.POINTER(ctypes.c_double),  # factors (out)
+]
+_HYDRO.hydrology_rain_shadow_omnidirectional.restype = None
+
 # compute_climate
 _HYDRO.hydrology_compute_climate.argtypes = [
     ctypes.POINTER(ctypes.c_double),  # elevation
     ctypes.POINTER(ctypes.c_double),  # lat_wiggle
     ctypes.POINTER(ctypes.c_double),  # rain_raw
     ctypes.POINTER(ctypes.c_double),  # rain_shadow
+    ctypes.POINTER(ctypes.c_double),  # dist_to_ocean (NULL=跳过大陆度)
     ctypes.c_int, ctypes.c_int,       # w, h
-    ctypes.c_double,                  # gx
-    ctypes.c_double,                  # gy
+    ctypes.c_double,                   # gx
+    ctypes.c_double,                   # gy
+    ctypes.c_double,                   # continentality_k
+    ctypes.c_double,                   # continentality_d0
+    ctypes.c_double,                   # cell_size_km
     ctypes.POINTER(ctypes.c_double),  # temp_out
     ctypes.POINTER(ctypes.c_double),  # rain_out
     ctypes.POINTER(ctypes.c_int),     # climate_out
@@ -164,6 +189,28 @@ def _dijkstra_to_ocean_c(
     return dist
 
 
+def _distance_to_ocean_c(elevation: array, w: int, h: int) -> array:
+    """C 加速 BFS 距海距离计算（零拷贝）。
+
+    对每个陆地格返回其到最近海洋格的 Chebyshev 距离（格数）。
+    海洋格距离为 0。
+
+    Args:
+        elevation: 海拔数组（行优先，<0=海洋）。
+        w: 宽度。
+        h: 高度。
+
+    Returns:
+        距海距离数组（格数，double）。
+    """
+    n = w * h
+    elev_ptr = (ctypes.c_double * n).from_buffer(elevation)
+    dist = array('d', [0.0]) * n
+    dist_ptr = (ctypes.c_double * n).from_buffer(dist)
+    _HYDRO.hydrology_distance_to_ocean(elev_ptr, w, h, dist_ptr)
+    return dist
+
+
 def _rain_shadow_c(
     elevation: array, w: int, h: int,
     scan_axis: int, windward: int,
@@ -177,19 +224,78 @@ def _rain_shadow_c(
     return factors
 
 
+def _rain_shadow_omnidirectional_c(
+    elevation: array, w: int, h: int,
+    primary_angle: float,
+    secondary_angle: float = 0.0,
+    secondary_weight: float = 0.0,
+    decay_length_km: float = 4.0,
+    cell_size_km: float = 0.1,
+    min_factor: float = 0.15,
+) -> array:
+    """C 加速万向抬升累积雨影因子（零拷贝）。
+
+    支持任意风向角（弧度）。沿风向累积地形抬升量，
+    指数衰减替代滑动窗口，映射到平滑分段线性雨影因子。
+
+    Args:
+        elevation: 海拔数组（行优先）。
+        w: 宽度。
+        h: 高度。
+        primary_angle: 主风向角（弧度）。
+        secondary_angle: 次风向角（弧度）。
+        secondary_weight: 次风权重 [0, 1]。
+        decay_length_km: 抬升指数衰减距离 (km)，≈旧滑动窗口大小。
+        cell_size_km: 每格公里数。
+        min_factor: 最小因子。
+
+    Returns:
+        雨影因子数组 [min_factor, 1.0]。
+    """
+    n = w * h
+    elev_ptr = (ctypes.c_double * n).from_buffer(elevation)
+    factors = array('d', [0.0]) * n
+    factors_ptr = (ctypes.c_double * n).from_buffer(factors)
+    _HYDRO.hydrology_rain_shadow_omnidirectional(
+        elev_ptr, w, h,
+        primary_angle, secondary_angle, secondary_weight,
+        decay_length_km, cell_size_km, min_factor,
+        factors_ptr,
+    )
+    return factors
+
+
 def _compute_climate_c(
     elevation: array,
     lat_wiggle: array, rain_raw: array,
     rain_shadow: array,
+    dist_to_ocean: array | None,
     w: int, h: int,
     gx: float, gy: float,
+    continentality_k: float = 3.0,
+    continentality_d0: float = 200.0,
+    cell_size_km: float = 0.1,
 ) -> tuple[array, array, array]:
-    """C 加速气候计算 — 600K 遍历下沉到 C，包含 classify() 决策树（零拷贝）。"""
+    """C 加速气候计算 — 600K 遍历下沉到 C，包含 classify() 决策树（零拷贝）。
+
+    Args:
+        elevation: 海拔数组。
+        lat_wiggle: 纬度噪声数组。
+        rain_raw: 降雨噪声原始值。
+        rain_shadow: 雨影因子数组。
+        dist_to_ocean: 距海距离数组（None=跳过大陆度修正）。
+        w, h: 网格尺寸。
+        gx, gy: 温度梯度方向向量。
+        continentality_k: 大陆度振幅 (°C)。
+        continentality_d0: 特征距离 (km)。
+        cell_size_km: 每格公里数。
+    """
     n = w * h
     elev_ptr = (ctypes.c_double * n).from_buffer(elevation)
     lat_ptr = (ctypes.c_double * n).from_buffer(lat_wiggle)
     rain_raw_ptr = (ctypes.c_double * n).from_buffer(rain_raw)
     shadow_ptr = (ctypes.c_double * n).from_buffer(rain_shadow)
+    dist_ptr = (ctypes.c_double * n).from_buffer(dist_to_ocean) if dist_to_ocean is not None else None
     temp = array('d', [0.0]) * n
     rain = array('d', [0.0]) * n
     climate = array('i', [0]) * n
@@ -198,8 +304,9 @@ def _compute_climate_c(
     climate_ptr = (ctypes.c_int * n).from_buffer(climate)
 
     _HYDRO.hydrology_compute_climate(
-        elev_ptr, lat_ptr, rain_raw_ptr, shadow_ptr,
+        elev_ptr, lat_ptr, rain_raw_ptr, shadow_ptr, dist_ptr,
         w, h, gx, gy,
+        continentality_k, continentality_d0, cell_size_km,
         temp_ptr, rain_ptr, climate_ptr,
     )
     return temp, rain, climate
@@ -263,7 +370,10 @@ def _apply_erosion_c(
 
 
 def _fill_depressions_c(dem: array, w: int, h: int) -> array:
-    """C 加速填洼（零拷贝）。"""
+    """C 加速填洼（零拷贝）。
+
+    Planchon-Darboux：海洋为边界，最小堆保证最低水位路径优先传播。
+    """
     n = w * h
     dem_ptr = (ctypes.c_double * n).from_buffer(dem)
     result = array('d', [0.0]) * n
@@ -434,131 +544,6 @@ def flow_accumulation(
 # ════════════════════════════════════════════════════════════════
 # 河流提取
 # ════════════════════════════════════════════════════════════════
-
-
-def extract_rivers(
-    directions: list[int],
-    acc: list[float],
-    w: int, h: int,
-    *,
-    threshold: float = 10.0,
-) -> list[list[tuple[int, int]]]:
-    """从水流累积中提取河流网络。
-
-    从累积量 > threshold 的源头像素出发，
-    沿 D8 流向追踪到汇点或边界。
-
-    Args:
-        directions: 行优先 D8 方向数组。
-        acc: 行优先水流累积量。
-        w: 宽度。
-        h: 高度。
-        threshold: 标记为河流的最小累积量。
-
-    Returns:
-        河流列表，每条河流是 (x, y) 坐标列表。
-    """
-    n = w * h
-    # 标记已追踪的像素
-    traced = [False] * n
-    rivers: list[list[tuple[int, int]]] = []
-
-    # 找所有源头：累积量 > threshold 且其所有流入邻居都 < threshold
-    for idx in range(n):
-        if acc[idx] < threshold or traced[idx]:
-            continue
-
-        # 检查是否有更高的流入邻居（非源头则跳过）
-        x, y = idx % w, idx // w
-        has_strong_inflow = False
-        for d in range(8):
-            nx, ny = x + _DX[d], y + _DY[d]
-            if not (0 <= nx < w and 0 <= ny < h):
-                continue
-            ni = ny * w + nx
-            if directions[ni] >= 0:
-                ndx = nx + _DX[directions[ni]]
-                ndy = ny + _DY[directions[ni]]
-                if ndx == x and ndy == y and acc[ni] >= threshold:
-                    has_strong_inflow = True
-                    break
-        if has_strong_inflow:
-            continue
-
-        # 从源头追踪河流
-        river, traced = _trace_river(idx, directions, traced, w, h)
-        if len(river) >= 2:
-            rivers.append(river)
-
-    return rivers
-
-
-def _trace_river(
-    start_idx: int,
-    directions: list[int],
-    traced: list[bool],
-    w: int, h: int,
-) -> tuple[list[tuple[int, int]], list[bool]]:
-    """从 start_idx 沿 D8 方向追踪河流。
-
-    Args:
-        start_idx: 起始像素索引。
-        directions: D8 方向数组。
-        traced: 已追踪标记。
-        w, h: 网格尺寸。
-
-    Returns:
-        (河流坐标列表, 更新后的 traced)。
-    """
-    river: list[tuple[int, int]] = []
-    idx = start_idx
-
-    while 0 <= idx < len(directions) and not traced[idx]:
-        traced[idx] = True
-        x, y = idx % w, idx // w
-        river.append((x, y))
-
-        d = directions[idx]
-        if d < 0:
-            break
-        idx = (y + _DY[d]) * w + (x + _DX[d])
-
-    return river, traced
-def strahler_order(rivers: list[list[tuple[int, int]]]) -> list[int]:
-    """计算河流的 Strahler 级别。
-
-    规则：
-      - 无支流的源头河段 = 1 级
-      - 同级支流交汇 → 级别 +1
-      - 不同级支流交汇 → 取较大者
-
-    简化版：每条河流独立分级，按长度估算。
-
-    Args:
-        rivers: 河流列表。
-
-    Returns:
-        每条河流的 Strahler 级别列表。
-    """
-    if not rivers:
-        return []
-
-    max_len = max(len(r) for r in rivers) if rivers else 1
-    orders: list[int] = []
-    for river in rivers:
-        # 按长度比例估算级别：短=1，长=2-4
-        ratio = len(river) / max_len if max_len > 0 else 0
-        if ratio < 0.1:
-            order = 1
-        elif ratio < 0.3:
-            order = 2
-        elif ratio < 0.6:
-            order = 3
-        else:
-            order = 4
-        orders.append(order)
-
-    return orders
 
 
 # ════════════════════════════════════════════════════════════════
@@ -917,9 +902,7 @@ __all__ = [
     "fill_depressions",
     "compute_d8",
     "flow_accumulation",
-    "extract_rivers",
     "extract_lake_basins",
-    "strahler_order",
     "erode",
     "find_lakes",
     "compute_river_width",

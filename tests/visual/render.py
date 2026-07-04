@@ -174,14 +174,15 @@ def render_elevation_with_rivers(
 
     pixels: list[tuple[int, int, int]] = []
     for i, e in enumerate(elevation):
-        if i in river_pixels:
-            # 河道像素：陆地变蓝，海底保持原色
-            if e > 0:
-                pixels.append((60, 140, 220))  # 陆地河道 → 蓝色水体
-            else:
-                pixels.append(_elevation_to_rgb(e))  # 海底无变化
+        base = _elevation_to_rgb(e)
+        if i in river_pixels and e > 0:
+            # 陆地水体 → 蓝色半透明叠加（保留海拔信息）
+            r = (base[0] + 60) // 2
+            g = (base[1] + 140) // 2
+            b = (base[2] + 220) // 2
+            pixels.append((r, g, b))
         else:
-            pixels.append(_elevation_to_rgb(e))
+            pixels.append(base)
 
     img = Image.new("RGB", (width, height))
     img.putdata(pixels)

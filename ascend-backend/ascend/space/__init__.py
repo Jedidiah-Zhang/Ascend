@@ -50,9 +50,8 @@ from .hydrology import (
     ErosionResult, LakeBasin, HydrologyData,
     fill_depressions, compute_d8,
     flow_accumulation,
-    extract_rivers,
     extract_lake_basins,
-    strahler_order, erode,
+    erode,
 )
 # from .storage import WorldStore
 
@@ -109,9 +108,7 @@ __all__ = [
     "fill_depressions",
     "compute_d8",
     "flow_accumulation",
-    "extract_rivers",
     "extract_lake_basins",
-    "strahler_order",
     "erode",
     # 持久化 — 待实现
 ]
