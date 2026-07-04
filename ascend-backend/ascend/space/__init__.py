@@ -47,11 +47,11 @@ from .streamlines import (
     trace_streamline, build_river_network, rivers_in_region,
 )
 from .hydrology import (
-    ErosionResult, RiverNode, RiverTree, LakeBasin, HydrologyData,
-    fill_depressions, compute_d8, compute_dinf,
-    flow_accumulation, flow_accumulation_dinf,
-    extract_rivers, extract_rivers_dinf,
-    build_river_tree, extract_lake_basins,
+    ErosionResult, LakeBasin, HydrologyData,
+    fill_depressions, compute_d8,
+    flow_accumulation,
+    extract_rivers,
+    extract_lake_basins,
     strahler_order, erode,
 )
 # from .storage import WorldStore
@@ -104,15 +104,12 @@ __all__ = [
     "rivers_in_region",
     # 水文侵蚀
     "ErosionResult",
-    "RiverNode",
-    "RiverTree",
     "LakeBasin",
     "HydrologyData",
     "fill_depressions",
     "compute_d8",
     "flow_accumulation",
     "extract_rivers",
-    "build_river_tree",
     "extract_lake_basins",
     "strahler_order",
     "erode",

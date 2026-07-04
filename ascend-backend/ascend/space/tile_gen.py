@@ -141,8 +141,7 @@ class TileGenerator:
         # 叠加水体（河流 + 湖泊）
         if hyd is not None:
             has_rivers = (
-                (hyd.river_network is not None and hyd.river_network.rivers)
-                or (hyd.river_tree is not None and hyd.river_tree.nodes)
+                hyd.river_network is not None and hyd.river_network.rivers
             )
             if has_rivers:
                 from .river_render import render_river_chunk

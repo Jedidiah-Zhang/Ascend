@@ -57,7 +57,15 @@ static void heap_free(MinHeap *h) {
 }
 
 static void heap_push(MinHeap *h, double elev, int idx) {
-    /* 上滤 */
+    /* 上滤 — 容量不足时自动 2× 扩容 */
+    if (h->size >= h->capacity) {
+        int new_cap = h->capacity * 2;
+        HeapEntry *new_data = (HeapEntry *)realloc(
+            h->data, (size_t)new_cap * sizeof(HeapEntry));
+        if (!new_data) return;  /* OOM — 丢弃（极端情况） */
+        h->data = new_data;
+        h->capacity = new_cap;
+    }
     int i = h->size++;
     HeapEntry entry = {elev, idx};
     while (i > 0) {
@@ -322,6 +330,63 @@ double hydrology_apply_erosion(
     return max_delta;
 }
 
+/* ── gaussian_blur ────────────────────────────────────────── */
+
+void hydrology_gaussian_blur(
+    const double *arr, int w, int h, double sigma,
+    double *result)
+{
+    /* 可分离 2-pass 高斯模糊，边界钳制到边缘。
+       sigma 以格为单位。替代 Python 层的 12M 次浮点运算。
+    */
+    int radius = (int)(3.0 * sigma);
+    if (radius < 1) radius = 1;
+    int kw = 2 * radius + 1;
+
+    /* 构建 kernel */
+    double *kernel = (double *)malloc(kw * sizeof(double));
+    double ks = 0.0;
+    for (int i = 0; i < kw; i++) {
+        double t = (double)(i - radius) / sigma;
+        kernel[i] = exp(-0.5 * t * t);
+        ks += kernel[i];
+    }
+    for (int i = 0; i < kw; i++) kernel[i] /= ks;
+
+    /* 水平方向 pass → tmp */
+    double *tmp = (double *)malloc((size_t)w * h * sizeof(double));
+    for (int y = 0; y < h; y++) {
+        int row = y * w;
+        for (int x = 0; x < w; x++) {
+            double s = 0.0;
+            for (int i = 0; i < kw; i++) {
+                int xi = x + i - radius;
+                if (xi < 0) xi = 0;
+                else if (xi >= w) xi = w - 1;
+                s += kernel[i] * arr[row + xi];
+            }
+            tmp[row + x] = s;
+        }
+    }
+
+    /* 垂直方向 pass → result */
+    for (int x = 0; x < w; x++) {
+        for (int y = 0; y < h; y++) {
+            double s = 0.0;
+            for (int i = 0; i < kw; i++) {
+                int yi = y + i - radius;
+                if (yi < 0) yi = 0;
+                else if (yi >= h) yi = h - 1;
+                s += kernel[i] * tmp[yi * w + x];
+            }
+            result[(size_t)y * w + x] = s;
+        }
+    }
+
+    free(kernel);
+    free(tmp);
+}
+
 /* ── hillslope_erosion_step ─────────────────────────────── */
 
 void hydrology_hillslope_step(
@@ -353,5 +418,250 @@ void hydrology_hillslope_step(
                 }
             }
         }
+    }
+}
+
+/* ── dijkstra_to_ocean ────────────────────────────────────── */
+
+void hydrology_dijkstra_to_ocean(
+    const double *dem, const double *flow_acc,
+    int w, int h, double *dist)
+{
+    /* 多源 Dijkstra：从所有海洋格（dem < 0）出发，计算每格到海的
+       最低累积代价。代价 = max(0, dem[i]) + 1 - 1.5*log1p(flow_acc[i])。
+
+       复用二叉最小堆，以 dist 作为 HeapEntry.elev 排序键。
+       替代 Python 层 ~500 万次 heapq 操作。
+    */
+    int n = w * h;
+    double INF = 1e100;
+
+    /* 初始化：所有海洋格 dist=0，但只推入海陆边界格（有陆地邻居的海洋格）。
+       内部海洋格永远不会被更优路径访问到（dist 已是 0，所有边代价 >0），
+       跳过它们大幅减少堆操作（海洋占 ~45%，其中边界仅 ~5%）。 */
+    MinHeap *heap = heap_create(n / 10 + 1024);  /* 保守初始容量 */
+    int boundary_pushed = 0;
+    for (int i = 0; i < n; i++) {
+        if (dem[i] < 0.0) {
+            dist[i] = 0.0;
+            /* 仅当有陆地邻居时才入堆 */
+            int x = i % w;
+            int y = i / w;
+            int has_land = 0;
+            for (int k = 0; k < 8; k++) {
+                int nx = x + DX[k];
+                int ny = y + DY[k];
+                if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                    if (dem[ny * w + nx] >= 0.0) { has_land = 1; break; }
+                }
+            }
+            if (has_land) {
+                heap_push(heap, 0.0, i);
+                boundary_pushed++;
+            }
+        } else {
+            dist[i] = INF;
+        }
+    }
+
+    /* 主循环 */
+    while (heap->size > 0) {
+        HeapEntry entry = heap_pop(heap);
+        double d = entry.elev;
+        int i = entry.idx;
+        if (d > dist[i]) continue;  /* 过期条目 */
+
+        int x = i % w;
+        int y = i / w;
+
+        for (int k = 0; k < 8; k++) {
+            int nx = x + DX[k];
+            int ny = y + DY[k];
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+
+            int ni = ny * w + nx;
+            double elev_cost = (dem[ni] > 0.0 ? dem[ni] : 0.0) + 1.0;
+            double flow_bonus = 1.5 * log1p(flow_acc[ni]);
+            double step = elev_cost - flow_bonus;
+            if (step < 0.1) step = 0.1;
+
+            double nd = d + step;
+            /* 仅当改进显著时才更新（避免 0.1 量级的重复推送） */
+            if (nd + 1e-12 < dist[ni]) {
+                dist[ni] = nd;
+                heap_push(heap, nd, ni);
+            }
+        }
+    }
+
+    heap_free(heap);
+}
+
+/* ── rain_shadow ──────────────────────────────────────────── */
+
+void hydrology_rain_shadow(
+    const double *elevation, int w, int h,
+    int scan_axis, int windward,
+    double *factors)
+{
+    /* 沿主轴扫描计算雨影因子。
+       scan_axis: 0=沿行扫描（东西风向），1=沿列扫描（南北风向）
+       windward: 0=迎风侧在起点，1=迎风侧在终点
+       滑动窗口 W=40 格，替代 Python 层 ~600K 双循环开销。
+    */
+    const int WINDOW = 40;
+    int outer = (scan_axis == 0) ? h : w;
+    int inner = (scan_axis == 0) ? w : h;
+
+    double *pref = (double *)malloc((size_t)inner * sizeof(double));
+
+    for (int o = 0; o < outer; o++) {
+        /* 前缀和：沿扫描方向累加上坡量 */
+        double running = 0.0;
+        for (int i = 0; i < inner; i++) {
+            int idx, prev_idx, next_idx, j;
+            double gain = 0.0;
+
+            if (scan_axis == 0) {
+                if (windward == 0) {
+                    idx = o * w + i;
+                    prev_idx = o * w + (i - 1);
+                    if (i > 0) gain = elevation[prev_idx] - elevation[idx];
+                } else {
+                    j = inner - 1 - i;
+                    idx = o * w + j;
+                    next_idx = o * w + (j + 1);
+                    if (j < inner - 1) gain = elevation[next_idx] - elevation[idx];
+                }
+            } else {
+                if (windward == 0) {
+                    idx = i * w + o;
+                    prev_idx = (i - 1) * w + o;
+                    if (i > 0) gain = elevation[prev_idx] - elevation[idx];
+                } else {
+                    j = inner - 1 - i;
+                    idx = j * w + o;
+                    next_idx = (j + 1) * w + o;
+                    if (j < inner - 1) gain = elevation[next_idx] - elevation[idx];
+                }
+            }
+
+            if (gain > 0.0) running += gain;
+            pref[i] = running;
+        }
+
+        /* 滑动窗口 → 雨影因子 */
+        for (int i = 0; i < inner; i++) {
+            int idx;
+            if (scan_axis == 0) {
+                if (windward == 0)
+                    idx = o * w + i;
+                else
+                    idx = o * w + (inner - 1 - i);
+            } else {
+                if (windward == 0)
+                    idx = i * w + o;
+                else
+                    idx = (inner - 1 - i) * w + o;
+            }
+
+            double total_uplift = (i <= WINDOW) ? pref[i] : pref[i] - pref[i - WINDOW];
+            double f;
+            if (total_uplift < 30.0)
+                f = 1.0;
+            else if (total_uplift < 150.0)
+                f = 1.0 - (total_uplift - 30.0) / 120.0 * 0.4;
+            else if (total_uplift < 400.0)
+                f = 0.6 - (total_uplift - 150.0) / 250.0 * 0.35;
+            else {
+                f = 0.25 - (total_uplift - 400.0) / 2000.0 * 0.15;
+                if (f < 0.15) f = 0.15;
+            }
+            factors[idx] = f;
+        }
+    }
+
+    free(pref);
+}
+
+/* ── compute_climate ──────────────────────────────────────── */
+
+/* climate classification constants */
+#define LAPSE_RATE 9.0
+#define RAINFALL_MIN 50.0
+#define RAINFALL_MAX 3500.0
+#define ALPINE_ALT 2000.0
+#define POLAR_TEMP -5.0
+#define DESERT_RAIN 200.0
+#define STEPPE_RAIN 600.0
+#define STEPPE_MIN_T 5.0
+#define TROPICAL_T 20.0
+#define TEMPERATE_T 5.0
+#define RAINFOREST_RAIN 1500.0
+#define TAIGA_RAIN 400.0
+
+static int classify_climate(double temp, double rainfall, double altitude) {
+    /* 8-zone climate classification, mirrors climate.py:classify() */
+    if (altitude >= ALPINE_ALT) return 7;        /* ALPINE */
+    if (temp < POLAR_TEMP) return 6;              /* POLAR_TUNDRA */
+    if (rainfall < DESERT_RAIN) return 2;          /* DESERT */
+    if (rainfall < STEPPE_RAIN && temp > STEPPE_MIN_T) return 3; /* STEPPE */
+    if (temp >= TROPICAL_T) {
+        if (rainfall >= RAINFOREST_RAIN) return 0;  /* EQUATORIAL_RAINFOREST */
+        return 1;                                  /* TROPICAL_SAVANNA */
+    }
+    if (temp >= TEMPERATE_T) return 4;             /* TEMPERATE_FOREST */
+    if (rainfall >= TAIGA_RAIN) return 5;           /* SUBARCTIC_TAIGA */
+    return 6;                                      /* POLAR_TUNDRA */
+}
+
+static double rainfall_from_noise_c(double n) {
+    /* noise [-1,1] -> rainfall mm/yr, matches climate.py */
+    double r = RAINFALL_MIN + (n + 1.0) * 0.5 * (RAINFALL_MAX - RAINFALL_MIN);
+    if (r < 0.0) r = 0.0;
+    if (r > 5000.0) r = 5000.0;
+    return r;
+}
+
+void hydrology_compute_climate(
+    const double *elevation,
+    const double *lat_wiggle, const double *rain_raw,
+    const double *rain_shadow,
+    int w, int h,
+    double gx, double gy,
+    double *temp_out, double *rain_out, int *climate_out)
+{
+    /* 单次 C 遍历替代 Python 600K 循环。
+       温度 = 纬度梯度 + 微量摆动 - 海拔 × 直减率
+       降雨 = 降雨噪声 × 雨影因子
+       气候 = classify()
+    */
+    double inv_w = 1.0 / (double)w;
+    double inv_h = 1.0 / (double)h;
+    double lapse = LAPSE_RATE / 1000.0;
+    int n = w * h;
+
+    for (int i = 0; i < n; i++) {
+        int x = i % w;
+        int y = i / w;
+        double px = ((double)x * inv_w - 0.5) * 2.0;
+        double py = ((double)y * inv_h - 0.5) * 2.0;
+        double lat_n = (px * gx + py * gy) * 0.6 + lat_wiggle[i] * 0.15;
+
+        double sea_temp = lat_n * 25.0 + 10.0;
+        if (sea_temp < -20.0) sea_temp = -20.0;
+        if (sea_temp > 38.0) sea_temp = 38.0;
+
+        double elev = elevation[i];
+        double temp = sea_temp - elev * lapse;
+        if (temp < -20.0) temp = -20.0;
+        if (temp > 36.0) temp = 36.0;
+
+        double rain_n = rain_raw[i];
+        double rainfall = rainfall_from_noise_c(rain_n) * rain_shadow[i];
+
+        temp_out[i] = temp;
+        rain_out[i] = rainfall;
+        climate_out[i] = classify_climate(temp, rainfall, elev);
     }
 }

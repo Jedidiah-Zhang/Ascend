@@ -63,21 +63,21 @@ def generate(seed: int = 42, downsample: int = 4) -> None:
             for ci in basin.cells:
                 lake_surface_at[ci] = basin.surface_elev
 
-    # ── 河流节点 → 3D 散点（全分辨率，x 翻转，湖底跳过）──
+    # ── 河流流线 → 3D 散点 ──
     river_x, river_y, river_z = [], [], []
-    if hyd and hyd.river_tree:
-        for node in hyd.river_tree.nodes:
-            fx = (w - 1 - node.x) / ds
-            fy = node.y / ds
-            if 0 <= fx < dw and 0 <= fy < dh:
-                grid_idx = node.y * w + node.x
-                elev = cont.elevation_field[grid_idx]
-                # 湖底河流不显示（被湖面覆盖）
-                if grid_idx in lake_surface_at and elev < lake_surface_at[grid_idx]:
-                    continue
-                river_x.append(fx)
-                river_y.append(fy)
-                river_z.append(max(0, elev) + 5)
+    if hyd and hyd.river_network:
+        for river in hyd.river_network.rivers:
+            for p in river.points:
+                fx = (w - 1 - p.x) / ds
+                fy = p.y / ds
+                if 0 <= fx < dw and 0 <= fy < dh:
+                    gi = int(p.y) * w + int(p.x)
+                    elev = cont.elevation_field[gi] if 0 <= gi < len(cont.elevation_field) else 0
+                    if gi in lake_surface_at and elev < lake_surface_at[gi]:
+                        continue
+                    river_x.append(fx)
+                    river_y.append(fy)
+                    river_z.append(max(0, elev) + 5)
 
     # ── 自定义 colorscale（对齐实际海拔范围 [-2486, 2413]）──
     # 位置 = (elev + 2486) / 4899

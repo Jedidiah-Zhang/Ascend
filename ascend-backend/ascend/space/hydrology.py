@@ -19,6 +19,7 @@
 import ctypes
 import math
 import subprocess
+from array import array
 from collections import deque
 from dataclasses import dataclass, field
 from heapq import heappush, heappop
@@ -86,82 +87,189 @@ _HYDRO.hydrology_apply_erosion.argtypes = [
 ]
 _HYDRO.hydrology_apply_erosion.restype = ctypes.c_double
 
+# gaussian_blur
+_HYDRO.hydrology_gaussian_blur.argtypes = [
+    ctypes.POINTER(ctypes.c_double),  # arr
+    ctypes.c_int, ctypes.c_int,       # w, h
+    ctypes.c_double,                  # sigma
+    ctypes.POINTER(ctypes.c_double),  # result (out)
+]
+_HYDRO.hydrology_gaussian_blur.restype = None
 
-def _compute_d8_c(dem: list[float], w: int, h: int) -> list[int]:
-    """C 加速 D8 流向计算。"""
+# dijkstra_to_ocean
+_HYDRO.hydrology_dijkstra_to_ocean.argtypes = [
+    ctypes.POINTER(ctypes.c_double),  # dem
+    ctypes.POINTER(ctypes.c_double),  # flow_acc
+    ctypes.c_int, ctypes.c_int,       # w, h
+    ctypes.POINTER(ctypes.c_double),  # dist (out)
+]
+_HYDRO.hydrology_dijkstra_to_ocean.restype = None
+
+# rain_shadow
+_HYDRO.hydrology_rain_shadow.argtypes = [
+    ctypes.POINTER(ctypes.c_double),  # elevation
+    ctypes.c_int, ctypes.c_int,       # w, h
+    ctypes.c_int,                     # scan_axis
+    ctypes.c_int,                     # windward
+    ctypes.POINTER(ctypes.c_double),  # factors (out)
+]
+_HYDRO.hydrology_rain_shadow.restype = None
+
+# compute_climate
+_HYDRO.hydrology_compute_climate.argtypes = [
+    ctypes.POINTER(ctypes.c_double),  # elevation
+    ctypes.POINTER(ctypes.c_double),  # lat_wiggle
+    ctypes.POINTER(ctypes.c_double),  # rain_raw
+    ctypes.POINTER(ctypes.c_double),  # rain_shadow
+    ctypes.c_int, ctypes.c_int,       # w, h
+    ctypes.c_double,                  # gx
+    ctypes.c_double,                  # gy
+    ctypes.POINTER(ctypes.c_double),  # temp_out
+    ctypes.POINTER(ctypes.c_double),  # rain_out
+    ctypes.POINTER(ctypes.c_int),     # climate_out
+]
+_HYDRO.hydrology_compute_climate.restype = None
+
+
+def _compute_d8_c(dem: array, w: int, h: int) -> array:
+    """C 加速 D8 流向计算（零拷贝 — dem 和返回值均为 array）。"""
     n = w * h
-    dem_arr = (ctypes.c_double * n)(*dem)
-    dirs_arr = (ctypes.c_int * n)()
-    _HYDRO.hydrology_compute_d8(dem_arr, w, h, dirs_arr)
-    return list(dirs_arr)
+    dem_ptr = (ctypes.c_double * n).from_buffer(dem)
+    dirs = array('i', [0]) * n
+    dirs_ptr = (ctypes.c_int * n).from_buffer(dirs)
+    _HYDRO.hydrology_compute_d8(dem_ptr, w, h, dirs_ptr)
+    return dirs
+
+
+def _gaussian_blur_c(arr: array, w: int, h: int, sigma: float) -> array:
+    """C 加速可分离 2-pass 高斯模糊（零拷贝）。"""
+    n = w * h
+    arr_ptr = (ctypes.c_double * n).from_buffer(arr)
+    result = array('d', [0.0]) * n
+    result_ptr = (ctypes.c_double * n).from_buffer(result)
+    _HYDRO.hydrology_gaussian_blur(arr_ptr, w, h, sigma, result_ptr)
+    return result
+
+
+def _dijkstra_to_ocean_c(
+    dem: array, flow_acc: array, w: int, h: int,
+) -> array:
+    """C 加速 Dijkstra 多源到海代价场（零拷贝）。"""
+    n = w * h
+    dem_ptr = (ctypes.c_double * n).from_buffer(dem)
+    acc_ptr = (ctypes.c_double * n).from_buffer(flow_acc)
+    dist = array('d', [0.0]) * n
+    dist_ptr = (ctypes.c_double * n).from_buffer(dist)
+    _HYDRO.hydrology_dijkstra_to_ocean(dem_ptr, acc_ptr, w, h, dist_ptr)
+    return dist
+
+
+def _rain_shadow_c(
+    elevation: array, w: int, h: int,
+    scan_axis: int, windward: int,
+) -> array:
+    """C 加速雨影因子滑动窗口计算（零拷贝）。"""
+    n = w * h
+    elev_ptr = (ctypes.c_double * n).from_buffer(elevation)
+    factors = array('d', [0.0]) * n
+    factors_ptr = (ctypes.c_double * n).from_buffer(factors)
+    _HYDRO.hydrology_rain_shadow(elev_ptr, w, h, scan_axis, windward, factors_ptr)
+    return factors
+
+
+def _compute_climate_c(
+    elevation: array,
+    lat_wiggle: array, rain_raw: array,
+    rain_shadow: array,
+    w: int, h: int,
+    gx: float, gy: float,
+) -> tuple[array, array, array]:
+    """C 加速气候计算 — 600K 遍历下沉到 C，包含 classify() 决策树（零拷贝）。"""
+    n = w * h
+    elev_ptr = (ctypes.c_double * n).from_buffer(elevation)
+    lat_ptr = (ctypes.c_double * n).from_buffer(lat_wiggle)
+    rain_raw_ptr = (ctypes.c_double * n).from_buffer(rain_raw)
+    shadow_ptr = (ctypes.c_double * n).from_buffer(rain_shadow)
+    temp = array('d', [0.0]) * n
+    rain = array('d', [0.0]) * n
+    climate = array('i', [0]) * n
+    temp_ptr = (ctypes.c_double * n).from_buffer(temp)
+    rain_ptr = (ctypes.c_double * n).from_buffer(rain)
+    climate_ptr = (ctypes.c_int * n).from_buffer(climate)
+
+    _HYDRO.hydrology_compute_climate(
+        elev_ptr, lat_ptr, rain_raw_ptr, shadow_ptr,
+        w, h, gx, gy,
+        temp_ptr, rain_ptr, climate_ptr,
+    )
+    return temp, rain, climate
 
 
 def _flow_accumulation_c(
-    directions: list[int], w: int, h: int,
-    source: list[float] | None = None,
-) -> list[float]:
-    """C 加速水流累积量。"""
+    directions: array, w: int, h: int,
+    source: array | None = None,
+) -> array:
+    """C 加速水流累积量（零拷贝）。"""
     n = w * h
-    dirs_arr = (ctypes.c_int * n)(*directions)
-    acc_arr = (ctypes.c_double * n)()
+    dirs_ptr = (ctypes.c_int * n).from_buffer(directions)
+    acc = array('d', [0.0]) * n
+    acc_ptr = (ctypes.c_double * n).from_buffer(acc)
 
     if source is not None:
-        src_arr = (ctypes.c_double * n)(*source)
-        _HYDRO.hydrology_flow_accumulation(dirs_arr, src_arr, w, h, acc_arr)
+        src_ptr = (ctypes.c_double * n).from_buffer(source)
+        _HYDRO.hydrology_flow_accumulation(dirs_ptr, src_ptr, w, h, acc_ptr)
     else:
-        _HYDRO.hydrology_flow_accumulation(dirs_arr, None, w, h, acc_arr)
+        _HYDRO.hydrology_flow_accumulation(dirs_ptr, None, w, h, acc_ptr)
 
-    return list(acc_arr)
+    return acc
 
 
 def _erode_step_c(
-    dem: list[float], directions: list[int],
-    acc: list[float], flow_source: list[float],
+    dem: array, directions: array,
+    acc: array, flow_source: array,
     w: int, h: int, erodibility: float,
-) -> tuple[list[float], list[float]]:
-    """C 加速单轮侵蚀 delta + 沉积。"""
+) -> tuple[array, array]:
+    """C 加速单轮侵蚀 delta + 沉积（零拷贝）。"""
     n = w * h
-    dem_arr = (ctypes.c_double * n)(*dem)
-    dirs_arr = (ctypes.c_int * n)(*directions)
-    acc_arr = (ctypes.c_double * n)(*acc)
-    src_arr = (ctypes.c_double * n)(*flow_source)
-    delta_arr = (ctypes.c_double * n)()
-    sed_arr = (ctypes.c_double * n)()
+    dem_ptr = (ctypes.c_double * n).from_buffer(dem)
+    dirs_ptr = (ctypes.c_int * n).from_buffer(directions)
+    acc_ptr = (ctypes.c_double * n).from_buffer(acc)
+    src_ptr = (ctypes.c_double * n).from_buffer(flow_source)
+    delta = array('d', [0.0]) * n
+    sed = array('d', [0.0]) * n
+    delta_ptr = (ctypes.c_double * n).from_buffer(delta)
+    sed_ptr = (ctypes.c_double * n).from_buffer(sed)
 
     _HYDRO.hydrology_erode_step(
-        dem_arr, dirs_arr, acc_arr, src_arr, w, h, erodibility,
-        delta_arr, sed_arr,
+        dem_ptr, dirs_ptr, acc_ptr, src_ptr, w, h, erodibility,
+        delta_ptr, sed_ptr,
     )
-    return list(delta_arr), list(sed_arr)
+    return delta, sed
 
 
 def _apply_erosion_c(
-    dem: list[float], sediment_net: list[float],
-    delta: list[float], n: int,
+    dem: array, sediment_net: array,
+    delta: array, n: int,
 ) -> float:
-    """C 加速侵蚀 delta 应用 — 原地修改 dem 和 sediment_net，返回 max_delta。"""
-    dem_arr = (ctypes.c_double * n)(*dem)
-    sed_arr = (ctypes.c_double * n)(*sediment_net)
-    delta_arr = (ctypes.c_double * n)(*delta)
+    """C 加速侵蚀 delta 应用 — 通过 from_buffer 原地修改 dem 和 sediment_net。
 
-    max_delta = _HYDRO.hydrology_apply_erosion(dem_arr, sed_arr, delta_arr, n)
-
-    # 写回 dem 和 sediment_net
-    for i in range(n):
-        dem[i] = dem_arr[i]
-        sediment_net[i] = sed_arr[i]
-    return max_delta
+    零拷贝：C 直接写入 array 对象的底层缓冲区，无需 Python 写回循环。
+    """
+    dem_ptr = (ctypes.c_double * n).from_buffer(dem)
+    sed_ptr = (ctypes.c_double * n).from_buffer(sediment_net)
+    delta_ptr = (ctypes.c_double * n).from_buffer(delta)
+    return _HYDRO.hydrology_apply_erosion(dem_ptr, sed_ptr, delta_ptr, n)
 
 
 
-def _fill_depressions_c(dem: list[float], w: int, h: int) -> list[float]:
-    """C 加速填洼。"""
+def _fill_depressions_c(dem: array, w: int, h: int) -> array:
+    """C 加速填洼（零拷贝）。"""
     n = w * h
-    dem_arr = (ctypes.c_double * n)(*dem)
-    result_arr = (ctypes.c_double * n)()
-
-    _HYDRO.hydrology_fill_depressions(dem_arr, w, h, result_arr)
-    return list(result_arr)
+    dem_ptr = (ctypes.c_double * n).from_buffer(dem)
+    result = array('d', [0.0]) * n
+    result_ptr = (ctypes.c_double * n).from_buffer(result)
+    _HYDRO.hydrology_fill_depressions(dem_ptr, w, h, result_ptr)
+    return result
 
 
 # ════════════════════════════════════════════════════════════════
@@ -196,76 +304,6 @@ class ErosionResult:
 
 
 @dataclass
-class RiverNode:
-    """河流树中的一个节点 — 河流经过的一个 100m 网格点。
-
-    Attributes:
-        x: 网格 X（整数，用于拓扑查找）。
-        y: 网格 Y（整数，用于拓扑查找）。
-        px: 扰动后 X（浮点，平缓地带带曲流偏移，陡坡≈grid）。
-        py: 扰动后 Y（浮点，同上）。
-        flow: 水流累积量。
-        strahler: Strahler 级别（1=源头小溪，越大越主流）。
-        children: 上游子节点在 RiverTree.nodes 中的索引。
-        parent: 下游父节点索引，-1=汇入海洋/湖泊/地图外。
-    """
-
-    x: int
-    y: int
-    flow: float
-    px: float = 0.0
-    py: float = 0.0
-    strahler: int = 1
-    children: list[int] = field(default_factory=list)
-    parent: int = -1
-
-    def __repr__(self) -> str:
-        return (
-            f"RiverNode(({self.x},{self.y}), flow={self.flow:.0f}, "
-            f"order={self.strahler}, parent={self.parent})"
-        )
-
-
-@dataclass
-class RiverTree:
-    """河流拓扑树 — 层1所有河流段的集合。
-
-    根节点 = 汇入海洋/湖泊的河口（parent == -1）。
-    从根向下遍历可得完整的流域汇流结构。
-
-    Attributes:
-        width: 网格宽度。
-        height: 网格高度。
-        nodes: 所有节点（按流量降序，根在前）。
-        node_index: grid_idx → nodes 中的位置。
-    """
-
-    width: int
-    height: int
-    nodes: list[RiverNode] = field(default_factory=list)
-    node_index: dict[int, int] = field(default_factory=dict)
-
-    def __repr__(self) -> str:
-        roots = sum(1 for n in self.nodes if n.parent < 0)
-        return (
-            f"RiverTree({self.width}×{self.height}, "
-            f"nodes={len(self.nodes)}, roots={roots})"
-        )
-
-    def grid_idx(self, node: RiverNode) -> int:
-        """节点的行优先网格索引。"""
-        return node.y * self.width + node.x
-
-    def get_node_at(self, x: int, y: int) -> RiverNode | None:
-        """查询网格坐标处的河流节点，不存在返回 None。"""
-        idx = y * self.width + x
-        pos = self.node_index.get(idx)
-        if pos is not None:
-            return self.nodes[pos]
-        return None
-
-
-@dataclass
 class LakeBasin:
     """一个湖泊盆地 — 封闭洼地 + 溢出口决定的湖面。
 
@@ -292,7 +330,6 @@ class HydrologyData:
     """层1 水文数据 — 统一传递到 Tile 层的结构化水体信息。
 
     Attributes:
-        river_tree: 河流拓扑（D8,可能为 None）。
         river_network: 流线河流网络（RK4 积分,可能为 None）。
         lake_basins: 湖泊盆地列表。
         flow_acc: 水流累积量场（行优先）。
@@ -300,7 +337,6 @@ class HydrologyData:
         filled_dem: 填洼后海拔（行优先）。
     """
 
-    river_tree: RiverTree | None
     lake_basins: list[LakeBasin]
     flow_acc: list[float]
     directions: list[int]
@@ -308,13 +344,11 @@ class HydrologyData:
     river_network: object | None = None  # RiverNetwork(避免循环导入)
 
     def __repr__(self) -> str:
-        rivers = self.river_tree.nodes if self.river_tree else []
         network_pts = 0
         if self.river_network is not None:
             network_pts = sum(len(r.points) for r in self.river_network.rivers)
         return (
-            f"HydrologyData(d8_nodes={len(rivers)}, "
-            f"streamlines={network_pts}, "
+            f"HydrologyData(streamlines={network_pts}, "
             f"lakes={len(self.lake_basins)})"
         )
 
@@ -351,7 +385,9 @@ def fill_depressions(dem: list[float], w: int, h: int) -> list[float]:
     Returns:
         填洼后的海拔数组（新列表）。
     """
-    return _fill_depressions_c(dem, w, h)
+    dem_arr = array('d', dem)
+    result = _fill_depressions_c(dem_arr, w, h)
+    return result.tolist()
 
 
 # ════════════════════════════════════════════════════════════════
@@ -374,205 +410,9 @@ def compute_d8(dem: list[float], w: int, h: int) -> list[int]:
     Returns:
         行优先方向数组（int）。
     """
-    return _compute_d8_c(dem, w, h)
-
-
-def compute_dinf(
-    dem: list[float], w: int, h: int,
-) -> tuple[list[float], list[int], list[float], list[int]]:
-    """D-infinity (D∞) 流向 — 水流可分配到任意角度。
-
-    在第 0-7 方向形成的 8 个三角面中找最陡下坡，
-    水流按比例分配到最近的两个 D8 方向。
-
-    Args:
-        dem: 行优先海拔数组。
-        w: 宽度。
-        h: 高度。
-
-    Returns:
-        (angle, dir1, frac1, dir2):
-          angle[i]  = 流向角度（弧度，0=东，π/2=南），汇点=-1
-          dir1[i]   = 第一下游方向 (0-7)
-          frac1[i]  = dir1 分得的流量比例
-          dir2[i]   = 第二下游方向（或 -1 如果全部分配给 dir1）
-    """
-    n = w * h
-    angles: list[float] = [-1.0] * n  # 汇点 = -1
-    dir1s: list[int] = [-1] * n
-    frac1s: list[float] = [0.0] * n
-    dir2s: list[int] = [-1] * n
-
-    # 8 方向的角度（弧度，从东开始逆时针）
-    dir_angles = [0.0, math.pi, math.pi / 2, -math.pi / 2,
-                  math.pi / 4, 3 * math.pi / 4, -math.pi / 4, -3 * math.pi / 4]
-
-    for y in range(h):
-        for x in range(w):
-            idx = y * w + x
-            elev = dem[idx]
-            best_slope = -1.0
-            best_angle = -1.0
-            best_d1 = -1
-            best_d2 = -1
-            best_frac1 = 0.0
-
-            # 检查 8 个三角面：面 d 由中心 + 方向d + 方向(d+1)%8 构成
-            for d in range(8):
-                d_next = (d + 1) % 8
-                a1 = dir_angles[d]
-                a2 = dir_angles[d_next]
-
-                # 邻居 1
-                nx1, ny1 = x + _DX[d], y + _DY[d]
-                if not (0 <= nx1 < w and 0 <= ny1 < h):
-                    continue
-                e1 = dem[ny1 * w + nx1]
-                if e1 >= elev:
-                    continue  # 不下坡
-                s1 = (elev - e1) / _dist(d)
-
-                # 邻居 2
-                nx2, ny2 = x + _DX[d_next], y + _DY[d_next]
-                e2_valid = (0 <= nx2 < w and 0 <= ny2 < h)
-                e2 = dem[ny2 * w + nx2] if e2_valid else elev
-                s2 = (elev - e2) / _dist(d_next) if (e2_valid and e2 < elev) else 0.0
-
-                if s2 > 0:
-                    # 两个邻居都更低 → 三角面内插值
-                    da = a2 - a1
-                    if da > math.pi:
-                        da -= 2 * math.pi
-                    elif da < -math.pi:
-                        da += 2 * math.pi
-                    if abs(da) < 0.001:
-                        slope = s1
-                        best_angle_in_tri = a1
-                    else:
-                        # 在 (a1, a2) 区间内按坡度比插值
-                        r = s1 / (s1 + s2) if s1 + s2 > 0 else 0.5
-                        best_angle_in_tri = a1 + da * (1.0 - r)
-                        slope = math.sqrt(s1 * s1 + s2 * s2 + 2 * s1 * s2 * math.cos(da))
-                else:
-                    # 只有邻居 1 更低
-                    slope = s1
-                    best_angle_in_tri = a1
-
-                if slope > best_slope:
-                    best_slope = slope
-                    best_angle = best_angle_in_tri
-                    best_d1, best_d2, best_frac1 = _angle_to_dirs(best_angle_in_tri)
-
-            angles[idx] = best_angle if best_slope > 0 else -1.0
-            dir1s[idx] = best_d1
-            frac1s[idx] = best_frac1
-            dir2s[idx] = best_d2
-
-    return angles, dir1s, frac1s, dir2s
-
-
-def _dist(d: int) -> float:
-    """D8 方向 d 的步长。"""
-    return math.sqrt(2.0) if d >= 4 else 1.0
-
-
-def _angle_to_dirs(angle: float) -> tuple[int, int, float]:
-    """将连续角度映射到最近的两个 D8 方向 + 比例。
-
-    Args:
-        angle: 弧度，0=东，π/2=南。
-
-    Returns:
-        (dir1, dir2, frac1): dir1 分得 frac1，dir2 分得 1-frac1。
-    """
-    # 8 方向角度（弧度）
-    dir_angles = [0.0, math.pi, math.pi / 2, -math.pi / 2,
-                  math.pi / 4, 3 * math.pi / 4, -math.pi / 4, -3 * math.pi / 4]
-    # 归一化
-    while angle > math.pi:
-        angle -= 2 * math.pi
-    while angle < -math.pi:
-        angle += 2 * math.pi
-
-    # 找最近的 D8 方向
-    best_d = 0
-    best_diff = float("inf")
-    for d in range(8):
-        diff = abs(angle - dir_angles[d])
-        if diff > math.pi:
-            diff = 2 * math.pi - diff
-        if diff < best_diff:
-            best_diff = diff
-            best_d = d
-
-    # 找第二近的 D8 方向（相邻方向）
-    second_d = -1
-    second_diff = float("inf")
-    for d in range(8):
-        if d == best_d:
-            continue
-        diff = abs(angle - dir_angles[d])
-        if diff > math.pi:
-            diff = 2 * math.pi - diff
-        if diff < second_diff:
-            second_diff = diff
-            second_d = d
-
-    # 流量比例：更接近的方向分更多
-    total_diff = best_diff + second_diff
-    if total_diff < 0.0001:
-        return best_d, -1, 1.0
-    frac1 = 1.0 - best_diff / total_diff
-    return best_d, second_d, frac1
-
-
-def flow_accumulation_dinf(
-    dem: list[float],
-    dir1s: list[int], frac1s: list[float], dir2s: list[int],
-    w: int, h: int,
-) -> list[float]:
-    """D∞ 水流累积。
-
-    Args:
-        dem: 行优先海拔数组。
-        dir1s, frac1s, dir2s: D∞ 输出。
-        w, h: 网格尺寸。
-
-    Returns:
-        行优先累积量数组。
-    """
-    n = w * h
-    acc = [1.0] * n
-
-    # 用拓扑排序：按海拔从高到低处理
-    indexed = sorted(enumerate(dem), key=lambda x: x[1], reverse=True)
-
-    for idx, _ in indexed:
-        d1 = dir1s[idx]
-        if d1 < 0:
-            continue
-        x, y = idx % w, idx // w
-        f1 = frac1s[idx]
-        f2 = 1.0 - f1
-
-        # 方向 1
-        nx1, ny1 = x + _DX[d1], y + _DY[d1]
-        if 0 <= nx1 < w and 0 <= ny1 < h:
-            ni1 = ny1 * w + nx1
-            if dem[ni1] < dem[idx]:
-                acc[ni1] += acc[idx] * f1
-
-        # 方向 2
-        d2 = dir2s[idx]
-        if d2 >= 0 and f2 > 0.001:
-            nx2, ny2 = x + _DX[d2], y + _DY[d2]
-            if 0 <= nx2 < w and 0 <= ny2 < h:
-                ni2 = ny2 * w + nx2
-                if dem[ni2] < dem[idx]:
-                    acc[ni2] += acc[idx] * f2
-
-    return acc
-
+    dem_arr = array('d', dem)
+    dirs = _compute_d8_c(dem_arr, w, h)
+    return dirs.tolist()
 
 # ════════════════════════════════════════════════════════════════
 # 水流累积
@@ -584,53 +424,11 @@ def flow_accumulation(
     *,
     source: list[float] | None = None,
 ) -> list[float]:
-    """计算水流累积量。
-
-    每个像素累积 = 自身源水量 + 所有流入像素的累积量。
-    使用拓扑排序（按入度）处理，避免递归。
-
-    Args:
-        directions: 行优先 D8 方向数组。
-        w: 宽度。
-        h: 高度。
-        source: 每像素自身贡献的水量，None=默认每像素 1.0。
-                传降雨量（归一化到 ~1.0）可实现降雨驱动的水流。
-
-    Returns:
-        行优先累积量数组。
-    """
-    n = w * h
-    acc = list(source) if source is not None else [1.0] * n
-
-    # 计算每个像素的入度（有多少像素流入它）
-    indegree = [0] * n
-    for idx in range(n):
-        d = directions[idx]
-        if d < 0:
-            continue
-        nx = (idx % w) + _DX[d]
-        ny = (idx // w) + _DY[d]
-        if 0 <= nx < w and 0 <= ny < h:
-            indegree[ny * w + nx] += 1
-
-    # 拓扑排序：从入度为 0 的点开始
-    queue: deque[int] = deque(i for i in range(n) if indegree[i] == 0)
-
-    while queue:
-        idx = queue.popleft()
-        d = directions[idx]
-        if d < 0:
-            continue
-        nx = (idx % w) + _DX[d]
-        ny = (idx // w) + _DY[d]
-        if 0 <= nx < w and 0 <= ny < h:
-            ni = ny * w + nx
-            acc[ni] += acc[idx]
-            indegree[ni] -= 1
-            if indegree[ni] == 0:
-                queue.append(ni)
-
-    return acc
+    """计算水流累积量（C 加速）。"""
+    dirs_arr = array('i', directions)
+    src_arr = array('d', source) if source is not None else None
+    result = _flow_accumulation_c(dirs_arr, w, h, source=src_arr)
+    return result.tolist()
 
 
 # ════════════════════════════════════════════════════════════════
@@ -726,302 +524,6 @@ def _trace_river(
         idx = (y + _DY[d]) * w + (x + _DX[d])
 
     return river, traced
-
-
-# ════════════════════════════════════════════════════════════════
-# 河流树构建
-# ════════════════════════════════════════════════════════════════
-
-
-def build_river_tree(
-    directions: list[int],
-    acc: list[float],
-    w: int, h: int,
-    *,
-    threshold: float = 30.0,
-    land_only: bool = False,
-    dem: list[float] | None = None,
-    min_length: int = 5,
-) -> RiverTree:
-    """从 D8 流向和水流累积量构建河流拓扑树。
-
-    从 acc > threshold 的像素出发，沿流向追踪到汇点（海洋/地图外）。
-    多条支流在交汇点合并为同一节点，父子关系自动形成。
-
-    Strahler 级别在拓扑上正确计算：
-      - 无支流的源头 = 1
-      - 同级交汇 → +1，不同级 → 取较大者
-
-    Args:
-        directions: D8 方向数组。
-        acc: 水流累积量数组。
-        w: 宽度。
-        h: 高度。
-        threshold: 河流最小累积量阈值。
-        land_only: True=只保留陆地上（dem > 0）的河流。
-        dem: 海拔数组（land_only=True 时必需）。
-
-    Returns:
-        RiverTree 包含所有河流节点和拓扑关系。
-    """
-    n = w * h
-    tree = RiverTree(width=w, height=h)
-
-    # 陆地过滤
-    is_land: list[bool] | None = None
-    if land_only and dem is not None:
-        is_land = [e > 0 for e in dem]
-
-    # 找河流像素（acc > threshold 且流向有定义）
-    river_mask = [False] * n
-    river_pixels: list[int] = []
-    for i in range(n):
-        if acc[i] >= threshold and directions[i] >= 0:
-            if is_land is not None and not is_land[i]:
-                continue  # 跳过海洋像素
-            river_mask[i] = True
-            river_pixels.append(i)
-
-    if not river_pixels:
-        return tree
-
-    # 追踪：从每个源头（无流入的河流像素）出发
-    # 先算入度（仅限河流像素之间的流入）
-    indegree = [0] * n
-    for i in river_pixels:
-        d = directions[i]
-        if d < 0:
-            continue
-        nx = (i % w) + _DX[d]
-        ny = (i // w) + _DY[d]
-        ni = ny * w + nx
-        if 0 <= nx < w and 0 <= ny < h:
-            indegree[ni] += 1
-
-    # BFS：从入度为 0 的点出发，沿流向追踪并合并
-    traced_to_node: dict[int, int] = {}  # grid_idx → node index in tree.nodes
-
-    # 按入度排序，优先追踪源头
-    from heapq import heappush, heappop
-    heap: list[tuple[float, int]] = []  # (-acc, idx) —— 高流量优先
-    for i in river_pixels:
-        if indegree[i] == 0:
-            heappush(heap, (-acc[i], i))
-
-    # 如果所有像素都有入度（循环？），从最高流量处开始
-    if not heap:
-        max_acc_idx = max(river_pixels, key=lambda i: acc[i])
-        heappush(heap, (-acc[max_acc_idx], max_acc_idx))
-
-    visited = [False] * n
-
-    while heap:
-        _, start_idx = heappop(heap)
-        if visited[start_idx]:
-            continue
-
-        # 从 start_idx 沿流向追踪
-        path: list[int] = []
-        idx = start_idx
-        while 0 <= idx < n and river_mask[idx] and not visited[idx]:
-            visited[idx] = True
-            path.append(idx)
-
-            d = directions[idx]
-            if d < 0:
-                break
-            nx = (idx % w) + _DX[d]
-            ny = (idx // w) + _DY[d]
-            if 0 <= nx < w and 0 <= ny < h:
-                idx = ny * w + nx
-            else:
-                break  # 流出地图
-
-        if not path:
-            continue
-
-        # 将 path 中的像素注册为节点（合并已存在的节点）
-        prev_node_idx = -1  # 上游节点的 tree index
-        for grid_idx in reversed(path):  # 从下游向上游遍历
-            if grid_idx in traced_to_node:
-                # 此像素已有节点（之前其他支流创建的）→ 交汇点
-                existing = traced_to_node[grid_idx]
-                if prev_node_idx >= 0:
-                    # 将 prev_node 链接到 existing
-                    prev_node = tree.nodes[prev_node_idx]
-                    prev_node.parent = existing
-                    existing_node = tree.nodes[existing]
-                    if prev_node_idx not in existing_node.children:
-                        existing_node.children.append(prev_node_idx)
-                prev_node_idx = existing
-            else:
-                # 新建节点
-                x, y = grid_idx % w, grid_idx // w
-                node = RiverNode(
-                    x=x, y=y, flow=acc[grid_idx],
-                    px=float(x), py=float(y),  # 初始化=网格位置
-                    strahler=1,  # 稍后计算
-                    parent=prev_node_idx,
-                )
-                node_idx = len(tree.nodes)
-                tree.nodes.append(node)
-                tree.node_index[grid_idx] = node_idx
-                traced_to_node[grid_idx] = node_idx
-
-                if prev_node_idx >= 0:
-                    # 链接父子关系
-                    tree.nodes[prev_node_idx].parent = node_idx
-                    node.children.append(prev_node_idx)
-
-                prev_node_idx = node_idx
-
-    # 计算 Strahler 级别（拓扑：从叶子向上）
-    _compute_strahler(tree)
-
-    # 剪除海边短河（源头到入海口 < min_length 格 = 噪声）
-    _prune_short_rivers(tree, min_length=min_length)
-
-    # 初始化扰动坐标 = 网格坐标（蜿蜒在 Tile 级渲染时叠加）
-    for node in tree.nodes:
-        node.px = float(node.x)
-        node.py = float(node.y)
-
-    return tree
-
-
-def _prune_short_rivers(tree: RiverTree, min_length: int = 5) -> None:
-    """删除过短的河流支流（海边噪声）。
-
-    从每个叶子（源头）沿 parent 向上走到根（入海口），
-    总长 < min_length 的路径上的节点全部移除。
-    共享节点（被其他更长路径使用）不受影响。
-
-    Args:
-        tree: 河流树（原地修改）。
-        min_length: 最小河流长度（网格格数，默认 5 = 500m）。
-    """
-    n = len(tree.nodes)
-    if n == 0:
-        return
-
-    # 找叶子：没有子节点的节点
-    leaves = [i for i in range(n) if not tree.nodes[i].children]
-
-    # 对每个叶子，计算到根（入海口）的路径长度
-    # short_leaves = 需要剪除的叶子
-    short_path_nodes: set[int] = set()
-
-    for leaf_idx in leaves:
-        path: list[int] = []
-        idx = leaf_idx
-        seen: set[int] = set()
-        while idx >= 0 and idx < n and idx not in seen:
-            seen.add(idx)
-            path.append(idx)
-            parent = tree.nodes[idx].parent
-            if parent < 0 or parent >= n:
-                break
-            idx = parent
-
-        if len(path) >= min_length:
-            continue  # 够长，保留
-
-        short_path_nodes.update(path)
-
-    if not short_path_nodes:
-        return
-
-    # 检查哪些节点被长路径共享——共享节点的特征是 children 中至少有一个不在 short_path_nodes 中
-    protected: set[int] = set()
-    for i in short_path_nodes:
-        node = tree.nodes[i]
-        for child_idx in node.children:
-            if child_idx < n and child_idx not in short_path_nodes:
-                protected.add(i)
-                break
-        # 如果它的 parent 也不在 short_path_nodes 中，这个节点在长路径下游→保护
-        if node.parent >= 0 and node.parent < n and node.parent not in short_path_nodes:
-            protected.add(i)
-
-    remove = short_path_nodes - protected
-    if not remove:
-        return
-
-    # 重建节点列表，映射 old_idx → new_idx
-    old_to_new: dict[int, int] = {}
-    new_nodes: list[RiverNode] = []
-    for i, node in enumerate(tree.nodes):
-        if i not in remove:
-            old_to_new[i] = len(new_nodes)
-            new_nodes.append(node)
-
-    # 更新 parent/children 引用
-    for node in new_nodes:
-        if node.parent >= 0 and node.parent in old_to_new:
-            node.parent = old_to_new[node.parent]
-        else:
-            node.parent = -1
-        new_children = []
-        for c in node.children:
-            if c in old_to_new:
-                new_children.append(old_to_new[c])
-        node.children = new_children
-
-    tree.nodes = new_nodes
-    tree.node_index = {}
-    for i, node in enumerate(tree.nodes):
-        tree.node_index[node.y * tree.width + node.x] = i
-
-def _compute_strahler(tree: RiverTree) -> None:
-    """在 RiverTree 上计算 Strahler 级别（拓扑正确版）。
-
-    从源头（无子节点的叶）向河口（无父节点的根）传播：
-      - 源头叶 = 1
-      - 同级子节点交汇 → max_order + 1
-      - 不同级 → 取较大者
-
-    同时合并相邻的同级单链节点（简化树）。
-    """
-    n = len(tree.nodes)
-
-    # 拓扑排序：从叶子（children 为空）向根（parent == -1）传播
-    # indegree[i] = 有多少节点将 i 列为 child（即 i 有多少个 parent 引用）
-    from collections import deque
-    pending = [0] * n  # 待处理的子节点数
-    for i, node in enumerate(tree.nodes):
-        pending[i] = len(node.children)
-
-    q = deque(i for i in range(n) if pending[i] == 0)
-
-    # 暂存子节点的 Strahler 值
-    child_orders: list[list[int]] = [[] for _ in range(n)]
-
-    while q:
-        idx = q.popleft()
-        node = tree.nodes[idx]
-
-        # 计算 Strahler
-        if not child_orders[idx]:
-            node.strahler = 1  # 源头
-        else:
-            orders = child_orders[idx]
-            max_o = max(orders)
-            # 至少两个子节点达到最高级 → +1
-            if sum(1 for o in orders if o >= max_o) >= 2:
-                node.strahler = max_o + 1
-            else:
-                node.strahler = max_o
-
-        # 向上传播给父节点
-        parent = node.parent
-        if 0 <= parent < n:
-            child_orders[parent].append(node.strahler)
-            pending[parent] -= 1
-            if pending[parent] == 0:
-                q.append(parent)
-
-
-
 def strahler_order(rivers: list[list[tuple[int, int]]]) -> list[int]:
     """计算河流的 Strahler 级别。
 
@@ -1099,25 +601,23 @@ def erode(
     Returns:
         ErosionResult 包含最终海拔、流向、累积量、沉积场。
     """
-    result = dem[:]
     n = w * h
 
-    # 归一化降雨量作为水流累积的源（全球平均 ~1000mm/yr → ~1.0）
-    flow_source = [max(0.0, rainfall[i] / 1000.0) for i in range(n)]
+    # 一次性转换为 array（零拷贝 C 调用的基础）
+    result = array('d', dem)
+    flow_source = array('d', (max(0.0, rainfall[i] / 1000.0) for i in range(n)))
+    sediment_net = array('d', [0.0]) * n
 
-    # 累积沉积量（正=沉积，负=侵蚀）
-    sediment_net = [0.0] * n
-
-    # 保存最后一轮的水文状态
-    last_filled: list[float] = []
-    last_directions: list[int] = []
-    last_acc: list[float] = []
+    # 保存最后一轮的水文状态（array 类型）
+    last_filled: array | None = None
+    last_directions: array | None = None
+    last_acc: array | None = None
 
     for iteration in range(iterations):
-        # 填洼（C 加速优先队列）
-        filled = fill_depressions(result, w, h)
+        # 填洼（C 加速优先队列，零拷贝）
+        filled = _fill_depressions_c(result, w, h)
 
-        # D8 + 累积 + 侵蚀 ← C 加速
+        # D8 + 累积 + 侵蚀 ← C 加速，零拷贝
         directions = _compute_d8_c(filled, w, h)
         acc = _flow_accumulation_c(directions, w, h, source=flow_source)
 
@@ -1126,11 +626,11 @@ def erode(
         last_directions = directions
         last_acc = acc
 
-        # C 加速侵蚀 delta
+        # C 加速侵蚀 delta（零拷贝）
         delta, _ = _erode_step_c(
             result, directions, acc, flow_source, w, h, erodibility)
 
-        # 应用侵蚀 + 累积沉积 + 跟踪最大变化（C 加速）
+        # 应用侵蚀 + 累积沉积 + 跟踪最大变化（零拷贝 — C 直接写 result 缓冲区）
         max_delta = _apply_erosion_c(result, sediment_net, delta, n)
 
         # 自适应收敛：地形变化微小时提前退出
@@ -1138,83 +638,12 @@ def erode(
             break
 
     return ErosionResult(
-        dem=result,
-        filled_dem=last_filled,
-        flow_acc=last_acc,
-        directions=last_directions,
-        sediment_net=sediment_net,
+        dem=result.tolist(),
+        filled_dem=last_filled.tolist() if last_filled else [],
+        flow_acc=last_acc.tolist() if last_acc else [],
+        directions=last_directions.tolist() if last_directions else [],
+        sediment_net=sediment_net.tolist(),
     )
-
-
-def extract_rivers_dinf(
-    angles: list[float],
-    acc: list[float],
-    w: int, h: int,
-    *,
-    threshold: float = 50.0,
-) -> list[list[tuple[int, int]]]:
-    """D∞ 河流追踪：沿连续角度场追踪河流，路径自然弯曲。
-
-    从累积量 > threshold 的源头出发，沿 D∞ 角度追踪到汇点。
-
-    Args:
-        angles: D∞ 角度数组，-1=汇点。
-        acc: 水流累积量。
-        w, h: 网格尺寸。
-        threshold: 河流阈值。
-
-    Returns:
-        河流坐标列表。
-    """
-    n = w * h
-    traced = [False] * n
-    rivers: list[list[tuple[int, int]]] = []
-
-    # 从高累积量像素开始追踪
-    sorted_indices = sorted(
-        [i for i in range(n) if acc[i] >= threshold],
-        key=lambda i: acc[i], reverse=True,
-    )
-
-    for start_idx in sorted_indices:
-        if traced[start_idx]:
-            continue
-
-        # 只追踪陆地上的河流（海拔 > 0）
-        # 用 dem 数组判断；这里需要传入 dem
-        # 暂时从 acc 推断...
-
-        river: list[tuple[int, int]] = []
-        idx = start_idx
-
-        while 0 <= idx < n and not traced[idx]:
-            traced[idx] = True
-            x, y = idx % w, idx // w
-            river.append((x, y))
-
-            ang = angles[idx]
-            if ang < 0:
-                break  # 汇点
-
-            # 沿角度走一步
-            step = 1.0
-            nx = int(x + math.cos(ang) * step + 0.5)
-            ny = int(y + math.sin(ang) * step * (-1) + 0.5)
-            # 注意：角度 0=东(cos=1,sin=0)，π/2=南(sin=1)，但因为 Y 向下，
-            # 需要翻转 sin 的符号。实际上 angles 已经按数学约定存储。
-            # 在屏幕坐标中 Y 向下，所以南 = +sin
-            nx = int(x + math.cos(ang) * step + 0.5)
-            ny = int(y + math.sin(ang) * step + 0.5)
-
-            if 0 <= nx < w and 0 <= ny < h:
-                idx = ny * w + nx
-            else:
-                break
-
-        if len(river) >= 2:
-            rivers.append(river)
-
-    return rivers
 
 
 def find_lakes(
@@ -1483,18 +912,12 @@ def compute_river_width(
 
 __all__ = [
     "ErosionResult",
-    "RiverNode",
-    "RiverTree",
     "LakeBasin",
     "HydrologyData",
     "fill_depressions",
     "compute_d8",
-    "compute_dinf",
     "flow_accumulation",
-    "flow_accumulation_dinf",
     "extract_rivers",
-    "extract_rivers_dinf",
-    "build_river_tree",
     "extract_lake_basins",
     "strahler_order",
     "erode",

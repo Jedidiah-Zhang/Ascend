@@ -316,52 +316,6 @@ class TestVisualOutput:
         render_elevation(visual, w, h, out_path, title="Flow Accumulation (land only)")
         print(f"[visual] 水流累积已保存, max_acc={max_acc:.0f}")
 
-    def test_visual_07_river_tree(self):
-        """步骤7：河流树 → visual/output/07_river_tree.png"""
-        from ascend.space.continent import ContinentData
-
-        data = _get_data(seed=CANONICAL_SEED)
-        w, h = data.grid_width, data.grid_height
-        hyd = data.hydrology
-
-        if hyd is None or hyd.river_tree is None:
-            print("[visual] 河流树不可用，跳过")
-            return
-
-        lines: list[list[tuple[float, float]]] = []
-        for node in hyd.river_tree.nodes:
-            for child_idx in node.children:
-                child = hyd.river_tree.nodes[child_idx]
-                lines.append([
-                    (node.px, node.py),
-                    (child.px, child.py),
-                ])
-
-        max_order = max(n.strahler for n in hyd.river_tree.nodes) if hyd.river_tree.nodes else 1
-        colors = []
-        for node in hyd.river_tree.nodes:
-            for child_idx in node.children:
-                child = hyd.river_tree.nodes[child_idx]
-                order = max(node.strahler, child.strahler)
-                t = order / max(max_order, 1)
-                r = int(20 + 100 * (1 - t))
-                g = int(60 + 140 * (1 - t))
-                b = int(200 + 55 * t)
-                colors.append((r, g, b))
-
-        out_path = os.path.join(self._OUTPUT_DIR, "07_river_tree.png")
-        _render_elevation_with_lines(
-            data.elevation_field, w, h, lines, colors, out_path,
-            title="River Tree",
-        )
-
-        order_counts: dict[int, int] = {}
-        for node in hyd.river_tree.nodes:
-            o = node.strahler
-            order_counts[o] = order_counts.get(o, 0) + 1
-        print(f"[visual] 河流树已保存, {len(hyd.river_tree.nodes)} 节点, "
-              f"{len(lines)} 连线, Strahler分布={order_counts}")
-
     def test_visual_08_lake_basins(self):
         """步骤8：湖泊盆地 → visual/output/08_lake_basins.png"""
         from ascend.space.continent import ContinentData
@@ -462,7 +416,6 @@ class TestVisualOutput:
         self.test_visual_04_rainfall()
         self.test_visual_05_climate()
         self.test_visual_06_flow_acc()
-        self.test_visual_07_river_tree()
         self.test_visual_08_lake_basins()
         self.test_visual_09_tile_water()
         self.test_visual_10_tile_boundary()

@@ -253,22 +253,13 @@ class ContinentGenerator:
         )
 
         # Step 3: 侵蚀（降雨驱动水流累积）—— 提取完整水文状态
-        from .hydrology import erode, build_river_tree, extract_lake_basins, HydrologyData
+        from .hydrology import erode, extract_lake_basins, HydrologyData
         erosion_result = erode(elevation, rain_field, w, h, iterations=10)
 
         # 用侵蚀后的海拔替换原始海拔（河流已雕刻，地形已塑形）
         elevation = erosion_result.dem
 
-        # Step 4: 构建结构化水文数据
-        # 阈值约 0.2-0.5% of max_acc（降雨驱动下 max_acc ~200K）
-        # 只保留陆地上的河流（dem > 0），过滤海底河道
-        river_tree = build_river_tree(
-            erosion_result.directions, erosion_result.flow_acc, w, h,
-            threshold=500.0,
-            land_only=True,
-            dem=elevation,
-            min_length=20,
-        )
+        # Step 4: 湖泊盆地提取
         lake_basins = extract_lake_basins(
             elevation, erosion_result.filled_dem, land_mask, w, h,
             min_size=5,
@@ -284,7 +275,6 @@ class ContinentGenerator:
         )
 
         hydrology = HydrologyData(
-            river_tree=river_tree,
             lake_basins=lake_basins,
             flow_acc=erosion_result.flow_acc,
             directions=erosion_result.directions,
@@ -475,95 +465,6 @@ class ContinentGenerator:
             if land_mask[i] and elevation[i] > p90:
                 elevation[i] = p90 + (elevation[i] - p90) * scale
 
-    def _ensure_rainfall_range(
-        self, rainfall: list[float], land_mask: list[bool],
-    ) -> None:
-        """降雨校准 — 压缩低降雨尾部，保证陆地 P3 ≤ 100mm。
-
-        只压缩 bottom 10%（P10 以下），使 P3 ≈ 100mm（沙漠阈值 200mm 之下）。
-        中高降雨不变，保持整体湿润度。原地修改 rainfall。
-        """
-        land_vals = sorted(r for i, r in enumerate(rainfall) if land_mask[i])
-        if not land_vals:
-            return
-        p3 = self._percentile(land_vals, 0.03)
-        p10 = self._percentile(land_vals, 0.10)
-        target_p3 = 100.0
-        if p3 <= target_p3 or p10 <= p3:
-            return
-        # 线性压缩 [p3, p10) → [target_p3, p10)
-        scale = (p10 - target_p3) / (p10 - p3)
-        for i in range(len(rainfall)):
-            if land_mask[i] and rainfall[i] < p10:
-                rainfall[i] = max(0.0, target_p3 + (rainfall[i] - p3) * scale)
-
-    def _ensure_temperature_range(
-        self, temp: list[float], land_mask: list[bool],
-    ) -> None:
-        """温度校准 — 两端拉伸，保证陆地覆盖 [-12°C, 30°C]。
-
-        线性映射 P2 → -12°C、P98 → 30°C。保持空间相对关系
-        （温度梯度方向、海拔降温梯度不变）。原地修改 temp。
-        """
-        land_vals = sorted(t for i, t in enumerate(temp) if land_mask[i])
-        if not land_vals:
-            return
-        p2 = self._percentile(land_vals, 0.02)
-        p98 = self._percentile(land_vals, 0.98)
-        target_low = -12.0
-        target_high = 30.0
-        if p98 - p2 < 1.0:
-            return
-        if p2 <= target_low and p98 >= target_high:
-            return  # 已覆盖
-        scale = (target_high - target_low) / (p98 - p2)
-        offset = target_low - p2 * scale
-        for i in range(len(temp)):
-            if land_mask[i]:
-                temp[i] = temp[i] * scale + offset
-
-    def _ensure_rainfall_temperature_coverage(
-        self, temp: list[float], rain: list[float], land_mask: list[bool],
-    ) -> None:
-        """温度-降雨交叉校准 — 按温度分区拉伸降雨，保证每个温度带干湿跨度。
-
-        温度梯度和降雨噪声是两个独立场，某些 seed 下热区不湿、
-        冷区不潮，导致热带（热+湿）或针叶林（冷+潮）缺失。
-        本函数在每个温度分区内独立拉伸降雨，确保：
-          - 热区(T>=20): 降雨覆盖 200~1800mm 连续跨度
-            （沙漠<200 由低尾保留，热带草原 600~1500，雨林>=1500）
-          - 冷区(-5<=T<5): 降雨覆盖 100~600mm 连续跨度
-            （苔原<400，针叶林>=400）
-        低尾(bottom 20%)保持不动以保留干旱端。原地修改 rain。
-        """
-        n = len(temp)
-
-        # 热区:top 80% 拉伸到 [200, 1800] 连续跨度
-        hot = sorted(
-            (rain[i], i) for i in range(n)
-            if land_mask[i] and temp[i] >= 20.0
-        )
-        if len(hot) > 100:
-            p20_rain = hot[int(len(hot) * 0.20)][0]
-            max_rain = hot[-1][0]
-            if max_rain < 1500.0 and max_rain > p20_rain:
-                for r, i in hot[int(len(hot) * 0.20):]:
-                    t = (r - p20_rain) / (max_rain - p20_rain)
-                    rain[i] = 200.0 + t * 1600.0
-
-        # 冷区:top 60% 拉伸到 [300, 600] 连续跨度
-        cold = sorted(
-            (rain[i], i) for i in range(n)
-            if land_mask[i] and -5.0 <= temp[i] < 5.0
-        )
-        if len(cold) > 100:
-            p40_rain = cold[int(len(cold) * 0.40)][0]
-            max_rain = cold[-1][0]
-            if max_rain < 500.0 and max_rain > p40_rain:
-                for r, i in cold[int(len(cold) * 0.40):]:
-                    t = (r - p40_rain) / (max_rain - p40_rain)
-                    rain[i] = 300.0 + t * 300.0
-
     def _inject_missing_climates(
         self,
         elevation: list[float],
@@ -600,26 +501,41 @@ class ContinentGenerator:
         }
 
         present = set(climate_field[i] for i in range(n) if land_mask[i])
-        missing = set(targets.keys()) - present
+        missing = list(set(targets.keys()) - present)
+
+        if not missing:
+            return
+
+        # 单次扫描替代 N × |missing| 次独立扫描
+        inv30 = 1.0 / 30.0
+        inv2000 = 1.0 / 2000.0
+        inv3000 = 1.0 / 3000.0
+        best_i = {mz: -1 for mz in missing}
+        best_d = {mz: float("inf") for mz in missing}
+
+        for i in range(n):
+            if not land_mask[i]:
+                continue
+            t = temp[i]
+            r = rain[i]
+            e = elevation[i]
+            for mz in missing:
+                tt, tr, ta = targets[mz]
+                dt = (t - tt) * inv30
+                dr = (r - tr) * inv2000
+                de = (e - ta) * inv3000
+                d = dt * dt + dr * dr + de * de
+                if d < best_d[mz]:
+                    best_d[mz] = d
+                    best_i[mz] = i
 
         for mzone in missing:
             tt, tr, ta = targets[mzone]
-            # 找最接近目标参数的陆地像素（归一化加权距离）
-            best_i, best_d = -1, float("inf")
-            for i in range(n):
-                if not land_mask[i]:
-                    continue
-                d = (
-                    ((temp[i] - tt) / 30.0) ** 2
-                    + ((rain[i] - tr) / 2000.0) ** 2
-                    + ((elevation[i] - ta) / 3000.0) ** 2
-                )
-                if d < best_d:
-                    best_d, best_i = d, i
-            if best_i < 0:
+            best_idx = best_i[mzone]
+            if best_idx < 0:
                 continue
             # 在候选位置周围 3×3 注入目标参数
-            gx, gy = best_i % w, best_i // w
+            gx, gy = best_idx % w, best_idx // w
             for dy in range(-1, 2):
                 for dx in range(-1, 2):
                     nx, ny = gx + dx, gy + dy
@@ -658,16 +574,23 @@ class ContinentGenerator:
 
         n = w * h
         mixed = [0.0] * n
-        for i in range(n):
-            x = i % w
-            y = i // w
+        inv_w = 1.0 / w
+        inv_h = 1.0 / h
 
-            dx = (x / w - 0.5) * 2.0
-            dy = (y / h - 0.5) * 2.0
-            dist = max(abs(dx), abs(dy))
-            center = max(0.0, 1.0 - dist * 2.5)
-
-            mixed[i] = continent_field[i] * 0.7 + terrain_field[i] * 0.3 + center * 0.12
+        # 嵌套循环避免每像素 % 和 // 取模运算
+        i = 0
+        for y in range(h):
+            dy = (y * inv_h - 0.5) * 2.0
+            for x in range(w):
+                dx = (x * inv_w - 0.5) * 2.0
+                dist = -dx if dx < -dy else (dy if dy > dx else dx)
+                if dist < 0:
+                    dist = -dist
+                center = 1.0 - dist * 2.5
+                if center < 0.0:
+                    center = 0.0
+                mixed[i] = continent_field[i] * 0.7 + terrain_field[i] * 0.3 + center * 0.12
+                i += 1
 
         target = self._params.land_ratio
         sorted_vals = sorted(mixed)
@@ -675,11 +598,8 @@ class ContinentGenerator:
         sea_idx = max(0, min(n - 1, sea_idx))
         sea_level = sorted_vals[sea_idx]
 
-        elevation: list[float] = []
-        for i in range(n):
-            elev = (mixed[i] - sea_level) * 4000.0
-            elevation.append(elev)
-
+        # 列表推导 — 比 .append() 循环快
+        elevation = [(m - sea_level) * 4000.0 for m in mixed]
         land_mask = [e > 0 for e in elevation]
         return land_mask, elevation
 
@@ -697,9 +617,6 @@ class ContinentGenerator:
         叠加微量噪声使气候带边界自然蜿蜒。
         """
         import math
-        from .climate import (
-            rainfall_from_noise, classify, LAPSE_RATE,
-        )
 
         # seed → 随机温度梯度方向
         angle = ((self._seed * 2654435761) & 0xFFFFFFFF) / 0xFFFFFFFF * 2.0 * math.pi
@@ -719,33 +636,20 @@ class ContinentGenerator:
         )
 
         rain_shadow = self._compute_rain_shadow(elevation, w, h)
-        LAPSE = LAPSE_RATE / 1000.0
 
-        temp_field: list[float] = []
-        rain_field: list[float] = []
-        climate_field: list[int] = []
+        # climate computation → C (single pass over 600K cells, 零拷贝)
+        from .hydrology import _compute_climate_c
+        elev_arr = array('d', elevation)
+        lat_arr = array('d', lat_wiggle_field)
+        rain_raw_arr = array('d', rain_field_raw)
+        shadow_arr = array('d', rain_shadow)
+        temp_field, rain_field, climate_field = _compute_climate_c(
+            elev_arr, lat_arr, rain_raw_arr, shadow_arr,
+            w, h, gx, gy,
+        )
 
-        for i in range(w * h):
-            x = i % w
-            y = i // w
-            px = (x / w - 0.5) * 2.0
-            py = (y / h - 0.5) * 2.0
-            lat_n = (px * gx + py * gy) * 0.6 + lat_wiggle_field[i] * 0.15
-
-            sea_temp = lat_n * 25.0 + 10.0
-            sea_temp = max(-20.0, min(38.0, sea_temp))
-
-            elev = elevation[i]
-            temp = sea_temp - elev * LAPSE
-            temp = max(-20.0, min(36.0, temp))
-
-            rain_n = rain_field_raw[i]
-            rainfall = rainfall_from_noise(rain_n) * rain_shadow[i]
-            climate = classify(temp, rainfall, elev)
-
-            temp_field.append(temp)
-            rain_field.append(rainfall)
-            climate_field.append(int(climate))
+        # convert climate to int (from array)
+        climate_field = [int(c) for c in climate_field]
 
         return temp_field, rain_field, climate_field
 
@@ -811,80 +715,16 @@ class ContinentGenerator:
         elevation: list[float], w: int, h: int,
         scan_axis: int, windward: int,
     ) -> list[float]:
-        """沿主轴扫描计算雨影因子。
+        """沿主轴扫描计算雨影因子 — C 加速。
 
         Args:
             scan_axis: 0=沿行扫描（风向东西），1=沿列扫描（风向南北）。
             windward: 0=迎风侧在起点（如西风扫描从左→右），1=迎风侧在终点。
         """
-        factors: list[float] = [0.0] * (w * h)
-        WINDOW = 40
-
-        if scan_axis == 0:
-            outer, inner = h, w
-        else:
-            outer, inner = w, h
-
-        for o in range(outer):
-            # 前缀和：沿扫描方向累加上坡量
-            pref: list[float] = []
-            running = 0.0
-
-            for i in range(inner):
-                if scan_axis == 0:
-                    if windward == 0:
-                        idx = o * w + i
-                        prev_idx = o * w + (i - 1)
-                        gain = elevation[prev_idx] - elevation[idx] if i > 0 else 0.0
-                    else:
-                        j = inner - 1 - i
-                        idx = o * w + j
-                        next_idx = o * w + (j + 1)
-                        gain = elevation[next_idx] - elevation[idx] if j < inner - 1 else 0.0
-                else:
-                    if windward == 0:
-                        idx = i * h + o
-                        prev_idx = (i - 1) * h + o
-                        gain = elevation[prev_idx] - elevation[idx] if i > 0 else 0.0
-                    else:
-                        j = inner - 1 - i
-                        idx = j * h + o
-                        next_idx = (j + 1) * h + o
-                        gain = elevation[next_idx] - elevation[idx] if j < inner - 1 else 0.0
-
-                if gain > 0:
-                    running += gain
-                pref.append(running)
-
-            # 滑动窗口求和 → 雨影因子
-            for i in range(inner):
-                if scan_axis == 0:
-                    if windward == 0:
-                        idx = o * w + i
-                    else:
-                        idx = o * w + (inner - 1 - i)
-                else:
-                    if windward == 0:
-                        idx = i * h + o
-                    else:
-                        idx = (inner - 1 - i) * h + o
-
-                if i <= WINDOW:
-                    total_uplift = pref[i]
-                else:
-                    total_uplift = pref[i] - pref[i - WINDOW]
-
-                if total_uplift < 30:
-                    f = 1.0
-                elif total_uplift < 150:
-                    f = 1.0 - (total_uplift - 30) / 120 * 0.4
-                elif total_uplift < 400:
-                    f = 0.6 - (total_uplift - 150) / 250 * 0.35
-                else:
-                    f = max(0.15, 0.25 - (total_uplift - 400) / 2000 * 0.15)
-                factors[idx] = f
-
-        return factors
+        from .hydrology import _rain_shadow_c
+        elev_arr = array('d', elevation)
+        result = _rain_shadow_c(elev_arr, w, h, scan_axis, windward)
+        return result.tolist()
 
 
 __all__ = ["ContinentParams", "ContinentData", "ContinentGenerator"]

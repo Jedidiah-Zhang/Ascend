@@ -30,6 +30,7 @@
 
 import heapq
 import math
+from array import array
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -79,44 +80,62 @@ def _dijkstra_to_ocean(
     flow_acc: list[float],
     w: int, h: int,
 ) -> list[float]:
-    """从所有海洋格反向 Dijkstra，计算每个格到海的最低累积代价。
+    """从所有海洋格反向 Dijkstra（heapq + 预计算代价 + 局部变量绑定）。
 
-    cost 进入格 q = max(0, dem[q]) + 1 - 0.4 * log(1 + flow_acc[q])，
+    cost 进入格 q = max(0, dem[q]) + 1 - 1.5 * log(1 + flow_acc[q])，
     下限 0.1 保证非负。海洋格 (dem < 0) 代价 0，作为多源起点。
 
-    Returns:
-        dist[i] = 从格 i 到最近海洋格的最低累积代价；海洋格为 0。
-        无路径可达的格为 inf。
+    优化：预计算 step_cost[q] 到 array，避免内部循环每次重算
+    elev_cost、flow_bonus 和 clamp。
     """
+    _DX = [1, -1, 0, 0, 1, -1, 1, -1]
+    _DY = [0, 0, 1, -1, 1, 1, -1, -1]
+
     n = w * h
     INF = float("inf")
     dist: list[float] = [INF] * n
     heap: list[tuple[float, int]] = []
+
+    # 预计算每格的进入代价（使用 log1p 避免 log(0)）
+    step_cost = [0.0] * n
+    for i in range(n):
+        if dem[i] >= 0:
+            elev_cost = dem[i] + 1.0
+            fb = 1.5 * math.log1p(flow_acc[i])
+            sc = elev_cost - fb
+            step_cost[i] = sc if sc > 0.1 else 0.1
+
+    # 只推入海陆边界的海洋格（有陆地邻居的）
     for i in range(n):
         if dem[i] < 0:
             dist[i] = 0.0
-            heapq.heappush(heap, (0.0, i))
+            x, y = i % w, i // w
+            for k in range(8):
+                nx, ny = x + _DX[k], y + _DY[k]
+                if 0 <= nx < w and 0 <= ny < h and dem[ny * w + nx] >= 0:
+                    heapq.heappush(heap, (0.0, i))
+                    break
+        else:
+            dist[i] = INF
+
+    # 局部变量绑定，避免属性查找
+    heappop = heapq.heappop
+    heappush = heapq.heappush
 
     while heap:
-        d, i = heapq.heappop(heap)
+        d, i = heappop(heap)
         if d > dist[i]:
             continue
         x, y = i % w, i // w
         for k in range(8):
-            nx = x + _DX[k]
-            ny = y + _DY[k]
+            nx, ny = x + _DX[k], y + _DY[k]
             if not (0 <= nx < w and 0 <= ny < h):
                 continue
             ni = ny * w + nx
-            elev_cost = max(0.0, dem[ni]) + 1.0
-            flow_bonus = 1.5 * math.log1p(flow_acc[ni])
-            step = elev_cost - flow_bonus
-            if step < 0.1:
-                step = 0.1
-            nd = d + step
-            if nd < dist[ni]:
+            nd = d + step_cost[ni]
+            if nd + 1e-14 < dist[ni]:
                 dist[ni] = nd
-                heapq.heappush(heap, (nd, ni))
+                heappush(heap, (nd, ni))
     return dist
 
 
@@ -167,70 +186,40 @@ def _find_sources(
 
 
 def _gaussian_blur(arr: list[float], w: int, h: int,
-                   sigma: float) -> list[float]:
-    """可分离高斯模糊（σ 以格为单位）。
+                   sigma: float) -> array:
+    """可分离高斯模糊 — C 加速（零拷贝）。
 
     dem 原始像素噪声会让梯度方向抖动；先平滑 σ≈2 格，
     让 -∇z 跟随宏观山谷趋势而非像素级噪声。
     """
-    radius = max(1, int(3 * sigma))
-    kernel = [math.exp(-0.5 * (i / sigma) ** 2) for i in range(-radius, radius + 1)]
-    ks = sum(kernel)
-    kernel = [k / ks for k in kernel]
-    tmp = [0.0] * (w * h)
-    for y in range(h):
-        row = y * w
-        for x in range(w):
-            s = 0.0
-            for i, k in enumerate(kernel):
-                xi = x + i - radius
-                if xi < 0:
-                    xi = 0
-                elif xi >= w:
-                    xi = w - 1
-                s += k * arr[row + xi]
-            tmp[row + x] = s
-    out = [0.0] * (w * h)
-    for x in range(w):
-        for y in range(h):
-            s = 0.0
-            for i, k in enumerate(kernel):
-                yi = y + i - radius
-                if yi < 0:
-                    yi = 0
-                elif yi >= h:
-                    yi = h - 1
-                s += k * tmp[yi * w + x]
-            out[y * w + x] = s
-    return out
+    from .hydrology import _gaussian_blur_c
+    arr_in = array('d', arr)
+    return _gaussian_blur_c(arr_in, w, h, sigma)
 
 
-def _bilinear(arr: list[float], x: float, y: float,
+def _bilinear(arr, x: float, y: float,
               w: int, h: int) -> float:
     """双线性插值采样，边界外按钳制到边缘格的值返回。"""
-    ix, iy = int(x), int(y)
-    if ix < 0:
-        ix = 0
-    elif ix >= w - 1:
-        ix = w - 2
-    if iy < 0:
-        iy = 0
-    elif iy >= h - 1:
-        iy = h - 2
+    ix = max(0, min(int(x), w - 2))
+    iy = max(0, min(int(y), h - 2))
     fx, fy = x - ix, y - iy
-    a = arr[iy * w + ix]
-    b = arr[iy * w + ix + 1]
-    c = arr[(iy + 1) * w + ix]
-    d = arr[(iy + 1) * w + ix + 1]
-    return ((1 - fx) * (1 - fy) * a + fx * (1 - fy) * b +
-            (1 - fx) * fy * c + fx * fy * d)
+    row0 = iy * w
+    row1 = row0 + w
+    a = arr[row0 + ix]
+    b = arr[row0 + ix + 1]
+    c = arr[row1 + ix]
+    d = arr[row1 + ix + 1]
+    w1 = 1.0 - fx
+    return (w1 * (1.0 - fy) * a + fx * (1.0 - fy) * b +
+            w1 * fy * c + fx * fy * d)
 
 
 def _neg_grad(x: float, y: float, arr: list[float],
               w: int, h: int, eps: float = 0.75) -> tuple[float, float]:
     """中心差分算 -∇arr（指向 arr 下降最快方向）。"""
-    gx = (_bilinear(arr, x + eps, y, w, h) - _bilinear(arr, x - eps, y, w, h)) / (2 * eps)
-    gy = (_bilinear(arr, x, y + eps, w, h) - _bilinear(arr, x, y - eps, w, h)) / (2 * eps)
+    inv_2eps = 1.0 / (2.0 * eps)
+    gx = (_bilinear(arr, x + eps, y, w, h) - _bilinear(arr, x - eps, y, w, h)) * inv_2eps
+    gy = (_bilinear(arr, x, y + eps, w, h) - _bilinear(arr, x, y - eps, w, h)) * inv_2eps
     return -gx, -gy
 
 
@@ -251,30 +240,34 @@ def _flow_dir(x: float, y: float,
       - flow_acc 也太弱 → 跟 dist（保证到海，纯几何兜底）
       - 全失效 → None（终止追踪）
     """
-    gxd, gyd = _neg_grad(x, y, smooth_dem, w, h)
-    md = math.hypot(gxd, gyd)
-    gxf, gyf = _neg_grad(x, y, dist, w, h)
-    mf = math.hypot(gxf, gyf)
+    # 局部绑定避免属性查找
+    hypot = math.hypot
 
-    if md > dem_min and mf > 1e-6:
-        if gxd * gxf + gyd * gyf > 0:
+    gxd, gyd = _neg_grad(x, y, smooth_dem, w, h)
+    md = hypot(gxd, gyd)
+    gxf, gyf = _neg_grad(x, y, dist, w, h)
+    mf = hypot(gxf, gyf)
+
+    if md > dem_min:
+        if mf > 1e-6:
+            if gxd * gxf + gyd * gyf > 0:
+                return gxd / md, gyd / md
+            # dem 跨分水岭 → 落到 flow_acc
+        else:
             return gxd / md, gyd / md
-        # dem 跨分水岭 → 落到 flow_acc
-    elif md > dem_min:
-        return gxd / md, gyd / md
 
     # flow_acc +梯度（指向下游高流量通道）
+    inv_1p5 = 1.0 / 1.5
     gfx = (_bilinear(smooth_flow, x + 0.75, y, w, h) -
-           _bilinear(smooth_flow, x - 0.75, y, w, h)) / 1.5
+           _bilinear(smooth_flow, x - 0.75, y, w, h)) * inv_1p5
     gfy = (_bilinear(smooth_flow, x, y + 0.75, w, h) -
-           _bilinear(smooth_flow, x, y - 0.75, w, h)) / 1.5
-    mfa = math.hypot(gfx, gfy)
-    if mfa > flow_min and mf > 1e-6:
-        # flow_acc 方向必须与 dist 下降同向，否则会在局部极大绕圈打转
-        if gfx * gxf + gfy * gyf > 0:
-            return gfx / mfa, gfy / mfa
-        return gxf / mf, gyf / mf
+           _bilinear(smooth_flow, x, y - 0.75, w, h)) * inv_1p5
+    mfa = hypot(gfx, gfy)
     if mfa > flow_min:
+        if mf > 1e-6:
+            if gfx * gxf + gfy * gyf > 0:
+                return gfx / mfa, gfy / mfa
+            return gxf / mf, gyf / mf
         return gfx / mfa, gfy / mfa
     if mf > 1e-6:
         return gxf / mf, gyf / mf
@@ -423,7 +416,7 @@ def trace_streamline(
 
 def _merge_into_existing(
     pts: list[RiverPoint],
-    visited: dict[int, int],
+    visited,  # array('i') — grid_idx → river_idx, -1 = unvisited
     w: int,
     merge_radius: int,
     min_length: int,
@@ -436,6 +429,7 @@ def _merge_into_existing(
     Returns:
         (outlet_idx, skip)。outlet=-1 表示独立入海，skip=True 表示丢弃。
     """
+    n_visited = len(visited)
     outlet = -1
     skip = False
     early_drop = max(min_length // 2, 15)
@@ -443,26 +437,28 @@ def _merge_into_existing(
         px, py = int(p.x), int(p.y)
         found = False
         for ndy in range(-merge_radius, merge_radius + 1):
+            ny = py + ndy
             if found:
                 break
             for ndx in range(-merge_radius, merge_radius + 1):
                 if ndx == 0 and ndy == 0:
                     continue
-                ni = (py + ndy) * w + (px + ndx)
-                hit = visited.get(ni, -1)
-                if hit != -1:
-                    if pi < early_drop:
-                        skip = True
-                    else:
-                        outlet = hit
-                        del pts[pi + 1:]
-                        pts.append(RiverPoint(
-                            x=px + ndx + 0.0,
-                            y=py + ndy + 0.0,
-                            flow=p.flow,
-                        ))
-                    found = True
-                    break
+                ni = (ny) * w + (px + ndx)
+                if 0 <= ni < n_visited:
+                    hit = visited[ni]
+                    if hit != -1:
+                        if pi < early_drop:
+                            skip = True
+                        else:
+                            outlet = hit
+                            del pts[pi + 1:]
+                            pts.append(RiverPoint(
+                                x=px + ndx + 0.0,
+                                y=ny + 0.0,
+                                flow=p.flow,
+                            ))
+                        found = True
+                        break
         if found:
             break
     return outlet, skip
@@ -472,7 +468,7 @@ def _commit_river(
     network: RiverNetwork,
     pts: list[RiverPoint],
     outlet: int,
-    visited: dict[int, int],
+    visited,  # array('i')
     w: int,
 ) -> None:
     """把一条河流提交到网络，标记占用格子。"""
@@ -483,7 +479,7 @@ def _commit_river(
         network.rivers[outlet].parent_indices.append(river_idx)
     for p in pts:
         gi = int(p.y) * w + int(p.x)
-        if gi not in visited:
+        if visited[gi] < 0:
             visited[gi] = river_idx
         if gi not in network.node_grid:
             network.node_grid[gi] = (river_idx, 0)
@@ -536,10 +532,13 @@ def build_river_network(
     smooth_dem = _gaussian_blur(dem, w, h, sigma)
     smooth_flow = _gaussian_blur(flow_acc, w, h, sigma)
     sources = _find_sources(flow_acc, directions, land_mask, w, h, threshold)
-    visited: dict[int, int] = {}
+
+    # array('i') 代替 dict — O(1) 直接索引，-1=未访问
+    n = w * h
+    visited = array('i', [-1]) * n
 
     for src in sources:
-        if src in visited:
+        if visited[src] >= 0:
             continue
         raw = _trace_downstream(src, dem, smooth_dem, smooth_flow, dist, w, h,
                                max_steps=max_steps, step_size=step_size)

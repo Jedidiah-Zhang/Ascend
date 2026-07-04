@@ -295,12 +295,12 @@ class TestHydraulicErosion:
     """水力侵蚀测试。"""
 
     def test_erosion_function_exists(self):
-        """erode 函数可调用。"""
+        """erode 函数可调用，返回 ErosionResult。"""
         from ascend.space.hydrology import erode
         dem = _make_slope_dem(10, 10)
         rainfall = [1.0] * 100
         result = erode(dem, rainfall, 10, 10, iterations=1)
-        assert len(result) == 100
+        assert len(result.dem) == 100
 
     def test_erosion_lowers_peaks(self):
         """侵蚀后最高点降低（物质被搬运走）。"""
@@ -308,7 +308,7 @@ class TestHydraulicErosion:
         dem = _make_cone_dem(20, 20)
         rainfall = [1.0] * 400
         eroded = erode(dem, rainfall, 20, 20, iterations=5)
-        assert max(eroded) <= max(dem), "侵蚀后最高点不应升高"
+        assert max(eroded.dem) <= max(dem), "侵蚀后最高点不应升高"
 
     def test_erosion_deterministic(self):
         """同输入 → 同输出。"""
@@ -317,8 +317,8 @@ class TestHydraulicErosion:
         rainfall = [1.0] * 225
         r1 = erode(dem, rainfall, 15, 15, iterations=3)
         r2 = erode(dem, rainfall, 15, 15, iterations=3)
-        for i in range(len(r1)):
-            assert r1[i] == pytest.approx(r2[i])
+        for i in range(len(r1.dem)):
+            assert r1.dem[i] == pytest.approx(r2.dem[i])
 
     def test_erosion_no_nan(self):
         """侵蚀结果不含 NaN/Inf。"""
@@ -326,7 +326,7 @@ class TestHydraulicErosion:
         dem = _make_slope_dem(10, 10)
         rainfall = [1.0] * 100
         result = erode(dem, rainfall, 10, 10, iterations=3)
-        for v in result:
+        for v in result.dem:
             assert not math.isnan(v)
             assert not math.isinf(v)
 
@@ -338,9 +338,9 @@ class TestHydraulicErosion:
         rainfall = [1.0] * (w * h)
         eroded = erode(dem, rainfall, w, h, iterations=5)
         # 侵蚀后最高点降低（物质被搬运）
-        assert max(eroded) <= max(dem)
+        assert max(eroded.dem) <= max(dem)
         # 至少有一些变化
-        changes = [abs(dem[i] - eroded[i]) for i in range(len(dem))]
+        changes = [abs(dem[i] - eroded.dem[i]) for i in range(len(dem))]
         assert max(changes) > 0.001, "侵蚀应有可测量的海拔变化"
 
     def test_erosion_mass_conserved(self):
@@ -350,7 +350,7 @@ class TestHydraulicErosion:
         dem = _make_cone_dem(w, h)
         rainfall = [1.0] * (w * h)
         eroded = erode(dem, rainfall, w, h, iterations=3)
-        total_change = sum(eroded[i] - dem[i] for i in range(len(dem)))
+        total_change = sum(eroded.dem[i] - dem[i] for i in range(len(dem)))
         # 净变化应接近 0（侵蚀量 ≈ 沉积量）
         avg_change = abs(total_change) / len(dem)
         assert avg_change < 1.0, f"净质量变化 {total_change:.2f}，平均 {avg_change:.4f}m/像素"
@@ -376,8 +376,8 @@ class TestIntegration:
         rainfall = [1.0] * len(dem)
 
         eroded = erode(dem, rainfall, w, h, iterations=2)
-        assert len(eroded) == len(dem)
-        for v in eroded:
+        assert len(eroded.dem) == len(dem)
+        for v in eroded.dem:
             assert not math.isnan(v)
             assert not math.isinf(v)
 
