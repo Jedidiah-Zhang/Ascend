@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "ascend-backend"))
 _HISTORY_FILE = Path(__file__).parent / ".ascend_history"
 _HISTORY_MAX = 1000
 
-from ascend.world_tree import bus
+from ascend.world_tree import world_tree
 from ascend.time import WorldClock, GameCalendar
 from ascend.log import setup_logging, quiet_console, get_logger
 from ascend.i18n import I18n
@@ -93,9 +93,9 @@ class GameConsole:
             if 6 <= h <= 22:
                 print(f"\n  {i18n.t('console.hour_bell', hour=f'{h:02d}')}\n> ", end="", flush=True)
 
-        bus.subscribe("day_end", on_day_end)
-        bus.subscribe("day_change", on_day_change)
-        bus.subscribe("hour_change", on_hour_change)
+        world_tree.subscribe("day_end", on_day_end)
+        world_tree.subscribe("day_change", on_day_change)
+        world_tree.subscribe("hour_change", on_hour_change)
 
     # ── 游戏循环（后台线程） ──────────────────────────────────────
 

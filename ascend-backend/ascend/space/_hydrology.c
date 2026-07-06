@@ -15,13 +15,13 @@
 /* D8 方向偏移 */
 static const int DX[8] = {1, -1, 0, 0, 1, -1, 1, -1};
 static const int DY[8] = {0, 0, 1, -1, 1, 1, -1, -1};
-static const double DIST[8] = {1.0, 1.0, 1.0, 1.0,
-                                1.41421356, 1.41421356, 1.41421356, 1.41421356};
+/* D8 方向距离倒数（1/轴距, 1/对角距），用于斜率计算时乘法替代除法 */
+static const double INV_DIST[8] = {1.0, 1.0, 1.0, 1.0,
+                                    0.70710678, 0.70710678, 0.70710678, 0.70710678};
 
 /* ── 二叉最小堆（用于填洼优先队列） ─────────────────────── */
 
-/* 堆排序键：(elev, idx) 复合键，保证确定性。
-   将 elev*1000 量化为 int，与 idx 组成 64 位键避免同高程的不确定性。 */
+/* 堆排序键：先比 elev，同 elev 时比 idx 保证确定性 */
 typedef struct {
     double elev;
     int idx;  /* y*w + x */
@@ -175,7 +175,7 @@ void hydrology_compute_d8(
                 if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
                 double ne = dem[ny * w + nx];
                 if (ne < elev) {
-                    double slope = (elev - ne) / DIST[d];
+                    double slope = (elev - ne) * INV_DIST[d];
                     if (slope > best_slope) {
                         best_slope = slope;
                         best_d = d;
@@ -264,12 +264,10 @@ void hydrology_erode_step(
        delta_out[i] = 侵蚀导致的净海拔变化
        sediment_out[i] = 累积净沉积（增量，调用方负责累加）
 
-       侵蚀量 = K × flow^0.5 × slope^1.0
-       限制：不超过 slope * 0.5（不能把山削成坑）
+       侵蚀量 = K × sqrt(flow) × slope
+       限制：不超过 slope × 0.5（不能把山削成坑）
     */
     int n = w * h;
-    double m_exp = 0.5;
-    double n_exp = 1.0;
 
     for (int i = 0; i < n; i++) {
         int d = directions[i];
@@ -288,7 +286,7 @@ void hydrology_erode_step(
         double flow = acc[i];
         if (flow < 1.0) flow = 1.0;
 
-        double erosion = erodibility * pow(flow, m_exp) * pow(slope, n_exp);
+        double erosion = erodibility * sqrt(flow) * slope;
 
         /* 限制 */
         double max_erode = slope * 0.5;
@@ -310,9 +308,7 @@ double hydrology_apply_erosion(
     const double *delta,
     int n)
 {
-    /* 将侵蚀 delta 应用到 dem 和 sediment_net，返回 max|delta|。
-       替代 Python 层的逐元素循环，消除 12 轮 × 600K 的 Python 迭代开销。
-    */
+    /* 将侵蚀 delta 应用到 dem 和 sediment_net，返回 max|delta|。 */
     double max_delta = 0.0;
     for (int i = 0; i < n; i++) {
         double d = delta[i];
@@ -330,15 +326,14 @@ void hydrology_gaussian_blur(
     const double *arr, int w, int h, double sigma,
     double *result)
 {
-    /* 可分离 2-pass 高斯模糊，边界钳制到边缘。
-       sigma 以格为单位。替代 Python 层的 12M 次浮点运算。
-    */
+    /* 可分离 2-pass 高斯模糊，边界钳制到边缘。sigma 以格为单位。 */
     int radius = (int)(3.0 * sigma);
     if (radius < 1) radius = 1;
     int kw = 2 * radius + 1;
 
     /* 构建 kernel */
     double *kernel = (double *)malloc(kw * sizeof(double));
+    if (!kernel) return;
     double ks = 0.0;
     for (int i = 0; i < kw; i++) {
         double t = (double)(i - radius) / sigma;
@@ -347,33 +342,83 @@ void hydrology_gaussian_blur(
     }
     for (int i = 0; i < kw; i++) kernel[i] /= ks;
 
-    /* 水平方向 pass → tmp */
+    /* 临时缓冲区 */
     double *tmp = (double *)malloc((size_t)w * h * sizeof(double));
+    if (!tmp) { free(kernel); return; }
+
+    int left_end = radius;
+    int right_start = w - radius;
+    if (right_start < left_end) right_start = left_end;
+
+    /* 水平方向 pass → tmp（三分区：左钳制 / 内部无分支 / 右钳制） */
     for (int y = 0; y < h; y++) {
         int row = y * w;
-        for (int x = 0; x < w; x++) {
+
+        for (int x = 0; x < left_end; x++) {
             double s = 0.0;
             for (int i = 0; i < kw; i++) {
                 int xi = x + i - radius;
                 if (xi < 0) xi = 0;
-                else if (xi >= w) xi = w - 1;
+                s += kernel[i] * arr[row + xi];
+            }
+            tmp[row + x] = s;
+        }
+
+        for (int x = left_end; x < right_start; x++) {
+            double s = 0.0;
+            for (int i = 0; i < kw; i++) {
+                s += kernel[i] * arr[row + x + i - radius];
+            }
+            tmp[row + x] = s;
+        }
+
+        for (int x = right_start; x < w; x++) {
+            double s = 0.0;
+            for (int i = 0; i < kw; i++) {
+                int xi = x + i - radius;
+                if (xi >= w) xi = w - 1;
                 s += kernel[i] * arr[row + xi];
             }
             tmp[row + x] = s;
         }
     }
 
-    /* 垂直方向 pass → result */
-    for (int x = 0; x < w; x++) {
-        for (int y = 0; y < h; y++) {
-            double s = 0.0;
-            for (int i = 0; i < kw; i++) {
-                int yi = y + i - radius;
-                if (yi < 0) yi = 0;
-                else if (yi >= h) yi = h - 1;
-                s += kernel[i] * tmp[yi * w + x];
+    int top_end = radius;
+    int bottom_start = h - radius;
+    if (bottom_start < top_end) bottom_start = top_end;
+
+    /* 垂直方向 pass → result（三分区：顶钳制 / 内部无分支 / 底钳制） */
+    for (int y = 0; y < h; y++) {
+        int row = y * w;
+
+        if (y < top_end) {
+            for (int x = 0; x < w; x++) {
+                double s = 0.0;
+                for (int i = 0; i < kw; i++) {
+                    int yi = y + i - radius;
+                    if (yi < 0) yi = 0;
+                    s += kernel[i] * tmp[yi * w + x];
+                }
+                result[row + x] = s;
             }
-            result[(size_t)y * w + x] = s;
+        } else if (y < bottom_start) {
+            for (int x = 0; x < w; x++) {
+                double s = 0.0;
+                for (int i = 0; i < kw; i++) {
+                    s += kernel[i] * tmp[(y + i - radius) * w + x];
+                }
+                result[row + x] = s;
+            }
+        } else {
+            for (int x = 0; x < w; x++) {
+                double s = 0.0;
+                for (int i = 0; i < kw; i++) {
+                    int yi = y + i - radius;
+                    if (yi >= h) yi = h - 1;
+                    s += kernel[i] * tmp[yi * w + x];
+                }
+                result[row + x] = s;
+            }
         }
     }
 
@@ -513,11 +558,10 @@ static double _bilinear_clamp(const double *grid, int w, int h,
     return v0 + (v1 - v0) * fy;
 }
 
-/* ── 抬升 → 雨影因子映射（与旧 1D 算法相同，保证平滑）────── */
+/* ── 抬升 → 雨影因子映射 ──────────────────────────────────── */
 
 static double _uplift_to_factor(double total_uplift, double min_factor) {
-    /* 分段线性：累积抬升越大 → 因子越小。
-       阈值与旧 hydrology_rain_shadow 一致，保证输出连续。 */
+    /* 分段线性映射：累积抬升越大 → 雨影因子越小，输出 [min_factor, 1.0]。 */
     if (total_uplift < 30.0)
         return 1.0;
     else if (total_uplift < 150.0)
@@ -544,7 +588,7 @@ static void _rain_shadow_single_dir(
     double wx = cos(angle_rad);
     double wy = sin(angle_rad);
 
-    /* 归一化步长 ≈ 1 格，配合最近邻采样（避免双线性自依赖） */
+    /* 归一化步长 ≈ 1 格，保证沿风向每步前进约一格 */
     double norm = fmax(1e-10, fmax(fabs(wx), fabs(wy)));
     double step_scale = 1.0 / norm;
     double step_x = wx * step_scale;
@@ -557,7 +601,8 @@ static void _rain_shadow_single_dir(
 
     /* 分配 */
     ProjEntry *entries = (ProjEntry *)malloc((size_t)n * sizeof(ProjEntry));
-    double *uplift_eff = (double *)malloc((size_t)n * sizeof(double));
+    /* 有效抬升累积量，零初始化（未处理格子视为无抬升的开洋） */
+    double *uplift_eff = (double *)calloc((size_t)n, sizeof(double));
 
     /* 计算投影 */
     for (int i = 0; i < n; i++) {
@@ -622,7 +667,7 @@ static void _rain_shadow_single_dir(
     _gaussian_blur_inplace(factors, w, h, 2.0);
 }
 
-/* 原地可分离高斯模糊（用于雨影因子后处理） */
+/* 原地可分离高斯模糊。kernel 预计算，逐像素 weight 归一化处理边界钳制。 */
 static void _gaussian_blur_inplace(double *arr, int w, int h, double sigma) {
     int n = w * h;
     double *tmp = (double *)malloc((size_t)n * sizeof(double));
@@ -630,39 +675,52 @@ static void _gaussian_blur_inplace(double *arr, int w, int h, double sigma) {
 
     int radius = (int)(sigma * 3.0);
     if (radius < 1) radius = 1;
+    int kw = 2 * radius + 1;
+
+    /* 预计算 1D kernel */
+    double *kernel = (double *)malloc((size_t)kw * sizeof(double));
+    if (!kernel) { free(tmp); return; }
+    double ks = 0.0;
+    for (int i = 0; i < kw; i++) {
+        double t = (double)(i - radius) / sigma;
+        kernel[i] = exp(-0.5 * t * t);
+        ks += kernel[i];
+    }
+    for (int i = 0; i < kw; i++) kernel[i] /= ks;
 
     /* 水平 pass */
     for (int y = 0; y < h; y++) {
+        int row = y * w;
         for (int x = 0; x < w; x++) {
             double sum = 0.0, weight = 0.0;
-            for (int dx = -radius; dx <= radius; dx++) {
-                int sx = x + dx;
+            for (int i = 0; i < kw; i++) {
+                int sx = x + i - radius;
                 if (sx < 0) sx = 0;
                 if (sx >= w) sx = w - 1;
-                double g = exp(-(double)(dx * dx) / (2.0 * sigma * sigma));
-                sum += arr[y * w + sx] * g;
-                weight += g;
+                sum += kernel[i] * arr[row + sx];
+                weight += kernel[i];
             }
-            tmp[y * w + x] = sum / weight;
+            tmp[row + x] = sum / weight;
         }
     }
 
     /* 垂直 pass */
     for (int y = 0; y < h; y++) {
+        int row = y * w;
         for (int x = 0; x < w; x++) {
             double sum = 0.0, weight = 0.0;
-            for (int dy = -radius; dy <= radius; dy++) {
-                int sy = y + dy;
+            for (int i = 0; i < kw; i++) {
+                int sy = y + i - radius;
                 if (sy < 0) sy = 0;
                 if (sy >= h) sy = h - 1;
-                double g = exp(-(double)(dy * dy) / (2.0 * sigma * sigma));
-                sum += tmp[sy * w + x] * g;
-                weight += g;
+                sum += kernel[i] * tmp[sy * w + x];
+                weight += kernel[i];
             }
-            arr[y * w + x] = sum / weight;
+            arr[row + x] = sum / weight;
         }
     }
 
+    free(kernel);
     free(tmp);
 }
 
@@ -680,7 +738,7 @@ void hydrology_rain_shadow_omnidirectional(
        primary_angle: 主风向（弧度）。
        secondary_angle: 次风向（弧度），仅当 secondary_weight > 0 时使用。
        secondary_weight: 次风权重 [0, 1]。
-       decay_length_km: 抬升指数衰减距离 (km)，替代滑动窗口。
+       decay_length_km: 抬升指数衰减距离 (km)。
        因子输出范围：[min_factor, 1.0]。
     */
     _rain_shadow_single_dir(elevation, w, h, primary_angle,
@@ -754,14 +812,13 @@ void hydrology_compute_climate(
     double cell_size_km,
     double *temp_out, double *rain_out, int *climate_out)
 {
-    /* 单次 C 遍历替代 Python 600K 循环。
+    /* 计算温度、降雨、气候分类。
        温度 = 纬度梯度 + 微量摆动 - 海拔 × 直减率 - 大陆度修正
-       降雨 = 降雨噪声 × 雨影因子
-       气候 = classify()
+       降雨 = 噪声值映射到 mm/yr × 雨影因子
+       气候 = 8 区分类决策树
 
-       大陆度修正：距海越远 → 年均温越低（大陆性气候，冬季降温主导年均值）。
-       饱和指数曲线：接近海岸修正 ≈0，远海内陆修正 → continentality_k。
-       dist_to_ocean == NULL 时跳过大 clo 陆度修正（向后兼容）。
+       大陆度修正：距海越远 → 年均温越低，饱和指数曲线。
+       dist_to_ocean == NULL 时跳过大陆度修正。
     */
     double inv_w = 1.0 / (double)w;
     double inv_h = 1.0 / (double)h;

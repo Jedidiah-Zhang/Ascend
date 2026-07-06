@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 from typing import Any
 import uuid
 
-from .affected import AffectedParty  # noqa: F401 — 从旧导入路径兼容
-
 
 @dataclass
 class Event:

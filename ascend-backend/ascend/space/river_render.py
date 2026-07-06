@@ -154,10 +154,7 @@ def _fill_gaps(
 
 
 def _river_width(flow: float, max_acc: float) -> float:
-    """对数流量→河道宽度 (m)。
-
-    相比旧版缩减最大宽度(40m→15m),避免河道过宽。
-    """
+    """对数流量 → 河道宽度 (m)。"""
     if max_acc <= 0:
         return 2.0
     ratio = flow / max_acc

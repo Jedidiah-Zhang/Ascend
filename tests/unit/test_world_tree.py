@@ -6,7 +6,7 @@ import threading
 import time
 
 import pytest
-from ascend.world_tree import Event, AffectedParty, EventBus, EventGraph, EventArchive
+from ascend.world_tree import Event, AffectedParty, WorldTree, EventGraph, EventArchive
 
 
 def make_event(timestamp=0, event_type="test", initiator_id="a",
@@ -26,9 +26,9 @@ def make_event(timestamp=0, event_type="test", initiator_id="a",
     )
 
 
-class TestEventBus:
+class TestWorldTree:
     def test_publish_and_subscribe(self):
-        bus = EventBus()
+        bus = WorldTree()
         received = []
         bus.subscribe("weather_change", lambda e: received.append(e))
         ev = make_event(event_type="weather_change")
@@ -37,7 +37,7 @@ class TestEventBus:
         assert received[0].id == ev.id
 
     def test_wildcard_subscription(self):
-        bus = EventBus()
+        bus = WorldTree()
         received = []
         bus.subscribe("*", lambda e: received.append(e))
         bus.publish(make_event(event_type="weather_change"))
@@ -45,7 +45,7 @@ class TestEventBus:
         assert len(received) == 2
 
     def test_unsubscribe(self):
-        bus = EventBus()
+        bus = WorldTree()
         received = []
         unsub = bus.subscribe("test", lambda e: received.append(e))
         bus.publish(make_event())
@@ -55,7 +55,7 @@ class TestEventBus:
         assert len(received) == 1  # no second event
 
     def test_time_range_query(self):
-        bus = EventBus()
+        bus = WorldTree()
         for t in range(5):
             bus.publish(make_event(timestamp=t))
         results = bus.get_events_in_range(1, 3)
@@ -63,7 +63,7 @@ class TestEventBus:
         assert {e.timestamp for e in results} == {1, 2, 3}
 
     def test_time_range_with_filter(self):
-        bus = EventBus()
+        bus = WorldTree()
         bus.publish(make_event(timestamp=0, event_type="rain"))
         bus.publish(make_event(timestamp=1, event_type="snow"))
         bus.publish(make_event(timestamp=2, event_type="rain"))
@@ -71,7 +71,7 @@ class TestEventBus:
         assert len(results) == 2
 
     def test_entity_index(self):
-        bus = EventBus()
+        bus = WorldTree()
         ev = make_event(initiator_id="npc_1",
                         affected=[AffectedParty(entity_id="npc_2", role="witness")])
         bus.publish(ev)
@@ -81,7 +81,7 @@ class TestEventBus:
         assert len(events_2) == 1
 
     def test_spatial_query(self):
-        bus = EventBus()
+        bus = WorldTree()
         bus.publish(make_event(location=(0, 0, None, None)))
         bus.publish(make_event(location=(1, 0, None, None)))
         bus.publish(make_event(location=(5, 5, None, None)))
@@ -89,7 +89,7 @@ class TestEventBus:
         assert len(results) == 2
 
     def test_event_count(self):
-        bus = EventBus()
+        bus = WorldTree()
         assert bus.event_count == 0
         bus.publish(make_event())
         bus.publish(make_event())
@@ -97,7 +97,7 @@ class TestEventBus:
 
     def test_get_event_by_id_memory(self):
         """按 ID 查找内存中的事件。"""
-        bus = EventBus()
+        bus = WorldTree()
         ev = make_event(id="target_1", timestamp=10)
         bus.publish(ev)
         result = bus.get_event_by_id("target_1")
@@ -107,14 +107,14 @@ class TestEventBus:
 
     def test_get_event_by_id_not_found(self):
         """查找不存在的事件返回 None。"""
-        bus = EventBus()
+        bus = WorldTree()
         bus.publish(make_event(id="exists"))
         result = bus.get_event_by_id("no_such_id")
         assert result is None
 
     def test_get_event_by_id_empty_bus(self):
         """空总线上查找返回 None。"""
-        bus = EventBus()
+        bus = WorldTree()
         result = bus.get_event_by_id("anything")
         assert result is None
 
@@ -251,47 +251,47 @@ class TestModuleSingleton:
 # ── 事件校验 ──────────────────────────────────────────
 
 
-class TestEventBusValidation:
+class TestWorldTreeValidation:
     """事件校验测试。"""
 
     def test_empty_event_type(self):
-        bus = EventBus()
+        bus = WorldTree()
         with pytest.raises(ValueError, match="事件类型不能为空"):
             bus.publish(make_event(event_type=""))
 
     def test_whitespace_event_type(self):
-        bus = EventBus()
+        bus = WorldTree()
         with pytest.raises(ValueError, match="事件类型不能为空"):
             bus.publish(make_event(event_type="   "))
 
     def test_empty_initiator_id(self):
-        bus = EventBus()
+        bus = WorldTree()
         with pytest.raises(ValueError, match="发起方 ID 不能为空"):
             bus.publish(make_event(initiator_id=""))
 
     def test_invalid_initiator_type(self):
-        bus = EventBus()
+        bus = WorldTree()
         with pytest.raises(ValueError, match="无效的发起方类型"):
             bus.publish(make_event(initiator_type="alien"))
 
     def test_negative_timestamp(self):
-        bus = EventBus()
+        bus = WorldTree()
         with pytest.raises(ValueError, match="时间戳不能为负"):
             bus.publish(make_event(timestamp=-1))
 
     def test_invalid_location_type(self):
-        bus = EventBus()
+        bus = WorldTree()
         with pytest.raises(ValueError, match="位置格式无效"):
             bus.publish(make_event(location="not_a_tuple"))  # type: ignore[arg-type]
 
     def test_validation_can_be_disabled(self):
-        bus = EventBus(validate=False)
+        bus = WorldTree(validate=False)
         ev = make_event(event_type="")
         bus.publish(ev)  # 不抛异常
         assert bus.event_count == 1
 
     def test_valid_event_passes(self):
-        bus = EventBus()
+        bus = WorldTree()
         ev = make_event()
         bus.publish(ev)  # 不抛异常
         assert bus.event_count == 1
@@ -300,12 +300,12 @@ class TestEventBusValidation:
 # ── 事件生命周期 trim ────────────────────────────────
 
 
-class TestEventBusTrim:
+class TestWorldTreeTrim:
     """事件生命周期测试。"""
 
     def test_auto_trim_on_publish(self):
         """发布事件超过 max_memory_events 时自动触发 trim。"""
-        bus = EventBus(validate=False, max_memory_events=5)
+        bus = WorldTree(validate=False, max_memory_events=5)
         for t in range(10):
             bus.publish(make_event(timestamp=t))
         # 自动 trim 已触发，事件数不应超过阈值
@@ -316,7 +316,7 @@ class TestEventBusTrim:
 
     def test_auto_trim_not_triggered_under_threshold(self):
         """事件数未超阈值时不触发 trim。"""
-        bus = EventBus(validate=False, max_memory_events=100)
+        bus = WorldTree(validate=False, max_memory_events=100)
         for t in range(10):
             bus.publish(make_event(timestamp=t))
         # 全部保留
@@ -324,14 +324,14 @@ class TestEventBusTrim:
 
     def test_auto_trim_disabled_by_default(self):
         """不传 max_memory_events 时不自动 trim。"""
-        bus = EventBus(validate=False)
+        bus = WorldTree(validate=False)
         for t in range(100):
             bus.publish(make_event(timestamp=t))
         assert bus.event_count == 100  # 全部保留
 
     def test_auto_trim_preserves_graph_consistency(self):
         """自动 trim 后图和索引保持一致。"""
-        bus = EventBus(validate=False, max_memory_events=6)
+        bus = WorldTree(validate=False, max_memory_events=6)
         ev0 = make_event(timestamp=0, id="ev0")
         ev1 = make_event(timestamp=1, id="ev1", caused_by=["ev0"])
         for _ in range(10):
@@ -342,7 +342,7 @@ class TestEventBusTrim:
         assert bus.graph.node_count >= 1
 
     def test_trim_basic(self):
-        bus = EventBus()
+        bus = WorldTree()
         for t in [0, 1, 2, 3, 4]:
             bus.publish(make_event(timestamp=t))
 
@@ -353,7 +353,7 @@ class TestEventBusTrim:
         assert bus.event_count == 2
 
     def test_trim_removes_nothing(self):
-        bus = EventBus()
+        bus = WorldTree()
         for t in range(5, 10):  # ts 5, 6, 7, 8, 9
             bus.publish(make_event(timestamp=t))
 
@@ -362,7 +362,7 @@ class TestEventBusTrim:
         assert bus.event_count == 5
 
     def test_trim_removes_everything(self):
-        bus = EventBus()
+        bus = WorldTree()
         for t in range(5):
             bus.publish(make_event(timestamp=t))
 
@@ -371,12 +371,12 @@ class TestEventBusTrim:
         assert bus.event_count == 0
 
     def test_trim_empty_bus(self):
-        bus = EventBus()
+        bus = WorldTree()
         removed = bus._trim(10)
         assert removed == 0
 
     def test_trim_rebuilds_entity_index(self):
-        bus = EventBus()
+        bus = WorldTree()
         bus.publish(make_event(timestamp=0, initiator_id="npc_1"))
         bus.publish(make_event(timestamp=1, initiator_id="npc_2"))
         bus.publish(make_event(timestamp=10, initiator_id="npc_1"))
@@ -388,7 +388,7 @@ class TestEventBusTrim:
         assert events_npc1[0].timestamp == 10
 
     def test_trim_rebuilds_spatial_index(self):
-        bus = EventBus()
+        bus = WorldTree()
         bus.publish(make_event(timestamp=0, location=(0, 0, None, None)))
         bus.publish(make_event(timestamp=1, location=(5, 5, None, None)))
         bus.publish(make_event(timestamp=10, location=(0, 0, None, None)))
@@ -400,7 +400,7 @@ class TestEventBusTrim:
         assert region[0].timestamp == 10
 
     def test_trim_and_publish(self):
-        bus = EventBus()
+        bus = WorldTree()
         for t in range(3):
             bus.publish(make_event(timestamp=t))  # ts 0,1,2
 
@@ -412,7 +412,7 @@ class TestEventBusTrim:
         assert len(results) == 2  # ts=2 + ts=5
 
     def test_trim_twice(self):
-        bus = EventBus()
+        bus = WorldTree()
         for t in range(6):
             bus.publish(make_event(timestamp=t))
 
@@ -423,13 +423,13 @@ class TestEventBusTrim:
         assert bus.event_count == 1  # ts 5
 
     def test_trim_negative_time_raises(self):
-        bus = EventBus()
+        bus = WorldTree()
         with pytest.raises(ValueError, match="清理时间不能为负"):
             bus._trim(-1)
 
     def test_trim_preserves_causal_chain_with_lookup(self):
         """Trim 后内存图节点移除，通过 lookup 可从内存事件体补全一级链。"""
-        bus = EventBus()
+        bus = WorldTree()
         ev0 = make_event(timestamp=0, id="ev0")
         ev1 = make_event(timestamp=1, id="ev1", caused_by=["ev0"])
         ev2 = make_event(timestamp=10, id="ev2", caused_by=["ev1"])
@@ -458,7 +458,7 @@ class TestEventBusTrim:
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 
-        bus = EventBus(validate=False, archive_path=path)
+        bus = WorldTree(validate=False, archive_path=path)
         try:
             ev = make_event(timestamp=0, id="ev_old")
             bus.publish(ev)
@@ -476,7 +476,7 @@ class TestEventBusTrim:
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 
-        bus = EventBus(validate=False, archive_path=path)
+        bus = WorldTree(validate=False, archive_path=path)
         try:
             # 发布并归档
             ev = make_event(timestamp=1, id="dup_id", event_type="old")
@@ -498,7 +498,7 @@ class TestEventBusTrim:
 
     def test_trim_removes_graph_nodes(self):
         """trim 事件体时同步移除图中对应节点。"""
-        bus = EventBus()
+        bus = WorldTree()
         ev0 = make_event(timestamp=0, id="ev0")
         ev1 = make_event(timestamp=1, id="ev1", caused_by=["ev0"])
         ev2 = make_event(timestamp=10, id="ev2", caused_by=["ev1"])
@@ -523,7 +523,7 @@ class TestEventBusTrim:
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 
-        bus = EventBus(validate=False, archive_path=path)
+        bus = WorldTree(validate=False, archive_path=path)
         try:
             ev0 = make_event(timestamp=0, id="ev0")
             ev1 = make_event(timestamp=1, id="ev1", caused_by=["ev0"])
@@ -549,11 +549,11 @@ class TestEventBusTrim:
 # ── 线程安全 ──────────────────────────────────────────
 
 
-class TestEventBusThreadSafety:
+class TestWorldTreeThreadSafety:
     """线程安全测试。"""
 
     def test_concurrent_publish(self):
-        bus = EventBus()
+        bus = WorldTree()
         n_per_thread = 100
         n_threads = 4
 
@@ -570,7 +570,7 @@ class TestEventBusThreadSafety:
         assert bus.event_count == n_per_thread * n_threads
 
     def test_concurrent_publish_and_query(self):
-        bus = EventBus()
+        bus = WorldTree()
         stop = threading.Event()
         errors: list[Exception] = []
 
@@ -605,7 +605,7 @@ class TestEventBusThreadSafety:
         assert bus.event_count == 200
 
     def test_concurrent_subscribe_unsubscribe(self):
-        bus = EventBus()
+        bus = WorldTree()
 
         def subscriber():
             for _ in range(50):
@@ -626,11 +626,11 @@ class TestEventBusThreadSafety:
 # ── 回调异常隔离 ──────────────────────────────────────
 
 
-class TestEventBusErrorIsolation:
+class TestWorldTreeErrorIsolation:
     """回调异常隔离测试。"""
 
     def test_one_bad_callback_does_not_affect_others(self):
-        bus = EventBus()
+        bus = WorldTree()
         good_results: list[Event] = []
 
         def bad_callback(_event: Event) -> None:
@@ -650,7 +650,7 @@ class TestEventBusErrorIsolation:
 
     def test_wildcard_and_specific_both_receive(self):
         """一个回调失败，通配符和其他订阅者仍应收到事件。"""
-        bus = EventBus()
+        bus = WorldTree()
         results: list[Event] = []
 
         def bad_callback(_event: Event) -> None:
@@ -881,7 +881,7 @@ class TestEventArchive:
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 
-        bus = EventBus(validate=False, archive_path=path)
+        bus = WorldTree(validate=False, archive_path=path)
         try:
             # 发布 10 个事件
             for t in range(10):
@@ -911,7 +911,7 @@ class TestEventArchive:
 
     def test_no_archive_path_behavior_unchanged(self):
         """不传 archive_path 时行为与之前完全一致。"""
-        bus = EventBus()
+        bus = WorldTree()
         for t in range(5):
             bus.publish(make_event(timestamp=t * 60))
 
@@ -941,7 +941,7 @@ class TestEventWeight:
 
     def test_high_weight_survives_trim(self):
         """高权重事件在一次 trim 后仍留在内存。"""
-        bus = EventBus(validate=False, max_memory_events=100)
+        bus = WorldTree(validate=False, max_memory_events=100)
 
         # 插入权重 5 的关键事件
         critical = make_event(timestamp=0, id="crit", weight=5)
@@ -957,7 +957,7 @@ class TestEventWeight:
 
     def test_low_weight_trimmed_first(self):
         """低权重事件先于高权重事件被归档。"""
-        bus = EventBus(validate=False, max_memory_events=100)
+        bus = WorldTree(validate=False, max_memory_events=100)
 
         bus.publish(make_event(timestamp=0, id="low", weight=1))
         bus.publish(make_event(timestamp=1, id="high", weight=5))
@@ -976,7 +976,7 @@ class TestEventWeight:
 
     def test_all_weights_trimmed_eventually(self):
         """足够多次 trim 后所有事件都会被归档。"""
-        bus = EventBus(validate=False, max_memory_events=50)
+        bus = WorldTree(validate=False, max_memory_events=50)
 
         bus.publish(make_event(timestamp=0, id="w5", weight=5))
 
@@ -991,7 +991,7 @@ class TestEventWeight:
 
     def test_weighted_trim_preserves_ordering(self):
         """权重分层归档后内存日志仍保持时间有序。"""
-        bus = EventBus(validate=False, max_memory_events=100)
+        bus = WorldTree(validate=False, max_memory_events=100)
 
         for i in range(500):
             w = 5 if i % 20 == 0 else 1  # 每 20 个事件一个高权重
@@ -1009,7 +1009,7 @@ class TestEventWeight:
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 
-        bus = EventBus(validate=False, max_memory_events=50,
+        bus = WorldTree(validate=False, max_memory_events=50,
                        archive_path=path)
         try:
             bus.publish(make_event(timestamp=0, id="arch_crit", weight=5,
@@ -1049,7 +1049,7 @@ class TestGraphWarmup:
 
     def test_world_tree_warmup_no_archive(self):
         """无归档时 warmup_graph 返回 0。"""
-        bus = EventBus(validate=False)
+        bus = WorldTree(validate=False)
         assert bus.warmup_graph() == 0
 
     def test_world_tree_warmup_restores_edges(self):
@@ -1058,7 +1058,7 @@ class TestGraphWarmup:
         bus = None
         bus2 = None
         try:
-            bus = EventBus(
+            bus = WorldTree(
                 validate=False, archive_path=path,
                 max_memory_events=20,
             )
@@ -1073,7 +1073,7 @@ class TestGraphWarmup:
             for i in range(30):
                 bus.publish(make_event(timestamp=200 + i))
 
-            bus2 = EventBus(
+            bus2 = WorldTree(
                 validate=False, archive_path=path,
                 max_memory_events=20,
             )
@@ -1097,7 +1097,7 @@ class TestStats:
 
     def test_stats_initial(self):
         """初始状态下 stats 各项为 0。"""
-        bus = EventBus(validate=False)
+        bus = WorldTree(validate=False)
         s = bus.stats
         assert s["publish_count"] == 0
         assert s["event_count"] == 0
@@ -1107,14 +1107,14 @@ class TestStats:
 
     def test_stats_publish_count(self):
         """stats 记录发布总数。"""
-        bus = EventBus(validate=False)
+        bus = WorldTree(validate=False)
         for i in range(5):
             bus.publish(make_event(timestamp=i))
         assert bus.stats["publish_count"] == 5
 
     def test_stats_trim_count(self):
         """stats 记录 trim 次数。"""
-        bus = EventBus(validate=False, max_memory_events=20)
+        bus = WorldTree(validate=False, max_memory_events=20)
         for i in range(100):
             bus.publish(make_event(timestamp=i))
         assert bus.stats["trim_count"] >= 1
@@ -1122,7 +1122,7 @@ class TestStats:
 
     def test_stats_subscriber_count(self):
         """stats 记录活跃订阅数。"""
-        bus = EventBus(validate=False)
+        bus = WorldTree(validate=False)
         unsub = bus.subscribe("test", lambda e: None)
         assert bus.stats["subscriber_count"] == 1
         unsub()
@@ -1132,7 +1132,7 @@ class TestStats:
         """stats 记录归档事件数。"""
         path = tempfile.mktemp(suffix=".db")
         try:
-            bus = EventBus(
+            bus = WorldTree(
                 validate=False,
                 archive_path=path,
                 max_memory_events=20,
@@ -1148,7 +1148,7 @@ class TestStats:
 
     def test_stats_after_clear(self):
         """clear() 后统计归零。"""
-        bus = EventBus(validate=False, max_memory_events=20)
+        bus = WorldTree(validate=False, max_memory_events=20)
         for i in range(100):
             bus.publish(make_event(timestamp=i))
         bus.clear()
@@ -1165,7 +1165,7 @@ class TestAsyncDispatch:
 
     def test_async_callback_receives_event(self):
         """异步订阅者在后台线程收到事件。"""
-        bus = EventBus()
+        bus = WorldTree()
         received: list[Event] = []
         barrier = threading.Barrier(2)
 
@@ -1184,7 +1184,7 @@ class TestAsyncDispatch:
 
     def test_async_does_not_block_publish(self):
         """异步订阅者的慢回调不阻塞 publish。"""
-        bus = EventBus()
+        bus = WorldTree()
         started = threading.Event()
         done = threading.Event()
 
@@ -1208,7 +1208,7 @@ class TestAsyncDispatch:
 
     def test_sync_and_async_coexist(self):
         """同步和异步订阅者同时存在，互不影响。"""
-        bus = EventBus()
+        bus = WorldTree()
         sync_results: list[Event] = []
         async_results: list[Event] = []
         barrier = threading.Barrier(2)
@@ -1226,7 +1226,7 @@ class TestAsyncDispatch:
 
     def test_async_exception_isolated(self):
         """异步回调抛异常不影响后续事件的分发。"""
-        bus = EventBus()
+        bus = WorldTree()
         received: list[Event] = []
         barrier = threading.Barrier(2)
 
@@ -1246,7 +1246,7 @@ class TestAsyncDispatch:
 
     def test_async_unsubscribe(self):
         """取消异步订阅后不再收到事件。"""
-        bus = EventBus()
+        bus = WorldTree()
         received: list[Event] = []
 
         def handler(event: Event) -> None:
@@ -1261,7 +1261,7 @@ class TestAsyncDispatch:
 
     def test_async_multiple_events_ordering(self):
         """异步订���者按 publish 顺序接收事件。"""
-        bus = EventBus()
+        bus = WorldTree()
         received: list[str] = []
         n = 50
         barrier = threading.Barrier(2)
@@ -1284,7 +1284,7 @@ class TestAsyncDispatch:
 
     def test_async_callback_on_wildcard(self):
         """异步订阅者也可以通过通配符接收所有事件。"""
-        bus = EventBus()
+        bus = WorldTree()
         received: list[Event] = []
         barrier = threading.Barrier(2)
 

@@ -294,22 +294,40 @@ class GameEngine:
     def _generate_initial_chunks(self, continent) -> None:
         """预生成出生点周边 INITIAL_CHUNK_RADIUS 范围的详细 tile 层。
 
-        层1 ChunkData 由 WorldGenerator 生成（群系/气候），
+        层1 ChunkData 由 WorldGenerator 并行生成（群系/气候），
         层2 TileGrid 由 TileGenerator 生成（地形/河流/湖泊），
         两者合并写入 ChunkData 并缓存到 loaded_chunks。
 
         Args:
             continent: ContinentData（已由 ensure_continent 生成）。
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         bcx, bcy = self.birth_chunk
         r = INITIAL_CHUNK_RADIUS
-        for dy in range(-r, r + 1):
-            for dx in range(-r, r + 1):
-                cx, cy = bcx + dx, bcy + dy
-                chunk = self.world_gen.generate_chunk(cx, cy)
-                grid = self.tile_generator.generate_chunk_for(chunk)
-                chunk.generate_tiles(grid)
-                self.loaded_chunks[(cx, cy)] = chunk
+        coords = [
+            (bcx + dx, bcy + dy)
+            for dy in range(-r, r + 1)
+            for dx in range(-r, r + 1)
+        ]
+
+        # 并行生成层1 ChunkData（WorldGenerator 线程安全）
+        chunks = self.world_gen.generate_parallel(coords, max_workers=4)
+
+        # 层2 TileGrid 生成（每个 chunk 独立，无需加锁）
+        def _build_tiles(chunk):
+            grid = self.tile_generator.generate_chunk_for(chunk)
+            chunk.generate_tiles(grid)
+            return chunk
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {
+                pool.submit(_build_tiles, chunk): (chunk.cx, chunk.cy)
+                for chunk in chunks
+            }
+            for future in as_completed(futures):
+                chunk = future.result()
+                self.loaded_chunks[(chunk.cx, chunk.cy)] = chunk
 
     def _publish_world_initialized(self) -> None:
         """发布 world_initialized 事件，通知各模块世界已就绪。

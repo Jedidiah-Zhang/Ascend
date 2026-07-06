@@ -269,7 +269,7 @@ class ContinentGenerator:
         # Step 4b: 流线河流网络 — RK4 沿海拔梯度场追踪自然弯曲流线
         from .streamlines import build_river_network
         river_network = build_river_network(
-            elevation, erosion_result.filled_dem,
+            elevation,
             erosion_result.directions, erosion_result.flow_acc,
             land_mask, w, h,
             threshold=500.0, min_length=20,
@@ -340,12 +340,10 @@ class ContinentGenerator:
         climate_field: list[int],
         w: int, h: int,
     ) -> None:
-        """合并气候校准 — 单次数据收集 + 合并应用循环。
+        """合并气候校准 — 数据收集、排序、合并应用。
 
-        将原来的四次独立 O(N) 遍历（_ensure_rainfall_range、
-        _ensure_temperature_range、_ensure_rainfall_temperature_coverage、
-        重算气候带）合并为两次 O(N) 遍历 + 共享排序，
-        消除 3 次冗余的 600K 元素扫描。
+        在两次 O(N) 遍历中完成降雨/温度范围校准和气候带覆盖检查，
+        对缺失气候档位通过共享排序找到最近邻区域注入种子。
         """
         from .climate import classify
         n = w * h
@@ -515,7 +513,7 @@ class ContinentGenerator:
         if not missing:
             return
 
-        # 单次扫描替代 N × |missing| 次独立扫描
+        # 单次扫描找到每个缺失档位的最近邻
         inv30 = 1.0 / 30.0
         inv2000 = 1.0 / 2000.0
         inv3000 = 1.0 / 3000.0
@@ -641,7 +639,7 @@ class ContinentGenerator:
         inv_w = 1.0 / w
         inv_h = 1.0 / h
 
-        # 嵌套循环避免每像素 % 和 // 取模运算
+        # 用累加索引替代每像素的取模运算
         i = 0
         for y in range(h):
             dy = (y * inv_h - 0.5) * 2.0
@@ -702,12 +700,12 @@ class ContinentGenerator:
 
         rain_shadow = self._compute_rain_shadow(elevation, w, h)
 
-        # 距海距离（BFS，C 加速）
+        # 距海距离
         from .hydrology import _distance_to_ocean_c
         elev_arr = array('d', elevation)
         dist_to_ocean = _distance_to_ocean_c(elev_arr, w, h)
 
-        # climate computation → C (single pass over 600K cells, 零拷贝)
+        # 气候计算（温度、降雨、气候分类）
         from .hydrology import _compute_climate_c
         lat_arr = array('d', lat_wiggle_field)
         rain_raw_arr = array('d', rain_field_raw)
@@ -750,7 +748,7 @@ class ContinentGenerator:
             primary_angle=wind_angle,
             secondary_angle=secondary_angle,
             secondary_weight=0.2,
-            decay_length_km=4.0,   # 抬升衰减距离 ≈ 旧 40 格滑动窗口
+            decay_length_km=4.0,   # 抬升衰减距离 (km)
             cell_size_km=self._params.sample_resolution / 1000.0,
             min_factor=0.15,
         )

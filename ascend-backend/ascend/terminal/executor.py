@@ -1,14 +1,14 @@
 """指令执行器 — 解析并执行终端指令，返回结构化结果。
 
 从 GameConsole 提取的核心指令逻辑，封装为无 UI 依赖的纯执行器。
-指令路由采用 dict 映射（O(1) 查找），替代 if/elif 链。
+指令路由采用 dict 映射（O(1) 查找）。
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Optional
 
-from ascend.world_tree import bus
+from ascend.world_tree import world_tree
 from ascend.log import get_logger
 from ascend.i18n import I18n
 from ascend.time import WorldClock, GameCalendar, GAME_DAY, GAME_HOUR, GAME_MINUTE
@@ -439,12 +439,12 @@ class CommandExecutor:
         Returns:
             事件列表文本。
         """
-        total = bus.event_count
+        total = world_tree.event_count
         if total == 0:
             return self._i18n.t("console.no_events")
 
         count = min(count, total)
-        log = bus._event_log
+        log = world_tree._event_log
         lines = [self._i18n.t("console.events_header", count=count, total=total)]
         lines.append(f"  {'Time':>10s}  {'Type':<20s}  {'Initiator':<15s}  Summary")
         lines.append(f"  {'─'*10}  {'─'*20}  {'─'*15}  {'─'*30}")
@@ -464,7 +464,7 @@ class CommandExecutor:
         Returns:
             包含各项统计的运行报告文本。
         """
-        stats = bus.stats
+        stats = world_tree.stats
         lines = [
             f"  {self._i18n.t('console.report_active')}:    {self._fmt_active_time()}",
             f"  {self._i18n.t('console.report_game_time')}:    {self._clock.time:,}t",
@@ -473,7 +473,7 @@ class CommandExecutor:
             f"  {self._i18n.t('console.report_day_changes')}:    {self._calendar.day_change_count}",
             f"  {self._i18n.t('console.report_mode')}:    {self._speed_label()}",
             f"  {self._i18n.t('console.report_ticks')}:   {self._clock.tick_count:,}",
-            f"  {self._i18n.t('console.report_events')}:    {bus.event_count:,}",
+            f"  {self._i18n.t('console.report_events')}:    {world_tree.event_count:,}",
             f"  ---",
             f"  publish:     {stats['publish_count']:,}",
             f"  trim:        {stats['trim_count']} (cycle={stats['trim_cycle']})",

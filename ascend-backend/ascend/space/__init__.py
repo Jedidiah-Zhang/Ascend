@@ -24,13 +24,13 @@ from .noise import PerlinNoise
 from .climate import (
     ClimateZone, ClimateTemplate, SeasonalityMode,
     WeatherParams,
-    classify, climate_zone_from_values,
+    classify,
     annual_baseline, sea_level_temperature, apply_lapse_rate,
     rainfall_from_noise, get_climate_template, LAPSE_RATE, clamp,
 )
 from .biome import (
     BiomeType, BiomeTemplate, TerrainBias,
-    biome_membership, biome_from_attrs, biome_from_climate,
+    biome_membership, biome_from_attrs,
     get_template,
 )
 from .chunk import ChunkData, TILE_MAP_SIZE
@@ -64,7 +64,6 @@ __all__ = [
     "SeasonalityMode",
     "WeatherParams",
     "classify",
-    "climate_zone_from_values",
     "get_climate_template",
     "annual_baseline",
     "sea_level_temperature",
@@ -77,7 +76,6 @@ __all__ = [
     "TerrainBias",
     "biome_membership",
     "biome_from_attrs",
-    "biome_from_climate",
     "get_template",
     "ChunkData",
     "TILE_MAP_SIZE",

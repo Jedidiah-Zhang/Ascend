@@ -11,7 +11,7 @@
 import time as _real_time
 from dataclasses import dataclass, field
 
-from ascend.world_tree import bus
+from ascend.world_tree import world_tree
 from ascend.time import WorldClock, GameCalendar, GAME_DAY, GAME_HOUR
 from ascend.log import setup_logging, get_logger
 
@@ -65,7 +65,7 @@ class GameLoop:
         self._unsubscribers: list = []
         self._setup_monitors()
 
-        logger.info("系统就绪: EventBus, WorldClock, GameCalendar")
+        logger.info("系统就绪: WorldTree, WorldClock, GameCalendar")
 
     def _setup_monitors(self) -> None:
         """订阅关键事件，记录运行统计。"""
@@ -82,8 +82,8 @@ class GameLoop:
                 self.session.day_changes.append(event.data)
             logger.info("📅 新的一天: 第 %d 天", event.data["day"])
 
-        self._unsubscribers.append(bus.subscribe("game_tick", on_tick))
-        self._unsubscribers.append(bus.subscribe("day_change", on_day_change))
+        self._unsubscribers.append(world_tree.subscribe("game_tick", on_tick))
+        self._unsubscribers.append(world_tree.subscribe("day_change", on_day_change))
 
     # ── 生命周期 ──────────────────────────────────────────────────
 
@@ -195,8 +195,8 @@ class GameLoop:
             f"  速度:          ×{s.clock.speed:.1f}" + (" (暂停)" if s.clock.paused else ""),
             f"  累计 tick:     {s.clock.tick_count:,}",
             f"  真实耗时:      {s.elapsed_real():.2f}s",
-            f"  总线事件数:    {bus.event_count:,}",
-            f"  活跃订阅:      {bus.subscriber_count}",
+            f"  总线事件数:    {world_tree.event_count:,}",
+            f"  活跃订阅:      {world_tree.subscriber_count}",
             "=" * 50,
         ]
         report = "\n".join(lines)
@@ -235,7 +235,7 @@ class TestGameLoop:
                 f"期望 time={expected}，实际 time={loop.clock.time}"
 
             # 验证：总线上应该有 game_tick 事件和 day_change 事件
-            assert bus.event_count > 0, "总线应该有事件"
+            assert world_tree.event_count > 0, "总线应该有事件"
             assert len(session.day_changes) == 3, \
                 f"应该有 3 次 day_change，实际 {len(session.day_changes)}"
 

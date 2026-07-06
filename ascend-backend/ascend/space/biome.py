@@ -753,59 +753,6 @@ def biome_from_attrs(
     return max(membership, key=lambda x: x[1])[0]
 
 
-def biome_from_climate(
-    climate: ClimateZone,
-    moisture_noise: float,
-    altitude: float,
-    sea_level_temp: float,
-) -> BiomeType:
-    """兼容旧 API：由气候档位分配群系。
-
-    内部转调 biome_from_attrs。注意：旧接口未提供温度/降雨，
-    无法精确重算 classify；此处用气候档位的细分配置取主隶属。
-    海洋仍按海拔+海平面温度判定。
-
-    Args:
-        climate: 气候档位。
-        moisture_noise: 湿度相关次级噪声 [-1, 1]。
-        altitude: 实际海拔 (m)。
-        sea_level_temp: 海平面温度 (°C)。
-
-    Returns:
-        群系类型。
-    """
-    if altitude < _SEA_LEVEL:
-        if sea_level_temp >= _OCEAN_WARM_CUTOFF:
-            return BiomeType.WARM_OCEAN
-        elif sea_level_temp >= _OCEAN_COLD_CUTOFF:
-            return BiomeType.TEMPERATE_OCEAN
-        else:
-            return BiomeType.COLD_OCEAN
-
-    cfg = _SUBDIV_CONFIGS.get(climate)
-    if cfg is None:
-        return BiomeType.TEMPERATE_DECIDUOUS_FOREST
-
-    # 用配置值域中点作为输入，取主隶属
-    mid = (cfg.value_min + cfg.value_max) / 2.0
-    if cfg.dimension == _SUBDIV_RAINFALL:
-        return biome_from_attrs(
-            sea_level_temp, mid, altitude, sea_level_temp, moisture_noise,
-        )
-    elif cfg.dimension == _SUBDIV_TEMPERATURE:
-        return biome_from_attrs(
-            mid, 800.0, altitude, sea_level_temp, moisture_noise,
-        )
-    elif cfg.dimension == _SUBDIV_ALTITUDE:
-        return biome_from_attrs(
-            sea_level_temp, 800.0, mid, sea_level_temp, moisture_noise,
-        )
-    else:  # _SUBDIV_MOISTURE
-        return biome_from_attrs(
-            sea_level_temp, 100.0, altitude, sea_level_temp, moisture_noise,
-        )
-
-
 def get_template(biome: BiomeType) -> BiomeTemplate:
     """获取群系模板。
 
@@ -827,6 +774,5 @@ __all__ = [
     "BiomeTemplate",
     "biome_membership",
     "biome_from_attrs",
-    "biome_from_climate",
     "get_template",
 ]

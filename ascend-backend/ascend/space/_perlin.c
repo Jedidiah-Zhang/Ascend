@@ -1,4 +1,7 @@
-/* _perlin.c — Perlin 噪声 C 实现（无状态）
+/* _perlin.c — Perlin 噪声生成模块。
+
+   实现单八度采样、多八度叠加、以及批量网格生成。
+   使用排列表保证可复现性，无全局状态。
 
    编译: gcc -O3 -shared -fPIC -o _perlin.so _perlin.c -lm
 */
@@ -66,7 +69,7 @@ void perlin_octave_grid(const int perm[512],
                         double *output,
                         int octaves, double persistence,
                         double lacunarity) {
-    /* 在网格上批量采样多八度噪声，避免逐像素 ctypes 开销。
+    /* 在网格上批量采样多八度噪声。
        cx, cy 为浮点起始坐标，可加 0.5 偏移避开整数网格点（噪声零点）。
        output 必须预分配 w*h 个 double。 */
     for (int row = 0; row < h; row++) {

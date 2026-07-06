@@ -15,7 +15,7 @@ import threading
 import time
 
 import pytest
-from ascend.world_tree import Event, AffectedParty, EventBus, EventGraph
+from ascend.world_tree import Event, AffectedParty, WorldTree, EventGraph
 
 
 # ── 测试辅助 ──────────────────────────────────────────────
@@ -87,7 +87,7 @@ class TestMemoryBound:
         """发布远超阈值的事件后，内存事件数不超过 max_memory_events。"""
         max_n = _params["max_events"]
         n = _params["publish_n"]
-        bus = EventBus(validate=False, max_memory_events=max_n)
+        bus = WorldTree(validate=False, max_memory_events=max_n)
 
         for i in range(n):
             bus.publish(make_event(timestamp=i, id=f"e{i}"))
@@ -98,7 +98,7 @@ class TestMemoryBound:
 
     def test_timestamps_monotonic_after_trim(self):
         """多次 trim 后内存事件时间戳仍然有序。"""
-        bus = EventBus(validate=False, max_memory_events=_params["max_events"])
+        bus = WorldTree(validate=False, max_memory_events=_params["max_events"])
         n = _params["publish_n"]
 
         for i in range(n):
@@ -110,7 +110,7 @@ class TestMemoryBound:
 
     def test_id_index_consistent_after_repeated_trim(self):
         """多次 trim 重建 _id_index 后，ID 查找仍然正确。"""
-        bus = EventBus(validate=False, max_memory_events=_params["max_events"])
+        bus = WorldTree(validate=False, max_memory_events=_params["max_events"])
         n = _params["publish_n"]
 
         for i in range(n):
@@ -136,7 +136,7 @@ class TestArchiveIntegrity:
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 
-        bus = EventBus(validate=False, max_memory_events=max_n,
+        bus = WorldTree(validate=False, max_memory_events=max_n,
                        archive_path=path)
         try:
             for i in range(n):
@@ -172,7 +172,7 @@ class TestArchiveIntegrity:
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 
-        bus = EventBus(validate=False, max_memory_events=max_n,
+        bus = WorldTree(validate=False, max_memory_events=max_n,
                        archive_path=path)
         try:
             special = make_event(
@@ -216,7 +216,7 @@ class TestCausalChainStress:
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 
-        bus = EventBus(validate=False, max_memory_events=max_n,
+        bus = WorldTree(validate=False, max_memory_events=max_n,
                        archive_path=path)
         try:
             # 构建因果链：c0 → c1 → c2 → ... → c{N-1}
@@ -252,7 +252,7 @@ class TestCausalChainStress:
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 
-        bus = EventBus(validate=False, max_memory_events=max_n,
+        bus = WorldTree(validate=False, max_memory_events=max_n,
                        archive_path=path)
         try:
             num_chains = 20
@@ -294,7 +294,7 @@ class TestConcurrentStress:
 
     def test_concurrent_publish_no_errors(self):
         """多线程并发发布，无异常、无数据丢失。"""
-        bus = EventBus(validate=False,
+        bus = WorldTree(validate=False,
                        max_memory_events=_params["max_events"])
         n_total = _params["concurrent_n"]
         n_threads = _params["concurrent_threads"]
@@ -325,7 +325,7 @@ class TestConcurrentStress:
 
     def test_concurrent_publish_and_query(self):
         """发布和查询并发执行，查询不报错。"""
-        bus = EventBus(validate=False,
+        bus = WorldTree(validate=False,
                        max_memory_events=_params["max_events"])
         n_publish = _params["concurrent_n"] // 2
         stop = threading.Event()
@@ -366,7 +366,7 @@ class TestConcurrentStress:
 
     def test_graph_not_corrupted_by_concurrent_publish(self):
         """并发发布不损坏图结构。"""
-        bus = EventBus(validate=False,
+        bus = WorldTree(validate=False,
                        max_memory_events=_params["max_events"])
         n = _params["concurrent_n"] // 4
         n_threads = _params["concurrent_threads"]
@@ -399,7 +399,7 @@ class TestThroughput:
 
     def test_publish_throughput(self):
         """测量单线程发布吞吐量（事件/秒）。"""
-        bus = EventBus(validate=False)
+        bus = WorldTree(validate=False)
         n = _params["throughput_n"]
 
         start = time.perf_counter()
@@ -418,7 +418,7 @@ class TestThroughput:
 
     def test_publish_with_auto_trim_throughput(self):
         """测量有自动 trim 时的发布吞吐量。"""
-        bus = EventBus(validate=False,
+        bus = WorldTree(validate=False,
                        max_memory_events=_params["max_events"])
         n = min(_params["throughput_n"], _params["max_events"] + 500_000)
 
@@ -439,7 +439,7 @@ class TestThroughput:
 
     def test_query_after_stress(self):
         """大量事件后查询仍然快速。"""
-        bus = EventBus(validate=False,
+        bus = WorldTree(validate=False,
                        max_memory_events=_params["max_events"])
         n = _params["throughput_n"]
 
@@ -478,7 +478,7 @@ class TestGraphConsistency:
 
     def test_node_count_never_exceeds_memory_events(self):
         """图节点数不应远超内存事件数。"""
-        bus = EventBus(validate=False,
+        bus = WorldTree(validate=False,
                        max_memory_events=_params["max_events"])
         n = _params["publish_n"]
 
@@ -495,7 +495,7 @@ class TestGraphConsistency:
 
     def test_graph_repr_stable_under_load(self):
         """图的 __repr__ 在负载下不崩溃。"""
-        bus = EventBus(validate=False,
+        bus = WorldTree(validate=False,
                        max_memory_events=_params["max_events"])
         for i in range(10000):
             bus.publish(make_event(timestamp=i))

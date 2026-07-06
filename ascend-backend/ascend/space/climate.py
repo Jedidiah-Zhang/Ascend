@@ -107,7 +107,7 @@ class ClimateTemplate:
         wind_speed_range: 风速区间 (m/s)。
         seasonality: 季节性模式（预留，当前不算）。
         seasonal_temp_amplitude: 温度季节振幅范围 (°C)（预留，当前不算）。
-        display_color: UI 显示色（hex），集中定义替代散落各处的色板。
+        display_color: UI 显示色（hex），在此统一定义供渲染层引用。
     """
 
     climate: ClimateZone
@@ -362,23 +362,6 @@ def classify(
     if annual_rainfall >= _TAIGA_RAINFALL:
         return ClimateZone.SUBARCTIC_TAIGA
     return ClimateZone.POLAR_TUNDRA
-
-
-def climate_zone_from_values(
-    temperature: float, rainfall: float
-) -> ClimateZone:
-    """由实际温度和年降雨量判定气候档位（兼容旧 API，海拔默认 0）。
-
-    内部转调 classify。保留是为了兼容调用方未提供海拔的场景。
-
-    Args:
-        temperature: 年均温度 (°C)。
-        rainfall: 年降雨量 (mm)。
-
-    Returns:
-        对应的 ClimateZone。
-    """
-    return classify(temperature, rainfall, 0.0)
 
 
 def annual_baseline(

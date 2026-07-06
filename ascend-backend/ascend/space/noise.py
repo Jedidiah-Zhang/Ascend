@@ -1,6 +1,6 @@
-"""Perlin 噪声 — C 加速实现，与纯 Python 版 API 兼容。
+"""Perlin 噪声生成模块。
 
-用法与之前完全一致:
+用法:
     noise = PerlinNoise(seed=42)
     value = noise.sample(1.5, 3.2)         # 单八度，范围 [-1, 1]
     value = noise.octave(1.5, 3.2, 4)      # 4 八度叠加
@@ -48,9 +48,9 @@ _LIB.perlin_octave_grid.restype = None
 
 
 class PerlinNoise:
-    """种子化二维 Perlin 噪声生成器（C 加速）。
+    """种子化二维 Perlin 噪声生成器。
 
-    线程安全：每个实例的排列表为独立 C 数组，无共享状态。
+    线程安全：每个实例的排列表为独立数组，无共享状态。
     """
 
     def __init__(self, seed: int = 0) -> None:

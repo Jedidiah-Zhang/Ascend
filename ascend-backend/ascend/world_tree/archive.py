@@ -1,7 +1,7 @@
 """事件归档存储 — SQLite 后端。
 
 被 trim 移出内存的事件体写入 SQLite，支持按时间、实体、空间区域查询。
-对 EventBus 调用方完全透明。
+对 WorldTree 调用方完全透明。
 """
 
 import json

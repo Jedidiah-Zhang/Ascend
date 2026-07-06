@@ -18,12 +18,6 @@ from .tree import WorldTree
 # 模块级世界树单例，各模块通过此实例通信
 world_tree = WorldTree()
 
-# 兼容旧名称
-bus = world_tree  # type: ignore[assignment]
-
-__all__ = ["world_tree", "bus", "Event", "AffectedParty", "EventGraph",
-           "WorldTree", "EventBus", "EventArchive", "EventSchema",
+__all__ = ["world_tree", "Event", "AffectedParty", "EventGraph",
+           "WorldTree", "EventArchive", "EventSchema",
            "SchemaRegistry"]
-
-# 兼容旧类名
-EventBus = WorldTree  # type: ignore[assignment]

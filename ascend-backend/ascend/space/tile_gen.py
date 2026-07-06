@@ -65,6 +65,8 @@ class TileGenerator:
 
     def sample_climate_attrs(
         self, world_x: float, world_y: float,
+        *,
+        altitude: float | None = None,
     ) -> tuple[float, float, float, float]:
         """从层1宏观场双线性插值采样 tile 粒度气候属性。
 
@@ -74,6 +76,7 @@ class TileGenerator:
         Args:
             world_x: 世界 tile X 坐标。
             world_y: 世界 tile Y 坐标。
+            altitude: 可选预计算海拔，传入后跳过内部双线性插值。
 
         Returns:
             (mean_temp, annual_rainfall, sea_level_temp, altitude)：
@@ -84,7 +87,8 @@ class TileGenerator:
         gy = int(world_y / cont.cell_size)
         gw, gh = cont.grid_width, cont.grid_height
 
-        altitude = cont.sample_altitude_bilinear(world_x, world_y)
+        if altitude is None:
+            altitude = cont.sample_altitude_bilinear(world_x, world_y)
 
         if 0 <= gx < gw and 0 <= gy < gh:
             idx = gy * gw + gx
@@ -100,9 +104,9 @@ class TileGenerator:
     # ── 主入口 ──────────────────────────────────────────────
 
     def generate_chunk(self, cx: int, cy: int) -> TileGrid:
-        """生成一个 200×200 chunk 的详细地形（兼容旧签名）。
+        """生成一个 200×200 chunk 的详细地形。
 
-        内部从 ContinentData 采样 tile 级气候属性算群系隶属度。
+        从 ContinentData 采样 tile 级气候属性计算群系隶属度。
         推荐使用 generate_chunk_for(chunk) 复用 chunk 级数据。
 
         Args:
@@ -151,10 +155,16 @@ class TileGenerator:
         cont = self._continent
         detail_freq = 0.005
 
-        # 批量采样细节噪声——一次 C 调用替代 40K 次 ctypes 跨越
+        # 批量采样细节噪声
         noise_field = self._detail_noise.octave_grid(
             world_x0 + 0.5, world_y0 + 0.5, size, size,
             frequency=detail_freq, octaves=4,
+        )
+
+        # 批量采样 moisture 噪声
+        moisture_field = self._moisture_noise.octave_grid(
+            world_x0 + 0.5, world_y0 + 0.5, size, size,
+            frequency=0.005, octaves=2,
         )
 
         # 预分配宏观海拔缓存（仅在有湖泊时用于后续复用）
@@ -175,11 +185,11 @@ class TileGenerator:
                 detail = noise_field[idx] * 50.0
                 elev = macro_elev + detail
 
-                # tile 级气候属性采样（算群系隶属度用）
-                temp, rain, sea_temp, _ = self.sample_climate_attrs(wx, wy)
-                moisture = self._moisture_noise.octave(
-                    wx + 0.5, wy + 0.5, octaves=2, frequency=0.005,
+                # tile 级气候属性采样（算群系隶属度用，复用 macro_elev 避免重复插值）
+                temp, rain, sea_temp, _ = self.sample_climate_attrs(
+                    wx, wy, altitude=macro_elev,
                 )
+                moisture = moisture_field[idx]
 
                 # 群系隶属度 → 混合 TerrainBias
                 bias = self._compute_bias(

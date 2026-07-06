@@ -188,10 +188,10 @@ def _rain_shadow_omnidirectional_c(
     cell_size_km: float = 0.1,
     min_factor: float = 0.15,
 ) -> array:
-    """C 加速万向抬升累积雨影因子（零拷贝）。
+    """万向抬升累积雨影因子。
 
-    支持任意风向角（弧度）。沿风向累积地形抬升量，
-    指数衰减替代滑动窗口，映射到平滑分段线性雨影因子。
+    沿风向累积地形抬升量，指数衰减映射到平滑分段线性雨影因子。
+    支持主次双风向加权混合。
 
     Args:
         elevation: 海拔数组（行优先）。
@@ -200,7 +200,7 @@ def _rain_shadow_omnidirectional_c(
         primary_angle: 主风向角（弧度）。
         secondary_angle: 次风向角（弧度）。
         secondary_weight: 次风权重 [0, 1]。
-        decay_length_km: 抬升指数衰减距离 (km)，≈旧滑动窗口大小。
+        decay_length_km: 抬升指数衰减距离 (km)。
         cell_size_km: 每格公里数。
         min_factor: 最小因子。
 
@@ -231,7 +231,7 @@ def _compute_climate_c(
     continentality_d0: float = 200.0,
     cell_size_km: float = 0.1,
 ) -> tuple[array, array, array]:
-    """C 加速气候计算 — 600K 遍历下沉到 C，包含 classify() 决策树（零拷贝）。
+    """气候计算 — 温度、降雨、气候分类（单次遍历）。
 
     Args:
         elevation: 海拔数组。
@@ -313,15 +313,14 @@ def _apply_erosion_c(
     dem: array, sediment_net: array,
     delta: array, n: int,
 ) -> float:
-    """C 加速侵蚀 delta 应用 — 通过 from_buffer 原地修改 dem 和 sediment_net。
+    """将侵蚀 delta 应用到 dem 和 sediment_net，返回 max|delta|。
 
-    零拷贝：C 直接写入 array 对象的底层缓冲区，无需 Python 写回循环。
+    通过 from_buffer 原地修改 array 对象的底层缓冲区。
     """
     dem_ptr = (ctypes.c_double * n).from_buffer(dem)
     sed_ptr = (ctypes.c_double * n).from_buffer(sediment_net)
     delta_ptr = (ctypes.c_double * n).from_buffer(delta)
     return _HYDRO.hydrology_apply_erosion(dem_ptr, sed_ptr, delta_ptr, n)
-
 
 
 def _fill_depressions_c(dem: array, w: int, h: int) -> array:
@@ -543,34 +542,27 @@ def erode(
     """
     n = w * h
 
-    # 一次性转换为 array（零拷贝 C 调用的基础）
+    # 转为 array 用于 C 层零拷贝访问
     result = array('d', dem)
     flow_source = array('d', (max(0.0, rainfall[i] / 1000.0) for i in range(n)))
     sediment_net = array('d', [0.0]) * n
 
-    # 保存最后一轮的水文状态（array 类型）
     last_filled: array | None = None
     last_directions: array | None = None
     last_acc: array | None = None
 
     for iteration in range(iterations):
-        # 填洼（C 加速优先队列，零拷贝）
         filled = _fill_depressions_c(result, w, h)
-
-        # D8 + 累积 + 侵蚀 ← C 加速，零拷贝
         directions = _compute_d8_c(filled, w, h)
         acc = _flow_accumulation_c(directions, w, h, source=flow_source)
 
-        # 保存最后一轮状态
         last_filled = filled
         last_directions = directions
         last_acc = acc
 
-        # C 加速侵蚀 delta（零拷贝）
         delta, _ = _erode_step_c(
             result, directions, acc, flow_source, w, h, erodibility)
 
-        # 应用侵蚀 + 累积沉积 + 跟踪最大变化（零拷贝 — C 直接写 result 缓冲区）
         max_delta = _apply_erosion_c(result, sediment_net, delta, n)
 
         # 自适应收敛：地形变化微小时提前退出

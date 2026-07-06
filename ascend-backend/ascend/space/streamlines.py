@@ -15,6 +15,7 @@
           必须与 dist 下降同向，否则在局部极大绕圈打转 → 退到 dist
        c. dist 场 -∇dist —— 纯几何兜底，保证到海
   3. Chaikin 切角平滑 2 轮 → 消除格子线。
+  4. RK4 积分核心调用 C 实现（_streamlines.so）。
 
 设计取舍:
   - 纯 dem 梯度：山地弯曲好，但会跨分水岭、平原易断头
@@ -24,15 +25,101 @@
 
 用法:
     from ascend.space.streamlines import build_river_network
-    network = build_river_network(dem, filled_dem, directions, flow_acc,
+    network = build_river_network(dem, directions, flow_acc,
                                   land_mask, w, h, threshold=500.0)
 """
 
+import ctypes
 import heapq
 import math
+import subprocess
 from array import array
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
+
+
+# ── C 扩展加载（与 _perlin.so / _hydrology.so 相同模式） ──────
+
+_HERE = Path(__file__).resolve().parent
+_STREAMLINES_SO = _HERE / "_streamlines.so"
+_STREAMLINES_C = _HERE / "_streamlines.c"
+
+if not _STREAMLINES_SO.exists() or _STREAMLINES_C.stat().st_mtime > _STREAMLINES_SO.stat().st_mtime:
+    subprocess.run(
+        ["gcc", "-O3", "-march=native", "-ffast-math", "-funroll-loops",
+         "-shared", "-fPIC", "-o", str(_STREAMLINES_SO), str(_STREAMLINES_C), "-lm"],
+        check=True, cwd=str(_HERE),
+    )
+
+_STREAMLINES = ctypes.CDLL(str(_STREAMLINES_SO))
+
+_STREAMLINES.streamlines_trace_downstream.argtypes = [
+    ctypes.c_int,                       # src_idx
+    ctypes.POINTER(ctypes.c_double),    # dem
+    ctypes.POINTER(ctypes.c_double),    # smooth_dem
+    ctypes.POINTER(ctypes.c_double),    # smooth_flow
+    ctypes.POINTER(ctypes.c_double),    # dist
+    ctypes.c_int, ctypes.c_int,         # w, h
+    ctypes.c_int,                       # max_steps
+    ctypes.c_double,                    # step_size
+    ctypes.c_double,                    # dem_min
+    ctypes.c_double,                    # flow_min
+    ctypes.POINTER(ctypes.c_double),    # out_x
+    ctypes.POINTER(ctypes.c_double),    # out_y
+]
+_STREAMLINES.streamlines_trace_downstream.restype = ctypes.c_int
+
+
+def _trace_downstream_c(
+    src_idx: int,
+    dem,          # array('d')
+    smooth_dem,   # array('d')
+    smooth_flow,  # array('d')
+    dist,         # array('d')
+    w: int, h: int,
+    *,
+    max_steps: int = 4000,
+    step_size: float = 0.7,
+    dem_min: float = 0.02,
+    flow_min: float = 1e-3,
+) -> list[tuple[float, float]]:
+    """RK4 流线追踪。所有输入必须为 array('d') 类型。
+
+    Args:
+        src_idx: 源头网格索引 (y*w + x)。
+        dem: 侵蚀后海拔（array('d')，<0=海洋）。
+        smooth_dem: dem 高斯平滑场（array('d')）。
+        smooth_flow: flow_acc 高斯平滑场（array('d')）。
+        dist: Dijkstra 代价场（array('d')）。
+        w, h: 网格尺寸。
+        max_steps: 最大追踪步数。
+        step_size: RK4 步长。
+        dem_min, flow_min: _flow_dir 阈值。
+
+    Returns:
+        [(x, y), ...] 连续坐标点列表。
+    """
+    n = w * h
+    dem_ptr = (ctypes.c_double * n).from_buffer(dem)
+    sdem_ptr = (ctypes.c_double * n).from_buffer(smooth_dem)
+    sflow_ptr = (ctypes.c_double * n).from_buffer(smooth_flow)
+    dist_ptr = (ctypes.c_double * n).from_buffer(dist)
+
+    out_x = array('d', [0.0]) * max_steps
+    out_y = array('d', [0.0]) * max_steps
+    out_x_ptr = (ctypes.c_double * max_steps).from_buffer(out_x)
+    out_y_ptr = (ctypes.c_double * max_steps).from_buffer(out_y)
+
+    count = _STREAMLINES.streamlines_trace_downstream(
+        src_idx,
+        dem_ptr, sdem_ptr, sflow_ptr, dist_ptr,
+        w, h, max_steps, step_size, dem_min, flow_min,
+        out_x_ptr, out_y_ptr,
+    )
+
+    return [(out_x[i], out_y[i]) for i in range(count)]
+
 
 
 _DX = (1, -1, 0, 0, 1, -1, 1, -1)
@@ -85,8 +172,7 @@ def _dijkstra_to_ocean(
     cost 进入格 q = max(0, dem[q]) + 1 - 1.5 * log(1 + flow_acc[q])，
     下限 0.1 保证非负。海洋格 (dem < 0) 代价 0，作为多源起点。
 
-    优化：预计算 step_cost[q] 到 array，避免内部循环每次重算
-    elev_cost、flow_bonus 和 clamp。
+    step_cost 数组预存每格的进入代价，Dijkstra 内循环直接查表。
     """
     _DX = [1, -1, 0, 0, 1, -1, 1, -1]
     _DY = [0, 0, 1, -1, 1, 1, -1, -1]
@@ -187,160 +273,18 @@ def _find_sources(
 
 def _gaussian_blur(arr: list[float], w: int, h: int,
                    sigma: float) -> array:
-    """可分离高斯模糊 — C 加速（零拷贝）。
+    """可分离高斯模糊。
 
-    dem 原始像素噪声会让梯度方向抖动；先平滑 σ≈2 格，
-    让 -∇z 跟随宏观山谷趋势而非像素级噪声。
+    平滑 dem 让 -∇z 跟随宏观山谷趋势而非像素级噪声。
     """
     from .hydrology import _gaussian_blur_c
     arr_in = array('d', arr)
     return _gaussian_blur_c(arr_in, w, h, sigma)
 
 
-def _bilinear(arr, x: float, y: float,
-              w: int, h: int) -> float:
-    """双线性插值采样，边界外按钳制到边缘格的值返回。"""
-    ix = max(0, min(int(x), w - 2))
-    iy = max(0, min(int(y), h - 2))
-    fx, fy = x - ix, y - iy
-    row0 = iy * w
-    row1 = row0 + w
-    a = arr[row0 + ix]
-    b = arr[row0 + ix + 1]
-    c = arr[row1 + ix]
-    d = arr[row1 + ix + 1]
-    w1 = 1.0 - fx
-    return (w1 * (1.0 - fy) * a + fx * (1.0 - fy) * b +
-            w1 * fy * c + fx * fy * d)
-
-
-def _neg_grad(x: float, y: float, arr: list[float],
-              w: int, h: int, eps: float = 0.75) -> tuple[float, float]:
-    """中心差分算 -∇arr（指向 arr 下降最快方向）。"""
-    inv_2eps = 1.0 / (2.0 * eps)
-    gx = (_bilinear(arr, x + eps, y, w, h) - _bilinear(arr, x - eps, y, w, h)) * inv_2eps
-    gy = (_bilinear(arr, x, y + eps, w, h) - _bilinear(arr, x, y - eps, w, h)) * inv_2eps
-    return -gx, -gy
-
-
-def _flow_dir(x: float, y: float,
-              smooth_dem: list[float],
-              smooth_flow: list[float],
-              dist: list[float],
-              w: int, h: int,
-              dem_min: float = 0.02,
-              flow_min: float = 1e-3) -> tuple[float, float] | None:
-    """混合方向场：dem 梯度优先，flow_acc 梯度次之，dist 兜底。
-
-    分级策略:
-      - dem 梯度强 且 与 dist 下降方向同向（点积>0）→ 跟 dem（山谷弯曲）
-      - dem 梯度反向（跨分水岭）或太弱 → 跟 flow_acc 平滑场 +梯度
-        （指向下游高流量主流，等值线跟随真实汇水网络，平原区有自然弯曲）
-        flow_acc 方向也必须与 dist 下降同向，否则在局部极大绕圈打转 → 退 dist
-      - flow_acc 也太弱 → 跟 dist（保证到海，纯几何兜底）
-      - 全失效 → None（终止追踪）
-    """
-    # 局部绑定避免属性查找
-    hypot = math.hypot
-
-    gxd, gyd = _neg_grad(x, y, smooth_dem, w, h)
-    md = hypot(gxd, gyd)
-    gxf, gyf = _neg_grad(x, y, dist, w, h)
-    mf = hypot(gxf, gyf)
-
-    if md > dem_min:
-        if mf > 1e-6:
-            if gxd * gxf + gyd * gyf > 0:
-                return gxd / md, gyd / md
-            # dem 跨分水岭 → 落到 flow_acc
-        else:
-            return gxd / md, gyd / md
-
-    # flow_acc +梯度（指向下游高流量通道）
-    inv_1p5 = 1.0 / 1.5
-    gfx = (_bilinear(smooth_flow, x + 0.75, y, w, h) -
-           _bilinear(smooth_flow, x - 0.75, y, w, h)) * inv_1p5
-    gfy = (_bilinear(smooth_flow, x, y + 0.75, w, h) -
-           _bilinear(smooth_flow, x, y - 0.75, w, h)) * inv_1p5
-    mfa = hypot(gfx, gfy)
-    if mfa > flow_min:
-        if mf > 1e-6:
-            if gfx * gxf + gfy * gyf > 0:
-                return gfx / mfa, gfy / mfa
-            return gxf / mf, gyf / mf
-        return gfx / mfa, gfy / mfa
-    if mf > 1e-6:
-        return gxf / mf, gyf / mf
-    return None
-
-
-def _rk4_step(x: float, y: float,
-              smooth_dem: list[float],
-              smooth_flow: list[float],
-              dist: list[float],
-              w: int, h: int,
-              ds: float) -> tuple[float, float] | None:
-    """RK4 积分一步沿 _flow_dir 方向场。"""
-    k1 = _flow_dir(x, y, smooth_dem, smooth_flow, dist, w, h)
-    if k1 is None:
-        return None
-    k2 = _flow_dir(x + 0.5 * ds * k1[0], y + 0.5 * ds * k1[1],
-                   smooth_dem, smooth_flow, dist, w, h)
-    if k2 is None:
-        return None
-    k3 = _flow_dir(x + 0.5 * ds * k2[0], y + 0.5 * ds * k2[1],
-                   smooth_dem, smooth_flow, dist, w, h)
-    if k3 is None:
-        return None
-    k4 = _flow_dir(x + ds * k3[0], y + ds * k3[1],
-                   smooth_dem, smooth_flow, dist, w, h)
-    if k4 is None:
-        return None
-    return (
-        x + ds * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]) / 6.0,
-        y + ds * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]) / 6.0,
-    )
-
-
 # ═══════════════════════════════════════════════════════════
-# 单条河流追踪 + 平滑
+# Chaikin 平滑
 # ═══════════════════════════════════════════════════════════
-
-
-def _trace_downstream(
-    src: int,
-    dem: list[float],
-    smooth_dem: list[float],
-    smooth_flow: list[float],
-    dist: list[float],
-    w: int, h: int,
-    *,
-    max_steps: int = 4000,
-    step_size: float = 0.7,
-) -> list[tuple[float, float]]:
-    """从源头沿混合方向场 RK4 积分追踪到海。
-
-    返回连续坐标点列表（未做 Chaikin 平滑）。
-    终止条件：进入海洋（dem<0）、越界、方向场失效、或步数耗尽。
-    """
-    pts: list[tuple[float, float]] = []
-    x = float(src % w)
-    y = float(src // w)
-    for _ in range(max_steps):
-        ix, iy = int(x), int(y)
-        if not (0 <= ix < w and 0 <= iy < h):
-            break
-        pts.append((x, y))
-        if dem[iy * w + ix] < 0:
-            break
-        step = _rk4_step(x, y, smooth_dem, smooth_flow, dist, w, h, step_size)
-        if step is None:
-            break
-        nx, ny = step
-        if math.hypot(nx - x, ny - y) < 1e-4:
-            break
-        x, y = nx, ny
-    return pts
 
 
 def _chaikin(points: list[tuple[float, float]],
@@ -448,7 +392,6 @@ def _commit_river(
 
 def build_river_network(
     dem: list[float],
-    filled_dem: list[float],
     directions: list[int],
     flow_acc: list[float],
     land_mask: list[bool],
@@ -466,7 +409,6 @@ def build_river_network(
 
     Args:
         dem: 侵蚀后海拔数组（m），dem < 0 视为海洋。
-        filled_dem: 填洼后海拔（保留接口兼容，本算法未使用）。
         directions: D8 流向数组（-1=汇点），用于源头检测。
         flow_acc: 水流累积量数组。
         land_mask: 陆地掩码（True=陆地）。
@@ -489,6 +431,10 @@ def build_river_network(
     smooth_flow = _gaussian_blur(flow_acc, w, h, sigma)
     sources = _find_sources(flow_acc, directions, land_mask, w, h, threshold)
 
+    # 预转为 array('d') 避免每河重复 O(n) 转换
+    dem_arr = array('d', dem)
+    dist_arr = array('d', dist)
+
     # array('i') 代替 dict — O(1) 直接索引，-1=未访问
     n = w * h
     visited = array('i', [-1]) * n
@@ -496,8 +442,8 @@ def build_river_network(
     for src in sources:
         if visited[src] >= 0:
             continue
-        raw = _trace_downstream(src, dem, smooth_dem, smooth_flow, dist, w, h,
-                               max_steps=max_steps, step_size=step_size)
+        raw = _trace_downstream_c(src, dem_arr, smooth_dem, smooth_flow, dist_arr,
+                                  w, h, max_steps=max_steps, step_size=step_size)
         if len(raw) < min_length:
             continue
         smooth = _chaikin(raw, chaikin_iters)
