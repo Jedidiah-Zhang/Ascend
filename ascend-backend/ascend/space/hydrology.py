@@ -95,15 +95,6 @@ _HYDRO.hydrology_gaussian_blur.argtypes = [
 ]
 _HYDRO.hydrology_gaussian_blur.restype = None
 
-# dijkstra_to_ocean
-_HYDRO.hydrology_dijkstra_to_ocean.argtypes = [
-    ctypes.POINTER(ctypes.c_double),  # dem
-    ctypes.POINTER(ctypes.c_double),  # flow_acc
-    ctypes.c_int, ctypes.c_int,       # w, h
-    ctypes.POINTER(ctypes.c_double),  # dist (out)
-]
-_HYDRO.hydrology_dijkstra_to_ocean.restype = None
-
 # distance_to_ocean
 _HYDRO.hydrology_distance_to_ocean.argtypes = [
     ctypes.POINTER(ctypes.c_double),  # elevation
@@ -111,16 +102,6 @@ _HYDRO.hydrology_distance_to_ocean.argtypes = [
     ctypes.POINTER(ctypes.c_double),  # dist_out
 ]
 _HYDRO.hydrology_distance_to_ocean.restype = None
-
-# rain_shadow
-_HYDRO.hydrology_rain_shadow.argtypes = [
-    ctypes.POINTER(ctypes.c_double),  # elevation
-    ctypes.c_int, ctypes.c_int,       # w, h
-    ctypes.c_int,                     # scan_axis
-    ctypes.c_int,                     # windward
-    ctypes.POINTER(ctypes.c_double),  # factors (out)
-]
-_HYDRO.hydrology_rain_shadow.restype = None
 
 # rain_shadow_omnidirectional
 _HYDRO.hydrology_rain_shadow_omnidirectional.argtypes = [
@@ -176,19 +157,6 @@ def _gaussian_blur_c(arr: array, w: int, h: int, sigma: float) -> array:
     return result
 
 
-def _dijkstra_to_ocean_c(
-    dem: array, flow_acc: array, w: int, h: int,
-) -> array:
-    """C 加速 Dijkstra 多源到海代价场（零拷贝）。"""
-    n = w * h
-    dem_ptr = (ctypes.c_double * n).from_buffer(dem)
-    acc_ptr = (ctypes.c_double * n).from_buffer(flow_acc)
-    dist = array('d', [0.0]) * n
-    dist_ptr = (ctypes.c_double * n).from_buffer(dist)
-    _HYDRO.hydrology_dijkstra_to_ocean(dem_ptr, acc_ptr, w, h, dist_ptr)
-    return dist
-
-
 def _distance_to_ocean_c(elevation: array, w: int, h: int) -> array:
     """C 加速 BFS 距海距离计算（零拷贝）。
 
@@ -209,19 +177,6 @@ def _distance_to_ocean_c(elevation: array, w: int, h: int) -> array:
     dist_ptr = (ctypes.c_double * n).from_buffer(dist)
     _HYDRO.hydrology_distance_to_ocean(elev_ptr, w, h, dist_ptr)
     return dist
-
-
-def _rain_shadow_c(
-    elevation: array, w: int, h: int,
-    scan_axis: int, windward: int,
-) -> array:
-    """C 加速雨影因子滑动窗口计算（零拷贝）。"""
-    n = w * h
-    elev_ptr = (ctypes.c_double * n).from_buffer(elevation)
-    factors = array('d', [0.0]) * n
-    factors_ptr = (ctypes.c_double * n).from_buffer(factors)
-    _HYDRO.hydrology_rain_shadow(elev_ptr, w, h, scan_axis, windward, factors_ptr)
-    return factors
 
 
 def _rain_shadow_omnidirectional_c(
@@ -672,7 +627,6 @@ def find_lakes(
             continue
 
         # BFS 收集连通分量
-        from collections import deque
         comp: list[int] = []
         q = deque([i])
         visited[i] = True

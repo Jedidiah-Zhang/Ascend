@@ -2,12 +2,11 @@
 
 在世界创建时调用一次，生成低分辨率（100m/采样点）宏观场：
    - 海拔场（两层 Perlin：低频大陆轮廓 + 高频地形细节）
-  - 温度场（纬度渐变 + 海拔降温）
-  - 降雨场（噪声 + 雨影效应）
-  - 气候带（热/温/寒/干）
-  - 积雪场（年均温 < 0°C）
-  - 河流宽度场
-  - 内陆湖泊
+   - 温度场（纬度渐变 + 海拔降温）
+   - 降雨场（噪声 + 雨影效应）
+   - 气候带（热/温/寒/干）
+   - 河流宽度场
+   - 内陆湖泊
 
 结果保存在 ContinentData 中，所有 chunk 和 tile 生成共享此数据。
 
@@ -23,7 +22,7 @@
 
 from array import array
 from dataclasses import dataclass, field
-from typing import Union, Sequence
+from typing import Union
 
 from .noise import PerlinNoise
 
@@ -65,7 +64,6 @@ class ContinentData:
         elevation_field: 行优先海拔数组 (m)。
         temperature_field: 年均温基线 (°C)。
         rainfall_field: 年降雨量基线 (mm)。
-        snow_mask: 永久积雪（年均温 < 0°C）。
         climate_zone: 气候带编码 (0=热带 1=温带 2=寒带 3=干旱)。
         river_width: 河流+湖泊宽度场 (m)。
     """
@@ -82,6 +80,9 @@ class ContinentData:
     climate_zone: list[int] = field(default_factory=list)
     river_width: Union[list[float], "array[float]"] = field(default_factory=lambda: array('d'))
     hydrology: "HydrologyData | None" = None
+    # 群系细分动态值域: {ClimateZone int: (P10, P90)}
+    # 由 generate() 末尾计算，供 biome_membership 使用，保证档内子型均衡
+    subdiv_ranges: dict[int, tuple[float, float]] = field(default_factory=dict)
 
     def __repr__(self) -> str:
         land = sum(1 for v in self.land_mask if v)
@@ -297,6 +298,11 @@ class ContinentGenerator:
             elevation, temp_field, rain_field, land_mask, climate_field, w, h,
         )
 
+        # Step 7: 群系细分动态值域 — 每档内细分维度的 P10/P90
+        subdiv_ranges = self._compute_subdiv_ranges(
+            elevation, temp_field, rain_field, land_mask, climate_field, w, h,
+        )
+
         return ContinentData(
             grid_width=w, grid_height=h,
             cell_size=self._params.sample_resolution,
@@ -308,6 +314,7 @@ class ContinentGenerator:
             climate_zone=climate_field,
             river_width=array('d', river_width),
             hydrology=hydrology,
+            subdiv_ranges=subdiv_ranges,
         )
 
     # ── 气候覆盖校准 ──────────────────────────────────────
@@ -548,6 +555,61 @@ class ContinentGenerator:
                             rain[ni] = tr
                             elevation[ni] = max(elevation[ni], ta)
                             climate_field[ni] = int(mzone)
+
+    # ── 群系细分动态值域 ────────────────────────────────────
+
+    @staticmethod
+    def _compute_subdiv_ranges(
+        elevation: list[float],
+        temp: list[float],
+        rain: list[float],
+        land_mask: list[bool],
+        climate_field: list[int],
+        w: int, h: int,
+    ) -> dict[int, tuple[float, float]]:
+        """计算每气候档内细分维度的 P10/P90 值域。
+
+        供 biome_membership 动态归一化用，使档内两子型比例均衡。
+        沙漠档用 moisture 噪声细分，此处不计算（噪声值域固定 [-1,1]）。
+
+        Returns:
+            {ClimateZone_int: (P10, P90)} 每档的细分值域。
+        """
+        from .climate import ClimateZone
+        from .biome import _SUBDIV_CONFIGS, _SUBDIV_MOISTURE
+
+        # 按档收集细分维度值
+        zone_vals: dict[int, list[float]] = {}
+        for i in range(w * h):
+            if not land_mask[i]:
+                continue
+            cz = climate_field[i]
+            cfg = _SUBDIV_CONFIGS.get(ClimateZone(cz))
+            if cfg is None or cfg.dimension == _SUBDIV_MOISTURE:
+                continue
+            if cfg.dimension == "rainfall":
+                zone_vals.setdefault(cz, []).append(rain[i])
+            elif cfg.dimension == "temperature":
+                zone_vals.setdefault(cz, []).append(temp[i])
+            elif cfg.dimension == "altitude":
+                zone_vals.setdefault(cz, []).append(elevation[i])
+
+        # P10/P90
+        ranges: dict[int, tuple[float, float]] = {}
+        for cz_int, vals in zone_vals.items():
+            if len(vals) < 10:
+                continue
+            vals.sort()
+            n = len(vals)
+            p10 = vals[int(n * 0.10)]
+            p90 = vals[int(n * 0.90)]
+            if p90 - p10 < 1.0:
+                # 值域过窄（档内几乎无变化），用 min/max
+                p10 = vals[0]
+                p90 = vals[-1]
+            ranges[cz_int] = (p10, p90)
+
+        return ranges
 
     # ── 海拔生成 ──────────────────────────────────────────
 

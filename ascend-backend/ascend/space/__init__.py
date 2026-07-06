@@ -24,13 +24,14 @@ from .noise import PerlinNoise
 from .climate import (
     ClimateZone, ClimateTemplate, SeasonalityMode,
     WeatherParams,
-    classify, climate_zone_from_noise, climate_zone_from_values,
+    classify, climate_zone_from_values,
     annual_baseline, sea_level_temperature, apply_lapse_rate,
     rainfall_from_noise, get_climate_template, LAPSE_RATE, clamp,
 )
 from .biome import (
-    BiomeType, BiomeTemplate,
-    biome_from_attrs, biome_from_climate, get_template,
+    BiomeType, BiomeTemplate, TerrainBias,
+    biome_membership, biome_from_attrs, biome_from_climate,
+    get_template,
 )
 from .chunk import ChunkData, TILE_MAP_SIZE
 from .generator import WorldGenerator
@@ -44,7 +45,7 @@ from .tile_gen import TileGenerator
 from .continent import ContinentParams, ContinentData, ContinentGenerator
 from .streamlines import (
     RiverPoint, River, RiverNetwork,
-    trace_streamline, build_river_network, rivers_in_region,
+    build_river_network, rivers_in_region,
 )
 from .hydrology import (
     ErosionResult, LakeBasin, HydrologyData,
@@ -53,7 +54,6 @@ from .hydrology import (
     extract_lake_basins,
     erode,
 )
-# from .storage import WorldStore
 
 __all__ = [
     # 第一层：大地图
@@ -64,7 +64,6 @@ __all__ = [
     "SeasonalityMode",
     "WeatherParams",
     "classify",
-    "climate_zone_from_noise",
     "climate_zone_from_values",
     "get_climate_template",
     "annual_baseline",
@@ -75,6 +74,8 @@ __all__ = [
     "clamp",
     "BiomeType",
     "BiomeTemplate",
+    "TerrainBias",
+    "biome_membership",
     "biome_from_attrs",
     "biome_from_climate",
     "get_template",
@@ -98,7 +99,6 @@ __all__ = [
     "RiverPoint",
     "River",
     "RiverNetwork",
-    "trace_streamline",
     "build_river_network",
     "rivers_in_region",
     # 水文侵蚀
@@ -110,5 +110,4 @@ __all__ = [
     "flow_accumulation",
     "extract_lake_basins",
     "erode",
-    # 持久化 — 待实现
 ]

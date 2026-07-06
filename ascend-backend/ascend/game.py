@@ -307,7 +307,7 @@ class GameEngine:
             for dx in range(-r, r + 1):
                 cx, cy = bcx + dx, bcy + dy
                 chunk = self.world_gen.generate_chunk(cx, cy)
-                grid = self.tile_generator.generate_chunk(cx, cy)
+                grid = self.tile_generator.generate_chunk_for(chunk)
                 chunk.generate_tiles(grid)
                 self.loaded_chunks[(cx, cy)] = chunk
 

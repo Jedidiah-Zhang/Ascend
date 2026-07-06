@@ -30,17 +30,25 @@ from ascend.space import WorldGenerator, BiomeType, ClimateZone, TileGenerator
 # ── 颜色方案 ──────────────────────────────────────────────────
 
 BIOME_COLORS = {
+    BiomeType.TROPICAL_MONSOON_FOREST:    "#2a8b3a",
+    BiomeType.TROPICAL_RAINFOREST:        "#1a6b3a",
+    BiomeType.TROPICAL_SAVANNA:           "#c4a43e",
+    BiomeType.TROPICAL_WOODLAND:          "#5a8c3a",
+    BiomeType.SANDY_DESERT:               "#e6c878",
+    BiomeType.ROCKY_DESERT:               "#b8a060",
+    BiomeType.SHORT_GRASS_STEPPE:         "#b8a060",
+    BiomeType.TALL_GRASS_STEPPE:          "#8caa5a",
+    BiomeType.TEMPERATE_MIXED_FOREST:     "#3a7c4f",
     BiomeType.TEMPERATE_DECIDUOUS_FOREST: "#4a7c3f",
-    BiomeType.TROPICAL_RAINFOREST: "#1a6b3a",
-    BiomeType.TROPICAL_SAVANNA: "#c4a43e",
-    BiomeType.DESERT: "#e6c878",
-    BiomeType.STEPPE_SHRUBLAND: "#b8a060",
-    BiomeType.TAIGA: "#3a6a8a",
-    BiomeType.TUNDRA: "#d8d8e8",
-    BiomeType.ALPINE_MEADOW: "#b0b0c0",
-    BiomeType.WARM_OCEAN: "#1e6b8a",
-    BiomeType.TEMPERATE_OCEAN: "#2e6b8a",
-    BiomeType.COLD_OCEAN: "#5a8aaa",
+    BiomeType.BOREAL_WETLAND:             "#4a7a8a",
+    BiomeType.BOREAL_FOREST:              "#3a6a8a",
+    BiomeType.POLAR_BARREN:               "#e0e0e8",
+    BiomeType.TUNDRA:                     "#d8d8e8",
+    BiomeType.ALPINE_MEADOW:              "#b0b0c0",
+    BiomeType.ALPINE_BARREN:              "#909098",
+    BiomeType.WARM_OCEAN:                 "#1e6b8a",
+    BiomeType.TEMPERATE_OCEAN:            "#2e6b8a",
+    BiomeType.COLD_OCEAN:                 "#5a8aaa",
 }
 
 CLIMATE_COLORS = {

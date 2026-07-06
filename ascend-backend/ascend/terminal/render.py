@@ -14,18 +14,26 @@ _RESET = "\033[0m"
 # 群系颜色
 _BIOME_COLORS: dict[BiomeType, str] = {
     # 陆地
+    BiomeType.TROPICAL_MONSOON_FOREST:    "\033[0;32m",  # 绿
+    BiomeType.TROPICAL_RAINFOREST:        "\033[0;42m",  # 亮绿
+    BiomeType.TROPICAL_SAVANNA:           "\033[0;33m",  # 黄
+    BiomeType.TROPICAL_WOODLAND:          "\033[0;32m",  # 绿
+    BiomeType.SANDY_DESERT:               "\033[1;33m",  # 亮黄
+    BiomeType.ROCKY_DESERT:               "\033[0;33m",  # 黄
+    BiomeType.SHORT_GRASS_STEPPE:         "\033[0;33m",  # 黄
+    BiomeType.TALL_GRASS_STEPPE:          "\033[0;32m",  # 绿
+    BiomeType.TEMPERATE_MIXED_FOREST:     "\033[0;32m",  # 绿
     BiomeType.TEMPERATE_DECIDUOUS_FOREST: "\033[0;32m",  # 绿
-    BiomeType.TROPICAL_RAINFOREST:       "\033[0;42m",  # 亮绿
-    BiomeType.TROPICAL_SAVANNA:          "\033[0;33m",  # 黄
-    BiomeType.DESERT:                    "\033[1;33m",  # 亮黄
-    BiomeType.STEPPE_SHRUBLAND:          "\033[0;33m",  # 黄
-    BiomeType.TAIGA:                     "\033[0;36m",  # 青
-    BiomeType.TUNDRA:                    "\033[1;37m",  # 白
-    BiomeType.ALPINE_MEADOW:             "\033[0;35m",  # 紫
+    BiomeType.BOREAL_WETLAND:             "\033[0;36m",  # 青
+    BiomeType.BOREAL_FOREST:              "\033[0;36m",  # 青
+    BiomeType.POLAR_BARREN:               "\033[1;37m",  # 白
+    BiomeType.TUNDRA:                     "\033[1;37m",  # 白
+    BiomeType.ALPINE_MEADOW:              "\033[0;35m",  # 紫
+    BiomeType.ALPINE_BARREN:              "\033[0;35m",  # 紫
     # 海洋
-    BiomeType.WARM_OCEAN:                "\033[0;31m",  # 红
-    BiomeType.TEMPERATE_OCEAN:           "\033[0;34m",  # 蓝
-    BiomeType.COLD_OCEAN:                "\033[0;36m",  # 青
+    BiomeType.WARM_OCEAN:                 "\033[0;31m",  # 红
+    BiomeType.TEMPERATE_OCEAN:            "\033[0;34m",  # 蓝
+    BiomeType.COLD_OCEAN:                 "\033[0;36m",  # 青
 }
 
 # 气候颜色
@@ -42,17 +50,25 @@ _CLIMATE_COLORS: dict[ClimateZone, str] = {
 
 # 群系字符
 _BIOME_CHARS: dict[BiomeType, str] = {
-    BiomeType.TEMPERATE_DECIDUOUS_FOREST: "T",
-    BiomeType.TROPICAL_RAINFOREST:       "R",
-    BiomeType.TROPICAL_SAVANNA:          "S",
-    BiomeType.DESERT:                    "D",
-    BiomeType.STEPPE_SHRUBLAND:          "~",
-    BiomeType.TAIGA:                     "A",
-    BiomeType.TUNDRA:                    "U",
-    BiomeType.ALPINE_MEADOW:             "^",
-    BiomeType.WARM_OCEAN:                "w",
-    BiomeType.TEMPERATE_OCEAN:           "o",
-    BiomeType.COLD_OCEAN:                "c",
+    BiomeType.TROPICAL_MONSOON_FOREST:    "M",
+    BiomeType.TROPICAL_RAINFOREST:        "R",
+    BiomeType.TROPICAL_SAVANNA:           "S",
+    BiomeType.TROPICAL_WOODLAND:          "W",
+    BiomeType.SANDY_DESERT:               "D",
+    BiomeType.ROCKY_DESERT:               "d",
+    BiomeType.SHORT_GRASS_STEPPE:         "~",
+    BiomeType.TALL_GRASS_STEPPE:          "=",
+    BiomeType.TEMPERATE_MIXED_FOREST:     "T",
+    BiomeType.TEMPERATE_DECIDUOUS_FOREST: "F",
+    BiomeType.BOREAL_WETLAND:             "B",
+    BiomeType.BOREAL_FOREST:              "A",
+    BiomeType.POLAR_BARREN:               "P",
+    BiomeType.TUNDRA:                     "U",
+    BiomeType.ALPINE_MEADOW:              "^",
+    BiomeType.ALPINE_BARREN:              "v",
+    BiomeType.WARM_OCEAN:                 "w",
+    BiomeType.TEMPERATE_OCEAN:            "o",
+    BiomeType.COLD_OCEAN:                 "c",
 }
 
 # 气候字符
@@ -183,22 +199,38 @@ def render_map(
             ch = _BIOME_CHARS.get(v, "?")
             return color, ch
         legend_items = [
-            ("T", _BIOME_COLORS[BiomeType.TEMPERATE_DECIDUOUS_FOREST],
-             BiomeType.TEMPERATE_DECIDUOUS_FOREST.label),
             ("R", _BIOME_COLORS[BiomeType.TROPICAL_RAINFOREST],
              BiomeType.TROPICAL_RAINFOREST.label),
+            ("M", _BIOME_COLORS[BiomeType.TROPICAL_MONSOON_FOREST],
+             BiomeType.TROPICAL_MONSOON_FOREST.label),
             ("S", _BIOME_COLORS[BiomeType.TROPICAL_SAVANNA],
              BiomeType.TROPICAL_SAVANNA.label),
-            ("D", _BIOME_COLORS[BiomeType.DESERT],
-             BiomeType.DESERT.label),
-            ("~", _BIOME_COLORS[BiomeType.STEPPE_SHRUBLAND],
-             BiomeType.STEPPE_SHRUBLAND.label),
-            ("A", _BIOME_COLORS[BiomeType.TAIGA],
-             BiomeType.TAIGA.label),
+            ("W", _BIOME_COLORS[BiomeType.TROPICAL_WOODLAND],
+             BiomeType.TROPICAL_WOODLAND.label),
+            ("D", _BIOME_COLORS[BiomeType.SANDY_DESERT],
+             BiomeType.SANDY_DESERT.label),
+            ("d", _BIOME_COLORS[BiomeType.ROCKY_DESERT],
+             BiomeType.ROCKY_DESERT.label),
+            ("~", _BIOME_COLORS[BiomeType.SHORT_GRASS_STEPPE],
+             BiomeType.SHORT_GRASS_STEPPE.label),
+            ("=", _BIOME_COLORS[BiomeType.TALL_GRASS_STEPPE],
+             BiomeType.TALL_GRASS_STEPPE.label),
+            ("F", _BIOME_COLORS[BiomeType.TEMPERATE_DECIDUOUS_FOREST],
+             BiomeType.TEMPERATE_DECIDUOUS_FOREST.label),
+            ("T", _BIOME_COLORS[BiomeType.TEMPERATE_MIXED_FOREST],
+             BiomeType.TEMPERATE_MIXED_FOREST.label),
+            ("A", _BIOME_COLORS[BiomeType.BOREAL_FOREST],
+             BiomeType.BOREAL_FOREST.label),
+            ("B", _BIOME_COLORS[BiomeType.BOREAL_WETLAND],
+             BiomeType.BOREAL_WETLAND.label),
             ("U", _BIOME_COLORS[BiomeType.TUNDRA],
              BiomeType.TUNDRA.label),
+            ("P", _BIOME_COLORS[BiomeType.POLAR_BARREN],
+             BiomeType.POLAR_BARREN.label),
             ("^", _BIOME_COLORS[BiomeType.ALPINE_MEADOW],
              BiomeType.ALPINE_MEADOW.label),
+            ("v", _BIOME_COLORS[BiomeType.ALPINE_BARREN],
+             BiomeType.ALPINE_BARREN.label),
             ("w", _BIOME_COLORS[BiomeType.WARM_OCEAN],
              BiomeType.WARM_OCEAN.label),
             ("o", _BIOME_COLORS[BiomeType.TEMPERATE_OCEAN],

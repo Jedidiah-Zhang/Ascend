@@ -25,6 +25,8 @@ from ascend.space import (
     get_climate_template,
     BiomeType,
     BiomeTemplate,
+    TerrainBias,
+    biome_membership,
     biome_from_attrs,
     biome_from_climate,
     get_template,
@@ -259,69 +261,113 @@ class TestWeatherParams:
 # ══════════════════════════════════════════════════════════
 
 class TestBiome:
-    """群系系统测试 — 8 陆地群系 + 3 海洋群系。"""
+    """群系系统测试 — 16 陆地群系（8 档 × 2 子型）+ 3 海洋群系。"""
 
     def test_biome_type_labels(self):
         """群系类型有中文标签。"""
         assert BiomeType.TEMPERATE_DECIDUOUS_FOREST.label == "温带落叶林"
         assert BiomeType.TROPICAL_RAINFOREST.label == "热带雨林"
-        assert BiomeType.DESERT.label == "沙漠"
-        assert BiomeType.TAIGA.label == "针叶林"
+        assert BiomeType.SANDY_DESERT.label == "沙质沙漠"
+        assert BiomeType.BOREAL_FOREST.label == "北方针叶林"
         assert BiomeType.TUNDRA.label == "苔原"
         assert BiomeType.ALPINE_MEADOW.label == "高山草甸"
 
+    def test_land_biome_count(self):
+        """16 陆地群系 + 3 海洋群系。"""
+        land = [b for b in BiomeType if not b.is_ocean]
+        ocean = [b for b in BiomeType if b.is_ocean]
+        assert len(land) == 16
+        assert len(ocean) == 3
+
     def test_land_biome_from_attrs(self):
-        """biome_from_attrs 从连续属性映射陆地群系。"""
-        # 热带雨林
-        assert biome_from_attrs(28.0, 2000.0, 100.0, 29.0) == BiomeType.TROPICAL_RAINFOREST
-        # 热带草原
+        """biome_from_attrs 从连续属性映射陆地群系（含档内细分）。
+
+        用静态默认值域（subdiv_ranges=None），中点 = (value_min+value_max)/2。
+        测试值选在子型中心附近，确保明确归属。
+        """
+        # 热带雨林档 [1500,2200] 中点1850: R=1700→季雨林, R=2100→雨林
+        assert biome_from_attrs(28.0, 1700.0, 100.0, 29.0) == BiomeType.TROPICAL_MONSOON_FOREST
+        assert biome_from_attrs(28.0, 2100.0, 100.0, 29.0) == BiomeType.TROPICAL_RAINFOREST
+        # 热带草原档 [600,1500] 中点1050: R=800→草原, R=1300→疏林
         assert biome_from_attrs(28.0, 800.0, 100.0, 29.0) == BiomeType.TROPICAL_SAVANNA
-        # 沙漠
-        assert biome_from_attrs(25.0, 100.0, 100.0, 26.0) == BiomeType.DESERT
-        # 灌木草原
-        assert biome_from_attrs(15.0, 400.0, 100.0, 16.0) == BiomeType.STEPPE_SHRUBLAND
-        # 温带落叶林
-        assert biome_from_attrs(15.0, 800.0, 100.0, 16.0) == BiomeType.TEMPERATE_DECIDUOUS_FOREST
-        # 针叶林
-        assert biome_from_attrs(-2.0, 600.0, 100.0, 1.0) == BiomeType.TAIGA
-        # 苔原
-        assert biome_from_attrs(-10.0, 500.0, 100.0, -9.0) == BiomeType.TUNDRA
-        # 高山草甸
-        assert biome_from_attrs(10.0, 800.0, 2500.0, 32.5) == BiomeType.ALPINE_MEADOW
+        assert biome_from_attrs(28.0, 1300.0, 100.0, 29.0) == BiomeType.TROPICAL_WOODLAND
+        # 沙漠档 [-1,1] 中点0: moisture=-0.5→沙质, moisture=0.5→砾石
+        assert biome_from_attrs(25.0, 100.0, 100.0, 26.0, moisture_noise=-0.5) == BiomeType.SANDY_DESERT
+        assert biome_from_attrs(25.0, 100.0, 100.0, 26.0, moisture_noise=0.5) == BiomeType.ROCKY_DESERT
+        # 草原档 [200,600] 中点400: R=300→矮草, R=500→高草
+        assert biome_from_attrs(15.0, 300.0, 100.0, 16.0) == BiomeType.SHORT_GRASS_STEPPE
+        assert biome_from_attrs(15.0, 500.0, 100.0, 16.0) == BiomeType.TALL_GRASS_STEPPE
+        # 温带森林档 [5,20] 中点12.5: T=8→混交, T=16→落叶
+        assert biome_from_attrs(8.0, 800.0, 100.0, 9.0) == BiomeType.TEMPERATE_MIXED_FOREST
+        assert biome_from_attrs(16.0, 800.0, 100.0, 17.0) == BiomeType.TEMPERATE_DECIDUOUS_FOREST
+        # 亚寒带针叶林档 [0,800] 中点400: alt=100→湿地, alt=700→密林
+        assert biome_from_attrs(-2.0, 600.0, 100.0, 1.0) == BiomeType.BOREAL_WETLAND
+        assert biome_from_attrs(-2.0, 600.0, 700.0, 1.0) == BiomeType.BOREAL_FOREST
+        # 极地苔原档 [-14,0] 中点-7: T=-12→荒原, T=-6→苔原（需 T<-5 才入此档）
+        assert biome_from_attrs(-12.0, 500.0, 100.0, -11.0) == BiomeType.POLAR_BARREN
+        assert biome_from_attrs(-6.0, 500.0, 100.0, -5.0) == BiomeType.TUNDRA
+        # 高山档 [2000,2600] 中点2300: alt=2100→草甸, alt=2500→裸岩
+        assert biome_from_attrs(10.0, 800.0, 2100.0, 32.5) == BiomeType.ALPINE_MEADOW
+        assert biome_from_attrs(10.0, 800.0, 2500.0, 32.5) == BiomeType.ALPINE_BARREN
+
+    def test_biome_membership_smooth(self):
+        """biome_membership 在档内边界处平滑混合。"""
+        # 热带雨林档静态默认 [1500,2200], 中点 1850 → 两子型各 0.5
+        m = biome_membership(28.0, 1850.0, 100.0, 29.0)
+        assert len(m) == 2
+        weights = [w for _, w in m]
+        assert sum(weights) == pytest.approx(1.0)
+        assert all(abs(w - 0.5) < 0.01 for w in weights)
+
+        # 单一子型（远离边界，权重 <0.001 被过滤）
+        m2 = biome_membership(28.0, 1550.0, 100.0, 29.0)
+        assert len(m2) == 1
+        assert m2[0][1] == pytest.approx(1.0)
+
+    def test_biome_membership_ocean(self):
+        """海洋返回单一群系隶属度 1.0。"""
+        m = biome_membership(28.0, 2000.0, -100.0, 28.0)
+        assert len(m) == 1
+        assert m[0][0] == BiomeType.WARM_OCEAN
+        assert m[0][1] == 1.0
 
     def test_biome_from_climate_compat(self):
-        """biome_from_climate 兼容旧 API。"""
-        assert biome_from_climate(
+        """biome_from_climate 兼容旧 API（用档位中点取主隶属）。"""
+        # 温带森林档中点 T=12.5 → 归一化=0.5 → 取 low（混交林）
+        result = biome_from_climate(
             ClimateZone.TEMPERATE_FOREST, 0.0, 100.0, 16.0
-        ) == BiomeType.TEMPERATE_DECIDUOUS_FOREST
-        assert biome_from_climate(
+        )
+        assert result in (BiomeType.TEMPERATE_MIXED_FOREST, BiomeType.TEMPERATE_DECIDUOUS_FOREST)
+        # 沙漠档中点 moisture=0 → 归一化=0.5 → 取 low（沙质沙漠）
+        result2 = biome_from_climate(
             ClimateZone.DESERT, 0.0, 100.0, 26.0
-        ) == BiomeType.DESERT
+        )
+        assert result2 in (BiomeType.SANDY_DESERT, BiomeType.ROCKY_DESERT)
 
     def test_all_land_biomes_have_templates(self):
-        """8 种陆地群系均有模板。"""
-        land_biomes = [
-            BiomeType.TEMPERATE_DECIDUOUS_FOREST,
-            BiomeType.TROPICAL_RAINFOREST,
-            BiomeType.TROPICAL_SAVANNA,
-            BiomeType.DESERT,
-            BiomeType.STEPPE_SHRUBLAND,
-            BiomeType.TAIGA,
-            BiomeType.TUNDRA,
-            BiomeType.ALPINE_MEADOW,
-        ]
+        """16 种陆地群系均有模板。"""
+        land_biomes = [b for b in BiomeType if not b.is_ocean]
+        assert len(land_biomes) == 16
         for bt in land_biomes:
             t = get_template(bt)
             assert t.biome_type == bt
             assert len(t.creature_weights) > 0
             assert len(t.resource_weights) > 0
+            assert t.terrain_bias is not None
+
+    def test_all_biomes_have_terrain_bias(self):
+        """每个群系模板都有 TerrainBias。"""
+        from ascend.space import TerrainBias
+        for bt in BiomeType:
+            t = get_template(bt)
+            assert isinstance(t.terrain_bias, TerrainBias)
 
     def test_template_tree_density_ordering(self):
         """雨林树密度 > 温带 > 草原 > 沙漠。"""
         rainforest = get_template(BiomeType.TROPICAL_RAINFOREST)
         temperate = get_template(BiomeType.TEMPERATE_DECIDUOUS_FOREST)
-        steppe = get_template(BiomeType.STEPPE_SHRUBLAND)
-        desert = get_template(BiomeType.DESERT)
+        steppe = get_template(BiomeType.TALL_GRASS_STEPPE)
+        desert = get_template(BiomeType.SANDY_DESERT)
         assert rainforest.tree_density > temperate.tree_density
         assert temperate.tree_density > steppe.tree_density
         assert steppe.tree_density > desert.tree_density
@@ -334,8 +380,9 @@ class TestBiome:
 
     def test_template_has_resources(self):
         """模板包含资源权重。"""
-        t = get_template(BiomeType.DESERT)
+        t = get_template(BiomeType.SANDY_DESERT)
         assert "exposed_mineral" in t.resource_weights
+        assert "sand" in t.resource_weights
 
     def test_ocean_biomes(self):
         """海拔 <0 判定为海洋，温度决定暖/温/冷。"""
@@ -353,7 +400,7 @@ class TestBiome:
         assert BiomeType.WARM_OCEAN.is_ocean is True
         assert BiomeType.COLD_OCEAN.is_ocean is True
         assert BiomeType.TEMPERATE_DECIDUOUS_FOREST.is_ocean is False
-        assert BiomeType.DESERT.is_ocean is False
+        assert BiomeType.SANDY_DESERT.is_ocean is False
 
     def test_ocean_templates_registered(self):
         """三种海洋群系均有模板。"""
@@ -391,7 +438,7 @@ class TestChunkData:
         """写入详细 tile 数据（TileGrid）。"""
         c = ChunkData(
             cx=1, cy=2,
-            biome=BiomeType.DESERT,
+            biome=BiomeType.SANDY_DESERT,
             climate_zone=ClimateZone.DESERT,
             annual_baseline=WeatherParams(25, 100, 12, 500, 25, 8),
         )
@@ -438,7 +485,7 @@ class TestChunkData:
         """标记的添加和移除。"""
         c = ChunkData(
             cx=3, cy=4,
-            biome=BiomeType.DESERT,
+            biome=BiomeType.SANDY_DESERT,
             climate_zone=ClimateZone.DESERT,
             annual_baseline=WeatherParams(25, 100, 12, 500, 25, 8),
         )

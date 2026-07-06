@@ -20,7 +20,6 @@ from .tile_grid import TILE_MAP_SIZE
 from .continent import ContinentGenerator
 from .climate import (
     ClimateZone,
-    WeatherParams,
     sea_level_temperature,
     rainfall_from_noise,
     classify,
@@ -104,13 +103,52 @@ class WorldGenerator:
         本方法强制预生成，供 GameEngine 在启动时主动触发，
         并把 ContinentData 暴露给出生点选择 / TileGenerator。
 
+        生成后补充沙漠档的 moisture 噪声动态值域（continent 生成时
+        无 moisture 噪声实例，此处补算）。
+
         Returns:
             ContinentData 宏观场（缓存于 self._continent）。
         """
         if self._continent is None:
             self._continent = ContinentGenerator(seed=self._seed).generate()
+            self._supplement_moisture_range()
             logger.info("大陆生成完成: %s", self._continent)
         return self._continent
+
+    def _supplement_moisture_range(self) -> None:
+        """补充沙漠档 moisture 噪声的动态值域。
+
+        采样沙漠档陆地格的 moisture 噪声，取 P10/P90 存入 subdiv_ranges。
+        """
+        cont = self._continent
+        if cont is None:
+            return
+        w, h = cont.grid_width, cont.grid_height
+        moisture_vals: list[float] = []
+        for gy in range(0, h, 2):
+            for gx in range(0, w, 2):
+                idx = gy * w + gx
+                if not cont.land_mask[idx]:
+                    continue
+                alt = cont.elevation_field[idx]
+                temp = cont.temperature_field[idx]
+                rain = cont.rainfall_field[idx]
+                cz = classify(temp, rain, alt)
+                if cz != ClimateZone.DESERT:
+                    continue
+                cx, cy = gx // 2, gy // 2
+                moisture = self._sample_derived_noise(self._noise_moisture, cx, cy, 6)
+                moisture_vals.append(moisture)
+        if len(moisture_vals) < 10:
+            return
+        moisture_vals.sort()
+        n = len(moisture_vals)
+        p10 = moisture_vals[int(n * 0.10)]
+        p90 = moisture_vals[int(n * 0.90)]
+        if p90 - p10 < 0.1:
+            p10 = moisture_vals[0]
+            p90 = moisture_vals[-1]
+        cont.subdiv_ranges[int(ClimateZone.DESERT)] = (p10, p90)
 
     def get_altitude(self, world_x: float, world_y: float) -> float:
         """查询任意世界坐标的构造海拔。
@@ -214,8 +252,12 @@ class WorldGenerator:
         temperature = apply_lapse_rate(sea_temp, altitude)
         climate = classify(temperature, rainfall, altitude)
 
-        # 5. 群系 — 从连续属性映射（不经离散档位主键，边界自然渐变）
-        biome = biome_from_attrs(temperature, rainfall, altitude, sea_temp)
+        # 5. 群系 — 从连续属性 + moisture 噪声映射（档内细分，边界自然渐变）
+        moisture = self._sample_derived_noise(self._noise_moisture, cx, cy, 6)
+        biome = biome_from_attrs(
+            temperature, rainfall, altitude, sea_temp,
+            moisture_noise=moisture, subdiv_ranges=self._continent.subdiv_ranges,
+        )
 
         # 6. 派生参数 → 完整气象数据
         params = annual_baseline(
@@ -301,7 +343,12 @@ class WorldGenerator:
         rainfall = self._sample_rainfall(cx, cy)
         from .climate import apply_lapse_rate
         temperature = apply_lapse_rate(sea_temp, altitude)
-        return biome_from_attrs(temperature, rainfall, altitude, sea_temp)
+        moisture = self._sample_derived_noise(self._noise_moisture, cx, cy, 6)
+        return biome_from_attrs(
+            temperature, rainfall, altitude, sea_temp,
+            moisture_noise=moisture,
+            subdiv_ranges=self._continent.subdiv_ranges if self._continent else None,
+        )
 
     def get_climate(self, cx: int, cy: int) -> ClimateZone:
         """快速查询分块气候档位。

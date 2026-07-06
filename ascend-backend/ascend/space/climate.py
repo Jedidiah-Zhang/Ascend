@@ -14,7 +14,7 @@
 所有函数为纯函数，无内部状态，天然线程安全。
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import IntEnum
 
 
@@ -426,25 +426,6 @@ def annual_baseline(
         humidity=_derive(tmpl.humidity_range, humidity_noise, "humidity"),
         wind_speed=_derive(tmpl.wind_speed_range, wind_noise, "wind_speed"),
     )
-
-
-# ── 兼容旧接口 ────────────────────────────────────────────
-
-def climate_zone_from_noise(temperature_noise: float, rainfall_noise: float) -> ClimateZone:
-    """由温度/降雨噪声值映射到气候档位（兼容旧 API）。
-
-    内部将噪声转为实际值再调用 classify。
-
-    Args:
-        temperature_noise: 温度噪声 [-1, 1]。
-        rainfall_noise: 降雨噪声 [-1, 1]。
-
-    Returns:
-        对应的 ClimateZone。
-    """
-    temp = sea_level_temperature(temperature_noise)
-    rain = rainfall_from_noise(rainfall_noise)
-    return classify(temp, rain, 0.0)
 
 
 def clamp(value: float, lo: float, hi: float) -> float:

@@ -365,50 +365,6 @@ def _chaikin(points: list[tuple[float, float]],
     return pts
 
 
-def trace_streamline(
-    sx: float, sy: float,
-    dem: list[float],
-    smooth_dem: list[float],
-    smooth_flow: list[float],
-    flow_acc: list[float],
-    dist: list[float],
-    w: int, h: int,
-    *,
-    max_steps: int = 4000,
-    step_size: float = 0.7,
-    chaikin_iters: int = 2,
-) -> list[RiverPoint]:
-    """追踪单条河流：RK4 沿混合方向场积分 + Chaikin 平滑。
-
-    Args:
-        sx, sy: 源头坐标（格单位）。
-        dem: 侵蚀后海拔数组（用于判断到海）。
-        smooth_dem: dem 高斯平滑后的场（驱动山谷弯曲）。
-        smooth_flow: flow_acc 高斯平滑后的场（平原区指向下游主流）。
-        flow_acc: 水流累积量数组（采样 RiverPoint.flow）。
-        dist: _dijkstra_to_ocean 返回的到海代价场（约束+兜底）。
-        w, h: 网格尺寸。
-        max_steps: 最大追踪步数。
-        step_size: RK4 步长（格单位）。
-        chaikin_iters: Chaikin 平滑轮数。
-
-    Returns:
-        RiverPoint 列表（连续坐标，flow 已采样）。
-    """
-    src = int(sy) * w + int(sx)
-    raw = _trace_downstream(src, dem, smooth_dem, smooth_flow, dist, w, h,
-                            max_steps=max_steps, step_size=step_size)
-    smooth = _chaikin(raw, chaikin_iters)
-    return [
-        RiverPoint(
-            x=p[0],
-            y=p[1],
-            flow=flow_acc[max(0, min(w * h - 1, int(p[1]) * w + int(p[0])))],
-        )
-        for p in smooth
-    ]
-
-
 # ═══════════════════════════════════════════════════════════
 # 汇流合并
 # ═══════════════════════════════════════════════════════════
