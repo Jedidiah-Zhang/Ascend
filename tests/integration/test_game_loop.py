@@ -74,7 +74,7 @@ class GameLoop:
                 self.session.tick_count += 1
                 self.session.tick_events.append({
                     "game_time": event.data["game_time"],
-                    "mode": event.data["mode"],
+                    "speed": event.data["speed"],
                 })
 
         def on_day_change(event):

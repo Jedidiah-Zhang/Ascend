@@ -2,7 +2,7 @@
 
 from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.log import get_logger
-from .mode import GAME_DAY, GAME_HOUR
+from .constants import GAME_DAY, GAME_HOUR
 
 logger = get_logger(__name__)
 
@@ -18,8 +18,9 @@ world_tree.register_event_schema(
         "previous_day": int,
         "elapsed_days": int,
         "day_change_count": int,
+        "skipped_days": int,
     },
-    description="日期变更时发布，触发群体/生态等日更模块",
+    description="日期变更时发布，触发群体/生态等日更模块；skipped_days=0 为连续过夜，>0 为长跳未经历的中间天数",
 )
 world_tree.register_event_schema(
     "hour_change",
@@ -93,6 +94,7 @@ class GameCalendar:
         current_day = int(game_time / GAME_DAY) + 1
         if current_day != self._day:
             previous_day = self._day
+            skipped_days = current_day - previous_day - 1
 
             world_tree.publish(Event(
                 timestamp=game_time,
@@ -122,11 +124,12 @@ class GameCalendar:
                     "previous_day": previous_day,
                     "elapsed_days": self.elapsed_days,
                     "day_change_count": self._day_change_count,
+                    "skipped_days": skipped_days,
                 },
             ))
             logger.info(
-                "日期变更: day %d → %d (累计 %d 天)",
-                previous_day, current_day, self.elapsed_days,
+                "日期变更: day %d → %d (累计 %d 天, 跳过 %d 天)",
+                previous_day, current_day, self.elapsed_days, skipped_days,
             )
 
         current_hour = int((game_time % GAME_DAY) / GAME_HOUR)

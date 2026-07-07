@@ -9,13 +9,14 @@ Usage:
     clock.pause()
 """
 
-from .mode import GAME_MINUTE, GAME_HOUR, GAME_DAY, GAME_YEAR
+from .constants import TICK_RATE, GAME_MINUTE, GAME_HOUR, GAME_DAY, GAME_YEAR
 from .clock import WorldClock
 from .calendar import GameCalendar
 
 __all__ = [
     "WorldClock",
     "GameCalendar",
+    "TICK_RATE",
     "GAME_MINUTE",
     "GAME_HOUR",
     "GAME_DAY",

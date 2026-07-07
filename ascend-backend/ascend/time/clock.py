@@ -14,7 +14,7 @@
 
 from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.log import get_logger
-from .mode import GAME_HOUR
+from .constants import GAME_HOUR, GAME_DAY, GAME_YEAR
 
 logger = get_logger(__name__)
 
@@ -88,7 +88,12 @@ class WorldClock:
 
     @property
     def tick_count(self) -> int:
-        """累计 tick 次数（不含 skip 的跃迁帧）。"""
+        """累计时间推进操作次数（每次 tick/step/skip 调用 +1）。
+
+        注意：这是"事件发布次数"，不是"世界经历的 tick 数"。
+        speed=2 时一次 tick() 推进 2 tick 但只 +1；skip(N) 跳过 N tick
+        也只 +1。要获取世界实际经过的 tick 数请用 ``time`` 属性。
+        """
         return self._tick_count
 
     def pause(self) -> None:
@@ -173,11 +178,16 @@ class WorldClock:
             target: 目标时间（tick 数），必须大于当前时间。
 
         Raises:
-            ValueError: target 在过去。
+            ValueError: target 在过去，或 speed ≤ 0（会导致死循环）。
         """
         if target <= self._time:
             raise ValueError(
                 f"目标时间 {target} 必须在当前时间 {self._time} 之后"
+            )
+        if self._speed <= 0:
+            raise ValueError(
+                f"run_to 需要 speed > 0，当前 speed={self._speed}；"
+                f"暂停状态请用 resume() 或 step()，瞬跳请用 skip()"
             )
 
         was_paused = self._paused
@@ -192,11 +202,9 @@ class WorldClock:
         logger.info("模拟完成: → %d (%d tick, speed=%.1f)", self._time, tick_count, self._speed)
 
     def game_days(self) -> float:
-        from .mode import GAME_DAY
         return self._time / GAME_DAY
 
     def game_years(self) -> float:
-        from .mode import GAME_YEAR
         return self._time / GAME_YEAR
 
     # ── 内部 ──────────────────────────────────────────

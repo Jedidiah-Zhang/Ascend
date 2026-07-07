@@ -23,13 +23,12 @@ from ascend.space import WorldGenerator, TileGenerator
 from ascend.space.tile_grid import TILE_MAP_SIZE
 from ascend.entity import EntityManager
 from ascend.terminal import CommandExecutor
-from ascend.time import WorldClock, GameCalendar
+from ascend.time import WorldClock, GameCalendar, TICK_RATE
 from ascend.i18n import I18n
 from ascend.world_tree import world_tree, Event, AffectedParty
 
 logger = get_logger(__name__)
 
-TICK_RATE: float = 24.0        # 后端 tick 频率（Hz）
 TICK_DT: float = 1.0 / TICK_RATE
 SERVER_HOST: str = "127.0.0.1"
 SERVER_PORT: int = 9081
