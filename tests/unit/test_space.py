@@ -20,7 +20,6 @@ from ascend.space import (
     SeasonalityMode,
     WeatherParams,
     classify,
-    climate_zone_from_values,
     annual_baseline,
     get_climate_template,
     BiomeType,
@@ -28,7 +27,6 @@ from ascend.space import (
     TerrainBias,
     biome_membership,
     biome_from_attrs,
-    biome_from_climate,
     get_template,
     ChunkData,
     TILE_MAP_SIZE,
@@ -181,12 +179,6 @@ class TestClimateZone:
         """极地严寒优先于沙漠干旱判定。"""
         assert classify(-10.0, 50.0, 0.0) == ClimateZone.POLAR_TUNDRA
 
-    def test_climate_zone_from_values_compat(self):
-        """climate_zone_from_values 兼容旧 API（海拔默认 0）。"""
-        assert climate_zone_from_values(28.0, 2000.0) == ClimateZone.EQUATORIAL_RAINFOREST
-        assert climate_zone_from_values(15.0, 800.0) == ClimateZone.TEMPERATE_FOREST
-        assert climate_zone_from_values(-10.0, 500.0) == ClimateZone.POLAR_TUNDRA
-
     def test_sea_level_temperature_range(self):
         """纬度噪声映射到合理海平面温度范围。"""
         from ascend.space.climate import sea_level_temperature
@@ -330,19 +322,6 @@ class TestBiome:
         assert len(m) == 1
         assert m[0][0] == BiomeType.WARM_OCEAN
         assert m[0][1] == 1.0
-
-    def test_biome_from_climate_compat(self):
-        """biome_from_climate 兼容旧 API（用档位中点取主隶属）。"""
-        # 温带森林档中点 T=12.5 → 归一化=0.5 → 取 low（混交林）
-        result = biome_from_climate(
-            ClimateZone.TEMPERATE_FOREST, 0.0, 100.0, 16.0
-        )
-        assert result in (BiomeType.TEMPERATE_MIXED_FOREST, BiomeType.TEMPERATE_DECIDUOUS_FOREST)
-        # 沙漠档中点 moisture=0 → 归一化=0.5 → 取 low（沙质沙漠）
-        result2 = biome_from_climate(
-            ClimateZone.DESERT, 0.0, 100.0, 26.0
-        )
-        assert result2 in (BiomeType.SANDY_DESERT, BiomeType.ROCKY_DESERT)
 
     def test_all_land_biomes_have_templates(self):
         """16 种陆地群系均有模板。"""
