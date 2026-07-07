@@ -16,7 +16,9 @@ __pycache__/
 .venv/
 logs/
 
-# 覆盖率数据（生成在 tests/ 下）
+# 覆盖率数据（生成在 tests/ 或 ascend-backend/ 下）
+.coverage
+.coverage.*
 tests/.coverage
 tests/.coverage.*
 

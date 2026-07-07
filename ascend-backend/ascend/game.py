@@ -22,6 +22,7 @@ from ascend.net.handlers.terminal_handler import make_terminal_handler
 from ascend.space import WorldGenerator, TileGenerator
 from ascend.space.tile_grid import TILE_MAP_SIZE
 from ascend.entity import EntityManager
+from ascend.weather import WeatherEngine
 from ascend.terminal import CommandExecutor
 from ascend.time import WorldClock, GameCalendar, TICK_RATE
 from ascend.i18n import I18n
@@ -75,6 +76,7 @@ class GameEngine:
         self.i18n: I18n = I18n()
         self._executor: CommandExecutor | None = None
         self.entity_manager: EntityManager | None = None
+        self.weather_engine: WeatherEngine | None = None
         self.tile_generator: TileGenerator | None = None
         self.birth_chunk: tuple[int, int] | None = None
         self.loaded_chunks: dict[tuple[int, int], object] = {}
@@ -162,6 +164,14 @@ class GameEngine:
         # 5. 实体管理器（接入事件管线）
         self.entity_manager = EntityManager()
 
+        # 5b. 天气引擎（接入已加载 chunk 的天气基线）
+        self.weather_engine = WeatherEngine(self.clock, seed=self.seed)
+        for (cx, cy), chunk in self.loaded_chunks.items():
+            self.weather_engine.register_chunk(
+                cx, cy, chunk.annual_baseline, chunk.climate_zone,
+            )
+        logger.info("天气引擎已接入 %d 个 chunk", len(self.loaded_chunks))
+
         # 6. TCP 服务器
         self.server = GameServer(host=SERVER_HOST, port=SERVER_PORT)
         self.server.start()
@@ -225,6 +235,9 @@ class GameEngine:
         if self.calendar:
             self.calendar.shutdown()
             self.calendar = None  # type: ignore[assignment]
+        if self.weather_engine:
+            self.weather_engine.shutdown()
+            self.weather_engine = None
         self.entity_manager = None
         self.tile_generator = None
         self.loaded_chunks.clear()
