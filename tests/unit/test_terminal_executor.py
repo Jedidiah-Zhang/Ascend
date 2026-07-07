@@ -16,10 +16,10 @@ def clock():
 
 
 @pytest.fixture
-def calendar():
+def calendar(clock):
     """使用默认起始日的 GameCalendar 固件，测试后自动清理订阅。"""
     from ascend.time import GameCalendar
-    cal = GameCalendar()
+    cal = GameCalendar(clock=clock)
     yield cal
     cal.shutdown()
 

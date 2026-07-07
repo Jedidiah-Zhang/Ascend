@@ -72,7 +72,7 @@ class GameEngine:
         self.server: GameServer | None = None
         self.dispatcher: MessageDispatcher | None = None
         self.clock: WorldClock = WorldClock()
-        self.calendar: GameCalendar = GameCalendar()
+        self.calendar: GameCalendar = GameCalendar(clock=self.clock)
         self.i18n: I18n = I18n()
         self._executor: CommandExecutor | None = None
         self.entity_manager: EntityManager | None = None

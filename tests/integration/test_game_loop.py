@@ -58,7 +58,7 @@ class GameLoop:
         logger.info("══════ Ascend 游戏启动 ══════")
 
         self.clock = WorldClock()
-        self.calendar = GameCalendar()
+        self.calendar = GameCalendar(clock=self.clock)
         self.session: GameSession | None = None
 
         # 监控事件
@@ -69,12 +69,12 @@ class GameLoop:
 
     def _setup_monitors(self) -> None:
         """订阅关键事件，记录运行统计。"""
-        def on_tick(event):
+        def on_tick(game_time: int):
             if self.session:
                 self.session.tick_count += 1
                 self.session.tick_events.append({
-                    "game_time": event.data["game_time"],
-                    "speed": event.data["speed"],
+                    "game_time": game_time,
+                    "speed": self.clock.speed,
                 })
 
         def on_day_change(event):
@@ -82,7 +82,7 @@ class GameLoop:
                 self.session.day_changes.append(event.data)
             logger.info("📅 新的一天: 第 %d 天", event.data["day"])
 
-        self._unsubscribers.append(world_tree.subscribe("game_tick", on_tick))
+        self._unsubscribers.append(self.clock.on_tick(on_tick))
         self._unsubscribers.append(world_tree.subscribe("day_change", on_day_change))
 
     # ── 生命周期 ──────────────────────────────────────────────────

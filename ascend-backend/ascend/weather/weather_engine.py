@@ -1,10 +1,13 @@
 """天气引擎 — 解析算天气 + per-parameter 事件发布。
 
-天气参数每刻解析算（baseline + 季节 + 昼夜 + 大气扰动），无快照，连续变化。
+天气参数每游戏分钟解析算（baseline + 季节 + 昼夜 + 大气扰动），无快照。
 每 tick 检查各参数变化超阈值 → 发对应 temperature_change/humidity_change/
 wind_change；降水 RainSchedule 状态切换 → 发 precipitation_start/precipitation_stop。
 
 降雨仍用事件调度（RainSchedule，从年降雨量推算频率/持续/强度）。
+
+订阅 Calendar 的 minute_change 事件（而非 game_tick），分钟级更新已涵盖
+所有阈值穿越（温度日变率 ~0.5°C/h，阈值 0.3°C），无需逐 tick 计算。
 """
 
 import random
@@ -114,8 +117,9 @@ class _ChunkWeatherBaseline:
 class WeatherEngine:
     """天气引擎 — 解析算天气 + per-parameter 事件发布。
 
-    构造时订阅 game_tick；register_chunk 注册 chunk 基线 + 降雨调度；
-    每 tick 解析算各参数，变化超阈值发对应事件，降水切换发 precipitation_start/stop。
+    构造时订阅 minute_change（Calendar 发布，每游戏分钟一次）；
+    register_chunk 注册 chunk 基线 + 降雨调度；
+    每分钟解析算各参数，变化超阈值发对应事件，降水切换发 precipitation_start/stop。
 
     线程安全：由 GameEngine 后台单线程驱动，自身不做并发保护。
 
@@ -149,7 +153,7 @@ class WeatherEngine:
         self._last_season: int | None = None
         self._last_is_daytime: bool | None = None
         register_weather_schemas(self._wt)
-        self._unsub = self._wt.subscribe("game_tick", self._on_tick)
+        self._unsub = self._wt.subscribe("minute_change", self._on_minute_change)
         logger.debug("天气引擎初始化 seed=%d", seed)
 
     def register_chunk(
@@ -311,15 +315,14 @@ class WeatherEngine:
         ss = sunset_hour(day_of_year_val, latitude_deg)
         return sr <= hour < ss
 
-    def _on_tick(self, event: Event) -> None:
-        """每 tick：全局事件（季节/日出/日落）+ per-parameter 事件 + 降雨切换。"""
+    def _on_minute_change(self, event: Event) -> None:
+        """每游戏分钟：全局事件（季节/日出/日落）+ per-parameter 事件 + 降水切换。"""
         now: int = event.data["game_time"]
+        day: int = event.data["day"]
         tod = now % GAME_DAY
-        # 预计算时间维度（_compute_params 每 chunk 复用）
-        day = now // GAME_DAY + 1
         season = int(season_of(day))
         dos = day_of_season(day)
-        hour = hour_of_game_time(now)
+        hour = hour_of_game_time(now)  # 带小数小时，昼夜偏移需要精确时间
         # 全局事件（参考纬度，不 per-chunk，location=(0,0)）
         if self._last_season is not None and season != self._last_season:
             self._publish(0, 0, now, "season_change", {

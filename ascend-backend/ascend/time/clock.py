@@ -1,43 +1,27 @@
-"""世界时钟 — 驱动游戏时间推进，通过世界树发布 game_tick 和 time_skip。
+"""世界时钟 — 驱动游戏时间推进，通过直接回调通知监听者。
 
 控制接口：
     clock.tick()         — GameEngine 每帧调用，按当前 speed 推进
     clock.step()         — 强制推进 1 tick（忽略暂停/速度，调试用）
-    clock.skip(ticks)    — 瞬间跳转 N tick，发布 time_skip
+    clock.skip(ticks)    — 瞬间跳转 N tick，通知跳过回调
     clock.run_to(target) — 以当前 speed 逐 tick 模拟到目标时间
     clock.speed = 1.0    — 时间倍率（float，≥0，0.5=半速，1=正常）
 
     clock.pause()        — 暂停时间
     clock.resume()       — 恢复时间
     clock.paused         — 是否暂停（只读）
+
+回调接口：
+    clock.on_tick(cb)    — 每 tick 调用 cb(game_time:int)，返回 unsubscribe
+    clock.on_skip(cb)    — 跳转时调用 cb(skipped:int, game_time:int)
 """
 
-from ascend.world_tree import world_tree, Event, AffectedParty
+from typing import Callable
+
 from ascend.log import get_logger
 from .constants import GAME_HOUR, GAME_DAY, GAME_YEAR
 
 logger = get_logger(__name__)
-
-world_tree.register_event_schema(
-    "game_tick",
-    required={
-        "step": int,
-        "speed": (int, float),
-        "tick_count": int,
-        "game_time": int,
-    },
-    description="每 tick 发布一次，携带当前世界时间（tick 计数）",
-)
-world_tree.register_event_schema(
-    "time_skip",
-    required={
-        "skipped": int,
-        "game_time": int,
-        "speed": (int, float),
-        "tick_count": int,
-    },
-    description="跳转时发布，通知模块时间发生跃迁",
-)
 
 
 class WorldClock:
@@ -46,8 +30,12 @@ class WorldClock:
     以 tick 为原子时间单位。tick() 每帧由 GameEngine 调用，
     按当前 speed 倍率推进；暂停时 tick() 空转不推进。
 
+    tick 不经过 WorldTree——高频时钟信号通过直接回调分发，
+    日历等订阅者检测到分钟/小时/天边界后自行发布语义事件。
+
     用法:
         clock = WorldClock()
+        unsub = clock.on_tick(lambda t: print(f"tick {t}"))
         clock.tick()                    # 每帧
         clock.speed = 2.0               # 双倍速
         clock.pause()
@@ -57,6 +45,11 @@ class WorldClock:
     """
 
     def __init__(self, epoch: int | None = None) -> None:
+        """初始化时钟。
+
+        Args:
+            epoch: 起始游戏时间（tick）。None=默认 06:00。
+        """
         if epoch is None:
             epoch = 6 * GAME_HOUR
         self._time: int = epoch
@@ -64,6 +57,48 @@ class WorldClock:
         self._accumulator: float = 0.0
         self._paused: bool = False
         self._tick_count: int = 0
+        self._on_tick_callbacks: list[Callable[[int], None]] = []
+        self._on_skip_callbacks: list[Callable[[int, int], None]] = []
+
+    # ── 回调注册 ──────────────────────────────────────────
+
+    def on_tick(self, callback: Callable[[int], None]) -> Callable[[], None]:
+        """每 tick 调用 callback(game_time)。
+
+        线程不安全：请在主线程注册。返回 unsubscribe 函数。
+
+        Args:
+            callback: 签名为 (game_time: int) -> None。
+
+        Returns:
+            取消订阅的可调用对象，幂等。
+        """
+        self._on_tick_callbacks.append(callback)
+        def _unsub() -> None:
+            try:
+                self._on_tick_callbacks.remove(callback)
+            except ValueError:
+                pass
+        return _unsub
+
+    def on_skip(self, callback: Callable[[int, int], None]) -> Callable[[], None]:
+        """跳转时调用 callback(skipped_ticks, game_time)。
+
+        Args:
+            callback: 签名为 (skipped: int, game_time: int) -> None。
+
+        Returns:
+            取消订阅的可调用对象，幂等。
+        """
+        self._on_skip_callbacks.append(callback)
+        def _unsub() -> None:
+            try:
+                self._on_skip_callbacks.remove(callback)
+            except ValueError:
+                pass
+        return _unsub
+
+    # ── 属性 ──────────────────────────────────────────────
 
     @property
     def time(self) -> int:
@@ -90,9 +125,9 @@ class WorldClock:
     def tick_count(self) -> int:
         """累计时间推进操作次数（每次 tick/step/skip 调用 +1）。
 
-        注意：这是"事件发布次数"，不是"世界经历的 tick 数"。
-        speed=2 时一次 tick() 推进 2 tick 但只 +1；skip(N) 跳过 N tick
-        也只 +1。要获取世界实际经过的 tick 数请用 ``time`` 属性。
+        注意：这是"推进次数"，不是"世界经历的 tick 数"。
+        speed=2 时一次 tick() 推进 2 tick 但只 +1。
+        要获取世界实际经过的 tick 数请用 ``time`` 属性。
         """
         return self._tick_count
 
@@ -104,10 +139,12 @@ class WorldClock:
         """恢复时间推进。"""
         self._paused = False
 
+    # ── 推进 ──────────────────────────────────────────────
+
     def tick(self) -> None:
         """推进一帧。
 
-        由 GameEngine 每帧调用。暂停时或 speed≤0 时不推进也不发布事件。
+        由 GameEngine 每帧调用。暂停时或 speed≤0 时不推进。
         使用浮点累加器处理小数 speed（如 speed=0.5 时每 2 帧推进 1 tick）。
         """
         if self._paused or self._speed <= 0:
@@ -121,7 +158,13 @@ class WorldClock:
         self._accumulator -= advance
         self._time += advance
         self._tick_count += 1
-        self._publish_tick(advance)
+
+        game_time = self._time
+        for cb in self._on_tick_callbacks:
+            try:
+                cb(game_time)
+            except Exception:
+                logger.exception("tick 回调异常")
 
     def step(self) -> None:
         """强制推进恰好 1 tick，忽略暂停和 speed。
@@ -130,13 +173,18 @@ class WorldClock:
         """
         self._time += 1
         self._tick_count += 1
-        self._publish_tick(1)
+
+        game_time = self._time
+        for cb in self._on_tick_callbacks:
+            try:
+                cb(game_time)
+            except Exception:
+                logger.exception("step 回调异常")
 
     def skip(self, ticks: int) -> None:
         """瞬间跳转 N tick，不模拟中间过程。
 
-        发布 time_skip 事件，日历订阅后自行检测日/时边界并补发事件。
-        长跳、调试跳转用。
+        通知所有 on_skip 回调（如日历需要检测跨过的日/时边界）。
 
         Args:
             ticks: 要跳过的 tick 数，必须 > 0。
@@ -147,38 +195,30 @@ class WorldClock:
         if ticks <= 0:
             raise ValueError(f"跳过 tick 数必须 > 0，实际为 {ticks}")
 
+        skipped = ticks
         self._time += ticks
         self._tick_count += 1
 
-        event = Event(
-            timestamp=self._time,
-            location=(0, 0, None, None),
-            initiator_type="system",
-            initiator_id="world_clock",
-            affected=[AffectedParty("world", "subject")],
-            event_type="time_skip",
-            weight=3,
-            data={
-                "skipped": ticks,
-                "game_time": self._time,
-                "speed": self._speed,
-                "tick_count": self._tick_count,
-            },
-        )
-        world_tree.publish(event)
+        game_time = self._time
+        for cb in self._on_skip_callbacks:
+            try:
+                cb(skipped, game_time)
+            except Exception:
+                logger.exception("skip 回调异常")
+
         logger.info("跳转: +%d tick (→ %d)", ticks, self._time)
 
     def run_to(self, target: int) -> None:
         """以当前 speed 逐 tick 推进到目标时间。
 
-        期间正常发布 game_tick 事件，日历等模块正常运作。
+        每个中间 tick 都触发 on_tick 回调，日历等模块正常运作。
         用于睡眠、快速旅行等需要中间事件的场景。
 
         Args:
             target: 目标时间（tick 数），必须大于当前时间。
 
         Raises:
-            ValueError: target 在过去，或 speed ≤ 0（会导致死循环）。
+            ValueError: target 在过去，或 speed ≤ 0。
         """
         if target <= self._time:
             raise ValueError(
@@ -206,26 +246,6 @@ class WorldClock:
 
     def game_years(self) -> float:
         return self._time / GAME_YEAR
-
-    # ── 内部 ──────────────────────────────────────────
-
-    def _publish_tick(self, step: int) -> None:
-        event = Event(
-            timestamp=self._time,
-            location=(0, 0, None, None),
-            initiator_type="system",
-            initiator_id="world_clock",
-            affected=[AffectedParty("world", "subject")],
-            event_type="game_tick",
-            weight=1,
-            data={
-                "step": step,
-                "speed": self._speed,
-                "tick_count": self._tick_count,
-                "game_time": self._time,
-            },
-        )
-        world_tree.publish(event)
 
     def __repr__(self) -> str:
         state = "paused" if self._paused else f"x{self._speed:.1f}"
