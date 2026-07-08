@@ -53,7 +53,7 @@ class GameConsole:
         quiet_console()
 
         self.clock = WorldClock()
-        self.calendar = GameCalendar()
+        self.calendar = GameCalendar(clock=self.clock)
         self._running = False
         self._start_real_time: float = 0.0
         self._thread: threading.Thread | None = None
