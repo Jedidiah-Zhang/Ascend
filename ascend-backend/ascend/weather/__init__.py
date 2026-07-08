@@ -22,6 +22,7 @@ tile 级天气通过双线性插值运行时计算，保证跨 chunk 平滑。
 
 from .atmosphere import AtmosphereField
 from .events import register_weather_schemas
+from .weather_modifier import ModifierEvent, ModifierSchedule, ModifierConfig, WEATHER_MODIFIERS
 from .rain_events import RainEvent, RainSchedule, intensity_at, mean_interval_hours
 from .season import Season
 from .weather_engine import WeatherEngine

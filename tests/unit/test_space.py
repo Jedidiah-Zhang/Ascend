@@ -221,7 +221,6 @@ class TestWeatherParams:
             sea_level_temp=20.0,
             rainfall=1000.0,
             climate=ClimateZone.TEMPERATE_FOREST,
-            sunshine_noise=0.0,
             humidity_noise=0.0,
             wind_noise=0.0,
         )
@@ -232,18 +231,17 @@ class TestWeatherParams:
         assert 45.0 <= w.humidity <= 80.0
 
     def test_annual_baseline_uses_template_ranges(self):
-        """annual_baseline 使用 ClimateTemplate 区间。"""
+        """annual_baseline 使用 ClimateTemplate 区间生成 humidity/wind；sunshine 固定 12.0（天文）。"""
         w = annual_baseline(
             altitude=0.0,
             sea_level_temp=28.0,
             rainfall=2000.0,
             climate=ClimateZone.EQUATORIAL_RAINFOREST,
-            sunshine_noise=1.0,
             humidity_noise=1.0,
             wind_noise=1.0,
         )
         tmpl = get_climate_template(ClimateZone.EQUATORIAL_RAINFOREST)
-        assert w.sunshine == pytest.approx(tmpl.sunshine_range[1])
+        assert w.sunshine == 12.0
         assert w.humidity == pytest.approx(tmpl.humidity_range[1])
         assert w.wind_speed == pytest.approx(tmpl.wind_speed_range[1])
 

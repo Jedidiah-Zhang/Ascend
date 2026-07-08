@@ -1,18 +1,19 @@
 """天气事件 schema 注册 — per-parameter 事件（什么变了发什么）。
 
-7 个事件：
-  - temperature_change：温度变化超阈值（含 season 元数据）
-  - humidity_change：湿度变化超阈值
-  - wind_change：风速变化超阈值
-  - sunshine_change：日照时长变化超阈值（随季节+纬度浮动）
-  - precipitation_start：降水开始（RainSchedule 事件进入区间），含 precip_type
-  - precipitation_stop：降水停止（RainSchedule 事件结束）
-  - season_change / sunrise / sunset：全局季节切换 / per-chunk 昼夜切换
+10 种事件：
+  - temperature_change / humidity_change / wind_change / sunshine_change：
+      参数变化超阈值
+  - precipitation_start / precipitation_stop：降雨事件切换
+  - cold_snap_start / cold_snap_stop：寒潮事件切换
+  - heat_wave_start / heat_wave_stop：热浪事件切换
+  - storm_start / storm_stop：暴风雨事件切换
+  - season_change / sunrise / sunset：全局季节 / per-chunk 昼夜
 
 导入此模块即向 world_tree 单例注册。WeatherEngine 构造时也会在注入实例注册。
 """
 
 from ascend.world_tree import world_tree
+from .weather_modifier import WEATHER_MODIFIERS
 
 
 def register_weather_schemas(wt) -> None:
@@ -66,6 +67,18 @@ def register_weather_schemas(wt) -> None:
         description="日落时发布（per-chunk，用 chunk 纬度算昼夜切换）。"
                     "daylight_hours 为当日天文日照时长（小时/天）。",
     )
+    # 天气修改器事件 schema（从 WEATHER_MODIFIERS 注册表自动生成）
+    for config in WEATHER_MODIFIERS.values():
+        wt.register_event_schema(
+            f"{config.type_name}_start",
+            required=config.start_schema,
+            description=f"{config.type_name} 开始时发布。",
+        )
+        wt.register_event_schema(
+            f"{config.type_name}_stop",
+            required={"time_of_day": int},
+            description=f"{config.type_name} 停止时发布。",
+        )
 
 
 # 单例注册（生产环境用 world_tree 单例时生效）

@@ -102,7 +102,6 @@ class ClimateTemplate:
 
     Attributes:
         climate: 对应的 ClimateZone。
-        sunshine_range: 日照时长区间 (小时/天)。
         humidity_range: 相对湿度区间 (%)。
         wind_speed_range: 风速区间 (m/s)。
         seasonality: 季节性模式，供 WeatherEngine 选择湿度季节曲线形状。
@@ -110,7 +109,6 @@ class ClimateTemplate:
     """
 
     climate: ClimateZone
-    sunshine_range: tuple[float, float]
     humidity_range: tuple[float, float]
     wind_speed_range: tuple[float, float]
     seasonality: SeasonalityMode = SeasonalityMode.NONE
@@ -122,7 +120,6 @@ class ClimateTemplate:
 _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
     ClimateZone.EQUATORIAL_RAINFOREST: ClimateTemplate(
         climate=ClimateZone.EQUATORIAL_RAINFOREST,
-        sunshine_range=(10.0, 14.0),
         humidity_range=(75.0, 95.0),
         wind_speed_range=(0.0, 6.0),
         seasonality=SeasonalityMode.NONE,
@@ -130,7 +127,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
     ),
     ClimateZone.TROPICAL_SAVANNA: ClimateTemplate(
         climate=ClimateZone.TROPICAL_SAVANNA,
-        sunshine_range=(9.0, 13.0),
         humidity_range=(40.0, 75.0),
         wind_speed_range=(1.0, 8.0),
         seasonality=SeasonalityMode.MONSOON,
@@ -138,7 +134,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
     ),
     ClimateZone.DESERT: ClimateTemplate(
         climate=ClimateZone.DESERT,
-        sunshine_range=(10.0, 14.0),
         humidity_range=(5.0, 30.0),
         wind_speed_range=(2.0, 15.0),
         seasonality=SeasonalityMode.NONE,
@@ -146,7 +141,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
     ),
     ClimateZone.STEPPE: ClimateTemplate(
         climate=ClimateZone.STEPPE,
-        sunshine_range=(9.0, 13.0),
         humidity_range=(20.0, 50.0),
         wind_speed_range=(2.0, 12.0),
         seasonality=SeasonalityMode.FOUR_SEASON,
@@ -154,7 +148,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
     ),
     ClimateZone.TEMPERATE_FOREST: ClimateTemplate(
         climate=ClimateZone.TEMPERATE_FOREST,
-        sunshine_range=(8.0, 16.0),
         humidity_range=(45.0, 80.0),
         wind_speed_range=(0.0, 12.0),
         seasonality=SeasonalityMode.FOUR_SEASON,
@@ -162,7 +155,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
     ),
     ClimateZone.SUBARCTIC_TAIGA: ClimateTemplate(
         climate=ClimateZone.SUBARCTIC_TAIGA,
-        sunshine_range=(4.0, 14.0),
         humidity_range=(40.0, 75.0),
         wind_speed_range=(2.0, 15.0),
         seasonality=SeasonalityMode.POLAR,
@@ -170,7 +162,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
     ),
     ClimateZone.POLAR_TUNDRA: ClimateTemplate(
         climate=ClimateZone.POLAR_TUNDRA,
-        sunshine_range=(2.0, 12.0),
         humidity_range=(30.0, 70.0),
         wind_speed_range=(2.0, 20.0),
         seasonality=SeasonalityMode.POLAR,
@@ -178,7 +169,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
     ),
     ClimateZone.ALPINE: ClimateTemplate(
         climate=ClimateZone.ALPINE,
-        sunshine_range=(6.0, 14.0),
         humidity_range=(30.0, 70.0),
         wind_speed_range=(3.0, 25.0),
         seasonality=SeasonalityMode.ALPINE,
@@ -360,21 +350,20 @@ def annual_baseline(
     rainfall: float,
     climate: ClimateZone,
     *,
-    sunshine_noise: float = 0.0,
     humidity_noise: float = 0.0,
     wind_noise: float = 0.0,
 ) -> WeatherParams:
     """组装完整的年均基线气象参数。
 
-    温度和降雨由物理推导得出，日照/湿度/风速
+    温度和降雨由物理推导得出，湿度/风速
     从气候档位模板的区间表中用噪声插值。
+    日照固定为 12.0（天文年均，季节变化由天气引擎单独处理）。
 
     Args:
         altitude: 海拔 (m)。
         sea_level_temp: 海平面温度 (°C)。
         rainfall: 年降雨量 (mm)。
         climate: 气候档位。
-        sunshine_noise: 日照噪声 [-1, 1]。
         humidity_noise: 湿度噪声 [-1, 1]。
         wind_noise: 风速噪声 [-1, 1]。
 
@@ -394,7 +383,7 @@ def annual_baseline(
     return WeatherParams(
         temperature=temperature,
         rainfall=rainfall,
-        sunshine=_derive(tmpl.sunshine_range, sunshine_noise, "sunshine"),
+        sunshine=12.0,
         altitude=altitude,
         humidity=_derive(tmpl.humidity_range, humidity_noise, "humidity"),
         wind_speed=_derive(tmpl.wind_speed_range, wind_noise, "wind_speed"),

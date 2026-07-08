@@ -80,16 +80,15 @@ class WorldGenerator:
             for i in range(n_phases)
         ]
 
-        # 6 个噪声通道（海拔改用构造模拟）
+        # 5 个噪声通道（海拔改用构造模拟，日照固定天文）
         self._noise_latitude = PerlinNoise(seed + 200)
         self._noise_rainfall = PerlinNoise(seed + 300)
-        self._noise_sunshine = PerlinNoise(seed + 400)
         self._noise_humidity = PerlinNoise(seed + 500)
         self._noise_wind = PerlinNoise(seed + 600)
         # 次级噪声（群系细分用）
         self._noise_moisture = PerlinNoise(seed + 700)
 
-        logger.info("WorldGenerator 就绪: seed=%d, 构造海拔 + 6 噪声通道", seed)
+        logger.info("WorldGenerator 就绪: seed=%d, 构造海拔 + 5 噪声通道", seed)
 
     def __repr__(self) -> str:
         return f"WorldGenerator(seed={self._seed})"
@@ -265,7 +264,6 @@ class WorldGenerator:
             sea_level_temp=sea_temp,
             rainfall=rainfall,
             climate=climate,
-            sunshine_noise=self._sample_derived_noise(self._noise_sunshine, cx, cy, 3),
             humidity_noise=self._sample_derived_noise(self._noise_humidity, cx, cy, 4),
             wind_noise=self._sample_derived_noise(self._noise_wind, cx, cy, 5),
         )

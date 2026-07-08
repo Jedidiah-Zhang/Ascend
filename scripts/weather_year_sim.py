@@ -75,11 +75,17 @@ def run(seed: int, fraction: float) -> dict:
         weather.register_chunk(cx, cy, chunk.annual_baseline, chunk.climate_zone, chunk.sea_level_temp)
     print(f"── 天气引擎接入 {len(loaded)} chunk")
 
+    # 启用世界树内存裁剪（避免长模拟 OOM）
+    world_tree.configure(max_memory_events=100_000)
+
     # ── 4. 订阅天气事件 ─────────────────────────────
     collected: dict[str, list] = defaultdict(list)
     event_types = [
         "temperature_change", "humidity_change", "wind_change", "sunshine_change",
         "precipitation_start", "precipitation_stop",
+        "cold_snap_start", "cold_snap_stop",
+        "heat_wave_start", "heat_wave_stop",
+        "storm_start", "storm_stop",
         "season_change", "sunrise", "sunset",
     ]
     for ev_type in event_types:
@@ -198,6 +204,13 @@ def print_report(r: dict) -> None:
     print(f"  start: {r['precip_starts']}  stop: {r['precip_stops']}  "
           f"(diff={abs(r['precip_starts'] - r['precip_stops'])})")
     print(f"  雪事件: {r['snow_count']}")
+
+    print(f"\n── 极端天气 ──")
+    for et in ("cold_snap", "heat_wave", "storm"):
+        starts = counts.get(f"{et}_start", 0)
+        stops = counts.get(f"{et}_stop", 0)
+        print(f"  {et}: start={starts}  stop={stops}  "
+              f"({'✓' if starts == stops else '⚠ diff=' + str(abs(starts - stops))})")
 
     issues = []
     if abs(r['precip_starts'] - r['precip_stops']) > 2:

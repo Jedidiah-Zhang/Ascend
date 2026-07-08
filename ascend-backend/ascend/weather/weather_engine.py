@@ -38,6 +38,8 @@ from .diurnal import (
     sunrise_hour, sunset_hour, daylight_hours, hour_of_game_time,
 )
 from .events import register_weather_schemas
+from .weather_modifier import ModifierSchedule, WEATHER_MODIFIERS
+from .weather_modifier import MODIFIER_FORECAST_DEPTH, MODIFIER_REPLENISH_THRESHOLD
 from .rain_events import RainSchedule
 from .season import season_of, day_of_season, seasonal_temp_offset, seasonal_humidity_offset
 from .weather_field import WeatherField
@@ -156,10 +158,8 @@ class _ChunkWeatherBaseline:
         diurnal_amp: 昼夜温度振幅 (°C)，= seasonal_amp × DIURNAL_TO_SEASONAL_RATIO。
         humidity_seasonal_amp: 季节湿度振幅 (pp)，= seasonal_amp × HUMIDITY_SEASONAL_SCALE。
         humidity_diurnal_amp: 昼夜湿度振幅 (pp)，= diurnal_amp × HUMIDITY_DIURNAL_SCALE。
-        sunshine_seasonal_amp: 日照季节振幅 (小时)，= (夏至日照 - 冬至日照) / 2，
-            由该 chunk 纬度的天文日照季节差算出。
         seasonality: 季节性模式（决定湿度曲线形状 — 余弦 vs 季风阶梯）。
-        latitude: 纬度 (°)，用于日出/日落时间计算。
+        latitude: 纬度 (°)，用于日出/日落时间计算 + 日照时长计算。
     """
 
     altitude: float
@@ -172,7 +172,6 @@ class _ChunkWeatherBaseline:
     diurnal_amp: float
     humidity_seasonal_amp: float
     humidity_diurnal_amp: float
-    sunshine_seasonal_amp: float
     seasonality: SeasonalityMode
     latitude: float
 
@@ -213,6 +212,7 @@ class WeatherEngine:
         self._atmosphere = AtmosphereField(seed=seed)
         self._fields: dict[tuple[int, int], WeatherField] = {}
         self._rain_schedules: dict[tuple[int, int], RainSchedule] = {}
+        self._modifier_schedules: dict[tuple[int, int, str], ModifierSchedule] = {}
         self._last_season: int | None = None
         register_weather_schemas(self._wt)
         self._unsub = self._wt.subscribe("minute_change", self._on_minute_change)
@@ -244,11 +244,6 @@ class WeatherEngine:
         humidity_seasonal_amp = seasonal_amp * HUMIDITY_SEASONAL_SCALE
         humidity_diurnal_amp = diurnal_amp * HUMIDITY_DIURNAL_SCALE
         latitude = _derive_latitude(sea_level_temp)
-        # 日照季节振幅 = 该纬度夏至日照与冬至日照之差的一半
-        # 夏至 day_of_year=135（夏季中点），冬至=315（冬季中点）
-        dl_summer = daylight_hours(135, latitude)
-        dl_winter = daylight_hours(315, latitude)
-        sunshine_seasonal_amp = (dl_summer - dl_winter) / 2.0
         bl = _ChunkWeatherBaseline(
             altitude=baseline.altitude,
             sunshine=baseline.sunshine,
@@ -260,7 +255,6 @@ class WeatherEngine:
             diurnal_amp=diurnal_amp,
             humidity_seasonal_amp=humidity_seasonal_amp,
             humidity_diurnal_amp=humidity_diurnal_amp,
-            sunshine_seasonal_amp=sunshine_seasonal_amp,
             seasonality=tmpl.seasonality,
             latitude=latitude,
         )
@@ -278,6 +272,14 @@ class WeatherEngine:
         )
         self._rain_schedules[key] = rain
         self._seed_rain(rain)
+        # 天气修改器调度（每类型独立队列，仅可能发生的气候带创建）
+        for config in WEATHER_MODIFIERS.values():
+            if config.rates.get(climate, 0.0) <= 0:
+                continue
+            ext_seed = chunk_seed + hash(config.type_name) % 1000
+            ext = ModifierSchedule(random.Random(ext_seed), config, climate)
+            self._modifier_schedules[(cx, cy, config.type_name)] = ext
+            self._seed_modifier(ext)
         logger.debug("注册 chunk (%d,%d) climate=%s", cx, cy, climate)
 
     def shutdown(self) -> None:
@@ -296,7 +298,7 @@ class WeatherEngine:
         温度 = baseline + 季节偏移 + 昼夜偏移 + 大气扰动
         湿度 = baseline + 季节偏移（受 SeasonalityMode 影响）+ 昼夜偏移（逆温）+ 大气扰动
         风速 = baseline + 大气扰动
-        日照 = baseline + 季节偏移（振幅由该纬度天文日照季节差算）+ 大气扰动
+        日照 = 天文日照时长(daylight_hours) + 大气扰动
         降雨强度 = RainSchedule.intensity(now)
 
         Args:
@@ -328,6 +330,24 @@ class WeatherEngine:
             + perturb * TEMP_PERTURB_SCALE,
             *_TEMP_BOUNDS,
         )
+        # 天气修改器偏移（遍历所有类型，根据 config.effect 施加不同效果）
+        cx, cy = field.chunk_x, field.chunk_y
+        temp_extra = 0.0
+        wind_mult = 1.0
+        rain_mult = 1.0
+        for config in WEATHER_MODIFIERS.values():
+            sched = self._modifier_schedules.get((cx, cy, config.type_name))
+            if sched is None:
+                continue
+            if config.effect == "temperature":
+                temp_extra += sched.temp_offset(now)
+            elif config.effect == "multiplier":
+                m = sched.wind_rain_multiplier(now)
+                wind_mult *= m
+                rain_mult *= m
+        temperature = clamp(
+            temperature + temp_extra, *_TEMP_BOUNDS,
+        )
         humidity = clamp(
             bl.humidity + season_hum + diurnal_hum
             + perturb * HUMIDITY_PERTURB_SCALE,
@@ -336,17 +356,17 @@ class WeatherEngine:
         wind_speed = clamp(
             bl.wind_speed + perturb * WIND_PERTURB_SCALE, *_WIND_BOUNDS,
         )
-        # 日照：基线 + 季节偏移（夏至+amp冬至-amp，复用温度季节曲线相位）+ 大气扰动（云量）
-        sunshine_offset = seasonal_temp_offset(
-            season, dos, bl.sunshine_seasonal_amp,
-        )
+        wind_speed = clamp(wind_speed * wind_mult, *_WIND_BOUNDS)
+        # 日照：天文日照时长（随纬度+季节变化）+ 大气扰动（自然波动）
+        day_of_year_val = (now // GAME_DAY) % 360
+        daylight = daylight_hours(day_of_year_val, bl.latitude)
         sunshine = clamp(
-            bl.sunshine + sunshine_offset + perturb * SUNSHINE_PERTURB_SCALE,
+            daylight + perturb * SUNSHINE_PERTURB_SCALE,
             *_SUNSHINE_BOUNDS,
         )
         rain = self._rain_schedules.get((field.chunk_x, field.chunk_y))
         intensity = (
-            clamp(rain.intensity(now), *_RAIN_INTENSITY_BOUNDS)
+            clamp(rain.intensity(now) * rain_mult, *_RAIN_INTENSITY_BOUNDS)
             if rain is not None else 0.0
         )
         return WeatherParams(
@@ -376,6 +396,29 @@ class WeatherEngine:
             latest_end = rain.latest_end_tick()
             earliest = latest_end if latest_end is not None else now
             rain.push(rain.generate_next(earliest))
+
+    def _seed_modifier(self, schedule: ModifierSchedule) -> None:
+        """注册时预排 MODIFIER_FORECAST_DEPTH 个未来修改器事件并 seed_current。"""
+        now = self._clock.time
+        latest_end = now
+        for _ in range(MODIFIER_FORECAST_DEPTH):
+            event = schedule.generate_next(latest_end)
+            schedule.push(event)
+            latest_end = event.end_tick
+        schedule.seed_current(now)
+
+    def _replenish_modifier(self, key: tuple[int, int, str], now: int) -> None:
+        """裁剪过期 + 补算修改器事件到深度。"""
+        sched = self._modifier_schedules.get(key)
+        if sched is None:
+            return
+        sched.prune_before(now)
+        for _ in range(MODIFIER_FORECAST_DEPTH):
+            if not sched.needs_replenish(MODIFIER_REPLENISH_THRESHOLD):
+                break
+            latest_end = sched.latest_end_tick()
+            earliest = latest_end if latest_end is not None else now
+            sched.push(sched.generate_next(earliest))
 
     # ── 内部：tick 调度 ─────────────────────────────────────────
 
@@ -466,6 +509,20 @@ class WeatherEngine:
                     })
             # 补算降水（先裁剪过期事件）
             self._replenish_rain((cx, cy), now)
+            # 天气修改器事件（遍历 WEATHER_MODIFIERS 注册表）
+            for config in WEATHER_MODIFIERS.values():
+                sched = self._modifier_schedules.get((cx, cy, config.type_name))
+                if sched is None:
+                    continue
+                if sched.pop_due(now):
+                    if sched.is_active(now):
+                        data = sched.start_event_data(now)
+                        data["time_of_day"] = int(tod)
+                        self._publish(cx, cy, now, f"{config.type_name}_start", data)
+                    else:
+                        self._publish(cx, cy, now, f"{config.type_name}_stop",
+                                      {"time_of_day": int(tod)})
+                self._replenish_modifier((cx, cy, config.type_name), now)
 
     def _publish(
         self, cx: int, cy: int, now: int,

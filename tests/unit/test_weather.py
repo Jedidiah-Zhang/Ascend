@@ -1363,3 +1363,163 @@ class TestPerChunkDayNight:
         if (10, 0) in by_chunk:
             assert by_chunk[(10, 0)] > 22.0
         e.shutdown()
+
+
+class TestModifierSchedule:
+    """天气修改器调度测试 — ModifierSchedule 队列管理。"""
+
+    def test_construct(self):
+        from ascend.weather.weather_modifier import ModifierSchedule, WEATHER_MODIFIERS
+        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["cold_snap"], ClimateZone.TEMPERATE_FOREST)
+        assert s is not None
+
+    def test_push_and_is_active(self):
+        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
+        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["heat_wave"], ClimateZone.DESERT)
+        s.push(ModifierEvent(100, 500, "heat_wave", 1.0))
+        assert s.is_active(200)
+        assert not s.is_active(99)
+        assert not s.is_active(600)
+
+    def test_temp_offset(self):
+        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
+        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["cold_snap"], ClimateZone.SUBARCTIC_TAIGA)
+        s.push(ModifierEvent(100, 500, "cold_snap", 1.0))
+        assert s.temp_offset(200) < -10.0  # cold snap is negative
+        assert s.temp_offset(0) == 0.0
+
+    def test_heat_wave_positive_offset(self):
+        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
+        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["heat_wave"], ClimateZone.DESERT)
+        s.push(ModifierEvent(100, 500, "heat_wave", 1.0))
+        assert s.temp_offset(200) > 10.0
+
+    def test_storm_wind_multiplier(self):
+        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
+        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["storm"], ClimateZone.TEMPERATE_FOREST)
+        s.push(ModifierEvent(100, 500, "storm", 1.0))
+        assert s.wind_rain_multiplier(200) > 2.0
+        assert s.wind_rain_multiplier(0) == 1.0
+
+    def test_temp_offset_zero_for_storm(self):
+        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
+        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["storm"], ClimateZone.TROPICAL_SAVANNA)
+        s.push(ModifierEvent(100, 500, "storm", 1.0))
+        assert s.temp_offset(200) == 0.0
+
+    def test_pop_due_detects_start_and_stop(self):
+        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
+        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["cold_snap"], ClimateZone.TEMPERATE_FOREST)
+        s.seed_current(0)
+        s.push(ModifierEvent(100, 200, "cold_snap", 1.0))
+        assert s.pop_due(150)  # start
+        assert not s.pop_due(160)  # no change
+        assert s.pop_due(300)  # stop
+
+    def test_generate_next_in_future(self):
+        from ascend.weather.weather_modifier import ModifierSchedule, WEATHER_MODIFIERS
+        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["cold_snap"], ClimateZone.SUBARCTIC_TAIGA)
+        ev = s.generate_next(1000)
+        assert ev.start_tick > 1000
+        assert ev.duration > 0
+        assert 0.5 <= ev.magnitude <= 1.5
+
+    def test_prune_removes_old_events(self):
+        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
+        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["heat_wave"], ClimateZone.DESERT)
+        s.push(ModifierEvent(100, 50, "heat_wave", 1.0))
+        s.push(ModifierEvent(200, 50, "heat_wave", 1.0))
+        s.prune_before(151)
+        assert len(s) == 1
+        assert s.is_active(220)
+
+    def test_rate_zero_climate_no_events(self):
+        """热带雨林寒潮频率为 0，通过 weather_engine 确认不创建对应 schedule。"""
+        from ascend.weather.weather_engine import WeatherEngine
+        wt = WorldTree()
+        clock = WorldClock()
+        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
+        e.register_chunk(0, 0, _make_baseline(), ClimateZone.EQUATORIAL_RAINFOREST, 30.0)
+        # 热带雨林寒潮/热浪频率均为 0
+        assert (0, 0, "cold_snap") not in e._modifier_schedules
+        assert (0, 0, "heat_wave") not in e._modifier_schedules
+        # 风暴频率 > 0
+        assert (0, 0, "storm") in e._modifier_schedules
+        e.shutdown()
+
+
+class TestExtremeWeatherIntegration:
+    """天气修改器集成测试 — WeatherEngine 发布事件 + 参数偏移。"""
+
+    def test_cold_snap_affects_temperature(self):
+        """寒潮期间温度额外下降。"""
+        from ascend.weather.weather_engine import WeatherEngine
+        from ascend.weather.weather_modifier import ModifierEvent
+        wt = WorldTree()
+        events = []
+        wt.subscribe("temperature_change", lambda e: events.append(e))
+        clock = WorldClock()
+        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
+        e.register_chunk(0, 0, _make_baseline(temp=10.0), ClimateZone.SUBARCTIC_TAIGA, 0.0)
+        _publish_minute(wt, clock.time)
+        normal_temp = events[-1].data["temperature"]
+        sched = e._modifier_schedules.get((0, 0, "cold_snap"))
+        if sched:
+            sched._events.clear()
+            sched.push(ModifierEvent(0, 999999999, "cold_snap", 1.0))
+            sched.seed_current(0)
+            events.clear()
+            clock.skip(GAME_DAY)
+            _publish_minute(wt, clock.time)
+            cold_temp = events[-1].data["temperature"]
+            assert cold_temp < normal_temp - 10.0
+        e.shutdown()
+
+    def test_heat_wave_events_emitted(self):
+        """热浪状态切换发布 heat_wave_start/stop。"""
+        from ascend.weather.weather_engine import WeatherEngine
+        from ascend.weather.weather_modifier import ModifierEvent
+        wt = WorldTree()
+        events = []
+        for t in ("heat_wave_start", "heat_wave_stop"):
+            wt.subscribe(t, lambda e: events.append(e))
+        clock = WorldClock()
+        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
+        e.register_chunk(0, 0, _make_baseline(temp=25.0), ClimateZone.DESERT, 22.0)
+        _publish_minute(wt, clock.time)
+        sched = e._modifier_schedules.get((0, 0, "heat_wave"))
+        if sched:
+            sched._events.clear()
+            sched.push(ModifierEvent(1, GAME_DAY, "heat_wave", 1.0))
+            sched.seed_current(0)
+            _publish_minute(wt, clock.time)
+            assert any(ev.event_type == "heat_wave_start" for ev in events)
+            clock.skip(GAME_DAY * 2)
+            _publish_minute(wt, clock.time)
+            assert any(ev.event_type == "heat_wave_stop" for ev in events)
+        e.shutdown()
+
+    def test_storm_affects_wind_and_rain(self):
+        """风暴期间风速倍率 > 1。"""
+        from ascend.weather.weather_engine import WeatherEngine
+        from ascend.weather.weather_modifier import ModifierEvent
+        wt = WorldTree()
+        wind_events = []
+        wt.subscribe("wind_change", lambda e: wind_events.append(e))
+        clock = WorldClock()
+        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
+        e.register_chunk(0, 0, _make_baseline(wind=5.0), ClimateZone.TEMPERATE_FOREST, 15.0)
+        _publish_minute(wt, clock.time)
+        normal_wind = wind_events[-1].data["wind_speed"]
+        sched = e._modifier_schedules.get((0, 0, "storm"))
+        if sched:
+            sched._events.clear()
+            sched.push(ModifierEvent(0, 999999999, "storm", 1.0))
+            sched.seed_current(0)
+            wind_events.clear()
+            clock.skip(GAME_DAY)
+            _publish_minute(wt, clock.time)
+            if wind_events:
+                storm_wind = wind_events[-1].data["wind_speed"]
+                assert storm_wind > normal_wind * 1.5
+        e.shutdown()
