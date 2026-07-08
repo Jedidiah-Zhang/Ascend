@@ -27,14 +27,15 @@ from .constants import (
     ATMOSPHERE_RESOLUTION, ATMOSPHERE_DRIFT_RATE,
     RAIN_FORECAST_DEPTH, RAIN_REPLENISH_THRESHOLD,
     TEMP_PERTURB_SCALE, HUMIDITY_PERTURB_SCALE, WIND_PERTURB_SCALE,
+    SUNSHINE_PERTURB_SCALE,
     DIURNAL_TO_SEASONAL_RATIO,
     HUMIDITY_DIURNAL_SCALE, HUMIDITY_SEASONAL_SCALE,
     TEMP_CHANGE_THRESHOLD, HUMIDITY_CHANGE_THRESHOLD, WIND_CHANGE_THRESHOLD,
-    REFERENCE_LATITUDE,
+    SUNSHINE_CHANGE_THRESHOLD,
 )
 from .diurnal import (
     diurnal_temp_offset, diurnal_humidity_offset,
-    sunrise_hour, sunset_hour, hour_of_game_time,
+    sunrise_hour, sunset_hour, daylight_hours, hour_of_game_time,
 )
 from .events import register_weather_schemas
 from .rain_events import RainSchedule
@@ -50,17 +51,13 @@ _WIND_BOUNDS = (0.0, 50.0)
 _SUNSHINE_BOUNDS = (0.0, 24.0)
 _RAIN_INTENSITY_BOUNDS = (0.0, 100.0)  # mm/小时
 
-# 气候带 → 典型纬度（°），用于日出/日落计算
-_CLIMATE_LATITUDE: dict[ClimateZone, float] = {
-    ClimateZone.EQUATORIAL_RAINFOREST: 5.0,
-    ClimateZone.TROPICAL_SAVANNA: 18.0,
-    ClimateZone.DESERT: 25.0,
-    ClimateZone.STEPPE: 40.0,
-    ClimateZone.TEMPERATE_FOREST: 45.0,
-    ClimateZone.SUBARCTIC_TAIGA: 58.0,
-    ClimateZone.POLAR_TUNDRA: 70.0,
-    ClimateZone.ALPINE: 45.0,
-}
+# 纬度连续推导的物理参数
+# 海平面温度范围 [-5, 35]°C → 纬度 [80, 0]°
+# 海平面温度是连续场（纬度噪声推导），保证气候带交界处无纬度跳变
+_LATITUDE_T_MIN: float = -5.0   # 年均温下界（极地，lat 最大）
+_LATITUDE_T_MAX: float = 35.0   # 年均温上界（赤道，lat 最小）
+_LATITUDE_MIN: float = 0.0      # 赤道
+_LATITUDE_MAX: float = 80.0     # 极地边缘（超过 80° 极昼极夜过于极端）
 
 # SeasonalityMode → 湿度季节曲线 sharpness（0=余弦，>0=tanh 阶梯）
 _SEASONALITY_HUMIDITY_SHARPNESS: dict[SeasonalityMode, float] = {
@@ -85,6 +82,68 @@ _RAIN_PROFILE: dict[ClimateZone, tuple[float, float, float, float]] = {
 }
 
 
+# 季节振幅连续推导的物理参数
+_SEASONAL_AMP_T_MIN: float = -5.0    # 年均温下界（极地，amp 最大）
+_SEASONAL_AMP_T_MAX: float = 35.0    # 年均温上界（赤道，amp 最小）
+_SEASONAL_AMP_MAX: float = 28.0      # 低温端振幅
+_SEASONAL_AMP_MIN: float = 2.0       # 高温端振幅
+_SEASONAL_AMP_R_REF: float = 2000.0  # 降雨参考值（海洋调节，bonus=0）
+_SEASONAL_AMP_R_BONUS: float = 4.0   # 干旱区大陆性修正幅度
+_SEASONAL_AMP_BOUNDS: tuple[float, float] = (1.0, 30.0)
+
+
+def _derive_seasonal_amp(temperature: float, rainfall: float) -> float:
+    """从年均温 + 年降雨连续推导季节温度振幅 (°C)。
+
+    年均温越低 → 振幅越大（极地 ~28, 赤道 ~2）；
+    干旱区（低降雨）大陆性气候 → 振幅偏大（+最多 4°C）；
+    高降雨区海洋调节 → 振幅偏小（-最多 2°C）。
+
+    保证空间连续：相邻 chunk 的 baseline 温度/降雨接近 →
+    seasonal_amp 接近，无气候带边界跳变。
+
+    Args:
+        temperature: 年均温度 (°C)。
+        rainfall: 年降雨量 (mm/年)。
+
+    Returns:
+        季节温度振幅 (°C)，钳制在 [1, 30]。
+    """
+    t_ratio = (temperature - _SEASONAL_AMP_T_MIN) / (
+        _SEASONAL_AMP_T_MAX - _SEASONAL_AMP_T_MIN
+    )
+    base_amp = _SEASONAL_AMP_MAX - t_ratio * (
+        _SEASONAL_AMP_MAX - _SEASONAL_AMP_MIN
+    )
+    rain_factor = clamp(
+        (_SEASONAL_AMP_R_REF - rainfall) / _SEASONAL_AMP_R_REF,
+        -0.5, 1.0,
+    )
+    rain_bonus = rain_factor * _SEASONAL_AMP_R_BONUS
+    return clamp(base_amp + rain_bonus, *_SEASONAL_AMP_BOUNDS)
+
+
+def _derive_latitude(sea_level_temp: float) -> float:
+    """从海平面温度连续推导纬度 (°)。
+
+    海平面温度是连续场（纬度噪声推导），不受海拔/气候档位离散判定影响，
+    保证气候带交界处纬度连续 → 日照季节振幅 + 日出/日落时刻无跳变。
+
+    线性映射：sea_temp=-5（极地）→ lat=80，sea_temp=35（赤道）→ lat=0。
+
+    Args:
+        sea_level_temp: 海平面年均温度 (°C)。
+
+    Returns:
+        纬度 (°)，范围 [0, 80]。
+    """
+    t_ratio = (sea_level_temp - _LATITUDE_T_MIN) / (
+        _LATITUDE_T_MAX - _LATITUDE_T_MIN
+    )
+    lat = _LATITUDE_MAX - t_ratio * (_LATITUDE_MAX - _LATITUDE_MIN)
+    return clamp(lat, _LATITUDE_MIN, _LATITUDE_MAX)
+
+
 @dataclass(slots=True)
 class _ChunkWeatherBaseline:
     """chunk 的天气基线（从 annual_baseline + climate 派生，固定不变）。
@@ -92,10 +151,13 @@ class _ChunkWeatherBaseline:
     Attributes:
         altitude/sunshine/temperature/humidity/wind_speed/rainfall:
             年均基线值（rainfall 为 mm/年，用于推算降雨事件频率）。
-        seasonal_amp: 季节温度振幅 (°C)，取气候模板振幅区间上界。
+        seasonal_amp: 季节温度振幅 (°C)，从年均温+年降雨连续推导（_derive_seasonal_amp），
+            保证气候带交界处无跳变。
         diurnal_amp: 昼夜温度振幅 (°C)，= seasonal_amp × DIURNAL_TO_SEASONAL_RATIO。
         humidity_seasonal_amp: 季节湿度振幅 (pp)，= seasonal_amp × HUMIDITY_SEASONAL_SCALE。
         humidity_diurnal_amp: 昼夜湿度振幅 (pp)，= diurnal_amp × HUMIDITY_DIURNAL_SCALE。
+        sunshine_seasonal_amp: 日照季节振幅 (小时)，= (夏至日照 - 冬至日照) / 2，
+            由该 chunk 纬度的天文日照季节差算出。
         seasonality: 季节性模式（决定湿度曲线形状 — 余弦 vs 季风阶梯）。
         latitude: 纬度 (°)，用于日出/日落时间计算。
     """
@@ -110,6 +172,7 @@ class _ChunkWeatherBaseline:
     diurnal_amp: float
     humidity_seasonal_amp: float
     humidity_diurnal_amp: float
+    sunshine_seasonal_amp: float
     seasonality: SeasonalityMode
     latitude: float
 
@@ -151,7 +214,6 @@ class WeatherEngine:
         self._fields: dict[tuple[int, int], WeatherField] = {}
         self._rain_schedules: dict[tuple[int, int], RainSchedule] = {}
         self._last_season: int | None = None
-        self._last_is_daytime: bool | None = None
         register_weather_schemas(self._wt)
         self._unsub = self._wt.subscribe("minute_change", self._on_minute_change)
         logger.debug("天气引擎初始化 seed=%d", seed)
@@ -162,6 +224,7 @@ class WeatherEngine:
         cy: int,
         baseline: WeatherParams,
         climate: ClimateZone,
+        sea_level_temp: float,
     ) -> None:
         """注册 chunk 的天气基线 + 降雨调度。
 
@@ -169,15 +232,23 @@ class WeatherEngine:
             cx: chunk X 坐标。
             cy: chunk Y 坐标。
             baseline: chunk 年均气象基线（来自 ChunkData.annual_baseline）。
-            climate: chunk 气候档位（取季节振幅 + 降雨档位）。
+            climate: chunk 气候档位（取季节性模式 + 降雨档位）。
+            sea_level_temp: chunk 海平面年均温度 (°C)（来自 ChunkData.sea_level_temp），
+                用于连续推导纬度（日照季节振幅 + 日出/日落）。
         """
         tmpl = get_climate_template(climate)
-        amp_lo, amp_hi = tmpl.seasonal_temp_amplitude
-        seasonal_amp = amp_hi
+        seasonal_amp = _derive_seasonal_amp(
+            baseline.temperature, baseline.rainfall,
+        )
         diurnal_amp = seasonal_amp * DIURNAL_TO_SEASONAL_RATIO
         humidity_seasonal_amp = seasonal_amp * HUMIDITY_SEASONAL_SCALE
         humidity_diurnal_amp = diurnal_amp * HUMIDITY_DIURNAL_SCALE
-        latitude = _CLIMATE_LATITUDE.get(climate, 45.0)
+        latitude = _derive_latitude(sea_level_temp)
+        # 日照季节振幅 = 该纬度夏至日照与冬至日照之差的一半
+        # 夏至 day_of_year=135（夏季中点），冬至=315（冬季中点）
+        dl_summer = daylight_hours(135, latitude)
+        dl_winter = daylight_hours(315, latitude)
+        sunshine_seasonal_amp = (dl_summer - dl_winter) / 2.0
         bl = _ChunkWeatherBaseline(
             altitude=baseline.altitude,
             sunshine=baseline.sunshine,
@@ -189,6 +260,7 @@ class WeatherEngine:
             diurnal_amp=diurnal_amp,
             humidity_seasonal_amp=humidity_seasonal_amp,
             humidity_diurnal_amp=humidity_diurnal_amp,
+            sunshine_seasonal_amp=sunshine_seasonal_amp,
             seasonality=tmpl.seasonality,
             latitude=latitude,
         )
@@ -224,6 +296,7 @@ class WeatherEngine:
         温度 = baseline + 季节偏移 + 昼夜偏移 + 大气扰动
         湿度 = baseline + 季节偏移（受 SeasonalityMode 影响）+ 昼夜偏移（逆温）+ 大气扰动
         风速 = baseline + 大气扰动
+        日照 = baseline + 季节偏移（振幅由该纬度天文日照季节差算）+ 大气扰动
         降雨强度 = RainSchedule.intensity(now)
 
         Args:
@@ -263,7 +336,14 @@ class WeatherEngine:
         wind_speed = clamp(
             bl.wind_speed + perturb * WIND_PERTURB_SCALE, *_WIND_BOUNDS,
         )
-        sunshine = clamp(bl.sunshine, *_SUNSHINE_BOUNDS)
+        # 日照：基线 + 季节偏移（夏至+amp冬至-amp，复用温度季节曲线相位）+ 大气扰动（云量）
+        sunshine_offset = seasonal_temp_offset(
+            season, dos, bl.sunshine_seasonal_amp,
+        )
+        sunshine = clamp(
+            bl.sunshine + sunshine_offset + perturb * SUNSHINE_PERTURB_SCALE,
+            *_SUNSHINE_BOUNDS,
+        )
         rain = self._rain_schedules.get((field.chunk_x, field.chunk_y))
         intensity = (
             clamp(rain.intensity(now), *_RAIN_INTENSITY_BOUNDS)
@@ -299,42 +379,21 @@ class WeatherEngine:
 
     # ── 内部：tick 调度 ─────────────────────────────────────────
 
-    def _is_daytime(self, now: int, latitude_deg: float) -> bool:
-        """当前是否白天（基于日出/日落时间 + 纬度）。
-
-        Args:
-            now: 当前 tick。
-            latitude_deg: 纬度（°）。
-
-        Returns:
-            True 如果 SUNRISE <= hour < SUNSET。
-        """
-        day_of_year_val = (now // GAME_DAY) % 360
-        hour = hour_of_game_time(now)
-        sr = sunrise_hour(day_of_year_val, latitude_deg)
-        ss = sunset_hour(day_of_year_val, latitude_deg)
-        return sr <= hour < ss
-
     def _on_minute_change(self, event: Event) -> None:
-        """每游戏分钟：全局事件（季节/日出/日落）+ per-parameter 事件 + 降水切换。"""
+        """每游戏分钟：全局 season_change + per-chunk 参数事件 + per-chunk 昼夜切换。"""
         now: int = event.data["game_time"]
         day: int = event.data["day"]
         tod = now % GAME_DAY
         season = int(season_of(day))
         dos = day_of_season(day)
         hour = hour_of_game_time(now)  # 带小数小时，昼夜偏移需要精确时间
-        # 全局事件（参考纬度，不 per-chunk，location=(0,0)）
+        day_of_year_val = (now // GAME_DAY) % 360
+        # 全局季节事件（location=(0,0)，不 per-chunk）
         if self._last_season is not None and season != self._last_season:
             self._publish(0, 0, now, "season_change", {
                 "season": season, "time_of_day": int(tod),
             })
         self._last_season = season
-        is_day = self._is_daytime(now, REFERENCE_LATITUDE)
-        if self._last_is_daytime is not None and is_day != self._last_is_daytime:
-            self._publish(0, 0, now, "sunrise" if is_day else "sunset", {
-                "time_of_day": int(tod),
-            })
-        self._last_is_daytime = is_day
         # per-chunk 事件
         for (cx, cy), field in self._fields.items():
             params = self._compute_params(field, now, day, season, dos, hour)
@@ -369,6 +428,28 @@ class WeatherEngine:
                     "time_of_day": int(tod),
                 })
                 field.last_wind = params.wind_speed
+            # 日照
+            if (field.last_sunshine is None
+                    or abs(params.sunshine - field.last_sunshine)
+                    >= SUNSHINE_CHANGE_THRESHOLD):
+                self._publish(cx, cy, now, "sunshine_change", {
+                    "sunshine": float(params.sunshine),
+                    "season": season,
+                    "time_of_day": int(tod),
+                })
+                field.last_sunshine = params.sunshine
+            # per-chunk 昼夜切换（用 chunk 自己的纬度）
+            sr = sunrise_hour(day_of_year_val, field.baseline.latitude)
+            ss = sunset_hour(day_of_year_val, field.baseline.latitude)
+            is_day = sr <= hour < ss
+            if (field.last_is_daytime is not None
+                    and is_day != field.last_is_daytime):
+                dl = ss - sr
+                self._publish(cx, cy, now, "sunrise" if is_day else "sunset", {
+                    "time_of_day": int(tod),
+                    "daylight_hours": float(dl),
+                })
+            field.last_is_daytime = is_day
             # 降水
             rain = self._rain_schedules.get((cx, cy))
             if rain is not None and rain.pop_due(now):

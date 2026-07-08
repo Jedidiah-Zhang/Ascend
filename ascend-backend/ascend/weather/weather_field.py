@@ -13,11 +13,13 @@ class WeatherField:
     Attributes:
         chunk_x/chunk_y: chunk 坐标。
         baseline: _ChunkWeatherBaseline 实例（年均基线 + 振幅）。
-        last_temp/last_humidity/last_wind: 上次发布的参数值（None=未发布过）。
+        last_temp/last_humidity/last_wind/last_sunshine: 上次发布的参数值（None=未发布过）。
+        last_is_daytime: 上次的昼夜状态（None=未初始化），用于 per-chunk sunrise/sunset 检测。
     """
 
     __slots__ = ("chunk_x", "chunk_y", "baseline",
-                 "last_temp", "last_humidity", "last_wind")
+                 "last_temp", "last_humidity", "last_wind", "last_sunshine",
+                 "last_is_daytime")
 
     def __init__(self, chunk_x: int, chunk_y: int, baseline) -> None:
         """初始化容器。
@@ -33,3 +35,5 @@ class WeatherField:
         self.last_temp: float | None = None
         self.last_humidity: float | None = None
         self.last_wind: float | None = None
+        self.last_sunshine: float | None = None
+        self.last_is_daytime: bool | None = None

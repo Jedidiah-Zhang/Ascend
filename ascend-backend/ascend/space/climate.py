@@ -6,8 +6,8 @@
 
 设计要点：
   - 气候档位是**纯静态判定**（年均温 + 年降雨 + 海拔），不依赖季节模块。
-  - 气候是季节系统的**输入**（ClimateTemplate 携带 seasonality 预留字段），
-    而非季节的输出。
+  - 气候是季节系统的**输入**（ClimateTemplate 携带 seasonality 字段，
+    供 WeatherEngine 选择湿度季节曲线形状 — 余弦 vs 季风阶梯）。
   - 连续气候属性（温度/降雨/海拔）按 100m 场存储，chunk/tile 级双线性插值，
     避免离散档位在 chunk 边界跳变。ClimateZone 仅作派生标签（UI 显示 + 群系映射中间量）。
 
@@ -60,8 +60,8 @@ class ClimateZone(IntEnum):
 class SeasonalityMode(IntEnum):
     """季节性模式 — 气候档位的季节特征标签。
 
-    当前仅作为 ClimateTemplate 的元数据存储，不被气候模块自身计算。
-    未来季节系统据此选择季节曲线（正弦/双峰/极夜）。
+    作为 ClimateTemplate 的元数据存储，供 WeatherEngine 选择湿度季节曲线
+    形状（标准余弦 vs 季风阶梯化）。
     """
 
     NONE = 0          # 无明显季节（赤道常年）
@@ -105,8 +105,7 @@ class ClimateTemplate:
         sunshine_range: 日照时长区间 (小时/天)。
         humidity_range: 相对湿度区间 (%)。
         wind_speed_range: 风速区间 (m/s)。
-        seasonality: 季节性模式（预留，当前不算）。
-        seasonal_temp_amplitude: 温度季节振幅范围 (°C)（预留，当前不算）。
+        seasonality: 季节性模式，供 WeatherEngine 选择湿度季节曲线形状。
         display_color: UI 显示色（hex），在此统一定义供渲染层引用。
     """
 
@@ -115,7 +114,6 @@ class ClimateTemplate:
     humidity_range: tuple[float, float]
     wind_speed_range: tuple[float, float]
     seasonality: SeasonalityMode = SeasonalityMode.NONE
-    seasonal_temp_amplitude: tuple[float, float] = (0.0, 0.0)
     display_color: str = "#888888"
 
 
@@ -128,7 +126,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
         humidity_range=(75.0, 95.0),
         wind_speed_range=(0.0, 6.0),
         seasonality=SeasonalityMode.NONE,
-        seasonal_temp_amplitude=(1.0, 3.0),
         display_color="#1a6b3a",
     ),
     ClimateZone.TROPICAL_SAVANNA: ClimateTemplate(
@@ -137,7 +134,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
         humidity_range=(40.0, 75.0),
         wind_speed_range=(1.0, 8.0),
         seasonality=SeasonalityMode.MONSOON,
-        seasonal_temp_amplitude=(3.0, 6.0),
         display_color="#c4a43e",
     ),
     ClimateZone.DESERT: ClimateTemplate(
@@ -146,7 +142,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
         humidity_range=(5.0, 30.0),
         wind_speed_range=(2.0, 15.0),
         seasonality=SeasonalityMode.NONE,
-        seasonal_temp_amplitude=(8.0, 15.0),  # 昼夜温差大，季节振幅亦大
         display_color="#e6c878",
     ),
     ClimateZone.STEPPE: ClimateTemplate(
@@ -155,7 +150,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
         humidity_range=(20.0, 50.0),
         wind_speed_range=(2.0, 12.0),
         seasonality=SeasonalityMode.FOUR_SEASON,
-        seasonal_temp_amplitude=(10.0, 18.0),
         display_color="#b8a060",
     ),
     ClimateZone.TEMPERATE_FOREST: ClimateTemplate(
@@ -164,7 +158,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
         humidity_range=(45.0, 80.0),
         wind_speed_range=(0.0, 12.0),
         seasonality=SeasonalityMode.FOUR_SEASON,
-        seasonal_temp_amplitude=(8.0, 16.0),
         display_color="#4a7c3f",
     ),
     ClimateZone.SUBARCTIC_TAIGA: ClimateTemplate(
@@ -173,7 +166,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
         humidity_range=(40.0, 75.0),
         wind_speed_range=(2.0, 15.0),
         seasonality=SeasonalityMode.POLAR,
-        seasonal_temp_amplitude=(15.0, 25.0),
         display_color="#3a6a8a",
     ),
     ClimateZone.POLAR_TUNDRA: ClimateTemplate(
@@ -182,7 +174,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
         humidity_range=(30.0, 70.0),
         wind_speed_range=(2.0, 20.0),
         seasonality=SeasonalityMode.POLAR,
-        seasonal_temp_amplitude=(15.0, 30.0),
         display_color="#d8d8e8",
     ),
     ClimateZone.ALPINE: ClimateTemplate(
@@ -191,7 +182,6 @@ _CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
         humidity_range=(30.0, 70.0),
         wind_speed_range=(3.0, 25.0),
         seasonality=SeasonalityMode.ALPINE,
-        seasonal_temp_amplitude=(10.0, 20.0),
         display_color="#b0b0c0",
     ),
 }

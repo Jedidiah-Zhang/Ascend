@@ -132,7 +132,7 @@ class TestClimateZone:
             assert tmpl.display_color.startswith("#")
 
     def test_template_has_seasonality(self):
-        """模板携带季节性模式预留字段。"""
+        """模板携带季节性模式字段（供 WeatherEngine 选择湿度曲线形状）。"""
         tmpl = get_climate_template(ClimateZone.TEMPERATE_FOREST)
         assert tmpl.seasonality == SeasonalityMode.FOUR_SEASON
         tmpl2 = get_climate_template(ClimateZone.TROPICAL_SAVANNA)

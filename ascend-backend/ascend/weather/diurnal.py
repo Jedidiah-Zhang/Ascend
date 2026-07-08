@@ -119,3 +119,19 @@ def sunset_hour(day_of_year: int, latitude_deg: float) -> float:
     half_day_deg = math.degrees(math.acos(-tan_product))
     half_day_h = half_day_deg / 15.0
     return 12.0 + half_day_h
+
+
+def daylight_hours(day_of_year: int, latitude_deg: float) -> float:
+    """给定日期和纬度 → 当日天文日照时长（小时）。
+
+    = sunset_hour - sunrise_hour。极昼返回 24.0，极夜返回 0.0。
+    赤道全年 ≈ 12.0，中纬度夏长冬短，极地季节极端。
+
+    Args:
+        day_of_year: 年内日 [0, 360)。
+        latitude_deg: 纬度（度），北纬为正 [-90, 90]。
+
+    Returns:
+        日照时长 [0, 24]。
+    """
+    return sunset_hour(day_of_year, latitude_deg) - sunrise_hour(day_of_year, latitude_deg)

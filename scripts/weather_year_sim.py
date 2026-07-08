@@ -72,13 +72,13 @@ def run(seed: int, fraction: float) -> dict:
     cal = GameCalendar(clock=clock)
     weather = WeatherEngine(clock, seed=seed, world_tree_arg=world_tree)
     for (cx, cy), chunk in loaded.items():
-        weather.register_chunk(cx, cy, chunk.annual_baseline, chunk.climate_zone)
+        weather.register_chunk(cx, cy, chunk.annual_baseline, chunk.climate_zone, chunk.sea_level_temp)
     print(f"── 天气引擎接入 {len(loaded)} chunk")
 
     # ── 4. 订阅天气事件 ─────────────────────────────
     collected: dict[str, list] = defaultdict(list)
     event_types = [
-        "temperature_change", "humidity_change", "wind_change",
+        "temperature_change", "humidity_change", "wind_change", "sunshine_change",
         "precipitation_start", "precipitation_stop",
         "season_change", "sunrise", "sunset",
     ]
@@ -132,6 +132,9 @@ def run(seed: int, fraction: float) -> dict:
                 for e in collected["sunrise"]]
     ss_times = [e.data["time_of_day"] // GAME_HOUR
                 for e in collected["sunset"]]
+    sunshine_vals = [e.data["sunshine"] for e in collected["sunshine_change"]]
+    daylight_vals = [e.data["daylight_hours"]
+                     for e in collected["sunrise"] + collected["sunset"]]
 
     return {
         "seed": seed, "birth": birth, "num_chunks": len(loaded),
@@ -140,6 +143,7 @@ def run(seed: int, fraction: float) -> dict:
         "precip_starts": precip_starts, "precip_stops": precip_stops,
         "snow_count": snow_count,
         "sunrise_times": sr_times, "sunset_times": ss_times,
+        "sunshine_vals": sunshine_vals, "daylight_vals": daylight_vals,
         "elapsed": elapsed, "total_ticks": target_ticks,
     }
 
@@ -176,6 +180,19 @@ def print_report(r: dict) -> None:
           f"最早 {min(sr) if sr else '?'}:00  最晚 {max(sr) if sr else '?'}:00")
     print(f"  日落: {len(ss)} 次  "
           f"最早 {min(ss) if ss else '?'}:00  最晚 {max(ss) if ss else '?'}:00")
+    dl = r["daylight_vals"]
+    if dl:
+        print(f"  日照时长: {len(dl)} 样本  "
+              f"最短 {min(dl):.1f}h  最长 {max(dl):.1f}h")
+
+    sv = r["sunshine_vals"]
+    print(f"\n── 日照参数 (sunshine_change) ──")
+    if sv:
+        print(f"  事件数: {len(sv)}  "
+              f"min {min(sv):.2f}h  max {max(sv):.2f}h  "
+              f"均值 {sum(sv)/len(sv):.2f}h")
+    else:
+        print(f"  事件数: 0")
 
     print(f"\n── 降水 ──")
     print(f"  start: {r['precip_starts']}  stop: {r['precip_stops']}  "

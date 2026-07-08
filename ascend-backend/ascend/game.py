@@ -169,6 +169,7 @@ class GameEngine:
         for (cx, cy), chunk in self.loaded_chunks.items():
             self.weather_engine.register_chunk(
                 cx, cy, chunk.annual_baseline, chunk.climate_zone,
+                chunk.sea_level_temp,
             )
         logger.info("天气引擎已接入 %d 个 chunk", len(self.loaded_chunks))
 

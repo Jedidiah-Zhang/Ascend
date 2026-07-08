@@ -1,7 +1,7 @@
 """季节系统 — 四季划分与温度季节偏移。
 
-纯函数，无状态，线程安全。振幅由调用方（weather_engine）从
-ClimateTemplate.seasonal_temp_amplitude 区间中取定值后传入。
+纯函数，无状态，线程安全。振幅由调用方（weather_engine）通过
+_derive_seasonal_amp 从年均温+年降雨连续推导后传入。
 
 温度偏移用余弦曲线：夏季中点 +amplitude，冬季中点 -amplitude，
 春秋分（季节中点）≈ 0，过渡平滑。

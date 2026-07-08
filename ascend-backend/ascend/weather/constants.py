@@ -35,10 +35,6 @@ DIURNAL_TROUGH_HOUR: int = 2     # 一天中最冷时刻
 SUNRISE_HOUR: int = 6
 SUNSET_HOUR: int = 18
 
-# 全局日出/日落事件的参考纬度（°），取中纬度以体现季节昼夜长短变化
-# 纬度=0（赤道）全年 6:00/18:00 无季节变化，45° 有显著差异
-REFERENCE_LATITUDE: float = 45.0
-
 # ── 大气扰动缩放 ────────────────────────────────────────────
 # AtmosphereField.sample 返回 [-1, 1]，乘以下列系数得各参数扰动幅度
 
@@ -48,6 +44,10 @@ WIND_PERTURB_SCALE: float = 4.0        # 风速 ±4 m/s
 
 # 昼夜振幅 = 季节振幅 × 此系数（昼夜变化小于季节变化）
 DIURNAL_TO_SEASONAL_RATIO: float = 0.5
+
+# 日照大气扰动缩放 — AtmosphereField.sample [-1,1] × 此系数得日照扰动幅度（小时）
+# 体现云量随机变化：多云地区日照减少，晴朗地区日照增加
+SUNSHINE_PERTURB_SCALE: float = 1.5       # 日照 ±1.5 小时
 
 # 湿度偏移缩放 — 分别作用于昼夜和季节温度振幅，得湿度振幅 (pp)
 # 湿度昼夜偏移反比于温度（02:00 最高，14:00 最低）；季节偏移同向（夏湿冬干）
@@ -65,3 +65,4 @@ RAIN_REPLENISH_THRESHOLD: int = 2   # 低于 2 场时补算
 TEMP_CHANGE_THRESHOLD: float = 0.3       # °C
 HUMIDITY_CHANGE_THRESHOLD: float = 1.5   # %
 WIND_CHANGE_THRESHOLD: float = 0.3       # m/s
+SUNSHINE_CHANGE_THRESHOLD: float = 0.2   # 小时/天
