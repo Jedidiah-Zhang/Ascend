@@ -78,8 +78,7 @@ def run(seed: int, fraction: float) -> dict:
     # 启用世界树内存裁剪（避免长模拟 OOM）
     world_tree.configure(max_memory_events=100_000)
 
-    # ── 4. 订阅天气事件 ─────────────────────────────
-    collected: dict[str, list] = defaultdict(list)
+    # ── 4. 实时统计（O(1) 内存，不囤积事件）───────────
     event_types = [
         "temperature_change", "humidity_change", "wind_change", "sunshine_change",
         "precipitation_start", "precipitation_stop",
@@ -88,11 +87,104 @@ def run(seed: int, fraction: float) -> dict:
         "storm_start", "storm_stop",
         "season_change", "sunrise", "sunset",
     ]
-    for ev_type in event_types:
-        world_tree.subscribe(
-            ev_type,
-            lambda e, _t=ev_type: collected[_t].append(e),
-        )
+    counts: dict[str, int] = {t: 0 for t in event_types}
+    # 温度
+    temp_min = float("inf"); temp_max = float("-inf"); temp_sum = 0.0
+    # 日照
+    sun_min = float("inf"); sun_max = float("-inf"); sun_sum = 0.0
+    # 日出日落
+    sr_min = 999; sr_max = 0; ss_min = 999; ss_max = 0
+    dl_min = float("inf"); dl_max = float("-inf")
+    # 降水
+    snow_count = 0
+    # 季节
+    season_changes: list[tuple[int, int, int]] = []
+    # 温度按 chunk
+    temp_by_chunk: dict[tuple, list[float]] = defaultdict(
+        lambda: [float("inf"), float("-inf")]  # [min, max]
+    )
+
+    def _on_temp(e):
+        counts["temperature_change"] += 1
+        v = e.data["temperature"]
+        nonlocal temp_min, temp_max, temp_sum
+        if v < temp_min: temp_min = v
+        if v > temp_max: temp_max = v
+        temp_sum += v
+        key = e.location[:2]
+        tbc = temp_by_chunk[key]
+        if v < tbc[0]: tbc[0] = v
+        if v > tbc[1]: tbc[1] = v
+
+    def _on_humidity(e):
+        counts["humidity_change"] += 1
+
+    def _on_wind(e):
+        counts["wind_change"] += 1
+
+    def _on_sunshine(e):
+        counts["sunshine_change"] += 1
+        v = e.data["sunshine"]
+        nonlocal sun_min, sun_max, sun_sum
+        if v < sun_min: sun_min = v
+        if v > sun_max: sun_max = v
+        sun_sum += v
+
+    def _on_precip_start(e):
+        counts["precipitation_start"] += 1
+        nonlocal snow_count
+        if e.data.get("precip_type") == "snow":
+            snow_count += 1
+
+    def _on_precip_stop(e):
+        counts["precipitation_stop"] += 1
+
+    def _on_season_change(e):
+        counts["season_change"] += 1
+        season_changes.append((
+            e.data["season"],
+            e.timestamp // GAME_DAY + 1,
+            e.data["time_of_day"] // GAME_HOUR,
+        ))
+
+    def _on_sunrise(e):
+        counts["sunrise"] += 1
+        tod = e.data["time_of_day"] // GAME_HOUR
+        dl = e.data["daylight_hours"]
+        nonlocal sr_min, sr_max, dl_min, dl_max
+        if tod < sr_min: sr_min = tod
+        if tod > sr_max: sr_max = tod
+        if dl < dl_min: dl_min = dl
+        if dl > dl_max: dl_max = dl
+
+    def _on_sunset(e):
+        counts["sunset"] += 1
+        tod = e.data["time_of_day"] // GAME_HOUR
+        nonlocal ss_min, ss_max
+        if tod < ss_min: ss_min = tod
+        if tod > ss_max: ss_max = tod
+
+    def _on_modifier(e):
+        counts[e.event_type] += 1
+
+    # 注册回调
+    _callbacks = {
+        "temperature_change": _on_temp,
+        "humidity_change": _on_humidity,
+        "wind_change": _on_wind,
+        "sunshine_change": _on_sunshine,
+        "precipitation_start": _on_precip_start,
+        "precipitation_stop": _on_precip_stop,
+        "season_change": _on_season_change,
+        "sunrise": _on_sunrise,
+        "sunset": _on_sunset,
+    }
+    for ev_type, cb in _callbacks.items():
+        world_tree.subscribe(ev_type, cb)
+    for et in ("cold_snap_start", "cold_snap_stop",
+               "heat_wave_start", "heat_wave_stop",
+               "storm_start", "storm_stop"):
+        world_tree.subscribe(et, _on_modifier)
 
     # ── 5. Tick 加速 ─────────────────────────────────
     target_ticks = int(GAME_YEAR * fraction)
@@ -122,25 +214,8 @@ def run(seed: int, fraction: float) -> dict:
     cal.shutdown()
 
     # ── 6. 汇总 ─────────────────────────────────────
-    counts = {t: len(collected[t]) for t in event_types}
-    season_changes = [
-        (e.data["season"], e.timestamp // GAME_DAY + 1,
-         e.data["time_of_day"] // GAME_HOUR)
-        for e in collected["season_change"]
-    ]
-    precip_starts = len(collected["precipitation_start"])
-    precip_stops = len(collected["precipitation_stop"])
-    snow_count = sum(
-        1 for e in collected["precipitation_start"]
-        if e.data.get("precip_type") == "snow"
-    )
-    sr_times = [e.data["time_of_day"] // GAME_HOUR
-                for e in collected["sunrise"]]
-    ss_times = [e.data["time_of_day"] // GAME_HOUR
-                for e in collected["sunset"]]
-    sunshine_vals = [e.data["sunshine"] for e in collected["sunshine_change"]]
-    daylight_vals = [e.data["daylight_hours"]
-                     for e in collected["sunrise"] + collected["sunset"]]
+    precip_starts = counts["precipitation_start"]
+    precip_stops = counts["precipitation_stop"]
 
     return {
         "seed": seed, "birth": birth, "num_chunks": len(loaded),
@@ -148,8 +223,14 @@ def run(seed: int, fraction: float) -> dict:
         "season_changes": season_changes,
         "precip_starts": precip_starts, "precip_stops": precip_stops,
         "snow_count": snow_count,
-        "sunrise_times": sr_times, "sunset_times": ss_times,
-        "sunshine_vals": sunshine_vals, "daylight_vals": daylight_vals,
+        "temp_min": temp_min, "temp_max": temp_max,
+        "temp_sum": temp_sum, "temp_count": counts["temperature_change"],
+        "sun_min": sun_min, "sun_max": sun_max,
+        "sun_sum": sun_sum, "sun_count": counts["sunshine_change"],
+        "sr_min": sr_min, "sr_max": sr_max,
+        "ss_min": ss_min, "ss_max": ss_max,
+        "dl_min": dl_min, "dl_max": dl_max,
+        "temp_by_chunk": {k: tuple(v) for k, v in temp_by_chunk.items()},
         "elapsed": elapsed, "total_ticks": target_ticks,
     }
 
@@ -179,24 +260,27 @@ def print_report(r: dict) -> None:
     for s, day, hour in sc:
         print(f"    day {day:>4}  {hour:>2}:00  →  {Season(s).name}")
 
-    sr = r["sunrise_times"]
-    ss = r["sunset_times"]
-    print(f"\n── 日出/日落 ──")
-    print(f"  日出: {len(sr)} 次  "
-          f"最早 {min(sr) if sr else '?'}:00  最晚 {max(sr) if sr else '?'}:00")
-    print(f"  日落: {len(ss)} 次  "
-          f"最早 {min(ss) if ss else '?'}:00  最晚 {max(ss) if ss else '?'}:00")
-    dl = r["daylight_vals"]
-    if dl:
-        print(f"  日照时长: {len(dl)} 样本  "
-              f"最短 {min(dl):.1f}h  最长 {max(dl):.1f}h")
+    print(f"\n── 温度 ──")
+    tc = r["temp_count"]
+    if tc:
+        print(f"  事件数: {tc}  min={r['temp_min']:.0f}°C  max={r['temp_max']:.0f}°C  "
+              f"均值={r['temp_sum']/tc:.1f}°C")
+    print(f"── 每 chunk 温度范围 ──")
+    for (cx, cy), (tmin, tmax) in sorted(r["temp_by_chunk"].items()):
+        print(f"  chunk({cx},{cy}): {tmin:.0f}~{tmax:.0f}°C")
 
-    sv = r["sunshine_vals"]
+    print(f"\n── 日出/日落 ──")
+    sr_cnt = r['counts'].get('sunrise', 0)
+    ss_cnt = r['counts'].get('sunset', 0)
+    print(f"  sunrise: {sr_cnt}次  {r['sr_min']}:00~{r['sr_max']}:00")
+    print(f"  sunset:  {ss_cnt}次  {r['ss_min']}:00~{r['ss_max']}:00")
+    print(f"  daylight_hours: {r['dl_min']:.1f}~{r['dl_max']:.1f}h")
+
     print(f"\n── 日照参数 (sunshine_change) ──")
-    if sv:
-        print(f"  事件数: {len(sv)}  "
-              f"min {min(sv):.2f}h  max {max(sv):.2f}h  "
-              f"均值 {sum(sv)/len(sv):.2f}h")
+    scnt = r["sun_count"]
+    if scnt:
+        print(f"  事件数: {scnt}  min={r['sun_min']:.2f}h  max={r['sun_max']:.2f}h  "
+              f"均值={r['sun_sum']/scnt:.2f}h")
     else:
         print(f"  事件数: 0")
 

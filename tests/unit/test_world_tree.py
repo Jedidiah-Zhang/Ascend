@@ -222,7 +222,7 @@ class TestEventGraph:
         assert g.node_count == 1
 
     def test_remove_nodes_nonexistent(self):
-        """移��不存在的节点是安全的。"""
+        """移除不存在的节点是安全的。"""
         g = EventGraph()
         g.add_event(make_event(id="a"))
         g.remove_nodes({"nonexistent"})

@@ -76,6 +76,42 @@ class AtmosphereField:
             扰动值，范围 [-1, 1]。
         """
         wx, wy = self.wind_vector(game_time)
+        return self.sample_with_wind(world_x, world_y, game_time, wx, wy)
+
+    def sample_raw(self, nx: float, ny: float) -> float:
+        """直接噪声采样（调用方负责计算采样坐标）。
+
+        供 WeatherEngine 在 per-chunk 循环中使用预计算的坐标偏移，
+        绕过 wind_vector 和空间坐标转换。
+
+        Args:
+            nx: 噪声空间 X 坐标。
+            ny: 噪声空间 Y 坐标。
+
+        Returns:
+            扰动值，范围 [-1, 1]。
+        """
+        return self._noise.sample(nx, ny)
+
+    def sample_with_wind(
+        self, world_x: float, world_y: float, game_time: int,
+        wx: float, wy: float,
+    ) -> float:
+        """采样大气扰动，使用预计算的风向向量。
+
+        当调用方已持有 wind_vector(now) 的结果时使用此方法，
+        避免在 per-chunk 循环中重复计算相同的风向。
+
+        Args:
+            world_x: 世界 X 坐标（单位 m）。
+            world_y: 世界 Y 坐标（单位 m）。
+            game_time: 游戏时间（tick）。
+            wx: 预计算的风向 X 分量。
+            wy: 预计算的风向 Y 分量。
+
+        Returns:
+            扰动值，范围 [-1, 1]。
+        """
         drift = game_time * self._drift_rate
         nx = world_x / self._resolution + wx * drift
         ny = world_y / self._resolution + wy * drift

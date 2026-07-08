@@ -81,7 +81,8 @@ def _solar_declination(day_of_year: int) -> float:
     )
 
 
-def sunrise_hour(day_of_year: int, latitude_deg: float) -> float:
+def sunrise_hour(day_of_year: int, latitude_deg: float,
+                 solar_decl: float | None = None) -> float:
     """给定日期和纬度 → 日出时刻（小时）。
 
     基于太阳赤纬公式，处理极昼（0h）和极夜（12h）边界。
@@ -89,11 +90,12 @@ def sunrise_hour(day_of_year: int, latitude_deg: float) -> float:
     Args:
         day_of_year: 年内日 [0, 360)。
         latitude_deg: 纬度（度），北纬为正 [-90, 90]。
+        solar_decl: 可选预计算太阳赤纬（弧度），传入时跳过 day_of_year 推导。
 
     Returns:
         日出时刻 [0, 12]。
     """
-    decl = _solar_declination(day_of_year)
+    decl = solar_decl if solar_decl is not None else _solar_declination(day_of_year)
     lat = math.radians(latitude_deg)
     tan_product = math.tan(lat) * math.tan(decl)
     tan_product = max(-1.0, min(1.0, tan_product))
@@ -102,17 +104,19 @@ def sunrise_hour(day_of_year: int, latitude_deg: float) -> float:
     return 12.0 - half_day_h
 
 
-def sunset_hour(day_of_year: int, latitude_deg: float) -> float:
+def sunset_hour(day_of_year: int, latitude_deg: float,
+                solar_decl: float | None = None) -> float:
     """给定日期和纬度 → 日落时刻（小时）。
 
     Args:
         day_of_year: 年内日 [0, 360)。
         latitude_deg: 纬度（度），北纬为正 [-90, 90]。
+        solar_decl: 可选预计算太阳赤纬（弧度），传入时跳过 day_of_year 推导。
 
     Returns:
         日落时刻 [12, 24]。
     """
-    decl = _solar_declination(day_of_year)
+    decl = solar_decl if solar_decl is not None else _solar_declination(day_of_year)
     lat = math.radians(latitude_deg)
     tan_product = math.tan(lat) * math.tan(decl)
     tan_product = max(-1.0, min(1.0, tan_product))
@@ -121,7 +125,8 @@ def sunset_hour(day_of_year: int, latitude_deg: float) -> float:
     return 12.0 + half_day_h
 
 
-def daylight_hours(day_of_year: int, latitude_deg: float) -> float:
+def daylight_hours(day_of_year: int, latitude_deg: float,
+                   solar_decl: float | None = None) -> float:
     """给定日期和纬度 → 当日天文日照时长（小时）。
 
     = sunset_hour - sunrise_hour。极昼返回 24.0，极夜返回 0.0。
@@ -130,8 +135,10 @@ def daylight_hours(day_of_year: int, latitude_deg: float) -> float:
     Args:
         day_of_year: 年内日 [0, 360)。
         latitude_deg: 纬度（度），北纬为正 [-90, 90]。
+        solar_decl: 可选预计算太阳赤纬（弧度），传入时跳过内部重复计算。
 
     Returns:
         日照时长 [0, 24]。
     """
-    return sunset_hour(day_of_year, latitude_deg) - sunrise_hour(day_of_year, latitude_deg)
+    return (sunset_hour(day_of_year, latitude_deg, solar_decl=solar_decl)
+            - sunrise_hour(day_of_year, latitude_deg, solar_decl=solar_decl))

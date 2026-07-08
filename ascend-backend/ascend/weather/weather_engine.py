@@ -10,6 +10,7 @@ wind_change；降水 RainSchedule 状态切换 → 发 precipitation_start/preci
 所有阈值穿越（温度日变率 ~0.5°C/h，阈值 0.3°C），无需逐 tick 计算。
 """
 
+import math
 import random
 from dataclasses import dataclass
 
@@ -36,6 +37,7 @@ from .constants import (
 from .diurnal import (
     diurnal_temp_offset, diurnal_humidity_offset,
     sunrise_hour, sunset_hour, daylight_hours, hour_of_game_time,
+    _solar_declination,
 )
 from .events import register_weather_schemas
 from .weather_modifier import ModifierSchedule, WEATHER_MODIFIERS
@@ -259,7 +261,11 @@ class WeatherEngine:
             latitude=latitude,
         )
         key = (cx, cy)
-        self._fields[key] = WeatherField(cx, cy, bl)
+        self._fields[key] = WeatherField(
+            cx, cy, bl,
+            tile_map_size=TILE_MAP_SIZE,
+            atmos_resolution=ATMOSPHERE_RESOLUTION,
+        )
         # 降雨调度（chunk 坐标派生 rng 种子，保证确定性）
         mean_intensity, mean_duration_h, ramp_up, ramp_down = _RAIN_PROFILE.get(
             climate, (5.0, 2.0, 0.2, 0.2),
@@ -292,7 +298,14 @@ class WeatherEngine:
     def _compute_params(
         self, field: WeatherField, now: int,
         day: int, season: int, dos: int, hour: float,
-    ) -> WeatherParams:
+        *,
+        wind_x: float, wind_y: float,
+        drift_x: float, drift_y: float,
+        solar_decl: float, day_of_year_val: int,
+        season_cos: float, season_hum_monsoon: float,
+        diurnal_cos: float,
+        rain,
+    ) -> tuple[WeatherParams, float, float]:
         """解析算 chunk 在 now 时刻的天气。
 
         温度 = baseline + 季节偏移 + 昼夜偏移 + 大气扰动
@@ -302,28 +315,43 @@ class WeatherEngine:
         降雨强度 = RainSchedule.intensity(now)
 
         Args:
-            field: chunk 天气状态。
+            field: chunk 天气状态（含预计算的 _atmos_nx/_atmos_ny）。
             now: 当前 tick。
             day: 游戏日（从 1 开始），由调用方预计算。
             season: 当前季节（int），由调用方预计算。
             dos: 季节内日 [0, SEASON_LENGTH_DAYS)，由调用方预计算。
             hour: 当日小时 [0, 24)，由调用方预计算。
+            wind_x: 预计算的风向 X 分量（tick 级复用）。
+            wind_y: 预计算的风向 Y 分量（tick 级复用）。
+            drift_x: 预计算的大气漂移 X 偏移（tick 级复用）。
+            drift_y: 预计算的大气漂移 Y 偏移（tick 级复用）。
+            solar_decl: 预计算的太阳赤纬（弧度，tick 级复用）。
+            day_of_year_val: 预计算的年内日（tick 级复用）。
+            season_cos: 预计算的季节余弦基（tick 级复用）。
+            season_hum_monsoon: 预计算的季风湿度曲线基（tanh(season_cos×2.5)）。
+            diurnal_cos: 预计算的昼夜余弦基（tick 级复用）。
+            rain: chunk 的 RainSchedule 实例（或 None），由调用方预查找。
 
         Returns:
-            WeatherParams。rainfall 字段装降雨强度 mm/小时。
+            (WeatherParams, sunrise_hour, sunset_hour)。
+            rainfall 字段装降雨强度 mm/小时。
         """
         bl = field.baseline
-        season_temp = seasonal_temp_offset(season, dos, bl.seasonal_amp)
-        diurnal_temp = diurnal_temp_offset(hour, bl.diurnal_amp)
+        # 季节/昼夜偏移 — 余弦基预计算（tick 级复用），只做 per-chunk amplitude 乘法
+        season_temp = bl.seasonal_amp * season_cos
+        diurnal_temp = bl.diurnal_amp * diurnal_cos
         sharpness = _SEASONALITY_HUMIDITY_SHARPNESS.get(bl.seasonality, 0.0)
-        season_hum = seasonal_humidity_offset(
-            season, dos, bl.humidity_seasonal_amp, sharpness=sharpness,
+        if sharpness > 0:
+            season_hum = bl.humidity_seasonal_amp * (season_hum_monsoon
+                if sharpness == 2.5 else math.tanh(season_cos * sharpness))
+        else:
+            season_hum = bl.humidity_seasonal_amp * season_cos
+        diurnal_hum = bl.humidity_diurnal_amp * (-diurnal_cos)
+        # 空间扰动 — 预计算空间基（field._atmos_nx/_ny）+ tick 级漂移偏移
+        perturb = self._atmosphere.sample_raw(
+            field._atmos_nx + drift_x,
+            field._atmos_ny + drift_y,
         )
-        diurnal_hum = diurnal_humidity_offset(hour, bl.humidity_diurnal_amp)
-        # 空间扰动（chunk 中心世界坐标）
-        world_x = (field.chunk_x + 0.5) * TILE_MAP_SIZE
-        world_y = (field.chunk_y + 0.5) * TILE_MAP_SIZE
-        perturb = self._atmosphere.sample(world_x, world_y, now)
         # 合成并钳界
         temperature = clamp(
             bl.temperature + season_temp + diurnal_temp
@@ -357,14 +385,14 @@ class WeatherEngine:
             bl.wind_speed + perturb * WIND_PERTURB_SCALE, *_WIND_BOUNDS,
         )
         wind_speed = clamp(wind_speed * wind_mult, *_WIND_BOUNDS)
-        # 日照：天文日照时长（随纬度+季节变化）+ 大气扰动（自然波动）
-        day_of_year_val = (now // GAME_DAY) % 360
-        daylight = daylight_hours(day_of_year_val, bl.latitude)
+        # 日照：天文日照时长（用预计算赤纬，纬度不同仍需 per-chunk 算）
+        sr = sunrise_hour(day_of_year_val, bl.latitude, solar_decl=solar_decl)
+        ss = sunset_hour(day_of_year_val, bl.latitude, solar_decl=solar_decl)
+        daylight = ss - sr
         sunshine = clamp(
             daylight + perturb * SUNSHINE_PERTURB_SCALE,
             *_SUNSHINE_BOUNDS,
         )
-        rain = self._rain_schedules.get((field.chunk_x, field.chunk_y))
         intensity = (
             clamp(rain.intensity(now) * rain_mult, *_RAIN_INTENSITY_BOUNDS)
             if rain is not None else 0.0
@@ -372,7 +400,7 @@ class WeatherEngine:
         return WeatherParams(
             temperature=temperature, rainfall=intensity, sunshine=sunshine,
             altitude=bl.altitude, humidity=humidity, wind_speed=wind_speed,
-        )
+        ), sr, ss
 
     def _seed_rain(self, rain: RainSchedule) -> None:
         """注册时预排 RAIN_FORECAST_DEPTH 个未来降雨事件并 seed_current。"""
@@ -430,7 +458,21 @@ class WeatherEngine:
         season = int(season_of(day))
         dos = day_of_season(day)
         hour = hour_of_game_time(now)  # 带小数小时，昼夜偏移需要精确时间
+        # tick 级预计算 — 这些值对所有 chunk 相同
         day_of_year_val = (now // GAME_DAY) % 360
+        wind_x, wind_y = self._atmosphere.wind_vector(now)
+        solar_decl = _solar_declination(day_of_year_val)
+        # 大气扰动漂移偏移 — tick 级常数
+        _drift = now * ATMOSPHERE_DRIFT_RATE
+        _drift_x = wind_x * _drift
+        _drift_y = wind_y * _drift
+        # 季节/昼夜余弦基 — phase 对所有 chunk 相同，只有 amplitude 不同
+        _season_progress = season + dos / 90.0  # SEASON_LENGTH_DAYS=90
+        _season_phase = (_season_progress - 1.5) / 4.0 * 2.0 * math.pi  # SEASONS_PER_YEAR=4
+        _season_cos = math.cos(_season_phase)
+        _season_hum_monsoon = math.tanh(_season_cos * 2.5)  # 季风阶梯化，sharpness=2.5
+        _diurnal_phase = (hour - 14.0) / 24.0 * 2.0 * math.pi  # DIURNAL_PEAK_HOUR=14
+        _diurnal_cos = math.cos(_diurnal_phase)
         # 全局季节事件（location=(0,0)，不 per-chunk）
         if self._last_season is not None and season != self._last_season:
             self._publish(0, 0, now, "season_change", {
@@ -439,7 +481,16 @@ class WeatherEngine:
         self._last_season = season
         # per-chunk 事件
         for (cx, cy), field in self._fields.items():
-            params = self._compute_params(field, now, day, season, dos, hour)
+            rain = self._rain_schedules.get((cx, cy))
+            params, sr, ss = self._compute_params(
+                field, now, day, season, dos, hour,
+                wind_x=wind_x, wind_y=wind_y,
+                drift_x=_drift_x, drift_y=_drift_y,
+                solar_decl=solar_decl, day_of_year_val=day_of_year_val,
+                season_cos=_season_cos, season_hum_monsoon=_season_hum_monsoon,
+                diurnal_cos=_diurnal_cos,
+                rain=rain,
+            )
             # 温度
             if (field.last_temp is None
                     or abs(params.temperature - field.last_temp)
@@ -459,15 +510,14 @@ class WeatherEngine:
                     "time_of_day": int(tod),
                 })
                 field.last_humidity = params.humidity
-            # 风
+            # 风（风向使用 tick 级预计算值）
             if (field.last_wind is None
                     or abs(params.wind_speed - field.last_wind)
                     >= WIND_CHANGE_THRESHOLD):
-                wdx, wdy = self._atmosphere.wind_vector(now)
                 self._publish(cx, cy, now, "wind_change", {
                     "wind_speed": float(params.wind_speed),
-                    "wind_dir_x": float(wdx),
-                    "wind_dir_y": float(wdy),
+                    "wind_dir_x": float(wind_x),
+                    "wind_dir_y": float(wind_y),
                     "time_of_day": int(tod),
                 })
                 field.last_wind = params.wind_speed
@@ -481,9 +531,7 @@ class WeatherEngine:
                     "time_of_day": int(tod),
                 })
                 field.last_sunshine = params.sunshine
-            # per-chunk 昼夜切换（用 chunk 自己的纬度）
-            sr = sunrise_hour(day_of_year_val, field.baseline.latitude)
-            ss = sunset_hour(day_of_year_val, field.baseline.latitude)
+            # per-chunk 昼夜切换（复用 _compute_params 返回的 sr/ss）
             is_day = sr <= hour < ss
             if (field.last_is_daytime is not None
                     and is_day != field.last_is_daytime):
@@ -493,8 +541,7 @@ class WeatherEngine:
                     "daylight_hours": float(dl),
                 })
             field.last_is_daytime = is_day
-            # 降水
-            rain = self._rain_schedules.get((cx, cy))
+            # 降水（rain 已在循环顶部预查找）
             if rain is not None and rain.pop_due(now):
                 if rain.is_raining(now):
                     precip_type = "snow" if params.temperature <= 0 else "rain"
