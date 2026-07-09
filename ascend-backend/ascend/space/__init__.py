@@ -42,6 +42,7 @@ from .terrain import (
 )
 from .tile_grid import TileGrid
 from .tile_gen import TileGenerator
+from .chunk_store import ChunkStore
 from .continent import ContinentParams, ContinentData, ContinentGenerator
 from .streamlines import (
     RiverPoint, River, RiverNetwork,
@@ -89,6 +90,7 @@ __all__ = [
     "fertility",
     "TileGrid",
     "TileGenerator",
+    "ChunkStore",
     # 构造模拟
     "ContinentParams",
     "ContinentData",

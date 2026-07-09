@@ -1,0 +1,21 @@
+[gd_scene format=3 uid="uid://cdon6w757a3e0"]
+
+[ext_resource type="Script" uid="uid://0b0fwhft7cr3" path="res://scripts/world/map_display.gd" id="1_sl2e5"]
+[ext_resource type="TileSet" uid="uid://bpfmadm7yulod" path="res://assets/tiles/terrain_tileset.tres" id="2_1fp7r"]
+
+[node name="World" type="Node2D" unique_id=1115777730]
+
+[node name="MapDisplay" type="Node2D" parent="." unique_id=26961960]
+script = ExtResource("1_sl2e5")
+
+[node name="MapCamera" type="Camera2D" parent="MapDisplay" unique_id=1590175551]
+
+[node name="ElevationLayers" type="Node2D" parent="MapDisplay" unique_id=2072524133]
+
+[node name="Layer0" type="TileMapLayer" parent="MapDisplay/ElevationLayers" unique_id=2077420531]
+y_sort_enabled = true
+tile_set = ExtResource("2_1fp7r")
+
+[node name="Player" type="Sprite2D" parent="MapDisplay" unique_id=1403542097]
+centered = false
+offset = Vector2(-16, -16)

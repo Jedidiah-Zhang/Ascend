@@ -20,6 +20,7 @@ from ascend.net import GameServer, MessageDispatcher
 from ascend.net.handlers.map_handler import make_map_handlers
 from ascend.net.handlers.terminal_handler import make_terminal_handler
 from ascend.space import WorldGenerator, TileGenerator
+from ascend.space.chunk_store import ChunkStore
 from ascend.space.tile_grid import TILE_MAP_SIZE
 from ascend.entity import EntityManager
 from ascend.weather import WeatherEngine
@@ -79,7 +80,7 @@ class GameEngine:
         self.weather_engine: WeatherEngine | None = None
         self.tile_generator: TileGenerator | None = None
         self.birth_chunk: tuple[int, int] | None = None
-        self.loaded_chunks: dict[tuple[int, int], object] = {}
+        self.chunk_store: ChunkStore | None = None
         self._running: bool = False
         self._thread: threading.Thread | None = None
 
@@ -154,11 +155,14 @@ class GameEngine:
         self.birth_chunk = self._select_birth_point(continent)
         logger.info("出生点: chunk %s", self.birth_chunk)
 
+        # 3b. 初始化 ChunkStore（LRU 缓存 + SQLite 持久化）
+        self.chunk_store = ChunkStore("save/chunks.db", max_size=49)
+
         # 4. 预生成出生点周边区块
         self._generate_initial_chunks(continent)
         logger.info(
             "已生成周边 %d 个区块 (radius=%d)",
-            len(self.loaded_chunks), INITIAL_CHUNK_RADIUS,
+            len(self.chunk_store), INITIAL_CHUNK_RADIUS,
         )
 
         # 5. 实体管理器（接入事件管线）
@@ -166,12 +170,12 @@ class GameEngine:
 
         # 5b. 天气引擎（接入已加载 chunk 的天气基线）
         self.weather_engine = WeatherEngine(self.clock, seed=self.seed)
-        for (cx, cy), chunk in self.loaded_chunks.items():
+        for (cx, cy), chunk in self.chunk_store.items():
             self.weather_engine.register_chunk(
                 cx, cy, chunk.annual_baseline, chunk.climate_zone,
                 chunk.sea_level_temp,
             )
-        logger.info("天气引擎已接入 %d 个 chunk", len(self.loaded_chunks))
+        logger.info("天气引擎已接入 %d 个 chunk", len(self.chunk_store))
 
         # 6. TCP 服务器
         self.server = GameServer(host=SERVER_HOST, port=SERVER_PORT)
@@ -179,7 +183,7 @@ class GameEngine:
 
         # 7. 消息分发器
         self.dispatcher = MessageDispatcher(self.server)
-        handlers = make_map_handlers(self.world_gen, tile_gen=self.tile_generator, birth_chunk=self.birth_chunk)
+        handlers = make_map_handlers(self.world_gen, tile_gen=self.tile_generator, birth_chunk=self.birth_chunk, chunk_store=self.chunk_store)
         for req_type, handler in handlers.items():
             self.dispatcher.register(req_type, handler)
         logger.info("已注册地图处理程序: %s", list(handlers.keys()))
@@ -241,7 +245,9 @@ class GameEngine:
             self.weather_engine = None
         self.entity_manager = None
         self.tile_generator = None
-        self.loaded_chunks.clear()
+        if self.chunk_store:
+            self.chunk_store.close()
+            self.chunk_store = None
         if self.world_gen:
             self.world_gen = None
         if self._executor:
@@ -309,7 +315,7 @@ class GameEngine:
 
         层1 ChunkData 由 WorldGenerator 并行生成（群系/气候），
         层2 TileGrid 由 TileGenerator 生成（地形/河流/湖泊），
-        两者合并写入 ChunkData 并缓存到 loaded_chunks。
+        两者合并写入 ChunkData 并缓存到 ChunkStore。
 
         Args:
             continent: ContinentData（已由 ensure_continent 生成）。
@@ -340,7 +346,7 @@ class GameEngine:
             }
             for future in as_completed(futures):
                 chunk = future.result()
-                self.loaded_chunks[(chunk.cx, chunk.cy)] = chunk
+                self.chunk_store.put(chunk)
 
     def _publish_world_initialized(self) -> None:
         """发布 world_initialized 事件，通知各模块世界已就绪。
@@ -360,7 +366,7 @@ class GameEngine:
             data={
                 "seed": self.seed,
                 "birth_chunk": list(bc),
-                "loaded_chunks": len(self.loaded_chunks),
+                "loaded_chunks": len(self.chunk_store),
             },
         ))
 

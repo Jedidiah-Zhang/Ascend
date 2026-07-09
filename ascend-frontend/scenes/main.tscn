@@ -1,6 +1,18 @@
 [gd_scene format=3 uid="uid://cw1nttcy0m3yo"]
 
 [ext_resource type="Script" uid="uid://dhswqw5sfhbtw" path="res://scripts/world/main_world.gd" id="1"]
+[ext_resource type="PackedScene" uid="uid://cdon6w757a3e0" path="res://scenes/world/world.tscn" id="2_sugp2"]
+[ext_resource type="Script" uid="uid://rj41svvvxcl7" path="res://scripts/ui/terminal_widget.gd" id="4_tefeu"]
 
 [node name="Main" type="Node2D" unique_id=1387621545]
 script = ExtResource("1")
+
+[node name="World" parent="." unique_id=1115777730 instance=ExtResource("2_sugp2")]
+
+[node name="TerminalLayer" type="CanvasLayer" parent="." unique_id=730525796]
+layer = 100
+
+[node name="TerminalWidget" type="Control" parent="TerminalLayer" unique_id=1154699806]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("4_tefeu")

@@ -65,6 +65,14 @@ var _backend_check_timer: float = 0.0
 ## 是否正在等待后端启动
 var _awaiting_backend: bool = false
 
+## 后台解码线程 — 将 JSON 解析移出主线程，避免阻塞渲染
+var _decode_thread: Thread = null
+var _decode_mutex: Mutex = null
+var _decode_sem: Semaphore = null
+var _decode_input: Array[PackedByteArray] = []
+var _decode_output: Array[Dictionary] = []
+var _decode_running: bool = false
+
 
 func _ready() -> void:
 	"""自动加载初始化。编辑器模式下跳过，游戏运行时自动启动后端。"""
@@ -82,6 +90,7 @@ func _notification(what: int) -> void:
 		what: 通知类型。
 	"""
 	if what == NOTIFICATION_PREDELETE:
+		_stop_decode_thread()
 		_kill_backend()
 
 
@@ -190,6 +199,7 @@ func _process(delta: float) -> void:
 			_poll_connection()
 			if status == Status.CONNECTED:
 				_read_messages()
+				_collect_decoded()
 				_flush_send_queue()
 
 
@@ -215,6 +225,7 @@ func disconnect_from_server() -> void:
 	status = Status.DISCONNECTED
 	_recv_buf.clear()
 	_send_queue.clear()
+	_stop_decode_thread()
 	set_process(false)
 	connection_lost.emit()
 
@@ -265,6 +276,7 @@ func _poll_connection() -> void:
 		StreamPeerTCP.STATUS_CONNECTED:
 			if status == Status.CONNECTING:
 				status = Status.CONNECTED
+				_start_decode_thread()
 				connection_established.emit(_host, _port)
 		StreamPeerTCP.STATUS_CONNECTING:
 			pass
@@ -273,11 +285,15 @@ func _poll_connection() -> void:
 			_stream = null
 			status = Status.DISCONNECTED
 			_reconnect_timer = RECONNECT_INTERVAL
+			_stop_decode_thread()
 			connection_lost.emit()
 
 
 func _read_messages() -> void:
-	"""读取所有可用数据，解析完整消息。"""
+	"""读取所有可用数据，提取帧体，推入后台解码队列。
+
+	JSON 解析在后台线程完成，主线程仅做字节帧提取。
+	"""
 	if _stream == null:
 		return
 
@@ -291,7 +307,7 @@ func _read_messages() -> void:
 	var data: PackedByteArray = chunk[1]
 	_recv_buf.append_array(data)
 
-	# 解析长度前缀帧
+	# 解析长度前缀帧，推入解码队列
 	while _recv_buf.size() >= 4:
 		var msg_len: int = (_recv_buf[0] << 24) | (_recv_buf[1] << 16) | (_recv_buf[2] << 8) | _recv_buf[3]
 		if msg_len <= 0 or msg_len > MAX_MESSAGE_SIZE:
@@ -300,11 +316,13 @@ func _read_messages() -> void:
 			return
 		if _recv_buf.size() < 4 + msg_len:
 			break
-		var body: PackedByteArray = PackedByteArray()
-		for i in range(msg_len):
-			body.append(_recv_buf[4 + i])
+		var body: PackedByteArray = _recv_buf.slice(4, 4 + msg_len)
 		_recv_buf = _recv_buf.slice(4 + msg_len)
-		_dispatch(body)
+
+		_decode_mutex.lock()
+		_decode_input.append(body)
+		_decode_mutex.unlock()
+		_decode_sem.post()
 
 
 func _flush_send_queue() -> void:
@@ -319,19 +337,6 @@ func _flush_send_queue() -> void:
 	_send_queue.clear()
 
 
-func _dispatch(body: PackedByteArray) -> void:
-	"""分发收到的消息。
-
-	Args:
-		body: 已解码的消息体字节
-	"""
-	var message: Variant = MsgPack.decode(body)
-	if message == null or not message is Dictionary:
-		push_error("Connection: invalid message: %s" % body.get_string_from_utf8().left(200))
-		return
-	message_received.emit(message)
-
-
 func _next_seq() -> int:
 	"""生成下一个序列号。
 
@@ -340,3 +345,72 @@ func _next_seq() -> int:
 	"""
 	_seq += 1
 	return _seq
+
+
+# ── 后台解码线程 ────────────────────────────────────
+
+
+func _start_decode_thread() -> void:
+	"""启动后台 JSON 解码线程。"""
+	if _decode_thread != null:
+		return
+	_decode_mutex = Mutex.new()
+	_decode_sem = Semaphore.new()
+	_decode_running = true
+	_decode_thread = Thread.new()
+	_decode_thread.start(_decode_worker)
+
+
+func _stop_decode_thread() -> void:
+	"""停止后台解码线程并清理。"""
+	_decode_running = false
+	if _decode_sem:
+		_decode_sem.post()
+	if _decode_thread:
+		_decode_thread.wait_to_finish()
+		_decode_thread = null
+	_decode_mutex = null
+	_decode_sem = null
+	_decode_input.clear()
+	_decode_output.clear()
+
+
+func _decode_worker() -> void:
+	"""后台线程：从输入队列取帧体 → JSON 解析 → 放入输出队列。"""
+	while _decode_running:
+		_decode_sem.wait()
+		if not _decode_running:
+			break
+
+		_decode_mutex.lock()
+		var body: PackedByteArray
+		if _decode_input.size() > 0:
+			body = _decode_input.pop_front()
+		_decode_mutex.unlock()
+
+		if body.is_empty():
+			continue
+
+		var message: Variant = MsgPack.decode(body)
+		if message == null or not message is Dictionary:
+			print("Connection: decode failed in worker thread")
+			continue
+
+		_decode_mutex.lock()
+		_decode_output.append(message)
+		_decode_mutex.unlock()
+
+
+func _collect_decoded() -> void:
+	"""主线程收集后台已解码的消息并发射信号。"""
+	if _decode_mutex == null:
+		return
+	var messages: Array[Dictionary] = []
+	_decode_mutex.lock()
+	for msg in _decode_output:
+		messages.append(msg)
+	_decode_output.clear()
+	_decode_mutex.unlock()
+
+	for msg in messages:
+		message_received.emit(msg)

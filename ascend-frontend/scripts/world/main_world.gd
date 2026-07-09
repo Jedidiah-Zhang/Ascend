@@ -13,36 +13,20 @@ extends Node2D
 const CAMERA_PAN_SPEED: float = 600.0
 ## 缩放步长
 const CAMERA_ZOOM_STEP: float = 0.15
-## 缩放范围
+## 缩放范围Invalid call. Nonexistent function 'create_tile' in base 'TileSet'.
 const CAMERA_ZOOM_MIN: float = 0.15
 const CAMERA_ZOOM_MAX: float = 4.0
 
 ## 地图显示节点
-var _map_display: MapDisplay = null
+@onready var _map_display: MapDisplay = $World/MapDisplay
 ## 终端节点
-var _terminal: TerminalWidget = null
+@onready var _terminal: TerminalWidget = $TerminalLayer/TerminalWidget
 
 
 func _ready() -> void:
-	"""场景加载时创建子节点、连接信号并发起连接。"""
-	# 创建地图显示节点
-	_map_display = MapDisplay.new()
-	_map_display.name = "MapDisplay"
-	add_child(_map_display)
-
-	# 创建终端节点（CanvasLayer 包裹，确保 UI 独立于 2D 世界坐标系）
-	var terminal_layer := CanvasLayer.new()
-	terminal_layer.name = "TerminalLayer"
-	terminal_layer.layer = 100  # 最顶层
-	add_child(terminal_layer)
-
-	_terminal = TerminalWidget.new()
-	_terminal.name = "TerminalWidget"
+	"""场景加载时连接信号并发起连接。"""
 	_terminal.remote_command.connect(_on_terminal_command)
-	_terminal.map_view_changed.connect(_on_terminal_map_view)
-	terminal_layer.add_child(_terminal)
 
-	# 连接网络信号
 	Connection.connection_established.connect(_on_connected)
 	Connection.connection_lost.connect(_on_disconnected)
 	Connection.message_received.connect(_on_message)
@@ -74,7 +58,7 @@ func _process(delta: float) -> void:
 		return
 
 	_process_camera(delta)
-	_process_input()
+	_process_input(delta)
 
 	# 根据相机位置请求新块
 	if _map_display:
@@ -94,24 +78,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 
-func _process_camera(delta: float) -> void:
-	"""本地相机平移和缩放（不经过后端）。
-
-	Args:
-		delta: 帧间隔时间。
-	"""
-	if _map_display == null:
-		return
-	var cam: Camera2D = _map_display.get_node_or_null("MapCamera")
+func _process_camera(_delta: float) -> void:
+	"""只处理缩放。平移已由玩家移动替代，相机跟随玩家。"""
+	var cam: Camera2D = _map_display.get_node("MapCamera") as Camera2D
 	if cam == null:
 		return
 
-	# WASD / 方向键平移
-	var pan := Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	if pan != Vector2.ZERO:
-		cam.position += pan * CAMERA_PAN_SPEED * delta / cam.zoom
-
-	# 鼠标滚轮缩放
 	var zoom_delta: float = 0.0
 	if Input.is_action_just_pressed("zoom_in"):
 		zoom_delta = CAMERA_ZOOM_STEP
@@ -124,8 +96,13 @@ func _process_camera(delta: float) -> void:
 		cam.zoom = Vector2(new_zoom, new_zoom)
 
 
-func _process_input() -> void:
+func _process_input(_delta: float) -> void:
 	"""读取需要后端处理的玩家指令并发送。"""
+	# WASD 移动玩家实体
+	var move_input := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	if move_input != Vector2.ZERO and _map_display:
+		_map_display.move_player(move_input, _delta)
+
 	if Input.is_action_just_pressed("interact"):
 		Connection.send({
 			"type": "request",
@@ -152,25 +129,6 @@ func _on_terminal_command(command: String) -> void:
 		"request_type": "terminal_cmd",
 		"payload": {"command": command},
 	})
-
-
-func _on_terminal_map_view(view_mode: String) -> void:
-	"""终端地图视图切换请求。
-
-	Args:
-		view_mode: 视图模式（biome/climate/altitude/normal）。
-	"""
-	if _map_display == null:
-		return
-	match view_mode:
-		"biome":
-			_map_display.set_view_mode(MapDisplay.ViewMode.BIOME)
-		"climate":
-			_map_display.set_view_mode(MapDisplay.ViewMode.CLIMATE)
-		"altitude":
-			_map_display.set_view_mode(MapDisplay.ViewMode.ALTITUDE)
-		_:
-			_map_display.set_view_mode(MapDisplay.ViewMode.NORMAL)
 
 
 func _on_connected(host: String, port: int) -> void:

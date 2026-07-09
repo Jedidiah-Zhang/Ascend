@@ -63,8 +63,6 @@ var _font_height: int = FONT_SIZE
 
 ## 向后端发送远程指令
 signal remote_command(command: String)
-## 请求切换地图视图模式（本地处理）
-signal map_view_changed(view_mode: String)
 
 
 # ── 生命周期 ────────────────────────────────────────────────
@@ -80,10 +78,9 @@ func _ready() -> void:
 	# 显式设置大小为视口大小（兜底锚点失效）
 	var vp := get_viewport()
 	if vp:
-		size = vp.get_visible_rect().size
+		set_deferred("size", vp.get_visible_rect().size)
 	_font = _get_mono_font()
-	if _font:
-		_font_height = _font.get_font_size() + 2
+	_font_height = FONT_SIZE + 2
 	hide()
 	_write_output("Ascend 调试终端")
 	_write_output("输入 help 查看指令列表，/? 切换终端")
@@ -408,22 +405,7 @@ func _show_help() -> void:
 
 
 func _handle_local_map(input: String) -> void:
-	"""处理本地地图指令。
-
-	Args:
-		input: 用户输入的完整指令文本。
-	"""
-	var parts: PackedStringArray = input.split(" ", false)
-	var view_mode: String = "biome"
-	if parts.size() > 1:
-		view_mode = parts[1].to_lower()
-
-	match view_mode:
-		"biome", "climate", "altitude", "normal":
-			map_view_changed.emit(view_mode)
-			_write_output(tr("terminal.map_switched").format({"view_mode": view_mode}))
-		_:
-			_write_output(tr("terminal.unknown_view").format({"mode": view_mode}))
+	_write_output("Map: tile-level terrain view active")
 
 
 # ── 辅助函数 ────────────────────────────────────────────────

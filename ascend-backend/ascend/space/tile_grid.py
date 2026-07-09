@@ -5,9 +5,14 @@ array('f')（float32）存储对应高度场和坡度场。
 TerrainType 的 int 值直接存入数组，每 chunk 80KB 地形 + 160KB 高度 + 160KB 坡度。
 """
 
+import struct
 from array import array
 
 from .terrain import TerrainType
+
+_TILEGRID_VERSION: int = 1
+_BYTES_TERRAIN: int = 40000 * 2
+_BYTES_ELEV: int = 40000 * 4
 
 # 详细地图固定尺寸
 TILE_MAP_SIZE: int = 200
@@ -171,6 +176,51 @@ class TileGrid:
             slope: 长度为 40000 的 float 列表（坡度），未提供则全 0。
         """
         return cls(data=data, elevation=elevation, slope=slope)
+
+    # ── 二进制序列化（用于 SQLite 持久化） ────────────────
+
+    def to_bytes(self) -> bytes:
+        """序列化为紧凑二进制 BLOB。
+
+        格式: 4B version(LE) + 80KB terrain(uint16 LE) +
+              160KB elevation(float32 LE) + 160KB slope(float32 LE)。
+        """
+        header = struct.pack("<I", _TILEGRID_VERSION)
+        return header + self._data.tobytes() + self._elevation.tobytes() + self._slope.tobytes()
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> "TileGrid":
+        """从 to_bytes() 输出的二进制 BLOB 反序列化。
+
+        Args:
+            data: to_bytes() 输出的字节串。
+
+        Returns:
+            重建的 TileGrid。
+
+        Raises:
+            ValueError: 版本不匹配或数据长度不正确。
+        """
+        if len(data) < 4:
+            raise ValueError("数据过短，缺少版本头")
+        version = struct.unpack("<I", data[:4])[0]
+        if version != _TILEGRID_VERSION:
+            raise ValueError(f"不支持 TileGrid 版本: {version}")
+        expected = 4 + _BYTES_TERRAIN + _BYTES_ELEV * 2
+        if len(data) != expected:
+            raise ValueError(
+                f"数据长度错误: 期望 {expected} 字节，实际 {len(data)}"
+            )
+        off = 4
+        terrain = array("H")
+        terrain.frombytes(data[off : off + _BYTES_TERRAIN])
+        off += _BYTES_TERRAIN
+        elevation = array("f")
+        elevation.frombytes(data[off : off + _BYTES_ELEV])
+        off += _BYTES_ELEV
+        slope = array("f")
+        slope.frombytes(data[off : off + _BYTES_ELEV])
+        return cls(data=terrain, elevation=elevation, slope=slope)
 
     # ── 低级访问 ──────────────────────────────────────────
 
