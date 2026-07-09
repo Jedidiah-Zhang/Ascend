@@ -93,6 +93,14 @@ class CommandExecutor:
             "help":    lambda a: CommandResult(success=True, output=self._cmd_help()),
         }
 
+    def add_active_time(self, dt: float) -> None:
+        """累加活跃时间（由 GameEngine 每 tick 调用）。
+
+        Args:
+            dt: 真实时间增量（秒）。
+        """
+        self._active_real_time += dt
+
     def register_command(self, name: str, handler: Callable[[list[str]], CommandResult]) -> None:
         """注册新指令（供 mod 和扩展使用）。
 
@@ -299,17 +307,7 @@ class CommandExecutor:
         Returns:
             睡眠后状态文本。
         """
-        old_speed = self._clock.speed
-        self._clock.speed = 120
-        target = int(self._clock.time + hours * GAME_HOUR)
-        self._clock.run_to(target)
-        self._clock.speed = old_speed
-
-        day = self._calendar.day
-        tod = self._calendar.time_of_day(self._clock.time)
-        h = int(tod / GAME_HOUR)
-        m = int((tod % GAME_HOUR) / GAME_MINUTE)
-        return self._i18n.t("console.slept", hours=hours, day=day, time=f"{h:02d}:{m:02d}")
+        return self._fast_forward(hours, "console.slept")
 
     def _cmd_travel(self, hours: float = 1.0) -> str:
         """快速旅行指定小时数。
@@ -319,6 +317,18 @@ class CommandExecutor:
 
         Returns:
              旅行后状态文本。
+        """
+        return self._fast_forward(hours, "console.traveled")
+
+    def _fast_forward(self, hours: float, i18n_key: str) -> str:
+        """以高速模拟推进指定小时数，完成后恢复原速度。
+
+        Args:
+            hours: 推进小时数。
+            i18n_key: 结果 i18n 翻译键。
+
+        Returns:
+            推进后状态文本。
         """
         old_speed = self._clock.speed
         self._clock.speed = 120
@@ -330,7 +340,7 @@ class CommandExecutor:
         tod = self._calendar.time_of_day(self._clock.time)
         h = int(tod / GAME_HOUR)
         m = int((tod % GAME_HOUR) / GAME_MINUTE)
-        return self._i18n.t("console.traveled", hours=hours, day=day, time=f"{h:02d}:{m:02d}")
+        return self._i18n.t(i18n_key, hours=hours, day=day, time=f"{h:02d}:{m:02d}")
 
     def _cmd_jump(self, days: int = 1) -> str:
         """跳过 N 天，落地到目标日 06:00。

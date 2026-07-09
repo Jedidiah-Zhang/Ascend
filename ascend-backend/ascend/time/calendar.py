@@ -125,16 +125,13 @@ class GameCalendar:
 
     def _on_skip_advance(self, skipped: int, game_time: int) -> None:
         """跳转回调 — 检测跳过的边界并发布事件。"""
-        self._check_boundaries(game_time, skipped_days=skipped)
+        self._check_boundaries(game_time)
 
-    def _check_boundaries(
-        self, game_time: int, skipped_days: int = 0,
-    ) -> None:
+    def _check_boundaries(self, game_time: int) -> None:
         """检测分钟/小时/天边界，发布对应事件。
 
         Args:
             game_time: 当前游戏时间（tick）。
-            skipped_days: 跳过的天数（仅 skip 路径使用，tick 路径为 0）。
         """
         self._last_game_time = game_time
 

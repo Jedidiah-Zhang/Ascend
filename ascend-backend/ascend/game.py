@@ -72,7 +72,7 @@ class GameEngine:
         self.server: GameServer | None = None
         self.dispatcher: MessageDispatcher | None = None
         self.clock: WorldClock = WorldClock()
-        self.calendar: GameCalendar = GameCalendar(clock=self.clock)
+        self.calendar: GameCalendar | None = GameCalendar(clock=self.clock)
         self.i18n: I18n = I18n()
         self._executor: CommandExecutor | None = None
         self.entity_manager: EntityManager | None = None
@@ -179,7 +179,7 @@ class GameEngine:
 
         # 7. 消息分发器
         self.dispatcher = MessageDispatcher(self.server)
-        handlers = make_map_handlers(self.world_gen)
+        handlers = make_map_handlers(self.world_gen, tile_gen=self.tile_generator, birth_chunk=self.birth_chunk)
         for req_type, handler in handlers.items():
             self.dispatcher.register(req_type, handler)
         logger.info("已注册地图处理程序: %s", list(handlers.keys()))
@@ -235,7 +235,7 @@ class GameEngine:
             self.server = None
         if self.calendar:
             self.calendar.shutdown()
-            self.calendar = None  # type: ignore[assignment]
+            self.calendar = None
         if self.weather_engine:
             self.weather_engine.shutdown()
             self.weather_engine = None
@@ -380,7 +380,7 @@ class GameEngine:
         """单个 tick：推进时钟 + 处理所有排队消息。"""
         if self.clock:
             self.clock.tick()
-            if hasattr(self, "_executor") and self._executor is not None:
-                self._executor._active_real_time += TICK_DT
+            if self._executor is not None:
+                self._executor.add_active_time(TICK_DT)
         if self.dispatcher:
             self.dispatcher.process()

@@ -7,6 +7,7 @@
 import socket
 import threading
 import time
+from collections.abc import Callable
 from ascend.log import get_logger
 from ascend.net.protocol import encode_message, read_frame, ProtocolError
 
@@ -175,8 +176,8 @@ class _ClientHandler:
         self,
         sock: socket.socket,
         addr: tuple[str, int],
-        on_message: callable,
-        on_disconnect: callable,
+        on_message: Callable[[dict], None],
+        on_disconnect: Callable[["_ClientHandler"], None],
     ) -> None:
         """初始化客户端处理器。
 
@@ -188,8 +189,8 @@ class _ClientHandler:
         """
         self.sock: socket.socket = sock
         self.addr: tuple[str, int] = addr
-        self._on_message: callable = on_message
-        self._on_disconnect: callable = on_disconnect
+        self._on_message: Callable[[dict], None] = on_message
+        self._on_disconnect: Callable[["_ClientHandler"], None] = on_disconnect
         self._recv_thread: threading.Thread | None = None
         self._running: bool = False
         self._send_lock: threading.Lock = threading.Lock()

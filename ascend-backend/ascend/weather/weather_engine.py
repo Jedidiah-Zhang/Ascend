@@ -412,18 +412,28 @@ class WeatherEngine:
             latest_end = event.start_tick + event.duration
         rain.seed_current(now)
 
-    def _replenish_rain(self, key: tuple[int, int], now: int) -> None:
-        """裁剪过期 + 补算降雨事件到深度（无预算限制，rain 生成轻量）。"""
-        rain = self._rain_schedules.get(key)
-        if rain is None:  # pragma: no cover  (调用方遍历 _fields，rain 必存在)
-            return
-        rain.prune_before(now)
-        for _ in range(RAIN_FORECAST_DEPTH):
-            if not rain.needs_replenish(RAIN_REPLENISH_THRESHOLD):
+    def _replenish_schedule(self, schedule, now: int,
+                            depth: int, threshold: int) -> None:
+        """裁剪过期事件 + 补算到指定深度。
+
+        schedule 需提供 prune_before / needs_replenish /
+        latest_end_tick / generate_next / push 接口。
+        """
+        schedule.prune_before(now)
+        for _ in range(depth):
+            if not schedule.needs_replenish(threshold):
                 break
-            latest_end = rain.latest_end_tick()
+            latest_end = schedule.latest_end_tick()
             earliest = latest_end if latest_end is not None else now
-            rain.push(rain.generate_next(earliest))
+            schedule.push(schedule.generate_next(earliest))
+
+    def _replenish_rain(self, key: tuple[int, int], now: int) -> None:
+        """裁剪过期 + 补算降雨事件。"""
+        rain = self._rain_schedules.get(key)
+        if rain is not None:
+            self._replenish_schedule(
+                rain, now, RAIN_FORECAST_DEPTH, RAIN_REPLENISH_THRESHOLD,
+            )
 
     def _seed_modifier(self, schedule: ModifierSchedule) -> None:
         """注册时预排 MODIFIER_FORECAST_DEPTH 个未来修改器事件并 seed_current。"""
@@ -436,17 +446,12 @@ class WeatherEngine:
         schedule.seed_current(now)
 
     def _replenish_modifier(self, key: tuple[int, int, str], now: int) -> None:
-        """裁剪过期 + 补算修改器事件到深度。"""
+        """裁剪过期 + 补算修改器事件。"""
         sched = self._modifier_schedules.get(key)
-        if sched is None:
-            return
-        sched.prune_before(now)
-        for _ in range(MODIFIER_FORECAST_DEPTH):
-            if not sched.needs_replenish(MODIFIER_REPLENISH_THRESHOLD):
-                break
-            latest_end = sched.latest_end_tick()
-            earliest = latest_end if latest_end is not None else now
-            sched.push(sched.generate_next(earliest))
+        if sched is not None:
+            self._replenish_schedule(
+                sched, now, MODIFIER_FORECAST_DEPTH, MODIFIER_REPLENISH_THRESHOLD,
+            )
 
     # ── 内部：tick 调度 ─────────────────────────────────────────
 
