@@ -36,3 +36,6 @@ tests/visual/output/
 
 # Godot 编辑器插件（开发工具，非游戏代码）
 ascend-frontend/addons/
+
+# 前端资源文件（不开源：美术素材、音频等）
+ascend-frontend/assets/

@@ -31,6 +31,9 @@ _BASE_GRASSLAND_CAP = 600.0  # GRASSLAND 海拔上限（之上 ROCK）
 _BASE_ROCK_THRESHOLD = 600.0  # ROCK 起始海拔
 _BASE_PEAK_THRESHOLD = 2000.0
 
+# 陡坡判定：tile 与 8 邻域最大高程差（m/m）超过此值则重分类为 STEEP_SLOPE
+_STEEP_GRADIENT = 1.0
+
 
 class TileGenerator:
     """详细地图地形生成器。
@@ -206,6 +209,10 @@ class TileGenerator:
                 if macro_cache is not None:
                     macro_cache[idx] = macro_elev
 
+        # 坡度计算 + STEEP_SLOPE 重分类（基于局部梯度而非绝对海拔）
+        _compute_slopes(grid)
+        _reclassify_steep(grid)
+
         # 叠加水体（河流 + 湖泊）
         if hyd is not None:
             has_rivers = (
@@ -292,7 +299,7 @@ class TileGenerator:
         """根据海拔、群系偏移分类 tile 地形。
 
         水体（河流/湖泊）由后续步骤叠加覆盖——不在此处判定。
-        积雪由天气系统接入后处理，当前 MOUNTAIN_PEAK 只由海拔带决定。
+        STEEP_SLOPE 不在此处判定——由坡度计算后重分类。
 
         Args:
             elev: 最终海拔 (m)。
@@ -314,8 +321,6 @@ class TileGenerator:
         grassland_cap = _BASE_GRASSLAND_CAP
         rock_threshold = _BASE_ROCK_THRESHOLD + bias.rock_threshold_delta
         peak_threshold = _BASE_PEAK_THRESHOLD + bias.peak_threshold_delta
-        # STEEP 取 ROCK 和 PEAK 的中间值
-        steep_threshold = (rock_threshold + peak_threshold) / 2.0
 
         # 海滩/海岸
         if elev < sand_cap:
@@ -324,8 +329,6 @@ class TileGenerator:
         # 按海拔带分类（偏移后）
         if elev > peak_threshold:
             return TerrainType.MOUNTAIN_PEAK
-        if elev > steep_threshold:
-            return TerrainType.STEEP_SLOPE
         if elev > rock_threshold:
             return TerrainType.ROCK
         if fertile_lo <= elev <= fertile_hi:
@@ -336,6 +339,55 @@ class TileGenerator:
             return TerrainType.GRASSLAND
 
         return TerrainType.SAND
+
+
+# ── 坡度计算与陡坡重分类 ──────────────────────────────────
+
+
+def _compute_slopes(grid: TileGrid) -> None:
+    """计算每个 tile 的最大局部梯度（m/m），存入 grid._slope。
+
+    对每个 tile，比较其高程与 8 邻域（chunk 内）的高程差，
+    取最大值作为该 tile 的坡度。边界 tile 仅考虑 chunk 内的邻居。
+    """
+    size = grid.size
+    directions = [(-1, -1), (0, -1), (1, -1), (-1, 0),
+                  (1, 0), (-1, 1), (0, 1), (1, 1)]
+
+    for y in range(size):
+        for x in range(size):
+            elev = grid.get_elevation(x, y)
+            max_delta = 0.0
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < size and 0 <= ny < size:
+                    delta = abs(elev - grid.get_elevation(nx, ny))
+                    if delta > max_delta:
+                        max_delta = delta
+            grid.set_slope(x, y, max_delta)
+
+
+_WATER_TYPES = frozenset({TerrainType.DEEP_WATER, TerrainType.SHALLOW_WATER})
+
+
+def _reclassify_steep(grid: TileGrid) -> None:
+    """将局部梯度超过阈值的 tile 重分类为 STEEP_SLOPE。
+
+    仅对非水体、非沙滩、非山巅的陆地 tile 生效。
+    山巅（MOUNTAIN_PEAK）保留最高优先级，不降级为陡坡。
+    """
+    size = grid.size
+    for y in range(size):
+        for x in range(size):
+            slope = grid.get_slope(x, y)
+            if slope <= _STEEP_GRADIENT:
+                continue
+            terrain = grid.get(x, y)
+            if terrain in _WATER_TYPES:
+                continue
+            if terrain in (TerrainType.SAND, TerrainType.MOUNTAIN_PEAK):
+                continue
+            grid.set(x, y, TerrainType.STEEP_SLOPE)
 
 
 __all__ = ["TileGenerator"]
