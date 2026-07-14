@@ -1,5 +1,6 @@
 """Tile 级地图 — 等轴侧渲染，多层 TileMapLayer + spritesheet 纹理
 """
+@warning_ignore("integer_division")
 extends Node2D
 
 class_name MapDisplay
@@ -13,8 +14,10 @@ const STREAM_MARGIN: int = 1
 const UNLOAD_RADIUS: int = 3
 const MAX_PENDING_TILES: int = 3
 const PLAYER_SPEED: float = 80.0
-const CELLS_PER_FRAME: int = 8000
 
+## 放置操作每帧时间预算（微秒），超时后下帧继续
+const PLACE_TIME_BUDGET_US: int = 5000
+const PLACE_BATCH_CHECK_MASK: int = 0x3F  # 每 64 格检查一次时间预算
 const TERRAIN_TILES: Array[Vector2i] = [
 	Vector2i(0, 2),
 	Vector2i(0, 0),
@@ -55,6 +58,7 @@ var _birth_chunk: Vector2i = Vector2i.ZERO
 var _has_birth: bool = false
 
 var _layers: Dictionary = {}
+var _player_layers: Dictionary = {}
 var _tileset: TileSet = null
 var _cell_step_x: Vector2 = Vector2.ZERO
 var _cell_step_y: Vector2 = Vector2.ZERO
@@ -62,8 +66,14 @@ var _place_queue: Array = []
 var _place_cursor: int = 0
 var _chunk_elevations: Dictionary = {}
 
-var _erase_queue: Array[Dictionary] = []
-var _erase_cursor: int = 0
+## 擦除队列：卸载时逐帧擦除共享层上的 tile，保持 cell 数有限
+var _erase_queue: Array = []
+
+## 性能计时器（微秒），用于 F3 面板定位瓶颈
+var _last_place_us: int = 0
+var _last_erase_us: int = 0
+var _last_stream_us: int = 0
+var _last_queue_us: int = 0
 
 
 # ── 生命周期 ──────────────────────────────────────────────
@@ -84,8 +94,7 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if _player and _camera:
 		_camera.global_position = _player.global_position
-	_process_place_queue()
-	_process_erase_queue()
+	_process_queues()
 
 
 # ── 公共接口 ──────────────────────────────────────────────
@@ -131,7 +140,10 @@ func handle_chunk_response(payload: Dictionary) -> void:
 
 func stream_chunks_for_viewport() -> void:
 	if _camera == null or Connection.status != Connection.Status.CONNECTED:
+		_last_stream_us = 0
 		return
+
+	var t0: int = Time.get_ticks_usec()
 
 	var center_cx: int = int(_player_pos.x / float(CHUNK_SIZE))
 	var center_cy: int = int(_player_pos.y / float(CHUNK_SIZE))
@@ -181,6 +193,8 @@ func stream_chunks_for_viewport() -> void:
 		_send_request([[pos.x, pos.y]], true)
 		pending_count += 1
 
+	_last_stream_us = Time.get_ticks_usec() - t0
+
 
 # ── 内部实现 ──────────────────────────────────────────────
 
@@ -198,16 +212,30 @@ func _get_layer(elevation: int) -> TileMapLayer:
 	return layer
 
 
+func _get_player_layer(elevation: int) -> TileMapLayer:
+	if _player_layers.has(elevation):
+		return _player_layers[elevation]
+	var layer := TileMapLayer.new()
+	layer.name = "PlayerLayer%d" % elevation
+	layer.tile_set = _tileset
+	layer.y_sort_enabled = false
+	layer.z_index = elevation
+	layer.position = Vector2(0, -elevation * 16)
+	_elevation_layers.add_child(layer)
+	_player_layers[elevation] = layer
+	return layer
+
+
 func _place_player_at(pos: Vector2, elevation: int) -> void:
 	_player_pos = pos
 	if _player_elevation != elevation:
 		if _player.get_parent():
 			_player.get_parent().remove_child(_player)
-		_get_layer(elevation).add_child(_player)
+		_get_player_layer(elevation).add_child(_player)
 		_player_elevation = elevation
 	var cell := Vector2i(int(pos.x), int(pos.y))
 	var frac := pos - Vector2(cell)
-	var layer := _get_layer(elevation)
+	var layer := _get_player_layer(elevation)
 	var base := layer.map_to_local(cell)
 	_player.position = base + _cell_step_x * frac.x + _cell_step_y * frac.y
 
@@ -224,10 +252,28 @@ func _request_chunks_around_birth() -> void:
 		_send_request(coords, false)
 
 
-func _process_place_queue() -> void:
+func _process_queues() -> void:
+	"""统一处理放置和擦除队列，共享帧时间预算。"""
+	var t0: int = Time.get_ticks_usec()
+	var deadline: int = t0 + PLACE_TIME_BUDGET_US
+
+	var t1: int = Time.get_ticks_usec()
+	_place_batch(deadline)
+	_last_place_us = Time.get_ticks_usec() - t1
+
+	if Time.get_ticks_usec() < deadline:
+		var t2: int = Time.get_ticks_usec()
+		_erase_batch(deadline)
+		_last_erase_us = Time.get_ticks_usec() - t2
+	else:
+		_last_erase_us = 0
+
+	_last_queue_us = Time.get_ticks_usec() - t0
+
+
+func _place_batch(deadline: int) -> void:
 	if _place_queue.is_empty():
 		return
-	var t0: int = Time.get_ticks_usec()
 	var data: Dictionary = _place_queue.front()
 	var cx: int = data["cx"]
 	var cy: int = data["cy"]
@@ -241,78 +287,120 @@ func _process_place_queue() -> void:
 	var used_set: Dictionary = _chunk_elevations.get(key, {})
 	_chunk_elevations[key] = used_set
 
-	for _i in range(CELLS_PER_FRAME):
-		if _place_cursor >= total:
-			var dt_done: int = int((Time.get_ticks_usec() - t0) / 1000.0)
-			print("[place] chunk (%d,%d) done: %d layers, %dms" % [cx, cy, used_set.size(), dt_done])
-			_tiles_loaded[key] = true
-			_being_placed.erase(key)
-			_place_queue.pop_front()
-			_place_cursor = 0
-			return
-		var y: int = int(_place_cursor / float(CHUNK_SIZE))
-		var x: int = _place_cursor % int(CHUNK_SIZE)
-		var idx: int = y * CHUNK_SIZE + x
-		var tile: int = terrain[idx]
+	var layers: Dictionary = {}
+
+	while _place_cursor < total:
+		var y: int = _place_cursor / CHUNK_SIZE
+		var x: int = _place_cursor - y * CHUNK_SIZE
+		var tile: int = terrain[_place_cursor]
 		var elev: int
 		if tile == 6 or tile == 7:
 			elev = 0
 		elif elevation != null:
-			elev = int(elevation[idx])
+			elev = int(elevation[_place_cursor])
 		else:
 			elev = TERRAIN_BANDS[tile]
-		if not used_set.has(elev):
-			used_set[elev] = true
-		var atlas_coord: Vector2i = TERRAIN_TILES[tile]
-		_get_layer(elev).set_cell(Vector2i(base_x + x, base_y + y), 0, atlas_coord)
+		used_set[elev] = true
+
+		var layer: TileMapLayer = layers.get(elev, null)
+		if layer == null:
+			layer = _get_layer(elev)
+			layers[elev] = layer
+
+		layer.set_cell(Vector2i(base_x + x, base_y + y), 0, TERRAIN_TILES[tile])
 		_place_cursor += 1
-	var dt_batch: int = int((Time.get_ticks_usec() - t0) / 1000.0)
-	print("[place] chunk (%d,%d) batch: cursor=%d, %dms" % [cx, cy, _place_cursor, dt_batch])
 
-
-func _process_erase_queue() -> void:
-	if _erase_queue.is_empty():
-		return
-	var data: Dictionary = _erase_queue.front()
-	var elevs: Array = data["elevations"]
-	var bx: int = data["base_x"]
-	var by: int = data["base_y"]
-	var total: int = CHUNK_SIZE * CHUNK_SIZE * elevs.size()
-
-	for _i in range(CELLS_PER_FRAME):
-		if _erase_cursor >= total:
-			_erase_queue.pop_front()
-			_erase_cursor = 0
+		if (_place_cursor & PLACE_BATCH_CHECK_MASK) == 0 and Time.get_ticks_usec() >= deadline:
 			return
-		var cell_index: int = int(_erase_cursor / float(elevs.size()))
-		var elev_index: int = _erase_cursor % int(elevs.size())
-		var elev: int = elevs[elev_index]
-		var ty: int = int(cell_index / float(CHUNK_SIZE))
-		var tx: int = cell_index % int(CHUNK_SIZE)
-		var layer: TileMapLayer = _layers.get(elev, null)
-		if layer != null:
-			layer.erase_cell(Vector2i(bx + tx, by + ty))
-		_erase_cursor += 1
+
+	if _place_cursor >= total:
+		print("[place] chunk (%d,%d) done: %d layers" % [cx, cy, used_set.size()])
+		_tiles_loaded[key] = true
+		_being_placed.erase(key)
+		_place_queue.pop_front()
+		_place_cursor = 0
 
 
 func _unload_chunk(cx: int, cy: int) -> void:
 	var key := Vector2i(cx, cy)
-	var base_x: int = cx * CHUNK_SIZE
-	var base_y: int = cy * CHUNK_SIZE
 	var used: Dictionary = _chunk_elevations.get(key, {})
-	if not used.is_empty():
-		var elevs: Array[int] = []
-		for elev in used:
-			elevs.append(elev)
+
+	# 如果该 chunk 还在放置队列中，取消放置
+	if not _place_queue.is_empty():
+		var front_data: Dictionary = _place_queue.front()
+		if front_data.get("cx", -1) == cx and front_data.get("cy", -1) == cy:
+			_place_queue.pop_front()
+			_place_cursor = 0
+
+	var chunk_data: Dictionary = _chunks.get(key, {})
+	if not used.is_empty() and not chunk_data.is_empty() and chunk_data.has("terrain"):
 		_erase_queue.append({
-			"key": key, "base_x": base_x, "base_y": base_y,
-			"elevations": elevs,
+			"cx": cx,
+			"cy": cy,
+			"terrain": chunk_data["terrain"],
+			"elevation": chunk_data.get("elevation", null),
+			"evals": used.keys(),
+			"cursor": 0,
 		})
 	_chunk_elevations.erase(key)
 	_chunks.erase(key)
 	_tiles_loaded.erase(key)
 	_tiles_cached.erase(key)
 	_being_placed.erase(key)
+
+
+func _erase_batch(deadline: int) -> void:
+	if _erase_queue.is_empty():
+		return
+	var entry: Dictionary = _erase_queue.front()
+	var cx: int = entry["cx"]
+	var cy: int = entry["cy"]
+	var terrain: Array = entry["terrain"]
+	var elevation: Array = entry["elevation"]
+	var evals: Array = entry["evals"]
+	var cursor: int = entry["cursor"]
+	var base_x: int = cx * CHUNK_SIZE
+	var base_y: int = cy * CHUNK_SIZE
+	var total: int = CHUNK_SIZE * CHUNK_SIZE
+
+	var layers: Dictionary = {}
+	for elev in evals:
+		layers[elev] = _layers.get(elev, null)
+
+	while cursor < total:
+		var tile: int = terrain[cursor]
+		var elev: int
+		if tile == 6 or tile == 7:
+			elev = 0
+		elif elevation != null:
+			elev = int(elevation[cursor])
+		else:
+			elev = TERRAIN_BANDS[tile]
+
+		var y: int = cursor / CHUNK_SIZE
+		var x: int = cursor - y * CHUNK_SIZE
+		var layer: TileMapLayer = layers.get(elev, null)
+		if layer:
+			layer.set_cell(Vector2i(base_x + x, base_y + y), -1)
+		cursor += 1
+
+		if (cursor & PLACE_BATCH_CHECK_MASK) == 0 and Time.get_ticks_usec() >= deadline:
+			entry["cursor"] = cursor
+			return
+
+	_erase_queue.pop_front()
+	for elev in evals:
+		var active := false
+		for other_key in _tiles_loaded:
+			var other_used: Dictionary = _chunk_elevations.get(other_key, {})
+			if other_used.has(elev):
+				active = true
+				break
+		if not active:
+			var layer: TileMapLayer = _layers.get(elev, null)
+			if layer:
+				_layers.erase(elev)
+				layer.queue_free()
 
 
 func _unload_distant_chunks(center_cx: int, center_cy: int) -> void:
@@ -459,6 +547,20 @@ func get_chunk_humidity(world_pos: Vector2) -> float:
 	if chunk_data == null or chunk_data.is_empty() or not chunk_data.has("humidity"):
 		return -999.0
 	return float(chunk_data["humidity"])
+
+
+func get_timing() -> Dictionary:
+	"""返回上帧性能计时器快照（微秒），读取后自动清零。"""
+	var out := {
+		"stream": _last_stream_us,
+		"place": _last_place_us,
+		"erase": _last_erase_us,
+		"queue": _last_queue_us,
+	}
+	_last_stream_us = 0
+	_last_place_us = 0
+	_last_erase_us = 0
+	return out
 
 
 func _send_request(coord_array: Array, include_tiles: bool) -> void:

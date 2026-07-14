@@ -17,12 +17,19 @@ const TEXT_COLOR: Color = Color(0.85, 0.85, 0.90)
 const FONT_SIZE: int = 12
 const LINE_HEIGHT: int = 15
 const PADDING: int = 8
+## 固定面板宽度（避免每帧 get_string_size 测量所有行）
+const PANEL_WIDTH: float = 280.0
+
+## 最低刷新间隔（秒），限制高频率事件涌入时的绘制开销
+const REFRESH_INTERVAL: float = 0.5
 
 
 # ── 属性 ────────────────────────────────────────────────────
 
 var _lines: PackedStringArray = PackedStringArray()
 var _font: Font = null
+var _pending_redraw: bool = false
+var _refresh_accum: float = 0.0
 
 
 # ── 生命周期 ────────────────────────────────────────────────
@@ -37,24 +44,25 @@ func _ready() -> void:
 	hide()
 
 
+func _process(delta: float) -> void:
+	if not _pending_redraw:
+		return
+	_refresh_accum += delta
+	if _refresh_accum >= REFRESH_INTERVAL:
+		_refresh_accum = 0.0
+		_pending_redraw = false
+		queue_redraw()
+
+
 func _draw() -> void:
 	if _font == null or _lines.is_empty():
 		return
 
-	# 计算最大行宽
-	var max_w: float = 0.0
-	for line in _lines:
-		max_w = max(max_w, _font.get_string_size(line,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x)
 	var header_text := "── 事件日志 ──"
-	max_w = max(max_w, _font.get_string_size(header_text,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x)
-
-	var bg_w: float = max_w + PADDING * 2
+	var bg_x: float = size.x - PANEL_WIDTH
 	var bg_h: float = (_lines.size() + 1) * LINE_HEIGHT + PADDING * 2
-	var bg_x: float = size.x - bg_w
 
-	draw_rect(Rect2(Vector2(bg_x, 0.0), Vector2(bg_w, bg_h)), BG_COLOR)
+	draw_rect(Rect2(Vector2(bg_x, 0.0), Vector2(PANEL_WIDTH, bg_h)), BG_COLOR)
 
 	var y: float = PADDING
 	var x: float = bg_x + PADDING
@@ -81,7 +89,7 @@ func push_event(line: String) -> void:
 	_lines = arr
 	if _lines.size() > 20:
 		_lines.resize(20)
-	queue_redraw()
+	_pending_redraw = true
 
 
 # ── 内部实现 ────────────────────────────────────────────────

@@ -205,7 +205,14 @@ class GameEngine:
             self.dispatcher.register(req_type, handler)
         logger.info("已注册终端处理程序: %s", list(term_handlers.keys()))
 
-        # 9. 世界树：归档 + 内存限制 + 图预热
+        # 8b. 占位 handler：尚未实现的功能返回空成功响应
+        def _placeholder_ok(_msg: dict) -> dict:
+            return {"type": "response", "payload": {}}
+
+        self.dispatcher.register("open_menu", _placeholder_ok)
+        self.dispatcher.register("player_interact", _placeholder_ok)
+
+		# 9. 世界树：归档 + 内存限制 + 图预热
         world_tree.configure(
             archive_path="save/events.db",
             max_memory_events=100_000,

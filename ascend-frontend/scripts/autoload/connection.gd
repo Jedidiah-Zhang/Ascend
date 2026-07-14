@@ -79,6 +79,9 @@ var _decode_input: Array[PackedByteArray] = []
 var _decode_output: Array[Dictionary] = []
 var _decode_running: bool = false
 
+## 上帧 _process 耗时（微秒），供调试面板读取
+var last_process_us: int = 0
+
 
 # ── 生命周期 ──────────────────────────────────────────────
 
@@ -99,15 +102,19 @@ func _notification(what: int) -> void:
 
 func _process(delta: float) -> void:
 	"""每帧轮询：检查连接、读数据、发数据。"""
+	var t0: int = Time.get_ticks_usec()
+
 	if _awaiting_backend:
 		_backend_startup_timer += delta
 		if _backend_startup_timer > BACKEND_STARTUP_TIMEOUT:
 			push_error("Connection: backend startup timed out after %.0fs" % BACKEND_STARTUP_TIMEOUT)
 			_awaiting_backend = false
 			_kill_backend()
+			last_process_us = Time.get_ticks_usec() - t0
 			return
 		_backend_check_timer -= delta
 		if _backend_check_timer > 0.0:
+			last_process_us = Time.get_ticks_usec() - t0
 			return
 		_backend_check_timer = 0.5
 		if _is_port_open(DEFAULT_HOST, DEFAULT_PORT):
@@ -117,6 +124,7 @@ func _process(delta: float) -> void:
 				_stream.disconnect_from_host()
 				_stream = null
 			_connect()
+		last_process_us = Time.get_ticks_usec() - t0
 		return
 
 	match status:
@@ -132,6 +140,8 @@ func _process(delta: float) -> void:
 				_read_messages()
 				_collect_decoded()
 				_flush_send_queue()
+
+	last_process_us = Time.get_ticks_usec() - t0
 
 
 # ── 公共接口 ──────────────────────────────────────────────

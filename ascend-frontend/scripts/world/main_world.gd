@@ -35,6 +35,13 @@ var _current_game_minute: int = -1
 ## 上次显示的日期，仅变更时插入分隔线
 var _current_game_day: int = -1
 
+## TPS 计算：上一帧的游戏时间戳 + 真实时间（毫秒）
+var _prev_game_time: int = -1
+var _prev_real_msec: int = 0
+
+## 上次推送调试数据时的玩家 tile 坐标，仅在移位时刷新地形/气候数据
+var _last_tile_pos: Vector2i = Vector2i(-999999, -999999)
+
 
 func _ready() -> void:
 	"""场景加载时连接信号并发起连接。"""
@@ -188,6 +195,7 @@ func _update_debug_sections() -> void:
 			cam_section.zoom = mcam.zoom
 
 	var player_pos: Vector2 = _map_display.get_player_pos()
+	var tile_pos := Vector2i(int(player_pos.x), int(player_pos.y))
 
 	var player_section: PlayerSection = _debug_overlay.get_section("玩家")
 	if player_section:
@@ -202,23 +210,39 @@ func _update_debug_sections() -> void:
 		chunk_section.cached_count = stats["cached"]
 		chunk_section.pending_count = stats["pending"]
 
-	var elev_section: ElevationSection = _debug_overlay.get_section("地形")
-	if elev_section:
-		var elev: float = _map_display.get_elevation_at(player_pos)
-		if elev > -998.0:
-			elev_section.update_from_backend({"elevation": int(elev)})
-		var slope: float = _map_display.get_slope_at(player_pos)
-		if slope > -998.0:
-			elev_section.update_from_backend({"slope": slope})
+	# 仅在玩家移动到新 tile 时才查询地形/气候数据（涉及 chunk 字典查找和数组索引）
+	if tile_pos != _last_tile_pos:
+		_last_tile_pos = tile_pos
 
-	var climate_section: ClimateSection = _debug_overlay.get_section("气候")
-	if climate_section:
-		var temp: float = _map_display.get_chunk_temperature(player_pos)
-		if temp > -998.0:
-			climate_section.update_from_backend({"temperature": temp})
-		var hum: float = _map_display.get_chunk_humidity(player_pos)
-		if hum > -998.0:
-			climate_section.update_from_backend({"humidity": hum})
+		var elev_section: ElevationSection = _debug_overlay.get_section("地形")
+		if elev_section:
+			var elev: float = _map_display.get_elevation_at(player_pos)
+			if elev > -998.0:
+				elev_section.update_from_backend({"elevation": int(elev)})
+			var slope: float = _map_display.get_slope_at(player_pos)
+			if slope > -998.0:
+				elev_section.update_from_backend({"slope": slope})
+
+		var climate_section: ClimateSection = _debug_overlay.get_section("气候")
+		if climate_section:
+			var temp: float = _map_display.get_chunk_temperature(player_pos)
+			if temp > -998.0:
+				climate_section.update_from_backend({"temperature": temp})
+			var hum: float = _map_display.get_chunk_humidity(player_pos)
+			if hum > -998.0:
+				climate_section.update_from_backend({"humidity": hum})
+
+	var fps_section: FPSSection = _debug_overlay.get_section("性能")
+	if fps_section:
+		fps_section.update_msp_t()
+		var timing: Dictionary = _map_display.get_timing()
+		fps_section.set_timing(
+			timing.get("stream", 0),
+			timing.get("place", 0),
+			timing.get("erase", 0),
+			timing.get("queue", 0),
+			Connection.last_process_us,
+		)
 
 
 func _on_connected(host: String, port: int) -> void:
@@ -287,6 +311,18 @@ func _handle_event(message: Dictionary) -> void:
 			if day != _current_game_day:
 				_current_game_day = day
 				_push_log("[%s] ── 第%d天 ──" % [ts, day])
+			# 计算实测 TPS
+			var gt: int = int(data.get("game_time", 0))
+			var now_msec: int = Time.get_ticks_msec()
+			if _prev_game_time >= 0 and gt > _prev_game_time:
+				var tick_delta: int = gt - _prev_game_time
+				var real_delta: float = (now_msec - _prev_real_msec) / 1000.0
+				if real_delta > 0.0:
+					var fps_section: FPSSection = _debug_overlay.get_section("性能")
+					if fps_section:
+						fps_section.tps = tick_delta / real_delta
+			_prev_game_time = gt
+			_prev_real_msec = now_msec
 
 		"temperature_change":
 			var section: ClimateSection = _debug_overlay.get_section("气候")
