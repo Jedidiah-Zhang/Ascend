@@ -19,7 +19,6 @@ config/features=PackedStringArray("4.7")
 [autoload]
 
 Connection="*res://scripts/autoload/connection.gd"
-MCPRuntimeProbe="*res://addons/godot_mcp/runtime/mcp_runtime_probe.gd"
 
 [display]
 

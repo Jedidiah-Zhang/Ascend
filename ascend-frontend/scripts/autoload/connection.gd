@@ -186,6 +186,10 @@ func _process(delta: float) -> void:
 		if _is_port_open(DEFAULT_HOST, DEFAULT_PORT):
 			print("Connection: backend ready on %s:%d (waited %.1fs)" % [DEFAULT_HOST, DEFAULT_PORT, _backend_startup_timer])
 			_awaiting_backend = false
+			if _stream != null:
+				_stream.disconnect_from_host()
+				_stream = null
+			_connect()
 		return
 
 	match status:

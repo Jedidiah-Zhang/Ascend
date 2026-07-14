@@ -75,10 +75,6 @@ func _ready() -> void:
 	anchor_right = 1.0
 	anchor_bottom = 1.0
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# 显式设置大小为视口大小（兜底锚点失效）
-	var vp := get_viewport()
-	if vp:
-		set_deferred("size", vp.get_visible_rect().size)
 	_font = _get_mono_font()
 	_font_height = FONT_SIZE + 2
 	hide()
@@ -404,7 +400,7 @@ func _show_help() -> void:
 	_write_output("  " + tr("terminal.help_help"))
 
 
-func _handle_local_map(input: String) -> void:
+func _handle_local_map(_cmd_input: String) -> void:
 	_write_output("Map: tile-level terrain view active")
 
 
@@ -445,9 +441,9 @@ func _get_mono_font() -> Font:
 	Returns:
 		Font 或 null。
 	"""
-	var theme: Theme = ThemeDB.get_project_theme()
-	if theme and theme.default_font:
-		return theme.default_font
+	var project_theme: Theme = ThemeDB.get_project_theme()
+	if project_theme and project_theme.default_font:
+		return project_theme.default_font
 	# 回退：使用稍大一号的默认主题字体
 	return get_theme_default_font()
 

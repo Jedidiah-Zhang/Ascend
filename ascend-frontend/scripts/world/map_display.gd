@@ -147,8 +147,8 @@ func handle_chunk_response(payload: Dictionary) -> void:
 		_pending.erase(pos)
 
 		if entry.has("terrain") and not _tiles_loaded.has(pos) and not _tiles_cached.has(pos) and not _being_placed.has(pos):
-			var center_cx: int = int(_player_pos.x) / CHUNK_SIZE
-			var center_cy: int = int(_player_pos.y) / CHUNK_SIZE
+			var center_cx: int = int(_player_pos.x / float(CHUNK_SIZE))
+			var center_cy: int = int(_player_pos.y / float(CHUNK_SIZE))
 			if abs(cx - center_cx) <= STREAM_MARGIN and abs(cy - center_cy) <= STREAM_MARGIN:
 				_being_placed[pos] = true
 				_place_queue.append(entry)
@@ -175,15 +175,15 @@ func _process_place_queue() -> void:
 
 	for _i in range(CELLS_PER_FRAME):
 		if _place_cursor >= total:
-			var dt: int = (Time.get_ticks_usec() - t0) / 1000
-			print("[place] chunk (%d,%d) done: %d layers, %dms" % [cx, cy, used_set.size(), dt])
+			var dt_done: int = int((Time.get_ticks_usec() - t0) / 1000.0)
+			print("[place] chunk (%d,%d) done: %d layers, %dms" % [cx, cy, used_set.size(), dt_done])
 			_tiles_loaded[key] = true
 			_being_placed.erase(key)
 			_place_queue.pop_front()
 			_place_cursor = 0
 			return
-		var y: int = _place_cursor / CHUNK_SIZE
-		var x: int = _place_cursor % CHUNK_SIZE
+		var y: int = int(_place_cursor / float(CHUNK_SIZE))
+		var x: int = _place_cursor % int(CHUNK_SIZE)
 		var idx: int = y * CHUNK_SIZE + x
 		var tile: int = terrain[idx]
 		var elev: int
@@ -198,8 +198,8 @@ func _process_place_queue() -> void:
 		var atlas_coord: Vector2i = TERRAIN_TILES[tile]
 		_get_layer(elev).set_cell(Vector2i(base_x + x, base_y + y), 0, atlas_coord)
 		_place_cursor += 1
-	var dt: int = (Time.get_ticks_usec() - t0) / 1000
-	print("[place] chunk (%d,%d) batch: cursor=%d, %dms" % [cx, cy, _place_cursor, dt])
+	var dt_batch: int = int((Time.get_ticks_usec() - t0) / 1000.0)
+	print("[place] chunk (%d,%d) batch: cursor=%d, %dms" % [cx, cy, _place_cursor, dt_batch])
 
 
 func _process_erase_queue() -> void:
@@ -216,11 +216,11 @@ func _process_erase_queue() -> void:
 			_erase_queue.pop_front()
 			_erase_cursor = 0
 			return
-		var cell_index: int = _erase_cursor / elevs.size()
-		var elev_index: int = _erase_cursor % elevs.size()
+		var cell_index: int = int(_erase_cursor / float(elevs.size()))
+		var elev_index: int = _erase_cursor % int(elevs.size())
 		var elev: int = elevs[elev_index]
-		var ty: int = cell_index / CHUNK_SIZE
-		var tx: int = cell_index % CHUNK_SIZE
+		var ty: int = int(cell_index / float(CHUNK_SIZE))
+		var tx: int = cell_index % int(CHUNK_SIZE)
 		var layer: TileMapLayer = _layers.get(elev, null)
 		if layer != null:
 			layer.erase_cell(Vector2i(bx + tx, by + ty))
@@ -280,8 +280,8 @@ func stream_chunks_for_viewport() -> void:
 	if _camera == null or Connection.status != Connection.Status.CONNECTED:
 		return
 
-	var center_cx: int = int(_player_pos.x) / CHUNK_SIZE
-	var center_cy: int = int(_player_pos.y) / CHUNK_SIZE
+	var center_cx: int = int(_player_pos.x / float(CHUNK_SIZE))
+	var center_cy: int = int(_player_pos.y / float(CHUNK_SIZE))
 
 	_unload_distant_chunks(center_cx, center_cy)
 
