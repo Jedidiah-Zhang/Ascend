@@ -23,6 +23,17 @@ const CAMERA_ZOOM_MAX: float = 4.0
 @onready var _terminal: TerminalWidget = $TerminalLayer/TerminalWidget
 ## 地图相机（从 MapDisplay 缓存，避免每帧 get_node）
 @onready var _map_camera: Camera2D = $World/MapDisplay/MapCamera
+## 调试信息覆盖层
+@onready var _debug_overlay: DebugOverlay = $DebugLayer/DebugOverlay
+## 事件日志面板
+@onready var _event_log: EventLog = $DebugLayer/EventLog
+
+## 当前游戏时间（时），来自 minute_change 事件，用于事件日志时间戳
+var _current_game_hour: int = -1
+## 当前游戏时间（分）
+var _current_game_minute: int = -1
+## 上次显示的日期，仅变更时插入分隔线
+var _current_game_day: int = -1
 
 
 func _ready() -> void:
@@ -32,6 +43,8 @@ func _ready() -> void:
 	Connection.connection_established.connect(_on_connected)
 	Connection.connection_lost.connect(_on_disconnected)
 	Connection.message_received.connect(_on_message)
+
+	_setup_debug_sections()
 
 	Connection.connect_to_server()
 
@@ -47,10 +60,14 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
-	"""每帧：控制相机 + 流式地图块 + 处理玩家指令。
+	"""每帧：控制相机 + 流式地图块 + 处理玩家指令 + 更新调试覆盖层。
 
 	终端打开时跳过相机控制和玩家输入，但保持 Connection 消息处理。
 	"""
+	# 始终更新调试覆盖层（独立于连接状态和终端状态）
+	if _debug_overlay and _debug_overlay.is_shown():
+		_update_debug_sections()
+
 	# 无条件处理 Connection（即使终端打开，远程指令响应仍需接收）
 	if Connection.status != Connection.Status.CONNECTED:
 		return
@@ -68,7 +85,7 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	"""处理 '/' 键切换终端。
+	"""处理快捷键：'/' 切换终端、F3 切换调试覆盖层。
 
 	Args:
 		event: 输入事件。
@@ -77,6 +94,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_SLASH and not event.shift_pressed and not event.ctrl_pressed and not event.alt_pressed:
 			if _terminal:
 				_terminal.toggle()
+			get_viewport().set_input_as_handled()
+
+		if event.keycode == KEY_F3:
+			if _debug_overlay:
+				_debug_overlay.toggle()
+			if _event_log:
+				if _debug_overlay and _debug_overlay.is_shown():
+					_event_log.show()
+				else:
+					_event_log.hide()
 			get_viewport().set_input_as_handled()
 
 
@@ -132,6 +159,68 @@ func _on_terminal_command(command: String) -> void:
 	})
 
 
+# ── 调试覆盖层 ──────────────────────────────────────────────
+
+func _setup_debug_sections() -> void:
+	"""注册所有调试分区到覆盖层。"""
+	_debug_overlay.add_section(FPSSection.new())
+	_debug_overlay.add_section(MemorySection.new())
+	_debug_overlay.add_section(TimeSection.new())
+	_debug_overlay.add_section(ConnectionSection.new())
+	_debug_overlay.add_section(CameraSection.new())
+	_debug_overlay.add_section(PlayerSection.new())
+	_debug_overlay.add_section(ClimateSection.new())
+	_debug_overlay.add_section(WeatherSection.new())
+	_debug_overlay.add_section(ChunkSection.new())
+	_debug_overlay.add_section(ElevationSection.new())
+
+
+func _update_debug_sections() -> void:
+	"""每帧推送动态数据到调试分区。"""
+	if _map_display == null:
+		return
+
+	var mcam: Camera2D = _map_display.get_camera()
+	if mcam:
+		var cam_section: CameraSection = _debug_overlay.get_section("相机")
+		if cam_section:
+			cam_section.position = mcam.global_position
+			cam_section.zoom = mcam.zoom
+
+	var player_pos: Vector2 = _map_display.get_player_pos()
+
+	var player_section: PlayerSection = _debug_overlay.get_section("玩家")
+	if player_section:
+		player_section.world_pos = player_pos
+		player_section.elevation = _map_display.get_player_elevation()
+
+	var chunk_section: ChunkSection = _debug_overlay.get_section("区块")
+	if chunk_section:
+		var stats: Dictionary = _map_display.get_chunk_stats()
+		chunk_section.loaded_count = stats["loaded"]
+		chunk_section.being_placed_count = stats["placing"]
+		chunk_section.cached_count = stats["cached"]
+		chunk_section.pending_count = stats["pending"]
+
+	var elev_section: ElevationSection = _debug_overlay.get_section("地形")
+	if elev_section:
+		var elev: float = _map_display.get_elevation_at(player_pos)
+		if elev > -998.0:
+			elev_section.update_from_backend({"elevation": int(elev)})
+		var slope: float = _map_display.get_slope_at(player_pos)
+		if slope > -998.0:
+			elev_section.update_from_backend({"slope": slope})
+
+	var climate_section: ClimateSection = _debug_overlay.get_section("气候")
+	if climate_section:
+		var temp: float = _map_display.get_chunk_temperature(player_pos)
+		if temp > -998.0:
+			climate_section.update_from_backend({"temperature": temp})
+		var hum: float = _map_display.get_chunk_humidity(player_pos)
+		if hum > -998.0:
+			climate_section.update_from_backend({"humidity": hum})
+
+
 func _on_connected(host: String, port: int) -> void:
 	"""连接成功回调。
 
@@ -167,13 +256,75 @@ func _on_message(message: Dictionary) -> void:
 
 
 func _handle_event(message: Dictionary) -> void:
-	"""处理后端推送的事件。
+	"""处理后端推送的事件并路由到调试分区和事件日志。
 
 	Args:
 		message: 事件消息。
 	"""
 	var event_type: String = message.get("event_type", "")
-	print("MainWorld: event '%s'" % event_type)
+
+	var payload: Dictionary = message.get("payload", {})
+	var data: Dictionary = payload.get("data", {})
+
+	if _debug_overlay == null:
+		return
+
+	# 格式化时间戳
+	var ts: String = "--:--"
+	if _current_game_hour >= 0:
+		ts = "%02d:%02d" % [_current_game_hour, _current_game_minute]
+
+	match event_type:
+		"minute_change":
+			_current_game_hour = int(data.get("hour", 0))
+			_current_game_minute = int(data.get("minute", 0))
+			ts = "%02d:%02d" % [_current_game_hour, _current_game_minute]
+			var time_section: TimeSection = _debug_overlay.get_section("时间")
+			if time_section:
+				time_section.update_from_backend(data)
+			# 仅在日期变更时显示分隔线
+			var day: int = int(data.get("day", 0))
+			if day != _current_game_day:
+				_current_game_day = day
+				_push_log("[%s] ── 第%d天 ──" % [ts, day])
+
+		"temperature_change":
+			var section: ClimateSection = _debug_overlay.get_section("气候")
+			if section:
+				section.update_from_backend({"temperature": data.get("temperature", 0.0)})
+			_push_log("[%s] 温度 %.1f°C" % [ts, data.get("temperature", 0.0)])
+
+		"humidity_change":
+			var section: ClimateSection = _debug_overlay.get_section("气候")
+			if section:
+				section.update_from_backend({"humidity": data.get("humidity", 0.0)})
+			_push_log("[%s] 湿度 %.0f%%" % [ts, data.get("humidity", 0.0)])
+
+		"wind_change":
+			_push_log("[%s] 风速 %.1f m/s" % [ts, data.get("wind_speed", 0.0)])
+
+		"sunshine_change":
+			_push_log("[%s] 日照 %.1fh" % [ts, data.get("sunshine", 0.0)])
+
+		"precipitation_start":
+			var section: WeatherSection = _debug_overlay.get_section("天气")
+			if section:
+				var ptype: String = data.get("precip_type", "")
+				var intensity: float = data.get("intensity", 0.0)
+				section.update_from_backend({"weather": "%s (%.1f mm/h)" % [ptype, intensity]})
+			_push_log("[%s] %s %.1fmm/h" % [ts, data.get("precip_type", ""), data.get("intensity", 0.0)])
+
+		"precipitation_stop":
+			var section: WeatherSection = _debug_overlay.get_section("天气")
+			if section:
+				section.update_from_backend({"weather": "晴"})
+			_push_log("[%s] 雨停" % ts)
+
+
+func _push_log(line: String) -> void:
+	"""推入一行事件到右侧日志面板。"""
+	if _event_log:
+		_event_log.push_event(line)
 
 
 func _handle_response(message: Dictionary) -> void:

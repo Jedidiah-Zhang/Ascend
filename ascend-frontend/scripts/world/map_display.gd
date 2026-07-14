@@ -348,8 +348,121 @@ func _on_connected(_host: String, _port: int) -> void:
 	pass
 
 
+func get_player_pos() -> Vector2:
+	return _player_pos
+
+
+func get_player_elevation() -> int:
+	return _player_elevation
+
+
+func get_camera() -> Camera2D:
+	return _camera
+
+
+func get_chunk_stats() -> Dictionary:
+	return {
+		"loaded": _tiles_loaded.size(),
+		"placing": _being_placed.size(),
+		"cached": _tiles_cached.size(),
+		"pending": _pending.size(),
+	}
+
+
+func get_elevation_at(world_pos: Vector2) -> float:
+	"""获取指定世界坐标的逐格海拔。
+
+	Args:
+		world_pos: 世界坐标。
+
+	Returns:
+		海拔值（米），无数据时返回 -999.0。
+	"""
+	var cx: int = int(world_pos.x / float(CHUNK_SIZE))
+	var cy: int = int(world_pos.y / float(CHUNK_SIZE))
+	var key := Vector2i(cx, cy)
+	var chunk_data: Dictionary = _chunks.get(key, {})
+	if chunk_data == null or chunk_data.is_empty() or not chunk_data.has("elevation"):
+		return -999.0
+
+	var base_x: int = cx * CHUNK_SIZE
+	var base_y: int = cy * CHUNK_SIZE
+	var tx: int = int(world_pos.x) - base_x
+	var ty: int = int(world_pos.y) - base_y
+	var idx: int = ty * CHUNK_SIZE + tx
+
+	var elev_arr: Array = chunk_data["elevation"]
+	if idx < 0 or idx >= elev_arr.size():
+		return -999.0
+	return float(elev_arr[idx])
+
+
+func get_slope_at(world_pos: Vector2) -> float:
+	"""获取指定世界坐标的逐格坡度。
+
+	Args:
+		world_pos: 世界坐标。
+
+	Returns:
+		坡度值（m/m），无数据时返回 -999.0。
+	"""
+	var cx: int = int(world_pos.x / float(CHUNK_SIZE))
+	var cy: int = int(world_pos.y / float(CHUNK_SIZE))
+	var key := Vector2i(cx, cy)
+	var chunk_data: Dictionary = _chunks.get(key, {})
+	if chunk_data == null or chunk_data.is_empty() or not chunk_data.has("slope"):
+		return -999.0
+
+	var base_x: int = cx * CHUNK_SIZE
+	var base_y: int = cy * CHUNK_SIZE
+	var tx: int = int(world_pos.x) - base_x
+	var ty: int = int(world_pos.y) - base_y
+	var idx: int = ty * CHUNK_SIZE + tx
+
+	var slope_arr: Array = chunk_data["slope"]
+	if idx < 0 or idx >= slope_arr.size():
+		return -999.0
+	return float(slope_arr[idx])
+
+
+func get_chunk_temperature(world_pos: Vector2) -> float:
+	"""获取指定世界坐标所在区块的年均温。
+
+	Args:
+		world_pos: 世界坐标。
+
+	Returns:
+		年均温（°C），无数据时返回 -999.0。
+	"""
+	var cx: int = int(world_pos.x / float(CHUNK_SIZE))
+	var cy: int = int(world_pos.y / float(CHUNK_SIZE))
+	var key := Vector2i(cx, cy)
+	var chunk_data: Dictionary = _chunks.get(key, {})
+	if chunk_data == null or chunk_data.is_empty() or not chunk_data.has("temperature"):
+		return -999.0
+	return float(chunk_data["temperature"])
+
+
+func get_chunk_humidity(world_pos: Vector2) -> float:
+	"""获取指定世界坐标所在区块的年均湿度。
+
+	Args:
+		world_pos: 世界坐标。
+
+	Returns:
+		年均湿度（%，0-100），无数据时返回 -999.0。
+	"""
+	var cx: int = int(world_pos.x / float(CHUNK_SIZE))
+	var cy: int = int(world_pos.y / float(CHUNK_SIZE))
+	var key := Vector2i(cx, cy)
+	var chunk_data: Dictionary = _chunks.get(key, {})
+	if chunk_data == null or chunk_data.is_empty() or not chunk_data.has("humidity"):
+		return -999.0
+	return float(chunk_data["humidity"])
+
+
 func _send_request(coord_array: Array, include_tiles: bool) -> void:
-	var payload: Dictionary = {"chunks": coord_array}
+	var payload: Dictionary = {"chunks": coord_array, "force_fields": true}
 	if include_tiles:
 		payload["include_tiles"] = true
 	Connection.send({

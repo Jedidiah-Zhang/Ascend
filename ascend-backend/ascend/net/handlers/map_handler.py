@@ -102,6 +102,7 @@ def make_map_handlers(gen, tile_gen=None, birth_chunk=None, chunk_store=None):
                 entry.update({
                     "altitude": round(c.annual_baseline.altitude, 1),
                     "temperature": round(c.annual_baseline.temperature, 1),
+                    "humidity": round(c.annual_baseline.humidity, 1),
                     "rainfall": round(c.annual_baseline.rainfall, 1),
                 })
             if include_tiles and tile_gen is not None:

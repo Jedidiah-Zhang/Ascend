@@ -16,7 +16,7 @@ import threading
 import time as _real_time
 
 from ascend.log import get_logger
-from ascend.net import GameServer, MessageDispatcher
+from ascend.net import GameServer, MessageDispatcher, EventBridge
 from ascend.net.handlers.map_handler import make_map_handlers
 from ascend.net.handlers.terminal_handler import make_terminal_handler
 from ascend.space import WorldGenerator, TileGenerator
@@ -180,6 +180,11 @@ class GameEngine:
         # 6. TCP 服务器
         self.server = GameServer(host=SERVER_HOST, port=SERVER_PORT)
         self.server.start()
+
+        # 6b. 事件桥接器 — 将 WorldTree 事件转发给 Godot 前端
+        self.event_bridge = EventBridge(world_tree, self.server)
+        self.event_bridge.install()
+        logger.info("事件桥接器已安装")
 
         # 7. 消息分发器
         self.dispatcher = MessageDispatcher(self.server)

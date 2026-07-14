@@ -3,6 +3,8 @@
 [ext_resource type="Script" path="res://scripts/world/main_world.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/world/world.tscn" id="2_sugp2"]
 [ext_resource type="Script" path="res://scripts/ui/terminal_widget.gd" id="4_tefeu"]
+[ext_resource type="Script" path="res://scripts/ui/debug_overlay.gd" id="5_debug"]
+[ext_resource type="Script" path="res://scripts/ui/event_log.gd" id="6_eventlog"]
 
 [node name="Main" type="Node2D" unique_id=1387621545]
 script = ExtResource("1")
@@ -16,3 +18,16 @@ layer = 100
 layout_mode = 3
 anchors_preset = 0
 script = ExtResource("4_tefeu")
+
+[node name="DebugLayer" type="CanvasLayer" parent="."]
+layer = 200
+
+[node name="DebugOverlay" type="Control" parent="DebugLayer"]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("5_debug")
+
+[node name="EventLog" type="Control" parent="DebugLayer"]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("6_eventlog")
