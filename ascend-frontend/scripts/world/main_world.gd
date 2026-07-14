@@ -21,11 +21,13 @@ const CAMERA_ZOOM_MAX: float = 4.0
 @onready var _map_display: MapDisplay = $World/MapDisplay
 ## 终端节点
 @onready var _terminal: TerminalWidget = $TerminalLayer/TerminalWidget
+## 地图相机（从 MapDisplay 缓存，避免每帧 get_node）
+@onready var _map_camera: Camera2D = $World/MapDisplay/MapCamera
 
 
 func _ready() -> void:
 	"""场景加载时连接信号并发起连接。"""
-	_terminal.remote_command.connect(_on_terminal_command)
+	_terminal.remote_command_submitted.connect(_on_terminal_command)
 
 	Connection.connection_established.connect(_on_connected)
 	Connection.connection_lost.connect(_on_disconnected)
@@ -80,8 +82,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process_camera(_delta: float) -> void:
 	"""只处理缩放。平移已由玩家移动替代，相机跟随玩家。"""
-	var cam: Camera2D = _map_display.get_node("MapCamera") as Camera2D
-	if cam == null:
+	if _map_camera == null:
 		return
 
 	var zoom_delta: float = 0.0
@@ -91,17 +92,17 @@ func _process_camera(_delta: float) -> void:
 		zoom_delta = -CAMERA_ZOOM_STEP
 
 	if zoom_delta != 0.0:
-		var new_zoom := cam.zoom.x + zoom_delta
+		var new_zoom := _map_camera.zoom.x + zoom_delta
 		new_zoom = clampf(new_zoom, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
-		cam.zoom = Vector2(new_zoom, new_zoom)
+		_map_camera.zoom = Vector2(new_zoom, new_zoom)
 
 
-func _process_input(_delta: float) -> void:
+func _process_input(delta: float) -> void:
 	"""读取需要后端处理的玩家指令并发送。"""
 	# WASD 移动玩家实体
 	var move_input := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	if move_input != Vector2.ZERO and _map_display:
-		_map_display.move_player(move_input, _delta)
+		_map_display.move_player(move_input, delta)
 
 	if Input.is_action_just_pressed("interact"):
 		Connection.send({

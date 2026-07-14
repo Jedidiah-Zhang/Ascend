@@ -4,8 +4,8 @@
 切换时只需替换 encode/decode 实现，调用方无需修改。
 """
 
-class_name MsgPack
 extends RefCounted
+class_name MsgPack
 
 
 static func encode(value: Variant) -> PackedByteArray:
