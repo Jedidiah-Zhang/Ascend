@@ -10,7 +10,7 @@ _derive_seasonal_amp 从年均温+年降雨连续推导后传入。
 import math
 from enum import IntEnum
 
-from .constants import SEASON_LENGTH_DAYS, SEASONS_PER_YEAR
+from ascend.config import SEASON_LENGTH_DAYS, SEASONS_PER_YEAR
 
 
 class Season(IntEnum):

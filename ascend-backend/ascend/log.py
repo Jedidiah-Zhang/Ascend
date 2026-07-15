@@ -9,6 +9,7 @@
 
 import logging
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -16,7 +17,9 @@ from pathlib import Path
 LOG_DIR = Path(__file__).parent.parent.parent / "logs"
 
 # 防止重复初始化
-_setup_done = False
+_setup_lock: threading.Lock = threading.Lock()
+_setup_done: bool = False
+_log_path: str | None = None
 
 
 def setup_logging(level: int = logging.DEBUG) -> str:
@@ -31,40 +34,42 @@ def setup_logging(level: int = logging.DEBUG) -> str:
     Returns:
         日志文件的绝对路径。
     """
-    global _setup_done
-    if _setup_done:
-        return ""
+    global _setup_done, _log_path
+    with _setup_lock:
+        if _setup_done:
+            return _log_path or ""
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = LOG_DIR / f"ascend_{timestamp}.log"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = LOG_DIR / f"ascend_{timestamp}.log"
 
-    root_logger = logging.getLogger("ascend")
-    root_logger.setLevel(level)
+        root_logger = logging.getLogger("ascend")
+        root_logger.setLevel(level)
 
-    # 文件 handler：每次运行新文件
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
-    file_handler.setLevel(level)
-    file_formatter = logging.Formatter(
-        "[%(asctime)s] %(levelname)-7s %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-    )
-    file_handler.setFormatter(file_formatter)
+        # 文件 handler：每次运行新文件
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setLevel(level)
+        file_formatter = logging.Formatter(
+            "[%(asctime)s] %(levelname)-7s %(name)s | %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        file_handler.setFormatter(file_formatter)
 
-    # 控制台 handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_formatter = logging.Formatter(
-        "%(levelname)-7s %(name)s | %(message)s",
-    )
-    console_handler.setFormatter(console_formatter)
+        # 控制台 handler
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+        console_formatter = logging.Formatter(
+            "%(levelname)-7s %(name)s | %(message)s",
+        )
+        console_handler.setFormatter(console_formatter)
 
-    root_logger.addHandler(file_handler)
-    root_logger.addHandler(console_handler)
+        root_logger.addHandler(file_handler)
+        root_logger.addHandler(console_handler)
 
-    _setup_done = True
-    return str(log_path)
+        _setup_done = True
+        _log_path = str(log_path)
+        return _log_path
 
 
 def quiet_console() -> None:

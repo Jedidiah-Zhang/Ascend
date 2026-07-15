@@ -9,13 +9,15 @@
 
 extends Node2D
 
+const Config = preload("res://scripts/config.gd")
+
 ## 相机平移速度（像素/秒）
-const CAMERA_PAN_SPEED: float = 600.0
+const CAMERA_PAN_SPEED: float = Config.CAMERA_PAN_SPEED
 ## 缩放步长
-const CAMERA_ZOOM_STEP: float = 0.15
-## 缩放范围Invalid call. Nonexistent function 'create_tile' in base 'TileSet'.
-const CAMERA_ZOOM_MIN: float = 0.15
-const CAMERA_ZOOM_MAX: float = 4.0
+const CAMERA_ZOOM_STEP: float = Config.CAMERA_ZOOM_STEP
+## 缩放范围
+const CAMERA_ZOOM_MIN: float = Config.CAMERA_ZOOM_MIN
+const CAMERA_ZOOM_MAX: float = Config.CAMERA_ZOOM_MAX
 
 ## 地图显示节点
 @onready var _map_display: MapDisplay = $World/MapDisplay

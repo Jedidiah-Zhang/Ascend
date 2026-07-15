@@ -9,13 +9,11 @@ import struct
 from array import array
 
 from .terrain import TerrainType
+from ascend.config import TILE_MAP_SIZE
 
 _TILEGRID_VERSION: int = 1
-_BYTES_TERRAIN: int = 40000 * 2
-_BYTES_ELEV: int = 40000 * 4
-
-# 详细地图固定尺寸
-TILE_MAP_SIZE: int = 200
+_BYTES_TERRAIN: int = TILE_MAP_SIZE * TILE_MAP_SIZE * 2
+_BYTES_ELEV: int = TILE_MAP_SIZE * TILE_MAP_SIZE * 4
 
 
 class TileGrid:

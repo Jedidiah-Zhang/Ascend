@@ -12,56 +12,58 @@ wind_change；降水 RainSchedule 状态切换 → 发 precipitation_start/preci
 
 import math
 import random
+import zlib
 from dataclasses import dataclass
 
 from ascend.log import get_logger
 from ascend.space import (
     WeatherParams, ClimateZone, SeasonalityMode, get_climate_template, clamp,
-    TILE_MAP_SIZE,
 )
 from ascend.time import WorldClock
-from ascend.time.constants import GAME_DAY
 from ascend.world_tree import world_tree as _default_wt, Event, AffectedParty
 
-from .atmosphere import AtmosphereField
-from .constants import (
+from ascend.config import (
+    TILE_MAP_SIZE,
+    GAME_DAY,
     ATMOSPHERE_RESOLUTION, ATMOSPHERE_DRIFT_RATE,
     RAIN_FORECAST_DEPTH, RAIN_REPLENISH_THRESHOLD,
+    MODIFIER_FORECAST_DEPTH, MODIFIER_REPLENISH_THRESHOLD,
     TEMP_PERTURB_SCALE, HUMIDITY_PERTURB_SCALE, WIND_PERTURB_SCALE,
     SUNSHINE_PERTURB_SCALE,
     DIURNAL_TO_SEASONAL_RATIO,
     HUMIDITY_DIURNAL_SCALE, HUMIDITY_SEASONAL_SCALE,
     TEMP_CHANGE_THRESHOLD, HUMIDITY_CHANGE_THRESHOLD, WIND_CHANGE_THRESHOLD,
     SUNSHINE_CHANGE_THRESHOLD,
+    TEMP_BOUNDS as _TEMP_BOUNDS,
+    HUMIDITY_BOUNDS as _HUMIDITY_BOUNDS,
+    WIND_BOUNDS as _WIND_BOUNDS,
+    SUNSHINE_BOUNDS as _SUNSHINE_BOUNDS,
+    RAIN_INTENSITY_BOUNDS as _RAIN_INTENSITY_BOUNDS,
+    LATITUDE_T_MIN as _LATITUDE_T_MIN,
+    LATITUDE_T_MAX as _LATITUDE_T_MAX,
+    LATITUDE_MIN as _LATITUDE_MIN,
+    LATITUDE_MAX as _LATITUDE_MAX,
+    SEASONAL_AMP_T_MIN as _SEASONAL_AMP_T_MIN,
+    SEASONAL_AMP_T_MAX as _SEASONAL_AMP_T_MAX,
+    SEASONAL_AMP_MAX as _SEASONAL_AMP_MAX,
+    SEASONAL_AMP_MIN as _SEASONAL_AMP_MIN,
+    SEASONAL_AMP_R_REF as _SEASONAL_AMP_R_REF,
+    SEASONAL_AMP_R_BONUS as _SEASONAL_AMP_R_BONUS,
+    SEASONAL_AMP_BOUNDS as _SEASONAL_AMP_BOUNDS,
 )
+
+from .atmosphere import AtmosphereField
 from .diurnal import (
-    diurnal_temp_offset, diurnal_humidity_offset,
-    sunrise_hour, sunset_hour, daylight_hours, hour_of_game_time,
+    sunrise_hour, sunset_hour, hour_of_game_time,
     _solar_declination,
 )
 from .events import register_weather_schemas
 from .weather_modifier import ModifierSchedule, WEATHER_MODIFIERS
-from .weather_modifier import MODIFIER_FORECAST_DEPTH, MODIFIER_REPLENISH_THRESHOLD
 from .rain_events import RainSchedule
-from .season import season_of, day_of_season, seasonal_temp_offset, seasonal_humidity_offset
+from .season import season_of, day_of_season
 from .weather_field import WeatherField
 
 logger = get_logger(__name__)
-
-# 物理边界（与 climate._PARAM_BOUNDS 一致）
-_TEMP_BOUNDS = (-30.0, 50.0)
-_HUMIDITY_BOUNDS = (0.0, 100.0)
-_WIND_BOUNDS = (0.0, 50.0)
-_SUNSHINE_BOUNDS = (0.0, 24.0)
-_RAIN_INTENSITY_BOUNDS = (0.0, 100.0)  # mm/小时
-
-# 纬度连续推导的物理参数
-# 海平面温度范围 [-5, 35]°C → 纬度 [80, 0]°
-# 海平面温度是连续场（纬度噪声推导），保证气候带交界处无纬度跳变
-_LATITUDE_T_MIN: float = -5.0   # 年均温下界（极地，lat 最大）
-_LATITUDE_T_MAX: float = 35.0   # 年均温上界（赤道，lat 最小）
-_LATITUDE_MIN: float = 0.0      # 赤道
-_LATITUDE_MAX: float = 80.0     # 极地边缘（超过 80° 极昼极夜过于极端）
 
 # SeasonalityMode → 湿度季节曲线 sharpness（0=余弦，>0=tanh 阶梯）
 _SEASONALITY_HUMIDITY_SHARPNESS: dict[SeasonalityMode, float] = {
@@ -84,17 +86,6 @@ _RAIN_PROFILE: dict[ClimateZone, tuple[float, float, float, float]] = {
     ClimateZone.POLAR_TUNDRA:           (2.0, 1.0, 0.25, 0.3),
     ClimateZone.ALPINE:                 (3.0, 1.0, 0.25, 0.25),
 }
-
-
-# 季节振幅连续推导的物理参数
-_SEASONAL_AMP_T_MIN: float = -5.0    # 年均温下界（极地，amp 最大）
-_SEASONAL_AMP_T_MAX: float = 35.0    # 年均温上界（赤道，amp 最小）
-_SEASONAL_AMP_MAX: float = 28.0      # 低温端振幅
-_SEASONAL_AMP_MIN: float = 2.0       # 高温端振幅
-_SEASONAL_AMP_R_REF: float = 2000.0  # 降雨参考值（海洋调节，bonus=0）
-_SEASONAL_AMP_R_BONUS: float = 4.0   # 干旱区大陆性修正幅度
-_SEASONAL_AMP_BOUNDS: tuple[float, float] = (1.0, 30.0)
-
 
 def _derive_seasonal_amp(temperature: float, rainfall: float) -> float:
     """从年均温 + 年降雨连续推导季节温度振幅 (°C)。
@@ -220,6 +211,13 @@ class WeatherEngine:
         self._unsub = self._wt.subscribe("minute_change", self._on_minute_change)
         logger.debug("天气引擎初始化 seed=%d", seed)
 
+    def __repr__(self) -> str:
+        return (
+            f"WeatherEngine(seed={self._seed}, "
+            f"chunks={len(self._fields)}, "
+            f"rain_schedules={len(self._rain_schedules)})"
+        )
+
     def register_chunk(
         self,
         cx: int,
@@ -282,11 +280,25 @@ class WeatherEngine:
         for config in WEATHER_MODIFIERS.values():
             if config.rates.get(climate, 0.0) <= 0:
                 continue
-            ext_seed = chunk_seed + hash(config.type_name) % 1000
+            ext_seed = chunk_seed + zlib.crc32(config.type_name.encode()) % 1000
             ext = ModifierSchedule(random.Random(ext_seed), config, climate)
             self._modifier_schedules[(cx, cy, config.type_name)] = ext
             self._seed_modifier(ext)
         logger.debug("注册 chunk (%d,%d) climate=%s", cx, cy, climate)
+
+    def unregister_chunk(self, cx: int, cy: int) -> None:
+        """注销 chunk 的天气状态（ChunkStore LRU 淘汰时由 GameEngine 调用）。
+
+        Args:
+            cx: chunk X 坐标。
+            cy: chunk Y 坐标。
+        """
+        key = (cx, cy)
+        self._fields.pop(key, None)
+        self._rain_schedules.pop(key, None)
+        for mk in list(self._modifier_schedules.keys()):
+            if mk[:2] == (cx, cy):
+                del self._modifier_schedules[mk]
 
     def shutdown(self) -> None:
         """取消订阅，释放资源。"""

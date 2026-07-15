@@ -36,7 +36,7 @@ class TestGameEngine:
             engine.start()
 
             # Assert: 子系统已创建
-            assert engine._running is True
+            assert engine._running.is_set()
             assert engine.world_gen is not None, "WorldGenerator 未创建"
             assert engine.server is not None, "GameServer 未创建"
             assert engine.dispatcher is not None, "MessageDispatcher 未创建"
@@ -54,7 +54,7 @@ class TestGameEngine:
             engine.stop()
 
         # Assert: 已清理
-        assert engine._running is False
+        assert not engine._running.is_set()
         assert engine.server is None
         assert engine.world_gen is None
 
@@ -78,7 +78,7 @@ class TestGameEngine:
             # 幂等调用
             engine.start()  # 不应抛出异常
 
-            assert engine._running is True
+            assert engine._running.is_set()
             assert engine.server is not None
             assert engine.dispatcher is not None
 
@@ -105,7 +105,7 @@ class TestGameEngine:
         # 幂等调用 — 不应抛出异常
         engine.stop()
 
-        assert engine._running is False
+        assert not engine._running.is_set()
 
     # ── 辅助测试：start 后引擎接受连接 ─────────────────────────────────
 

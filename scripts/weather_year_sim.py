@@ -10,7 +10,7 @@ import time as _real_time
 from collections import defaultdict
 
 from ascend.time import WorldClock, GameCalendar
-from ascend.time.constants import GAME_HOUR, GAME_DAY, GAME_YEAR
+from ascend.config import GAME_HOUR, GAME_DAY, GAME_YEAR
 from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.space import WorldGenerator, TileGenerator
 from ascend.weather import WeatherEngine

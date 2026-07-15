@@ -533,12 +533,12 @@ _BIOME_TEMPLATES: dict[BiomeType, BiomeTemplate] = {
 # 群系细分配置 — 每气候档的子型 + 细分维度
 # ═══════════════════════════════════════════════════════════
 
-# 海平面海拔阈值
-_SEA_LEVEL: float = 0.0
-
-# 海洋温度分界 (°C，取海平面温度)
-_OCEAN_COLD_CUTOFF: float = 5.0    # < 5°C → 冷水
-_OCEAN_WARM_CUTOFF: float = 20.0   # >= 20°C → 暖水
+# 海平面海拔阈值 — 已迁移至 ascend.config
+from ascend.config import (
+    SEA_LEVEL_ELEV as _SEA_LEVEL,
+    OCEAN_COLD_CUTOFF as _OCEAN_COLD_CUTOFF,
+    OCEAN_WARM_CUTOFF as _OCEAN_WARM_CUTOFF,
+)
 
 
 # 细分维度枚举

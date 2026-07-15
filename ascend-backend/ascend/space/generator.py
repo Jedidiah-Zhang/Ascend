@@ -30,10 +30,11 @@ from .chunk import ChunkData
 
 logger = get_logger(__name__)
 
-# 噪声频率配置
-_FREQ_LATITUDE = 0.0003    # 纬度：超低频，暖/冷带宽 ~3000 chunk
-_FREQ_RAINFALL = 0.004     # 降雨：低频，区域降水模式
-_FREQ_DERIVED = 0.005      # 派生参数（日照/湿度/风速）：中频
+from ascend.config import (
+    NOISE_FREQ_LATITUDE as _FREQ_LATITUDE,
+    NOISE_FREQ_RAINFALL as _FREQ_RAINFALL,
+    NOISE_FREQ_DERIVED as _FREQ_DERIVED,
+)
 
 
 class WorldGenerator:

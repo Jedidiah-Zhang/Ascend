@@ -7,8 +7,7 @@
 import json
 import struct
 
-
-MAX_MESSAGE_SIZE: int = 16 * 1024 * 1024  # 16 MiB
+from ascend.config import MAX_MESSAGE_SIZE
 
 
 class ProtocolError(Exception):
@@ -69,5 +68,6 @@ def read_frame(buffer: bytearray) -> dict | None:
     if len(buffer) < 4 + length:
         return None
     body = bytes(buffer[4 : 4 + length])
+    result = decode_message(body)
     del buffer[: 4 + length]
-    return decode_message(body)
+    return result

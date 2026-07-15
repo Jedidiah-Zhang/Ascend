@@ -13,7 +13,7 @@ import math
 
 from ascend.space import PerlinNoise
 
-from .constants import ATMOSPHERE_RESOLUTION, ATMOSPHERE_DRIFT_RATE
+from ascend.config import ATMOSPHERE_RESOLUTION, ATMOSPHERE_DRIFT_RATE
 
 
 class AtmosphereField:
@@ -44,6 +44,9 @@ class AtmosphereField:
         self._wind_noise = PerlinNoise(seed=seed + 1)
         self._resolution = resolution
         self._drift_rate = drift_rate
+
+    def __repr__(self) -> str:
+        return f"AtmosphereField(seed={self._noise}, resolution={self._resolution})"
 
     def wind_vector(self, game_time: int) -> tuple[float, float]:
         """当前风向（单位向量），随时间缓慢旋转。

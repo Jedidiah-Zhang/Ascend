@@ -72,28 +72,15 @@ class SeasonalityMode(IntEnum):
 
 
 # ── 物理常量 ──────────────────────────────────────────────
-
-# 气温直减率: 海拔每升高 1000m 温度下降的度数
-# 注: 游戏性放大值（国际标准大气为 6.5，此处 9.0 有意放大温差以增强气候多样性）
-LAPSE_RATE: float = 9.0  # °C / 1000m
-
-# 海平面温度范围（由纬度噪声映射）
-_SEA_LEVEL_TEMP_MIN: float = -5.0   # 极地
-_SEA_LEVEL_TEMP_MAX: float = 35.0   # 赤道
-
-# 降雨量范围（由降雨噪声映射）
-_RAINFALL_MIN: float = 50.0    # mm/年
-_RAINFALL_MAX: float = 3500.0  # mm/年
-
-# 各参数通用绝对边界
-_PARAM_BOUNDS: dict[str, tuple[float, float]] = {
-    "temperature": (-30.0, 50.0),
-    "rainfall":    (0.0, 5000.0),
-    "sunshine":    (0.0, 24.0),
-    "altitude":    (-500.0, 5000.0),
-    "humidity":    (0.0, 100.0),
-    "wind_speed":  (0.0, 50.0),
-}
+# 以下值已迁移至 ascend.config，此处按原名重新导出以保持兼容
+from ascend.config import (
+    LAPSE_RATE,
+    SEA_LEVEL_TEMP_MIN as _SEA_LEVEL_TEMP_MIN,
+    SEA_LEVEL_TEMP_MAX as _SEA_LEVEL_TEMP_MAX,
+    RAINFALL_MIN as _RAINFALL_MIN,
+    RAINFALL_MAX as _RAINFALL_MAX,
+    PARAM_BOUNDS as _PARAM_BOUNDS,
+)
 
 
 @dataclass(slots=True)
@@ -274,16 +261,18 @@ def rainfall_from_noise(rainfall_noise: float) -> float:
 
 
 # ── 气候档位判定阈值（游戏设计常量，非物理精确值）──────────────
-
-_ALPINE_ALTITUDE: float = 2000.0   # 高山海拔阈值 (m)
-_POLAR_TEMP: float = -5.0          # 极地温度阈值 (°C)
-_DESERT_RAINFALL: float = 200.0    # 沙漠降雨阈值 (mm)
-_STEPPE_RAINFALL: float = 600.0   # 草原降雨阈值 (mm)
-_STEPPE_MIN_TEMP: float = 5.0     # 草原温度下限 (°C)
-_TROPICAL_TEMP: float = 20.0      # 热带温度阈值 (°C)
-_TEMPERATE_TEMP: float = 5.0      # 温带温度下限 (°C)
-_RAINFOREST_RAINFALL: float = 1500.0  # 雨林降雨阈值 (mm)
-_TAIGA_RAINFALL: float = 400.0    # 针叶林降雨阈值 (mm)
+# 已迁移至 ascend.config，此处按原名重新导出以保持兼容
+from ascend.config import (
+    ALPINE_ALTITUDE as _ALPINE_ALTITUDE,
+    POLAR_TEMP as _POLAR_TEMP,
+    DESERT_RAINFALL as _DESERT_RAINFALL,
+    STEPPE_RAINFALL as _STEPPE_RAINFALL,
+    STEPPE_MIN_TEMP as _STEPPE_MIN_TEMP,
+    TROPICAL_TEMP as _TROPICAL_TEMP,
+    TEMPERATE_TEMP as _TEMPERATE_TEMP,
+    RAINFOREST_RAINFALL as _RAINFOREST_RAINFALL,
+    TAIGA_RAINFALL as _TAIGA_RAINFALL,
+)
 
 
 def classify(

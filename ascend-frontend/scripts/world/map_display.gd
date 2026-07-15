@@ -5,18 +5,20 @@ extends Node2D
 
 class_name MapDisplay
 
+const Config = preload("res://scripts/config.gd")
+
 
 # ── 常量 ──────────────────────────────────────────────────
 
-const CHUNK_SIZE: int = 200
-const INITIAL_VIEW_RADIUS: int = 2
-const STREAM_MARGIN: int = 1
-const UNLOAD_RADIUS: int = 3
-const MAX_PENDING_TILES: int = 3
-const PLAYER_SPEED: float = 80.0
+const CHUNK_SIZE: int = Config.TILE_MAP_SIZE
+const INITIAL_VIEW_RADIUS: int = Config.INITIAL_VIEW_RADIUS
+const STREAM_MARGIN: int = Config.STREAM_MARGIN
+const UNLOAD_RADIUS: int = Config.UNLOAD_RADIUS
+const MAX_PENDING_TILES: int = Config.MAX_PENDING_TILES
+const PLAYER_SPEED: float = Config.PLAYER_SPEED
 
 ## 放置操作每帧时间预算（微秒），超时后下帧继续
-const PLACE_TIME_BUDGET_US: int = 5000
+const PLACE_TIME_BUDGET_US: int = Config.PLACE_TIME_BUDGET_US
 const PLACE_BATCH_CHECK_MASK: int = 0x3F  # 每 64 格检查一次时间预算
 const TERRAIN_TILES: Array[Vector2i] = [
 	Vector2i(0, 2),
@@ -87,8 +89,6 @@ func _ready() -> void:
 	_player.centered = false
 	_player.offset = Vector2(-16, -16)
 	_player.z_index = 0
-
-	Connection.connection_established.connect(_on_connected)
 
 
 func _process(_delta: float) -> void:
@@ -430,10 +430,6 @@ func _unload_distant_chunks(center_cx: int, center_cy: int) -> void:
 		_tiles_loaded.erase(key)
 	for key in to_unload:
 		_unload_chunk(key.x, key.y)
-
-
-func _on_connected(_host: String, _port: int) -> void:
-	pass
 
 
 func get_player_pos() -> Vector2:

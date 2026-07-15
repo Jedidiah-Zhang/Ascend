@@ -46,3 +46,9 @@ class WeatherField:
         inv_res = 1.0 / atmos_resolution
         self._atmos_nx = (chunk_x + 0.5) * tile_map_size * inv_res
         self._atmos_ny = (chunk_y + 0.5) * tile_map_size * inv_res
+
+    def __repr__(self) -> str:
+        return (
+            f"WeatherField(chunk=({self.chunk_x},{self.chunk_y}), "
+            f"temp={self.last_temp}, rain={self.last_is_daytime})"
+        )

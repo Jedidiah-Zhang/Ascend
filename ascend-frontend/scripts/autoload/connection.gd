@@ -17,6 +17,8 @@ Usage:
 
 extends Node
 
+const Config = preload("res://scripts/config.gd")
+
 
 # ── 信号 ──────────────────────────────────────────────────
 
@@ -33,17 +35,17 @@ var status: Status = Status.DISCONNECTED
 
 # ── 常量 ──────────────────────────────────────────────────
 
-const DEFAULT_HOST: String = "127.0.0.1"
-const DEFAULT_PORT: int = 9081
-const RECONNECT_INTERVAL: float = 2.0
-const MAX_MESSAGE_SIZE: int = 16 * 1024 * 1024  # 16 MiB
+const DEFAULT_HOST: String = Config.DEFAULT_HOST
+const DEFAULT_PORT: int = Config.DEFAULT_PORT
+const RECONNECT_INTERVAL: float = Config.RECONNECT_INTERVAL
+const MAX_MESSAGE_SIZE: int = Config.MAX_MESSAGE_SIZE
 
 ## Python 虚拟环境相对路径（相对于项目根目录）
-const VENV_PYTHON_REL: String = ".venv/bin/python"
+const VENV_PYTHON_REL: String = Config.VENV_PYTHON_REL
 ## 后端脚本相对于项目根目录的路径
-const BACKEND_SCRIPT_REL: String = "ascend-backend/run_server.py"
+const BACKEND_SCRIPT_REL: String = Config.BACKEND_SCRIPT_REL
 ## 后端启动后等待端口就绪的超时时间（秒）
-const BACKEND_STARTUP_TIMEOUT: float = 10.0
+const BACKEND_STARTUP_TIMEOUT: float = Config.BACKEND_STARTUP_TIMEOUT
 
 
 # ── 属性 ──────────────────────────────────────────────────

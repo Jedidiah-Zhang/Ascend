@@ -18,7 +18,16 @@ import os
 import sqlite3
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
 
+from ascend.config import (
+    CHUNK_STORE_DB_PATH as _DEFAULT_DB_PATH,
+    CHUNK_STORE_MAX_SIZE as _DEFAULT_MAX_SIZE,
+    SQLITE_JOURNAL_MODE,
+    SQLITE_SYNCHRONOUS,
+    SQLITE_MMAP_SIZE,
+    SQLITE_CACHE_SIZE,
+)
 from ascend.log import get_logger
 from .chunk import ChunkData
 from .tile_grid import TileGrid
@@ -54,8 +63,10 @@ class ChunkStore:
         store.close()
     """
 
-    def __init__(self, db_path: str = "save/chunks.db", max_size: int = 49) -> None:
+    def __init__(self, db_path: str = _DEFAULT_DB_PATH, max_size: int = _DEFAULT_MAX_SIZE,
+                 on_evict: Callable[[int, int], None] | None = None) -> None:
         self._max_size = max_size
+        self._on_evict = on_evict
         self._cache: OrderedDict[tuple[int, int], ChunkData] = OrderedDict()
         self._dirty: set[tuple[int, int]] = set()
         self._lock = threading.RLock()
@@ -63,8 +74,10 @@ class ChunkStore:
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._db = sqlite3.connect(db_path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
-        self._db.execute("PRAGMA journal_mode=WAL")
-        self._db.execute("PRAGMA synchronous=NORMAL")
+        self._db.execute(f"PRAGMA journal_mode={SQLITE_JOURNAL_MODE}")
+        self._db.execute(f"PRAGMA synchronous={SQLITE_SYNCHRONOUS}")
+        self._db.execute(f"PRAGMA mmap_size={SQLITE_MMAP_SIZE}")
+        self._db.execute(f"PRAGMA cache_size={SQLITE_CACHE_SIZE}")
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS chunk_tiles ("
             "cx INTEGER, cy INTEGER, "
@@ -223,3 +236,5 @@ class ChunkStore:
             if chunk.tile_grid is not None:
                 self._save_tiles(*key, chunk.tile_grid)
             self._dirty.discard(key)
+            if self._on_evict:
+                self._on_evict(*key)

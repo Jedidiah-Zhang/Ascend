@@ -181,7 +181,7 @@ def _fill_circle(
             if not (0 <= nx < size and 0 <= ny < size):
                 continue
             dist = math.sqrt(dx * dx + dy * dy)
-            if dist > radius:
+            if dist > radius + 1.0:
                 continue
             current = tile_grid.get(nx, ny)
             if deep_radius > 0 and dist <= deep_radius:
@@ -189,9 +189,10 @@ def _fill_circle(
             elif dist <= radius:
                 if current != TerrainType.DEEP_WATER:
                     tile_grid.set(nx, ny, TerrainType.SHALLOW_WATER)
-            elif dist <= radius + 1.0 and current not in (
-                TerrainType.DEEP_WATER, TerrainType.SHALLOW_WATER,
-                TerrainType.MOUNTAIN_PEAK, TerrainType.STEEP_SLOPE,
-            ):
-                tile_grid.set(nx, ny, TerrainType.FERTILE_SOIL)
+            else:  # radius < dist <= radius + 1.0 — 河岸沃土
+                if current not in (
+                    TerrainType.DEEP_WATER, TerrainType.SHALLOW_WATER,
+                    TerrainType.MOUNTAIN_PEAK, TerrainType.STEEP_SLOPE,
+                ):
+                    tile_grid.set(nx, ny, TerrainType.FERTILE_SOIL)
 __all__ = ["render_river_chunk"]

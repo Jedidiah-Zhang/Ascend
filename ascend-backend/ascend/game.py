@@ -15,31 +15,35 @@ import random
 import threading
 import time as _real_time
 
+from ascend.config import (
+    TICK_RATE,
+    TICK_DT,
+    SERVER_HOST,
+    SERVER_PORT,
+    INITIAL_CHUNK_RADIUS,
+    BIRTH_ELEV_MIN,
+    BIRTH_ELEV_MAX,
+    TILE_MAP_SIZE,
+    CHUNK_STORE_MAX_SIZE,
+    CHUNK_STORE_DB_PATH,
+    WT_MAX_MEMORY_EVENTS,
+    WT_ARCHIVE_PATH,
+    WT_GRAPH_WARMUP_EVENTS,
+)
 from ascend.log import get_logger
 from ascend.net import GameServer, MessageDispatcher, EventBridge
 from ascend.net.handlers.map_handler import make_map_handlers
 from ascend.net.handlers.terminal_handler import make_terminal_handler
 from ascend.space import WorldGenerator, TileGenerator
 from ascend.space.chunk_store import ChunkStore
-from ascend.space.tile_grid import TILE_MAP_SIZE
 from ascend.entity import EntityManager
 from ascend.weather import WeatherEngine
 from ascend.terminal import CommandExecutor
-from ascend.time import WorldClock, GameCalendar, TICK_RATE
+from ascend.time import WorldClock, GameCalendar
 from ascend.i18n import I18n
 from ascend.world_tree import world_tree, Event, AffectedParty
 
 logger = get_logger(__name__)
-
-TICK_DT: float = 1.0 / TICK_RATE
-SERVER_HOST: str = "127.0.0.1"
-SERVER_PORT: int = 9081
-
-# 出生点周边预生成半径（chunk 数），2 → 5×5 共 25 个 chunk
-INITIAL_CHUNK_RADIUS: int = 2
-# 出生点理想海拔范围（m）——海岸低地，沙滩/草地带，海陆地形多样
-BIRTH_ELEV_MIN: float = 0.0
-BIRTH_ELEV_MAX: float = 50.0
 
 # 8 邻域偏移（用于海岸像素检测）
 _NDX = (1, -1, 0, 0, 1, -1, 1, -1)
@@ -73,7 +77,7 @@ class GameEngine:
         self.server: GameServer | None = None
         self.dispatcher: MessageDispatcher | None = None
         self.clock: WorldClock = WorldClock()
-        self.calendar: GameCalendar | None = GameCalendar(clock=self.clock)
+        self.calendar: GameCalendar | None = GameCalendar(clock=self.clock)  # shutdown 后为 None
         self.i18n: I18n = I18n()
         self._executor: CommandExecutor | None = None
         self.entity_manager: EntityManager | None = None
@@ -81,7 +85,7 @@ class GameEngine:
         self.tile_generator: TileGenerator | None = None
         self.birth_chunk: tuple[int, int] | None = None
         self.chunk_store: ChunkStore | None = None
-        self._running: bool = False
+        self._running: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
 
     def __repr__(self) -> str:
@@ -93,7 +97,7 @@ class GameEngine:
         client_count = self.server.client_count if self.server else 0
         return (
             f"GameEngine(seed={self.seed}, "
-            f"running={self._running}, "
+            f"running={self._running.is_set()}, "
             f"paused={self.paused}, "
             f"clients={client_count})"
         )
@@ -135,7 +139,7 @@ class GameEngine:
 
         幂等：已在运行时调用无效果。
         """
-        if self._running:
+        if self._running.is_set():
             return
 
         # 1. 随机 seed
@@ -156,7 +160,10 @@ class GameEngine:
         logger.info("出生点: chunk %s", self.birth_chunk)
 
         # 3b. 初始化 ChunkStore（LRU 缓存 + SQLite 持久化）
-        self.chunk_store = ChunkStore("save/chunks.db", max_size=49)
+        self.chunk_store = ChunkStore(
+            CHUNK_STORE_DB_PATH, max_size=CHUNK_STORE_MAX_SIZE,
+            on_evict=self._on_chunk_evicted,
+        )
 
         # 4. 预生成出生点周边区块
         self._generate_initial_chunks(continent)
@@ -188,7 +195,11 @@ class GameEngine:
 
         # 7. 消息分发器
         self.dispatcher = MessageDispatcher(self.server)
-        handlers = make_map_handlers(self.world_gen, tile_gen=self.tile_generator, birth_chunk=self.birth_chunk, chunk_store=self.chunk_store)
+        handlers = make_map_handlers(
+            self.world_gen, tile_gen=self.tile_generator,
+            birth_chunk=self.birth_chunk, chunk_store=self.chunk_store,
+            weather_engine=self.weather_engine,
+        )
         for req_type, handler in handlers.items():
             self.dispatcher.register(req_type, handler)
         logger.info("已注册地图处理程序: %s", list(handlers.keys()))
@@ -212,22 +223,22 @@ class GameEngine:
         self.dispatcher.register("open_menu", _placeholder_ok)
         self.dispatcher.register("player_interact", _placeholder_ok)
 
-		# 9. 世界树：归档 + 内存限制 + 图预热
+        # 9. 世界树：归档 + 内存限制 + 图预热
         world_tree.configure(
-            archive_path="save/events.db",
-            max_memory_events=100_000,
+            archive_path=WT_ARCHIVE_PATH,
+            max_memory_events=WT_MAX_MEMORY_EVENTS,
         )
-        world_tree.warmup_graph(max_events=10_000)
+        world_tree.warmup_graph(max_events=WT_GRAPH_WARMUP_EVENTS)
         logger.info(
-            "已配置世界树: archive=save/events.db max_memory=%d",
-            100_000,
+            "已配置世界树: archive=%s max_memory=%d",
+            WT_ARCHIVE_PATH, WT_MAX_MEMORY_EVENTS,
         )
 
         # 10. 发布世界初始化事件（时钟此时停在 epoch，尚未推进）
         self._publish_world_initialized()
 
         # 11. 启动 tick 循环——clock.tick() 推进时间，calendar 自动收事件
-        self._running = True
+        self._running.set()
         self._thread = threading.Thread(
             target=self._run_loop, name="game-engine", daemon=True
         )
@@ -239,12 +250,15 @@ class GameEngine:
 
         幂等：已停止时调用无效果。
         """
-        if not self._running:
+        if not self._running.is_set():
             return
-        self._running = False
+        self._running.clear()
         if self._thread:
             self._thread.join(timeout=3.0)
             self._thread = None
+        if hasattr(self, 'event_bridge') and self.event_bridge:
+            self.event_bridge.uninstall()
+            self.event_bridge = None
         world_tree.await_async()
         if self.server:
             self.server.stop()
@@ -265,6 +279,11 @@ class GameEngine:
         if self._executor:
             self._executor = None
         logger.info("游戏引擎已停止")
+
+    def _on_chunk_evicted(self, cx: int, cy: int) -> None:
+        """ChunkStore LRU 淘汰时注销天气数据。"""
+        if self.weather_engine:
+            self.weather_engine.unregister_chunk(cx, cy)
 
     # ── 出生点与初始区块 ──────────────────────────────────
 
@@ -319,7 +338,18 @@ class GameEngine:
                     ideal.append((cx, cy))
         pool = ideal or any_coast
         if not pool:
-            return (0, 0)
+            # 兜底：取任意陆地 chunk 中心（不要求海岸）
+            for cy in range(h // 2):
+                for cx in range(w // 2):
+                    gi = (cy * 2 + 1) * w + (cx * 2 + 1)
+                    if continent.land_mask[gi]:
+                        pool.append((cx, cy))
+                    if pool:
+                        break
+                if pool:
+                    break
+        if not pool:
+            raise RuntimeError(f"seed={self.seed}: 大陆无陆地 chunk，无法选取出生点")
         return pool[random.randrange(len(pool))]
 
     def _generate_initial_chunks(self, continent) -> None:
@@ -386,13 +416,16 @@ class GameEngine:
 
     def _run_loop(self) -> None:
         """Tick 循环（运行在后台线程）。"""
-        while self._running:
-            tick_start = _real_time.monotonic()
-            self._tick()
-            elapsed = _real_time.monotonic() - tick_start
-            sleep_time = TICK_DT - elapsed
-            if sleep_time > 0:
-                _real_time.sleep(sleep_time)
+        while self._running.is_set():
+            try:
+                tick_start = _real_time.monotonic()
+                self._tick()
+                elapsed = _real_time.monotonic() - tick_start
+                sleep_time = TICK_DT - elapsed
+                if sleep_time > 0:
+                    _real_time.sleep(sleep_time)
+            except Exception:
+                logger.exception("tick 循环异常，引擎可能处于不一致状态")
 
     def _tick(self) -> None:
         """单个 tick：推进时钟 + 处理所有排队消息。"""

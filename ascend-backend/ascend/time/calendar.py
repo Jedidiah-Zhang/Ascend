@@ -7,7 +7,7 @@
 from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.log import get_logger
 from .clock import WorldClock
-from .constants import GAME_DAY, GAME_HOUR
+from ascend.config import GAME_DAY, GAME_HOUR
 
 logger = get_logger(__name__)
 

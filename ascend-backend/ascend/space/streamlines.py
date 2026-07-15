@@ -330,6 +330,7 @@ def _merge_into_existing(
         (outlet_idx, skip)。outlet=-1 表示独立入海，skip=True 表示丢弃。
     """
     n_visited = len(visited)
+    h = n_visited // w
     outlet = -1
     skip = False
     early_drop = max(min_length // 2, 15)
@@ -343,22 +344,24 @@ def _merge_into_existing(
             for ndx in range(-merge_radius, merge_radius + 1):
                 if ndx == 0 and ndy == 0:
                     continue
-                ni = (ny) * w + (px + ndx)
-                if 0 <= ni < n_visited:
-                    hit = visited[ni]
-                    if hit != -1:
-                        if pi < early_drop:
-                            skip = True
-                        else:
-                            outlet = hit
-                            del pts[pi + 1:]
-                            pts.append(RiverPoint(
-                                x=px + ndx + 0.0,
-                                y=ny + 0.0,
-                                flow=p.flow,
-                            ))
-                        found = True
-                        break
+                nx = px + ndx
+                if not (0 <= nx < w and 0 <= ny < h):
+                    continue
+                ni = ny * w + nx
+                hit = visited[ni]
+                if hit != -1:
+                    if pi < early_drop:
+                        skip = True
+                    else:
+                        outlet = hit
+                        del pts[pi + 1:]
+                        pts.append(RiverPoint(
+                            x=px + ndx + 0.0,
+                            y=ny + 0.0,
+                            flow=p.flow,
+                        ))
+                    found = True
+                    break
         if found:
             break
     return outlet, skip

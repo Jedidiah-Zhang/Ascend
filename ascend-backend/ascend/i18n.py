@@ -8,6 +8,7 @@
 """
 
 import json
+import re
 from pathlib import Path
 
 # 语言文件目录（项目根 /lang）
@@ -60,8 +61,10 @@ class I18n:
         """
         text = self._translations.get(key, key)
         if kwargs:
-            for k, v in kwargs.items():
-                text = text.replace(f"{{{k}}}", str(v))
+            def _replace(match: re.Match) -> str:
+                k = match.group(1)
+                return str(kwargs.get(k, match.group(0)))
+            text = re.sub(r'\{(\w+)\}', _replace, text)
         return text
 
     def set_lang(self, lang: str) -> None:

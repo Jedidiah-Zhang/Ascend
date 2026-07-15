@@ -636,14 +636,9 @@ class WorldTree:
                 events = self._entity_index.get(eid)
                 if not events:
                     continue
-                cut = 0
-                for ev in events:
-                    if ev.id in removed_ids:
-                        cut += 1
-                    else:
-                        break
-                if cut:
-                    self._entity_index[eid] = events[cut:]
+                self._entity_index[eid] = [
+                    ev for ev in events if ev.id not in removed_ids
+                ]
 
             # 3. _spatial_index：逐事件从集合中移除
             for ev in to_archive:

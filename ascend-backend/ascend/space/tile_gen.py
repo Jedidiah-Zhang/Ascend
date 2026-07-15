@@ -23,16 +23,15 @@ from .climate import LAPSE_RATE
 from .biome import TerrainBias, biome_membership, get_template
 
 
-# 基线地形分类阈值（TEMPERATE_DECIDUOUS_FOREST 的 TerrainBias = 全 0）
-_BASE_SAND_CAP = 10.0        # SAND 海拔上限
-_BASE_FERTILE_LO = 100.0     # FERTILE_SOIL 海拔带下限
-_BASE_FERTILE_HI = 300.0     # FERTILE_SOIL 海拔带上限
-_BASE_GRASSLAND_CAP = 600.0  # GRASSLAND 海拔上限（之上 ROCK）
-_BASE_ROCK_THRESHOLD = 600.0  # ROCK 起始海拔
-_BASE_PEAK_THRESHOLD = 2000.0
-
-# 陡坡判定：tile 与 8 邻域最大高程差（m/m）超过此值则重分类为 STEEP_SLOPE
-_STEEP_GRADIENT = 1.0
+from ascend.config import (
+    BASE_SAND_CAP as _BASE_SAND_CAP,
+    BASE_FERTILE_LO as _BASE_FERTILE_LO,
+    BASE_FERTILE_HI as _BASE_FERTILE_HI,
+    BASE_GRASSLAND_CAP as _BASE_GRASSLAND_CAP,
+    BASE_ROCK_THRESHOLD as _BASE_ROCK_THRESHOLD,
+    BASE_PEAK_THRESHOLD as _BASE_PEAK_THRESHOLD,
+    STEEP_GRADIENT as _STEEP_GRADIENT,
+)
 
 
 class TileGenerator:

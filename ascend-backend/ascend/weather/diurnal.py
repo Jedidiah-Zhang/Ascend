@@ -10,8 +10,7 @@
 
 import math
 
-from ascend.time.constants import GAME_DAY, GAME_HOUR
-from .constants import DIURNAL_PEAK_HOUR
+from ascend.config import GAME_DAY, GAME_HOUR, DIURNAL_PEAK_HOUR
 
 
 def diurnal_temp_offset(hour: float, amplitude: float) -> float:

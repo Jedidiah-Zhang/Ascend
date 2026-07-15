@@ -8,6 +8,13 @@ import json
 import os
 import sqlite3
 
+from ascend.config import (
+    SQLITE_JOURNAL_MODE,
+    SQLITE_SYNCHRONOUS,
+    SQLITE_MMAP_SIZE,
+    SQLITE_CACHE_SIZE,
+)
+
 from .event import Event
 from .affected import AffectedParty
 
@@ -38,10 +45,10 @@ class EventArchive:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self._db = sqlite3.connect(path)
         self._db.row_factory = sqlite3.Row
-        self._db.execute("PRAGMA journal_mode=WAL")
-        self._db.execute("PRAGMA synchronous=NORMAL")
-        self._db.execute("PRAGMA mmap_size=268435456")   # 256MB 内存映射
-        self._db.execute("PRAGMA cache_size=-8000")      # 8MB 页缓存
+        self._db.execute(f"PRAGMA journal_mode={SQLITE_JOURNAL_MODE}")
+        self._db.execute(f"PRAGMA synchronous={SQLITE_SYNCHRONOUS}")
+        self._db.execute(f"PRAGMA mmap_size={SQLITE_MMAP_SIZE}")
+        self._db.execute(f"PRAGMA cache_size={SQLITE_CACHE_SIZE}")
         self._create_schema()
 
     def __repr__(self) -> str:
@@ -69,8 +76,12 @@ class EventArchive:
             ddl = f.read()
         try:
             self._db.executescript(ddl)
-        except sqlite3.OperationalError:
-            pass
+        except sqlite3.OperationalError as e:
+            msg = str(e).lower()
+            if "already exists" in msg or "duplicate column" in msg:
+                pass  # 幂等建表，安全忽略
+            else:
+                raise
 
         # 迁移：旧 schema 可能缺少 weight 列
         try:

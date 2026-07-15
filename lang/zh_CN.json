@@ -72,6 +72,13 @@
 
   "console.map_no_seed": "未设置种子，使用 seed=0，可通过 map <radius> <seed> 指定",
   "console.map_generating": "正在生成 {count} 个分块...",
+  "console.no_world_gen": "WorldGenerator 未提供",
+  "console.invalid_seed": "无效种子: {seed}",
+  "console.map_header": "种子: {seed}  |  半径: {radius}  |  步长: {step}",
+  "console.events_col_time": "时间",
+  "console.events_col_type": "类型",
+  "console.events_col_initiator": "发起方",
+  "console.events_col_summary": "摘要",
 
   "mode.realtime": "正常",
   "mode.paused": "暂停",

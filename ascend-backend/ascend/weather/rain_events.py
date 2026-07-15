@@ -10,7 +10,7 @@ RainSchedule 预排未来降雨事件，到点切换下雨/停止状态。
 
 from dataclasses import dataclass
 
-from ascend.time.constants import GAME_HOUR, GAME_YEAR
+from ascend.config import GAME_HOUR, GAME_YEAR
 
 
 # 一年小时数 = GAME_YEAR / GAME_HOUR = 8640
@@ -135,6 +135,14 @@ class RainSchedule:
 
     def __len__(self) -> int:
         return len(self._events)
+
+    def __repr__(self) -> str:
+        return (
+            f"RainSchedule(annual={self._annual:.0f}mm, "
+            f"intensity={self._mean_intensity:.1f}mm/h, "
+            f"duration={self._mean_duration_h:.1f}h, "
+            f"events={len(self._events)})"
+        )
 
     def push(self, event: RainEvent) -> None:
         """追加速度事件，start_tick 必须严格递增。

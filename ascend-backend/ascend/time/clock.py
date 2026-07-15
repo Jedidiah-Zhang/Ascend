@@ -19,7 +19,7 @@
 from typing import Callable
 
 from ascend.log import get_logger
-from .constants import GAME_HOUR, GAME_DAY, GAME_YEAR
+from ascend.config import GAME_HOUR, GAME_DAY, GAME_YEAR
 
 logger = get_logger(__name__)
 

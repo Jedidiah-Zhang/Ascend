@@ -5,14 +5,14 @@
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from ascend.config import TILE_WORKERS
 from ascend.log import get_logger
 
 logger = get_logger(__name__)
 
-_TILE_WORKERS: int = 4
 
-
-def make_map_handlers(gen, tile_gen=None, birth_chunk=None, chunk_store=None):
+def make_map_handlers(gen, tile_gen=None, birth_chunk=None, chunk_store=None,
+                      weather_engine=None):
     """为给定的 WorldGenerator 创建地图相关的请求处理程序。
 
     Args:
@@ -20,16 +20,18 @@ def make_map_handlers(gen, tile_gen=None, birth_chunk=None, chunk_store=None):
         tile_gen: TileGenerator 实例（可选），提供时支持 include_tiles。
         birth_chunk: (cx, cy) 出生区块坐标（可选），会附带在响应中。
         chunk_store: ChunkStore 实例，LRU 缓存 + SQLite 持久化。
+        weather_engine: WeatherEngine 实例（可选），动态生成 chunk 时自动注册天气。
 
     Returns:
         一个字典，将 request_type 字符串映射到处理函数。
     """
 
     def _generate_tiles(chunk):
-        """在独立线程中生成 chunk 的 TileGrid。"""
-        if not chunk.has_tiles:
-            grid = tile_gen.generate_chunk_for(chunk)
-            chunk.generate_tiles(grid)
+        """在独立线程中生成 chunk 的 TileGrid（原子操作）。"""
+        if chunk.has_tiles:
+            return
+        grid = tile_gen.generate_chunk_for(chunk)
+        chunk.generate_tiles(grid)
 
     def handle_get_chunks(msg: dict) -> dict:
         """处理 "get_chunks" 请求。"""
@@ -65,6 +67,11 @@ def make_map_handlers(gen, tile_gen=None, birth_chunk=None, chunk_store=None):
                     chunk.generate_tiles(saved_grid)
                     coord_to_chunk[coord] = chunk
                     chunk_store.put(chunk)
+                    if weather_engine is not None:
+                        weather_engine.register_chunk(
+                            chunk.cx, chunk.cy, chunk.annual_baseline,
+                            chunk.climate_zone, chunk.sea_level_temp,
+                        )
                     continue
 
             missing.append(coord)
@@ -75,13 +82,18 @@ def make_map_handlers(gen, tile_gen=None, birth_chunk=None, chunk_store=None):
                 coord_to_chunk[(c.cx, c.cy)] = c
                 if chunk_store is not None:
                     chunk_store.put(c)
+                if weather_engine is not None:
+                    weather_engine.register_chunk(
+                        c.cx, c.cy, c.annual_baseline,
+                        c.climate_zone, c.sea_level_temp,
+                    )
 
         ordered = [coord_to_chunk[c] for c in coord_tuples]
 
         if include_tiles and tile_gen is not None:
             tiles_needed = [c for c in ordered if not c.has_tiles]
             if tiles_needed:
-                n_workers = min(_TILE_WORKERS, len(tiles_needed))
+                n_workers = min(TILE_WORKERS, len(tiles_needed))
                 with ThreadPoolExecutor(max_workers=n_workers) as pool:
                     futures = [
                         pool.submit(_generate_tiles, c) for c in tiles_needed

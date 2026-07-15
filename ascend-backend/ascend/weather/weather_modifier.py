@@ -15,7 +15,7 @@
 
 from dataclasses import dataclass, field
 
-from ascend.time.constants import GAME_DAY, GAME_HOUR, GAME_YEAR
+from ascend.config import GAME_DAY, GAME_HOUR, GAME_YEAR, MODIFIER_FORECAST_DEPTH, MODIFIER_REPLENISH_THRESHOLD
 from ascend.space import ClimateZone
 
 
@@ -99,9 +99,6 @@ WEATHER_MODIFIERS: dict[str, ModifierConfig] = {
 
 # ── 调度队列参数 ──────────────────────────────────────────────────
 
-MODIFIER_FORECAST_DEPTH: int = 2
-MODIFIER_REPLENISH_THRESHOLD: int = 1
-
 
 @dataclass(slots=True)
 class ModifierEvent:
@@ -145,6 +142,13 @@ class ModifierSchedule:
 
     def __len__(self) -> int:
         return len(self._events)
+
+    def __repr__(self) -> str:
+        return (
+            f"ModifierSchedule(type={self._config.type_name}, "
+            f"interval={self._mean_interval:.0f}t, "
+            f"events={len(self._events)})"
+        )
 
     @property
     def type_name(self) -> str:

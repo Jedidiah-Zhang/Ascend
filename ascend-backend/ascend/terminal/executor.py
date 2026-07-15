@@ -11,7 +11,7 @@ from typing import Optional
 from ascend.world_tree import world_tree
 from ascend.log import get_logger
 from ascend.i18n import I18n
-from ascend.time import WorldClock, GameCalendar, GAME_DAY, GAME_HOUR, GAME_MINUTE
+from ascend.time import WorldClock, GameCalendar, GAME_DAY, GAME_HOUR, GAME_MINUTE, GAME_YEAR
 
 logger = get_logger(__name__)
 
@@ -441,10 +441,10 @@ class CommandExecutor:
         return self._i18n.t("console.lang_switched", lang=lang_code)
 
     def _cmd_events(self, count: int = 10) -> str:
-        """显示最近 N 个事件。
+        """显示最近 N 条事件。
 
         Args:
-            count: 显示的事件数。
+            count: 显示的事件条数。
 
         Returns:
             事件列表文本。
@@ -454,12 +454,19 @@ class CommandExecutor:
             return self._i18n.t("console.no_events")
 
         count = min(count, total)
-        log = world_tree._event_log
-        lines = [self._i18n.t("console.events_header", count=count, total=total)]
-        lines.append(f"  {'Time':>10s}  {'Type':<20s}  {'Initiator':<15s}  Summary")
+        now = self._clock.time
+        start = max(0, now - GAME_YEAR)
+        events = world_tree.get_events_in_range(start, now)
+        log = events[-count:] if len(events) >= count else events
+        lines = [self._i18n.t("console.events_header", count=min(count, len(log)), total=total)]
+        time_hdr = self._i18n.t("console.events_col_time")
+        type_hdr = self._i18n.t("console.events_col_type")
+        init_hdr = self._i18n.t("console.events_col_initiator")
+        sum_hdr = self._i18n.t("console.events_col_summary")
+        lines.append(f"  {time_hdr:>10s}  {type_hdr:<20s}  {init_hdr:<15s}  {sum_hdr}")
         lines.append(f"  {'─'*10}  {'─'*20}  {'─'*15}  {'─'*30}")
 
-        for ev in log[-count:]:
+        for ev in log:
             summary = ", ".join(f"{k}={v}" for k, v in list(ev.data.items())[:3])
             lines.append(
                 f"  {ev.timestamp:>10d}  {ev.event_type:<20s}  "
@@ -503,7 +510,7 @@ class CommandExecutor:
             ASCII 地图文本。
         """
         if self._world_gen is None:
-            return "WorldGenerator 未提供"
+            return self._i18n.t("console.no_world_gen")
 
         # 解析参数
         radius = 15
@@ -531,11 +538,12 @@ class CommandExecutor:
             try:
                 seed = int(args[arg_idx])
             except ValueError:
-                return f"  无效种子: {args[arg_idx]}"
+                return self._i18n.t("console.invalid_seed", seed=args[arg_idx])
 
         from .render import render_map, render_region_detail
 
-        output = f"  种子: {seed}  |  半径: {radius}  |  步长: {step}\n"
+        output = self._i18n.t("console.map_header",
+            seed=seed, radius=radius, step=step) + "\n"
         if mode == "detail":
             output += render_region_detail(self._world_gen, radius=min(radius, 5))
         else:

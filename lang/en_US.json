@@ -72,6 +72,13 @@
 
   "console.map_no_seed": "No seed set, using seed=0. Use map <radius> <seed> to specify",
   "console.map_generating": "Generating {count} chunks...",
+  "console.no_world_gen": "WorldGenerator not available",
+  "console.invalid_seed": "Invalid seed: {seed}",
+  "console.map_header": "Seed: {seed}  |  Radius: {radius}  |  Step: {step}",
+  "console.events_col_time": "Time",
+  "console.events_col_type": "Type",
+  "console.events_col_initiator": "Initiator",
+  "console.events_col_summary": "Summary",
 
   "mode.realtime": "Normal",
   "mode.paused": "Paused",

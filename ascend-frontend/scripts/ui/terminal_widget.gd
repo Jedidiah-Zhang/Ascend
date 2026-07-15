@@ -14,6 +14,8 @@ extends Control
 
 class_name TerminalWidget
 
+const Config = preload("res://scripts/config.gd")
+
 
 # ── 信号 ────────────────────────────────────────────────────
 
@@ -27,14 +29,14 @@ const TEXT_COLOR: Color = Color(0.90, 0.90, 0.95)
 const PROMPT_COLOR: Color = Color(0.60, 0.90, 0.60)
 const INFO_COLOR: Color = Color(0.60, 0.80, 0.60)
 const CURSOR_COLOR: Color = Color(0.80, 0.85, 0.95)
-const FONT_SIZE: int = 15
+const FONT_SIZE: int = Config.TERMINAL_FONT_SIZE
 const LINE_HEIGHT: int = 20
 const PADDING: int = 10
 const BOTTOM_INPUT_HEIGHT: int = 30
 
-const OUTPUT_LINE_LIMIT: int = 500
-const HISTORY_LIMIT: int = 100
-const PROMPT_STR: String = "$ "
+const OUTPUT_LINE_LIMIT: int = Config.TERMINAL_OUTPUT_LINE_LIMIT
+const HISTORY_LIMIT: int = Config.TERMINAL_HISTORY_LIMIT
+const PROMPT_STR: String = Config.TERMINAL_PROMPT
 
 ## 光标闪烁周期（秒）
 const CURSOR_BLINK_INTERVAL: float = 0.5
@@ -343,8 +345,6 @@ func _execute_input() -> void:
 		queue_redraw()
 	elif cmd == "help":
 		_show_help()
-	elif cmd == "map":
-		_handle_local_map(input)
 	else:
 		remote_command_submitted.emit(input)
 
@@ -357,10 +357,6 @@ func _show_help() -> void:
 	_write_output("  map <mode> - " + tr("terminal.help_map"))
 	_write_output("--- " + tr("terminal.remote_commands") + " ---")
 	_write_output("  " + tr("terminal.help_help"))
-
-
-func _handle_local_map(_cmd_input: String) -> void:
-	_write_output("Map: tile-level terrain view active")
 
 
 # ── 辅助函数 ────────────────────────────────────────────────

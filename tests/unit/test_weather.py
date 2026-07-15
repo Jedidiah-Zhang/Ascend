@@ -7,14 +7,14 @@ import pytest
 import random as _random
 
 from ascend.time import WorldClock
-from ascend.time.constants import GAME_HOUR, GAME_DAY, GAME_YEAR
+from ascend.config import GAME_HOUR, GAME_DAY, GAME_YEAR
 from ascend.world_tree import WorldTree, Event, AffectedParty
 from ascend.space import WeatherParams, ClimateZone, TILE_MAP_SIZE
 
 
 def _publish_minute(wt, game_time):
     """发布 minute_change 事件驱动 WeatherEngine。"""
-    from ascend.time.constants import GAME_DAY, GAME_HOUR
+    from ascend.config import GAME_DAY, GAME_HOUR
     day = game_time // GAME_DAY + 1
     tod = game_time % GAME_DAY
     hour = int(tod / GAME_HOUR)
@@ -43,33 +43,33 @@ class TestWeatherConstants:
     """天气常量测试。"""
 
     def test_module_importable(self):
-        from ascend.weather import constants
-        assert constants is not None
+        from ascend import config
+        assert config is not None
 
     def test_atmosphere_resolution_positive(self):
-        from ascend.weather.constants import ATMOSPHERE_RESOLUTION
+        from ascend.config import ATMOSPHERE_RESOLUTION
         assert ATMOSPHERE_RESOLUTION > 0
 
     def test_drift_rate_positive(self):
-        from ascend.weather.constants import ATMOSPHERE_DRIFT_RATE
+        from ascend.config import ATMOSPHERE_DRIFT_RATE
         assert ATMOSPHERE_DRIFT_RATE > 0
 
     def test_seasons_per_year_is_four(self):
-        from ascend.weather.constants import SEASONS_PER_YEAR
+        from ascend.config import SEASONS_PER_YEAR
         assert SEASONS_PER_YEAR == 4
 
     def test_season_length_covers_year(self):
-        from ascend.weather.constants import SEASONS_PER_YEAR, SEASON_LENGTH
+        from ascend.config import SEASONS_PER_YEAR, SEASON_LENGTH
         assert SEASON_LENGTH * SEASONS_PER_YEAR == GAME_YEAR
 
     def test_diurnal_hours_in_range(self):
-        from ascend.weather.constants import DIURNAL_PEAK_HOUR, DIURNAL_TROUGH_HOUR
+        from ascend.config import DIURNAL_PEAK_HOUR, DIURNAL_TROUGH_HOUR
         assert 0 <= DIURNAL_PEAK_HOUR <= 23
         assert 0 <= DIURNAL_TROUGH_HOUR <= 23
         assert DIURNAL_PEAK_HOUR != DIURNAL_TROUGH_HOUR
 
     def test_perturb_scales_positive(self):
-        from ascend.weather.constants import (
+        from ascend.config import (
             TEMP_PERTURB_SCALE, HUMIDITY_PERTURB_SCALE, WIND_PERTURB_SCALE,
             SUNSHINE_PERTURB_SCALE,
         )
@@ -79,7 +79,7 @@ class TestWeatherConstants:
         assert SUNSHINE_PERTURB_SCALE > 0
 
     def test_change_thresholds_positive(self):
-        from ascend.weather.constants import (
+        from ascend.config import (
             TEMP_CHANGE_THRESHOLD, HUMIDITY_CHANGE_THRESHOLD, WIND_CHANGE_THRESHOLD,
             SUNSHINE_CHANGE_THRESHOLD,
         )
@@ -89,22 +89,22 @@ class TestWeatherConstants:
         assert SUNSHINE_CHANGE_THRESHOLD > 0
 
     def test_humidity_scales_positive(self):
-        from ascend.weather.constants import (
+        from ascend.config import (
             HUMIDITY_DIURNAL_SCALE, HUMIDITY_SEASONAL_SCALE,
         )
         assert HUMIDITY_DIURNAL_SCALE > 0
         assert HUMIDITY_SEASONAL_SCALE > 0
 
     def test_sunshine_perturb_scale_positive(self):
-        from ascend.weather.constants import SUNSHINE_PERTURB_SCALE
+        from ascend.config import SUNSHINE_PERTURB_SCALE
         assert SUNSHINE_PERTURB_SCALE > 0
 
     def test_sunshine_change_threshold_positive(self):
-        from ascend.weather.constants import SUNSHINE_CHANGE_THRESHOLD
+        from ascend.config import SUNSHINE_CHANGE_THRESHOLD
         assert SUNSHINE_CHANGE_THRESHOLD > 0
 
     def test_rain_depth_positive(self):
-        from ascend.weather.constants import RAIN_FORECAST_DEPTH, RAIN_REPLENISH_THRESHOLD
+        from ascend.config import RAIN_FORECAST_DEPTH, RAIN_REPLENISH_THRESHOLD
         assert RAIN_FORECAST_DEPTH >= 1
         assert 0 < RAIN_REPLENISH_THRESHOLD < RAIN_FORECAST_DEPTH
 
@@ -230,7 +230,7 @@ class TestWeatherEventsSchema:
 # ── season ─────────────────────────────────────────────────────────
 
 
-from ascend.weather.constants import SEASON_LENGTH_DAYS
+from ascend.config import SEASON_LENGTH_DAYS
 
 
 class TestSeason:
@@ -868,7 +868,7 @@ class TestWeatherEngine:
     def test_no_event_when_below_threshold(self):
         """温度变化低于阈值时不发事件。"""
         from ascend.weather.weather_engine import WeatherEngine
-        from ascend.weather.constants import TEMP_CHANGE_THRESHOLD
+        from ascend.config import TEMP_CHANGE_THRESHOLD
         wt = WorldTree()
         events = []
         wt.subscribe("temperature_change", lambda e: events.append(e))
@@ -1131,7 +1131,7 @@ class TestWeatherEngine:
         夏季温度差应 < 2°C（季节振幅连续推导，非离散取值）。
         """
         from ascend.weather.weather_engine import WeatherEngine
-        from ascend.time.constants import GAME_DAY
+        from ascend.config import GAME_DAY
         wt = WorldTree()
         events: list = []
         wt.subscribe("temperature_change", lambda e: events.append(e))
@@ -1179,7 +1179,7 @@ class TestGlobalEvents:
     def test_season_change_emitted(self):
         """跨季节边界（day 90→91，春→夏）发 season_change。"""
         from ascend.weather.weather_engine import WeatherEngine
-        from ascend.time.constants import GAME_DAY
+        from ascend.config import GAME_DAY
         wt = WorldTree()
         events = []
         wt.subscribe("season_change", lambda e: events.append(e))
@@ -1288,7 +1288,7 @@ class TestGlobalEvents:
     def test_global_event_location_zero(self):
         """season_change 全局事件 location=(0,0)。（sunrise/sunset 是 per-chunk 事件，不在此验证。）"""
         from ascend.weather.weather_engine import WeatherEngine
-        from ascend.time.constants import GAME_DAY
+        from ascend.config import GAME_DAY
         wt = WorldTree()
         events = []
         wt.subscribe("season_change", lambda e: events.append(e))
@@ -1342,7 +1342,7 @@ class TestPerChunkDayNight:
     def test_per_chunk_latitude_affects_daylight(self):
         """不同纬度 chunk 的 daylight_hours 不同（极地 vs 赤道，夏季）。"""
         from ascend.weather.weather_engine import WeatherEngine
-        from ascend.time.constants import GAME_DAY
+        from ascend.config import GAME_DAY
         wt = WorldTree()
         events = []
         wt.subscribe("sunrise", lambda e: events.append(e))
