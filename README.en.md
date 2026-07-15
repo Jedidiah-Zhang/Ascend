@@ -55,11 +55,7 @@ Ascend fills this gap: a reproducible, intervenable causal world produces spatio
 
 The system consists of three parts:
 
-```
-① World Generation      ② NPC Decision        ③ Action Interface
-   ↓ perception input        ↓ action output
-   Causality Graph (WorldTree) ← actions write back to world
-```
+![Architecture Layers](docs/diagrams/ascend-system-architecture.svg)
 
 **① World Generation Layer** — A procedurally generated causal space that runs and evolves independently. Provides a perception interface (numerical quantities → semantic labels) to NPCs as decision input. State changes are recorded via the event causality graph (WorldTree), both supporting NPC perception and constituting spatiotemporal training samples for the world model.
 
@@ -85,6 +81,7 @@ requirements.txt  Python dependencies
 Full design documents in `docs/`, organized by module (in Chinese):
 
 - [Game Overview & Worldview](docs/游戏综述与世界观.md)
+- [Research Proposal & Theory](docs/研究方案与理论.md) — SCM, causal validation, sample complexity
 - [World Framework](docs/世界框架/) — physics, time, ecology, event system
 - [Life & Individual](docs/生命个体/) — personality, physiology, body
 - [Mind System](docs/心智系统/) — AI-native NPCs, goals, skills
