@@ -46,6 +46,10 @@ const VENV_PYTHON_REL: String = Config.VENV_PYTHON_REL
 const BACKEND_SCRIPT_REL: String = Config.BACKEND_SCRIPT_REL
 ## 后端启动后等待端口就绪的超时时间（秒）
 const BACKEND_STARTUP_TIMEOUT: float = Config.BACKEND_STARTUP_TIMEOUT
+## 等待后端启动期间的端口探测间隔（秒）
+const BACKEND_CHECK_INTERVAL: float = 0.5
+## 单次端口探测的连接超时（秒）
+const PROBE_TIMEOUT: float = 0.2
 
 
 # ── 属性 ──────────────────────────────────────────────────
@@ -72,6 +76,13 @@ var _backend_startup_timer: float = 0.0
 var _backend_check_timer: float = 0.0
 ## 是否正在等待后端启动
 var _awaiting_backend: bool = false
+
+## 端口探测流（非阻塞，null 表示无探测进行中）
+var _probe: StreamPeerTCP = null
+## 当前探测已等待时长（秒）
+var _probe_elapsed: float = 0.0
+## 当前探测是否为"启动前检查"（成功=后端已在运行，失败=需拉起后端进程）
+var _probe_before_spawn: bool = false
 
 ## 后台解码线程 — 将 JSON 解析移出主线程，避免阻塞渲染
 var _decode_thread: Thread = null
@@ -111,21 +122,21 @@ func _process(delta: float) -> void:
 		if _backend_startup_timer > BACKEND_STARTUP_TIMEOUT:
 			push_error("Connection: backend startup timed out after %.0fs" % BACKEND_STARTUP_TIMEOUT)
 			_awaiting_backend = false
+			_close_probe()
 			_kill_backend()
 			last_process_us = Time.get_ticks_usec() - t0
 			return
+
+	if _probe != null:
+		_poll_probe(delta)
+		last_process_us = Time.get_ticks_usec() - t0
+		return
+
+	if _awaiting_backend:
 		_backend_check_timer -= delta
-		if _backend_check_timer > 0.0:
-			last_process_us = Time.get_ticks_usec() - t0
-			return
-		_backend_check_timer = 0.5
-		if _is_port_open(DEFAULT_HOST, DEFAULT_PORT):
-			print("Connection: backend ready on %s:%d (waited %.1fs)" % [DEFAULT_HOST, DEFAULT_PORT, _backend_startup_timer])
-			_awaiting_backend = false
-			if _stream != null:
-				_stream.disconnect_from_host()
-				_stream = null
-			_connect()
+		if _backend_check_timer <= 0.0:
+			_backend_check_timer = BACKEND_CHECK_INTERVAL
+			_begin_probe()
 		last_process_us = Time.get_ticks_usec() - t0
 		return
 
@@ -191,11 +202,13 @@ func send(message: Dictionary) -> void:
 # ── 后端进程管理 ──────────────────────────────────────────
 
 func _start_backend() -> void:
-	"""启动 Python 后端进程。"""
-	if _is_port_open(DEFAULT_HOST, DEFAULT_PORT):
-		print("Connection: backend already running on %s:%d" % [DEFAULT_HOST, DEFAULT_PORT])
-		return
+	"""启动后端：先非阻塞探测端口，已开放则直接使用，否则拉起 Python 进程。"""
+	_probe_before_spawn = true
+	_begin_probe()
 
+
+func _spawn_backend_process() -> void:
+	"""拉起 Python 后端进程并进入等待端口就绪状态。"""
 	var project_root: String = ProjectSettings.globalize_path("res://..")
 	var python_path: String = project_root.path_join(VENV_PYTHON_REL)
 	var backend_dir: String = project_root.path_join("ascend-backend")
@@ -216,6 +229,7 @@ func _start_backend() -> void:
 	_backend_pid = pid
 	_awaiting_backend = true
 	_backend_startup_timer = 0.0
+	_backend_check_timer = BACKEND_CHECK_INTERVAL
 	set_process(true)
 	print("Connection: backend started (PID: %d), waiting for port..." % pid)
 
@@ -230,23 +244,61 @@ func _kill_backend() -> void:
 	_awaiting_backend = false
 
 
-func _is_port_open(host: String, port: int) -> bool:
-	"""检查指定端口是否已开放（TCP 连接测试）。"""
-	var test := StreamPeerTCP.new()
-	var err: Error = test.connect_to_host(host, port)
-	if err != OK:
-		return false
-	var elapsed: float = 0.0
-	while elapsed < 0.2:
-		test.poll()
-		if test.get_status() == StreamPeerTCP.STATUS_CONNECTED:
-			test.disconnect_from_host()
-			return true
-		if test.get_status() != StreamPeerTCP.STATUS_CONNECTING:
-			break
-		elapsed += 0.05
-	test.disconnect_from_host()
-	return false
+func _begin_probe() -> void:
+	"""发起一次非阻塞端口探测。结果由 _poll_probe 在后续帧中判定。"""
+	_close_probe()
+	var probe := StreamPeerTCP.new()
+	_probe_elapsed = 0.0
+	if probe.connect_to_host(DEFAULT_HOST, DEFAULT_PORT) != OK:
+		_on_probe_failed()
+		return
+	_probe = probe
+
+
+func _poll_probe(delta: float) -> void:
+	"""每帧轮询探测流状态：连接成功=端口开放，出错或超时=端口未就绪。"""
+	_probe_elapsed += delta
+	_probe.poll()
+	match _probe.get_status():
+		StreamPeerTCP.STATUS_CONNECTED:
+			_close_probe()
+			_on_probe_succeeded()
+		StreamPeerTCP.STATUS_CONNECTING:
+			if _probe_elapsed >= PROBE_TIMEOUT:
+				_close_probe()
+				_on_probe_failed()
+		_:
+			_close_probe()
+			_on_probe_failed()
+
+
+func _close_probe() -> void:
+	"""关闭并清理探测流。"""
+	if _probe != null:
+		_probe.disconnect_from_host()
+		_probe = null
+
+
+func _on_probe_succeeded() -> void:
+	"""端口开放：后端已就绪。"""
+	if _awaiting_backend:
+		print("Connection: backend ready on %s:%d (waited %.1fs)" % [DEFAULT_HOST, DEFAULT_PORT, _backend_startup_timer])
+		_awaiting_backend = false
+		_probe_before_spawn = false
+		if _stream != null:
+			_stream.disconnect_from_host()
+			_stream = null
+		_connect()
+	elif _probe_before_spawn:
+		print("Connection: backend already running on %s:%d" % [DEFAULT_HOST, DEFAULT_PORT])
+		_probe_before_spawn = false
+
+
+func _on_probe_failed() -> void:
+	"""端口未开放：启动前检查则拉起后端进程，等待期间则稍后重试。"""
+	if _probe_before_spawn:
+		_probe_before_spawn = false
+		_spawn_backend_process()
 
 
 # ── TCP 连接 ──────────────────────────────────────────────
