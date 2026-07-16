@@ -290,7 +290,7 @@ func _place_batch(deadline: int) -> void:
 	var layers: Dictionary = {}
 
 	while _place_cursor < total:
-		var y: int = _place_cursor / CHUNK_SIZE
+		var y: int = floori(_place_cursor / float(CHUNK_SIZE))
 		var x: int = _place_cursor - y * CHUNK_SIZE
 		var tile: int = terrain[_place_cursor]
 		var elev: int
@@ -377,7 +377,7 @@ func _erase_batch(deadline: int) -> void:
 		else:
 			elev = TERRAIN_BANDS[tile]
 
-		var y: int = cursor / CHUNK_SIZE
+		var y: int = floori(cursor / float(CHUNK_SIZE))
 		var x: int = cursor - y * CHUNK_SIZE
 		var layer: TileMapLayer = layers.get(elev, null)
 		if layer:
@@ -465,7 +465,7 @@ func get_elevation_at(world_pos: Vector2) -> float:
 	var cx: int = int(world_pos.x / float(CHUNK_SIZE))
 	var cy: int = int(world_pos.y / float(CHUNK_SIZE))
 	var key := Vector2i(cx, cy)
-	var chunk_data: Dictionary = _chunks.get(key, {})
+	var chunk_data = _chunks.get(key)
 	if chunk_data == null or chunk_data.is_empty() or not chunk_data.has("elevation"):
 		return -999.0
 
@@ -493,7 +493,7 @@ func get_slope_at(world_pos: Vector2) -> float:
 	var cx: int = int(world_pos.x / float(CHUNK_SIZE))
 	var cy: int = int(world_pos.y / float(CHUNK_SIZE))
 	var key := Vector2i(cx, cy)
-	var chunk_data: Dictionary = _chunks.get(key, {})
+	var chunk_data = _chunks.get(key)
 	if chunk_data == null or chunk_data.is_empty() or not chunk_data.has("slope"):
 		return -999.0
 
@@ -521,7 +521,7 @@ func get_chunk_temperature(world_pos: Vector2) -> float:
 	var cx: int = int(world_pos.x / float(CHUNK_SIZE))
 	var cy: int = int(world_pos.y / float(CHUNK_SIZE))
 	var key := Vector2i(cx, cy)
-	var chunk_data: Dictionary = _chunks.get(key, {})
+	var chunk_data = _chunks.get(key)
 	if chunk_data == null or chunk_data.is_empty() or not chunk_data.has("temperature"):
 		return -999.0
 	return float(chunk_data["temperature"])
@@ -539,10 +539,32 @@ func get_chunk_humidity(world_pos: Vector2) -> float:
 	var cx: int = int(world_pos.x / float(CHUNK_SIZE))
 	var cy: int = int(world_pos.y / float(CHUNK_SIZE))
 	var key := Vector2i(cx, cy)
-	var chunk_data: Dictionary = _chunks.get(key, {})
+	var chunk_data = _chunks.get(key)
 	if chunk_data == null or chunk_data.is_empty() or not chunk_data.has("humidity"):
 		return -999.0
 	return float(chunk_data["humidity"])
+
+
+func get_chunk_climate(world_pos: Vector2) -> int:
+	"""获取指定世界坐标所在区块的气候带编码。
+
+	与后端 ClimateZone 枚举一致:
+	0=热带雨林 1=热带草原 2=沙漠 3=草原
+	4=温带森林 5=亚寒带针叶林 6=极地苔原 7=高山
+
+	Args:
+		world_pos: 世界坐标。
+
+	Returns:
+		气候带编码，无数据时返回 -1。
+	"""
+	var cx: int = int(world_pos.x / float(CHUNK_SIZE))
+	var cy: int = int(world_pos.y / float(CHUNK_SIZE))
+	var key := Vector2i(cx, cy)
+	var chunk_data = _chunks.get(key)
+	if chunk_data == null or chunk_data.is_empty() or not chunk_data.has("climate"):
+		return -1
+	return int(chunk_data["climate"])
 
 
 func get_timing() -> Dictionary:

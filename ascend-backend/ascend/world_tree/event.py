@@ -69,3 +69,31 @@ class Event:
         if not isinstance(other, Event):
             return False
         return self.id == other.id
+
+
+@dataclass
+class LocationFilter:
+    """订阅位置过滤条件。
+
+    用于 subscribe() 时限制回调只接收指定 chunk 区域内的事件。
+    None 表示不做位置限制，完全向后兼容。
+
+    Attributes:
+        center_chunk: 中心 chunk 坐标 (chunk_x, chunk_y)。
+        radius: 搜索半径（chunk 数），默认 0 即仅匹配自身 chunk。
+    """
+    center_chunk: tuple[int, int]
+    radius: int = 0
+
+    def matches(self, event_location: tuple) -> bool:
+        """判断事件位置是否在过滤范围内。
+
+        Args:
+            event_location: 事件 location 字段，格式 (chunk_x, chunk_y, ...)。
+
+        Returns:
+            True 表示事件位置在范围内，应触发回调。
+        """
+        cx, cy = self.center_chunk
+        ex, ey = event_location[0], event_location[1]
+        return abs(ex - cx) <= self.radius and abs(ey - cy) <= self.radius

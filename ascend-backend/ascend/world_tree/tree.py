@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ascend.log import get_logger
 from .archive import EventArchive
-from .event import Event
+from .event import Event, LocationFilter
 from .graph import EventGraph
 from .registry import SchemaRegistry
 
@@ -64,7 +64,9 @@ class WorldTree:
         self._async_dispatch_count: int = 0
         self._event_log: list[Event] = []
         self._id_index: dict[str, Event] = {}
-        self._subscriptions: dict[str, list[Callable[[Event], None]]] = {}
+        self._subscriptions: dict[
+            str, list[tuple[Callable[[Event], None], LocationFilter | None]]
+        ] = {}
         self._entity_index: dict[str, list[Event]] = {}
         self._spatial_index: dict[tuple[int, int, int], set[Event]] = {}
         self._graph: EventGraph = EventGraph()
@@ -187,8 +189,13 @@ class WorldTree:
             self._graph.add_event(event)
 
             # 在锁内抓取订阅者快照，锁外分发
-            callbacks = list(self._subscriptions.get(event.event_type, []))
-            callbacks.extend(self._subscriptions.get("*", []))
+            callbacks: list[Callable[[Event], None]] = []
+            for cb, lf in self._subscriptions.get(event.event_type, []):
+                if lf is None or lf.matches(event.location):
+                    callbacks.append(cb)
+            for cb, lf in self._subscriptions.get("*", []):
+                if lf is None or lf.matches(event.location):
+                    callbacks.append(cb)
 
         if callbacks:
             self._dispatch(event, callbacks)
@@ -229,32 +236,44 @@ class WorldTree:
     # ── 订阅 ──────────────────────────────────────────
 
     def subscribe(
-        self, event_type: str, callback: Callable[[Event], None]
+        self,
+        event_type: str,
+        callback: Callable[[Event], None],
+        location_filter: LocationFilter | None = None,
     ) -> Callable[[], None]:
         """订阅某类事件。
 
         Args:
             event_type: 要订阅的事件类型字符串。"*" 表示订阅所有事件。
             callback: 事件触发时调用的函数，接收 Event 作为唯一参数。
+            location_filter: 可选的位置过滤条件。传入后仅当事件位置
+                在指定 chunk 区域内时才触发回调。None 表示不做位置限制。
 
         Returns:
             一个无参函数，调用后取消此订阅。
         """
         with self._lock:
-            self._subscriptions.setdefault(event_type, []).append(callback)
+            self._subscriptions.setdefault(event_type, []).append(
+                (callback, location_filter)
+            )
 
         def unsubscribe() -> None:
             """取消此订阅。若已取消则静默忽略。"""
             with self._lock:
                 try:
-                    self._subscriptions[event_type].remove(callback)
+                    self._subscriptions[event_type].remove(
+                        (callback, location_filter)
+                    )
                 except ValueError:
                     pass
 
         return unsubscribe
 
     def subscribe_async(
-        self, event_type: str, callback: Callable[[Event], None]
+        self,
+        event_type: str,
+        callback: Callable[[Event], None],
+        location_filter: LocationFilter | None = None,
     ) -> Callable[[], None]:
         """订阅某类事件，回调在后台线程中执行。
 
@@ -264,6 +283,7 @@ class WorldTree:
         Args:
             event_type: 事件类型字符串。"*" 表示订阅所有事件。
             callback: 在后台线程中调用的函数。
+            location_filter: 可选的位置过滤条件。
 
         Returns:
             一个无参函数，调用后取消此订阅。
@@ -272,7 +292,9 @@ class WorldTree:
             """将回调提交到线程池执行。"""
             self._async_executor.submit(self._safe_async_call, callback, event)
 
-        return self.subscribe(event_type, _async_wrapper)
+        return self.subscribe(
+            event_type, _async_wrapper, location_filter=location_filter
+        )
 
     def _safe_async_call(
         self, callback: Callable[[Event], None], event: Event

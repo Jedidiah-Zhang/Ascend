@@ -6,7 +6,7 @@ import threading
 import time
 
 import pytest
-from ascend.world_tree import Event, AffectedParty, WorldTree, EventGraph, EventArchive
+from ascend.world_tree import Event, AffectedParty, WorldTree, EventGraph, EventArchive, LocationFilter
 
 
 def make_event(timestamp=0, event_type="test", initiator_id="a",
@@ -1292,4 +1292,154 @@ class TestAsyncDispatch:
         bus.publish(make_event(event_type="any_type"))
 
         barrier.wait(timeout=5)
+        assert len(received) == 1
+
+
+# ── 位置过滤 ──────────────────────────────────────────
+
+
+class TestLocationFilter:
+    """LocationFilter 单元测试。"""
+
+    def test_matches_self_chunk(self):
+        """radius=0 时仅匹配自身 chunk。"""
+        lf = LocationFilter(center_chunk=(5, 3), radius=0)
+        assert lf.matches((5, 3, None, None))
+        assert not lf.matches((5, 4, None, None))
+        assert not lf.matches((6, 3, None, None))
+
+    def test_matches_with_radius(self):
+        """radius > 0 时匹配周边 chunk。"""
+        lf = LocationFilter(center_chunk=(5, 3), radius=1)
+        assert lf.matches((5, 3, None, None))
+        assert lf.matches((5, 4, None, None))
+        assert lf.matches((6, 3, None, None))
+        assert lf.matches((4, 2, None, None))
+        assert not lf.matches((7, 3, None, None))
+        assert not lf.matches((5, 1, None, None))
+
+    def test_matches_edge_case(self):
+        """边界情况：刚好在半径边缘。"""
+        lf = LocationFilter(center_chunk=(0, 0), radius=2)
+        assert lf.matches((2, 2, None, None))
+        assert not lf.matches((3, 0, None, None))
+
+    def test_matches_negative_coords(self):
+        """支持负坐标 chunk。"""
+        lf = LocationFilter(center_chunk=(-3, -3), radius=1)
+        assert lf.matches((-3, -3, None, None))
+        assert lf.matches((-2, -4, None, None))
+        assert not lf.matches((-5, -3, None, None))
+
+
+class TestWorldTreeLocationFilter:
+    """WorldTree 位置过滤集成测试。"""
+
+    def test_filter_matching_chunk_receives(self):
+        """位置匹配的订阅者收到事件。"""
+        bus = WorldTree()
+        received: list[Event] = []
+        lf = LocationFilter(center_chunk=(0, 0), radius=0)
+        bus.subscribe("test", lambda e: received.append(e), location_filter=lf)
+        ev = make_event(location=(0, 0, None, None))
+        bus.publish(ev)
+        assert len(received) == 1
+
+    def test_filter_non_matching_chunk_skipped(self):
+        """位置不匹配的订阅者不收到事件。"""
+        bus = WorldTree()
+        received: list[Event] = []
+        lf = LocationFilter(center_chunk=(5, 5), radius=0)
+        bus.subscribe("test", lambda e: received.append(e), location_filter=lf)
+        ev = make_event(location=(0, 0, None, None))
+        bus.publish(ev)
+        assert len(received) == 0
+
+    def test_filter_with_radius(self):
+        """radius > 0 时周边 chunk 的事件也被接收。"""
+        bus = WorldTree()
+        received: list[Event] = []
+        lf = LocationFilter(center_chunk=(0, 0), radius=1)
+        bus.subscribe("test", lambda e: received.append(e), location_filter=lf)
+        bus.publish(make_event(location=(0, 0, None, None)))
+        bus.publish(make_event(location=(1, 0, None, None)))
+        bus.publish(make_event(location=(0, 1, None, None)))
+        bus.publish(make_event(location=(1, 1, None, None)))
+        bus.publish(make_event(location=(2, 0, None, None)))
+        assert len(received) == 4
+
+    def test_no_filter_backward_compatible(self):
+        """不传 location_filter 时行为不变，接收所有事件。"""
+        bus = WorldTree()
+        received: list[Event] = []
+        bus.subscribe("test", lambda e: received.append(e))
+        bus.publish(make_event(location=(0, 0, None, None)))
+        bus.publish(make_event(location=(99, 99, None, None)))
+        assert len(received) == 2
+
+    def test_wildcard_with_location_filter(self):
+        """通配符 + 位置过滤的组合正确工作。"""
+        bus = WorldTree()
+        received: list[Event] = []
+        lf = LocationFilter(center_chunk=(0, 0), radius=0)
+        bus.subscribe("*", lambda e: received.append(e), location_filter=lf)
+        bus.publish(make_event(event_type="rain", location=(0, 0, None, None)))
+        bus.publish(make_event(event_type="snow", location=(0, 0, None, None)))
+        bus.publish(make_event(event_type="rain", location=(5, 5, None, None)))
+        assert len(received) == 2
+
+    def test_multiple_filters_on_same_type(self):
+        """同一事件类型，多个订阅者各有不同的位置过滤。"""
+        bus = WorldTree()
+        r1: list[Event] = []
+        r2: list[Event] = []
+        r_all: list[Event] = []
+
+        bus.subscribe("weather", lambda e: r1.append(e),
+                      location_filter=LocationFilter((0, 0), radius=0))
+        bus.subscribe("weather", lambda e: r2.append(e),
+                      location_filter=LocationFilter((5, 5), radius=0))
+        bus.subscribe("weather", lambda e: r_all.append(e))
+
+        bus.publish(make_event(event_type="weather", location=(0, 0, None, None)))
+        assert len(r1) == 1
+        assert len(r2) == 0
+        assert len(r_all) == 1
+
+        bus.publish(make_event(event_type="weather", location=(5, 5, None, None)))
+        assert len(r1) == 1
+        assert len(r2) == 1
+        assert len(r_all) == 2
+
+    def test_filter_with_unsubscribe(self):
+        """位置过滤的订阅可以正常取消。"""
+        bus = WorldTree()
+        received: list[Event] = []
+        lf = LocationFilter(center_chunk=(0, 0), radius=0)
+        unsub = bus.subscribe("test", lambda e: received.append(e),
+                              location_filter=lf)
+        bus.publish(make_event(location=(0, 0, None, None)))
+        assert len(received) == 1
+        unsub()
+        bus.publish(make_event(location=(0, 0, None, None)))
+        assert len(received) == 1
+
+    def test_async_with_location_filter(self):
+        """异步订阅者也可以使用位置过滤。"""
+        bus = WorldTree()
+        received: list[Event] = []
+        barrier = threading.Barrier(2)
+        lf = LocationFilter(center_chunk=(0, 0), radius=0)
+
+        def handler(event: Event) -> None:
+            received.append(event)
+            barrier.wait(timeout=5)
+
+        bus.subscribe_async("test", handler, location_filter=lf)
+        bus.publish(make_event(event_type="test", location=(0, 0, None, None)))
+        barrier.wait(timeout=5)
+        assert len(received) == 1
+
+        bus.publish(make_event(event_type="test", location=(5, 5, None, None)))
+        time.sleep(0.1)
         assert len(received) == 1

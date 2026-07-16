@@ -6,6 +6,7 @@
 from collections.abc import Callable
 
 from ascend.log import get_logger
+from ascend.time import GAME_MINUTE, GAME_HOUR
 from ascend.world_tree.event import Event
 from ascend.net.server import GameServer
 
@@ -77,12 +78,18 @@ class EventBridge:
         Args:
             event: WorldTree 事件。
         """
+        total_min = event.timestamp // GAME_MINUTE
+        game_hour = (total_min // 60) % 24
+        game_minute = total_min % 60
+
         message = {
             "type": "event",
             "event_type": event.event_type,
             "payload": {
                 "id": event.id,
                 "timestamp": event.timestamp,
+                "game_hour": game_hour,
+                "game_minute": game_minute,
                 "location": list(event.location),
                 "initiator_type": event.initiator_type,
                 "initiator_id": event.initiator_id,

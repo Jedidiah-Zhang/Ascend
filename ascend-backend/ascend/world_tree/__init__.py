@@ -9,7 +9,7 @@
 
 from .affected import AffectedParty
 from .archive import EventArchive
-from .event import Event
+from .event import Event, LocationFilter
 from .graph import EventGraph
 from .registry import SchemaRegistry
 from .schema import EventSchema
@@ -20,6 +20,6 @@ from .tree import WorldTree
 # 运行时校验是纯开销。外部输入（网络/脚本）需验证时在入口处显式校验。
 world_tree = WorldTree(validate=False)
 
-__all__ = ["world_tree", "Event", "AffectedParty", "EventGraph",
-           "WorldTree", "EventArchive", "EventSchema",
+__all__ = ["world_tree", "Event", "LocationFilter", "AffectedParty",
+           "EventGraph", "WorldTree", "EventArchive", "EventSchema",
            "SchemaRegistry"]

@@ -11,6 +11,9 @@ extends Node2D
 
 const Config = preload("res://scripts/config.gd")
 
+## 事件日志中天气事件的视野半径（以 chunk 为单位），覆盖 3x3 区域
+const EVENT_LOG_VIEW_RADIUS: int = 1
+
 ## 相机平移速度（像素/秒）
 const CAMERA_PAN_SPEED: float = Config.CAMERA_PAN_SPEED
 ## 缩放步长
@@ -30,10 +33,7 @@ const CAMERA_ZOOM_MAX: float = Config.CAMERA_ZOOM_MAX
 ## 事件日志面板
 @onready var _event_log: EventLog = $DebugLayer/EventLog
 
-## 当前游戏时间（时），来自 minute_change 事件，用于事件日志时间戳
-var _current_game_hour: int = -1
-## 当前游戏时间（分）
-var _current_game_minute: int = -1
+## 当前游戏时间（来自后端事件 payload 的 game_hour/game_minute）
 ## 上次显示的日期，仅变更时插入分隔线
 var _current_game_day: int = -1
 
@@ -43,6 +43,9 @@ var _prev_real_msec: int = 0
 
 ## 上次推送调试数据时的玩家 tile 坐标，仅在移位时刷新地形/气候数据
 var _last_tile_pos: Vector2i = Vector2i(-999999, -999999)
+
+## 当前玩家所在区块坐标，用于天气事件位置过滤
+var _player_chunk: Vector2i = Vector2i(0, 0)
 
 
 func _ready() -> void:
@@ -175,7 +178,6 @@ func _setup_debug_sections() -> void:
 	_debug_overlay.add_section(FPSSection.new())
 	_debug_overlay.add_section(MemorySection.new())
 	_debug_overlay.add_section(TimeSection.new())
-	_debug_overlay.add_section(ConnectionSection.new())
 	_debug_overlay.add_section(CameraSection.new())
 	_debug_overlay.add_section(PlayerSection.new())
 	_debug_overlay.add_section(ClimateSection.new())
@@ -199,9 +201,15 @@ func _update_debug_sections() -> void:
 	var player_pos: Vector2 = _map_display.get_player_pos()
 	var tile_pos := Vector2i(int(player_pos.x), int(player_pos.y))
 
+	_player_chunk = Vector2i(
+		floori(player_pos.x / Config.TILE_MAP_SIZE),
+		floori(player_pos.y / Config.TILE_MAP_SIZE)
+	)
+
 	var player_section: PlayerSection = _debug_overlay.get_section("玩家")
 	if player_section:
 		player_section.world_pos = player_pos
+		player_section.chunk = _player_chunk
 		player_section.elevation = _map_display.get_player_elevation()
 
 	var chunk_section: ChunkSection = _debug_overlay.get_section("区块")
@@ -233,6 +241,9 @@ func _update_debug_sections() -> void:
 			var hum: float = _map_display.get_chunk_humidity(player_pos)
 			if hum > -998.0:
 				climate_section.update_from_backend({"humidity": hum})
+			var cz: int = _map_display.get_chunk_climate(player_pos)
+			if cz >= 0:
+				climate_section.update_from_backend({"climate_zone": cz})
 
 	var fps_section: FPSSection = _debug_overlay.get_section("性能")
 	if fps_section:
@@ -295,16 +306,13 @@ func _handle_event(message: Dictionary) -> void:
 	if _debug_overlay == null:
 		return
 
-	# 格式化时间戳
-	var ts: String = "--:--"
-	if _current_game_hour >= 0:
-		ts = "%02d:%02d" % [_current_game_hour, _current_game_minute]
+	var ts: String = "%02d:%02d" % [
+		payload.get("game_hour", 0),
+		payload.get("game_minute", 0),
+	]
 
 	match event_type:
 		"minute_change":
-			_current_game_hour = int(data.get("hour", 0))
-			_current_game_minute = int(data.get("minute", 0))
-			ts = "%02d:%02d" % [_current_game_hour, _current_game_minute]
 			var time_section: TimeSection = _debug_overlay.get_section("时间")
 			if time_section:
 				time_section.update_from_backend(data)
@@ -327,42 +335,90 @@ func _handle_event(message: Dictionary) -> void:
 			_prev_real_msec = now_msec
 
 		"temperature_change":
+			var loc: Array = payload.get("location", [])
+			if not _is_within_event_log_view(loc):
+				return
+			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
+			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
 			var section: ClimateSection = _debug_overlay.get_section("气候")
 			if section:
 				section.update_from_backend({"temperature": data.get("temperature", 0.0)})
-			_push_log("[%s] 温度 %.1f°C" % [ts, data.get("temperature", 0.0)])
+			_push_log("[%s] 温度 %.1f°C  [区块 %d,%d]" % [ts, data.get("temperature", 0.0), cx, cy])
 
 		"humidity_change":
+			var loc: Array = payload.get("location", [])
+			if not _is_within_event_log_view(loc):
+				return
+			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
+			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
 			var section: ClimateSection = _debug_overlay.get_section("气候")
 			if section:
 				section.update_from_backend({"humidity": data.get("humidity", 0.0)})
-			_push_log("[%s] 湿度 %.0f%%" % [ts, data.get("humidity", 0.0)])
+			_push_log("[%s] 湿度 %.0f%%  [区块 %d,%d]" % [ts, data.get("humidity", 0.0), cx, cy])
 
 		"wind_change":
-			_push_log("[%s] 风速 %.1f m/s" % [ts, data.get("wind_speed", 0.0)])
+			var loc: Array = payload.get("location", [])
+			if not _is_within_event_log_view(loc):
+				return
+			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
+			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
+			_push_log("[%s] 风速 %.1f m/s  [区块 %d,%d]" % [ts, data.get("wind_speed", 0.0), cx, cy])
 
 		"sunshine_change":
-			_push_log("[%s] 日照 %.1fh" % [ts, data.get("sunshine", 0.0)])
+			var loc: Array = payload.get("location", [])
+			if not _is_within_event_log_view(loc):
+				return
+			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
+			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
+			_push_log("[%s] 日照 %.1fh  [区块 %d,%d]" % [ts, data.get("sunshine", 0.0), cx, cy])
 
 		"precipitation_start":
+			var loc: Array = payload.get("location", [])
+			if not _is_within_event_log_view(loc):
+				return
+			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
+			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
 			var section: WeatherSection = _debug_overlay.get_section("天气")
 			if section:
 				var ptype: String = data.get("precip_type", "")
 				var intensity: float = data.get("intensity", 0.0)
 				section.update_from_backend({"weather": "%s (%.1f mm/h)" % [ptype, intensity]})
-			_push_log("[%s] %s %.1fmm/h" % [ts, data.get("precip_type", ""), data.get("intensity", 0.0)])
+			_push_log("[%s] %s %.1fmm/h  [区块 %d,%d]" % [ts, data.get("precip_type", ""), data.get("intensity", 0.0), cx, cy])
 
 		"precipitation_stop":
+			var loc: Array = payload.get("location", [])
+			if not _is_within_event_log_view(loc):
+				return
+			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
+			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
 			var section: WeatherSection = _debug_overlay.get_section("天气")
 			if section:
 				section.update_from_backend({"weather": "晴"})
-			_push_log("[%s] 雨停" % ts)
+			_push_log("[%s] 雨停  [区块 %d,%d]" % [ts, cx, cy])
 
 
 func _push_log(line: String) -> void:
 	"""推入一行事件到右侧日志面板。"""
 	if _event_log:
 		_event_log.push_event(line)
+
+
+func _is_within_event_log_view(location_array: Array) -> bool:
+	"""判断事件位置是否在事件日志视野（玩家 3x3 chunk 区域）内。
+
+	Args:
+		location_array: 事件的 location 字段，格式 [chunk_x, chunk_y, ...]。
+
+	Returns:
+		True 表示事件在视野范围内，应显示在日志中。
+	"""
+	if location_array.size() < 2:
+		return true  # 无位置信息时不过滤
+	var ev_cx: int = int(location_array[0])
+	var ev_cy: int = int(location_array[1])
+	var dx: int = abs(ev_cx - _player_chunk.x)
+	var dy: int = abs(ev_cy - _player_chunk.y)
+	return dx <= EVENT_LOG_VIEW_RADIUS and dy <= EVENT_LOG_VIEW_RADIUS
 
 
 func _handle_response(message: Dictionary) -> void:
