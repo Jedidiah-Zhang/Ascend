@@ -34,6 +34,7 @@ from ascend.log import get_logger
 from ascend.net import GameServer, MessageDispatcher, EventBridge
 from ascend.net.handlers.map_handler import make_map_handlers
 from ascend.net.handlers.terminal_handler import make_terminal_handler
+from ascend.net.handlers.weather_handler import make_weather_handler
 from ascend.space import WorldGenerator, TileGenerator
 from ascend.space.chunk_store import ChunkStore
 from ascend.entity import EntityManager
@@ -203,6 +204,12 @@ class GameEngine:
         for req_type, handler in handlers.items():
             self.dispatcher.register(req_type, handler)
         logger.info("已注册地图处理程序: %s", list(handlers.keys()))
+
+        # 7b. 天气查询处理程序
+        weather_handlers = make_weather_handler(self.weather_engine, self.i18n)
+        for req_type, handler in weather_handlers.items():
+            self.dispatcher.register(req_type, handler)
+        logger.info("已注册天气查询处理程序: %s", list(weather_handlers.keys()))
 
         # 8. 终端指令执行器
         self._executor = CommandExecutor(

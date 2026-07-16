@@ -94,5 +94,47 @@
   "terminal.unknown_view": "Unknown view mode '{mode}', available: biome, climate, altitude, normal",
   "terminal.unknown_cmd": "Unknown command '{cmd}', type help for help",
   "terminal.map_switched": "Map view switched to: {view_mode}",
-  "terminal.input_hint": "Type help for commands"
+  "terminal.input_hint": "Type help for commands",
+
+  "weather.clear": "Clear",
+  "weather.rain": "Rain",
+  "weather.snow": "Snow",
+  "weather.intensity": "{type} ({intensity} mm/h)",
+
+  "perception.temp.bitter_cold": "Bitter Cold",
+  "perception.temp.freezing": "Freezing",
+  "perception.temp.cold": "Cold",
+  "perception.temp.chilly": "Chilly",
+  "perception.temp.cool": "Cool",
+  "perception.temp.mild": "Mild",
+  "perception.temp.warm": "Warm",
+  "perception.temp.hot": "Hot",
+  "perception.temp.scorching": "Scorching",
+  "perception.temp.extreme_heat": "Extreme Heat",
+
+  "perception.hum.dry": "Dry",
+  "perception.hum.comfortable": "Comfortable",
+  "perception.hum.humid": "Humid",
+  "perception.hum.very_humid": "Very Humid",
+  "perception.hum.oppressive": "Oppressive",
+
+  "perception.wind.calm": "Calm",
+  "perception.wind.light_breeze": "Light Breeze",
+  "perception.wind.breezy": "Breezy",
+  "perception.wind.windy": "Windy",
+  "perception.wind.strong": "Strong",
+  "perception.wind.gale": "Gale",
+
+  "perception.sun.very_short": "Very Short",
+  "perception.sun.short": "Short",
+  "perception.sun.moderate": "Moderate",
+  "perception.sun.long": "Long",
+  "perception.sun.very_long": "Very Long",
+  "perception.sun.extreme": "Extreme",
+
+  "perception.light.dark": "Dark",
+  "perception.light.dim": "Dim",
+  "perception.light.moderate": "Moderate",
+  "perception.light.bright": "Bright",
+  "perception.light.intense": "Intense"
 }

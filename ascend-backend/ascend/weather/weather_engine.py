@@ -1,13 +1,15 @@
-"""天气引擎 — 解析算天气 + per-parameter 事件发布。
+"""天气引擎 — 解析算天气 + 感知层事件发布 + 查询 API。
 
 天气参数每游戏分钟解析算（baseline + 季节 + 昼夜 + 大气扰动），无快照。
-每 tick 检查各参数变化超阈值 → 发对应 temperature_change/humidity_change/
-wind_change；降水 RainSchedule 状态切换 → 发 precipitation_start/precipitation_stop。
+事件按感知类别发布（温度 "cold"/"cool"、湿度 "dry"/"comfortable" 等），
+仅在类别跨越边界时触发，不再按固定数值阈值。
 
-降雨仍用事件调度（RainSchedule，从年降雨量推算频率/持续/强度）。
+查询 API：get_weather(cx, cy, time) 返回任意位置任意时刻的精确天气，
+供 UI 面板、生态模拟等需要精确值的模块同步使用。
 
-订阅 Calendar 的 minute_change 事件（而非 game_tick），分钟级更新已涵盖
-所有阈值穿越（温度日变率 ~0.5°C/h，阈值 0.3°C），无需逐 tick 计算。
+降雨/季节/昼夜/极端天气保持离散事件调度不变。
+
+订阅 Calendar 的 minute_change 事件（而非 game_tick），分钟级更新。
 """
 
 import math
@@ -32,8 +34,11 @@ from ascend.config import (
     SUNSHINE_PERTURB_SCALE,
     DIURNAL_TO_SEASONAL_RATIO,
     HUMIDITY_DIURNAL_SCALE, HUMIDITY_SEASONAL_SCALE,
-    TEMP_CHANGE_THRESHOLD, HUMIDITY_CHANGE_THRESHOLD, WIND_CHANGE_THRESHOLD,
-    SUNSHINE_CHANGE_THRESHOLD,
+    TEMP_PERCEPTION_BOUNDARIES,
+    HUMIDITY_PERCEPTION_BOUNDARIES,
+    WIND_PERCEPTION_BOUNDARIES,
+    SUNSHINE_PERCEPTION_BOUNDARIES,
+    SUNLIGHT_INTENSITY_BOUNDARIES,
     TEMP_BOUNDS as _TEMP_BOUNDS,
     HUMIDITY_BOUNDS as _HUMIDITY_BOUNDS,
     WIND_BOUNDS as _WIND_BOUNDS,
@@ -73,6 +78,61 @@ _SEASONALITY_HUMIDITY_SHARPNESS: dict[SeasonalityMode, float] = {
     SeasonalityMode.POLAR: 0.0,
     SeasonalityMode.ALPINE: 0.0,
 }
+
+# ── 感知分类 ────────────────────────────────────────────────
+
+def _classify_perception(value: float,
+                         boundaries: tuple[tuple[float, str], ...]) -> str:
+    """按阈值边界分类。
+
+    boundaries 为 (上限, 标签) 的升序元组，最后一个上限为 float("inf")。
+    """
+    for limit, label in boundaries:
+        if value < limit:
+            return label
+    return boundaries[-1][1]
+
+
+def classify_temperature(temp: float,
+                         boundaries: tuple[tuple[float, str], ...]
+                         = TEMP_PERCEPTION_BOUNDARIES) -> str:
+    """温度 → 感知类别。
+
+    Args:
+        temp: 温度 (°C)。
+        boundaries: 可选自定义边界，默认用全局配置。
+                    用于不同物种/场景的敏感度调整。
+    """
+    return _classify_perception(temp, boundaries)
+
+
+def classify_humidity(hum: float,
+                      boundaries: tuple[tuple[float, str], ...]
+                      = HUMIDITY_PERCEPTION_BOUNDARIES) -> str:
+    """湿度 → 感知类别。"""
+    return _classify_perception(hum, boundaries)
+
+
+def classify_wind(speed: float,
+                  boundaries: tuple[tuple[float, str], ...]
+                  = WIND_PERCEPTION_BOUNDARIES) -> str:
+    """风速 → 感知类别。"""
+    return _classify_perception(speed, boundaries)
+
+
+def classify_sunshine(sun: float,
+                      boundaries: tuple[tuple[float, str], ...]
+                      = SUNSHINE_PERCEPTION_BOUNDARIES) -> str:
+    """日照时长 → 感知类别。"""
+    return _classify_perception(sun, boundaries)
+
+
+def classify_sunlight_intensity(intensity: float,
+                                boundaries: tuple[tuple[float, str], ...]
+                                = SUNLIGHT_INTENSITY_BOUNDARIES) -> str:
+    """日照强度 (0~1) → 感知类别。"""
+    return _classify_perception(intensity, boundaries)
+
 
 # 降雨事件档位：climate → (mean_intensity mm/h, mean_duration h,
 #                             ramp_up_ratio, ramp_down_ratio)
@@ -170,19 +230,24 @@ class _ChunkWeatherBaseline:
 
 
 class WeatherEngine:
-    """天气引擎 — 解析算天气 + per-parameter 事件发布。
+    """天气引擎 — 解析算天气 + 感知层事件 + 查询 API。
 
     构造时订阅 minute_change（Calendar 发布，每游戏分钟一次）；
     register_chunk 注册 chunk 基线 + 降雨调度；
-    每分钟解析算各参数，变化超阈值发对应事件，降水切换发 precipitation_start/stop。
+    每分钟解析算各参数，感知类别变化时发对应事件，
+    降水/季节/昼夜/极端天气切换发离散事件。
 
     线程安全：由 GameEngine 后台单线程驱动，自身不做并发保护。
 
     用法:
         engine = WeatherEngine(clock, seed=42)
-        engine.register_chunk(cx, cy, baseline, climate)
+        engine.register_chunk(cx, cy, baseline, climate, sea_level_temp)
+        # 事件：感知通知（AI 决策、行为变化）
+        #   订阅 temperature_change / humidity_change / wind_change 等
+        # API 查询：精确值（UI 面板、生态模拟）
+        wp = engine.get_weather(cx, cy)      # 当前时刻
+        wp = engine.get_weather(cx, cy, t)   # 任意时刻
         engine.shutdown()
-        # 天气数据通过订阅 temperature_change 等事件获取，不开放查询
     """
 
     def __init__(
@@ -304,6 +369,131 @@ class WeatherEngine:
         """取消订阅，释放资源。"""
         self._unsub()
         logger.debug("天气引擎已关闭")
+
+    # ── 公开：查询 API ──────────────────────────────────────────
+
+    def get_weather(self, cx: int, cy: int,
+                    time: int | None = None) -> "WeatherParams | None":
+        """查询任意 chunk 在指定时刻的精确天气（解析算，无状态）。
+
+        供 UI 面板、温度计、生态模拟等需要精确值的模块同步使用。
+        感知层 AI 决策应订阅事件而非轮询此方法。
+
+        Args:
+            cx: chunk X 坐标。
+            cy: chunk Y 坐标。
+            time: 目标时刻（tick），None=当前时刻。
+
+        Returns:
+            WeatherParams 或 None（chunk 未注册时）。
+        """
+        key = (cx, cy)
+        field = self._fields.get(key)
+        if field is None:
+            return None
+        rain = self._rain_schedules.get(key)
+        if time is None:
+            time = self._clock.time
+        now = time
+        day = now // GAME_DAY + 1
+        tod = now % GAME_DAY
+        season = int(season_of(day))
+        dos = day_of_season(day)
+        hour = hour_of_game_time(now)
+        day_of_year_val = (now // GAME_DAY) % 360
+        wind_x, wind_y = self._atmosphere.wind_vector(now)
+        solar_decl = _solar_declination(day_of_year_val)
+        drift = now * ATMOSPHERE_DRIFT_RATE
+        drift_x = wind_x * drift
+        drift_y = wind_y * drift
+        season_progress = season + dos / 90.0
+        season_phase = (season_progress - 1.5) / 4.0 * 2.0 * math.pi
+        season_cos = math.cos(season_phase)
+        season_hum_monsoon = math.tanh(season_cos * 2.5)
+        diurnal_phase = (hour - 14.0) / 24.0 * 2.0 * math.pi
+        diurnal_cos = math.cos(diurnal_phase)
+        params, _, _ = self._compute_params(
+            field, now, day, season, dos, hour,
+            wind_x=wind_x, wind_y=wind_y,
+            drift_x=drift_x, drift_y=drift_y,
+            solar_decl=solar_decl, day_of_year_val=day_of_year_val,
+            season_cos=season_cos, season_hum_monsoon=season_hum_monsoon,
+            diurnal_cos=diurnal_cos,
+            rain=rain,
+        )
+        return params
+
+    def get_perceptions(self, cx: int, cy: int,
+                        time: int | None = None) -> dict[str, str] | None:
+        """查询任意 chunk 在指定时刻的感知类别。
+
+        便捷方法，返回 {"temperature": "cool", "humidity": "dry", ...}。
+
+        Args:
+            cx: chunk X 坐标。
+            cy: chunk Y 坐标。
+            time: 目标时刻（tick），None=当前时刻。
+
+        Returns:
+            dict 或 None（chunk 未注册时）。
+        """
+        params = self.get_weather(cx, cy, time)
+        if params is None:
+            return None
+        return {
+            "temperature": classify_temperature(params.temperature),
+            "humidity": classify_humidity(params.humidity),
+            "wind": classify_wind(params.wind_speed),
+            "sunshine": classify_sunshine(params.sunshine),
+        }
+
+    def get_daylight_info(self, cx: int, cy: int,
+                          time: int | None = None,
+                          rainfall: float = 0.0
+                          ) -> tuple[float, float, float, float] | None:
+        """查询任意 chunk 的日出日落 + 当前日照强度。
+
+        Args:
+            cx: chunk X 坐标。
+            cy: chunk Y 坐标。
+            time: 目标时刻（tick），None=当前时刻。
+            rainfall: 当前降雨强度 mm/h（含修改器效果），用于衰减日照。
+                      由调用方通过 get_weather() 获取后传入，避免重复计算。
+
+        Returns:
+            (sunrise_hour, sunset_hour, daylight_hours, sunshine_intensity)
+            或 None（chunk 未注册时）。
+            sunshine_intensity 为 0~1 归一化值，0=黑夜 1=正午烈日。
+        """
+        key = (cx, cy)
+        field = self._fields.get(key)
+        if field is None:
+            return None
+        if time is None:
+            time = self._clock.time
+        day_of_year_val = (time // GAME_DAY) % 360
+        lat = field.baseline.latitude
+        sr = sunrise_hour(day_of_year_val, lat)
+        ss = sunset_hour(day_of_year_val, lat)
+        daylight = ss - sr
+        hour = hour_of_game_time(time)
+        if sr <= hour < ss and daylight > 0:
+            progress = (hour - sr) / daylight
+            intensity = math.sin(progress * math.pi)
+            # 降雨衰减：雨越大光越暗，暴雨覆盖 80% 日照
+            # rainfall 已由 get_weather() 包含普通降雨 + 暴风雨修改器效果
+            if rainfall > 0:
+                rain_factor = min(rainfall / 30.0, 1.0) * 0.8
+                intensity *= (1.0 - rain_factor)
+            # 大气扰动微调
+            w_p = self._atmosphere.sample_raw(
+                field._atmos_nx + time * ATMOSPHERE_DRIFT_RATE * 0.1,
+                field._atmos_ny + time * ATMOSPHERE_DRIFT_RATE * 0.1,
+            )
+            intensity = max(0.0, min(1.0, intensity + w_p * 0.05))
+        else:
+            intensity = 0.0
+        return (sr, ss, daylight, intensity)
 
     # ── 内部：解析算 ────────────────────────────────────────────
 
@@ -508,46 +698,54 @@ class WeatherEngine:
                 diurnal_cos=_diurnal_cos,
                 rain=rain,
             )
-            # 温度
-            if (field.last_temp is None
-                    or abs(params.temperature - field.last_temp)
-                    >= TEMP_CHANGE_THRESHOLD):
+            # 温度 — 感知类别变化时发布
+            temp_perception = classify_temperature(params.temperature)
+            if (field.last_temp_perception is None
+                    or temp_perception != field.last_temp_perception):
                 self._publish(cx, cy, now, "temperature_change", {
                     "temperature": float(params.temperature),
+                    "perception": temp_perception,
                     "season": season,
                     "time_of_day": int(tod),
                 })
                 field.last_temp = params.temperature
-            # 湿度
-            if (field.last_humidity is None
-                    or abs(params.humidity - field.last_humidity)
-                    >= HUMIDITY_CHANGE_THRESHOLD):
+                field.last_temp_perception = temp_perception
+            # 湿度 — 感知类别变化时发布
+            hum_perception = classify_humidity(params.humidity)
+            if (field.last_humidity_perception is None
+                    or hum_perception != field.last_humidity_perception):
                 self._publish(cx, cy, now, "humidity_change", {
                     "humidity": float(params.humidity),
+                    "perception": hum_perception,
                     "time_of_day": int(tod),
                 })
                 field.last_humidity = params.humidity
-            # 风（风向使用 tick 级预计算值）
-            if (field.last_wind is None
-                    or abs(params.wind_speed - field.last_wind)
-                    >= WIND_CHANGE_THRESHOLD):
+                field.last_humidity_perception = hum_perception
+            # 风 — 感知类别变化时发布（风向使用 tick 级预计算值）
+            wind_perception = classify_wind(params.wind_speed)
+            if (field.last_wind_perception is None
+                    or wind_perception != field.last_wind_perception):
                 self._publish(cx, cy, now, "wind_change", {
                     "wind_speed": float(params.wind_speed),
+                    "perception": wind_perception,
                     "wind_dir_x": float(wind_x),
                     "wind_dir_y": float(wind_y),
                     "time_of_day": int(tod),
                 })
                 field.last_wind = params.wind_speed
-            # 日照
-            if (field.last_sunshine is None
-                    or abs(params.sunshine - field.last_sunshine)
-                    >= SUNSHINE_CHANGE_THRESHOLD):
+                field.last_wind_perception = wind_perception
+            # 日照 — 感知类别变化时发布
+            sun_perception = classify_sunshine(params.sunshine)
+            if (field.last_sunshine_perception is None
+                    or sun_perception != field.last_sunshine_perception):
                 self._publish(cx, cy, now, "sunshine_change", {
                     "sunshine": float(params.sunshine),
+                    "perception": sun_perception,
                     "season": season,
                     "time_of_day": int(tod),
                 })
                 field.last_sunshine = params.sunshine
+                field.last_sunshine_perception = sun_perception
             # per-chunk 昼夜切换（复用 _compute_params 返回的 sr/ss）
             is_day = sr <= hour < ss
             if (field.last_is_daytime is not None

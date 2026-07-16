@@ -94,5 +94,47 @@
   "terminal.unknown_view": "未知视图模式 '{mode}'，可用: biome, climate, altitude, normal",
   "terminal.unknown_cmd": "未知指令 '{cmd}'，输入 help 查看帮助",
   "terminal.map_switched": "地图视图已切换为: {view_mode}",
-  "terminal.input_hint": "输入 help 查看指令"
+  "terminal.input_hint": "输入 help 查看指令",
+
+  "weather.clear": "晴",
+  "weather.rain": "雨",
+  "weather.snow": "雪",
+  "weather.intensity": "{type} ({intensity} mm/h)",
+
+  "perception.temp.bitter_cold": "严寒",
+  "perception.temp.freezing": "冰冷",
+  "perception.temp.cold": "寒冷",
+  "perception.temp.chilly": "微凉",
+  "perception.temp.cool": "凉爽",
+  "perception.temp.mild": "温和",
+  "perception.temp.warm": "温暖",
+  "perception.temp.hot": "炎热",
+  "perception.temp.scorching": "酷热",
+  "perception.temp.extreme_heat": "极热",
+
+  "perception.hum.dry": "干燥",
+  "perception.hum.comfortable": "舒适",
+  "perception.hum.humid": "潮湿",
+  "perception.hum.very_humid": "非常潮湿",
+  "perception.hum.oppressive": "闷热",
+
+  "perception.wind.calm": "无风",
+  "perception.wind.light_breeze": "轻风",
+  "perception.wind.breezy": "微风",
+  "perception.wind.windy": "大风",
+  "perception.wind.strong": "强风",
+  "perception.wind.gale": "狂风",
+
+  "perception.sun.very_short": "极短",
+  "perception.sun.short": "较短",
+  "perception.sun.moderate": "适中",
+  "perception.sun.long": "较长",
+  "perception.sun.very_long": "很长",
+  "perception.sun.extreme": "极长",
+
+  "perception.light.dark": "夜",
+  "perception.light.dim": "昏暗",
+  "perception.light.moderate": "适中",
+  "perception.light.bright": "明亮",
+  "perception.light.intense": "强光"
 }

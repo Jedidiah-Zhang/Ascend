@@ -1,7 +1,9 @@
-"""chunk 级天气状态 — 存基线 + 上次发布值（用于变化阈值检测）。
+"""chunk 级天气状态 — 存基线 + 上次发布值（用于感知层变化检测）。
 
 天气参数由 WeatherEngine 解析算（baseline + 季节 + 昼夜 + 扰动，每刻连续），
-本类只存基线和上次发布的参数值，用于 per-parameter 事件阈值比较。
+本类存基线、上次发布的参数值和感知类别，用于 per-parameter 事件阈值比较。
+
+事件逻辑：属性值在感知类别（如 "cold"→"cool"）变化时发布，而非固定数值阈值。
 """
 
 
@@ -14,11 +16,15 @@ class WeatherField:
         chunk_x/chunk_y: chunk 坐标。
         baseline: _ChunkWeatherBaseline 实例（年均基线 + 振幅）。
         last_temp/last_humidity/last_wind/last_sunshine: 上次发布的参数值（None=未发布过）。
+        last_temp_perception/last_humidity_perception/last_wind_perception/
+            last_sunshine_perception: 上次发布的感知类别标签（None=未发布过）。
         last_is_daytime: 上次的昼夜状态（None=未初始化），用于 per-chunk sunrise/sunset 检测。
     """
 
     __slots__ = ("chunk_x", "chunk_y", "baseline",
                  "last_temp", "last_humidity", "last_wind", "last_sunshine",
+                 "last_temp_perception", "last_humidity_perception",
+                 "last_wind_perception", "last_sunshine_perception",
                  "last_is_daytime",
                  "_atmos_nx", "_atmos_ny")
 
@@ -41,6 +47,10 @@ class WeatherField:
         self.last_humidity: float | None = None
         self.last_wind: float | None = None
         self.last_sunshine: float | None = None
+        self.last_temp_perception: str | None = None
+        self.last_humidity_perception: str | None = None
+        self.last_wind_perception: str | None = None
+        self.last_sunshine_perception: str | None = None
         self.last_is_daytime: bool | None = None
         # 预计算大气噪声空间基：（chunk_center / resolution），per-chunk 常数
         inv_res = 1.0 / atmos_resolution

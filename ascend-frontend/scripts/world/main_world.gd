@@ -47,6 +47,9 @@ var _last_tile_pos: Vector2i = Vector2i(-999999, -999999)
 ## 当前玩家所在区块坐标，用于天气事件位置过滤
 var _player_chunk: Vector2i = Vector2i(0, 0)
 
+## 天气查询累积时间（秒），限制网络请求频率
+var _weather_query_accum: float = 0.0
+
 
 func _ready() -> void:
 	"""场景加载时连接信号并发起连接。"""
@@ -78,6 +81,7 @@ func _process(delta: float) -> void:
 	"""
 	# 始终更新调试覆盖层（独立于连接状态和终端状态）
 	if _debug_overlay and _debug_overlay.is_shown():
+		_weather_query_accum += delta
 		_update_debug_sections()
 
 	# 无条件处理 Connection（即使终端打开，远程指令响应仍需接收）
@@ -245,6 +249,15 @@ func _update_debug_sections() -> void:
 			if cz >= 0:
 				climate_section.update_from_backend({"climate_zone": cz})
 
+	# 定期通过 API 查询当前天气（代替事件驱动）
+	if Connection.status == Connection.Status.CONNECTED and _weather_query_accum >= 0.5:
+		_weather_query_accum = 0.0
+		Connection.send({
+			"type": "request",
+			"request_type": "get_weather",
+			"payload": {"chunks": [[_player_chunk.x, _player_chunk.y]]},
+		})
+
 	var fps_section: FPSSection = _debug_overlay.get_section("性能")
 	if fps_section:
 		fps_section.update_msp_t()
@@ -340,9 +353,15 @@ func _handle_event(message: Dictionary) -> void:
 				return
 			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
 			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
-			var section: ClimateSection = _debug_overlay.get_section("气候")
-			if section:
-				section.update_from_backend({"temperature": data.get("temperature", 0.0)})
+			var climate_sec: ClimateSection = _debug_overlay.get_section("气候")
+			if climate_sec:
+				climate_sec.update_from_backend({"temperature": data.get("temperature", 0.0)})
+			var weather_sec: WeatherSection = _debug_overlay.get_section("天气")
+			if weather_sec:
+				weather_sec.update_from_backend({
+					"temperature": data.get("temperature", 0.0),
+					"perception": data.get("perception", ""),
+				})
 			_push_log("[%s] 温度 %.1f°C  [区块 %d,%d]" % [ts, data.get("temperature", 0.0), cx, cy])
 
 		"humidity_change":
@@ -351,9 +370,15 @@ func _handle_event(message: Dictionary) -> void:
 				return
 			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
 			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
-			var section: ClimateSection = _debug_overlay.get_section("气候")
-			if section:
-				section.update_from_backend({"humidity": data.get("humidity", 0.0)})
+			var climate_sec: ClimateSection = _debug_overlay.get_section("气候")
+			if climate_sec:
+				climate_sec.update_from_backend({"humidity": data.get("humidity", 0.0)})
+			var weather_sec: WeatherSection = _debug_overlay.get_section("天气")
+			if weather_sec:
+				weather_sec.update_from_backend({
+					"humidity": data.get("humidity", 0.0),
+					"perception": data.get("perception", ""),
+				})
 			_push_log("[%s] 湿度 %.0f%%  [区块 %d,%d]" % [ts, data.get("humidity", 0.0), cx, cy])
 
 		"wind_change":
@@ -362,6 +387,12 @@ func _handle_event(message: Dictionary) -> void:
 				return
 			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
 			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
+			var weather_sec: WeatherSection = _debug_overlay.get_section("天气")
+			if weather_sec:
+				weather_sec.update_from_backend({
+					"wind_speed": data.get("wind_speed", 0.0),
+					"perception": data.get("perception", ""),
+				})
 			_push_log("[%s] 风速 %.1f m/s  [区块 %d,%d]" % [ts, data.get("wind_speed", 0.0), cx, cy])
 
 		"sunshine_change":
@@ -370,6 +401,12 @@ func _handle_event(message: Dictionary) -> void:
 				return
 			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
 			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
+			var weather_sec: WeatherSection = _debug_overlay.get_section("天气")
+			if weather_sec:
+				weather_sec.update_from_backend({
+					"sunshine": data.get("sunshine", 0.0),
+					"perception": data.get("perception", ""),
+				})
 			_push_log("[%s] 日照 %.1fh  [区块 %d,%d]" % [ts, data.get("sunshine", 0.0), cx, cy])
 
 		"precipitation_start":
@@ -434,6 +471,12 @@ func _handle_response(message: Dictionary) -> void:
 		"get_chunks":
 			if _map_display:
 				_map_display.handle_chunk_response(payload)
+		"get_weather":
+			var weathers: Array = payload.get("weathers", [])
+			if weathers.size() > 0:
+				var weather_sec: WeatherSection = _debug_overlay.get_section("天气")
+				if weather_sec:
+					weather_sec.update_from_backend(weathers[0])
 		"terminal_cmd":
 			if _terminal:
 				var output: String = payload.get("output", "")

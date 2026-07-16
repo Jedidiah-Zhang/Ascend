@@ -1,8 +1,9 @@
-"""天气事件 schema 注册 — per-parameter 事件（什么变了发什么）。
+"""天气事件 schema 注册 — 感知层事件 + 离散事件。
 
-10 种事件：
+事件类型：
   - temperature_change / humidity_change / wind_change / sunshine_change：
-      参数变化超阈值
+       感知类别变化时发布（如 "cold"→"cool"、"dry"→"comfortable"），
+       附带 numeric 值和 perception 标签。
   - precipitation_start / precipitation_stop：降雨事件切换
   - cold_snap_start / cold_snap_stop：寒潮事件切换
   - heat_wave_start / heat_wave_stop：热浪事件切换
@@ -20,25 +21,26 @@ def register_weather_schemas(wt) -> None:
     """在指定 WorldTree 实例上注册天气事件 schema。"""
     wt.register_event_schema(
         "temperature_change",
-        required={"temperature": float, "season": int, "time_of_day": int},
-        description="温度变化超阈值时发布（解析算，每刻连续）。season 为当前季节索引。",
+        required={"temperature": float, "perception": str, "season": int,
+                  "time_of_day": int},
+        description="温度感知类别变化时发布。perception 为感知标签（cold/cool/comfortable 等）。",
     )
     wt.register_event_schema(
         "humidity_change",
-        required={"humidity": float, "time_of_day": int},
-        description="湿度变化超阈值时发布。",
+        required={"humidity": float, "perception": str, "time_of_day": int},
+        description="湿度感知类别变化时发布。perception 为感知标签（dry/comfortable/humid 等）。",
     )
     wt.register_event_schema(
         "wind_change",
-        required={"wind_speed": float, "wind_dir_x": float, "wind_dir_y": float,
-                  "time_of_day": int},
-        description="风速变化超阈值时发布。wind_dir_* 为全局风向单位向量。",
+        required={"wind_speed": float, "perception": str,
+                  "wind_dir_x": float, "wind_dir_y": float, "time_of_day": int},
+        description="风速感知类别变化时发布。perception 为感知标签（calm/breezy/windy 等）。",
     )
     wt.register_event_schema(
         "sunshine_change",
-        required={"sunshine": float, "season": int, "time_of_day": int},
-        description="日照时长变化超阈值时发布（解析算，随季节+纬度浮动）。"
-                    "sunshine 为当日日照时长（小时/天），season 为当前季节索引。",
+        required={"sunshine": float, "perception": str, "season": int,
+                  "time_of_day": int},
+        description="日照感知类别变化时发布。perception 为感知标签（overcast/cloudy/sunny 等）。",
     )
     wt.register_event_schema(
         "precipitation_start",

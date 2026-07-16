@@ -195,11 +195,61 @@ RAIN_REPLENISH_THRESHOLD: int = 2       # 低于 N 场时补算
 MODIFIER_FORECAST_DEPTH: int = 2
 MODIFIER_REPLENISH_THRESHOLD: int = 1
 
-# per-parameter 事件发布阈值
+# per-parameter 事件发布阈值（已弃用，保留兼容性）
 TEMP_CHANGE_THRESHOLD: float = 0.3      # 温度变化 (°C)
 HUMIDITY_CHANGE_THRESHOLD: float = 1.5  # 湿度变化 (%)
 WIND_CHANGE_THRESHOLD: float = 0.3      # 风速变化 (m/s)
 SUNSHINE_CHANGE_THRESHOLD: float = 0.2  # 日照变化 (小时/天)
+
+# 感知层天气分类阈值 — (上限, 标签)，按数值升序排列
+# 事件仅在感知类别变化时发布，不再按固定数值间隔
+TEMP_PERCEPTION_BOUNDARIES: tuple[tuple[float, str], ...] = (
+    (-10.0, "bitter_cold"),
+    (-3.0,  "freezing"),
+    (5.0,   "cold"),
+    (13.0,  "chilly"),
+    (20.0,  "cool"),
+    (25.0,  "mild"),
+    (30.0,  "warm"),
+    (36.0,  "hot"),
+    (43.0,  "scorching"),
+    (float("inf"), "extreme_heat"),
+)
+
+HUMIDITY_PERCEPTION_BOUNDARIES: tuple[tuple[float, str], ...] = (
+    (25.0, "dry"),
+    (50.0, "comfortable"),
+    (72.0, "humid"),
+    (88.0, "very_humid"),
+    (float("inf"), "oppressive"),
+)
+
+WIND_PERCEPTION_BOUNDARIES: tuple[tuple[float, str], ...] = (
+    (1.5,  "calm"),
+    (4.0,  "light_breeze"),
+    (8.0,  "breezy"),
+    (14.0, "windy"),
+    (23.0, "strong"),
+    (float("inf"), "gale"),
+)
+
+SUNSHINE_PERCEPTION_BOUNDARIES: tuple[tuple[float, str], ...] = (
+    (1.5,  "very_short"),
+    (4.5,  "short"),
+    (8.0,  "moderate"),
+    (12.0, "long"),
+    (15.5, "very_long"),
+    (float("inf"), "extreme"),
+)
+
+# 日照强度感知分类 (0~1 归一化，0=黑夜 1=正午烈日)
+SUNLIGHT_INTENSITY_BOUNDARIES: tuple[tuple[float, str], ...] = (
+    (0.01, "dark"),
+    (0.25, "dim"),
+    (0.55, "moderate"),
+    (0.80, "bright"),
+    (float("inf"), "intense"),
+)
 
 # 物理边界
 TEMP_BOUNDS: tuple[float, float] = (-30.0, 50.0)
