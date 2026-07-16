@@ -213,9 +213,15 @@ classDiagram
     }
 
     class WeatherEngine {
-        +register_chunk(cx, cy, baseline, climate)
+        +register_chunk(cx, cy, baseline, climate, sea_temp)
+        +unregister_chunk(cx, cy)
+        +get_weather(cx, cy, time?) WeatherParams
+        +get_perceptions(cx, cy, time?) dict
+        +get_daylight_info(cx, cy, time?, rainfall?) tuple
         +shutdown()
         -_on_minute_change(event)
+        -_compute_params(...)
+        -_classify_perception(value, boundaries)
     }
 
     class EntityManager {
