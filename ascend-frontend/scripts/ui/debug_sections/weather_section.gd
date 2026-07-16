@@ -1,12 +1,14 @@
-"""天气分区 — 通过 API 查询更新，显示降水 + 温度/湿度/风速 + 日出日落/日照强度。
+"""天气分区 — 由 get_weather 轮询响应更新（唯一数据源）。
 
 数据通过 update_from_backend() 注入（weather_handler 响应）：
   - {"weather": "晴", "temperature": 24.5, "temp_perception": "温暖",
      "humidity": 68.0, "hum_perception": "舒适",
      "wind_speed": 3.2, "wind_perception": "微风",
-     "daylight_hours": 10.7, "sun_perception": "少云",
+     "sunshine": 10.7, "sun_perception": "适中",
      "sunrise": 6.2, "sunset": 18.8,
-     "sunshine_intensity": 0.85, "light_perception": "强"}
+     "sunshine_intensity": 0.85, "light_perception": "明亮"}
+
+感知标签由后端按显示值（四舍五入后）分类并翻译，前端只做展示。
 """
 
 class_name WeatherSection
@@ -28,7 +30,7 @@ var wind_speed: float = 0.0
 var wind_perception: String = ""
 var _has_wind: bool = false
 
-var daylight_hours: float = 0.0
+var sunshine: float = 0.0
 var sun_perception: String = ""
 var _has_sun: bool = false
 
@@ -48,23 +50,20 @@ func _init() -> void:
 func update_from_backend(data: Dictionary) -> void:
 	if data.has("weather"):
 		current_weather = str(data["weather"])
-	# 事件字段兼容
-	var tp = data.get("perception", "")
 	if data.has("temperature"):
 		temperature = float(data["temperature"])
-		temp_perception = str(data.get("temp_perception", tp))
+		temp_perception = str(data.get("temp_perception", ""))
 		_has_temp = true
 	if data.has("humidity"):
 		humidity = float(data["humidity"])
-		hum_perception = str(data.get("hum_perception", tp))
+		hum_perception = str(data.get("hum_perception", ""))
 		_has_hum = true
 	if data.has("wind_speed"):
 		wind_speed = float(data["wind_speed"])
-		wind_perception = str(data.get("wind_perception", tp))
+		wind_perception = str(data.get("wind_perception", ""))
 		_has_wind = true
-	# API 响应字段
-	if data.has("daylight_hours"):
-		daylight_hours = float(data["daylight_hours"])
+	if data.has("sunshine"):
+		sunshine = float(data["sunshine"])
 		sun_perception = str(data.get("sun_perception", ""))
 		_has_sun = true
 	if data.has("sunrise"):
@@ -92,7 +91,11 @@ func get_lines() -> PackedStringArray:
 	if not meteo.is_empty():
 		lines.append("  ".join(meteo))
 
-	# 日照行：强度 + 日出→日落
+	# 日照时长行
+	if _has_sun:
+		lines.append("日照 %.1fh(%s)" % [sunshine, sun_perception])
+
+	# 光照强度 + 日出→日落
 	var sun_parts: PackedStringArray = []
 	if _has_intensity:
 		sun_parts.append("光照 %.2f(%s)" % [sunshine_intensity, light_perception])

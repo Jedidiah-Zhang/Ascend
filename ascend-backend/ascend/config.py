@@ -195,6 +195,9 @@ RAIN_REPLENISH_THRESHOLD: int = 2       # 低于 N 场时补算
 MODIFIER_FORECAST_DEPTH: int = 2
 MODIFIER_REPLENISH_THRESHOLD: int = 1
 
+# 天气查询 API
+MAX_WEATHER_QUERY_CHUNKS: int = 64      # get_weather 单请求最大 chunk 数（防超大请求卡游戏线程）
+
 # per-parameter 事件发布阈值（已弃用，保留兼容性）
 TEMP_CHANGE_THRESHOLD: float = 0.3      # 温度变化 (°C)
 HUMIDITY_CHANGE_THRESHOLD: float = 1.5  # 湿度变化 (%)

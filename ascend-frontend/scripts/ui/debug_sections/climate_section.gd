@@ -1,6 +1,6 @@
-"""气候分区 — 温度/湿度来自天气事件和 chunk 数据，气候带来自 chunk 数据。
+"""气候分区 — 显示年均基线（温度/湿度）与气候带，均来自 chunk 数据。
 
-三者独立追踪，未收到的显示 "—"。
+实时温度/湿度看天气分区（get_weather 轮询）。三者独立追踪，未收到的显示 "—"。
 """
 
 class_name ClimateSection
@@ -49,6 +49,6 @@ func get_lines() -> PackedStringArray:
 	var humid_str := "%.0f%%" % humidity if _has_humidity else "—"
 	var zone_str := CLIMATE_LABELS[climate_zone] if climate_zone >= 0 and climate_zone < CLIMATE_LABELS.size() else "—"
 	return PackedStringArray([
-		"温度: %s  |  湿度: %s" % [temp_str, humid_str],
+		"年均温: %s  |  年均湿度: %s" % [temp_str, humid_str],
 		"气候: %s" % zone_str,
 	])

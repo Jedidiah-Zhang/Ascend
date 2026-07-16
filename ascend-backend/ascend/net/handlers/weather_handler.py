@@ -1,8 +1,13 @@
 """天气查询处理程序 — 通过 get_weather API 返回任意 chunk 的当前天气。
 
 通过 make_weather_handler() 工厂函数创建，返回 {request_type: handler} 映射。
+
+输入防护：逐坐标校验（畸形坐标跳过不毁整批）、批量上限
+MAX_WEATHER_QUERY_CHUNKS（防超大请求卡游戏线程）。
+所有感知标签从"四舍五入后的显示值"分类，保证面板数值与标签一致。
 """
 
+from ascend.config import MAX_WEATHER_QUERY_CHUNKS
 from ascend.weather.weather_engine import (
     classify_temperature, classify_humidity, classify_wind, classify_sunshine,
     classify_sunlight_intensity,
@@ -22,89 +27,123 @@ PERCEPTION_NS = {
 
 
 def _tr_perception(i18n, category: str, label: str) -> str:
-    key = "%s.%s" % (PERCEPTION_NS[category], label)
-    return i18n.t(key)
+    """翻译感知标签。
+
+    Args:
+        i18n: I18n 翻译管理器。
+        category: 感知类别（PERCEPTION_NS 的键：temp/hum/wind/sun/light）。
+        label: 引擎输出的原始标签（如 "cool"）。
+
+    Returns:
+        str，翻译后的标签文本。
+    """
+    return i18n.t("%s.%s" % (PERCEPTION_NS[category], label))
 
 
-def make_weather_handler(weather_engine, i18n=None):
+def _parse_coord(coord) -> "tuple[int, int] | None":
+    """校验并解析单个 chunk 坐标。
+
+    合法坐标：长度 ≥2 的序列，前两元素为整值 int/float（排除 bool）。
+    非整值浮点（如 10.9）视为非法——不静默截断到错误 chunk。
+
+    Args:
+        coord: 客户端载荷中的单个坐标项。
+
+    Returns:
+        (cx, cy) 或 None（非法时）。
+    """
+    if not isinstance(coord, (list, tuple)) or len(coord) < 2:
+        return None
+    result = []
+    for v in coord[:2]:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+        if isinstance(v, float) and not v.is_integer():
+            return None
+        result.append(int(v))
+    return (result[0], result[1])
+
+
+def make_weather_handler(weather_engine, i18n):
     """为给定的 WeatherEngine 创建天气查询处理程序。
 
     Args:
         weather_engine: WeatherEngine 实例。
-        i18n: I18n 翻译管理器。
+        i18n: I18n 翻译管理器（必传）。
 
     Returns:
         一个字典，将 "get_weather" 映射到处理函数。
     """
 
     def handle_get_weather(msg: dict) -> dict:
-        payload = msg.get("payload", {})
-        coords = payload.get("chunks", [])
+        """处理 get_weather 请求。
 
-        if not coords:
-            return {
-                "type": "response",
-                "request_type": "get_weather",
-                "payload": {"weathers": []},
-            }
+        Args:
+            msg: 请求消息，payload.chunks 为 [[cx, cy], ...] 坐标列表。
+
+        Returns:
+            dict 响应，payload.weathers 为逐 chunk 的天气数据列表
+            （非法坐标与未注册 chunk 被跳过）。
+        """
+        payload = msg.get("payload", {})
+        coords = payload.get("chunks", []) if isinstance(payload, dict) else []
+
+        if not isinstance(coords, list):
+            logger.warning("get_weather: chunks 非列表（%s），忽略", type(coords).__name__)
+            coords = []
+        if len(coords) > MAX_WEATHER_QUERY_CHUNKS:
+            logger.warning("get_weather: 请求 %d 个 chunk 超上限，截断至 %d",
+                           len(coords), MAX_WEATHER_QUERY_CHUNKS)
+            coords = coords[:MAX_WEATHER_QUERY_CHUNKS]
 
         results = []
         for coord in coords:
-            cx, cy = int(coord[0]), int(coord[1])
-            wp = weather_engine.get_weather(cx, cy)
-            if wp is None:
+            parsed = _parse_coord(coord)
+            if parsed is None:
+                logger.warning("get_weather: 非法坐标 %r，跳过", coord)
                 continue
+            cx, cy = parsed
+            report = weather_engine.get_weather_report(cx, cy)
+            if report is None:
+                continue
+            wp, sunrise_h, sunset_h, _, intensity = report
 
-            temp = wp.temperature
-            hum = wp.humidity
-            wind = wp.wind_speed
-            sun = wp.sunshine
+            # 先 round 再 classify —— 显示数值与感知标签一致
+            temp = round(wp.temperature, 1)
+            hum = round(wp.humidity, 1)
+            wind = round(wp.wind_speed, 1)
+            sun = round(wp.sunshine, 1)
+            intensity = round(intensity, 2)
             rain = wp.rainfall
 
             if rain > 0:
                 precip_type_key = "weather.snow" if temp <= 0 else "weather.rain"
-                precip_type = i18n.t(precip_type_key) if i18n else ("雪" if temp <= 0 else "雨")
-                weather_desc = (i18n.t("weather.intensity", type=precip_type, intensity="%.1f" % rain)
-                                if i18n else "%s (%.1f mm/h)" % (precip_type, rain))
+                weather_desc = i18n.t("weather.intensity",
+                                      type=i18n.t(precip_type_key),
+                                      intensity="%.1f" % rain)
             else:
-                weather_desc = i18n.t("weather.clear") if i18n else "晴"
-
-            temp_label = classify_temperature(temp)
-            hum_label = classify_humidity(hum)
-            wind_label = classify_wind(wind)
-            sun_label = classify_sunshine(sun)
-
-            # 日照信息：日出/日落 + 当前强度
-            # 传入 get_weather 的降雨值（含暴雨修改器效果），避免 get_daylight_info 内部重复计算
-            dl = weather_engine.get_daylight_info(cx, cy, rainfall=rain)
-            if dl is not None:
-                sunrise_h, sunset_h, daylight_h, intensity = dl
-                light_label = classify_sunlight_intensity(intensity)
-            else:
-                sunrise_h = sunset_h = daylight_h = 0.0
-                intensity = 0.0
-                light_label = "dark"
+                weather_desc = i18n.t("weather.clear")
 
             results.append({
                 "cx": cx,
                 "cy": cy,
-                "temperature": round(temp, 1),
-                "temp_perception": (_tr_perception(i18n, "temp", temp_label)
-                                    if i18n else temp_label),
-                "humidity": round(hum, 1),
-                "hum_perception": (_tr_perception(i18n, "hum", hum_label)
-                                   if i18n else hum_label),
-                "wind_speed": round(wind, 1),
-                "wind_perception": (_tr_perception(i18n, "wind", wind_label)
-                                    if i18n else wind_label),
-                "daylight_hours": round(daylight_h, 1),
-                "sun_perception": (_tr_perception(i18n, "sun", sun_label)
-                                   if i18n else sun_label),
+                "temperature": temp,
+                "temp_perception": _tr_perception(
+                    i18n, "temp", classify_temperature(temp)),
+                "humidity": hum,
+                "hum_perception": _tr_perception(
+                    i18n, "hum", classify_humidity(hum)),
+                "wind_speed": wind,
+                "wind_perception": _tr_perception(
+                    i18n, "wind", classify_wind(wind)),
+                "sunshine": sun,
+                "sun_perception": _tr_perception(
+                    i18n, "sun", classify_sunshine(sun)),
                 "sunrise": round(sunrise_h, 1),
                 "sunset": round(sunset_h, 1),
-                "sunshine_intensity": round(intensity, 2),
-                "light_perception": (_tr_perception(i18n, "light", light_label)
-                                     if i18n else light_label),
+                "sunshine_intensity": intensity,
+                "light_perception": _tr_perception(
+                    i18n, "light", classify_sunlight_intensity(intensity)),
                 "weather": weather_desc,
             })
 

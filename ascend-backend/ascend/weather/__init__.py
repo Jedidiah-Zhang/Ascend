@@ -9,7 +9,7 @@
   - 感知层事件：temperature_change / humidity_change / wind_change / sunshine_change
     仅在类别跨越边界时触发，附带精确 numeric 值。
   - 离散事件：precipitation_start/stop / season_change / sunrise/sunset / extreme weather
-  - API 查询：get_weather(cx, cy, time) 获取任意位置任意时刻的精确值
+  - API 查询：get_weather(cx, cy, time) 获取任意位置当前/过去时刻的精确值
 
 天气状态存于 chunk 级（复用 ChunkData.annual_baseline 为基线），
 tile 级天气通过双线性插值运行时计算，保证跨 chunk 平滑。

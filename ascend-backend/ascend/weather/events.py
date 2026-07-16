@@ -40,7 +40,8 @@ def register_weather_schemas(wt) -> None:
         "sunshine_change",
         required={"sunshine": float, "perception": str, "season": int,
                   "time_of_day": int},
-        description="日照感知类别变化时发布。perception 为感知标签（overcast/cloudy/sunny 等）。",
+        description="日照时长感知类别变化时发布。perception 为时长分级标签"
+                    "（very_short/short/moderate/long/very_long/extreme）。",
     )
     wt.register_event_schema(
         "precipitation_start",
