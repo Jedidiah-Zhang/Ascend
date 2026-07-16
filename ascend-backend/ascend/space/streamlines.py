@@ -533,5 +533,5 @@ def rivers_in_region(
 
 __all__ = [
     "RiverPoint", "River", "RiverNetwork",
-    "trace_streamline", "build_river_network", "rivers_in_region",
+    "build_river_network", "rivers_in_region",
 ]

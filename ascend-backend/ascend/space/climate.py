@@ -187,7 +187,7 @@ class WeatherParams:
 
     Attributes:
         temperature: 温度 (°C)。
-        rainfall: 降雨量 (mm/年)。
+        rainfall: 降雨量 — 年均基线为 mm/年，当前天气为 mm/小时（瞬时强度）。
         sunshine: 日照时长 (小时/天)。
         altitude: 海拔 (m)。
         humidity: 相对湿度 (%)。

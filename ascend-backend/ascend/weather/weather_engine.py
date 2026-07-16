@@ -443,8 +443,7 @@ class WeatherEngine:
         Returns:
             dict，含 _compute_params 需要的全部 tick 级预计算值：
             day/season/dos/hour/day_of_year_val/wind_x/wind_y/
-            drift_x/drift_y/solar_decl/season_cos/season_hum_monsoon/
-            diurnal_cos。
+            drift_x/drift_y/solar_decl/season_cos/diurnal_cos。
         """
         day = now // GAME_DAY + 1
         season = int(season_of(day))
@@ -466,7 +465,6 @@ class WeatherEngine:
             "drift_x": wind_x * drift, "drift_y": wind_y * drift,
             "solar_decl": _solar_declination(day_of_year_val),
             "season_cos": season_cos,
-            "season_hum_monsoon": math.tanh(season_cos * 2.5),  # 季风阶梯化，sharpness=2.5
             "diurnal_cos": math.cos(diurnal_phase),
         }
 
@@ -476,7 +474,7 @@ class WeatherEngine:
         """计算日照强度：正弦日弧 × 降雨衰减 + 大气噪声微调。
 
         Args:
-            field: chunk 天气状态（含预计算的 _atmos_nx/_atmos_ny）。
+            field: chunk 天气状态（含预计算的 atmos_nx/atmos_ny）。
             hour: 当日小时 [0, 24)。
             sr: 日出小时。
             ss: 日落小时。
@@ -498,8 +496,8 @@ class WeatherEngine:
             intensity *= (1.0 - rain_factor)
         # 大气扰动微调 — 与 _compute_params 同一风向漂移，0.1x 慢速作云层效果
         w_p = self._atmosphere.sample_raw(
-            field._atmos_nx + drift_x * 0.1,
-            field._atmos_ny + drift_y * 0.1,
+            field.atmos_nx + drift_x * 0.1,
+            field.atmos_ny + drift_y * 0.1,
         )
         return max(0.0, min(1.0, intensity + w_p * 0.05))
 
@@ -642,7 +640,7 @@ class WeatherEngine:
         降雨强度 = RainSchedule.intensity(now)
 
         Args:
-            field: chunk 天气状态（含预计算的 _atmos_nx/_atmos_ny）。
+            field: chunk 天气状态（含预计算的 atmos_nx/atmos_ny）。
             now: 当前 tick。
             ctx: _tick_context(now) 返回的 tick 级预计算上下文
                  （对所有 chunk 相同，调用方在 per-chunk 循环外算一次）。
@@ -661,15 +659,14 @@ class WeatherEngine:
         diurnal_temp = bl.diurnal_amp * diurnal_cos
         sharpness = _SEASONALITY_HUMIDITY_SHARPNESS.get(bl.seasonality, 0.0)
         if sharpness > 0:
-            season_hum = bl.humidity_seasonal_amp * (ctx["season_hum_monsoon"]
-                if sharpness == 2.5 else math.tanh(season_cos * sharpness))
+            season_hum = bl.humidity_seasonal_amp * math.tanh(season_cos * sharpness)
         else:
             season_hum = bl.humidity_seasonal_amp * season_cos
         diurnal_hum = bl.humidity_diurnal_amp * (-diurnal_cos)
-        # 空间扰动 — 预计算空间基（field._atmos_nx/_ny）+ tick 级漂移偏移
+        # 空间扰动 — 预计算空间基（field.atmos_nx/_ny）+ tick 级漂移偏移
         perturb = self._atmosphere.sample_raw(
-            field._atmos_nx + ctx["drift_x"],
-            field._atmos_ny + ctx["drift_y"],
+            field.atmos_nx + ctx["drift_x"],
+            field.atmos_ny + ctx["drift_y"],
         )
         # 合成并钳界
         temperature = clamp(
@@ -678,6 +675,15 @@ class WeatherEngine:
             *_TEMP_BOUNDS,
         )
         # 天气修改器偏移（遍历所有类型，根据 config.effect 施加不同效果）
+        #
+        # 叠加语义：
+        #   - temperature 类偏移相加。cold_snap 与 heat_wave 在部分气候带
+        #     （STEPPE/TEMPERATE_FOREST/ALPINE）都可能触发，同时激活时
+        #     相互抵消（-15 + 15 ≈ 0），视为"异常天气对冲"，可接受；
+        #   - multiplier 类倍率相乘。当前仅 storm 一种，且单个
+        #     ModifierSchedule 的 _active_event 只取首个活动事件，
+        #     不存在同类型倍率自乘。若未来新增 multiplier 类型，
+        #     需重新评估乘法叠加上限。
         cx, cy = field.chunk_x, field.chunk_y
         temp_extra = 0.0
         wind_mult = 1.0

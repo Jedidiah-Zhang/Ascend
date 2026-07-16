@@ -10,7 +10,7 @@
 
 import math
 
-from ascend.config import GAME_DAY, GAME_HOUR, DIURNAL_PEAK_HOUR
+from ascend.config import GAME_DAY, GAME_HOUR, DIURNAL_PEAK_HOUR, OBLIQUITY_DEG
 
 
 def diurnal_temp_offset(hour: float, amplitude: float) -> float:
@@ -59,9 +59,6 @@ def hour_of_game_time(game_time: int) -> float:
 
 # ── 日出/日落 ──────────────────────────────────────────────────
 
-# 黄赤交角（游戏性取整）
-_OBLIQUITY_DEG: float = 23.44
-
 
 def _solar_declination(day_of_year: int) -> float:
     """太阳赤纬（弧度）。
@@ -76,7 +73,7 @@ def _solar_declination(day_of_year: int) -> float:
         赤纬（弧度）。
     """
     return math.radians(
-        _OBLIQUITY_DEG * math.sin(2 * math.pi * (day_of_year - 45) / 360)
+        OBLIQUITY_DEG * math.sin(2 * math.pi * (day_of_year - 45) / 360)
     )
 
 

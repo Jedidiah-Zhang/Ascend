@@ -204,7 +204,7 @@ class ChunkStore:
         )
 
     def flush(self) -> None:
-        """将所有缓存 chunk 的 TileGrid 写回 SQLite。
+        """将所有缓存 chunk 的 TileGrid 写回 SQLite 并提交。
 
         正常退出时调用，确保未淘汰的 chunk 持久化。
         """
@@ -214,6 +214,8 @@ class ChunkStore:
                 if chunk.tile_grid is not None:
                     self._save_tiles(*key, chunk.tile_grid)
                     count += 1
+            if count:
+                self._db.commit()
             self._dirty.clear()
             if count:
                 logger.info("已 flush %d 个 chunk", count)
@@ -229,12 +231,17 @@ class ChunkStore:
     def _evict_if_needed(self) -> None:
         """淘汰 LRU 头部（最久未访问）直到缓存不超限。
 
-        淘汰的 chunk 自动写入 SQLite（dirty 和 clean 都保存）。
+        淘汰的 chunk 自动写入 SQLite 并提交（dirty 和 clean 都保存）。
+        不提交的写入在连接关闭时会被回滚，跨进程重启即丢失。
         """
+        wrote = False
         while len(self._cache) >= self._max_size:
             key, chunk = self._cache.popitem(last=False)
             if chunk.tile_grid is not None:
                 self._save_tiles(*key, chunk.tile_grid)
+                wrote = True
             self._dirty.discard(key)
             if self._on_evict:
                 self._on_evict(*key)
+        if wrote:
+            self._db.commit()

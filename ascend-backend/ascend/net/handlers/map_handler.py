@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ascend.config import TILE_WORKERS
 from ascend.log import get_logger
+from ascend.net.handlers import parse_coord
 
 logger = get_logger(__name__)
 
@@ -34,22 +35,36 @@ def make_map_handlers(gen, tile_gen=None, birth_chunk=None, chunk_store=None,
         chunk.generate_tiles(grid)
 
     def handle_get_chunks(msg: dict) -> dict:
-        """处理 "get_chunks" 请求。"""
-        payload = msg.get("payload", {})
-        coords = payload.get("chunks", [])
-        force_fields = payload.get("force_fields", False)
-        include_tiles = payload.get("include_tiles", False)
+        """处理 "get_chunks" 请求。
 
-        if not coords:
+        输入防护：payload/chunks 类型校验，逐坐标校验，
+        畸形坐标跳过不毁整批（与 weather_handler 一致）。
+        """
+        payload = msg.get("payload", {})
+        coords = payload.get("chunks", []) if isinstance(payload, dict) else []
+        force_fields = payload.get("force_fields", False) if isinstance(payload, dict) else False
+        include_tiles = payload.get("include_tiles", False) if isinstance(payload, dict) else False
+
+        if not isinstance(coords, list):
+            logger.warning("get_chunks: chunks 非列表（%s），忽略", type(coords).__name__)
+            coords = []
+
+        coord_tuples = []
+        for c in coords:
+            parsed = parse_coord(c)
+            if parsed is None:
+                logger.warning("get_chunks: 非法坐标 %r，跳过", c)
+                continue
+            coord_tuples.append(parsed)
+
+        if not coord_tuples:
             return {
                 "type": "response",
                 "request_type": "get_chunks",
                 "payload": {"chunks": []},
             }
 
-        logger.debug("get_chunks: 请求 %d 个块 (include_tiles=%s)", len(coords), include_tiles)
-
-        coord_tuples = [(c[0], c[1]) for c in coords]
+        logger.debug("get_chunks: 请求 %d 个块 (include_tiles=%s)", len(coord_tuples), include_tiles)
 
         coord_to_chunk: dict[tuple[int, int], object] = {}
         missing: list[tuple[int, int]] = []

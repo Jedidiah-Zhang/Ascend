@@ -198,11 +198,6 @@ MODIFIER_REPLENISH_THRESHOLD: int = 1
 # 天气查询 API
 MAX_WEATHER_QUERY_CHUNKS: int = 64      # get_weather 单请求最大 chunk 数（防超大请求卡游戏线程）
 
-# per-parameter 事件发布阈值（已弃用，保留兼容性）
-TEMP_CHANGE_THRESHOLD: float = 0.3      # 温度变化 (°C)
-HUMIDITY_CHANGE_THRESHOLD: float = 1.5  # 湿度变化 (%)
-WIND_CHANGE_THRESHOLD: float = 0.3      # 风速变化 (m/s)
-SUNSHINE_CHANGE_THRESHOLD: float = 0.2  # 日照变化 (小时/天)
 
 # 感知层天气分类阈值 — (上限, 标签)，按数值升序排列
 # 事件仅在感知类别变化时发布，不再按固定数值间隔

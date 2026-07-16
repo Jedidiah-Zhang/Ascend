@@ -224,18 +224,24 @@ func _update_debug_sections() -> void:
 		chunk_section.cached_count = stats["cached"]
 		chunk_section.pending_count = stats["pending"]
 
-	# 仅在玩家移动到新 tile 时才查询地形/气候数据（涉及 chunk 字典查找和数组索引）
+	# 仅在玩家移动到新 tile 时才查询地形/气候数据（涉及 chunk 字典查找和数组索引）。
+	# 任一查询失败（chunk 数据未到达）时不锁定 _last_tile_pos，
+	# 下帧继续重试，避免出生/传送时序导致面板永久显示 "—"。
 	if tile_pos != _last_tile_pos:
-		_last_tile_pos = tile_pos
+		var all_received: bool = true
 
 		var elev_section: ElevationSection = _debug_overlay.get_section("地形")
 		if elev_section:
 			var elev: float = _map_display.get_elevation_at(player_pos)
 			if elev > -998.0:
 				elev_section.update_from_backend({"elevation": int(elev)})
+			else:
+				all_received = false
 			var slope: float = _map_display.get_slope_at(player_pos)
 			if slope > -998.0:
 				elev_section.update_from_backend({"slope": slope})
+			else:
+				all_received = false
 
 		var climate_section: ClimateSection = _debug_overlay.get_section("气候")
 		if climate_section:
@@ -243,12 +249,21 @@ func _update_debug_sections() -> void:
 			var temp: float = _map_display.get_chunk_temperature(player_pos)
 			if temp > -998.0:
 				climate_section.update_from_backend({"temperature": temp})
+			else:
+				all_received = false
 			var hum: float = _map_display.get_chunk_humidity(player_pos)
 			if hum > -998.0:
 				climate_section.update_from_backend({"humidity": hum})
+			else:
+				all_received = false
 			var cz: int = _map_display.get_chunk_climate(player_pos)
 			if cz >= 0:
 				climate_section.update_from_backend({"climate_zone": cz})
+			else:
+				all_received = false
+
+		if all_received:
+			_last_tile_pos = tile_pos
 
 	# 定期通过 API 查询当前天气（代替事件驱动）
 	if Connection.status == Connection.Status.CONNECTED and _weather_query_accum >= 0.5:
@@ -348,54 +363,44 @@ func _handle_event(message: Dictionary) -> void:
 			_prev_game_time = gt
 			_prev_real_msec = now_msec
 
-		"temperature_change":
-			var loc: Array = payload.get("location", [])
-			if not _is_within_event_log_view(loc):
-				return
-			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
-			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
+		"temperature_change", "humidity_change", "wind_change", "sunshine_change", \
+		"precipitation_start", "precipitation_stop":
 			# F3 面板由 get_weather 轮询更新，事件只进日志（避免双写与原始标签闪烁）
-			_push_log("[%s] [区块 %d,%d] 温度 %.1f°C" % [ts, cx, cy, data.get("temperature", 0.0)])
+			_log_weather_event(event_type, payload, data, ts)
 
+
+func _log_weather_event(event_type: String, payload: Dictionary, data: Dictionary, ts: String) -> void:
+	"""统一处理天气类事件：视野过滤 + 格式化 + 写入事件日志。
+
+	Args:
+		event_type: 事件类型（temperature_change 等六种）。
+		payload: 事件载荷（含 location）。
+		data: 事件数据字典。
+		ts: 已格式化的游戏时间戳（HH:MM）。
+	"""
+	var loc: Array = payload.get("location", [])
+	if not _is_within_event_log_view(loc):
+		return
+	var cx: int = int(loc[0]) if loc.size() >= 1 else 0
+	var cy: int = int(loc[1]) if loc.size() >= 2 else 0
+
+	var body: String
+	match event_type:
+		"temperature_change":
+			body = "温度 %.1f°C" % data.get("temperature", 0.0)
 		"humidity_change":
-			var loc: Array = payload.get("location", [])
-			if not _is_within_event_log_view(loc):
-				return
-			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
-			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
-			_push_log("[%s] [区块 %d,%d] 湿度 %.0f%%" % [ts, cx, cy, data.get("humidity", 0.0)])
-
+			body = "湿度 %.0f%%" % data.get("humidity", 0.0)
 		"wind_change":
-			var loc: Array = payload.get("location", [])
-			if not _is_within_event_log_view(loc):
-				return
-			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
-			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
-			_push_log("[%s] [区块 %d,%d] 风速 %.1f m/s" % [ts, cx, cy, data.get("wind_speed", 0.0)])
-
+			body = "风速 %.1f m/s" % data.get("wind_speed", 0.0)
 		"sunshine_change":
-			var loc: Array = payload.get("location", [])
-			if not _is_within_event_log_view(loc):
-				return
-			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
-			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
-			_push_log("[%s] [区块 %d,%d] 日照 %.1fh" % [ts, cx, cy, data.get("sunshine", 0.0)])
-
+			body = "日照 %.1fh" % data.get("sunshine", 0.0)
 		"precipitation_start":
-			var loc: Array = payload.get("location", [])
-			if not _is_within_event_log_view(loc):
-				return
-			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
-			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
-			_push_log("[%s] [区块 %d,%d] %s %.1fmm/h" % [ts, cx, cy, data.get("precip_type", ""), data.get("intensity", 0.0)])
-
+			body = "%s %.1fmm/h" % [data.get("precip_type", ""), data.get("intensity", 0.0)]
 		"precipitation_stop":
-			var loc: Array = payload.get("location", [])
-			if not _is_within_event_log_view(loc):
-				return
-			var cx: int = int(loc[0]) if loc.size() >= 1 else 0
-			var cy: int = int(loc[1]) if loc.size() >= 2 else 0
-			_push_log("[%s] [区块 %d,%d] 雨停" % [ts, cx, cy])
+			body = "雨停"
+		_:
+			return
+	_push_log("[%s] [区块 %d,%d] %s" % [ts, cx, cy, body])
 
 
 func _push_log(line: String) -> void:

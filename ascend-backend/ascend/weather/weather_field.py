@@ -18,13 +18,14 @@ class WeatherField:
         last_temp_perception/last_humidity_perception/last_wind_perception/
             last_sunshine_perception: 上次发布的感知类别标签（None=未发布过）。
         last_is_daytime: 上次的昼夜状态（None=未初始化），用于 per-chunk sunrise/sunset 检测。
+        atmos_nx/atmos_ny: 预计算的大气噪声采样基坐标，per-chunk 常数。
     """
 
     __slots__ = ("chunk_x", "chunk_y", "baseline",
                  "last_temp_perception", "last_humidity_perception",
                  "last_wind_perception", "last_sunshine_perception",
                  "last_is_daytime",
-                 "_atmos_nx", "_atmos_ny")
+                 "atmos_nx", "atmos_ny")
 
     def __init__(self, chunk_x: int, chunk_y: int, baseline,
                  *, tile_map_size: int = 200,
@@ -48,8 +49,8 @@ class WeatherField:
         self.last_is_daytime: bool | None = None
         # 预计算大气噪声空间基：（chunk_center / resolution），per-chunk 常数
         inv_res = 1.0 / atmos_resolution
-        self._atmos_nx = (chunk_x + 0.5) * tile_map_size * inv_res
-        self._atmos_ny = (chunk_y + 0.5) * tile_map_size * inv_res
+        self.atmos_nx = (chunk_x + 0.5) * tile_map_size * inv_res
+        self.atmos_ny = (chunk_y + 0.5) * tile_map_size * inv_res
 
     def __repr__(self) -> str:
         """返回含 chunk 坐标与感知状态的描述。

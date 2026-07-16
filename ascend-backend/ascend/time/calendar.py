@@ -7,12 +7,9 @@
 from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.log import get_logger
 from .clock import WorldClock
-from ascend.config import GAME_DAY, GAME_HOUR
+from ascend.config import GAME_DAY, GAME_HOUR, GAME_MINUTE
 
 logger = get_logger(__name__)
-
-# 1 游戏分钟 = 120 tick
-_GAME_MINUTE: int = GAME_HOUR // 60
 
 world_tree.register_event_schema(
     "day_end",
@@ -205,7 +202,7 @@ class GameCalendar:
                 self._day, current_hour, self._hour_change_count,
             )
 
-        current_minute = int((game_time % GAME_HOUR) / _GAME_MINUTE)
+        current_minute = int((game_time % GAME_HOUR) / GAME_MINUTE)
         if self._minute is None:
             self._minute = current_minute
         elif current_minute != self._minute:

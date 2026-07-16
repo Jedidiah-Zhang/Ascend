@@ -578,6 +578,62 @@ def erode(
     )
 
 
+def _depression_components(
+    dem: list[float],
+    filled: list[float],
+    land_mask: list[bool],
+    w: int, h: int,
+    min_size: int,
+) -> list[list[int]]:
+    """标记洼地像素并按 8 连通提取连通分量（find_lakes /
+    extract_lake_basins 共用）。
+
+    洼地 = 填洼后上升 > 1m 的陆地像素。
+
+    Args:
+        dem: 行优先原始海拔。
+        filled: 填洼后海拔。
+        land_mask: 陆地掩码。
+        w: 宽度。
+        h: 高度。
+        min_size: 最小分量面积（像素），小于此值的分量被丢弃。
+
+    Returns:
+        连通分量列表，每个分量为像素索引列表。
+    """
+    n = w * h
+    is_depression = [False] * n
+    for i in range(n):
+        if land_mask[i] and (filled[i] - dem[i]) > 1.0:
+            is_depression[i] = True
+
+    visited = [False] * n
+    components: list[list[int]] = []
+    for i in range(n):
+        if not is_depression[i] or visited[i]:
+            continue
+
+        # BFS 收集连通分量
+        comp: list[int] = []
+        q = deque([i])
+        visited[i] = True
+        while q:
+            ci = q.popleft()
+            comp.append(ci)
+            cx, cy = ci % w, ci // w
+            for d in range(8):
+                nx, ny = cx + _DX[d], cy + _DY[d]
+                if 0 <= nx < w and 0 <= ny < h:
+                    ni = ny * w + nx
+                    if is_depression[ni] and not visited[ni]:
+                        visited[ni] = True
+                        q.append(ni)
+
+        if len(comp) >= min_size:
+            components.append(comp)
+    return components
+
+
 def find_lakes(
     dem: list[float],
     land_mask: list[bool],
@@ -602,43 +658,14 @@ def find_lakes(
     Returns:
         (lake_surface, filled): 行优先湖面海拔（0=非湖）和填洼后 DEM。
     """
-    n = w * h
     filled = filled_dem if filled_dem is not None else fill_depressions(dem, w, h)
-    lake_surface: list[float] = [0.0] * n
+    lake_surface: list[float] = [0.0] * (w * h)
 
-    # 洼地 = 填洼后上升 > 1m 的陆地像素
-    is_depression = [False] * n
-    for i in range(n):
-        if land_mask[i] and (filled[i] - dem[i]) > 1.0:
-            is_depression[i] = True
-
-    # 找洼地的连通分量
-    visited = [False] * n
-    for i in range(n):
-        if not is_depression[i] or visited[i]:
-            continue
-
-        # BFS 收集连通分量
-        comp: list[int] = []
-        q = deque([i])
-        visited[i] = True
-        while q:
-            ci = q.popleft()
-            comp.append(ci)
-            cx, cy = ci % w, ci // w
-            for d in range(8):
-                nx, ny = cx + _DX[d], cy + _DY[d]
-                if 0 <= nx < w and 0 <= ny < h:
-                    ni = ny * w + nx
-                    if is_depression[ni] and not visited[ni]:
-                        visited[ni] = True
-                        q.append(ni)
-
-        if len(comp) >= min_size:
-            # 湖面海拔 = 填洼后的溢出口高度
-            lake_elev = max(filled[ci] for ci in comp)
-            for ci in comp:
-                lake_surface[ci] = lake_elev
+    for comp in _depression_components(dem, filled, land_mask, w, h, min_size):
+        # 湖面海拔 = 填洼后的溢出口高度
+        lake_elev = max(filled[ci] for ci in comp)
+        for ci in comp:
+            lake_surface[ci] = lake_elev
 
     return lake_surface, filled
 
@@ -670,41 +697,9 @@ def extract_lake_basins(
     Returns:
         LakeBasin 列表（按面积降序）。
     """
-    n = w * h
-
-    # 洼地 = 填洼后上升 > 1m 的陆地像素
-    is_depression = [False] * n
-    for i in range(n):
-        if land_mask[i] and (filled_dem[i] - dem[i]) > 1.0:
-            is_depression[i] = True
-
-    # BFS 找连通分量
-    visited = [False] * n
     basins: list[LakeBasin] = []
 
-    for i in range(n):
-        if not is_depression[i] or visited[i]:
-            continue
-
-        # 收集连通分量
-        comp: list[int] = []
-        q = deque([i])
-        visited[i] = True
-        while q:
-            ci = q.popleft()
-            comp.append(ci)
-            cx, cy = ci % w, ci // w
-            for d in range(8):
-                nx, ny = cx + _DX[d], cy + _DY[d]
-                if 0 <= nx < w and 0 <= ny < h:
-                    ni = ny * w + nx
-                    if is_depression[ni] and not visited[ni]:
-                        visited[ni] = True
-                        q.append(ni)
-
-        if len(comp) < min_size:
-            continue
-
+    for comp in _depression_components(dem, filled_dem, land_mask, w, h, min_size):
         # 计算溢出口高程：分量边界上最低 filled 像素 = 湖面
         # 边界 = 分量中至少有一个邻居不在分量中的像素
         comp_set = set(comp)

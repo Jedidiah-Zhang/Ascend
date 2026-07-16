@@ -67,6 +67,9 @@ class GameEngine:
         engine.stop()
     """
 
+    # tick 循环连续异常熔断阈值
+    _MAX_CONSECUTIVE_ERRORS: int = 5
+
     def __init__(self, seed: int = 0) -> None:
         """初始化引擎。
 
@@ -262,6 +265,15 @@ class GameEngine:
         self._running.clear()
         if self._thread:
             self._thread.join(timeout=3.0)
+            if self._thread.is_alive():
+                # tick 线程可能卡在耗时 handler（如同步生成 chunk）。
+                # 再等一轮，仍未退出则记录并继续清理——_tick 使用局部
+                # 快照 + dispatcher 异常兜底，清理期竞态只会产生可忽略
+                # 的错误响应，不会破坏持久化数据。
+                logger.warning("tick 线程 3s 内未退出，延长等待 10s")
+                self._thread.join(timeout=10.0)
+                if self._thread.is_alive():
+                    logger.error("tick 线程仍未退出，强制继续资源清理")
             self._thread = None
         if hasattr(self, 'event_bridge') and self.event_bridge:
             self.event_bridge.uninstall()
@@ -422,23 +434,50 @@ class GameEngine:
     # ── 内部 ──────────────────────────────────────────
 
     def _run_loop(self) -> None:
-        """Tick 循环（运行在后台线程）。"""
+        """Tick 循环（运行在后台线程）。
+
+        异常防护：
+          - 单次 _tick 异常不中断循环，但异常路径也会 sleep，
+            避免紧循环占满 CPU 刷日志；
+          - 连续异常达到 _MAX_CONSECUTIVE_ERRORS 次触发熔断，
+            自动清除运行标志退出循环（资源清理仍由 stop() 负责）。
+        """
+        consecutive_errors = 0
         while self._running.is_set():
+            tick_start = _real_time.monotonic()
             try:
-                tick_start = _real_time.monotonic()
                 self._tick()
-                elapsed = _real_time.monotonic() - tick_start
-                sleep_time = TICK_DT - elapsed
-                if sleep_time > 0:
-                    _real_time.sleep(sleep_time)
+                consecutive_errors = 0
             except Exception:
-                logger.exception("tick 循环异常，引擎可能处于不一致状态")
+                consecutive_errors += 1
+                logger.exception(
+                    "tick 循环异常（连续第 %d 次），引擎可能处于不一致状态",
+                    consecutive_errors,
+                )
+                if consecutive_errors >= self._MAX_CONSECUTIVE_ERRORS:
+                    logger.critical(
+                        "tick 连续异常达 %d 次，熔断退出 tick 循环",
+                        consecutive_errors,
+                    )
+                    self._running.clear()
+                    return
+            elapsed = _real_time.monotonic() - tick_start
+            sleep_time = TICK_DT - elapsed
+            if sleep_time > 0:
+                _real_time.sleep(sleep_time)
 
     def _tick(self) -> None:
-        """单个 tick：推进时钟 + 处理所有排队消息。"""
-        if self.clock:
-            self.clock.tick()
-            if self._executor is not None:
-                self._executor.add_active_time(TICK_DT)
-        if self.dispatcher:
-            self.dispatcher.process()
+        """单个 tick：推进时钟 + 处理所有排队消息。
+
+        属性先抓局部快照再使用，避免 stop() 在其他线程将属性
+        置 None 时出现 check-then-use 竞态。
+        """
+        clock = self.clock
+        executor = self._executor
+        dispatcher = self.dispatcher
+        if clock:
+            clock.tick()
+            if executor is not None:
+                executor.add_active_time(TICK_DT)
+        if dispatcher:
+            dispatcher.process()

@@ -8,6 +8,7 @@ MAX_WEATHER_QUERY_CHUNKS（防超大请求卡游戏线程）。
 """
 
 from ascend.config import MAX_WEATHER_QUERY_CHUNKS
+from ascend.net.handlers import parse_coord as _parse_coord
 from ascend.weather.weather_engine import (
     classify_temperature, classify_humidity, classify_wind, classify_sunshine,
     classify_sunlight_intensity,
@@ -38,30 +39,6 @@ def _tr_perception(i18n, category: str, label: str) -> str:
         str，翻译后的标签文本。
     """
     return i18n.t("%s.%s" % (PERCEPTION_NS[category], label))
-
-
-def _parse_coord(coord) -> "tuple[int, int] | None":
-    """校验并解析单个 chunk 坐标。
-
-    合法坐标：长度 ≥2 的序列，前两元素为整值 int/float（排除 bool）。
-    非整值浮点（如 10.9）视为非法——不静默截断到错误 chunk。
-
-    Args:
-        coord: 客户端载荷中的单个坐标项。
-
-    Returns:
-        (cx, cy) 或 None（非法时）。
-    """
-    if not isinstance(coord, (list, tuple)) or len(coord) < 2:
-        return None
-    result = []
-    for v in coord[:2]:
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
-            return None
-        if isinstance(v, float) and not v.is_integer():
-            return None
-        result.append(int(v))
-    return (result[0], result[1])
 
 
 def make_weather_handler(weather_engine, i18n):

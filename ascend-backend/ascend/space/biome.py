@@ -102,10 +102,18 @@ class BiomeType(IntEnum):
     @property
     def is_ocean(self) -> bool:
         """是否为海洋群系。"""
-        return self.value >= 16
+        return self in _OCEAN_BIOMES
 
     def __repr__(self) -> str:
         return f"BiomeType.{self.name}"
+
+
+# 海洋群系集合 — is_ocean 判定依据，新增群系时无需关心编号顺序
+_OCEAN_BIOMES: frozenset["BiomeType"] = frozenset({
+    BiomeType.WARM_OCEAN,
+    BiomeType.TEMPERATE_OCEAN,
+    BiomeType.COLD_OCEAN,
+})
 
 
 # ═══════════════════════════════════════════════════════════
