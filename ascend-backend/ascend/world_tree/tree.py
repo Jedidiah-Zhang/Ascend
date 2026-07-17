@@ -3,7 +3,7 @@
 各模块通过总线发布和订阅事件，不直接耦合。总线负责：
 - 事件记录（全局追加日志）
 - 事件路由（按 event_type 匹配订阅者）
-- 空间索引（按 chunk 分桶）
+- 空间索引（按 chunk + sub-cell 分桶，sub-cell = 16×16 tiles）
 - 实体索引（按 affected 自动建立）
 
 MVP 阶段同步调用，内存存储。
@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ascend.log import get_logger
 from .archive import EventArchive
-from .event import Event, LocationFilter
+from .event import Event, LocationFilter, SUB_CELL_SIZE, SUB_CELLS, spatial_key, sub_cell_range
 from .graph import EventGraph
 from .registry import SchemaRegistry
 
@@ -68,7 +68,7 @@ class WorldTree:
             str, list[tuple[Callable[[Event], None], LocationFilter | None]]
         ] = {}
         self._entity_index: dict[str, list[Event]] = {}
-        self._spatial_index: dict[tuple[int, int, int], set[Event]] = {}
+        self._spatial_index: dict[tuple[int, int, int, int, int], set[Event]] = {}
         self._graph: EventGraph = EventGraph()
         self._lock: threading.RLock = threading.RLock()
         self._archive: EventArchive | None = (
@@ -88,6 +88,16 @@ class WorldTree:
             f"WorldTree(events={self.event_count}, "
             f"subscribers={self.subscriber_count}, "
             f"graph={self._graph!r})"
+        )
+
+    # ── 空间索引键 ────────────────────────────────────
+
+    @staticmethod
+    def _sk(event: Event) -> tuple[int, int, int, int, int]:
+        """事件 → 空间索引键，委托给 event.spatial_key。"""
+        return spatial_key(
+            event.layer_id, event.location[0], event.location[1],
+            event.location[2], event.location[3],
         )
 
     # ── 校验 ──────────────────────────────────────────
@@ -183,7 +193,7 @@ class WorldTree:
             for eid in all_entities:
                 self._entity_index.setdefault(eid, []).append(event)
 
-            chunk_key = (event.layer_id, event.location[0], event.location[1])
+            chunk_key = self._sk(event)
             self._spatial_index.setdefault(chunk_key, set()).add(event)
 
             self._graph.add_event(event)
@@ -400,20 +410,25 @@ class WorldTree:
         layer_id: int = 0,
         start_time: int | None = None,
         end_time: int | None = None,
+        center_tile: tuple[int, int] | None = None,
+        sub_radius: int = 0,
     ) -> list[Event]:
         """按空间区域查询事件（限定单层）。
 
-        在 center_chunk 及其周围 radius 个 chunk 的范围内搜索。
-        预计算时间范围对应的日志索引区间，用整数比较代替浮点时间戳比较。
-        若启用归档且查询范围超出内存窗口，自动从 SQLite 归档合并结果。
+        chunk 级粗筛 + 可选的 sub-cell 精筛：
+        - center_chunk + radius 划定 chunk 范围。
+        - center_tile + sub_radius 进一步限定中心 chunk 内的 sub-cell 范围。
+          周边 chunk 不受 sub-cell 限制（返回全部 sub-cell 内的事件）。
 
         Args:
             center_chunk: 中心 chunk 坐标 (chunk_x, chunk_y)。
             radius: 搜索半径（chunk 数），默认 1 即 3×3 区域。
             layer_id: 只查询该层的事件，默认 0（地表）。
-                跨层查询不在此支持——层间隔离是设计意图。
             start_time: 可选，时间下界。
             end_time: 可选，时间上界。
+            center_tile: 可选，中心 tile 坐标 (tile_x, tile_y)，
+                传入后中心 chunk 仅返回 sub_radius 范围内的 sub-cell。
+            sub_radius: sub-cell 搜索半径，默认 0 即仅匹配自身 sub-cell。
 
         Returns:
             该层区域内满足条件的事件列表。
@@ -422,15 +437,31 @@ class WorldTree:
             cx, cy = center_chunk
             results: list[Event] = []
 
+            if center_tile is not None:
+                (scx_lo, scx_hi), (scy_lo, scy_hi) = sub_cell_range(
+                    center_tile[0], center_tile[1], sub_radius,
+                )
+                has_tile_filter = True
+            else:
+                has_tile_filter = False
+
             for dx in range(-radius, radius + 1):
                 for dy in range(-radius, radius + 1):
-                    chunk_key = (layer_id, cx + dx, cy + dy)
-                    for ev in self._spatial_index.get(chunk_key, set()):
-                        if start_time is not None and ev.timestamp < start_time:
-                            continue
-                        if end_time is not None and ev.timestamp > end_time:
-                            continue
-                        results.append(ev)
+                    if dx == 0 and dy == 0 and has_tile_filter:
+                        scx_iter = range(scx_lo, scx_hi + 1)
+                        scy_iter = range(scy_lo, scy_hi + 1)
+                    else:
+                        scx_iter = range(SUB_CELLS)
+                        scy_iter = range(SUB_CELLS)
+                    for scx in scx_iter:
+                        for scy in scy_iter:
+                            key = (layer_id, cx + dx, cy + dy, scx, scy)
+                            for ev in self._spatial_index.get(key, ()):
+                                if start_time is not None and ev.timestamp < start_time:
+                                    continue
+                                if end_time is not None and ev.timestamp > end_time:
+                                    continue
+                                results.append(ev)
 
             earliest_ts = (
                 self._event_log[0].timestamp if self._event_log else None
@@ -664,10 +695,10 @@ class WorldTree:
 
             # 3. _spatial_index：逐事件从集合中移除
             for ev in to_archive:
-                chunk_key = (ev.layer_id, ev.location[0], ev.location[1])
-                chunk_set = self._spatial_index.get(chunk_key)
-                if chunk_set:
-                    chunk_set.discard(ev)
+                key = self._sk(ev)
+                bucket = self._spatial_index.get(key)
+                if bucket:
+                    bucket.discard(ev)
 
             removed_count = len(removed_ids)
             logger = get_logger(__name__)

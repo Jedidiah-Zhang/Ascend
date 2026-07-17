@@ -59,14 +59,6 @@ class Entity:
         return (self.chunk_x, self.chunk_y)
 
     @property
-    def layer_chunk(self) -> tuple[int, int, int]:
-        """(layer_id, chunk_x, chunk_y) — 空间索引用的三元组键。
-
-        layer_id 在前，保证不同层的实体落入不同桶，天然隔离。
-        """
-        return (self.layer_id, self.chunk_x, self.chunk_y)
-
-    @property
     def position(self) -> tuple[int, int, int | None, int | None]:
         """层内平面位置 (chunk_x, chunk_y, tile_x, tile_y)。
 

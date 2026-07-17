@@ -7,6 +7,7 @@ import time
 
 import pytest
 from ascend.world_tree import Event, AffectedParty, WorldTree, EventGraph, EventArchive, LocationFilter
+from ascend.world_tree.event import SUB_CELL_SIZE, SUB_CELLS, spatial_key, sub_cell_range
 
 
 def make_event(timestamp=0, event_type="test", initiator_id="a",
@@ -1443,3 +1444,140 @@ class TestWorldTreeLocationFilter:
         bus.publish(make_event(event_type="test", location=(5, 5, None, None)))
         time.sleep(0.1)
         assert len(received) == 1
+
+
+# ── 空间索引公共函数 ──────────────────────────────────
+
+
+class TestSpatialKey:
+    """spatial_key / sub_cell_range 函数测试。"""
+
+    def test_spatial_key_with_tiles(self):
+        """带 tile 坐标时正确计算 sub-cell 索引。"""
+        key = spatial_key(0, 2, 3, 50, 100)
+        assert key == (0, 2, 3, 50 // SUB_CELL_SIZE, 100 // SUB_CELL_SIZE)
+        assert key[3] == 3   # 50 // 16
+        assert key[4] == 6   # 100 // 16
+
+    def test_spatial_key_none_tiles(self):
+        """tile 为 None 时 sub-cell 回退到 0。"""
+        key = spatial_key(1, 5, 5, None, None)
+        assert key == (1, 5, 5, 0, 0)
+
+    def test_spatial_key_tile_at_zero(self):
+        """tile=(0, 0) 落在 sub-cell (0, 0)。"""
+        key = spatial_key(0, 0, 0, 0, 0)
+        assert key == (0, 0, 0, 0, 0)
+
+    def test_spatial_key_tile_at_chunk_edge(self):
+        """chunk 边缘 tile=199 落在最后一个 sub-cell。"""
+        key = spatial_key(0, 0, 0, 199, 199)
+        assert key[3] == SUB_CELLS - 1
+        assert key[4] == SUB_CELLS - 1
+
+    def test_sub_cell_range_radius_zero(self):
+        """sub_radius=0 仅返回自身 sub-cell。"""
+        (lo, hi), (lo2, hi2) = sub_cell_range(50, 100, 0)
+        assert lo == hi == 50 // SUB_CELL_SIZE
+        assert lo2 == hi2 == 100 // SUB_CELL_SIZE
+
+    def test_sub_cell_range_radius_two(self):
+        """sub_radius=2 返回正确区间。"""
+        (lo, hi), (lo2, hi2) = sub_cell_range(48, 48, 2)
+        assert lo == 1   # 48//16=3, 3-2=1
+        assert hi == 5   # 3+2=5
+        assert lo2 == 1
+        assert hi2 == 5
+
+    def test_sub_cell_range_clamped_low(self):
+        """区间下界不会小于 0。"""
+        (lo, hi), _ = sub_cell_range(5, 0, 2)
+        assert lo == 0
+
+    def test_sub_cell_range_clamped_high(self):
+        """区间上界不会超过 SUB_CELLS-1。"""
+        (lo, hi), _ = sub_cell_range(190, 0, 2)
+        assert hi == SUB_CELLS - 1
+
+
+# ── LocationFilter tile 级过滤 ───────────────────────
+
+
+class TestLocationFilterTile:
+    """LocationFilter 带 center_tile / sub_radius 的测试。"""
+
+    def test_same_tile_same_sub_cell(self):
+        """同一 tile 的事件通过（sub_radius=0）。"""
+        lf = LocationFilter(center_chunk=(0, 0), center_tile=(50, 50), sub_radius=0)
+        assert lf.matches((0, 0, 50, 50))
+
+    def test_different_tile_same_sub_cell(self):
+        """同一 sub-cell 内不同 tile 通过（sub_radius=0，匹配 sub-cell 而非 tile）。"""
+        lf = LocationFilter(center_chunk=(0, 0), center_tile=(16, 32), sub_radius=0)
+        assert lf.matches((0, 0, 17, 33))  # 仍在 sub-cell (1,2)
+
+    def test_different_sub_cell_blocked(self):
+        """不同 sub-cell 的事件被过滤。"""
+        lf = LocationFilter(center_chunk=(0, 0), center_tile=(10, 10), sub_radius=0)
+        assert not lf.matches((0, 0, 30, 30))  # sub-cell (1,1) ≠ (0,0)
+
+    def test_different_chunk_blocked(self):
+        """不同 chunk 即使 tile 匹配也被 chunk 级过滤拦截。"""
+        lf = LocationFilter(center_chunk=(0, 0), center_tile=(10, 10), sub_radius=0)
+        assert not lf.matches((1, 0, 10, 10))
+
+    def test_sub_radius_covers_adjacent(self):
+        """sub_radius=1 覆盖相邻 sub-cell。"""
+        lf = LocationFilter(center_chunk=(0, 0), center_tile=(16, 16), sub_radius=1)
+        # center sub-cell: (1,1), sub_radius=1 → [0,2]
+        assert lf.matches((0, 0, 0, 0))     # sub-cell (0,0)
+        assert lf.matches((0, 0, 32, 32))   # sub-cell (2,2)
+        assert lf.matches((0, 0, 15, 15))   # sub-cell (0,0)
+        assert not lf.matches((0, 0, 48, 48))  # sub-cell (3,3) 太远
+
+    def test_none_tile_passes_anyway(self):
+        """事件 tile 为 None 时 tile 级过滤放行（回退到 chunk 级已有判断）。"""
+        lf = LocationFilter(center_chunk=(0, 0), center_tile=(10, 10), sub_radius=0)
+        assert lf.matches((0, 0, None, None))
+
+
+# ── get_events_in_region tile 级查询 ─────────────────
+
+
+class TestWorldTreeTileQuery:
+    """get_events_in_region 带 center_tile / sub_radius 的测试。"""
+
+    def test_tile_query_center_chunk_only(self):
+        """仅返回中心 chunk 内匹配 sub-cell 的事件。"""
+        bus = WorldTree()
+        bus.publish(make_event(timestamp=0, location=(0, 0, 10, 10)))
+        bus.publish(make_event(timestamp=1, location=(0, 0, 50, 50)))
+        bus.publish(make_event(timestamp=2, location=(0, 0, 11, 10)))
+
+        results = bus.get_events_in_region(
+            (0, 0), radius=0, center_tile=(10, 10), sub_radius=0,
+        )
+        timestamps = {ev.timestamp for ev in results}
+        assert 0 in timestamps   # tile (10,10) → sub-cell (0,0)
+        assert 2 in timestamps   # tile (11,10) → sub-cell (0,0)
+        assert 1 not in timestamps  # tile (50,50) → sub-cell (3,3) ≠ (0,0)
+
+    def test_tile_query_empty(self):
+        """没有事件匹配时返回空列表。"""
+        bus = WorldTree()
+        bus.publish(make_event(location=(0, 0, 50, 50)))
+        results = bus.get_events_in_region(
+            (0, 0), radius=0, center_tile=(10, 10), sub_radius=0,
+        )
+        assert results == []
+
+    def test_tile_query_with_chunk_radius(self):
+        """周边 chunk 仍返回全部事件（不受 sub-cell 限制）。"""
+        bus = WorldTree()
+        bus.publish(make_event(timestamp=0, location=(1, 0, 10, 10)))
+        bus.publish(make_event(timestamp=1, location=(1, 0, 50, 50)))
+
+        results = bus.get_events_in_region(
+            (0, 0), radius=1, center_tile=(10, 10), sub_radius=0,
+        )
+        assert len(results) == 2  # 周边 chunk 不过滤 sub-cell

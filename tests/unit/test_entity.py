@@ -158,7 +158,7 @@ class TestEntityManager:
         assert mgr.move("nonexistent", 0, 0, 0, 0) is False
 
     def test_move_same_chunk(self):
-        """在同一 chunk 内移动，不改变空间索引。"""
+        """在同一 chunk 内同 sub-cell 内移动，空间索引不变。"""
         mgr = EntityManager(world_tree_arg=world_tree)
         e = mgr.spawn(EntityType.NPC, 0, 0, 1, 2)
         mgr.move(e.id, 0, 0, 3, 4)
@@ -223,3 +223,72 @@ class TestEntityManager:
 
         assert len(mgr.in_region((0, 0), radius=0)) == 0
         assert len(mgr.in_region((5, 5), radius=0)) == 1
+
+    def test_move_crosses_sub_cell(self):
+        """在同一 chunk 内跨越 sub-cell 移动，空间索引更新。"""
+        wt = WorldTree()
+        mgr = EntityManager(world_tree_arg=wt)
+        e = mgr.spawn(EntityType.NPC, 0, 0, 0, 0)
+        mgr.move(e.id, 0, 0, 20, 0)  # 从 sub-cell (0,0) 跨到 (1,0)
+        # 旧 sub-cell 找不到
+        assert len(mgr.in_region((0, 0), radius=0,
+            center_tile=(0, 0), sub_radius=0)) == 0
+        # 新 sub-cell 能找到
+        assert len(mgr.in_region((0, 0), radius=0,
+            center_tile=(20, 0), sub_radius=0)) == 1
+
+
+# ── in_region tile 级查询 ────────────────────────────
+
+
+class TestEntityManagerTileQuery:
+    """in_region 带 center_tile / sub_radius 的测试。"""
+
+    def test_tile_filter_returns_only_matching(self):
+        """仅返回中心 chunk 内匹配 sub-cell 的实体。"""
+        wt = WorldTree()
+        mgr = EntityManager(world_tree_arg=wt)
+        mgr.spawn(EntityType.NPC, 0, 0, 10, 10)
+        mgr.spawn(EntityType.NPC, 0, 0, 50, 50)
+        mgr.spawn(EntityType.NPC, 0, 0, 11, 11)
+
+        results = mgr.in_region((0, 0), radius=0,
+            center_tile=(10, 10), sub_radius=0)
+        assert len(results) == 2  # tile (10,10) 和 (11,11) 同在 sub-cell (0,0)
+
+    def test_tile_filter_empty(self):
+        """没有匹配时返回空列表。"""
+        mgr = EntityManager(world_tree_arg=world_tree)
+        mgr.spawn(EntityType.NPC, 0, 0, 50, 50)
+        results = mgr.in_region((0, 0), radius=0,
+            center_tile=(10, 10), sub_radius=0)
+        assert results == []
+
+    def test_no_tile_filter_returns_all_in_chunk(self):
+        """不传 center_tile 时返回 chunk 内全部实体。"""
+        wt = WorldTree()
+        mgr = EntityManager(world_tree_arg=wt)
+        mgr.spawn(EntityType.NPC, 0, 0, 10, 10)
+        mgr.spawn(EntityType.NPC, 0, 0, 50, 50)
+        results = mgr.in_region((0, 0), radius=0)
+        assert len(results) == 2
+
+    def test_sub_radius_extends_range(self):
+        """sub_radius > 0 覆盖相邻 sub-cell。"""
+        wt = WorldTree()
+        mgr = EntityManager(world_tree_arg=wt)
+        mgr.spawn(EntityType.NPC, 0, 0, 5, 5)
+        mgr.spawn(EntityType.NPC, 0, 0, 30, 5)
+        results = mgr.in_region((0, 0), radius=0,
+            center_tile=(5, 5), sub_radius=2)
+        assert len(results) == 2
+
+    def test_none_tile_not_excluded(self):
+        """tile 为 None 的实体在 chunk 级查询中正常返回。"""
+        wt = WorldTree()
+        mgr = EntityManager(world_tree_arg=wt)
+        mgr.spawn(EntityType.STRUCTURE, 0, 0)
+        results = mgr.in_region((0, 0), radius=0,
+            center_tile=(10, 10), sub_radius=0)
+        # tile=None 的实体 key 中 sub_cell=(0,0)，center_tile 的 sub_cell 也是 (0,0)
+        assert len(results) == 1

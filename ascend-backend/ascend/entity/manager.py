@@ -1,6 +1,9 @@
 """实体管理器 — 实体的创建、销毁、查询和移动，发布生命周期事件。"""
 
 from ascend.world_tree import world_tree, Event, AffectedParty
+from ascend.world_tree.event import (
+    SUB_CELL_SIZE, SUB_CELLS, spatial_key, sub_cell_range,
+)
 from ascend.log import get_logger
 from .entity import Entity, EntityType
 
@@ -47,7 +50,7 @@ class EntityManager:
         )
         self._entities: dict[str, Entity] = {}
         self._type_index: dict[int, set[str]] = {}
-        self._spatial_index: dict[tuple[int, int, int], set[str]] = {}
+        self._spatial_index: dict[tuple[int, int, int, int, int], set[str]] = {}
 
     def __repr__(self) -> str:
         """返回管理器状态摘要。
@@ -100,7 +103,12 @@ class EntityManager:
         )
         self._entities[entity.id] = entity
         self._type_index.setdefault(entity_type, set()).add(entity.id)
-        self._spatial_index.setdefault(entity.layer_chunk, set()).add(entity.id)
+        self._spatial_index.setdefault(
+            spatial_key(
+                entity.layer_id, entity.chunk_x, entity.chunk_y,
+                entity.tile_x, entity.tile_y,
+            ), set(),
+        ).add(entity.id)
 
         self._world_tree.publish(Event(
             timestamp=game_time,
@@ -136,7 +144,12 @@ class EntityManager:
             return None
 
         self._type_index.get(entity.entity_type, set()).discard(entity_id)
-        self._spatial_index.get(entity.layer_chunk, set()).discard(entity_id)
+        self._spatial_index.get(
+            spatial_key(
+                entity.layer_id, entity.chunk_x, entity.chunk_y,
+                entity.tile_x, entity.tile_y,
+            ), set(),
+        ).discard(entity_id)
 
         self._world_tree.publish(Event(
             timestamp=game_time,
@@ -183,17 +196,23 @@ class EntityManager:
             logger.warning("move: 实体 %s 不存在", entity_id)
             return False
 
-        old_layer_chunk = entity.layer_chunk
         old_pos = entity.position
+        old_key = spatial_key(
+            entity.layer_id, entity.chunk_x, entity.chunk_y,
+            old_pos[2], old_pos[3],
+        )
         entity.chunk_x = chunk_x
         entity.chunk_y = chunk_y
         entity.tile_x = tile_x
         entity.tile_y = tile_y
-        new_layer_chunk = entity.layer_chunk
+        new_key = spatial_key(
+            entity.layer_id, entity.chunk_x, entity.chunk_y,
+            entity.tile_x, entity.tile_y,
+        )
 
-        if old_layer_chunk != new_layer_chunk:
-            self._spatial_index.get(old_layer_chunk, set()).discard(entity_id)
-            self._spatial_index.setdefault(new_layer_chunk, set()).add(entity_id)
+        if old_key != new_key:
+            self._spatial_index.get(old_key, set()).discard(entity_id)
+            self._spatial_index.setdefault(new_key, set()).add(entity_id)
 
         self._world_tree.publish(Event(
             timestamp=game_time,
@@ -244,14 +263,23 @@ class EntityManager:
         radius: int = 1,
         *,
         layer_id: int = 0,
+        center_tile: tuple[int, int] | None = None,
+        sub_radius: int = 0,
     ) -> list[Entity]:
         """按空间区域查询实体（限定单层）。
+
+        chunk 级粗筛 + 可选的 sub-cell 精筛：
+        - center_chunk + radius 划定 chunk 范围。
+        - center_tile + sub_radius 进一步限定中心 chunk 内的 sub-cell 范围。
+          周边 chunk 不受 sub-cell 限制（返回全部 sub-cell 内的实体）。
 
         Args:
             center_chunk: 中心 chunk 坐标 (chunk_x, chunk_y)。
             radius: 搜索半径（chunk 数），默认 1。
             layer_id: 只查询该层的实体，默认 0（地表）。
-                跨层查询不在此支持——层间隔离是设计意图。
+            center_tile: 可选，中心 tile 坐标 (tile_x, tile_y)，
+                传入后中心 chunk 仅返回 sub_radius 范围内的 sub-cell。
+            sub_radius: sub-cell 搜索半径，默认 0 即仅匹配自身 sub-cell。
 
         Returns:
             该层区域内的实体列表。
@@ -259,16 +287,32 @@ class EntityManager:
         cx, cy = center_chunk
         results: list[Entity] = []
         seen: set[str] = set()
+
+        if center_tile is not None:
+            (scx_lo, scx_hi), (scy_lo, scy_hi) = sub_cell_range(
+                center_tile[0], center_tile[1], sub_radius,
+            )
+            has_tile_filter = True
+        else:
+            has_tile_filter = False
+
         for dx in range(-radius, radius + 1):
             for dy in range(-radius, radius + 1):
-                for eid in self._spatial_index.get(
-                    (layer_id, cx + dx, cy + dy), set()
-                ):
-                    if eid not in seen:
-                        seen.add(eid)
-                        ent = self._entities.get(eid)
-                        if ent:
-                            results.append(ent)
+                if dx == 0 and dy == 0 and has_tile_filter:
+                    scx_iter = range(scx_lo, scx_hi + 1)
+                    scy_iter = range(scy_lo, scy_hi + 1)
+                else:
+                    scx_iter = range(SUB_CELLS)
+                    scy_iter = range(SUB_CELLS)
+                for scx in scx_iter:
+                    for scy in scy_iter:
+                        key = (layer_id, cx + dx, cy + dy, scx, scy)
+                        for eid in self._spatial_index.get(key, ()):
+                            if eid not in seen:
+                                seen.add(eid)
+                                ent = self._entities.get(eid)
+                                if ent:
+                                    results.append(ent)
         return results
 
     # ── 元信息 ────────────────────────────────────────────
