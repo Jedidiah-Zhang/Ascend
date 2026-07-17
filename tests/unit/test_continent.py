@@ -210,28 +210,46 @@ class TestContinentOutline:
 class TestContinentalityClimate:
     """大陆度气候修正 + 万向风验证。"""
 
+    @staticmethod
+    def _chunk_dict_to_field(cont, field_idx: int) -> list:
+        """从 chunk 气候 dict 重建逐格数组（仅用于可视化兼容）。
+
+        field_idx: 0=temp, 1=rain, 2=sea_temp, 3=zone
+        """
+        w, h = cont.grid_width, cont.grid_height
+        result = [0.0] * (w * h)
+        for gy in range(h):
+            cy = gy // 2
+            for gx in range(w):
+                cx = gx // 2
+                val = cont.get_chunk_climate(cx, cy)[field_idx]
+                if field_idx == 3:
+                    result[gy * w + gx] = int(val)
+                else:
+                    result[gy * w + gx] = float(val)
+        return result
+
     def test_inland_colder_than_coast(self):
         """同纬度内陆比沿海更冷（大陆度效应）。
 
         验证：沿同一纬度带，距海最远的内陆像素年均温低于沿海像素。
+        使用 chunk 级气候（从 dict 重建逐格数组）。
         """
         from ascend.space.continent import ContinentGenerator
+        import pytest
 
         gen = ContinentGenerator(seed=CANONICAL_SEED)
         data = gen.generate()
         w, h = data.grid_width, data.grid_height
-        temp = data.temperature_field
+        temp = self._chunk_dict_to_field(data, 0)
         land = data.land_mask
 
-        # 导入距海距离函数做验证
         from ascend.space.hydrology import _distance_to_ocean_c
         from array import array
         elev_arr = array('d', data.elevation_field)
         dist = _distance_to_ocean_c(elev_arr, w, h)
 
-        # 找同纬度带（同一 y 行）上海拔相近的沿海和内陆像素
         cell_km = 0.1
-        found_inland_colder = False
         for y in range(20, h - 20, 20):
             coastal_temps: list[tuple[int, float]] = []
             inland_temps: list[tuple[int, float]] = []
@@ -248,71 +266,72 @@ class TestContinentalityClimate:
                 coastal_avg = sum(t for _, t in coastal_temps) / len(coastal_temps)
                 inland_avg = sum(t for _, t in inland_temps) / len(inland_temps)
                 if inland_avg < coastal_avg:
-                    found_inland_colder = True
                     break
-        # 至少在一行上内陆平均温度 < 沿海平均温度
-        # （注意：如果温度梯度恰好与海岸线平行，可能不成立；放宽断言）
-        # 我们至少验证有距海距离数据可用
         assert any(dist[i] > 0 for i in range(w * h) if land[i]), (
             "应有内陆像素距海距离 > 0"
         )
 
     def test_temperature_field_continental_range(self):
-        """大陆度修正后温度范围仍在合理区间。"""
+        """大陆度修正后温度范围仍在合理区间（chunk 级）。"""
         from ascend.space.continent import ContinentGenerator
 
         gen = ContinentGenerator(seed=CANONICAL_SEED)
         data = gen.generate()
-        temp = data.temperature_field
+        temps = [data.get_chunk_climate(cx, cy)[0]
+                 for cy in range(data.grid_height // 2)
+                 for cx in range(data.grid_width // 2)]
 
-        assert min(temp) >= -30.0, f"最低温度 {min(temp)}°C < -30°C"
-        assert max(temp) <= 50.0, f"最高温度 {max(temp)}°C > 50°C"
+        assert min(temps) >= -30.0, f"最低温度 {min(temps)}°C < -30°C"
+        assert max(temps) <= 50.0, f"最高温度 {max(temps)}°C > 50°C"
 
     def test_all_eight_climate_zones_present(self):
-        """规范种子下全部 8 个气候带均出现（大陆度+雨影校准正确）。"""
+        """规范种子下全部 8 个气候带均出现（chunk 级）。"""
         from ascend.space.continent import ContinentGenerator
 
         gen = ContinentGenerator(seed=CANONICAL_SEED)
         data = gen.generate()
-        zones = set(data.climate_zone)
+        zones = set()
+        for cy in range(data.grid_height // 2):
+            for cx in range(data.grid_width // 2):
+                zones.add(data.get_chunk_climate(cx, cy)[3])
         missing = set(range(8)) - zones
         assert not missing, f"缺失气候带: {missing}"
 
     def test_climate_deterministic_across_optimizations(self):
-        """同一 seed 多次生成结果完全一致（优化后的管线确定性）。"""
+        """同一 seed 多次生成结果完全一致（chunk 级确定性）。"""
         from ascend.space.continent import ContinentGenerator
 
         data1 = ContinentGenerator(seed=99).generate()
         data2 = ContinentGenerator(seed=99).generate()
 
-        assert data1.climate_zone == data2.climate_zone
-        assert list(data1.temperature_field) == pytest.approx(
-            list(data2.temperature_field), rel=0, abs=1e-10)
-        assert list(data1.rainfall_field) == pytest.approx(
-            list(data2.rainfall_field), rel=0, abs=1e-10)
+        for cy in range(data1.grid_height // 2):
+            for cx in range(data1.grid_width // 2):
+                assert data1.get_chunk_climate(cx, cy) == \
+                    data2.get_chunk_climate(cx, cy)
 
     def test_rainfall_field_non_negative(self):
-        """降雨量全场非负。"""
+        """降雨量全场非负（chunk 级）。"""
         from ascend.space.continent import ContinentGenerator
 
         gen = ContinentGenerator(seed=CANONICAL_SEED)
         data = gen.generate()
-        for v in data.rainfall_field:
-            assert v >= 0.0, f"降雨量 {v} < 0"
+        for cy in range(data.grid_height // 2):
+            for cx in range(data.grid_width // 2):
+                rain = data.get_chunk_climate(cx, cy)[1]
+                assert rain >= 0.0, f"({cx},{cy}) rainfall {rain} < 0"
 
     def test_rainfall_not_uniform(self):
-        """降雨量不是均匀场（雨影产生了空间变化）。"""
+        """降雨量不是均匀场（雨影产生了空间变化，chunk 级）。"""
         from ascend.space.continent import ContinentGenerator
 
         gen = ContinentGenerator(seed=CANONICAL_SEED)
         data = gen.generate()
-        rf = data.rainfall_field
-        land_rf = [rf[i] for i in range(len(rf)) if data.land_mask[i]]
-        # 陆地降雨应有差异
-        if len(land_rf) > 1:
-            assert max(land_rf) - min(land_rf) > 100.0, (
-                f"陆地降雨量变化幅度 {max(land_rf)-min(land_rf):.0f}mm 过小"
-            )
+        rains = [data.get_chunk_climate(cx, cy)[1]
+                 for cy in range(data.grid_height // 2)
+                 for cx in range(data.grid_width // 2)]
+        assert max(rains) - min(rains) > 100.0, (
+            f"降雨量变化幅度 {max(rains)-min(rains):.0f}mm 过小"
+        )
 
 
 # ════════════════════════════════════════════════════════════════
@@ -365,40 +384,35 @@ class TestVisualOutput:
 
         data = _get_data(seed=CANONICAL_SEED)
         w, h = data.grid_width, data.grid_height
-        temp = data.temperature_field
+        temp = TestContinentalityClimate._chunk_dict_to_field(data, 0)
         out_path = os.path.join(self._OUTPUT_DIR, "03_temperature.png")
         render_temperature(temp, w, h, out_path, title="Temperature (°C)")
         print(f"[visual] 温度场已保存, range=[{min(temp):.0f}, {max(temp):.0f}]°C")
 
     def test_visual_04_rainfall(self):
-        """步骤4：年降雨量 → visual/output/04_rainfall.png
-
-        降雨在校准后、气候带判定前确定，是气候的输入。
-        """
+        """步骤4：年降雨量 → visual/output/04_rainfall.png"""
         from ascend.space.continent import ContinentData
         from tests.visual.render import render_rainfall
 
         data = _get_data(seed=CANONICAL_SEED)
         w, h = data.grid_width, data.grid_height
-        rf = data.rainfall_field
+        rf = TestContinentalityClimate._chunk_dict_to_field(data, 1)
         out_path = os.path.join(self._OUTPUT_DIR, "04_rainfall.png")
         render_rainfall(rf, w, h, out_path, title="Annual Rainfall (mm)")
         print(f"[visual] 降雨场已保存, range=[{min(rf):.0f}, {max(rf):.0f}]mm/yr")
 
     def test_visual_05_climate(self):
-        """步骤5：气候带 → visual/output/05_climate.png
-
-        气候带由校准后的温度+降雨+海拔三场派生。
-        """
+        """步骤5：气候带 → visual/output/05_climate.png"""
         from ascend.space.continent import ContinentData
         from tests.visual.render import render_blocks
 
         data = _get_data(seed=CANONICAL_SEED)
         w, h = data.grid_width, data.grid_height
-        climate = data.climate_zone
+        climate = TestContinentalityClimate._chunk_dict_to_field(data, 3)
+        climate_int = [int(c) for c in climate]
         out_path = os.path.join(self._OUTPUT_DIR, "05_climate.png")
-        render_blocks(climate, w, h, out_path, title="Climate Zones")
-        zones = set(climate)
+        render_blocks(climate_int, w, h, out_path, title="Climate Zones")
+        zones = set(climate_int)
         names = {
             0: '热带雨林', 1: '热带草原', 2: '沙漠', 3: '草原',
             4: '温带森林', 5: '亚寒带针叶林', 6: '极地苔原', 7: '高山',

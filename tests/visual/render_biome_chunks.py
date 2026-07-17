@@ -121,10 +121,8 @@ def _find_diverse_chunks(
             attempts += 1
             continue
         alt = cont.elevation_field[idx]
-        temp = cont.temperature_field[idx]
-        rain = cont.rainfall_field[idx]
-        sea_temp = temp + alt * 9.0 / 1000.0
         cx, cy = gx // 2, gy // 2
+        temp, rain, sea_temp, _ = cont.get_chunk_climate(cx, cy)
         moisture = wg._sample_derived_noise(wg._noise_moisture, cx, cy, 6)
         b = biome_from_attrs(temp, rain, alt, sea_temp, moisture, subdiv_ranges=ranges)
         if not b.is_ocean and b not in seen:
@@ -263,18 +261,22 @@ def render_biome_membership_band(seed: int = 42) -> None:
 
     for chunk_idx, (ccx, ccy) in enumerate([(cx, cy), (cx + 1, cy)]):
         x0 = chunk_idx * _CHUNK_TILE
+        # chunk 中心气候（与 tile_gen 一致，整 chunk 复用）
+        if cont.get_chunk_climate(ccx, ccy) == (-20.0, 0.0, -20.0, 0):
+            continue  # 越界 chunk，跳过
+        cc_temp, cc_rain, _, _ = cont.get_chunk_climate(ccx, ccy)
         for ty in range(_CHUNK_TILE):
             for tx in range(_CHUNK_TILE):
                 wx = ccx * _CHUNK_TILE + tx
                 wy = ccy * _CHUNK_TILE + ty
-                temp, rain, sea_temp, alt = tg.sample_climate_attrs(wx, wy)
+                macro = cont.sample_altitude_bilinear(wx, wy)
+                sea_temp = cc_temp + macro * 9.0 / 1000.0
                 moisture = tg._moisture_noise.octave(
                     wx + 0.5, wy + 0.5, octaves=2, frequency=0.005,
                 )
                 # 用宏观海拔算隶属度（与 tile_gen 一致，传动态值域）
-                macro = cont.sample_altitude_bilinear(wx, wy)
                 m = biome_membership(
-                    temp, rain, macro, sea_temp, moisture,
+                    cc_temp, cc_rain, macro, sea_temp, moisture,
                     subdiv_ranges=cont.subdiv_ranges,
                 )
                 # 混合群系颜色
@@ -328,11 +330,10 @@ def render_biome_overview(seed: int = 42) -> None:
     for gy in range(h):
         for gx in range(w):
             idx = gy * w + gx
+            cx, cy = gx // 2, gy // 2
+            temp, rain, sea_temp, _ = cont.get_chunk_climate(cx, cy)
             if not cont.land_mask[idx]:
                 # 海洋按海平面温度分色
-                alt = cont.elevation_field[idx]
-                temp = cont.temperature_field[idx]
-                sea_temp = temp + alt * 9.0 / 1000.0
                 if sea_temp >= 20:
                     pixels[gx, gy] = BIOME_COLORS[BiomeType.WARM_OCEAN]
                 elif sea_temp >= 5:
@@ -341,10 +342,6 @@ def render_biome_overview(seed: int = 42) -> None:
                     pixels[gx, gy] = BIOME_COLORS[BiomeType.COLD_OCEAN]
                 continue
             alt = cont.elevation_field[idx]
-            temp = cont.temperature_field[idx]
-            rain = cont.rainfall_field[idx]
-            sea_temp = temp + alt * 9.0 / 1000.0
-            cx, cy = gx // 2, gy // 2
             moisture = wg._sample_derived_noise(wg._noise_moisture, cx, cy, 6)
             b = biome_from_attrs(temp, rain, alt, sea_temp, moisture, subdiv_ranges=ranges)
             pixels[gx, gy] = BIOME_COLORS.get(b, (128, 0, 128))
@@ -363,10 +360,8 @@ def render_biome_overview(seed: int = 42) -> None:
             if not cont.land_mask[idx]:
                 continue
             alt = cont.elevation_field[idx]
-            temp = cont.temperature_field[idx]
-            rain = cont.rainfall_field[idx]
-            sea_temp = temp + alt * 9.0 / 1000.0
             cx, cy = gx // 2, gy // 2
+            temp, rain, sea_temp, _ = cont.get_chunk_climate(cx, cy)
             moisture = wg._sample_derived_noise(wg._noise_moisture, cx, cy, 6)
             b = biome_from_attrs(temp, rain, alt, sea_temp, moisture, subdiv_ranges=ranges)
             counts[b] += 1

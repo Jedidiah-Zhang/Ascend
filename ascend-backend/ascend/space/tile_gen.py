@@ -63,53 +63,13 @@ class TileGenerator:
     def __repr__(self) -> str:
         return f"TileGenerator(seed={self._seed})"
 
-    # ── 气候属性采样 ─────────────────────────────────────
-
-    def sample_climate_attrs(
-        self, world_x: float, world_y: float,
-        *,
-        altitude: float | None = None,
-    ) -> tuple[float, float, float, float]:
-        """从层1宏观场双线性插值采样 tile 粒度气候属性。
-
-        被 _generate 主循环调用，供 tile 级群系隶属度计算使用。
-        未来也可供 tile 级生理需求/作物生长计算使用。
-
-        Args:
-            world_x: 世界 tile X 坐标。
-            world_y: 世界 tile Y 坐标。
-            altitude: 可选预计算海拔，传入后跳过内部双线性插值。
-
-        Returns:
-            (mean_temp, annual_rainfall, sea_level_temp, altitude)：
-            年均温 (°C)、年降雨 (mm)、海平面温度 (°C)、海拔 (m)。
-        """
-        cont = self._continent
-        gx = int(world_x / cont.cell_size)
-        gy = int(world_y / cont.cell_size)
-        gw, gh = cont.grid_width, cont.grid_height
-
-        if altitude is None:
-            altitude = cont.sample_altitude_bilinear(world_x, world_y)
-
-        if 0 <= gx < gw and 0 <= gy < gh:
-            idx = gy * gw + gx
-            temp = cont.temperature_field[idx]
-            rain = cont.rainfall_field[idx]
-        else:
-            temp = -20.0
-            rain = 0.0
-
-        sea_level_temp = temp + altitude * LAPSE_RATE / 1000.0
-        return temp, rain, sea_level_temp, altitude
-
     # ── 主入口 ──────────────────────────────────────────────
 
     def generate_chunk(self, cx: int, cy: int) -> TileGrid:
         """生成一个 200×200 chunk 的详细地形。
 
-        从 ContinentData 采样 tile 级气候属性计算群系隶属度。
-        推荐使用 generate_chunk_for(chunk) 复用 chunk 级数据。
+        从 ContinentData 采样 chunk 中心气候属性计算群系隶属度，
+        tile 间仅海拔和 moisture 噪声变化，保证 chunk 边界连续。
 
         Args:
             cx: chunk X 坐标。
@@ -174,6 +134,9 @@ class TileGenerator:
         has_lakes = hyd is not None and hyd.lake_basins
         macro_cache = [0.0] * (size * size) if has_lakes else None
 
+        # chunk 中心气候（整 chunk 复用，减少 40,000 次到 1 次）
+        cc_temp, cc_rain, _, _ = self._continent.get_chunk_climate(cx, cy)
+
         for ty in range(size):
             for tx in range(size):
                 idx = ty * size + tx
@@ -187,15 +150,13 @@ class TileGenerator:
                 detail = noise_field[idx] * 50.0
                 elev = macro_elev + detail
 
-                # tile 级气候属性采样（算群系隶属度用，复用 macro_elev 避免重复插值）
-                temp, rain, sea_temp, _ = self.sample_climate_attrs(
-                    wx, wy, altitude=macro_elev,
-                )
+                # 海平面温度 = chunk 中心基线 + tile 海拔递减
+                sea_temp = cc_temp + macro_elev * LAPSE_RATE / 1000.0
                 moisture = moisture_field[idx]
 
-                # 群系隶属度 → 混合 TerrainBias
+                # 群系隶属度 → 混合 TerrainBias（温度降雨用 chunk 中心值）
                 bias = self._compute_bias(
-                    temp, rain, macro_elev, sea_temp, moisture,
+                    cc_temp, cc_rain, macro_elev, sea_temp, moisture,
                     subdiv_ranges=cont.subdiv_ranges,
                 )
 

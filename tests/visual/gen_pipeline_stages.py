@@ -54,6 +54,15 @@ def plot_pipeline(seed: int, axs: np.ndarray) -> None:
     def _to_2d(arr, w=w, h=h):
         return np.array(arr, dtype=np.float64).reshape(h, w)
 
+    def _chunk_field(cont, field_idx, *, as_int=False):
+        """从 chunk 气候 dict 重建逐格数组。field_idx: 0=temp 1=rain 2=sea 3=zone"""
+        result = []
+        for gy in range(h):
+            for gx in range(w):
+                val = cont.get_chunk_climate(gx // 2, gy // 2)[field_idx]
+                result.append(int(val) if as_int else float(val))
+        return result
+
     titles = [
         f"海拔 (seed={seed})",
         "温度 (°C)",
@@ -65,9 +74,9 @@ def plot_pipeline(seed: int, axs: np.ndarray) -> None:
 
     fields = [
         _to_2d(data.elevation_field),
-        _to_2d(data.temperature_field),
-        _to_2d(data.rainfall_field),
-        np.array(data.climate_zone, dtype=np.int32).reshape(h, w),
+        _to_2d(_chunk_field(data, 0)),
+        _to_2d(_chunk_field(data, 1)),
+        np.array(_chunk_field(data, 3, as_int=True), dtype=np.int32).reshape(h, w),
         None,  # streamline rivers 叠加
         None,  # lake basins 叠加
     ]

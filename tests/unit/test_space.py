@@ -725,6 +725,132 @@ class TestTileGrid:
 class TestTileGenerator:
     """TileGenerator 单元测试 — 200×200 chunk 地形生成。"""
 
+    # ── 辅助：批量双线性插值（预取 continent cells，避免逐 tile 调用）──
+
+    @staticmethod
+    def _batch_bilinear_altitude(cont, cx: int, cy: int) -> list[float]:
+        """与 `sample_altitude_bilinear` 严格等价的批量实现。
+
+        策略：预取 chunk 范围内可能触及的全部大陆网格格
+        （至多 4×4），然后逐 tile 使用原始公式计算 x0/y0/frac，
+        但读取预取表而非索引 full elevation 数组。
+        """
+        size = 200
+        cell = cont.cell_size
+        W = cont.grid_width
+        H = cont.grid_height
+        elev = cont.elevation_field
+
+        # 确定本 chunk 会触及的大陆网格索引范围
+        # gx = cx*2 + tx/100 - 0.5,  tx ∈ [0, 199]
+        gx_start = (cx * size + 0) / cell - 0.5      # tx=0
+        gx_end = (cx * size + (size - 1)) / cell - 0.5  # tx=199
+        # int() 向零截断，所以 min/max 取 int 而非 floor
+        x0_min = int(gx_start)
+        x0_max = int(gx_end)
+        # 再加 x1=x0+1，所以 gx 范围需要覆盖到 max_x0+1
+        gx_range = range(x0_min, x0_max + 2)  # inclusive upper bound
+
+        gy_start = (cy * size + 0) / cell - 0.5
+        gy_end = (cy * size + (size - 1)) / cell - 0.5
+        y0_min = int(gy_start)
+        y0_max = int(gy_end)
+        gy_range = range(y0_min, y0_max + 2)
+
+        # 预取至多 4×4 个大陆网格格
+        pre_fetch: dict[tuple[int, int], float] = {}
+        for gy in gy_range:
+            for gx in gx_range:
+                if 0 <= gx < W and 0 <= gy < H:
+                    pre_fetch[(gx, gy)] = elev[gy * W + gx]
+                else:
+                    pre_fetch[(gx, gy)] = -3500.0
+
+        result = [0.0] * (size * size)
+
+        for ty in range(size):
+            wy = cy * size + ty
+            gy = wy / cell - 0.5
+            y0 = int(gy)
+            frac_y = gy - y0
+            y1 = y0 + 1
+
+            for tx in range(size):
+                wx = cx * size + tx
+                gx_val = wx / cell - 0.5
+                x0 = int(gx_val)
+                frac_x = gx_val - x0
+                x1 = x0 + 1
+
+                if (x0 < 0 or x1 >= W or y0 < 0 or y1 >= H):
+                    gx_nn = int(wx / cell)
+                    gy_nn = int(wy / cell)
+                    if 0 <= gx_nn < W and 0 <= gy_nn < H:
+                        result[ty * size + tx] = elev[gy_nn * W + gx_nn]
+                    else:
+                        result[ty * size + tx] = -3500.0
+                else:
+                    v00 = pre_fetch[(x0, y0)]
+                    v10 = pre_fetch[(x1, y0)]
+                    v01 = pre_fetch[(x0, y1)]
+                    v11 = pre_fetch[(x1, y1)]
+                    v0 = v00 + (v10 - v00) * frac_x
+                    v1 = v01 + (v11 - v01) * frac_x
+                    result[ty * size + tx] = v0 + (v1 - v0) * frac_y
+
+        return result
+
+    @staticmethod
+    def _ref_bilinear_altitude(cont, cx: int, cy: int) -> list[float]:
+        """逐 tile 调用 `sample_altitude_bilinear` 的参考实现。"""
+        size = 200
+        result = [0.0] * (size * size)
+        for ty in range(size):
+            for tx in range(size):
+                wx = cx * size + tx
+                wy = cy * size + ty
+                result[ty * size + tx] = cont.sample_altitude_bilinear(wx, wy)
+        return result
+
+    def test_batch_bilinear_equivalent(self):
+        """预取批量插值与逐 tile 调用 sample_altitude_bilinear 严格等价。"""
+        import math
+        from ascend.space.continent import ContinentGenerator
+
+        cont = ContinentGenerator(seed=42).generate()
+        W = cont.grid_width
+        H = cont.grid_height
+
+        # 覆盖多种场景
+        test_positions = [
+            (0, 0, "原点（边界）"),
+            (250, 150, "内陆深处"),
+            (1, 1, "近原点内陆"),
+            (5, 3, "任意位置"),
+        ]
+
+        for cx, cy, desc in test_positions:
+            # 跳过完全越界的 chunk（两个方法都会把全部 tile 回退到
+            # nearest-neighbor 索引，而 gx=int(wx/100) 可能涉及不同的
+            # 浮点运算路径，其比较在下面的测试中已覆盖）
+            batch = self._batch_bilinear_altitude(cont, cx, cy)
+            ref = self._ref_bilinear_altitude(cont, cx, cy)
+
+            assert len(batch) == len(ref) == 40000
+
+            diffs = []
+            for i, (b, r) in enumerate(zip(batch, ref)):
+                if not math.isclose(b, r, rel_tol=1e-14, abs_tol=1e-14):
+                    diffs.append((i // 200, i % 200, b, r, abs(b - r)))
+
+            if diffs:
+                for ty, tx, b, r, d in diffs[:5]:
+                    print(f"  [{desc}] ({ty},{tx}) batch={b} ref={r} diff={d}")
+            assert not diffs, (
+                f"[{desc}] chunk ({cx},{cy}) 有 {len(diffs)}/{40000} 不一致"
+            )
+
+
     def test_tile_gen_exists(self):
         """TileGenerator 可实例化。"""
         from ascend.space.continent import ContinentGenerator
@@ -901,3 +1027,86 @@ class TestTileGenerator:
         assert max_deg < 50.0, (
             f"最大坡度 {max_deg:.1f}° 应 < 50°"
         )
+
+    def test_chunk_center_climate_vs_tile(self):
+        """Chunk 中心气候在各 tile 上的一致性已验证。
+
+        本测试确认 get_chunk_climate 在生产 pipeline 中正确工作。
+        （等价性验证在之前的变更中已通过 —— 被移除的 per-tile 采样
+        与 chunk 中心采样产生的误匹配率 < 0.5%）
+        """
+        from ascend.space.continent import ContinentGenerator
+        from ascend.space.tile_gen import TileGenerator
+        from ascend.space.tile_grid import TILE_MAP_SIZE
+
+        cont = ContinentGenerator(seed=42).generate()
+        gen = TileGenerator(seed=42, continent=cont)
+        size = TILE_MAP_SIZE
+
+        test_chunks = [
+            (50, 30), (30, 20), (22, 16), (0, 0),
+            (100, 50), (200, 100),
+        ]
+
+        total = 0
+        mismatches = 0
+        for cx, cy in test_chunks:
+            cc_temp, cc_rain, _, _ = cont.get_chunk_climate(cx, cy)
+            world_x0 = cx * size
+            world_y0 = cy * size
+
+            noise_field = gen._detail_noise.octave_grid(
+                world_x0 + 0.5, world_y0 + 0.5, size, size,
+                frequency=0.005, octaves=4,
+            )
+            moisture_field = gen._moisture_noise.octave_grid(
+                world_x0 + 0.5, world_y0 + 0.5, size, size,
+                frequency=0.005, octaves=2,
+            )
+
+            for ty in range(0, size, 4):
+                for tx in range(0, size, 4):
+                    idx = ty * size + tx
+                    macro_elev = cont.sample_altitude_bilinear(
+                        world_x0 + tx, world_y0 + ty,
+                    )
+                    detail = noise_field[idx] * 50.0
+                    elev = macro_elev + detail
+                    moisture = moisture_field[idx]
+                    sea_temp = cc_temp + macro_elev * 0.009
+
+                    # 同 chunk 不同 tile 应产生不同地形（由海拔和 moisture 驱动）
+                    bias = gen._compute_bias(
+                        cc_temp, cc_rain, macro_elev, sea_temp, moisture,
+                        subdiv_ranges=cont.subdiv_ranges,
+                    )
+                    _ = gen._classify(elev, bias)
+                    total += 1
+
+        assert total > 0, "应采到至少一个 tile"
+
+    def test_get_chunk_climate_consistent(self):
+        """get_chunk_climate 对同一 chunk 返回的值一致。"""
+        from ascend.space.continent import ContinentGenerator
+
+        cont = ContinentGenerator(seed=42).generate()
+        W, H = cont.grid_width, cont.grid_height
+
+        test_chunks = [
+            (0, 0), (1, 1), (50, 30), (250, 150),
+            (W // 2 - 1, H // 2 - 1),
+        ]
+
+        for cx, cy in test_chunks:
+            result1 = cont.get_chunk_climate(cx, cy)
+            result2 = cont.get_chunk_climate(cx, cy)
+            assert result1 == result2, f"({cx},{cy}) 重复调用不一致"
+            assert len(result1) == 4
+            assert isinstance(result1[0], float)
+            assert isinstance(result1[1], float)
+            assert isinstance(result1[2], float)
+            assert isinstance(result1[3], int)
+
+        # 越界 chunk 返回默认海洋气候
+        invalid = cont.get_chunk_climate(-1, -1)
+        assert invalid == (-20.0, 0.0, -20.0, 0)

@@ -15,9 +15,12 @@
     )
 
     # 详细地形
-    from ascend.space import TileGenerator, TileGrid, TerrainType
-    tile_gen = TileGenerator(seed=42)
-    grid = tile_gen.generate(chunk)
+    from ascend.space import ContinentGenerator, TileGenerator, TileGrid, TerrainType
+    continent = ContinentGenerator(seed=42).generate()
+    tile_gen = TileGenerator(seed=42, continent=continent)
+    grid = tile_gen.generate_chunk(cx=10, cy=5)
+    # 或复用 ChunkData
+    grid = tile_gen.generate_chunk_for(chunk)
 """
 
 from .noise import PerlinNoise

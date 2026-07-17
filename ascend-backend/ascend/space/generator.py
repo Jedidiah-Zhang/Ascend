@@ -1,12 +1,10 @@
-"""世界生成器 — 协调噪声→海拔→温度→气候→群系的物理因果链。
+"""世界生成器 — 从大陆场派生 ChunkData，协调群系和气象参数。
 
 生成顺序：
-  1. 海拔噪声 → 海拔高度（第一性，地形）
-  2. 纬度噪声 → 海平面温度
-  3. 气温直减率: 实际温度 = 海平面温度 - 海拔 × LAPSE_RATE
-  4. 降雨噪声 → 年降雨量
-  5. 温度 + 降雨 → 气候档位
-  6. 气候档位 + 次级噪声 → 群系类型
+  1. 大陆海拔场 → chunk 中心海拔（最近邻）
+  2. 大陆气候缓存 → chunk 中心温雨 + 气候档位（C 模型：纬度梯度 + 大陆度 + 雨影）
+  3. chunk 中心温雨 + moisture 噪声 → 群系（两子型隶属度混合）
+  4. 群系 + 风/湿噪声 → 气象参数基线
 
 支持串行和并行生成，可注入外部线程池。
 每个分块的生成逻辑为纯函数链，不依赖外部可变状态。
@@ -20,9 +18,6 @@ from .tile_grid import TILE_MAP_SIZE
 from .continent import ContinentGenerator
 from .climate import (
     ClimateZone,
-    sea_level_temperature,
-    rainfall_from_noise,
-    classify,
     annual_baseline,
 )
 from .biome import BiomeType, biome_from_attrs
@@ -31,8 +26,6 @@ from .chunk import ChunkData
 logger = get_logger(__name__)
 
 from ascend.config import (
-    NOISE_FREQ_LATITUDE as _FREQ_LATITUDE,
-    NOISE_FREQ_RAINFALL as _FREQ_RAINFALL,
     NOISE_FREQ_DERIVED as _FREQ_DERIVED,
 )
 
@@ -59,7 +52,7 @@ class WorldGenerator:
     ) -> None:
         """初始化世界生成器。
 
-        从 seed 派生 5 个独立噪声实例。
+        从 seed 派生独立噪声实例（湿度、风力、moisture 细分）。
 
         Args:
             seed: 世界种子。相同种子生成相同世界。
@@ -81,15 +74,13 @@ class WorldGenerator:
             for i in range(n_phases)
         ]
 
-        # 5 个噪声通道（海拔改用构造模拟，日照固定天文）
-        self._noise_latitude = PerlinNoise(seed + 200)
-        self._noise_rainfall = PerlinNoise(seed + 300)
+        # 噪声通道（温雨改用大陆场 C 模型，海拔改用构造模拟）
         self._noise_humidity = PerlinNoise(seed + 500)
         self._noise_wind = PerlinNoise(seed + 600)
         # 次级噪声（群系细分用）
         self._noise_moisture = PerlinNoise(seed + 700)
 
-        logger.info("WorldGenerator 就绪: seed=%d, 构造海拔 + 5 噪声通道", seed)
+        logger.info("WorldGenerator 就绪: seed=%d, 3 噪声通道", seed)
 
     def __repr__(self) -> str:
         return f"WorldGenerator(seed={self._seed})"
@@ -118,25 +109,21 @@ class WorldGenerator:
     def _supplement_moisture_range(self) -> None:
         """补充沙漠档 moisture 噪声的动态值域。
 
-        采样沙漠档陆地格的 moisture 噪声，取 P10/P90 存入 subdiv_ranges。
+        遍历所有 chunk，取气候档为 DESERT 的 chunk 采样 moisture 噪声。
         """
         cont = self._continent
         if cont is None:
             return
         w, h = cont.grid_width, cont.grid_height
         moisture_vals: list[float] = []
-        for gy in range(0, h, 2):
-            for gx in range(0, w, 2):
-                idx = gy * w + gx
+        for cy in range(h // 2):
+            for cx in range(w // 2):
+                idx = (cy * 2 + 1) * w + (cx * 2 + 1)
                 if not cont.land_mask[idx]:
                     continue
-                alt = cont.elevation_field[idx]
-                temp = cont.temperature_field[idx]
-                rain = cont.rainfall_field[idx]
-                cz = classify(temp, rain, alt)
-                if cz != ClimateZone.DESERT:
+                _, _, _, zone = cont.get_chunk_climate(cx, cy)
+                if zone != int(ClimateZone.DESERT):
                     continue
-                cx, cy = gx // 2, gy // 2
                 moisture = self._sample_derived_noise(self._noise_moisture, cx, cy, 6)
                 moisture_vals.append(moisture)
         if len(moisture_vals) < 10:
@@ -180,32 +167,6 @@ class WorldGenerator:
 
     # ── 物理推导 ──────────────────────────────────────────
 
-    def _sample_latitude_temp(self, cx: int, cy: int) -> float:
-        """采样纬度噪声 → 海平面温度。
-
-        Args:
-            cx, cy: 分块坐标。
-
-        Returns:
-            海平面温度 (°C)。
-        """
-        p = self._phase[1]
-        n = self._noise_latitude.octave(cx + p, cy + p, octaves=2, frequency=_FREQ_LATITUDE)
-        return sea_level_temperature(n)
-
-    def _sample_rainfall(self, cx: int, cy: int) -> float:
-        """采样降雨噪声 → 年降雨量 (mm)。
-
-        Args:
-            cx, cy: 分块坐标。
-
-        Returns:
-            年降雨量 (mm)。
-        """
-        p = self._phase[2]
-        n = self._noise_rainfall.octave(cx + p, cy + p, octaves=4, frequency=_FREQ_RAINFALL)
-        return rainfall_from_noise(n)
-
     def _sample_derived_noise(
         self, noise: PerlinNoise, cx: int, cy: int, phase_idx: int
     ) -> float:
@@ -241,18 +202,14 @@ class WorldGenerator:
         # 1. 海拔（第一性）
         altitude = self._sample_altitude_at_chunk(cx, cy)
 
-        # 2. 纬度 → 海平面温度
-        sea_temp = self._sample_latitude_temp(cx, cy)
+        # 2. 气候 — 从大陆校准后 C 模型获取（纬度梯度+大陆度+雨影）
+        temperature, rainfall, sea_temp, zone = (
+            self._continent.get_chunk_climate(cx, cy)
+        )
+        from .climate import ClimateZone as _CZ
+        climate = _CZ(zone)
 
-        # 3. 降雨
-        rainfall = self._sample_rainfall(cx, cy)
-
-        # 4. 温度 + 降雨 → 气候档位（纯静态判定）
-        from .climate import apply_lapse_rate
-        temperature = apply_lapse_rate(sea_temp, altitude)
-        climate = classify(temperature, rainfall, altitude)
-
-        # 5. 群系 — 从连续属性 + moisture 噪声映射（档内细分，边界自然渐变）
+        # 3. 群系 — 从连续属性 + moisture 噪声映射（档内细分，边界自然渐变）
         moisture = self._sample_derived_noise(self._noise_moisture, cx, cy, 6)
         biome = biome_from_attrs(
             temperature, rainfall, altitude, sea_temp,
@@ -338,10 +295,9 @@ class WorldGenerator:
             群系类型。
         """
         altitude = self._sample_altitude_at_chunk(cx, cy)
-        sea_temp = self._sample_latitude_temp(cx, cy)
-        rainfall = self._sample_rainfall(cx, cy)
-        from .climate import apply_lapse_rate
-        temperature = apply_lapse_rate(sea_temp, altitude)
+        temperature, rainfall, sea_temp, _zone = (
+            self._continent.get_chunk_climate(cx, cy)
+        )
         moisture = self._sample_derived_noise(self._noise_moisture, cx, cy, 6)
         return biome_from_attrs(
             temperature, rainfall, altitude, sea_temp,
@@ -358,9 +314,5 @@ class WorldGenerator:
         Returns:
             气候档位。
         """
-        altitude = self._sample_altitude_at_chunk(cx, cy)
-        sea_temp = self._sample_latitude_temp(cx, cy)
-        rainfall = self._sample_rainfall(cx, cy)
-        from .climate import apply_lapse_rate
-        temperature = apply_lapse_rate(sea_temp, altitude)
-        return classify(temperature, rainfall, altitude)
+        _, _, _, zone = self._continent.get_chunk_climate(cx, cy)
+        return ClimateZone(zone)

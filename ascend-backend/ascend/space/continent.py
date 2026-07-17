@@ -1,12 +1,11 @@
 """大陆生成模块 — 层1 全局低分辨率大陆生成。
 
-在世界创建时调用一次，生成低分辨率（100m/采样点）宏观场：
+在世界创建时调用一次，生成 100m/采样点 的宏观场：
    - 海拔场（两层 Perlin：低频大陆轮廓 + 高频地形细节）
-   - 温度场（纬度渐变 + 海拔降温）
-   - 降雨场（噪声 + 雨影效应）
-   - 气候带（热/温/寒/干）
+   - 温雨气候（C 端物理模型：纬度梯度 + 大陆度 + 雨影，校准后以 chunk 级 dict 存储）
    - 河流宽度场
    - 内陆湖泊
+   - 水文数据（D8 流向、水流累积、湖盆、流线河网）
 
 结果保存在 ContinentData 中，所有 chunk 和 tile 生成共享此数据。
 
@@ -25,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Union
 
 from .noise import PerlinNoise
+from .climate import LAPSE_RATE
 
 
 @dataclass
@@ -53,19 +53,21 @@ class ContinentParams:
 
 @dataclass
 class ContinentData:
-    """层1生成结果 — 宏观场数据，不可变。
+    """层1生成结果 — 宏观场数据。
 
     Attributes:
-        grid_width: 网格宽度（采样点数）。
-        grid_height: 网格高度（采样点数）。
-        cell_size: 每个采样点的世界距离 (m)。
-        seed: 生成所用的种子。
+        grid_width: 网格宽度（100m/格）。
+        grid_height: 网格高度（100m/格）。
+        cell_size: 每格对应的世界距离 (m)，默认 100。
+        seed: 生成所用种子。
         land_mask: 行优先布尔数组，True=陆地。
-        elevation_field: 行优先海拔数组 (m)。
-        temperature_field: 年均温基线 (°C)。
-        rainfall_field: 年降雨量基线 (mm)。
-        climate_zone: 气候带编码 (0=热带 1=温带 2=寒带 3=干旱)。
-        river_width: 河流+湖泊宽度场 (m)。
+        elevation_field: 行优先海拔数组 (m)，100m 分辨率。
+        river_width: 河流+湖泊宽度场 (m)，100m 分辨率。
+        hydrology: 水文数据（流向、累积、湖盆、流线河网）。
+        subdiv_ranges: 群系细分值域 {ClimateZone: (P10, P90)}。
+        _chunk_climate: chunk 级气候缓存，由 generate() 末尾填充。
+            通过 get_chunk_climate(cx, cy) 查询，返回
+            (mean_temp, annual_rainfall, sea_level_temp, zone_int)。
     """
 
     grid_width: int
@@ -74,15 +76,30 @@ class ContinentData:
     seed: int
 
     land_mask: list[bool] = field(default_factory=list)
-    elevation_field: Union[list[float], "array[float]"] = field(default_factory=lambda: array('d'))
-    temperature_field: Union[list[float], "array[float]"] = field(default_factory=lambda: array('d'))
-    rainfall_field: Union[list[float], "array[float]"] = field(default_factory=lambda: array('d'))
-    climate_zone: list[int] = field(default_factory=list)
-    river_width: Union[list[float], "array[float]"] = field(default_factory=lambda: array('d'))
+    elevation_field: Union[list[float], "array[float]"] = field(
+        default_factory=lambda: array('d')
+    )
+    river_width: Union[list[float], "array[float]"] = field(
+        default_factory=lambda: array('d')
+    )
     hydrology: "HydrologyData | None" = None
-    # 群系细分动态值域: {ClimateZone int: (P10, P90)}
-    # 由 generate() 末尾计算，供 biome_membership 使用，保证档内子型均衡
     subdiv_ranges: dict[int, tuple[float, float]] = field(default_factory=dict)
+    # chunk 级气候: {(cx, cy): (mean_temp, annual_rainfall, sea_level_temp, climate_zone_int)}
+    _chunk_climate: dict = field(default_factory=dict, repr=False)
+
+    def get_chunk_climate(
+        self, cx: int, cy: int,
+    ) -> tuple[float, float, float, int]:
+        """查询 chunk 中心的校准后气候属性。
+
+        Returns:
+            (mean_temp, annual_rainfall, sea_level_temp, climate_zone)：
+            越界返回默认海洋气候 (-20, 0, -20, 0)。
+        """
+        key = (cx, cy)
+        if key in self._chunk_climate:
+            return self._chunk_climate[key]
+        return -20.0, 0.0, -20.0, 0
 
     def __repr__(self) -> str:
         land = sum(1 for v in self.land_mask if v)
@@ -303,18 +320,28 @@ class ContinentGenerator:
             elevation, temp_field, rain_field, land_mask, climate_field, w, h,
         )
 
+        # Step 8: 提取 chunk 级气候缓存（校准后值，供 tile_gen 等模块使用）
+        chunk_climate: dict = {}
+        for cy in range(h // 2):
+            for cx in range(w // 2):
+                idx = (cy * 2 + 1) * w + (cx * 2 + 1)
+                alt = elevation[idx]
+                temp = temp_field[idx]
+                rain = rain_field[idx]
+                zone = climate_field[idx]
+                sea_temp = temp + alt * LAPSE_RATE / 1000.0
+                chunk_climate[(cx, cy)] = (temp, rain, sea_temp, zone)
+
         return ContinentData(
             grid_width=w, grid_height=h,
             cell_size=self._params.sample_resolution,
             seed=self._seed,
             land_mask=land_mask,
             elevation_field=array('d', elevation),
-            temperature_field=array('d', temp_field),
-            rainfall_field=array('d', rain_field),
-            climate_zone=climate_field,
             river_width=array('d', river_width),
             hydrology=hydrology,
             subdiv_ranges=subdiv_ranges,
+            _chunk_climate=chunk_climate,
         )
 
     # ── 气候覆盖校准 ──────────────────────────────────────
