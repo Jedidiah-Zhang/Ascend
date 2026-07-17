@@ -2,11 +2,16 @@
 
 从 GameConsole 提取的核心指令逻辑，封装为无 UI 依赖的纯执行器。
 指令路由采用 dict 映射（O(1) 查找）。
+
+指令结构（Issue #2）:
+    status                                  运行状态（时间 + 世界树统计）
+    time [speed|pause|resume|jump|tick]     时间控制组
+    weather [status|set]                    天气查询与强制控制组
+    lang / events / map / help / quit       独立指令
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Optional
 
 from ascend.world_tree import world_tree
 from ascend.log import get_logger
@@ -39,15 +44,15 @@ class CommandExecutor:
 
     Usage:
         executor = CommandExecutor(clock, calendar, I18n())
-        result = executor.execute("st")
+        result = executor.execute("status")
         print(result.output)
     """
 
     # 退出指令集（集合查找 O(1)）
     _QUIT_CMDS: frozenset = frozenset({"q", "quit", "exit"})
 
-    # 用于 mode 指令的快速验证集
-    _VALID_MODES: frozenset = frozenset({"realtime", "fast", "paused"})
+    # weather set 的合法状态词
+    _ON_OFF: frozenset = frozenset({"on", "off"})
 
     def __init__(
         self,
@@ -55,6 +60,9 @@ class CommandExecutor:
         calendar: GameCalendar,
         i18n: I18n,
         world_gen=None,
+        weather_engine=None,
+        default_chunk: tuple[int, int] | None = None,
+        player_service=None,
     ) -> None:
         """初始化指令执行器。
 
@@ -63,35 +71,37 @@ class CommandExecutor:
             calendar: 游戏日历实例。
             i18n: 国际化实例。
             world_gen: 可选的 WorldGenerator 实例，用于 map 指令。
+            weather_engine: 可选的 WeatherEngine 实例，用于 weather 指令。
+            default_chunk: weather 指令省略坐标时的默认 chunk（通常为出生点）。
+            player_service: 可选的 PlayerService 实例，用于 tp 指令。
         """
         self._clock = clock
         self._calendar = calendar
         self._i18n = i18n
         self._world_gen = world_gen
+        self._weather = weather_engine
+        self._default_chunk = default_chunk or (0, 0)
+        self._player = player_service
         self._active_real_time: float = 0.0
 
         # 指令路由表：{cmd_name: handler_func(args) -> CommandResult}
         # 可被外部扩展（mod 注入）
         self._handlers: dict[str, Callable[[list[str]], CommandResult]] = {
-            "st":      lambda a: CommandResult(success=True, output=self._cmd_status()),
             "status":  lambda a: CommandResult(success=True, output=self._cmd_status()),
-            "pa":      lambda a: CommandResult(success=True, output=self._cmd_pause()),
-            "pause":   lambda a: CommandResult(success=True, output=self._cmd_pause()),
-            "re":      lambda a: CommandResult(success=True, output=self._cmd_resume()),
-            "resume":  lambda a: CommandResult(success=True, output=self._cmd_resume()),
-            "tick":    self._h_tick,
-            "sleep":   lambda a: CommandResult(success=True, output=self._cmd_sleep(float(a[0]) if a else 8.0)),
-            "travel":  lambda a: CommandResult(success=True, output=self._cmd_travel(float(a[0]) if a else 1.0)),
-            "jump":    lambda a: CommandResult(success=True, output=self._cmd_jump(int(a[0]) if a else 1)),
-            "mode":    self._h_mode,
+            "time":    self._h_time,
+            "weather": self._h_weather,
+            "tp":      self._h_tp,
             "lang":    self._h_lang,
-            "events":  lambda a: CommandResult(success=True, output=self._cmd_events(int(a[0]) if a else 10)),
-            "rp":      lambda a: CommandResult(success=True, output=self._cmd_report()),
-            "report":  lambda a: CommandResult(success=True, output=self._cmd_report()),
+            "events":  self._h_events,
             "map":     lambda a: CommandResult(success=True, output=self._cmd_map(list(a))),
             "?":       lambda a: CommandResult(success=True, output=self._cmd_help()),
             "help":    lambda a: CommandResult(success=True, output=self._cmd_help()),
         }
+
+    @property
+    def paused(self) -> bool:
+        """游戏时间是否暂停（透传时钟状态）。"""
+        return self._clock.paused
 
     def add_active_time(self, dt: float) -> None:
         """累加活跃时间（由 GameEngine 每 tick 调用）。
@@ -131,7 +141,7 @@ class CommandExecutor:
         quit 指令由 frozenset 快速匹配。
 
         Args:
-            command: 原始指令字符串（如 "tick 5", "st", "lang en_US"）。
+            command: 原始指令字符串（如 "time tick 5", "status", "lang en_US"）。
 
         Returns:
             指令执行结果。
@@ -159,106 +169,135 @@ class CommandExecutor:
             output=self._i18n.t("console.unknown_cmd", cmd=cmd),
         )
 
-    # ── 指令处理程序（参数验证 + 结果包装）───────────────
+    # ── 参数解析辅助 ────────────────────────────────────
 
-    def _h_tick(self, args: list[str]) -> CommandResult:
-        """处理 tick 指令，验证参数为整数。
+    @staticmethod
+    def _parse_int(args: list[str], idx: int, default: int) -> int | None:
+        """解析 args[idx] 为 int，缺省返回 default，非法返回 None。
 
         Args:
-            args: 参数列表，第一个参数为 tick 次数。
+            args: 参数列表。
+            idx: 目标索引。
+            default: 参数缺省时的默认值。
+
+        Returns:
+            解析结果，非法输入返回 None。
+        """
+        if idx >= len(args):
+            return default
+        try:
+            return int(args[idx])
+        except ValueError:
+            return None
+
+    def _parse_chunk(self, args: list[str]) -> tuple[int, int] | None:
+        """从参数列表解析 chunk 坐标，缺省用 default_chunk。
+
+        Args:
+            args: 坐标参数（空 或 [cx, cy]）。
+
+        Returns:
+            (cx, cy)，参数个数错误或非整数时返回 None。
+        """
+        if not args:
+            return self._default_chunk
+        if len(args) != 2:
+            return None
+        try:
+            return (int(args[0]), int(args[1]))
+        except ValueError:
+            return None
+
+    # ── time 指令组 ─────────────────────────────────────
+
+    def _h_time(self, args: list[str]) -> CommandResult:
+        """处理 time 指令组：无参查看状态，子指令控制时间。
+
+        Args:
+            args: 参数列表，args[0] 为子指令（speed/pause/resume/jump/tick）。
 
         Returns:
             执行结果。
         """
-        if args:
-            try:
-                count = int(args[0])
-            except ValueError:
+        if not args:
+            return CommandResult(success=True, output=self._cmd_time_status())
+
+        sub = args[0].lower()
+        rest = args[1:]
+        if sub == "speed":
+            return self._h_time_speed(rest)
+        if sub == "pause":
+            return CommandResult(success=True, output=self._cmd_pause())
+        if sub == "resume":
+            return CommandResult(success=True, output=self._cmd_resume())
+        if sub == "jump":
+            days = self._parse_int(rest, 0, 1)
+            if days is None or days < 1:
                 return CommandResult(
                     success=False,
-                    output=self._i18n.t("console.unknown_cmd", cmd="tick " + args[0]),
+                    output=self._i18n.t("console.invalid_number",
+                                        value=rest[0] if rest else ""),
                 )
-        else:
-            count = 1
-        return CommandResult(success=True, output=self._cmd_tick(count))
+            return CommandResult(success=True, output=self._cmd_jump(days))
+        if sub == "tick":
+            count = self._parse_int(rest, 0, 1)
+            if count is None or count < 1:
+                return CommandResult(
+                    success=False,
+                    output=self._i18n.t("console.invalid_number",
+                                        value=rest[0] if rest else ""),
+                )
+            return CommandResult(success=True, output=self._cmd_tick(count))
+        return CommandResult(
+            success=False, output=self._i18n.t("console.time_usage"),
+        )
 
-    def _h_mode(self, args: list[str]) -> CommandResult:
-        """处理 mode 指令，验证模式名称。
+    def _h_time_speed(self, args: list[str]) -> CommandResult:
+        """处理 time speed <n>：设置时间流速（0=暂停）。
 
         Args:
-            args: 参数列表，第一个参数为模式名称。
+            args: 参数列表，args[0] 为流速数值。
 
         Returns:
             执行结果。
         """
-        mode_name = args[0] if args else None
-        output = self._cmd_mode(mode_name)
-        # 验证失败时返回 success=False
-        if mode_name is not None and mode_name.lower() not in self._VALID_MODES:
-            return CommandResult(success=False, output=output)
-        return CommandResult(success=True, output=output)
-
-    def _h_lang(self, args: list[str]) -> CommandResult:
-        """处理 lang 指令，验证语言代码。
-
-        Args:
-            args: 参数列表，第一个参数为语言代码。
-
-        Returns:
-            执行结果。
-        """
-        lang_code = args[0] if args else None
-        output = self._cmd_lang(lang_code)
-        # 验证失败时返回 success=False
-        if lang_code is not None and lang_code not in self._i18n.available_langs():
-            return CommandResult(success=False, output=output)
-        return CommandResult(success=True, output=output)
-
-    # ── 内部实现 ────────────────────────────────────────
-
-    def _speed_label(self) -> str:
-        """获取当前速度标签。
-
-        Returns:
-            格式化的速度文本。
-        """
+        if not args:
+            return CommandResult(
+                success=False, output=self._i18n.t("console.time_usage"),
+            )
+        try:
+            speed = float(args[0])
+        except ValueError:
+            speed = -1.0
+        if speed < 0:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t("console.speed_invalid", value=args[0]),
+            )
+        if speed == 0:
+            return CommandResult(success=True, output=self._cmd_pause())
         if self._clock.paused:
-            return self._i18n.t("mode.paused")
-        s = self._clock.speed
-        if s == 1.0:
-            return self._i18n.t("mode.realtime")
-        return f"×{s:.1f}"
+            self._clock.resume()
+        self._clock.speed = speed
+        return CommandResult(
+            success=True,
+            output=self._i18n.t("console.speed_set", speed=f"{speed:g}"),
+        )
 
-    def _fmt_active_time(self) -> str:
-        """格式化活跃时间为 'Xh Ym Zs'。
-
-        Returns:
-            格式化后的活跃时间字符串。
-        """
-        total_sec = int(self._active_real_time)
-        h = total_sec // 3600
-        m = (total_sec % 3600) // 60
-        s = total_sec % 60
-        return f"{h}h {m:02d}m {s:02d}s"
-
-    def _cmd_status(self) -> str:
-        """生成状态文本。
+    def _cmd_time_status(self) -> str:
+        """生成时间状态文本。
 
         Returns:
-            包含时间、日、模式、状态的字符串。
+            包含日、时间、速度、状态的字符串。
         """
-        t = self._clock.time
         day = self._calendar.day
-        tod = self._calendar.time_of_day(t)
-        hour = int(tod / GAME_HOUR)
-        minute = int((tod % GAME_HOUR) / GAME_MINUTE)
-        second = int((tod % GAME_MINUTE) * 60 / GAME_MINUTE)
-        state = self._i18n.t("console.state_paused" if self._clock.paused else "console.state_running")
+        state = self._i18n.t(
+            "console.state_paused" if self._clock.paused else "console.state_running"
+        )
         return self._i18n.t(
-            "console.status",
-            active=self._fmt_active_time(),
+            "console.time_status",
             day=day,
-            time=f"{hour:02d}:{minute:02d}:{second:02d}",
+            time=self._fmt_time_of_day(),
             mode=self._speed_label(),
             state=state,
         )
@@ -298,50 +337,6 @@ class CommandExecutor:
             self._clock.step()
         return self._i18n.t("console.ticked", count=count, time=f"{self._clock.time:,}")
 
-    def _cmd_sleep(self, hours: float = 8.0) -> str:
-        """睡眠指定小时数，以高速模拟中间过程。
-
-        Args:
-            hours: 睡眠小时数。
-
-        Returns:
-            睡眠后状态文本。
-        """
-        return self._fast_forward(hours, "console.slept")
-
-    def _cmd_travel(self, hours: float = 1.0) -> str:
-        """快速旅行指定小时数。
-
-        Args:
-            hours: 旅行小时数。
-
-        Returns:
-             旅行后状态文本。
-        """
-        return self._fast_forward(hours, "console.traveled")
-
-    def _fast_forward(self, hours: float, i18n_key: str) -> str:
-        """以高速模拟推进指定小时数，完成后恢复原速度。
-
-        Args:
-            hours: 推进小时数。
-            i18n_key: 结果 i18n 翻译键。
-
-        Returns:
-            推进后状态文本。
-        """
-        old_speed = self._clock.speed
-        self._clock.speed = 120
-        target = int(self._clock.time + hours * GAME_HOUR)
-        self._clock.run_to(target)
-        self._clock.speed = old_speed
-
-        day = self._calendar.day
-        tod = self._calendar.time_of_day(self._clock.time)
-        h = int(tod / GAME_HOUR)
-        m = int((tod % GAME_HOUR) / GAME_MINUTE)
-        return self._i18n.t(i18n_key, hours=hours, day=day, time=f"{h:02d}:{m:02d}")
-
     def _cmd_jump(self, days: int = 1) -> str:
         """跳过 N 天，落地到目标日 06:00。
 
@@ -357,60 +352,314 @@ class CommandExecutor:
         self._clock.skip(skipped)
         return self._i18n.t("console.jumped", days=days, day=self._calendar.day)
 
-    def _cmd_mode(self, mode_name: str | None = None) -> str:
-        """查看或设置时间速度。
+    # ── weather 指令组 ──────────────────────────────────
+
+    def _h_weather(self, args: list[str]) -> CommandResult:
+        """处理 weather 指令组：status 查询 / set 强制控制。
 
         Args:
-            mode_name: 速度预设或数值，None 则查看当前。
+            args: 参数列表。
 
         Returns:
-            速度信息或设置确认文本。
+            执行结果。
         """
-        mode_map = {
-            "realtime": 1.0,
-            "fast": 120.0,
-            "paused": 0.0,
-        }
-        if mode_name is None:
-            current = self._i18n.t(
-                "console.mode_current",
-                desc=self._speed_label(),
+        if self._weather is None:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t("console.weather_unavailable"),
             )
-            available = self._i18n.t(
-                "console.mode_available",
-                modes=", ".join(mode_map.keys()),
+        if not args or args[0].lower() == "status":
+            return self._h_weather_status(args[1:] if args else [])
+        if args[0].lower() == "set":
+            return self._h_weather_set(args[1:])
+        return CommandResult(
+            success=False, output=self._i18n.t("console.weather_usage"),
+        )
+
+    def _h_weather_status(self, args: list[str]) -> CommandResult:
+        """处理 weather status [cx cy]：查询指定位置当前天气。
+
+        Args:
+            args: 坐标参数（空 或 [cx, cy]）。
+
+        Returns:
+            执行结果。
+        """
+        coord = self._parse_chunk(args)
+        if coord is None:
+            return CommandResult(
+                success=False, output=self._i18n.t("console.weather_usage"),
             )
-            return current + "\n" + available
+        cx, cy = coord
+        report = self._weather.get_weather_report(cx, cy)
+        if report is None:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t(
+                    "console.weather_chunk_unregistered", cx=cx, cy=cy,
+                ),
+            )
+        wp, sunrise_h, sunset_h, _, intensity = report
 
-        mode_name_lower = mode_name.lower()
-        if mode_name_lower in mode_map:
-            speed = mode_map[mode_name_lower]
-            if speed == 0:
-                self._clock.pause()
-            else:
-                if self._clock.paused:
-                    self._clock.resume()
-                self._clock.speed = speed
-            return self._i18n.t("console.mode_set", mode=mode_name_lower)
+        from ascend.weather.weather_engine import (
+            classify_temperature, classify_humidity, classify_wind,
+            classify_sunshine, classify_sunlight_intensity,
+        )
+        t = self._i18n.t
+        temp = round(wp.temperature, 1)
+        hum = round(wp.humidity, 1)
+        wind = round(wp.wind_speed, 1)
+        sun = round(wp.sunshine, 1)
+        light = round(intensity, 2)
+        if wp.rainfall > 0:
+            precip_key = "weather.snow" if temp <= 0 else "weather.rain"
+            precip = t("weather.intensity", type=t(precip_key),
+                       intensity=f"{wp.rainfall:.1f}")
+        else:
+            precip = t("weather.clear")
+        lines = [
+            t("console.weather_header", cx=cx, cy=cy),
+            f"  {t('console.weather_temp')}: {temp}°C"
+            f" ({t('perception.temp.' + classify_temperature(temp))})",
+            f"  {t('console.weather_hum')}: {hum}%"
+            f" ({t('perception.hum.' + classify_humidity(hum))})",
+            f"  {t('console.weather_wind')}: {wind} m/s"
+            f" ({t('perception.wind.' + classify_wind(wind))})",
+            f"  {t('console.weather_sun')}: {sun}h"
+            f" ({t('perception.sun.' + classify_sunshine(sun))})"
+            f"  |  {t('console.weather_light')}: {light}"
+            f" ({t('perception.light.' + classify_sunlight_intensity(light))})",
+            f"  {t('console.weather_precip')}: {precip}",
+            f"  {t('console.weather_sun_times', sunrise=self._fmt_hour(sunrise_h), sunset=self._fmt_hour(sunset_h))}",
+        ]
+        return CommandResult(success=True, output="\n".join(lines))
 
+    def _h_weather_set(self, args: list[str]) -> CommandResult:
+        """处理 weather set <rain|modifier> <on|off> [cx cy]。
+
+        Args:
+            args: [target, state, cx?, cy?]。
+
+        Returns:
+            执行结果。
+        """
+        from ascend.weather.weather_modifier import WEATHER_MODIFIERS
+
+        if len(args) < 2:
+            return CommandResult(
+                success=False, output=self._i18n.t("console.weather_usage"),
+            )
+        target = args[0].lower()
+        state = args[1].lower()
+        valid_targets = ["rain"] + list(WEATHER_MODIFIERS.keys())
+        if target not in valid_targets:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t(
+                    "console.weather_target_unknown",
+                    name=target, targets=", ".join(valid_targets),
+                ),
+            )
+        if state not in self._ON_OFF:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t("console.weather_state_invalid"),
+            )
+        coord = self._parse_chunk(args[2:])
+        if coord is None:
+            return CommandResult(
+                success=False, output=self._i18n.t("console.weather_usage"),
+            )
+        cx, cy = coord
+        active = state == "on"
+
+        if target == "rain":
+            changed = self._weather.set_rain(cx, cy, active)
+        else:
+            changed = self._weather.set_modifier(cx, cy, target, active)
+
+        if changed is None:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t(
+                    "console.weather_chunk_unregistered", cx=cx, cy=cy,
+                ),
+            )
+        if not changed:
+            return CommandResult(
+                success=True,
+                output=self._i18n.t(
+                    "console.weather_set_noop", target=target, cx=cx, cy=cy,
+                ),
+            )
+        key = "console.weather_set_on" if active else "console.weather_set_off"
+        return CommandResult(
+            success=True,
+            output=self._i18n.t(key, target=target, cx=cx, cy=cy),
+        )
+
+    # ── tp 指令 ─────────────────────────────────────────
+
+    def _h_tp(self, args: list[str]) -> CommandResult:
+        """处理 tp [x y]：传送玩家（权威实体在后端）。
+
+        无参数回出生点。传送通过 player_teleported 事件推送前端吸附。
+
+        Args:
+            args: 参数列表（空 或 [x, y]）。
+
+        Returns:
+            执行结果。
+        """
+        if self._player is None:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t("console.player_unavailable"),
+            )
+        if not args:
+            x, y = self._player.teleport_home()
+            return CommandResult(
+                success=True,
+                output=self._i18n.t("console.tp_home", x=f"{x:.0f}", y=f"{y:.0f}"),
+            )
+        if len(args) != 2:
+            return CommandResult(
+                success=False, output=self._i18n.t("console.tp_usage"),
+            )
         try:
-            speed = float(mode_name)
-            if speed < 0:
-                return self._i18n.t("console.mode_unknown",
-                    name=mode_name, modes=", ".join(mode_map.keys()))
-            if speed == 0:
-                self._clock.pause()
-            else:
-                if self._clock.paused:
-                    self._clock.resume()
-                self._clock.speed = speed
-            return self._i18n.t("console.mode_set", mode=f"×{speed}")
+            x = float(args[0])
+            y = float(args[1])
         except ValueError:
-            return self._i18n.t(
-                "console.mode_unknown",
-                name=mode_name,
-                modes=", ".join(mode_map.keys()),
+            return CommandResult(
+                success=False, output=self._i18n.t("console.tp_usage"),
             )
+        x, y = self._player.teleport(x, y)
+        return CommandResult(
+            success=True,
+            output=self._i18n.t("console.tp_done", x=f"{x:.0f}", y=f"{y:.0f}"),
+        )
+
+    # ── 其余指令处理程序 ────────────────────────────────
+
+    def _h_lang(self, args: list[str]) -> CommandResult:
+        """处理 lang 指令，验证语言代码。
+
+        Args:
+            args: 参数列表，第一个参数为语言代码。
+
+        Returns:
+            执行结果。
+        """
+        lang_code = args[0] if args else None
+        output = self._cmd_lang(lang_code)
+        # 验证失败时返回 success=False
+        if lang_code is not None and lang_code not in self._i18n.available_langs():
+            return CommandResult(success=False, output=output)
+        return CommandResult(success=True, output=output)
+
+    def _h_events(self, args: list[str]) -> CommandResult:
+        """处理 events 指令，验证条数参数。
+
+        Args:
+            args: 参数列表，第一个参数为条数。
+
+        Returns:
+            执行结果。
+        """
+        count = self._parse_int(args, 0, 10)
+        if count is None or count < 1:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t("console.invalid_number",
+                                    value=args[0] if args else ""),
+            )
+        return CommandResult(success=True, output=self._cmd_events(count))
+
+    # ── 内部实现 ────────────────────────────────────────
+
+    def _speed_label(self) -> str:
+        """获取当前速度标签。
+
+        Returns:
+            格式化的速度文本。
+        """
+        if self._clock.paused:
+            return self._i18n.t("mode.paused")
+        s = self._clock.speed
+        if s == 1.0:
+            return self._i18n.t("mode.realtime")
+        return f"×{s:.1f}"
+
+    def _fmt_active_time(self) -> str:
+        """格式化活跃时间为 'Xh Ym Zs'。
+
+        Returns:
+            格式化后的活跃时间字符串。
+        """
+        total_sec = int(self._active_real_time)
+        h = total_sec // 3600
+        m = (total_sec % 3600) // 60
+        s = total_sec % 60
+        return f"{h}h {m:02d}m {s:02d}s"
+
+    def _fmt_time_of_day(self) -> str:
+        """格式化当前时刻为 HH:MM:SS。
+
+        Returns:
+            格式化后的当日时间字符串。
+        """
+        tod = self._calendar.time_of_day(self._clock.time)
+        hour = int(tod / GAME_HOUR)
+        minute = int((tod % GAME_HOUR) / GAME_MINUTE)
+        second = int((tod % GAME_MINUTE) * 60 / GAME_MINUTE)
+        return f"{hour:02d}:{minute:02d}:{second:02d}"
+
+    @staticmethod
+    def _fmt_hour(hour_float: float) -> str:
+        """小数小时 → HH:MM 文本。
+
+        Args:
+            hour_float: 小时数（如 6.2）。
+
+        Returns:
+            格式化后的字符串（如 "06:12"）。
+        """
+        h = int(hour_float)
+        m = int((hour_float - h) * 60)
+        return f"{h:02d}:{m:02d}"
+
+    def _cmd_status(self) -> str:
+        """生成运行状态报告（合并原 st + report）。
+
+        Returns:
+            首行时间概览 + 世界树统计的多行文本。
+        """
+        state = self._i18n.t(
+            "console.state_paused" if self._clock.paused else "console.state_running"
+        )
+        stats = world_tree.stats
+        lines = [
+            self._i18n.t(
+                "console.status",
+                active=self._fmt_active_time(),
+                day=self._calendar.day,
+                time=self._fmt_time_of_day(),
+                mode=self._speed_label(),
+                state=state,
+            ),
+            f"  {self._i18n.t('console.report_game_time')}:    {self._clock.time:,}t",
+            f"  {self._i18n.t('console.report_elapsed')}:    {self._calendar.elapsed_days}",
+            f"  {self._i18n.t('console.report_day_changes')}:    {self._calendar.day_change_count}",
+            f"  {self._i18n.t('console.report_ticks')}:   {self._clock.tick_count:,}",
+            f"  {self._i18n.t('console.report_events')}:    {world_tree.event_count:,}",
+            f"  ---",
+            f"  publish:     {stats['publish_count']:,}",
+            f"  trim:        {stats['trim_count']} (cycle={stats['trim_cycle']})",
+            f"  subscribers: {stats['subscriber_count']}",
+            f"  graph nodes: {stats['graph_nodes']}",
+            f"  archive:     {stats['archive_event_count']:,}",
+        ]
+        return "\n".join(lines)
 
     def _cmd_lang(self, lang_code: str | None = None) -> str:
         """查看或切换语言。
@@ -475,31 +724,6 @@ class CommandExecutor:
 
         return "\n".join(lines)
 
-    def _cmd_report(self) -> str:
-        """生成运行报告。
-
-        Returns:
-            包含各项统计的运行报告文本。
-        """
-        stats = world_tree.stats
-        lines = [
-            f"  {self._i18n.t('console.report_active')}:    {self._fmt_active_time()}",
-            f"  {self._i18n.t('console.report_game_time')}:    {self._clock.time:,}t",
-            f"  {self._i18n.t('console.report_day')}:       {self._calendar.day}",
-            f"  {self._i18n.t('console.report_elapsed')}:    {self._calendar.elapsed_days}",
-            f"  {self._i18n.t('console.report_day_changes')}:    {self._calendar.day_change_count}",
-            f"  {self._i18n.t('console.report_mode')}:    {self._speed_label()}",
-            f"  {self._i18n.t('console.report_ticks')}:   {self._clock.tick_count:,}",
-            f"  {self._i18n.t('console.report_events')}:    {world_tree.event_count:,}",
-            f"  ---",
-            f"  publish:     {stats['publish_count']:,}",
-            f"  trim:        {stats['trim_count']} (cycle={stats['trim_cycle']})",
-            f"  subscribers: {stats['subscriber_count']}",
-            f"  graph nodes: {stats['graph_nodes']}",
-            f"  archive:     {stats['archive_event_count']:,}",
-        ]
-        return "\n".join(lines)
-
     def _cmd_map(self, args: list[str]) -> str:
         """显示世界地图（ASCII 渲染）。
 
@@ -556,19 +780,22 @@ class CommandExecutor:
         Returns:
             包含所有指令说明的帮助文本。
         """
+        t = self._i18n.t
         lines = [
-            f"  st, status        {self._i18n.t('console.help_status')}",
-            f"  pa, pause         {self._i18n.t('console.help_pause')}",
-            f"  re, resume        {self._i18n.t('console.help_resume')}",
-            f"  tick [n]          {self._i18n.t('console.help_tick')}",
-            f"  sleep [n]         {self._i18n.t('console.help_sleep')}",
-            f"  travel [n]        {self._i18n.t('console.help_travel')}",
-            f"  jump [n]          {self._i18n.t('console.help_jump')}",
-            f"  mode [name]       {self._i18n.t('console.help_mode')}",
-            f"  lang [code]       {self._i18n.t('console.help_lang')}",
-            f"  events [n]        {self._i18n.t('console.help_events')}",
-            f"  rp, report        {self._i18n.t('console.help_report')}",
-            f"  ?, help           {self._i18n.t('console.help_help')}",
-            f"  q, quit, exit     {self._i18n.t('console.help_quit')}",
+            f"  status                                   {t('console.help_status')}",
+            f"  time                                     {t('console.help_time')}",
+            f"  time speed <n>                           {t('console.help_time_speed')}",
+            f"  time pause | resume                      {t('console.help_time_pause')}",
+            f"  time jump [d]                            {t('console.help_time_jump')}",
+            f"  time tick [n]                            {t('console.help_time_tick')}",
+            f"  weather status [cx cy]                   {t('console.help_weather_status')}",
+            f"  weather set rain <on|off> [cx cy]        {t('console.help_weather_rain')}",
+            f"  weather set <mod> <on|off> [cx cy]       {t('console.help_weather_modifier')}",
+            f"  tp [x y]                                 {t('console.help_tp')}",
+            f"  lang [code]                              {t('console.help_lang')}",
+            f"  events [n]                               {t('console.help_events')}",
+            f"  map [mode] [radius] [seed]               {t('console.help_map')}",
+            f"  ?, help                                  {t('console.help_help')}",
+            f"  q, quit, exit                            {t('console.help_quit')}",
         ]
         return "\n".join(lines)

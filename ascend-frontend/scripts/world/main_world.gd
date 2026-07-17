@@ -288,13 +288,18 @@ func _update_debug_sections() -> void:
 
 
 func _on_connected(host: String, port: int) -> void:
-	"""连接成功回调。
+	"""连接成功回调：请求权威玩家位置初始化本地状态。
 
 	Args:
 		host: 服务器地址。
 		port: 端口号。
 	"""
 	print("MainWorld: connected to %s:%d" % [host, port])
+	Connection.send({
+		"type": "request",
+		"request_type": "player_state",
+		"payload": {},
+	})
 
 
 func _on_disconnected() -> void:
@@ -331,6 +336,16 @@ func _handle_event(message: Dictionary) -> void:
 
 	var payload: Dictionary = message.get("payload", {})
 	var data: Dictionary = payload.get("data", {})
+
+	# 玩家吸附不依赖调试覆盖层，先于 overlay 检查处理
+	if event_type == "player_teleported":
+		if _map_display:
+			_map_display.teleport_player(Vector2(
+				float(data.get("x", 0.0)), float(data.get("y", 0.0))))
+		_push_log("[%02d:%02d] 传送至 (%.0f, %.0f)" % [
+			payload.get("game_hour", 0), payload.get("game_minute", 0),
+			float(data.get("x", 0.0)), float(data.get("y", 0.0))])
+		return
 
 	if _debug_overlay == null:
 		return
@@ -440,6 +455,11 @@ func _handle_response(message: Dictionary) -> void:
 		"get_chunks":
 			if _map_display:
 				_map_display.handle_chunk_response(payload)
+		"player_state":
+			if _map_display:
+				_map_display.handle_player_state(payload)
+		"player_move":
+			pass  # 壳子阶段权威=上报值，无需纠正；后端加校验后在此吸附
 		"get_weather":
 			if _debug_overlay == null:
 				return

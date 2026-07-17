@@ -309,6 +309,7 @@ class WeatherEngine:
         self._wt = world_tree_arg if world_tree_arg is not None else _default_wt
         self._atmosphere = AtmosphereField(seed=seed)
         self._fields: dict[tuple[int, int], WeatherField] = {}
+        self._climates: dict[tuple[int, int], ClimateZone] = {}
         self._rain_schedules: dict[tuple[int, int], RainSchedule] = {}
         self._modifier_schedules: dict[tuple[int, int, str], ModifierSchedule] = {}
         self._last_season: int | None = None
@@ -369,6 +370,7 @@ class WeatherEngine:
             tile_map_size=TILE_MAP_SIZE,
             atmos_resolution=ATMOSPHERE_RESOLUTION,
         )
+        self._climates[key] = climate
         # 降雨调度（chunk 坐标派生 rng 种子，保证确定性）
         mean_intensity, mean_duration_h, ramp_up, ramp_down = _RAIN_PROFILE.get(
             climate, (5.0, 2.0, 0.2, 0.2),
@@ -400,6 +402,7 @@ class WeatherEngine:
         """
         key = (cx, cy)
         self._fields.pop(key, None)
+        self._climates.pop(key, None)
         self._rain_schedules.pop(key, None)
         for mk in list(self._modifier_schedules.keys()):
             if mk[:2] == (cx, cy):
@@ -625,6 +628,84 @@ class WeatherEngine:
             field, ctx["hour"], sr, ss, rainfall,
             ctx["drift_x"], ctx["drift_y"])
         return (sr, ss, ss - sr, intensity)
+
+    # ── 公开：调试控制 API ──────────────────────────────────────
+
+    def set_rain(self, cx: int, cy: int, active: bool) -> bool | None:
+        """强制开启/关闭指定 chunk 的降雨（终端调试指令用）。
+
+        开启时以均值强度插入立即生效的降雨事件，关闭时截断当前事件。
+        precipitation_start/stop 事件由下一次 minute_change 自动发布。
+
+        Args:
+            cx: chunk X 坐标。
+            cy: chunk Y 坐标。
+            active: True=开始下雨，False=停止下雨。
+
+        Returns:
+            True=状态已切换；False=已处于目标状态（no-op）；
+            None=chunk 未注册。
+        """
+        rain = self._rain_schedules.get((cx, cy))
+        if rain is None:
+            return None
+        now = self._clock.time
+        changed = rain.force_start(now) if active else rain.force_stop(now)
+        if changed:
+            logger.info(
+                "强制%s降雨: chunk (%d,%d)",
+                "开启" if active else "关闭", cx, cy,
+            )
+        return changed
+
+    def set_modifier(
+        self, cx: int, cy: int, type_name: str, active: bool,
+    ) -> bool | None:
+        """强制开启/关闭指定 chunk 的天气修改器（终端调试指令用）。
+
+        气候带天然不出现该修改器的 chunk（无调度）在开启时动态创建
+        仅承载强制事件的调度（事件率 0，永不自然补算）。
+        {type}_start/stop 事件由下一次 minute_change 自动发布。
+
+        Args:
+            cx: chunk X 坐标。
+            cy: chunk Y 坐标。
+            type_name: 修改器类型（WEATHER_MODIFIERS 的键）。
+            active: True=激活，False=解除。
+
+        Returns:
+            True=状态已切换；False=已处于目标状态（no-op）；
+            None=chunk 未注册。
+
+        Raises:
+            ValueError: type_name 不在 WEATHER_MODIFIERS 注册表中。
+        """
+        if type_name not in WEATHER_MODIFIERS:
+            raise ValueError(f"未知天气修改器类型: {type_name}")
+        chunk_key = (cx, cy)
+        if chunk_key not in self._fields:
+            return None
+        now = self._clock.time
+        key = (cx, cy, type_name)
+        sched = self._modifier_schedules.get(key)
+        if sched is None:
+            if not active:
+                return False
+            config = WEATHER_MODIFIERS[type_name]
+            chunk_seed = (self._seed * 1_000_003 + cx) * 1_000_003 + cy
+            ext_seed = chunk_seed + zlib.crc32(config.type_name.encode()) % 1000
+            sched = ModifierSchedule(
+                random.Random(ext_seed), config, self._climates.get(chunk_key),
+            )
+            sched.seed_current(now)
+            self._modifier_schedules[key] = sched
+        changed = sched.force_start(now) if active else sched.force_stop(now)
+        if changed:
+            logger.info(
+                "强制%s修改器 %s: chunk (%d,%d)",
+                "激活" if active else "解除", type_name, cx, cy,
+            )
+        return changed
 
     # ── 内部：解析算 ────────────────────────────────────────────
 

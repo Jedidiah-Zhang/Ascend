@@ -17,6 +17,9 @@ const UNLOAD_RADIUS: int = Config.UNLOAD_RADIUS
 const MAX_PENDING_TILES: int = Config.MAX_PENDING_TILES
 const PLAYER_SPEED: float = Config.PLAYER_SPEED
 
+## 玩家位置上报间隔（秒），权威实体在后端
+const MOVE_REPORT_INTERVAL: float = Config.MOVE_REPORT_INTERVAL
+
 ## 放置操作每帧时间预算（微秒），超时后下帧继续
 const PLACE_TIME_BUDGET_US: int = Config.PLACE_TIME_BUDGET_US
 const PLACE_BATCH_CHECK_MASK: int = 0x3F  # 每 64 格检查一次时间预算
@@ -49,6 +52,12 @@ const TERRAIN_BANDS: Array[int] = [
 
 var _player_pos: Vector2 = Vector2.ZERO
 var _player_elevation: int = 0
+
+## 位置上报累积计时（秒）与待上报标记
+var _move_report_accum: float = 0.0
+var _move_dirty: bool = false
+## 是否已收到后端权威 player_state
+var _has_player_state: bool = false
 
 var _chunks: Dictionary = {}
 var _pending: Dictionary = {}
@@ -95,6 +104,7 @@ func _process(_delta: float) -> void:
 	if _player and _camera:
 		_camera.global_position = _player.global_position
 	_process_queues()
+	_report_move(_delta)
 
 
 # ── 公共接口 ──────────────────────────────────────────────
@@ -103,7 +113,38 @@ func move_player(direction: Vector2, delta: float) -> void:
 	if _player == null:
 		return
 	_player_pos += direction * PLAYER_SPEED * delta
+	_move_dirty = true
 	_place_player_at(_player_pos, _player_elevation)
+
+
+func teleport_player(pos: Vector2) -> void:
+	"""吸附玩家到权威位置（player_teleported 事件 / player_state 响应）。
+
+	周边区块由下一帧 stream_chunks_for_viewport 按新位置自动请求。
+	不标记 _move_dirty——权威位置无需回报。
+
+	Args:
+		pos: 后端权威世界坐标（tile 单位）。
+	"""
+	_move_dirty = false
+	_place_player_at(pos, _player_elevation)
+
+
+func handle_player_state(payload: Dictionary) -> void:
+	"""处理 player_state 响应：以后端权威位置初始化本地位置。
+
+	Args:
+		payload: {id, x, y}。
+	"""
+	if not payload.has("x") or not payload.has("y"):
+		return
+	_has_player_state = true
+	teleport_player(Vector2(float(payload["x"]), float(payload["y"])))
+
+
+func get_birth_chunk() -> Vector2i:
+	"""返回出生区块坐标（未收到后端数据前为 (0,0)）。"""
+	return _birth_chunk
 
 
 func set_birth_chunk(cx: int, cy: int) -> void:
@@ -111,7 +152,9 @@ func set_birth_chunk(cx: int, cy: int) -> void:
 		return
 	_has_birth = true
 	_birth_chunk = Vector2i(cx, cy)
-	_place_player_at(Vector2(cx * CHUNK_SIZE, cy * CHUNK_SIZE), 0)
+	# 已收到权威 player_state 时不重置位置，避免出生数据晚到覆盖
+	if not _has_player_state:
+		_place_player_at(Vector2(cx * CHUNK_SIZE, cy * CHUNK_SIZE), 0)
 	_request_chunks_around_birth()
 
 
@@ -197,6 +240,29 @@ func stream_chunks_for_viewport() -> void:
 
 
 # ── 内部实现 ──────────────────────────────────────────────
+
+func _report_move(delta: float) -> void:
+	"""节流上报本地移动到后端权威实体（player_move）。
+
+	仅在位置有变更（_move_dirty）且连接可用时发送，
+	间隔 MOVE_REPORT_INTERVAL 秒。
+
+	Args:
+		delta: 帧时间（秒）。
+	"""
+	_move_report_accum += delta
+	if _move_report_accum < MOVE_REPORT_INTERVAL:
+		return
+	_move_report_accum = 0.0
+	if not _move_dirty or Connection.status != Connection.Status.CONNECTED:
+		return
+	_move_dirty = false
+	Connection.send({
+		"type": "request",
+		"request_type": "player_move",
+		"payload": {"x": _player_pos.x, "y": _player_pos.y},
+	})
+
 
 func _get_layer(elevation: int) -> TileMapLayer:
 	if _layers.has(elevation):

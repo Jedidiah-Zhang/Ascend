@@ -43,6 +43,9 @@ const MAX_PENDING_TILES: int = 3
 const PLAYER_SPEED: float = 80.0
 const PLACE_TIME_BUDGET_US: int = 5000
 
+## 玩家位置上报后端的间隔（秒）
+const MOVE_REPORT_INTERVAL: float = 0.2
+
 # ═══════════════════════════════════════════════════════════
 # UI — 界面
 # ═══════════════════════════════════════════════════════════

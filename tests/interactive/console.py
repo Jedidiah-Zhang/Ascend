@@ -203,3 +203,7 @@ class GameConsole:
                 print(result.output)
             if result.is_quit:
                 break
+
+
+if __name__ == "__main__":
+    GameConsole().run()

@@ -219,7 +219,67 @@ class ModifierSchedule:
     def prune_before(self, tick: int) -> None:
         self._events = [e for e in self._events if e.end_tick > tick]
 
+    def force_start(self, now: int, magnitude: float = 1.0) -> bool:
+        """强制立即开始一场修改器事件（调试用）。
+
+        以 mean_duration 为时长、给定 magnitude 构造事件插入队首，
+        与新事件区间重叠的既有事件（含历史事件）被移除，
+        保持队列 start_tick 严格递增。
+
+        状态切换事件（{type}_start）由下一次 minute_change 的
+        pop_due 检测发布，此处不直接发事件。
+
+        Args:
+            now: 当前 tick。
+            magnitude: 强度系数（1.0 = 基准强度）。
+
+        Returns:
+            True=已插入强制事件；False=当前已激活（no-op）。
+        """
+        if self.is_active(now):
+            return False
+        duration = self._mean_duration
+        end = now + duration
+        self._events = [e for e in self._events if e.start_tick >= end]
+        self._events.insert(0, ModifierEvent(
+            now, duration, self._config.type_name, magnitude,
+        ))
+        return True
+
+    def force_stop(self, now: int) -> bool:
+        """强制立即结束当前修改器事件（调试用）。
+
+        将覆盖 now 的活动事件截断为在 now 结束（duration 归零则移除），
+        未来已排程的事件不受影响。
+
+        Args:
+            now: 当前 tick。
+
+        Returns:
+            True=已截断活动事件；False=当前未激活（no-op）。
+        """
+        stopped = False
+        kept: list[ModifierEvent] = []
+        for e in self._events:
+            if e.start_tick <= now < e.end_tick:
+                stopped = True
+                new_duration = now - e.start_tick
+                if new_duration > 0:
+                    e.duration = new_duration
+                    kept.append(e)
+            else:
+                kept.append(e)
+        self._events = kept
+        return stopped
+
     def needs_replenish(self, threshold: int) -> bool:
+        """事件数是否低于阈值（触发补算）。
+
+        事件率为 0 的调度（仅承载强制事件的动态调度）永不补算，
+        避免 generate_next 对无穷间隔取整溢出。
+        """
+        if self._mean_interval == float("inf"):
+            return False
         return len(self._events) < threshold
 
     def latest_end_tick(self) -> int | None:

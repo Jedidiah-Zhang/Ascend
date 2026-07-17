@@ -195,6 +195,58 @@ class RainSchedule:
             return True
         return False
 
+    def force_start(self, now: int) -> bool:
+        """强制立即开始一场降雨（调试用）。
+
+        以均值强度/时长构造事件，start_tick 前移 ramp_up 段，
+        使 now 时刻直接处于 peak 段（intensity > 0）。
+        与新事件区间重叠的既有事件（含历史事件）被移除，
+        保持队列 start_tick 严格递增。
+
+        状态切换事件（precipitation_start）由下一次 minute_change
+        的 pop_due 检测发布，此处不直接发事件。
+
+        Args:
+            now: 当前 tick。
+
+        Returns:
+            True=已插入强制事件；False=当前已在下雨（no-op）。
+        """
+        if self.is_raining(now):
+            return False
+        duration = max(GAME_HOUR // 4, int(self._mean_duration_h * GAME_HOUR))
+        start = now - int(duration * self._ramp_up_ratio)
+        end = start + duration
+        self._events = [e for e in self._events if e.start_tick >= end]
+        self._events.insert(0, RainEvent(start, duration, self._mean_intensity))
+        return True
+
+    def force_stop(self, now: int) -> bool:
+        """强制立即停止当前降雨（调试用）。
+
+        将覆盖 now 的活动事件截断为在 now 结束（duration 归零则移除），
+        未来已排程的降雨事件不受影响。
+
+        Args:
+            now: 当前 tick。
+
+        Returns:
+            True=已截断活动事件；False=当前未在下雨（no-op）。
+        """
+        stopped = False
+        kept: list[RainEvent] = []
+        for e in self._events:
+            if e.start_tick <= now < e.start_tick + e.duration:
+                stopped = True
+                new_duration = now - e.start_tick
+                if new_duration > 0:
+                    e.duration = new_duration
+                    kept.append(e)
+            else:
+                kept.append(e)
+        self._events = kept
+        return stopped
+
     def needs_replenish(self, threshold: int) -> bool:
         """事件数是否低于阈值（触发补算）。"""
         return len(self._events) < threshold

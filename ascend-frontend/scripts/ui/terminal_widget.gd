@@ -1,11 +1,16 @@
 """调试终端 UI 组件 — Godot 前端内置半透明控制台。
 
-支持本地指令（clear/help/map）和远程指令转发。
+支持本地指令（register_command 注册）和远程指令转发。
 所有内容通过 _draw() 渲染，无 RichTextLabel 等子节点。
+
+本地指令模仿 DebugSection 的注册模式：
+	term.register_command("tp", _cmd_teleport, "tp <x> <y> - 传送玩家")
+handler 签名: func(args: PackedStringArray) -> String（返回输出文本，空串无输出）。
 
 用法:
     var term = TerminalWidget.new()
     term.remote_command_submitted.connect(_on_terminal_command)
+	term.register_command("tp", _cmd_teleport, "tp <x> <y> - 传送玩家")
     add_child(term)
     term.open()
 """
@@ -70,11 +75,14 @@ var _font: Font = null
 ## 字体高度缓存
 var _font_height: int = FONT_SIZE
 
+## 本地指令注册表: name -> {"handler": Callable, "help": String}
+var _local_commands: Dictionary = {}
+
 
 # ── 生命周期 ────────────────────────────────────────────────
 
 func _ready() -> void:
-	"""初始化终端组件：设置锚点、字体、初始输出。"""
+	"""初始化终端组件：设置锚点、字体、内置指令、初始输出。"""
 	anchor_left = 0.0
 	anchor_top = 0.0
 	anchor_right = 1.0
@@ -83,8 +91,9 @@ func _ready() -> void:
 	_font = _get_mono_font()
 	_font_height = FONT_SIZE + 2
 	hide()
+	register_command("clear", _cmd_clear, "clear - 清空终端输出")
 	_write_output("Ascend 调试终端")
-	_write_output("输入 help 查看指令列表，/? 切换终端")
+	_write_output("输入 help 查看指令列表，/ 切换终端")
 
 
 func _notification(what: int) -> void:
@@ -261,6 +270,30 @@ func write(text: String) -> void:
 	_write_output(text)
 
 
+func register_command(cmd_name: String, handler: Callable, help_text: String = "") -> void:
+	"""注册本地指令（模仿 DebugSection 的注册模式）。
+
+	Args:
+		cmd_name: 指令名（首个空格前的词，不区分大小写）。
+		handler: func(args: PackedStringArray) -> String，
+			返回要写入终端的输出文本（空串表示无输出）。
+		help_text: help 指令中显示的说明行。
+	"""
+	_local_commands[cmd_name.to_lower()] = {
+		"handler": handler,
+		"help": help_text,
+	}
+
+
+func unregister_command(cmd_name: String) -> void:
+	"""注销本地指令。
+
+	Args:
+		cmd_name: 已注册的指令名。
+	"""
+	_local_commands.erase(cmd_name.to_lower())
+
+
 # ── 输入编辑 ────────────────────────────────────────────────
 
 func _insert_char(ch: String) -> void:
@@ -340,23 +373,42 @@ func _execute_input() -> void:
 
 	var cmd: String = input.get_slice(" ", 0).to_lower()
 
-	if cmd == "clear":
-		_output_lines.clear()
-		queue_redraw()
-	elif cmd == "help":
-		_show_help()
-	else:
+	if cmd == "help" or cmd == "?":
+		_show_local_help()
+		# 已连接后端时继续转发，追加远程指令帮助
 		remote_command_submitted.emit(input)
+		return
+
+	if _local_commands.has(cmd):
+		var entry: Dictionary = _local_commands[cmd]
+		var args: PackedStringArray = input.split(" ", false).slice(1)
+		var handler: Callable = entry["handler"]
+		var output: Variant = handler.call(args)
+		if output is String and not (output as String).is_empty():
+			_write_output(output)
+		return
+
+	remote_command_submitted.emit(input)
 
 
-func _show_help() -> void:
-	"""显示帮助信息。"""
-	_write_output("--- " + tr("terminal.local_commands") + " ---")
-	_write_output("  clear - " + tr("terminal.help_clear"))
-	_write_output("  help - " + tr("terminal.help_help"))
-	_write_output("  map <mode> - " + tr("terminal.help_map"))
-	_write_output("--- " + tr("terminal.remote_commands") + " ---")
-	_write_output("  " + tr("terminal.help_help"))
+func _cmd_clear(_args: PackedStringArray) -> String:
+	"""内置指令：清空终端输出。"""
+	_output_lines.clear()
+	queue_redraw()
+	return ""
+
+
+func _show_local_help() -> void:
+	"""显示本地指令帮助，远程指令帮助由后端响应追加。"""
+	_write_output("--- 本地指令 ---")
+	var names: Array = _local_commands.keys()
+	names.sort()
+	for cmd_name: String in names:
+		var help_text: String = _local_commands[cmd_name]["help"]
+		if help_text.is_empty():
+			help_text = cmd_name
+		_write_output("  " + help_text)
+	_write_output("--- 远程指令 ---")
 
 
 # ── 辅助函数 ────────────────────────────────────────────────

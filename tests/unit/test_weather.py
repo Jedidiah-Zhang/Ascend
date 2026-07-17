@@ -1967,3 +1967,119 @@ class TestExtremeWeatherIntegration:
                 storm_wind = wind_events[-1].data["wind_speed"]
                 assert storm_wind > normal_wind * 1.5
         e.shutdown()
+
+
+class TestForceControl:
+    """强制天气控制 API 测试 — set_rain / set_modifier（终端调试指令）。"""
+
+    @staticmethod
+    def _make_engine():
+        """构造含 chunk (0,0) 温带森林的引擎（独立 WorldTree）。"""
+        from ascend.weather.weather_engine import WeatherEngine
+        wt = WorldTree()
+        clock = WorldClock()
+        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
+        e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
+        return e, wt, clock
+
+    def test_set_rain_unregistered_returns_none(self):
+        """未注册 chunk 的 set_rain 返回 None。"""
+        e, _, _ = self._make_engine()
+        assert e.set_rain(9, 9, True) is None
+        e.shutdown()
+
+    def test_set_rain_on_starts_immediately(self):
+        """set_rain(on) 立即生效：is_raining=True 且 rainfall > 0。"""
+        e, _, clock = self._make_engine()
+        assert e.set_rain(0, 0, True) is True
+        rain = e._rain_schedules[(0, 0)]
+        assert rain.is_raining(clock.time) is True
+        wp = e.get_weather(0, 0)
+        assert wp.rainfall > 0
+        # 再次开启为 no-op
+        assert e.set_rain(0, 0, True) is False
+        e.shutdown()
+
+    def test_set_rain_off_stops_immediately(self):
+        """set_rain(off) 截断当前降雨事件。"""
+        e, _, clock = self._make_engine()
+        e.set_rain(0, 0, True)
+        assert e.set_rain(0, 0, False) is True
+        rain = e._rain_schedules[(0, 0)]
+        assert rain.is_raining(clock.time) is False
+        assert e.get_weather(0, 0).rainfall == 0.0
+        # 再次关闭为 no-op
+        assert e.set_rain(0, 0, False) is False
+        e.shutdown()
+
+    def test_set_rain_emits_events_on_next_minute(self):
+        """强制降雨的状态切换由下一次 minute_change 发布事件。"""
+        e, wt, clock = self._make_engine()
+        events = []
+        for t in ("precipitation_start", "precipitation_stop"):
+            wt.subscribe(t, lambda ev: events.append(ev))
+        _publish_minute(wt, clock.time)  # 静默初始化
+        e.set_rain(0, 0, True)
+        clock.skip(1)
+        _publish_minute(wt, clock.time)
+        assert any(ev.event_type == "precipitation_start" for ev in events)
+        e.set_rain(0, 0, False)
+        clock.skip(1)
+        _publish_minute(wt, clock.time)
+        assert any(ev.event_type == "precipitation_stop" for ev in events)
+        e.shutdown()
+
+    def test_set_modifier_on_off(self):
+        """set_modifier 强制激活/解除修改器并施加温度偏移。"""
+        e, _, clock = self._make_engine()
+        assert e.set_modifier(0, 0, "cold_snap", True) is True
+        sched = e._modifier_schedules[(0, 0, "cold_snap")]
+        assert sched.is_active(clock.time) is True
+        assert sched.temp_offset(clock.time) == pytest.approx(-15.0)
+        assert e.set_modifier(0, 0, "cold_snap", True) is False  # no-op
+        assert e.set_modifier(0, 0, "cold_snap", False) is True
+        assert sched.is_active(clock.time) is False
+        assert e.set_modifier(0, 0, "cold_snap", False) is False  # no-op
+        e.shutdown()
+
+    def test_set_modifier_dynamic_schedule_for_zero_rate(self):
+        """气候带事件率为 0 时动态创建仅承载强制事件的调度。"""
+        from ascend.weather.weather_engine import WeatherEngine
+        wt = WorldTree()
+        clock = WorldClock()
+        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
+        e.register_chunk(0, 0, _make_baseline(temp=-10.0),
+                         ClimateZone.POLAR_TUNDRA, -5.0)
+        assert (0, 0, "heat_wave") not in e._modifier_schedules
+        assert e.set_modifier(0, 0, "heat_wave", True) is True
+        sched = e._modifier_schedules[(0, 0, "heat_wave")]
+        assert sched.is_active(clock.time) is True
+        # 事件率 0 的调度不参与自然补算（needs_replenish 恒 False）
+        assert sched.needs_replenish(999) is False
+        # minute_change 循环不会因 inf 间隔崩溃
+        clock.skip(1)
+        _publish_minute(wt, clock.time)
+        e.shutdown()
+
+    def test_set_modifier_unknown_type_raises(self):
+        """未知修改器类型抛 ValueError。"""
+        e, _, _ = self._make_engine()
+        with pytest.raises(ValueError):
+            e.set_modifier(0, 0, "tsunami", True)
+        e.shutdown()
+
+    def test_set_modifier_unregistered_returns_none(self):
+        """未注册 chunk 的 set_modifier 返回 None。"""
+        e, _, _ = self._make_engine()
+        assert e.set_modifier(9, 9, "cold_snap", True) is None
+        e.shutdown()
+
+    def test_force_start_preserves_future_order(self):
+        """force_start 移除重叠事件后队列 start_tick 仍严格递增。"""
+        e, _, clock = self._make_engine()
+        rain = e._rain_schedules[(0, 0)]
+        e.set_rain(0, 0, True)
+        starts = [ev.start_tick for ev in rain._events]
+        assert starts == sorted(starts)
+        assert len(starts) == len(set(starts))
+        e.shutdown()

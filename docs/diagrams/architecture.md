@@ -146,6 +146,7 @@ graph TD
     GE -->|"start() 创建"| GEN3["WorldGenerator"]
     GE -->|"start() 创建"| TILE3["TileGenerator"]
     GE -->|"start() 创建"| ENT3["EntityManager"]
+    GE -->|"start() 创建"| PLR3["PlayerService"]
     GE -->|"start() 创建"| WEA3["WeatherEngine"]
     GE -->|"start() 创建"| SRV3["GameServer"]
     GE -->|"start() 创建"| DISP3["MessageDispatcher"]
@@ -160,6 +161,10 @@ graph TD
 
     CAL3 -->|注入| CMD3
     I18N -->|注入| CMD3
+    WEA3 -->|注入| CMD3
+    PLR3 -->|注入| CMD3
+
+    ENT3 -->|注入| PLR3
 
     SRV3 -->|注入| DISP3
 
@@ -232,6 +237,14 @@ classDiagram
         +in_region(center, radius) list
     }
 
+    class PlayerService {
+        +spawn() Entity
+        +position tuple
+        +move_to(x, y) tuple
+        +teleport(x, y) tuple
+        +teleport_home() tuple
+    }
+
     class GameServer {
         +start()
         +stop()
@@ -255,6 +268,7 @@ classDiagram
     GameEngine *-- WorldGenerator
     GameEngine *-- WeatherEngine
     GameEngine *-- EntityManager
+    GameEngine *-- PlayerService
     GameEngine *-- GameServer
     GameEngine *-- MessageDispatcher
     GameEngine *-- CommandExecutor
@@ -264,5 +278,7 @@ classDiagram
     WeatherEngine ..> WorldClock : 读取时间
     WeatherEngine ..> WorldTree : 订阅+发布
     EntityManager ..> WorldTree : 发布事件
+    PlayerService ..> EntityManager : 实体生灭/移动
+    PlayerService ..> WorldTree : player_teleported
     MessageDispatcher ..> GameServer : 收发消息
 ```

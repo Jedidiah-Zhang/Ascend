@@ -35,9 +35,10 @@ from ascend.net import GameServer, MessageDispatcher, EventBridge
 from ascend.net.handlers.map_handler import make_map_handlers
 from ascend.net.handlers.terminal_handler import make_terminal_handler
 from ascend.net.handlers.weather_handler import make_weather_handler
+from ascend.net.handlers.player_handler import make_player_handler
 from ascend.space import WorldGenerator, TileGenerator
 from ascend.space.chunk_store import ChunkStore
-from ascend.entity import EntityManager
+from ascend.entity import EntityManager, PlayerService
 from ascend.weather import WeatherEngine
 from ascend.terminal import CommandExecutor
 from ascend.time import WorldClock, GameCalendar
@@ -85,6 +86,7 @@ class GameEngine:
         self.i18n: I18n = I18n()
         self._executor: CommandExecutor | None = None
         self.entity_manager: EntityManager | None = None
+        self.player_service: PlayerService | None = None
         self.weather_engine: WeatherEngine | None = None
         self.tile_generator: TileGenerator | None = None
         self.birth_chunk: tuple[int, int] | None = None
@@ -179,6 +181,13 @@ class GameEngine:
         # 5. 实体管理器（接入事件管线）
         self.entity_manager = EntityManager()
 
+        # 5a. 权威玩家实体（壳子版：位置权威在后端，前端本地预测）
+        self.player_service = PlayerService(
+            self.entity_manager, self.clock, self.birth_chunk,
+        )
+        self.player_service.spawn()
+        logger.info("玩家实体已生成: %r", self.player_service)
+
         # 5b. 天气引擎（接入已加载 chunk 的天气基线）
         self.weather_engine = WeatherEngine(self.clock, seed=self.seed)
         for (cx, cy), chunk in self.chunk_store.items():
@@ -214,12 +223,21 @@ class GameEngine:
             self.dispatcher.register(req_type, handler)
         logger.info("已注册天气查询处理程序: %s", list(weather_handlers.keys()))
 
+        # 7c. 玩家状态处理程序
+        player_handlers = make_player_handler(self.player_service)
+        for req_type, handler in player_handlers.items():
+            self.dispatcher.register(req_type, handler)
+        logger.info("已注册玩家处理程序: %s", list(player_handlers.keys()))
+
         # 8. 终端指令执行器
         self._executor = CommandExecutor(
             clock=self.clock,
             calendar=self.calendar,
             i18n=self.i18n,
             world_gen=self.world_gen,
+            weather_engine=self.weather_engine,
+            default_chunk=self.birth_chunk,
+            player_service=self.player_service,
         )
         term_handlers = make_terminal_handler(self._executor)
         for req_type, handler in term_handlers.items():
@@ -288,6 +306,7 @@ class GameEngine:
         if self.weather_engine:
             self.weather_engine.shutdown()
             self.weather_engine = None
+        self.player_service = None
         self.entity_manager = None
         self.tile_generator = None
         if self.chunk_store:
