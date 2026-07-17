@@ -45,7 +45,9 @@ const TERRAIN_BANDS: Array[int] = [
 @onready var _camera: Camera2D = $MapCamera
 @onready var _elevation_layers: Node2D = $ElevationLayers
 @onready var _layer0: TileMapLayer = $ElevationLayers/Layer0
-@onready var _player: Sprite2D = $Player
+
+## 本地控制实体的视图节点（EntityLayer 创建后经 bind_local_entity_view 注入）
+var _player: Node2D = null
 
 
 # ── 属性 ──────────────────────────────────────────────────
@@ -69,7 +71,7 @@ var _birth_chunk: Vector2i = Vector2i.ZERO
 var _has_birth: bool = false
 
 var _layers: Dictionary = {}
-var _player_layers: Dictionary = {}
+var _entity_view_layers: Dictionary = {}
 var _tileset: TileSet = null
 var _cell_step_x: Vector2 = Vector2.ZERO
 var _cell_step_y: Vector2 = Vector2.ZERO
@@ -95,10 +97,6 @@ func _ready() -> void:
 	_cell_step_x = _layer0.map_to_local(Vector2i(1, 0)) - _layer0.map_to_local(Vector2i.ZERO)
 	_cell_step_y = _layer0.map_to_local(Vector2i(0, 1)) - _layer0.map_to_local(Vector2i.ZERO)
 
-	_player.centered = false
-	_player.offset = Vector2(-16, -16)
-	_player.z_index = 0
-
 
 func _process(_delta: float) -> void:
 	if _player and _camera:
@@ -109,8 +107,33 @@ func _process(_delta: float) -> void:
 
 # ── 公共接口 ──────────────────────────────────────────────
 
+func bind_local_entity_view(view: Node2D) -> void:
+	"""绑定本地控制实体的视图节点（EntityLayer 创建视图后调用）。
+
+	绑定后本地预测移动、相机跟随作用于该节点。
+	Player 与其他实体共用 EntityView 渲染管线，本方法只是把
+	"输入预测的驱动目标"指向其中一个视图。
+
+	Args:
+		view: 本地控制实体的视图节点。
+	"""
+	_player = view
+	if _has_player_state:
+		_place_player_at(_player_pos, _player_elevation)
+
+
+func unbind_local_entity_view(view: Node2D) -> void:
+	"""解绑本地控制实体视图（视图销毁时调用）。
+
+	Args:
+		view: 之前绑定的视图节点。
+	"""
+	if _player == view:
+		_player = null
+
+
 func move_player(direction: Vector2, delta: float) -> void:
-	if _player == null:
+	if not _has_player_state:
 		return
 	_player_pos += direction * PLAYER_SPEED * delta
 	_move_dirty = true
@@ -134,7 +157,7 @@ func handle_player_state(payload: Dictionary) -> void:
 	"""处理 player_state 响应：以后端权威位置初始化本地位置。
 
 	Args:
-		payload: {id, x, y}。
+		payload: {entity_id, x, y}。
 	"""
 	if not payload.has("x") or not payload.has("y"):
 		return
@@ -226,9 +249,7 @@ func stream_chunks_for_viewport() -> void:
 				and not _pending.has(pos)):
 				_tile_queue.append(pos)
 
-	var pending_count: int = 0
-	for _p in _pending:
-		pending_count += 1
+	var pending_count: int = _pending.size()
 
 	while not _tile_queue.is_empty() and pending_count < MAX_PENDING_TILES:
 		var pos: Vector2i = _tile_queue.pop_front()
@@ -278,32 +299,58 @@ func _get_layer(elevation: int) -> TileMapLayer:
 	return layer
 
 
-func _get_player_layer(elevation: int) -> TileMapLayer:
-	if _player_layers.has(elevation):
-		return _player_layers[elevation]
+func _get_entity_layer(elevation: int) -> TileMapLayer:
+	"""获取渲染海拔对应的实体视图层（懒创建）。
+
+	实体视图挂在与地形同构的 TileMapLayer 下，保证 z 排序与
+	海拔抬升偏移一致。
+
+	Args:
+		elevation: 渲染海拔层。
+
+	Returns:
+		该海拔的实体层。
+	"""
+	if _entity_view_layers.has(elevation):
+		return _entity_view_layers[elevation]
 	var layer := TileMapLayer.new()
-	layer.name = "PlayerLayer%d" % elevation
+	layer.name = "EntityViews%d" % elevation
 	layer.tile_set = _tileset
 	layer.y_sort_enabled = false
 	layer.z_index = elevation
 	layer.position = Vector2(0, -elevation * 16)
 	_elevation_layers.add_child(layer)
-	_player_layers[elevation] = layer
+	_entity_view_layers[elevation] = layer
 	return layer
+
+
+func place_entity_node(node: Node2D, pos: Vector2, elevation: int) -> void:
+	"""把实体视图节点放置到等距地图的精确像素位置。
+
+	节点挂载到对应渲染海拔的实体层下，按 tile 小数部分沿
+	等距基向量插值。Player 与其他实体共用本方法（统一渲染管线）。
+
+	Args:
+		node: 实体视图节点。
+		pos: 世界坐标（tile 单位，float 精确值）。
+		elevation: 渲染海拔层。
+	"""
+	var layer := _get_entity_layer(elevation)
+	if node.get_parent() != layer:
+		if node.get_parent():
+			node.get_parent().remove_child(node)
+		layer.add_child(node)
+	var cell := Vector2i(int(pos.x), int(pos.y))
+	var frac := pos - Vector2(cell)
+	node.position = layer.map_to_local(cell) \
+		+ _cell_step_x * frac.x + _cell_step_y * frac.y
 
 
 func _place_player_at(pos: Vector2, elevation: int) -> void:
 	_player_pos = pos
-	if _player_elevation != elevation:
-		if _player.get_parent():
-			_player.get_parent().remove_child(_player)
-		_get_player_layer(elevation).add_child(_player)
-		_player_elevation = elevation
-	var cell := Vector2i(int(pos.x), int(pos.y))
-	var frac := pos - Vector2(cell)
-	var layer := _get_player_layer(elevation)
-	var base := layer.map_to_local(cell)
-	_player.position = base + _cell_step_x * frac.x + _cell_step_y * frac.y
+	_player_elevation = elevation
+	if _player:
+		place_entity_node(_player, pos, elevation)
 
 
 func _request_chunks_around_birth() -> void:
@@ -398,8 +445,8 @@ func _unload_chunk(cx: int, cy: int) -> void:
 			_place_queue.pop_front()
 			_place_cursor = 0
 
-	var chunk_data: Dictionary = _chunks.get(key, {})
-	if not used.is_empty() and not chunk_data.is_empty() and chunk_data.has("terrain"):
+	var chunk_data = _chunks.get(key)
+	if not used.is_empty() and chunk_data != null and chunk_data.has("terrain"):
 		_erase_queue.append({
 			"cx": cx,
 			"cy": cy,

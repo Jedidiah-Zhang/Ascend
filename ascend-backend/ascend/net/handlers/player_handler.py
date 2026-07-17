@@ -4,7 +4,9 @@
 与 map_handler / weather_handler 模式一致。
 
 协议:
-    player_state 请求 → {payload: {id, x, y}}          查询权威位置
+    player_state 请求 → {payload: {entity_id, x, y}}
+        查询"玩家控制的实体"——核心职责是告知前端本地控制的 entity_id
+        （实体全量位置由 entity_snapshot 统一提供），x/y 为便捷冗余
     player_move  请求 {payload: {x, y}} → {payload: {x, y}}
         上报本地位置，返回裁决后的权威位置（壳子阶段原样接受）
 """
@@ -42,13 +44,13 @@ def make_player_handler(player_service):
     """
 
     def handle_player_state(_msg: dict) -> dict:
-        """处理 player_state 请求：返回权威玩家位置。
+        """处理 player_state 请求：返回玩家控制的实体标识与权威位置。
 
         Args:
             _msg: 请求消息（无载荷字段要求）。
 
         Returns:
-            {type, request_type, payload: {id, x, y}}。
+            {type, request_type, payload: {entity_id, x, y}}。
         """
         x, y = player_service.position
         entity = player_service.entity
@@ -56,7 +58,7 @@ def make_player_handler(player_service):
             "type": "response",
             "request_type": "player_state",
             "payload": {
-                "id": entity.id if entity else "",
+                "entity_id": entity.id if entity else "",
                 "x": x,
                 "y": y,
             },

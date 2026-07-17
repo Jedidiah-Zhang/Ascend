@@ -14,11 +14,11 @@ from ascend.world_tree import WorldTree
 
 @pytest.fixture
 def service():
-    """出生 chunk (0, 0)、已 spawn 的 PlayerService 固件。"""
+    """出生 chunk (0, 0)、已 birth 的 PlayerService 固件。"""
     wt = WorldTree()
     manager = EntityManager(world_tree_arg=wt)
     svc = PlayerService(manager, WorldClock(), birth_chunk=(0, 0), world_tree_arg=wt)
-    svc.spawn()
+    svc.birth()
     return svc
 
 
@@ -41,20 +41,20 @@ class TestPlayerState:
     """player_state 请求测试。"""
 
     def test_state_returns_position_and_id(self, handlers, service):
-        """player_state 返回权威位置与实体 ID。
+        """player_state 返回本地控制的 entity_id 与权威位置。
 
         Arrange:
-            已 spawn 的 service（出生点 (0,0) → 位置 (0.0, 0.0)）。
+            已 birth 的 service（出生点 (0,0) → 位置 (0.0, 0.0)）。
         Act:
             调用 player_state handler。
         Assert:
-            响应含 id/x/y，与 service 状态一致。
+            响应含 entity_id/x/y，与 service 状态一致。
         """
         resp = handlers["player_state"]({"payload": {}})
         assert resp["type"] == "response"
         assert resp["request_type"] == "player_state"
         payload = resp["payload"]
-        assert payload["id"] == service.entity.id
+        assert payload["entity_id"] == service.entity.id
         assert (payload["x"], payload["y"]) == service.position
 
     def test_state_reflects_moves(self, handlers, service):
@@ -71,7 +71,7 @@ class TestPlayerMove:
         """合法上报被接受，回传权威位置（壳子=原样）。
 
         Arrange:
-            已 spawn 的 service。
+            已 birth 的 service。
         Act:
             上报 (10.5, 20.25)。
         Assert:

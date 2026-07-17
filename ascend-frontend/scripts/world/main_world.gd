@@ -24,6 +24,8 @@ const CAMERA_ZOOM_MAX: float = Config.CAMERA_ZOOM_MAX
 
 ## 地图显示节点
 @onready var _map_display: MapDisplay = $World/MapDisplay
+## 实体视图工厂
+@onready var _entity_layer: EntityLayer = $World/MapDisplay/EntityLayer
 ## 终端节点
 @onready var _terminal: TerminalWidget = $TerminalLayer/TerminalWidget
 ## 地图相机（从 MapDisplay 缓存，避免每帧 get_node）
@@ -288,13 +290,23 @@ func _update_debug_sections() -> void:
 
 
 func _on_connected(host: String, port: int) -> void:
-	"""连接成功回调：请求权威玩家位置初始化本地状态。
+	"""连接成功回调：拉取实体快照并请求玩家控制的实体。
+
+	状态通道初始化顺序（Issue #20）：
+	  1. entity_snapshot — 全量实体视图（含玩家实体）
+	  2. player_state — 标记本地控制的 entity_id + 权威位置吸附
+	此后实体视图靠 entity_born/died/moved 事件增量维护。
 
 	Args:
 		host: 服务器地址。
 		port: 端口号。
 	"""
 	print("MainWorld: connected to %s:%d" % [host, port])
+	Connection.send({
+		"type": "request",
+		"request_type": "entity_snapshot",
+		"payload": {},
+	})
 	Connection.send({
 		"type": "request",
 		"request_type": "player_state",
@@ -346,6 +358,28 @@ func _handle_event(message: Dictionary) -> void:
 			payload.get("game_hour", 0), payload.get("game_minute", 0),
 			float(data.get("x", 0.0)), float(data.get("y", 0.0))])
 		return
+
+	# 实体生灭/移动（因果通道）→ 实体视图工厂增量维护
+	match event_type:
+		"entity_born":
+			if _entity_layer:
+				_entity_layer.on_entity_born(data)
+			_push_log("[%02d:%02d] %s 诞生 (%.0f, %.0f)" % [
+				payload.get("game_hour", 0), payload.get("game_minute", 0),
+				str(data.get("entity_type", "?")),
+				float(data.get("x", 0.0)), float(data.get("y", 0.0))])
+			return
+		"entity_died":
+			if _entity_layer:
+				_entity_layer.on_entity_died(data)
+			_push_log("[%02d:%02d] %s 死亡" % [
+				payload.get("game_hour", 0), payload.get("game_minute", 0),
+				str(data.get("entity_type", "?"))])
+			return
+		"entity_moved":
+			if _entity_layer:
+				_entity_layer.on_entity_moved(data)
+			return
 
 	if _debug_overlay == null:
 		return
@@ -455,7 +489,12 @@ func _handle_response(message: Dictionary) -> void:
 		"get_chunks":
 			if _map_display:
 				_map_display.handle_chunk_response(payload)
+		"entity_snapshot":
+			if _entity_layer:
+				_entity_layer.apply_snapshot(payload.get("entities", []))
 		"player_state":
+			if _entity_layer:
+				_entity_layer.set_local_entity(str(payload.get("entity_id", "")))
 			if _map_display:
 				_map_display.handle_player_state(payload)
 		"player_move":

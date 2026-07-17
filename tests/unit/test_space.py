@@ -850,7 +850,6 @@ class TestTileGenerator:
                 f"[{desc}] chunk ({cx},{cy}) 有 {len(diffs)}/{40000} 不一致"
             )
 
-
     def test_tile_gen_exists(self):
         """TileGenerator 可实例化。"""
         from ascend.space.continent import ContinentGenerator

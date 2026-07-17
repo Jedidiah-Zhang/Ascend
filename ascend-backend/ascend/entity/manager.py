@@ -1,23 +1,31 @@
-"""实体管理器 — 实体的创建、销毁、查询和移动，发布生命周期事件。"""
+"""实体管理器 — 实体在虚拟世界的生灭、查询和移动，发布生命周期事件。
+
+语义约定（Issue #20）:
+  - birth/death: 实体在虚拟世界的生灭 —— 世界内因果事件，走世界树
+    （entity_born / entity_died），是 NPC 未来可感知的历史事实。
+  - spawn/despawn: 实体进入/离开前端渲染视野 —— 表现层概念，不在
+    本模块职责内。现阶段视野=全部（前端收 born 即渲染、died 即移除）。
+  - 停服等世界外操作不得调用 death()——那会向因果历史写入虚假死亡。
+"""
 
 from ascend.world_tree import world_tree, Event, AffectedParty
 from ascend.world_tree.event import (
     SUB_CELL_SIZE, SUB_CELLS, spatial_key, sub_cell_range,
 )
 from ascend.log import get_logger
-from .entity import Entity, EntityType
+from .entity import Entity, EntityType, Controller
 
 logger = get_logger(__name__)
 
 world_tree.register_event_schema(
-    "entity_spawned",
+    "entity_born",
     required={"entity_id": str, "entity_type": str, "position": tuple},
-    description="新实体生成时发布",
+    description="实体在虚拟世界诞生时发布",
 )
 world_tree.register_event_schema(
-    "entity_despawned",
+    "entity_died",
     required={"entity_id": str, "entity_type": str},
-    description="实体销毁时发布",
+    description="实体在虚拟世界死亡/消亡时发布",
 )
 world_tree.register_event_schema(
     "entity_moved",
@@ -30,13 +38,13 @@ class EntityManager:
     """实体管理器。
 
     追踪所有活跃实体，维护类型和空间索引。
-    实体的创建、销毁、移动均发布事件到总线。
+    实体的生灭、移动均发布事件到世界树。
 
     用法:
         mgr = EntityManager()
-        npc = mgr.spawn(EntityType.NPC, 0, 0, 5, 3)
-        mgr.move(npc.id, 0, 0, 6, 3)
-        mgr.despawn(npc.id)
+        deer = mgr.birth(EntityType.CREATURE, 0, 0, 5, 3)
+        mgr.move(deer.id, 0, 0, 6, 3)
+        mgr.death(deer.id)
     """
 
     def __init__(self, world_tree_arg=None) -> None:
@@ -64,9 +72,9 @@ class EntityManager:
             f"types={dict((names.get(k, str(k)), len(v)) for k, v in self._type_index.items())})"
         )
 
-    # ── 生命周期 ──────────────────────────────────────────
+    # ── 生灭 ──────────────────────────────────────────────
 
-    def spawn(
+    def birth(
         self,
         entity_type: EntityType,
         chunk_x: int,
@@ -75,21 +83,23 @@ class EntityManager:
         tile_y: int | None = None,
         *,
         layer_id: int = 0,
+        controller: Controller = Controller.NONE,
         data: dict | None = None,
         game_time: int = 0,
     ) -> Entity:
-        """创建并注册一个实体，发布 entity_spawned 事件。
+        """实体在虚拟世界诞生：创建并注册，发布 entity_born 事件。
 
         Args:
-            entity_type: 实体类型。
+            entity_type: 存在形态。
             chunk_x, chunk_y: 所在 chunk 坐标。
             tile_x, tile_y: chunk 内 tile 坐标，可为 None。
             layer_id: 所在 Z 层（0=地表，负数=地下层），默认 0。
+            controller: 决策控制者，默认 NONE（被动实体）。
             data: 附加数据。
             game_time: 当前游戏时间（tick 数）。
 
         Returns:
-            创建的实体。
+            诞生的实体。
         """
         entity = Entity(
             entity_type=entity_type,
@@ -97,8 +107,9 @@ class EntityManager:
             chunk_y=chunk_y,
             tile_x=tile_x,
             tile_y=tile_y,
-            spawned_at=game_time,
+            born_at=game_time,
             layer_id=layer_id,
+            controller=controller,
             data=data,
         )
         self._entities[entity.id] = entity
@@ -110,6 +121,7 @@ class EntityManager:
             ), set(),
         ).add(entity.id)
 
+        gx, gy = entity.global_xy
         self._world_tree.publish(Event(
             timestamp=game_time,
             location=entity.position,
@@ -117,19 +129,28 @@ class EntityManager:
             initiator_type="system",
             initiator_id="entity_manager",
             affected=[AffectedParty(entity.id, "subject")],
-            event_type="entity_spawned",
+            event_type="entity_born",
             data={
                 "entity_id": entity.id,
                 "entity_type": entity_type.name,
+                "controller": entity.controller.name,
                 "position": entity.position,
                 "layer_id": entity.layer_id,
+                "x": gx,
+                "y": gy,
             },
         ))
-        logger.debug("spawn: %s type=%s at chunk %s", entity.id, entity_type.name, entity.chunk)
+        logger.debug(
+            "birth: %s type=%s controller=%s at chunk %s",
+            entity.id, entity_type.name, entity.controller.name, entity.chunk,
+        )
         return entity
 
-    def despawn(self, entity_id: str, *, game_time: int = 0) -> Entity | None:
-        """移除实体，发布 entity_despawned 事件。
+    def death(self, entity_id: str, *, game_time: int = 0) -> Entity | None:
+        """实体在虚拟世界死亡/消亡：移除并发布 entity_died 事件。
+
+        仅用于世界内的生灭（死亡、被摧毁、被拾取等）。停服清理等
+        世界外操作直接丢弃管理器即可，不得借用本方法伪造历史。
 
         Args:
             entity_id: 要移除的实体 ID。
@@ -140,16 +161,18 @@ class EntityManager:
         """
         entity = self._entities.pop(entity_id, None)
         if entity is None:
-            logger.warning("despawn: 实体 %s 不存在", entity_id)
+            logger.warning("death: 实体 %s 不存在", entity_id)
             return None
 
-        self._type_index.get(entity.entity_type, set()).discard(entity_id)
-        self._spatial_index.get(
+        self._discard_from_index(self._type_index, entity.entity_type, entity_id)
+        self._discard_from_index(
+            self._spatial_index,
             spatial_key(
                 entity.layer_id, entity.chunk_x, entity.chunk_y,
                 entity.tile_x, entity.tile_y,
-            ), set(),
-        ).discard(entity_id)
+            ),
+            entity_id,
+        )
 
         self._world_tree.publish(Event(
             timestamp=game_time,
@@ -158,13 +181,13 @@ class EntityManager:
             initiator_type="system",
             initiator_id="entity_manager",
             affected=[AffectedParty(entity_id, "subject")],
-            event_type="entity_despawned",
+            event_type="entity_died",
             data={
                 "entity_id": entity_id,
                 "entity_type": entity.entity_type.name,
             },
         ))
-        logger.debug("despawn: %s type=%s", entity_id, entity.entity_type.name)
+        logger.debug("death: %s type=%s", entity_id, entity.entity_type.name)
         return entity
 
     def move(
@@ -180,7 +203,7 @@ class EntityManager:
         """移动实体到新位置（同层内），发布 entity_moved 事件。
 
         跨层移动不在本方法职责内——跨层是离散动作（进入洞穴/出洞穴），
-        应通过 despawn + spawn 或专用 transition API 实现，避免误操作。
+        应通过专用 transition API 实现，避免误操作。
 
         Args:
             entity_id: 实体 ID。
@@ -211,9 +234,10 @@ class EntityManager:
         )
 
         if old_key != new_key:
-            self._spatial_index.get(old_key, set()).discard(entity_id)
+            self._discard_from_index(self._spatial_index, old_key, entity_id)
             self._spatial_index.setdefault(new_key, set()).add(entity_id)
 
+        gx, gy = entity.global_xy
         self._world_tree.publish(Event(
             timestamp=game_time,
             location=entity.position,
@@ -227,10 +251,31 @@ class EntityManager:
                 "old_position": old_pos,
                 "new_position": entity.position,
                 "layer_id": entity.layer_id,
+                "x": gx,
+                "y": gy,
             },
         ))
         logger.debug("move: %s %s → %s", entity_id, old_pos, entity.position)
         return True
+
+    @staticmethod
+    def _discard_from_index(index: dict, key, entity_id: str) -> None:
+        """从索引桶移除实体 ID，桶空时删除键。
+
+        空间索引键空间无上限（层 × chunk × sub-cell），残留空集
+        在高周转下是无界内存泄漏，必须随手清理。
+
+        Args:
+            index: 目标索引字典（值为 set）。
+            key: 索引键。
+            entity_id: 要移除的实体 ID。
+        """
+        bucket = index.get(key)
+        if bucket is None:
+            return
+        bucket.discard(entity_id)
+        if not bucket:
+            del index[key]
 
     # ── 查询 ──────────────────────────────────────────────
 
@@ -244,6 +289,14 @@ class EntityManager:
             实体或 None。
         """
         return self._entities.get(entity_id)
+
+    def all_entities(self) -> list[Entity]:
+        """返回所有活跃实体（快照接口等状态通道消费）。
+
+        Returns:
+            实体列表（浅拷贝，调用方可安全迭代）。
+        """
+        return list(self._entities.values())
 
     def by_type(self, entity_type: EntityType) -> list[Entity]:
         """按类型查询所有实体。

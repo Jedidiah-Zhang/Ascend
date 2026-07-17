@@ -127,7 +127,7 @@ class TestProtocol:
         """复杂嵌套数据的编解码。"""
         msg = {
             "type": "event",
-            "event_type": "entity_spawned",
+            "event_type": "entity_born",
             "payload": {
                 "id": "npc_001",
                 "position": [10.5, 20.3],

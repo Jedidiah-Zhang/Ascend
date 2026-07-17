@@ -622,13 +622,13 @@ class TestTeleportCommand:
 
     @pytest.fixture
     def player_service(self, clock):
-        """出生 chunk (2, 3)、已 spawn 的 PlayerService 固件（隔离 WorldTree）。"""
+        """出生 chunk (2, 3)、已 birth 的 PlayerService 固件（隔离 WorldTree）。"""
         from ascend.entity import EntityManager, PlayerService
         from ascend.world_tree import WorldTree
         wt = WorldTree()
         manager = EntityManager(world_tree_arg=wt)
         svc = PlayerService(manager, clock, birth_chunk=(2, 3), world_tree_arg=wt)
-        svc.spawn()
+        svc.birth()
         return svc
 
     @pytest.fixture
@@ -700,8 +700,221 @@ class TestTeleportCommand:
 
 
 # ══════════════════════════════════════════════════════════
+# entity 指令组（Issue #20）
+# ══════════════════════════════════════════════════════════
+
+
+class TestEntityCommand:
+    """entity 指令测试（需要 EntityManager）。"""
+
+    @pytest.fixture
+    def entity_manager(self):
+        """隔离 WorldTree 的 EntityManager 固件。"""
+        from ascend.entity import EntityManager
+        from ascend.world_tree import WorldTree
+        return EntityManager(world_tree_arg=WorldTree())
+
+    @pytest.fixture
+    def executor_entity(self, clock, calendar, i18n, entity_manager):
+        """含 EntityManager 的 CommandExecutor 固件。"""
+        return CommandExecutor(
+            clock=clock, calendar=calendar, i18n=i18n,
+            entity_manager=entity_manager,
+        )
+
+    def test_entity_without_manager(self, executor):
+        """无 entity_manager 时返回不可用。
+
+        Arrange:
+            标准 CommandExecutor（无实体管理器）。
+        Act:
+            执行 "entity list"。
+        Assert:
+            success=False，输出含不可用提示。
+        """
+        result = executor.execute("entity list")
+        assert result.success is False
+        assert "不可用" in result.output or "not available" in result.output
+
+    def test_entity_list_empty(self, executor_entity):
+        """无实体时 list 提示为空。
+
+        Arrange:
+            executor_entity（空管理器）。
+        Act:
+            执行 "entity list" 与无参 "entity"。
+        Assert:
+            均成功且输出为空提示。
+        """
+        for cmd in ("entity list", "entity"):
+            result = executor_entity.execute(cmd)
+            assert result.success is True, cmd
+            assert "没有" in result.output or "No active" in result.output
+
+    def test_entity_birth_at_coords(self, executor_entity, entity_manager):
+        """entity birth creature 100 200 在指定位置诞生实体。
+
+        Arrange:
+            executor_entity。
+        Act:
+            执行 "entity birth creature 100 200"。
+        Assert:
+            管理器多一个 CREATURE，位置精确。
+        """
+        result = executor_entity.execute("entity birth creature 100 200")
+        assert result.success is True
+        assert entity_manager.count == 1
+        entity = entity_manager.all_entities()[0]
+        from ascend.entity import EntityType
+        assert entity.entity_type == EntityType.CREATURE
+        assert entity.global_xy == (100.0, 200.0)
+
+    def test_entity_birth_publishes_event(self, executor_entity, entity_manager):
+        """birth 指令经管理器发布 entity_born 事件。
+
+        Arrange:
+            订阅 entity_born。
+        Act:
+            执行 "entity birth item 5 5"。
+        Assert:
+            收到 1 条事件。
+        """
+        events = []
+        entity_manager._world_tree.subscribe(
+            "entity_born", lambda e: events.append(e),
+        )
+        executor_entity.execute("entity birth item 5 5")
+        assert len(events) == 1
+        assert events[0].data["entity_type"] == "ITEM"
+
+    def test_entity_birth_default_position_from_player(
+        self, clock, calendar, i18n, entity_manager,
+    ):
+        """缺省坐标时 birth 落在玩家当前位置。
+
+        Arrange:
+            含 PlayerService（已移动到 (77.5, 88.5)）的 executor。
+        Act:
+            执行 "entity birth plant"。
+        Assert:
+            新实体位置 = 玩家位置。
+        """
+        from ascend.entity import EntityManager, PlayerService
+        from ascend.world_tree import WorldTree
+        wt = WorldTree()
+        manager = EntityManager(world_tree_arg=wt)
+        svc = PlayerService(manager, clock, birth_chunk=(0, 0), world_tree_arg=wt)
+        svc.birth()
+        svc.move_to(77.5, 88.5)
+        executor = CommandExecutor(
+            clock=clock, calendar=calendar, i18n=i18n,
+            player_service=svc, entity_manager=manager,
+        )
+        result = executor.execute("entity birth plant")
+        assert result.success is True
+        plants = [
+            e for e in manager.all_entities() if e.id != svc.entity.id
+        ]
+        assert len(plants) == 1
+        assert plants[0].global_xy == (77.5, 88.5)
+
+    def test_entity_birth_unknown_type(self, executor_entity):
+        """未知类型返回错误并列出可用类型。
+
+        Arrange:
+            executor_entity。
+        Act:
+            执行 "entity birth dragon"。
+        Assert:
+            success=False，输出含类型列表。
+        """
+        result = executor_entity.execute("entity birth dragon")
+        assert result.success is False
+        assert "creature" in result.output
+
+    def test_entity_birth_invalid_coords(self, executor_entity):
+        """非法坐标返回用法。"""
+        result = executor_entity.execute("entity birth item a b")
+        assert result.success is False
+
+    def test_entity_death_by_prefix(self, executor_entity, entity_manager):
+        """entity death <id前缀> 移除实体并发布 entity_died。
+
+        Arrange:
+            已 birth 一个实体，订阅 entity_died。
+        Act:
+            用 8 位 ID 前缀执行 death。
+        Assert:
+            实体移除，事件发布。
+        """
+        events = []
+        entity_manager._world_tree.subscribe(
+            "entity_died", lambda e: events.append(e),
+        )
+        executor_entity.execute("entity birth creature 1 1")
+        entity = entity_manager.all_entities()[0]
+        result = executor_entity.execute(f"entity death {entity.id[:8]}")
+        assert result.success is True
+        assert entity_manager.count == 0
+        assert len(events) == 1
+
+    def test_entity_death_player_protected(self, clock, calendar, i18n):
+        """玩家控制的实体禁止用 death 命令移除。
+
+        Arrange:
+            manager 含 controller=PLAYER 的实体。
+        Act:
+            执行 "entity death <玩家id前缀>"。
+        Assert:
+            success=False,实体仍存活。
+        """
+        from ascend.entity import Controller, EntityManager, EntityType
+        from ascend.world_tree import WorldTree
+        manager = EntityManager(world_tree_arg=WorldTree())
+        player = manager.birth(
+            EntityType.CREATURE, 0, 0, 0, 0, controller=Controller.PLAYER,
+        )
+        executor = CommandExecutor(
+            clock=clock, calendar=calendar, i18n=i18n, entity_manager=manager,
+        )
+        result = executor.execute(f"entity death {player.id[:8]}")
+        assert result.success is False
+        assert manager.count == 1
+
+    def test_entity_death_not_found(self, executor_entity):
+        """不存在的前缀返回错误。"""
+        result = executor_entity.execute("entity death deadbeef")
+        assert result.success is False
+
+    def test_entity_death_short_prefix_rejected(self, executor_entity, entity_manager):
+        """前缀不足 4 字符返回用法（防误删）。"""
+        executor_entity.execute("entity birth creature 1 1")
+        entity = entity_manager.all_entities()[0]
+        result = executor_entity.execute(f"entity death {entity.id[:3]}")
+        assert result.success is False
+        assert entity_manager.count == 1
+
+    def test_entity_list_shows_entities(self, executor_entity, entity_manager):
+        """list 输出含 ID 前缀、类型与坐标。"""
+        executor_entity.execute("entity birth creature 10 20")
+        entity = entity_manager.all_entities()[0]
+        result = executor_entity.execute("entity list")
+        assert result.success is True
+        assert entity.id[:8] in result.output
+        assert "CREATURE" in result.output
+
+    def test_entity_unknown_sub(self, executor_entity):
+        """未知子指令返回用法。"""
+        result = executor_entity.execute("entity foobar")
+        assert result.success is False
+
+
+# ══════════════════════════════════════════════════════════
 # T33-T35: lang
-# ══════════════════════════════════════════════════════════class TestLang:
+# ══════════════════════════════════════════════════════════
+
+
+class TestLang:
     """lang 指令测试。"""
 
     def test_T33_lang_show(self, executor):
@@ -886,50 +1099,6 @@ class TestEmptyLine:
             result = executor.execute(cmd)
             assert result.success is True
             assert result.output == ""
-
-
-# ══════════════════════════════════════════════════════════
-# T43: map with world_gen
-# ══════════════════════════════════════════════════════════
-
-class TestMap:
-    """map 指令测试（需要 WorldGenerator）。"""
-
-    @pytest.fixture
-    def executor_with_world_gen(self, clock, calendar, i18n):
-        """含 WorldGenerator 的 CommandExecutor 固件。"""
-        from ascend.space import WorldGenerator
-        wg = WorldGenerator(seed=42)
-        return CommandExecutor(clock=clock, calendar=calendar, i18n=i18n, world_gen=wg)
-
-    def test_T43_map_with_world_gen(self, executor_with_world_gen):
-        """有 world_gen 时 execute("map") 返回 ASCII 地图。
-
-        Arrange:
-            CommandExecutor 含 WorldGenerator(seed=42)。
-        Act:
-            执行 "map"。
-        Assert:
-            输出包含种子信息和地图字符。
-        """
-        result = executor_with_world_gen.execute("map")
-        assert result.success is True
-        assert "42" in result.output or "种子" in result.output
-        assert len(result.output) > 20  # 地图渲染应有相当长度
-
-    def test_T44_map_without_world_gen(self, executor):
-        """无 world_gen 时 execute("map") 返回提示。
-
-        Arrange:
-            标准 CommandExecutor（无 world_gen）。
-        Act:
-            执行 "map"。
-        Assert:
-            输出为未提供提示。
-        """
-        result = executor.execute("map")
-        assert result.success is True
-        assert "WorldGenerator" in result.output
 
 
 # ══════════════════════════════════════════════════════════

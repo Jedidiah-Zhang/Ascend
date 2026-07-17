@@ -61,3 +61,41 @@ class TestTickCircuitBreaker:
         engine._run_loop()
 
         assert not engine._running.is_set()
+
+
+class TestSelectBirthPoint:
+    """_select_birth_point 出生点选取。"""
+
+    class _FakeContinent:
+        """最小化 ContinentData 替身。"""
+
+        def __init__(self, w: int, h: int, land: list[int],
+                     elev: list[float]) -> None:
+            self.grid_width = w
+            self.grid_height = h
+            self.land_mask = land
+            self.elevation_field = elev
+            self.river_width = []
+
+    def test_no_land_raises_runtime_error(self):
+        """全海洋大陆抛 RuntimeError（携带 seed 诊断信息）。
+
+        回归:曾因 @staticmethod 内引用 self.seed 先炸 NameError。
+        """
+        import pytest
+        cont = self._FakeContinent(
+            4, 4, land=[0] * 16, elev=[-100.0] * 16,
+        )
+        with pytest.raises(RuntimeError, match="seed=42"):
+            GameEngine._select_birth_point(cont, 42)
+
+    def test_coastal_land_selected(self):
+        """海岸陆地 chunk 被选中。"""
+        w, h = 4, 4
+        land = [0] * 16
+        elev = [-100.0] * 16
+        # chunk (1,1) 中心格 (3,3)：陆地，邻居 (2,3) 保持海洋 → 海岸
+        land[3 * w + 3] = 1
+        elev[3 * w + 3] = 25.0
+        cont = self._FakeContinent(w, h, land, elev)
+        assert GameEngine._select_birth_point(cont, 7) == (1, 1)

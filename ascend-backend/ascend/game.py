@@ -36,6 +36,7 @@ from ascend.net.handlers.map_handler import make_map_handlers
 from ascend.net.handlers.terminal_handler import make_terminal_handler
 from ascend.net.handlers.weather_handler import make_weather_handler
 from ascend.net.handlers.player_handler import make_player_handler
+from ascend.net.handlers.entity_handler import make_entity_handlers
 from ascend.space import WorldGenerator, TileGenerator
 from ascend.space.chunk_store import ChunkStore
 from ascend.entity import EntityManager, PlayerService
@@ -162,7 +163,7 @@ class GameEngine:
         logger.info("大陆生成完成: %s", continent)
 
         # 3. 随机出生点（陆地、海拔适中的温和低地）
-        self.birth_chunk = self._select_birth_point(continent)
+        self.birth_chunk = self._select_birth_point(continent, self.seed)
         logger.info("出生点: chunk %s", self.birth_chunk)
 
         # 3b. 初始化 ChunkStore（LRU 缓存 + SQLite 持久化）
@@ -185,8 +186,8 @@ class GameEngine:
         self.player_service = PlayerService(
             self.entity_manager, self.clock, self.birth_chunk,
         )
-        self.player_service.spawn()
-        logger.info("玩家实体已生成: %r", self.player_service)
+        self.player_service.birth()
+        logger.info("玩家实体已诞生: %r", self.player_service)
 
         # 5b. 天气引擎（接入已加载 chunk 的天气基线）
         self.weather_engine = WeatherEngine(self.clock, seed=self.seed)
@@ -229,15 +230,21 @@ class GameEngine:
             self.dispatcher.register(req_type, handler)
         logger.info("已注册玩家处理程序: %s", list(player_handlers.keys()))
 
+        # 7d. 实体快照处理程序（状态通道：前端接入时初始化实体视图）
+        entity_handlers = make_entity_handlers(self.entity_manager)
+        for req_type, handler in entity_handlers.items():
+            self.dispatcher.register(req_type, handler)
+        logger.info("已注册实体处理程序: %s", list(entity_handlers.keys()))
+
         # 8. 终端指令执行器
         self._executor = CommandExecutor(
             clock=self.clock,
             calendar=self.calendar,
             i18n=self.i18n,
-            world_gen=self.world_gen,
             weather_engine=self.weather_engine,
             default_chunk=self.birth_chunk,
             player_service=self.player_service,
+            entity_manager=self.entity_manager,
         )
         term_handlers = make_terminal_handler(self._executor)
         for req_type, handler in term_handlers.items():
@@ -306,6 +313,8 @@ class GameEngine:
         if self.weather_engine:
             self.weather_engine.shutdown()
             self.weather_engine = None
+        # 停服是世界外操作：不发 entity_died（那会向因果历史写入虚假
+        # 死亡），直接释放内存；实体状态持久化是存档系统的职责。
         self.player_service = None
         self.entity_manager = None
         self.tile_generator = None
@@ -326,7 +335,7 @@ class GameEngine:
     # ── 出生点与初始区块 ──────────────────────────────────
 
     @staticmethod
-    def _select_birth_point(continent) -> tuple[int, int]:
+    def _select_birth_point(continent, seed: int = 0) -> tuple[int, int]:
         """从海岸 chunk 中随机选取出生点。
 
         以 chunk 为单位遍历，判断 chunk 中心格（land_mask 格
@@ -341,9 +350,13 @@ class GameEngine:
 
         Args:
             continent: ContinentData。
+            seed: 世界种子（仅用于无陆地时的错误诊断信息）。
 
         Returns:
             (chunk_x, chunk_y) 出生 chunk 坐标。
+
+        Raises:
+            RuntimeError: 大陆无任何陆地 chunk 时。
         """
         w, h = continent.grid_width, continent.grid_height
         elev = continent.elevation_field
@@ -387,7 +400,7 @@ class GameEngine:
                 if pool:
                     break
         if not pool:
-            raise RuntimeError(f"seed={self.seed}: 大陆无陆地 chunk，无法选取出生点")
+            raise RuntimeError(f"seed={seed}: 大陆无陆地 chunk，无法选取出生点")
         return pool[random.randrange(len(pool))]
 
     def _generate_initial_chunks(self, continent) -> None:

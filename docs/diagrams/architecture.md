@@ -67,7 +67,7 @@ graph LR
 
     CAL2 -->|"minute_change<br/>hour_change<br/>day_change<br/>day_end"| PUB
     WEA2 -->|"season_change<br/>temperature_change<br/>humidity_change<br/>wind_change<br/>sunshine_change<br/>precipitation_start/stop<br/>cold_snap/heat_wave/storm"| PUB
-    ENT2 -->|"entity_spawned<br/>entity_despawned<br/>entity_moved"| PUB
+    ENT2 -->|"entity_born<br/>entity_died<br/>entity_moved"| PUB
     GAME2 -->|"world_initialized"| PUB
 
     PUB --> SUB
@@ -163,6 +163,7 @@ graph TD
     I18N -->|注入| CMD3
     WEA3 -->|注入| CMD3
     PLR3 -->|注入| CMD3
+    ENT3 -->|注入| CMD3
 
     ENT3 -->|注入| PLR3
 
@@ -231,14 +232,15 @@ classDiagram
     }
 
     class EntityManager {
-        +spawn(type, cx, cy) Entity
-        +despawn(id) Entity
+        +birth(type, cx, cy, controller) Entity
+        +death(id) Entity
         +move(id, cx, cy)
         +in_region(center, radius) list
+        +all_entities() list
     }
 
     class PlayerService {
-        +spawn() Entity
+        +birth() Entity
         +position tuple
         +move_to(x, y) tuple
         +teleport(x, y) tuple

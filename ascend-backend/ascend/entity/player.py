@@ -3,6 +3,10 @@
 玩家位置的唯一权威来源。前端本地插值仅作预测显示，
 通过 player_move 上报、player_state 查询、player_teleported 事件对齐。
 
+玩家只是 controller=PLAYER 的 CREATURE（Issue #20）——与 NPC 唯一的
+区别是决策来自玩家输入而非 AI。本服务封装的是"玩家控制的那个实体"
+的生命周期与位置写入，而非一种特殊实体类型。
+
 壳子范围：
   - move_to 无条件接受上报位置（未来在此加碰撞/速度/边界校验）
   - 单玩家、单层（layer_id=0）、无持久化
@@ -19,7 +23,7 @@ from ascend.log import get_logger
 from ascend.time import WorldClock
 from ascend.world_tree import world_tree as _default_wt, Event, AffectedParty
 
-from .entity import Entity, EntityType
+from .entity import Entity, EntityType, Controller, split_coords
 from .manager import EntityManager
 
 logger = get_logger(__name__)
@@ -36,7 +40,7 @@ class PlayerService:
 
     Usage:
         svc = PlayerService(entity_manager, clock, birth_chunk=(3, 5))
-        svc.spawn()
+        svc.birth()
         svc.move_to(612.4, 1000.8)      # 前端上报（壳子：直接接受）
         svc.teleport(100.0, 200.0)      # 强制传送，发布 player_teleported
         x, y = svc.position
@@ -52,9 +56,9 @@ class PlayerService:
         """初始化玩家服务。
 
         Args:
-            entity_manager: 实体管理器（spawn/move 经由它发布生命周期事件）。
+            entity_manager: 实体管理器（birth/move 经由它发布生命周期事件）。
             clock: 世界时钟（事件时间戳）。
-            birth_chunk: 出生 chunk 坐标，spawn 与 teleport_home 的落点。
+            birth_chunk: 出生 chunk 坐标，birth 与 teleport_home 的落点。
             world_tree_arg: 可选 WorldTree 实例（测试注入隔离）。
         """
         self._manager = entity_manager
@@ -72,7 +76,7 @@ class PlayerService:
     def __repr__(self) -> str:
         """返回服务状态摘要。"""
         if self._entity is None:
-            return "PlayerService(spawned=False)"
+            return "PlayerService(born=False)"
         x, y = self.position
         return f"PlayerService(id={self._entity.id[:8]}, pos=({x:.1f},{y:.1f}))"
 
@@ -80,7 +84,7 @@ class PlayerService:
 
     @property
     def entity(self) -> Entity | None:
-        """玩家实体（未 spawn 时为 None）。"""
+        """玩家实体（未 birth 时为 None）。"""
         return self._entity
 
     @property
@@ -89,24 +93,25 @@ class PlayerService:
         bcx, bcy = self._birth_chunk
         return (float(bcx * TILE_MAP_SIZE), float(bcy * TILE_MAP_SIZE))
 
-    def spawn(self) -> Entity:
-        """在出生点生成玩家实体。
+    def birth(self) -> Entity:
+        """玩家控制的实体在出生点诞生。
 
-        幂等：已 spawn 时直接返回既有实体。
+        幂等：已诞生时直接返回既有实体。
 
         Returns:
-            玩家实体。
+            玩家实体（controller=PLAYER 的 CREATURE）。
         """
         if self._entity is not None:
             return self._entity
         x, y = self.birth_position
-        cx, cy, tx, ty = self._split_coords(x, y)
-        self._entity = self._manager.spawn(
-            EntityType.PLAYER, cx, cy, tx, ty,
+        cx, cy, tx, ty = split_coords(x, y)
+        self._entity = self._manager.birth(
+            EntityType.CREATURE, cx, cy, tx, ty,
+            controller=Controller.PLAYER,
             data={"fx": x, "fy": y},
             game_time=self._clock.time,
         )
-        logger.info("玩家实体已生成: %s at (%.1f, %.1f)", self._entity.id, x, y)
+        logger.info("玩家实体已诞生: %s at (%.1f, %.1f)", self._entity.id, x, y)
         return self._entity
 
     # ── 位置 ──────────────────────────────────────────────
@@ -116,7 +121,7 @@ class PlayerService:
         """玩家当前全局 float tile 坐标。
 
         Returns:
-            (x, y)，未 spawn 时返回出生点坐标。
+            (x, y)，未 birth 时返回出生点坐标。
         """
         if self._entity is None:
             return self.birth_position
@@ -177,15 +182,6 @@ class PlayerService:
 
     # ── 内部 ──────────────────────────────────────────────
 
-    @staticmethod
-    def _split_coords(x: float, y: float) -> tuple[int, int, int, int]:
-        """全局 float 坐标 → (chunk_x, chunk_y, tile_x, tile_y) 整数四元组。"""
-        gx = int(x // 1)
-        gy = int(y // 1)
-        cx = gx // TILE_MAP_SIZE
-        cy = gy // TILE_MAP_SIZE
-        return (cx, cy, gx - cx * TILE_MAP_SIZE, gy - cy * TILE_MAP_SIZE)
-
     def _apply_position(self, x: float, y: float) -> tuple[float, float]:
         """写入权威位置：更新 float 精确值，跨 tile 时同步整数索引。
 
@@ -197,11 +193,11 @@ class PlayerService:
             写入后的位置 (x, y)。
         """
         if self._entity is None:
-            self.spawn()
+            self.birth()
         entity = self._entity
         entity.set_data("fx", x)
         entity.set_data("fy", y)
-        cx, cy, tx, ty = self._split_coords(x, y)
+        cx, cy, tx, ty = split_coords(x, y)
         if (cx, cy, tx, ty) != entity.position:
             self._manager.move(
                 entity.id, cx, cy, tx, ty, game_time=self._clock.time,

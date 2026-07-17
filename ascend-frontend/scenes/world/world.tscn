@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" path="res://scripts/world/map_display.gd" id="1_sl2e5"]
 [ext_resource type="TileSet" path="res://assets/tiles/terrain_tileset.tres" id="2_1fp7r"]
+[ext_resource type="Script" path="res://scripts/world/entity_layer.gd" id="3_entl1"]
 
 [node name="World" type="Node2D" unique_id=1115777730]
 
@@ -16,6 +17,5 @@ script = ExtResource("1_sl2e5")
 y_sort_enabled = true
 tile_set = ExtResource("2_1fp7r")
 
-[node name="Player" type="Sprite2D" parent="MapDisplay" unique_id=1403542097]
-centered = false
-offset = Vector2(-16, -16)
+[node name="EntityLayer" type="Node2D" parent="MapDisplay" unique_id=1403542097]
+script = ExtResource("3_entl1")
