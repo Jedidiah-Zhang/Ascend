@@ -23,6 +23,18 @@ const MOVE_REPORT_INTERVAL: float = Config.MOVE_REPORT_INTERVAL
 ## 放置操作每帧时间预算（微秒），超时后下帧继续
 const PLACE_TIME_BUDGET_US: int = Config.PLACE_TIME_BUDGET_US
 const PLACE_BATCH_CHECK_MASK: int = 0x3F  # 每 64 格检查一次时间预算
+
+## 海拔渲染缩放：1 米 → 多少像素的 y 偏移。与 _get_layer 的 layer.position 一致。
+const ELEVATION_PIXELS_PER_METER: float = 16.0
+
+## 实体统一挂在 layer 0（地表层）；layer_id ≠ 0 的实体由区域地图处理。
+const ENTITY_RENDER_LAYER: int = 0
+
+## 实体层 z_index：Godot 限制 [-4096, 4096]。地形 layer z_index = 海拔米
+## （最高 ~4000），实体层设上限 4096 保证画在地形之上。代价是远处实体
+## 不会被远山遮挡（透视错误），但比实体被地形盖住看不见好。
+## 长期方案：改 y_sort 或 per-entity z_index 跟脚下海拔。
+const ENTITY_LAYER_Z_INDEX: int = 4096
 const TERRAIN_TILES: Array[Vector2i] = [
 	Vector2i(0, 2),
 	Vector2i(0, 0),
@@ -53,7 +65,8 @@ var _player: Node2D = null
 # ── 属性 ──────────────────────────────────────────────────
 
 var _player_pos: Vector2 = Vector2.ZERO
-var _player_elevation: int = 0
+## 玩家脚下海拔（米），用于 y 方向视觉偏移。0 = 海平面。
+var _player_elevation: float = 0.0
 
 ## 位置上报累积计时（秒）与待上报标记
 var _move_report_accum: float = 0.0
@@ -137,6 +150,7 @@ func move_player(direction: Vector2, delta: float) -> void:
 		return
 	_player_pos += direction * PLAYER_SPEED * delta
 	_move_dirty = true
+	_update_player_elevation_from_ground()
 	_place_player_at(_player_pos, _player_elevation)
 
 
@@ -145,11 +159,14 @@ func teleport_player(pos: Vector2) -> void:
 
 	周边区块由下一帧 stream_chunks_for_viewport 按新位置自动请求。
 	不标记 _move_dirty——权威位置无需回报。
+	脚下海拔在 chunk 数据到达后由 handle_chunk_response 校正。
 
 	Args:
 		pos: 后端权威世界坐标（tile 单位）。
 	"""
 	_move_dirty = false
+	_player_pos = pos
+	_update_player_elevation_from_ground()
 	_place_player_at(pos, _player_elevation)
 
 
@@ -195,13 +212,25 @@ func handle_chunk_response(payload: Dictionary) -> void:
 		_pending.erase(pos)
 
 		if entry.has("terrain") and not _tiles_loaded.has(pos) and not _tiles_cached.has(pos) and not _being_placed.has(pos):
+			var stream_r := _stream_radius_for_zoom()
 			var center_cx: int = int(_player_pos.x / float(CHUNK_SIZE))
 			var center_cy: int = int(_player_pos.y / float(CHUNK_SIZE))
-			if abs(cx - center_cx) <= STREAM_MARGIN and abs(cy - center_cy) <= STREAM_MARGIN:
+			if abs(cx - center_cx) <= stream_r and abs(cy - center_cy) <= stream_r:
 				_being_placed[pos] = true
 				_place_queue.append(entry)
 			else:
 				_tiles_cached[pos] = true
+
+		# 玩家所在 chunk 的 elevation 数据到达时，校正玩家脚下海拔
+		# （传送/出生后 chunk 数据晚到，首次移动前先校正一次）
+		if entry.has("elevation") and _has_player_state:
+			var player_chunk := Vector2i(
+				int(_player_pos.x / float(CHUNK_SIZE)),
+				int(_player_pos.y / float(CHUNK_SIZE)))
+			if pos == player_chunk:
+				_update_player_elevation_from_ground()
+				if _player:
+					_place_player_at(_player_pos, _player_elevation)
 
 
 func stream_chunks_for_viewport() -> void:
@@ -214,11 +243,12 @@ func stream_chunks_for_viewport() -> void:
 	var center_cx: int = int(_player_pos.x / float(CHUNK_SIZE))
 	var center_cy: int = int(_player_pos.y / float(CHUNK_SIZE))
 
-	_unload_distant_chunks(center_cx, center_cy)
+	var stream_r := _stream_radius_for_zoom()
+	_unload_distant_chunks(center_cx, center_cy, stream_r)
 
 	var coords: Array[Array] = []
-	for dx: int in range(-STREAM_MARGIN, STREAM_MARGIN + 1):
-		for dy: int in range(-STREAM_MARGIN, STREAM_MARGIN + 1):
+	for dx: int in range(-stream_r, stream_r + 1):
+		for dy: int in range(-stream_r, stream_r + 1):
 			var pos: Vector2i = Vector2i(center_cx + dx, center_cy + dy)
 			if not _chunks.has(pos):
 				_chunks[pos] = null
@@ -227,8 +257,8 @@ func stream_chunks_for_viewport() -> void:
 	if not coords.is_empty():
 		_send_request(coords, false)
 
-	for dx: int in range(-STREAM_MARGIN, STREAM_MARGIN + 1):
-		for dy: int in range(-STREAM_MARGIN, STREAM_MARGIN + 1):
+	for dx: int in range(-stream_r, stream_r + 1):
+		for dy: int in range(-stream_r, stream_r + 1):
 			var pos: Vector2i = Vector2i(center_cx + dx, center_cy + dy)
 			if _chunks.has(pos) and _chunks[pos] != null:
 				if _tiles_loaded.has(pos) or _being_placed.has(pos):
@@ -240,8 +270,8 @@ func stream_chunks_for_viewport() -> void:
 					_being_placed[pos] = true
 					_place_queue.append(entry)
 
-	for dx: int in range(-STREAM_MARGIN, STREAM_MARGIN + 1):
-		for dy: int in range(-STREAM_MARGIN, STREAM_MARGIN + 1):
+	for dx: int in range(-stream_r, stream_r + 1):
+		for dy: int in range(-stream_r, stream_r + 1):
 			var pos: Vector2i = Vector2i(center_cx + dx, center_cy + dy)
 			if (_chunks.has(pos) and _chunks[pos] != null
 				and not _tiles_loaded.has(pos) and not _tiles_cached.has(pos)
@@ -258,6 +288,35 @@ func stream_chunks_for_viewport() -> void:
 		pending_count += 1
 
 	_last_stream_us = Time.get_ticks_usec() - t0
+
+
+func _stream_radius_for_zoom() -> int:
+	"""根据相机 zoom 和视口尺寸计算流式加载半径。
+
+	等距投影下 chunk 屏幕尺寸 ≈ (CHUNK_SIZE * (|step_x.x|+|step_y.x|),
+	CHUNK_SIZE * (|step_x.y|+|step_y.y|))。半径 = 屏幕能容纳的 chunk 数 / 2，
+	下限 STREAM_MARGIN。zoom 拉远（<0.3）时多加 1 圈预加载防黑边；
+	zoom 近时不加，避免 chunk 数翻倍导致 layer 爆炸卡顿。
+	"""
+	if _camera == null:
+		return STREAM_MARGIN
+	var viewport_size: Vector2 = get_viewport_rect().size
+	var zoom: float = _camera.zoom.x
+	if zoom <= 0.0:
+		return STREAM_MARGIN
+	var world_px_w: float = viewport_size.x / zoom
+	var world_px_h: float = viewport_size.y / zoom
+	var chunk_px_w: float = float(CHUNK_SIZE) * (abs(_cell_step_x.x) + abs(_cell_step_y.x))
+	var chunk_px_h: float = float(CHUNK_SIZE) * (abs(_cell_step_x.y) + abs(_cell_step_y.y))
+	if chunk_px_w <= 0.0 or chunk_px_h <= 0.0:
+		return STREAM_MARGIN
+	var visible_x: int = int(world_px_w / chunk_px_w) + 1
+	var visible_y: int = int(world_px_h / chunk_px_h) + 1
+	var base_radius: int = int(maxi(visible_x, visible_y) / 2.0)
+	# zoom 拉远时 +1 圈预加载，zoom 近时省掉
+	var preload_r: int = 1 if zoom < 0.3 else 0
+	var radius: int = base_radius + preload_r
+	return maxi(STREAM_MARGIN, radius)
 
 
 # ── 内部实现 ──────────────────────────────────────────────
@@ -299,43 +358,46 @@ func _get_layer(elevation: int) -> TileMapLayer:
 	return layer
 
 
-func _get_entity_layer(elevation: int) -> TileMapLayer:
-	"""获取渲染海拔对应的实体视图层（懒创建）。
+func _get_entity_layer(_elevation: int) -> TileMapLayer:
+	"""获取实体视图层。
 
-	实体视图挂在与地形同构的 TileMapLayer 下，保证 z 排序与
-	海拔抬升偏移一致。
+	所有实体统一挂在 layer 0（地表层）：跨层移动（洞穴/建筑内）走
+	未来的区域地图切换，不走 layer_id 分层。_elevation 参数保留仅为
+	向后兼容，内部忽略。
 
 	Args:
-		elevation: 渲染海拔层。
+		_elevation: 保留参数，内部忽略。
 
 	Returns:
-		该海拔的实体层。
+		唯一的实体层（layer 0）。
 	"""
-	if _entity_view_layers.has(elevation):
-		return _entity_view_layers[elevation]
+	if _entity_view_layers.has(ENTITY_RENDER_LAYER):
+		return _entity_view_layers[ENTITY_RENDER_LAYER]
 	var layer := TileMapLayer.new()
-	layer.name = "EntityViews%d" % elevation
+	layer.name = "EntityViews"
 	layer.tile_set = _tileset
 	layer.y_sort_enabled = false
-	layer.z_index = elevation
-	layer.position = Vector2(0, -elevation * 16)
+	layer.z_index = ENTITY_LAYER_Z_INDEX
+	layer.position = Vector2.ZERO
 	_elevation_layers.add_child(layer)
-	_entity_view_layers[elevation] = layer
+	_entity_view_layers[ENTITY_RENDER_LAYER] = layer
 	return layer
 
 
-func place_entity_node(node: Node2D, pos: Vector2, elevation: int) -> void:
+func place_entity_node(node: Node2D, pos: Vector2, elevation_m: float) -> void:
 	"""把实体视图节点放置到等距地图的精确像素位置。
 
-	节点挂载到对应渲染海拔的实体层下，按 tile 小数部分沿
-	等距基向量插值。Player 与其他实体共用本方法（统一渲染管线）。
+	节点统一挂到 layer 0（地表层），按 tile 小数部分沿等距基向量
+	插值，再加脚下海拔的 y 偏移（1 米 = ELEVATION_PIXELS_PER_METER 像素）。
+	这样高海拔实体视觉上抬到正确高度，相机跟玩家节点即可同步到
+	脚下海拔，周围同海拔 tile 自然进入视野。
 
 	Args:
 		node: 实体视图节点。
 		pos: 世界坐标（tile 单位，float 精确值）。
-		elevation: 渲染海拔层。
+		elevation_m: 脚下海拔（米）。0 = 海平面。
 	"""
-	var layer := _get_entity_layer(elevation)
+	var layer := _get_entity_layer(ENTITY_RENDER_LAYER)
 	if node.get_parent() != layer:
 		if node.get_parent():
 			node.get_parent().remove_child(node)
@@ -343,14 +405,25 @@ func place_entity_node(node: Node2D, pos: Vector2, elevation: int) -> void:
 	var cell := Vector2i(int(pos.x), int(pos.y))
 	var frac := pos - Vector2(cell)
 	node.position = layer.map_to_local(cell) \
-		+ _cell_step_x * frac.x + _cell_step_y * frac.y
+		+ _cell_step_x * frac.x + _cell_step_y * frac.y \
+		+ Vector2(0, -elevation_m * ELEVATION_PIXELS_PER_METER)
 
 
-func _place_player_at(pos: Vector2, elevation: int) -> void:
+func _place_player_at(pos: Vector2, elevation_m: float) -> void:
 	_player_pos = pos
-	_player_elevation = elevation
+	_player_elevation = elevation_m
 	if _player:
-		place_entity_node(_player, pos, elevation)
+		place_entity_node(_player, pos, elevation_m)
+
+
+func _update_player_elevation_from_ground() -> void:
+	"""根据玩家当前 tile 的脚下海拔更新 _player_elevation。
+
+	查不到（chunk 未加载）时保持现状，避免出生/传送时跳到 0。
+	"""
+	var ground_m := get_elevation_at(_player_pos)
+	if ground_m > -998.0:
+		_player_elevation = ground_m
 
 
 func _request_chunks_around_birth() -> void:
@@ -502,10 +575,14 @@ func _erase_batch(deadline: int) -> void:
 			return
 
 	_erase_queue.pop_front()
+	# 回收判断：遍历 _chunk_elevations（语义=当前在 layer 上有 tile 的 chunk），
+	# 而非 _tiles_loaded（语义=place 完成的 chunk）。drop 状态的 chunk tile
+	# 仍留在 layer 上但不在 _tiles_loaded 里，遍历 _chunk_elevations 才能正确
+	# 阻止 layer 被误回收，避免 drop chunk 的 tile 一起消失（黑块 race）。
 	for elev in evals:
 		var active := false
-		for other_key in _tiles_loaded:
-			var other_used: Dictionary = _chunk_elevations.get(other_key, {})
+		for other_key in _chunk_elevations:
+			var other_used: Dictionary = _chunk_elevations[other_key]
 			if other_used.has(elev):
 				active = true
 				break
@@ -516,15 +593,17 @@ func _erase_batch(deadline: int) -> void:
 				layer.queue_free()
 
 
-func _unload_distant_chunks(center_cx: int, center_cy: int) -> void:
+func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> void:
+	# unload 半径 = stream_r + 2，留余量避免 zoom 变化时频繁 unload/reload 抖动
+	var unload_r: int = stream_r + 2
 	var to_unload: Array[Vector2i] = []
 	var to_drop_tiles: Array[Vector2i] = []
 	for pos: Vector2i in _tiles_loaded:
 		var dx: int = abs(pos.x - center_cx)
 		var dy: int = abs(pos.y - center_cy)
-		if dx > UNLOAD_RADIUS or dy > UNLOAD_RADIUS:
+		if dx > unload_r or dy > unload_r:
 			to_unload.append(pos)
-		elif dx > STREAM_MARGIN or dy > STREAM_MARGIN:
+		elif dx > stream_r or dy > stream_r:
 			to_drop_tiles.append(pos)
 
 	var unload_keys: Array[Vector2i] = []
@@ -533,7 +612,7 @@ func _unload_distant_chunks(center_cx: int, center_cy: int) -> void:
 			continue
 		var dx: int = abs(pos.x - center_cx)
 		var dy: int = abs(pos.y - center_cy)
-		if dx > UNLOAD_RADIUS or dy > UNLOAD_RADIUS:
+		if dx > unload_r or dy > unload_r:
 			if not _tiles_loaded.has(pos):
 				unload_keys.append(pos)
 	for key in unload_keys:
@@ -549,7 +628,8 @@ func get_player_pos() -> Vector2:
 	return _player_pos
 
 
-func get_player_elevation() -> int:
+func get_player_elevation() -> float:
+	## 玩家脚下海拔（米）。
 	return _player_elevation
 
 

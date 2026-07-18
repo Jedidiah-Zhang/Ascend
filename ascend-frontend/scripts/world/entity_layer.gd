@@ -15,8 +15,8 @@ extends Node2D
 
 class_name EntityLayer
 
-## 实体视图放置的渲染海拔（后端实体暂无渲染海拔概念，统一地表）
-const VIEW_ELEVATION: int = 0
+## 实体视图统一挂在 layer 0（地表层）；layer_id ≠ 0 的实体由区域地图处理。
+## 脚下海拔由 MapDisplay.get_elevation_at 实时查询，无数据时回退 0。
 
 ## entity_id → EntityView
 var _views: Dictionary = {}
@@ -135,7 +135,7 @@ func _create_view(id: String, type_name: String, controller_name: String,
 	view.name = "Entity_%s" % id.substr(0, 8)
 	view.setup(id, type_name, controller_name)
 	_views[id] = view
-	_map.place_entity_node(view, pos, VIEW_ELEVATION)
+	_map.place_entity_node(view, pos, _ground_elevation_m(pos))
 	if id == _local_entity_id or view.is_player_controlled():
 		_map.bind_local_entity_view(view)
 	print("[entity] view + %s %s %s (%.1f, %.1f)" % [
@@ -161,4 +161,16 @@ func _update_view_position(id: String, pos: Vector2) -> void:
 	"""更新实体视图的世界位置。"""
 	var view: EntityView = _views.get(id)
 	if view:
-		_map.place_entity_node(view, pos, VIEW_ELEVATION)
+		_map.place_entity_node(view, pos, _ground_elevation_m(pos))
+
+
+func _ground_elevation_m(pos: Vector2) -> float:
+	"""查询实体脚下海拔（米），chunk 未加载时回退 0（地表层）。
+
+	非玩家实体的海拔在 chunk 后续加载时不会自动校正，需等下次
+	entity_moved 事件触发重放。玩家由 MapDisplay 专门校正。
+	"""
+	var m: float = _map.get_elevation_at(pos)
+	if m <= -998.0:
+		return 0.0
+	return m
