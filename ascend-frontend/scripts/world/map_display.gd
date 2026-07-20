@@ -109,6 +109,8 @@ func _ready() -> void:
 	_layers[0] = _layer0
 	_cell_step_x = _layer0.map_to_local(Vector2i(1, 0)) - _layer0.map_to_local(Vector2i.ZERO)
 	_cell_step_y = _layer0.map_to_local(Vector2i(0, 1)) - _layer0.map_to_local(Vector2i.ZERO)
+	# 消除等距 tile 间亚像素缝隙：对 layer 做微小缩放使相邻 tile 边缘微重叠
+	_layer0.scale = Vector2(1.002, 1.002)
 
 
 func _process(_delta: float) -> void:
@@ -353,6 +355,7 @@ func _get_layer(elevation: int) -> TileMapLayer:
 	layer.y_sort_enabled = false
 	layer.z_index = elevation
 	layer.position = Vector2(0, -elevation * 16)
+	layer.scale = Vector2(1.002, 1.002)
 	_elevation_layers.add_child(layer)
 	_layers[elevation] = layer
 	return layer
