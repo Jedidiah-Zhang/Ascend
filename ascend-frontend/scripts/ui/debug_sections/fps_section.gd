@@ -1,6 +1,7 @@
-"""性能分区 — FPS / TPS / MSPT。
+"""性能分区 — FPS / TPS / MSPT / 各环节耗时。
 
-FPS 和逻辑耗时从引擎获取；TPS 由 main_world 根据 minute_change 间隔推算。
+FPS 和 MSPT 从引擎 Performance 单例获取；TPS 由 minute_change 事件间隔推算；
+各环节耗时从世界脚本 get_debug_timing() 拉取。
 """
 
 class_name FPSSection
@@ -21,9 +22,45 @@ var _erase_us: int = 0
 var _queue_us: int = 0
 var _conn_us: int = 0
 
+## TPS 计算所需的上一帧状态
+var _prev_game_time: int = -1
+var _prev_real_msec: int = 0
+
+var _world: Node = null
+
 
 func _init() -> void:
 	label = "性能"
+
+
+func setup(world: Node) -> void:
+	_world = world
+
+
+func process_section(_delta: float) -> void:
+	update_msp_t()
+	if _world and _world.has_method("get_debug_timing"):
+		var timing: Dictionary = _world.get_debug_timing()
+		_stream_us = timing.get("stream", 0)
+		_place_us = timing.get("place", 0)
+		_erase_us = timing.get("erase", 0)
+		_queue_us = timing.get("queue", 0)
+		_conn_us = timing.get("conn", 0)
+
+
+func on_world_event(event_type: String, payload: Dictionary) -> void:
+	if event_type != "minute_change":
+		return
+	var data: Dictionary = payload.get("data", {})
+	var gt: int = int(data.get("game_time", 0))
+	var now_msec: int = Time.get_ticks_msec()
+	if _prev_game_time >= 0 and gt > _prev_game_time:
+		var tick_delta: int = gt - _prev_game_time
+		var real_delta: float = (now_msec - _prev_real_msec) / 1000.0
+		if real_delta > 0.0:
+			tps = tick_delta / real_delta
+	_prev_game_time = gt
+	_prev_real_msec = now_msec
 
 
 func set_timing(stream_us: int, place_us: int, erase_us: int, queue_us: int, conn_us: int) -> void:
@@ -34,6 +71,11 @@ func set_timing(stream_us: int, place_us: int, erase_us: int, queue_us: int, con
 	_conn_us = conn_us
 
 
+func update_msp_t() -> void:
+	var raw_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
+	_mspt_ema = _MS_ALPHA * raw_ms + (1.0 - _MS_ALPHA) * _mspt_ema
+
+
 func get_lines() -> PackedStringArray:
 	var fps := Engine.get_frames_per_second()
 	return PackedStringArray([
@@ -41,8 +83,3 @@ func get_lines() -> PackedStringArray:
 		"MSPT: %.2f ms  网络: %dμs" % [_mspt_ema, _conn_us],
 		"流式: %dμs  放置: %dμs  擦除: %dμs" % [_stream_us, _place_us, _erase_us],
 	])
-
-
-func update_msp_t() -> void:
-	var raw_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
-	_mspt_ema = _MS_ALPHA * raw_ms + (1.0 - _MS_ALPHA) * _mspt_ema

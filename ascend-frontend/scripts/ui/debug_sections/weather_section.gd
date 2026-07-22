@@ -1,18 +1,10 @@
-"""天气分区 — 由 get_weather 轮询响应更新（唯一数据源）。
+"""天气分区 — 每 0.5 秒通过 Connection 轮询 get_weather，自行管理计时与响应处理。
 
-数据通过 update_from_backend() 注入（weather_handler 响应）：
-  - {"weather": "晴", "temperature": 24.5, "temp_perception": "温暖",
-     "humidity": 68.0, "hum_perception": "舒适",
-     "wind_speed": 3.2, "wind_perception": "微风",
-     "sunshine": 10.7, "sun_perception": "适中",
-     "sunrise": 6.2, "sunset": 18.8,
-     "sunshine_intensity": 0.85, "light_perception": "明亮"}
-
-感知标签由后端按显示值（四舍五入后）分类并翻译，前端只做展示。
+数据通过 on_world_response("get_weather") 接收，与具体世界脚本解耦。
 """
 
 class_name WeatherSection
-extends DebugSection
+extends "res://scripts/ui/debug_section.gd"
 
 
 ## 当前天气描述（降水）
@@ -42,12 +34,50 @@ var sunshine_intensity: float = 0.0
 var light_perception: String = ""
 var _has_intensity: bool = false
 
+## 轮询累积计时器（秒）
+var _query_accum: float = 0.0
+
+var _world: Node = null
+
 
 func _init() -> void:
 	label = "天气"
 
 
-func update_from_backend(data: Dictionary) -> void:
+func setup(world: Node) -> void:
+	_world = world
+
+
+func process_section(delta: float) -> void:
+	_query_accum += delta
+	if _query_accum < 0.5:
+		return
+	_query_accum = 0.0
+
+	if Connection.status != Connection.Status.CONNECTED:
+		return
+
+	var chunk: Vector2i = Vector2i.ZERO
+	if _world and _world.has_method("get_debug_player_info"):
+		var info: Dictionary = _world.get_debug_player_info()
+		chunk = info.get("chunk", Vector2i.ZERO)
+
+	Connection.send({
+		"type": "request",
+		"request_type": "get_weather",
+		"payload": {"chunks": [[chunk.x, chunk.y]]},
+	})
+
+
+func on_world_response(request_type: String, payload: Dictionary) -> void:
+	if request_type != "get_weather":
+		return
+	var weathers: Array = payload.get("weathers", [])
+	if weathers.size() > 0:
+		_apply_weather_data(weathers[0])
+
+
+func _apply_weather_data(data: Dictionary) -> void:
 	if data.has("weather"):
 		current_weather = str(data["weather"])
 	if data.has("temperature"):
@@ -80,7 +110,6 @@ func get_lines() -> PackedStringArray:
 	var lines: PackedStringArray = []
 	lines.append("天气: %s" % current_weather)
 
-	# 温度 / 湿度 / 风速
 	var meteo: PackedStringArray = []
 	if _has_temp:
 		meteo.append("%.1f°C(%s)" % [temperature, temp_perception])
@@ -91,11 +120,9 @@ func get_lines() -> PackedStringArray:
 	if not meteo.is_empty():
 		lines.append("  ".join(meteo))
 
-	# 日照时长行
 	if _has_sun:
 		lines.append("日照 %.1fh(%s)" % [sunshine, sun_perception])
 
-	# 光照强度 + 日出→日落
 	var sun_parts: PackedStringArray = []
 	if _has_intensity:
 		sun_parts.append("光照 %.2f(%s)" % [sunshine_intensity, light_perception])

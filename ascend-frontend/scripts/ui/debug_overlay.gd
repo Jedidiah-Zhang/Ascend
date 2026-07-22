@@ -1,14 +1,16 @@
 """调试信息覆盖层 — 类似 Minecraft F3 的半透明调试面板。
 
 渲染所有已注册 DebugSection 的文本行，显示在屏幕左上角。
-F3 键切换可见性，数据由 MainWorld 每帧推送。
+F3 键切换可见性。每个 Section 自行管理数据拉取与轮询，
+DebugOverlay 仅负责统一调度（process_sections / broadcast_event / broadcast_response）。
 
 用法:
-    var overlay := DebugOverlay.new()
+	var overlay := get_node("DebugLayer/DebugOverlay")
     overlay.add_section(FPSSection.new())
     overlay.add_section(MemorySection.new())
-    add_child(overlay)
-    overlay.toggle()
+    overlay.setup_sections(self)        # 世界脚本调用
+    overlay.process_sections(delta)     # 每帧调用
+    overlay.broadcast_event(...)        # 后端事件到达时调用
 """
 
 extends Control
@@ -140,6 +142,51 @@ func get_section(label: String) -> DebugSection:
 		if s.label == label:
 			return s
 	return null
+
+
+func setup_sections(world: Node) -> void:
+	"""对所有已注册 Section 调用 setup，传入世界脚本引用。
+
+	Args:
+		world: 世界脚本节点（MainWorld 或 MainWorld3D）。
+	"""
+	for section: DebugSection in _sections:
+		section.setup(world)
+
+
+func process_sections(delta: float) -> void:
+	"""对所有启用的 Section 调用 process_section。
+
+	Args:
+		delta: 帧间隔（秒）。
+	"""
+	for section: DebugSection in _sections:
+		if section.enabled:
+			section.process_section(delta)
+
+
+func broadcast_event(event_type: String, payload: Dictionary) -> void:
+	"""向后端事件广播给所有启用的 Section。
+
+	Args:
+		event_type: 事件类型（如 "minute_change"）。
+		payload: 完整事件载荷（含 payload.data）。
+	"""
+	for section: DebugSection in _sections:
+		if section.enabled:
+			section.on_world_event(event_type, payload)
+
+
+func broadcast_response(request_type: String, payload: Dictionary) -> void:
+	"""将后端响应广播给所有启用的 Section。
+
+	Args:
+		request_type: 请求类型（如 "get_weather"）。
+		payload: 响应载荷。
+	"""
+	for section: DebugSection in _sections:
+		if section.enabled:
+			section.on_world_response(request_type, payload)
 
 
 func toggle() -> void:

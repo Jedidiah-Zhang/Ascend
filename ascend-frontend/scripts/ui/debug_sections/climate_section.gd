@@ -1,10 +1,11 @@
-"""气候分区 — 显示年均基线（温度/湿度）与气候带，均来自 chunk 数据。
+"""气候分区 — 显示年均基线（温度/湿度）与气候带。
 
-实时温度/湿度看天气分区（get_weather 轮询）。三者独立追踪，未收到的显示 "—"。
+仅在玩家移动到新 tile 时查询世界脚本，避免每帧字典遍历。
+实时温度/湿度看天气分区（get_weather 轮询）。
 """
 
 class_name ClimateSection
-extends DebugSection
+extends "res://scripts/ui/debug_section.gd"
 
 
 const CLIMATE_LABELS: Array[String] = [
@@ -28,20 +29,46 @@ var _has_humidity: bool = false
 ## 气候带编码，-1 表示未知
 var climate_zone: int = -1
 
+var _world: Node = null
+var _last_tile_pos: Vector2i = Vector2i(-999999, -999999)
+
 
 func _init() -> void:
 	label = "气候"
 
 
-func update_from_backend(data: Dictionary) -> void:
-	if data.has("temperature"):
-		temperature = float(data["temperature"])
+func setup(world: Node) -> void:
+	_world = world
+
+
+func process_section(_delta: float) -> void:
+	if _world == null or not _world.has_method("get_debug_climate_at"):
+		return
+	var player_info: Dictionary = _world.get_debug_player_info()
+	var world_pos: Vector2 = player_info.get("world_pos", Vector2.ZERO)
+	var tile_pos := Vector2i(int(world_pos.x), int(world_pos.y))
+	if tile_pos == _last_tile_pos:
+		return
+
+	var all_received: bool = true
+	var climate_data: Dictionary = _world.get_debug_climate_at(world_pos)
+	if climate_data.has("temperature"):
+		temperature = climate_data["temperature"]
 		_has_temp = true
-	if data.has("humidity"):
-		humidity = float(data["humidity"])
+	else:
+		all_received = false
+	if climate_data.has("humidity"):
+		humidity = climate_data["humidity"]
 		_has_humidity = true
-	if data.has("climate_zone"):
-		climate_zone = int(data["climate_zone"])
+	else:
+		all_received = false
+	if climate_data.has("climate_zone"):
+		climate_zone = climate_data["climate_zone"]
+	else:
+		all_received = false
+
+	if all_received:
+		_last_tile_pos = tile_pos
 
 
 func get_lines() -> PackedStringArray:

@@ -39,18 +39,8 @@ const CAMERA_ZOOM_MAX: float = Config.CAMERA_ZOOM_MAX
 ## 上次显示的日期，仅变更时插入分隔线
 var _current_game_day: int = -1
 
-## TPS 计算：上一帧的游戏时间戳 + 真实时间（毫秒）
-var _prev_game_time: int = -1
-var _prev_real_msec: int = 0
-
-## 上次推送调试数据时的玩家 tile 坐标，仅在移位时刷新地形/气候数据
-var _last_tile_pos: Vector2i = Vector2i(-999999, -999999)
-
 ## 当前玩家所在区块坐标，用于天气事件位置过滤
 var _player_chunk: Vector2i = Vector2i(0, 0)
-
-## 天气查询累积时间（秒），限制网络请求频率
-var _weather_query_accum: float = 0.0
 
 
 func _ready() -> void:
@@ -77,14 +67,13 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
-	"""每帧：控制相机 + 流式地图块 + 处理玩家指令 + 更新调试覆盖层。
+	"""每帧：控制相机 + 流式地图块 + 处理玩家指令 + 调度调试覆盖层。
 
 	终端打开时跳过相机控制和玩家输入，但保持 Connection 消息处理。
 	"""
-	# 始终更新调试覆盖层（独立于连接状态和终端状态）
+	# 调度调试覆盖层（独立于连接状态和终端状态）
 	if _debug_overlay and _debug_overlay.is_shown():
-		_weather_query_accum += delta
-		_update_debug_sections()
+		_debug_overlay.process_sections(delta)
 
 	# 无条件处理 Connection（即使终端打开，远程指令响应仍需接收）
 	if Connection.status != Connection.Status.CONNECTED:
@@ -96,6 +85,13 @@ func _process(delta: float) -> void:
 
 	_process_camera(delta)
 	_process_input(delta)
+
+	# 更新玩家所在区块（供天气事件日志过滤使用）
+	if _map_display:
+		var player_pos: Vector2 = _map_display.get_player_pos()
+		_player_chunk = Vector2i(
+			floori(player_pos.x / Config.TILE_MAP_SIZE),
+			floori(player_pos.y / Config.TILE_MAP_SIZE))
 
 	# 根据相机位置请求新块
 	if _map_display:
@@ -190,103 +186,78 @@ func _setup_debug_sections() -> void:
 	_debug_overlay.add_section(WeatherSection.new())
 	_debug_overlay.add_section(ChunkSection.new())
 	_debug_overlay.add_section(ElevationSection.new())
+	_debug_overlay.setup_sections(self)
 
 
-func _update_debug_sections() -> void:
-	"""每帧推送动态数据到调试分区。"""
+# ── 调试数据 getter（供 DebugSection 自行拉取）────────────
+
+func get_debug_camera_info() -> Dictionary:
+	if _map_camera == null:
+		return {}
+	return {
+		"position": _map_camera.global_position,
+		"camera_display": "缩放: %.2fx" % _map_camera.zoom.x,
+	}
+
+
+func get_debug_player_info() -> Dictionary:
+	var player_pos := Vector2.ZERO
+	var chunk := Vector2i.ZERO
+	var elev: float = 0.0
+	if _map_display:
+		player_pos = _map_display.get_player_pos()
+		chunk = Vector2i(
+			floori(player_pos.x / Config.TILE_MAP_SIZE),
+			floori(player_pos.y / Config.TILE_MAP_SIZE))
+		elev = _map_display.get_player_elevation()
+	return {
+		"world_pos": player_pos,
+		"chunk": chunk,
+		"elevation": elev,
+	}
+
+
+func get_debug_terrain_at(world_pos: Vector2) -> Dictionary:
 	if _map_display == null:
-		return
+		return {}
+	var result: Dictionary = {}
+	var elev: float = _map_display.get_elevation_at(world_pos)
+	if elev > -998.0:
+		result["elevation"] = int(elev)
+	var slope: float = _map_display.get_slope_at(world_pos)
+	if slope > -998.0:
+		result["slope"] = slope
+	return result
 
-	var mcam: Camera2D = _map_display.get_camera()
-	if mcam:
-		var cam_section: CameraSection = _debug_overlay.get_section("相机")
-		if cam_section:
-			cam_section.position = mcam.global_position
-			cam_section.zoom = mcam.zoom
 
-	var player_pos: Vector2 = _map_display.get_player_pos()
-	var tile_pos := Vector2i(int(player_pos.x), int(player_pos.y))
+func get_debug_climate_at(world_pos: Vector2) -> Dictionary:
+	if _map_display == null:
+		return {}
+	var result: Dictionary = {}
+	var temp: float = _map_display.get_chunk_temperature(world_pos)
+	if temp > -998.0:
+		result["temperature"] = temp
+	var hum: float = _map_display.get_chunk_humidity(world_pos)
+	if hum > -998.0:
+		result["humidity"] = hum
+	var cz: int = _map_display.get_chunk_climate(world_pos)
+	if cz >= 0:
+		result["climate_zone"] = cz
+	return result
 
-	_player_chunk = Vector2i(
-		floori(player_pos.x / Config.TILE_MAP_SIZE),
-		floori(player_pos.y / Config.TILE_MAP_SIZE)
-	)
 
-	var player_section: PlayerSection = _debug_overlay.get_section("玩家")
-	if player_section:
-		player_section.world_pos = player_pos
-		player_section.chunk = _player_chunk
-		player_section.elevation = _map_display.get_player_elevation()
+func get_debug_chunk_stats() -> Dictionary:
+	if _map_display == null:
+		return {}
+	return _map_display.get_chunk_stats()
 
-	var chunk_section: ChunkSection = _debug_overlay.get_section("区块")
-	if chunk_section:
-		var stats: Dictionary = _map_display.get_chunk_stats()
-		chunk_section.loaded_count = stats["loaded"]
-		chunk_section.being_placed_count = stats["placing"]
-		chunk_section.cached_count = stats["cached"]
-		chunk_section.pending_count = stats["pending"]
 
-	# 仅在玩家移动到新 tile 时才查询地形/气候数据（涉及 chunk 字典查找和数组索引）。
-	# 任一查询失败（chunk 数据未到达）时不锁定 _last_tile_pos，
-	# 下帧继续重试，避免出生/传送时序导致面板永久显示 "—"。
-	if tile_pos != _last_tile_pos:
-		var all_received: bool = true
-
-		var elev_section: ElevationSection = _debug_overlay.get_section("地形")
-		if elev_section:
-			var elev: float = _map_display.get_elevation_at(player_pos)
-			if elev > -998.0:
-				elev_section.update_from_backend({"elevation": int(elev)})
-			else:
-				all_received = false
-			var slope: float = _map_display.get_slope_at(player_pos)
-			if slope > -998.0:
-				elev_section.update_from_backend({"slope": slope})
-			else:
-				all_received = false
-
-		var climate_section: ClimateSection = _debug_overlay.get_section("气候")
-		if climate_section:
-			# 气候分区显示年均基线（来自 chunk 数据）；实时值看天气分区
-			var temp: float = _map_display.get_chunk_temperature(player_pos)
-			if temp > -998.0:
-				climate_section.update_from_backend({"temperature": temp})
-			else:
-				all_received = false
-			var hum: float = _map_display.get_chunk_humidity(player_pos)
-			if hum > -998.0:
-				climate_section.update_from_backend({"humidity": hum})
-			else:
-				all_received = false
-			var cz: int = _map_display.get_chunk_climate(player_pos)
-			if cz >= 0:
-				climate_section.update_from_backend({"climate_zone": cz})
-			else:
-				all_received = false
-
-		if all_received:
-			_last_tile_pos = tile_pos
-
-	# 定期通过 API 查询当前天气（代替事件驱动）
-	if Connection.status == Connection.Status.CONNECTED and _weather_query_accum >= 0.5:
-		_weather_query_accum = 0.0
-		Connection.send({
-			"type": "request",
-			"request_type": "get_weather",
-			"payload": {"chunks": [[_player_chunk.x, _player_chunk.y]]},
-		})
-
-	var fps_section: FPSSection = _debug_overlay.get_section("性能")
-	if fps_section:
-		fps_section.update_msp_t()
-		var timing: Dictionary = _map_display.get_timing()
-		fps_section.set_timing(
-			timing.get("stream", 0),
-			timing.get("place", 0),
-			timing.get("erase", 0),
-			timing.get("queue", 0),
-			Connection.last_process_us,
-		)
+func get_debug_timing() -> Dictionary:
+	if _map_display == null:
+		return {}
+	var timing: Dictionary = _map_display.get_timing()
+	timing["conn"] = Connection.last_process_us
+	return timing
 
 
 func _on_connected(host: String, port: int) -> void:
@@ -384,6 +355,9 @@ func _handle_event(message: Dictionary) -> void:
 	if _debug_overlay == null:
 		return
 
+	# 广播到所有调试分区
+	_debug_overlay.broadcast_event(event_type, payload)
+
 	var ts: String = "%02d:%02d" % [
 		payload.get("game_hour", 0),
 		payload.get("game_minute", 0),
@@ -391,30 +365,13 @@ func _handle_event(message: Dictionary) -> void:
 
 	match event_type:
 		"minute_change":
-			var time_section: TimeSection = _debug_overlay.get_section("时间")
-			if time_section:
-				time_section.update_from_backend(data)
-			# 仅在日期变更时显示分隔线
 			var day: int = int(data.get("day", 0))
 			if day != _current_game_day:
 				_current_game_day = day
 				_push_log("[%s] ── 第%d天 ──" % [ts, day])
-			# 计算实测 TPS
-			var gt: int = int(data.get("game_time", 0))
-			var now_msec: int = Time.get_ticks_msec()
-			if _prev_game_time >= 0 and gt > _prev_game_time:
-				var tick_delta: int = gt - _prev_game_time
-				var real_delta: float = (now_msec - _prev_real_msec) / 1000.0
-				if real_delta > 0.0:
-					var fps_section: FPSSection = _debug_overlay.get_section("性能")
-					if fps_section:
-						fps_section.tps = tick_delta / real_delta
-			_prev_game_time = gt
-			_prev_real_msec = now_msec
 
 		"temperature_change", "humidity_change", "wind_change", "sunshine_change", \
 		"precipitation_start", "precipitation_stop":
-			# F3 面板由 get_weather 轮询更新，事件只进日志（避免双写与原始标签闪烁）
 			_log_weather_event(event_type, payload, data, ts)
 
 
@@ -485,6 +442,10 @@ func _handle_response(message: Dictionary) -> void:
 	var request_type: String = message.get("request_type", "")
 	var payload: Dictionary = message.get("payload", {})
 
+	# 广播到所有调试分区（Section 按其关心的 request_type 自行过滤）
+	if _debug_overlay:
+		_debug_overlay.broadcast_response(request_type, payload)
+
 	match request_type:
 		"get_chunks":
 			if _map_display:
@@ -499,20 +460,12 @@ func _handle_response(message: Dictionary) -> void:
 				_map_display.handle_player_state(payload)
 		"player_move":
 			pass  # 壳子阶段权威=上报值，无需纠正；后端加校验后在此吸附
-		"get_weather":
-			if _debug_overlay == null:
-				return
-			var weathers: Array = payload.get("weathers", [])
-			if weathers.size() > 0:
-				var weather_sec: WeatherSection = _debug_overlay.get_section("天气")
-				if weather_sec:
-					weather_sec.update_from_backend(weathers[0])
 		"terminal_cmd":
 			if _terminal:
 				var output: String = payload.get("output", "")
 				_terminal.write(output)
 		_:
-			print("MainWorld: response for '%s'" % request_type)
+			pass
 
 
 func _handle_error(message: Dictionary) -> void:

@@ -23,6 +23,9 @@ const STREAM_MARGIN: int = 1
 const UNLOAD_MARGIN: int = 2
 const MAX_PENDING: int = 3
 
+## 事件日志中天气事件的视野半径（以 chunk 为单位），覆盖 3x3 区域
+const EVENT_LOG_VIEW_RADIUS: int = 1
+
 ## 终端节点
 @onready var _terminal: TerminalWidget = $TerminalLayer/TerminalWidget
 ## 3D 伪正交相机（极小 FOV 近似正交）
@@ -69,9 +72,8 @@ var _has_birth: bool = false
 ## 当前游戏时间
 var _current_game_day: int = -1
 
-## TPS 计算
-var _prev_game_time: int = -1
-var _prev_real_msec: int = 0
+## 当前玩家所在区块坐标，用于天气事件位置过滤
+var _player_chunk: Vector2i = Vector2i(0, 0)
 
 
 func _ready() -> void:
@@ -191,44 +193,93 @@ func _set_birth_chunk(cx: int, cy: int) -> void:
 		return
 	_has_birth = true
 	_birth_chunk = Vector2i(cx, cy)
-	_player_pos.x = float(cx * CHUNK_SIZE + CHUNK_SIZE / 2)
-	_player_pos.z = float(cy * CHUNK_SIZE + CHUNK_SIZE / 2)
+	_player_pos.x = float(cx * CHUNK_SIZE + CHUNK_SIZE / 2.0)
+	_player_pos.z = float(cy * CHUNK_SIZE + CHUNK_SIZE / 2.0)
 	_player.position = _player_pos
 	_camera_focus = _player_pos
 	_apply_camera_transform()
 	print("MainWorld3D: birth chunk (%d,%d), player at (%.0f, %.0f)" % [cx, cy, _player_pos.x, _player_pos.z])
 
 
-func _update_climate_section(chunk: Dictionary) -> void:
-	var section: ClimateSection = _debug_overlay.get_section("气候")
-	if section == null:
-		return
-	section.update_from_backend({
-		"temperature": float(chunk.get("temperature", 0.0)),
-		"humidity": float(chunk.get("humidity", 0.0)),
-		"climate_zone": int(chunk.get("climate", -1)),
-	})
+# ── 调试数据 getter（供 DebugSection 自行拉取）────────────
+
+func get_debug_camera_info() -> Dictionary:
+	if _camera == null:
+		return {}
+	return {
+		"position": Vector2(_camera.position.x, _camera.position.z),
+		"camera_display": "距离: %.0f m" % _camera_distance,
+	}
 
 
-func _update_elevation_section(chunk: Dictionary) -> void:
-	var section: ElevationSection = _debug_overlay.get_section("地形")
-	if section == null:
-		return
+func get_debug_player_info() -> Dictionary:
+	return {
+		"world_pos": Vector2(_player_pos.x, _player_pos.z),
+		"chunk": Vector2i(
+			floori(_player_pos.x / float(CHUNK_SIZE)),
+			floori(_player_pos.z / float(CHUNK_SIZE))),
+		"elevation": _player_pos.y - 1.0,
+	}
+
+
+func get_debug_terrain_at(world_pos: Vector2) -> Dictionary:
+	var cx: int = floori(world_pos.x / float(CHUNK_SIZE))
+	var cz: int = floori(world_pos.y / float(CHUNK_SIZE))
+	var key := Vector2i(cx, cz)
+	var chunk: Dictionary = _chunks.get(key, {})
+	if chunk == null:
+		return {}
 	var elev: Array = chunk.get("elevation", [])
 	var slope: Array = chunk.get("slope", [])
-	var cx: int = int(chunk.get("cx", 0))
-	var cy: int = int(chunk.get("cy", 0))
-	var tx: int = int(_player_pos.x) - cx * CHUNK_SIZE
-	var tz: int = int(_player_pos.z) - cy * CHUNK_SIZE
+	if elev.size() < CHUNK_SIZE * CHUNK_SIZE:
+		return {}
+	var tx: int = int(world_pos.x) - cx * CHUNK_SIZE
+	var tz: int = int(world_pos.y) - cz * CHUNK_SIZE
 	if tx < 0 or tx >= CHUNK_SIZE or tz < 0 or tz >= CHUNK_SIZE:
-		return
+		return {}
 	var idx: int = tz * CHUNK_SIZE + tx
-	var elev_val := float(elev[idx]) if idx < elev.size() else 0.0
-	var slope_val := float(slope[idx]) if idx < slope.size() else 0.0
-	section.update_from_backend({
-		"elevation": elev_val,
-		"slope": slope_val,
-	})
+	var result: Dictionary = {}
+	if idx < elev.size():
+		result["elevation"] = int(elev[idx])
+	if idx < slope.size():
+		result["slope"] = float(slope[idx])
+	return result
+
+
+func get_debug_climate_at(world_pos: Vector2) -> Dictionary:
+	var cx: int = floori(world_pos.x / float(CHUNK_SIZE))
+	var cz: int = floori(world_pos.y / float(CHUNK_SIZE))
+	var key := Vector2i(cx, cz)
+	var chunk: Dictionary = _chunks.get(key, {})
+	if chunk == null:
+		return {}
+	var result: Dictionary = {}
+	if chunk.has("temperature"):
+		result["temperature"] = float(chunk["temperature"])
+	if chunk.has("humidity"):
+		result["humidity"] = float(chunk["humidity"])
+	if chunk.has("climate"):
+		result["climate_zone"] = int(chunk["climate"])
+	return result
+
+
+func get_debug_chunk_stats() -> Dictionary:
+	return {
+		"loaded": _loaded.size(),
+		"placing": 0,
+		"cached": 0,
+		"pending": _pending.size(),
+	}
+
+
+func get_debug_timing() -> Dictionary:
+	return {
+		"stream": _stream_us,
+		"place": 0,
+		"erase": 0,
+		"queue": 0,
+		"conn": Connection.last_process_us,
+	}
 
 
 func _update_player_ground() -> void:
@@ -287,8 +338,6 @@ func _build_terrain_chunk(cx: int, cy: int, elevation: Array) -> void:
 
 	# 首次 chunk 覆盖玩家时，吸附玩家到地面
 	if not _camera_grounded and land_count > 0:
-		var px := int(_player_pos.x)
-		var pz := int(_player_pos.z)
 		if cx == floori(_player_pos.x / float(CS)) and cy == floori(_player_pos.z / float(CS)):
 			_camera_grounded = true
 			var ground_y := _get_ground_elevation_at(_player_pos)
@@ -302,17 +351,21 @@ func _build_terrain_chunk(cx: int, cy: int, elevation: Array) -> void:
 
 
 func _process(delta: float) -> void:
-	# 相机始终可控（不依赖后端连接）
 	_process_camera(delta)
 
 	if _debug_overlay and _debug_overlay.is_shown():
-		_update_debug_sections()
+		_debug_overlay.process_sections(delta)
 
 	if Connection.status != Connection.Status.CONNECTED:
 		return
 
 	if _terminal and _terminal.is_open():
 		return
+
+	# 更新玩家所在区块（供天气事件日志过滤使用）
+	_player_chunk = Vector2i(
+		floori(_player_pos.x / float(CHUNK_SIZE)),
+		floori(_player_pos.z / float(CHUNK_SIZE)))
 
 	_stream_chunks()
 	_process_input(delta)
@@ -429,33 +482,7 @@ func _setup_debug_sections() -> void:
 	_debug_overlay.add_section(WeatherSection.new())
 	_debug_overlay.add_section(ChunkSection.new())
 	_debug_overlay.add_section(ElevationSection.new())
-
-
-func _update_debug_sections() -> void:
-	var fps_section: FPSSection = _debug_overlay.get_section("性能")
-	if fps_section:
-		fps_section.update_msp_t()
-		fps_section.set_timing(_stream_us, 0, 0, 0, _conn_us)
-
-	var cam_section: CameraSection = _debug_overlay.get_section("相机")
-	if cam_section and _camera:
-		cam_section.position = Vector2(_camera.position.x, _camera.position.z)
-		cam_section.zoom = Vector2(CAMERA_FOV, _camera_distance)
-
-	var player_section: PlayerSection = _debug_overlay.get_section("玩家")
-	if player_section:
-		player_section.world_pos = Vector2(_player_pos.x, _player_pos.z)
-		player_section.chunk = Vector2i(
-			floori(_player_pos.x / float(CHUNK_SIZE)),
-			floori(_player_pos.z / float(CHUNK_SIZE)))
-		player_section.elevation = _player_pos.y - 1.0  # 扣除玩家身高
-
-	var chunk_section: ChunkSection = _debug_overlay.get_section("区块")
-	if chunk_section:
-		chunk_section.loaded_count = _loaded.size()
-		chunk_section.pending_count = _pending.size()
-		chunk_section.cached_count = 0
-		chunk_section.being_placed_count = 0
+	_debug_overlay.setup_sections(self)
 
 
 # ── Connection 信号处理 ───────────────────────────────────
@@ -500,42 +527,37 @@ func _handle_event(message: Dictionary) -> void:
 	if event_type == "player_teleported":
 		return
 
-	if _debug_overlay == null:
-		return
+	# 广播到所有调试分区
+	if _debug_overlay:
+		_debug_overlay.broadcast_event(event_type, payload)
+
+	var ts: String = "%02d:%02d" % [
+		payload.get("game_hour", 0),
+		payload.get("game_minute", 0),
+	]
 
 	match event_type:
 		"minute_change":
-			var time_section: TimeSection = _debug_overlay.get_section("时间")
-			if time_section:
-				time_section.update_from_backend(data)
 			var day: int = int(data.get("day", 0))
 			if day != _current_game_day:
 				_current_game_day = day
-				var ts: String = "%02d:%02d" % [
-					payload.get("game_hour", 0),
-					payload.get("game_minute", 0),
-				]
 				_push_log("[%s] ── 第%d天 ──" % [ts, day])
-			var gt: int = int(data.get("game_time", 0))
-			var now_msec: int = Time.get_ticks_msec()
-			if _prev_game_time >= 0 and gt > _prev_game_time:
-				var tick_delta: int = gt - _prev_game_time
-				var real_delta: float = (now_msec - _prev_real_msec) / 1000.0
-				if real_delta > 0.0:
-					var fps_section: FPSSection = _debug_overlay.get_section("性能")
-					if fps_section:
-						fps_section.tps = tick_delta / real_delta
-			_prev_game_time = gt
-			_prev_real_msec = now_msec
+
+		"temperature_change", "humidity_change", "wind_change", "sunshine_change", \
+		"precipitation_start", "precipitation_stop":
+			_log_weather_event(event_type, payload, data, ts)
 
 
 func _handle_response(message: Dictionary) -> void:
 	var request_type: String = message.get("request_type", "")
 	var payload: Dictionary = message.get("payload", {})
 
+	# 广播到所有调试分区（Section 按其关心的 request_type 自行过滤）
+	if _debug_overlay:
+		_debug_overlay.broadcast_response(request_type, payload)
+
 	match request_type:
 		"get_chunks":
-			# 首次响应带 birth_chunk
 			if not _has_birth and payload.has("birth_chunk"):
 				var bc: Array = payload["birth_chunk"]
 				_set_birth_chunk(bc[0], bc[1])
@@ -552,14 +574,6 @@ func _handle_response(message: Dictionary) -> void:
 				if elev.size() == CHUNK_SIZE * CHUNK_SIZE:
 					if not _loaded.has(key):
 						_build_terrain_chunk(cx, cy, elev)
-
-				# 更新当前玩家所在 chunk 的气候和地形信息
-				var player_chunk := Vector2i(
-					floori(_player_pos.x / float(CHUNK_SIZE)),
-					floori(_player_pos.z / float(CHUNK_SIZE)))
-				if key == player_chunk and _debug_overlay:
-					_update_climate_section(chunk)
-					_update_elevation_section(chunk)
 		"terminal_cmd":
 			if _terminal:
 				_terminal.write(payload.get("output", ""))
@@ -642,6 +656,44 @@ func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> vo
 			_chunks.erase(key)
 			_pending.erase(key)
 			print("MainWorld3D: unloaded chunk (%d,%d)" % [cx, cy])
+
+
+# ── 天气事件日志 ────────────────────────────────────────────
+
+func _log_weather_event(event_type: String, payload: Dictionary, data: Dictionary, ts: String) -> void:
+	var loc: Array = payload.get("location", [])
+	if not _is_within_event_log_view(loc):
+		return
+	var cx: int = int(loc[0]) if loc.size() >= 1 else 0
+	var cy: int = int(loc[1]) if loc.size() >= 2 else 0
+
+	var body: String
+	match event_type:
+		"temperature_change":
+			body = "温度 %.1f°C" % data.get("temperature", 0.0)
+		"humidity_change":
+			body = "湿度 %.0f%%" % data.get("humidity", 0.0)
+		"wind_change":
+			body = "风速 %.1f m/s" % data.get("wind_speed", 0.0)
+		"sunshine_change":
+			body = "日照 %.1fh" % data.get("sunshine", 0.0)
+		"precipitation_start":
+			body = "%s %.1fmm/h" % [data.get("precip_type", ""), data.get("intensity", 0.0)]
+		"precipitation_stop":
+			body = "雨停"
+		_:
+			return
+	_push_log("[%s] [区块 %d,%d] %s" % [ts, cx, cy, body])
+
+
+func _is_within_event_log_view(location_array: Array) -> bool:
+	if location_array.size() < 2:
+		return true
+	var ev_cx: int = int(location_array[0])
+	var ev_cy: int = int(location_array[1])
+	var dx: int = abs(ev_cx - _player_chunk.x)
+	var dy: int = abs(ev_cy - _player_chunk.y)
+	return dx <= EVENT_LOG_VIEW_RADIUS and dy <= EVENT_LOG_VIEW_RADIUS
 
 
 func _handle_error(message: Dictionary) -> void:
