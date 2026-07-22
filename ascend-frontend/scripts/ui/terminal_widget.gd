@@ -88,7 +88,7 @@ func _ready() -> void:
 	anchor_right = 1.0
 	anchor_bottom = 1.0
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_font = _get_mono_font()
+	_font = FontUtils.get_mono_font()
 	_font_height = FONT_SIZE + 2
 	hide()
 	register_command("clear", _cmd_clear, "clear - 清空终端输出")
@@ -115,18 +115,18 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	"""当终端打开时捕获所有键盘事件。"""
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == Key.KEY_SLASH and not event.shift_pressed and not event.ctrl_pressed and not event.alt_pressed:
+			toggle()
+			get_viewport().set_input_as_handled()
+			return
+
 	if not _is_open:
 		return
 
 	if event is InputEventKey and event.pressed and not event.echo:
 		var key: Key = event.keycode
 		var ctrl: bool = event.ctrl_pressed
-
-		if key == Key.KEY_SLASH and not event.shift_pressed and not ctrl and not event.alt_pressed:
-			close()
-			get_viewport().set_input_as_handled()
-			return
 
 		if key == Key.KEY_ENTER or key == Key.KEY_KP_ENTER:
 			_execute_input()
@@ -431,11 +431,3 @@ func _visible_line_count() -> int:
 	"""计算当前可见区域可容纳的输出行数。"""
 	var usable_h: float = size.y - PADDING * 2 - BOTTOM_INPUT_HEIGHT - LINE_HEIGHT
 	return max(1, int(usable_h / LINE_HEIGHT))
-
-
-func _get_mono_font() -> Font:
-	"""获取等宽字体，回退到主题默认字体。"""
-	var project_theme: Theme = ThemeDB.get_project_theme()
-	if project_theme and project_theme.default_font:
-		return project_theme.default_font
-	return get_theme_default_font()

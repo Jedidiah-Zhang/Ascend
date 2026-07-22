@@ -47,20 +47,21 @@ const PLACE_TIME_BUDGET_US: int = 5000
 const MOVE_REPORT_INTERVAL: float = 0.2
 
 # ═══════════════════════════════════════════════════════════
-# 3D — 固定视角 3D 渲染
+# 3D — 透视等轴视角 3D 渲染
 # ═══════════════════════════════════════════════════════════
 
-## GridMap 每格的世界单位尺寸
-const CELL_SIZE: float = 1.0
+## 相机 FOV（极小值近似正交）
+const CAMERA_3D_FOV: float = 5.0
+## 相机默认距离
+const CAMERA_3D_DISTANCE_DEFAULT: float = 400.0
+## 缩放步长（距离变化）
+const CAMERA_3D_DISTANCE_STEP: float = 40.0
+const CAMERA_3D_DISTANCE_MIN: float = 60.0
+const CAMERA_3D_DISTANCE_MAX: float = 1200.0
 
-## 相机俯角（度）— 相对水平面的俯视角度
-const CAMERA_PITCH: float = 60.0
-
-## 正交相机半高（等价于 2D zoom 语义）
-const ORTHO_SIZE_DEFAULT: float = 10.0
-const ORTHO_SIZE_STEP: float = 2.0
-const ORTHO_SIZE_MIN: float = 2.0
-const ORTHO_SIZE_MAX: float = 80.0
+## 3D 玩家移动速度（每秒世界单位）
+const PLAYER_3D_SPEED: float = 30.0
+const PLAYER_3D_FAST_MULT: float = 3.0
 
 # ═══════════════════════════════════════════════════════════
 # UI — 界面

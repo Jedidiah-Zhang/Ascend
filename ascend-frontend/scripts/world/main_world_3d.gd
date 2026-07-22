@@ -6,15 +6,13 @@ const Config = preload("res://scripts/config.gd")
 
 # ── 相机常量 ──────────────────────────────────────────────
 
-const CAMERA_PAN_SPEED_3D: float = 20.0
-const CAMERA_FAST_MULT: float = 3.0
-const CAMERA_FOV: float = 5.0
-const CAMERA_DISTANCE_DEFAULT: float = 400.0
-const CAMERA_ZOOM_DISTANCE_STEP: float = 40.0
-const CAMERA_DISTANCE_MIN: float = 60.0
-const CAMERA_DISTANCE_MAX: float = 1200.0
-const PLAYER_SPEED: float = 30.0
-const PLAYER_FAST_MULT: float = 3.0
+const CAMERA_FOV: float = Config.CAMERA_3D_FOV
+const CAMERA_DISTANCE_DEFAULT: float = Config.CAMERA_3D_DISTANCE_DEFAULT
+const CAMERA_ZOOM_DISTANCE_STEP: float = Config.CAMERA_3D_DISTANCE_STEP
+const CAMERA_DISTANCE_MIN: float = Config.CAMERA_3D_DISTANCE_MIN
+const CAMERA_DISTANCE_MAX: float = Config.CAMERA_3D_DISTANCE_MAX
+const PLAYER_SPEED: float = Config.PLAYER_3D_SPEED
+const PLAYER_FAST_MULT: float = Config.PLAYER_3D_FAST_MULT
 
 # ── 流式 chunk 常量 ───────────────────────────────────────
 
@@ -22,9 +20,6 @@ const CHUNK_SIZE: int = Config.TILE_MAP_SIZE
 const STREAM_MARGIN: int = 1
 const UNLOAD_MARGIN: int = 2
 const MAX_PENDING: int = 3
-
-## 事件日志中天气事件的视野半径（以 chunk 为单位），覆盖 3x3 区域
-const EVENT_LOG_VIEW_RADIUS: int = 1
 
 ## 终端节点
 @onready var _terminal: TerminalWidget = $TerminalLayer/TerminalWidget
@@ -59,7 +54,6 @@ var _tile_queue: Array[Vector2i] = []
 
 ## 性能计时（微秒）
 var _stream_us: int = 0
-var _conn_us: int = 0
 
 ## 玩家实体占位
 var _player: Node3D
@@ -68,12 +62,6 @@ var _player_pos: Vector3 = Vector3.ZERO
 ## 出生 chunk（后端权威）
 var _birth_chunk: Vector2i = Vector2i.ZERO
 var _has_birth: bool = false
-
-## 当前游戏时间
-var _current_game_day: int = -1
-
-## 当前玩家所在区块坐标，用于天气事件位置过滤
-var _player_chunk: Vector2i = Vector2i(0, 0)
 
 
 func _ready() -> void:
@@ -89,7 +77,7 @@ func _ready() -> void:
 
 	_create_player()
 
-	_setup_debug_sections()
+	_setup_debug_overlay()
 	_configure_camera()
 	_configure_environment()
 
@@ -362,38 +350,23 @@ func _process(delta: float) -> void:
 	if _terminal and _terminal.is_open():
 		return
 
-	# 更新玩家所在区块（供天气事件日志过滤使用）
-	_player_chunk = Vector2i(
-		floori(_player_pos.x / float(CHUNK_SIZE)),
-		floori(_player_pos.z / float(CHUNK_SIZE)))
+	if _event_log:
+		_event_log.set_player_chunk(Vector2i(
+			floori(_player_pos.x / float(CHUNK_SIZE)),
+			floori(_player_pos.z / float(CHUNK_SIZE))))
 
 	_stream_chunks()
 	_process_input(delta)
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_SLASH and not event.shift_pressed and not event.ctrl_pressed and not event.alt_pressed:
-			if _terminal:
-				_terminal.toggle()
-			get_viewport().set_input_as_handled()
-
-		if event.keycode == KEY_F3:
-			if _debug_overlay:
-				_debug_overlay.toggle()
-			if _event_log:
-				if _debug_overlay and _debug_overlay.is_shown():
-					_event_log.show()
-				else:
-					_event_log.hide()
-			get_viewport().set_input_as_handled()
+func _unhandled_input(_event: InputEvent) -> void:
+	pass
 
 
-func _process_camera(delta: float) -> void:
+func _process_camera(_delta: float) -> void:
 	if _camera == null:
 		return
 
-	# ── 缩放（调整距离） ──
 	var zoom_delta: float = 0.0
 	if Input.is_action_just_pressed("zoom_in"):
 		zoom_delta = -CAMERA_ZOOM_DISTANCE_STEP
@@ -405,31 +378,6 @@ func _process_camera(delta: float) -> void:
 			_camera_distance + zoom_delta,
 			CAMERA_DISTANCE_MIN,
 			CAMERA_DISTANCE_MAX)
-
-	# ── WASD 移动玩家 ──
-	var move_input := Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	if move_input != Vector2.ZERO:
-		var forward: Vector3 = -_camera.global_transform.basis.z
-		var right: Vector3 = _camera.global_transform.basis.x
-		forward.y = 0.0
-		right.y = 0.0
-		if forward.length_squared() > 0.0:
-			forward = forward.normalized()
-		if right.length_squared() > 0.0:
-			right = right.normalized()
-
-		var speed := PLAYER_SPEED
-		if Input.is_key_pressed(KEY_SHIFT):
-			speed *= PLAYER_FAST_MULT
-
-		var velocity: Vector3 = (forward * -move_input.y + right * move_input.x) * speed * delta
-		_player_pos.x += velocity.x
-		_player_pos.z += velocity.z
-		_update_player_ground()
-		_camera_focus = _player_pos
-
-	# ── 应用变换（缩放或移动后） ──
-	if zoom_delta != 0.0 or move_input != Vector2.ZERO:
 		_apply_camera_transform()
 
 
@@ -446,7 +394,28 @@ func _apply_camera_transform() -> void:
 		_sun_light.position = _camera_focus
 
 
-func _process_input(_delta: float) -> void:
+func _process_input(delta: float) -> void:
+	var move_input := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	if move_input != Vector2.ZERO:
+		var forward: Vector3 = -_camera.global_transform.basis.z
+		var right: Vector3 = _camera.global_transform.basis.x
+		forward.y = 0.0
+		right.y = 0.0
+		if forward.length_squared() > 0.0:
+			forward = forward.normalized()
+		if right.length_squared() > 0.0:
+			right = right.normalized()
+
+		var speed := PLAYER_SPEED
+		if Input.is_key_pressed(KEY_SHIFT):
+			speed *= PLAYER_FAST_MULT
+
+		_player_pos.x += (forward * -move_input.y + right * move_input.x).x * speed * delta
+		_player_pos.z += (forward * -move_input.y + right * move_input.x).z * speed * delta
+		_update_player_ground()
+		_camera_focus = _player_pos
+		_apply_camera_transform()
+
 	if Input.is_action_just_pressed("interact"):
 		Connection.send({
 			"type": "request",
@@ -472,17 +441,8 @@ func _on_terminal_command(command: String) -> void:
 
 # ── 调试覆盖层 ──────────────────────────────────────────────
 
-func _setup_debug_sections() -> void:
-	_debug_overlay.add_section(FPSSection.new())
-	_debug_overlay.add_section(MemorySection.new())
-	_debug_overlay.add_section(TimeSection.new())
-	_debug_overlay.add_section(CameraSection.new())
-	_debug_overlay.add_section(PlayerSection.new())
-	_debug_overlay.add_section(ClimateSection.new())
-	_debug_overlay.add_section(WeatherSection.new())
-	_debug_overlay.add_section(ChunkSection.new())
-	_debug_overlay.add_section(ElevationSection.new())
-	_debug_overlay.setup_sections(self)
+func _setup_debug_overlay() -> void:
+	_debug_overlay.setup_default_sections(self)
 
 
 # ── Connection 信号处理 ───────────────────────────────────
@@ -525,27 +485,24 @@ func _handle_event(message: Dictionary) -> void:
 	var data: Dictionary = payload.get("data", {})
 
 	if event_type == "player_teleported":
+		var tx: float = float(data.get("x", _player_pos.x))
+		var tz: float = float(data.get("y", _player_pos.z))
+		_player_pos.x = tx
+		_player_pos.z = tz
+		_update_player_ground()
+		_camera_focus = _player_pos
+		_apply_camera_transform()
+		if _event_log:
+			_event_log.push_event("[%02d:%02d] 传送至 (%.0f, %.0f)" % [
+				payload.get("game_hour", 0), payload.get("game_minute", 0),
+				tx, tz])
 		return
 
-	# 广播到所有调试分区
 	if _debug_overlay:
 		_debug_overlay.broadcast_event(event_type, payload)
 
-	var ts: String = "%02d:%02d" % [
-		payload.get("game_hour", 0),
-		payload.get("game_minute", 0),
-	]
-
-	match event_type:
-		"minute_change":
-			var day: int = int(data.get("day", 0))
-			if day != _current_game_day:
-				_current_game_day = day
-				_push_log("[%s] ── 第%d天 ──" % [ts, day])
-
-		"temperature_change", "humidity_change", "wind_change", "sunshine_change", \
-		"precipitation_start", "precipitation_stop":
-			_log_weather_event(event_type, payload, data, ts)
+	if _event_log:
+		_event_log.on_world_event(event_type, payload)
 
 
 func _handle_response(message: Dictionary) -> void:
@@ -658,49 +615,6 @@ func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> vo
 			print("MainWorld3D: unloaded chunk (%d,%d)" % [cx, cy])
 
 
-# ── 天气事件日志 ────────────────────────────────────────────
-
-func _log_weather_event(event_type: String, payload: Dictionary, data: Dictionary, ts: String) -> void:
-	var loc: Array = payload.get("location", [])
-	if not _is_within_event_log_view(loc):
-		return
-	var cx: int = int(loc[0]) if loc.size() >= 1 else 0
-	var cy: int = int(loc[1]) if loc.size() >= 2 else 0
-
-	var body: String
-	match event_type:
-		"temperature_change":
-			body = "温度 %.1f°C" % data.get("temperature", 0.0)
-		"humidity_change":
-			body = "湿度 %.0f%%" % data.get("humidity", 0.0)
-		"wind_change":
-			body = "风速 %.1f m/s" % data.get("wind_speed", 0.0)
-		"sunshine_change":
-			body = "日照 %.1fh" % data.get("sunshine", 0.0)
-		"precipitation_start":
-			body = "%s %.1fmm/h" % [data.get("precip_type", ""), data.get("intensity", 0.0)]
-		"precipitation_stop":
-			body = "雨停"
-		_:
-			return
-	_push_log("[%s] [区块 %d,%d] %s" % [ts, cx, cy, body])
-
-
-func _is_within_event_log_view(location_array: Array) -> bool:
-	if location_array.size() < 2:
-		return true
-	var ev_cx: int = int(location_array[0])
-	var ev_cy: int = int(location_array[1])
-	var dx: int = abs(ev_cx - _player_chunk.x)
-	var dy: int = abs(ev_cy - _player_chunk.y)
-	return dx <= EVENT_LOG_VIEW_RADIUS and dy <= EVENT_LOG_VIEW_RADIUS
-
-
 func _handle_error(message: Dictionary) -> void:
 	var error_msg: String = message.get("error", "unknown error")
 	push_error("MainWorld3D: server error: %s" % error_msg)
-
-
-func _push_log(line: String) -> void:
-	if _event_log:
-		_event_log.push_event(line)

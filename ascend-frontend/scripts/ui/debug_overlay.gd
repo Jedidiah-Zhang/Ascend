@@ -1,21 +1,26 @@
 """调试信息覆盖层 — 类似 Minecraft F3 的半透明调试面板。
 
 渲染所有已注册 DebugSection 的文本行，显示在屏幕左上角。
-F3 键切换可见性。每个 Section 自行管理数据拉取与轮询，
+F3 键切换可见性（自管理，无需世界脚本介入）。
+每个 Section 自行管理数据拉取与轮询，
 DebugOverlay 仅负责统一调度（process_sections / broadcast_event / broadcast_response）。
 
 用法:
 	var overlay := get_node("DebugLayer/DebugOverlay")
-    overlay.add_section(FPSSection.new())
-    overlay.add_section(MemorySection.new())
-    overlay.setup_sections(self)        # 世界脚本调用
-    overlay.process_sections(delta)     # 每帧调用
-    overlay.broadcast_event(...)        # 后端事件到达时调用
+    overlay.setup_default_sections(self)  # 世界脚本一行搞定
+    overlay.process_sections(delta)       # 每帧调用
+    overlay.broadcast_event(...)          # 后端事件到达时调用
 """
 
 extends Control
 
 class_name DebugOverlay
+
+
+# ── 信号 ────────────────────────────────────────────────────
+
+## F3 切换时发出，供 EventLog 等面板联动
+signal toggled(shown: bool)
 
 
 # ── 常量 ────────────────────────────────────────────────────
@@ -49,8 +54,15 @@ func _ready() -> void:
 	anchor_right = 1.0
 	anchor_bottom = 1.0
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_font = _get_mono_font()
+	_font = FontUtils.get_mono_font()
 	hide()
+
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_F3:
+			toggle()
+			get_viewport().set_input_as_handled()
 
 
 func _process(delta: float) -> void:
@@ -66,7 +78,6 @@ func _draw() -> void:
 	if not _shown or _font == null:
 		return
 
-	# 一次性收集各分区的文本行，避免重入 get_lines() 的副作用
 	var sections_data: Array[Dictionary] = []
 	for section: DebugSection in _sections:
 		if not section.enabled:
@@ -79,7 +90,6 @@ func _draw() -> void:
 	if sections_data.is_empty():
 		return
 
-	# 测量
 	var y: float = PADDING
 	var max_w: float = 0.0
 	for data in sections_data:
@@ -96,7 +106,6 @@ func _draw() -> void:
 	var bg_h: float = y + PADDING - SECTION_SPACING
 	draw_rect(Rect2(Vector2.ZERO, Vector2(bg_w, bg_h)), BG_COLOR)
 
-	# 绘制
 	y = PADDING
 	for data in sections_data:
 		draw_string(_font, Vector2(PADDING + LABEL_INDENT, y + FONT_SIZE),
@@ -112,101 +121,69 @@ func _draw() -> void:
 # ── 公共接口 ────────────────────────────────────────────────
 
 func add_section(section: DebugSection) -> void:
-	"""注册一个调试分区。
-
-	Args:
-		section: DebugSection 子类实例。
-	"""
 	_sections.append(section)
 
 
 func remove_section(label: String) -> void:
-	"""按标签移除调试分区。
-
-	Args:
-		label: 分区的 label 值。
-	"""
 	_sections = _sections.filter(func(s: DebugSection): return s.label != label)
 
 
 func get_section(label: String) -> DebugSection:
-	"""按标签查找调试分区。
-
-	Args:
-		label: 分区的 label 值。
-
-	Returns:
-		匹配的分区实例，未找到返回 null。
-	"""
 	for s: DebugSection in _sections:
 		if s.label == label:
 			return s
 	return null
 
 
-func setup_sections(world: Node) -> void:
-	"""对所有已注册 Section 调用 setup，传入世界脚本引用。
+func setup_default_sections(world: Node) -> void:
+	"""创建所有默认调试分区并注入世界脚本引用。
 
 	Args:
 		world: 世界脚本节点（MainWorld 或 MainWorld3D）。
 	"""
+	add_section(FPSSection.new())
+	add_section(MemorySection.new())
+	add_section(TimeSection.new())
+	add_section(CameraSection.new())
+	add_section(PlayerSection.new())
+	add_section(ClimateSection.new())
+	add_section(WeatherSection.new())
+	add_section(ChunkSection.new())
+	add_section(ElevationSection.new())
+	setup_sections(world)
+
+
+func setup_sections(world: Node) -> void:
 	for section: DebugSection in _sections:
 		section.setup(world)
 
 
 func process_sections(delta: float) -> void:
-	"""对所有启用的 Section 调用 process_section。
-
-	Args:
-		delta: 帧间隔（秒）。
-	"""
 	for section: DebugSection in _sections:
 		if section.enabled:
 			section.process_section(delta)
 
 
 func broadcast_event(event_type: String, payload: Dictionary) -> void:
-	"""向后端事件广播给所有启用的 Section。
-
-	Args:
-		event_type: 事件类型（如 "minute_change"）。
-		payload: 完整事件载荷（含 payload.data）。
-	"""
 	for section: DebugSection in _sections:
 		if section.enabled:
 			section.on_world_event(event_type, payload)
 
 
 func broadcast_response(request_type: String, payload: Dictionary) -> void:
-	"""将后端响应广播给所有启用的 Section。
-
-	Args:
-		request_type: 请求类型（如 "get_weather"）。
-		payload: 响应载荷。
-	"""
 	for section: DebugSection in _sections:
 		if section.enabled:
 			section.on_world_response(request_type, payload)
 
 
 func toggle() -> void:
-	"""切换调试覆盖层的可见性。"""
 	_shown = not _shown
 	if _shown:
 		show()
 	else:
 		hide()
+	toggled.emit(_shown)
 
 
 func is_shown() -> bool:
-	"""调试覆盖层是否可见。"""
 	return _shown
-
-
-# ── 内部实现 ────────────────────────────────────────────────
-
-func _get_mono_font() -> Font:
-	var project_theme: Theme = ThemeDB.get_project_theme()
-	if project_theme and project_theme.default_font:
-		return project_theme.default_font
-	return get_theme_default_font()
