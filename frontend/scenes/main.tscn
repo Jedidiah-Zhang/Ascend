@@ -3,7 +3,23 @@
 [ext_resource type="Script" uid="uid://bf3a2roe7m8ry" path="res://scripts/world/main_world.gd" id="1_6g3y2"]
 [ext_resource type="Script" uid="uid://carmjpelgpmpt" path="res://scripts/ui/terminal_widget.gd" id="1_kefov"]
 [ext_resource type="Script" uid="uid://dyjbrovf27uoi" path="res://scripts/ui/debug_overlay.gd" id="2_mt54i"]
+[ext_resource type="Shader" uid="uid://dv62n8xrydrrt" path="res://shaders/water_depth_fog.gdshader" id="2_tbgi4"]
 [ext_resource type="Script" uid="uid://br07478oh2w3f" path="res://scripts/ui/event_log.gd" id="3_le0cj"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_tefeu"]
+render_priority = 0
+shader = ExtResource("2_tbgi4")
+shader_parameter/shallow_color = Color(0.2, 0.7, 0.9, 0.35)
+shader_parameter/deep_color = Color(0.05, 0.15, 0.55, 0.9)
+shader_parameter/max_depth = 10.0
+shader_parameter/banding_steps = 4
+shader_parameter/wave_scale = 0.4
+shader_parameter/wave_speed = 0.06
+shader_parameter/shore_fade_range = 3.0
+shader_parameter/specular_strength = 0.12
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_tbgi4"]
+size = Vector2(2000, 2000)
 
 [node name="Main" type="Node3D" unique_id=408287164]
 script = ExtResource("1_6g3y2")
@@ -20,10 +36,7 @@ transform = Transform3D(0.70710677, 0.4055798, -0.579228, 0, 0.81915206, 0.57357
 light_color = Color(1, 0.95, 0.85, 1)
 light_energy = 1.2
 shadow_enabled = true
-directional_shadow_mode = 2
-directional_shadow_split_1 = 0.1
 directional_shadow_split_2 = 0.25
-directional_shadow_split_3 = 0.5
 directional_shadow_blend_splits = true
 directional_shadow_fade_start = 1.0
 directional_shadow_max_distance = 500.0
@@ -36,6 +49,10 @@ directional_shadow_pancake_size = 5.0
 [node name="ChunkPool" type="Node3D" parent="World/Terrain" unique_id=1839068375]
 
 [node name="Water" type="Node3D" parent="World" unique_id=789455065]
+
+[node name="WaterPlane" type="MeshInstance3D" parent="World/Water" unique_id=1816996044]
+material_override = SubResource("ShaderMaterial_tefeu")
+mesh = SubResource("PlaneMesh_tbgi4")
 
 [node name="Entities" type="Node3D" parent="World" unique_id=1186880012]
 

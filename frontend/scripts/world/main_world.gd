@@ -42,8 +42,6 @@ const MESH_LIBRARY_PATH: String = "res://assets/terrain/terrain_mesh_library.tre
 @onready var _world_env: WorldEnvironment = $World/WorldEnvironment
 ## 方向光（太阳）
 @onready var _sun_light: DirectionalLight3D = $World/SunLight
-## 水面平面（跟随玩家）
-@onready var _water_plane: MeshInstance3D = $World/Water/WaterPlane
 
 ## 相机焦点（世界空间中的观察目标点）
 var _camera_focus: Vector3 = Vector3(0, 0, 0)
@@ -367,7 +365,6 @@ func _process(delta: float) -> void:
 
 	_stream_chunks()
 	_process_input(delta)
-	_update_water_plane()
 
 
 func _unhandled_input(_event: InputEvent) -> void:
@@ -403,12 +400,6 @@ func _apply_camera_transform() -> void:
 		_sun_light.directional_shadow_max_distance = _camera_distance * 1.5 + 500.0
 		_sun_light.directional_shadow_fade_start = 0.99
 		_sun_light.position = _camera_focus
-
-
-func _update_water_plane() -> void:
-	if _water_plane:
-		_water_plane.position.x = _player_pos.x
-		_water_plane.position.z = _player_pos.z
 
 
 func _process_input(delta: float) -> void:
