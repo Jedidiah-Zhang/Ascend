@@ -16,11 +16,11 @@ __pycache__/
 .venv/
 logs/
 
-# 覆盖率数据（生成在 tests/ 或 ascend-backend/ 下）
+# 覆盖率数据（生成在 backend/tests/ 下）
 .coverage
 .coverage.*
-tests/.coverage
-tests/.coverage.*
+backend/tests/.coverage
+backend/tests/.coverage.*
 
 # 编译产物（从 .c 自动生成）
 *.so
@@ -32,10 +32,10 @@ tests/.coverage.*
 save/
 
 # 可视化输出（测试生成的 PNG，不提交）
-tests/visual/output/
+backend/tests/visual/output/
 
 # Godot 编辑器插件（开发工具，非游戏代码）
-ascend-frontend/addons/
+frontend/addons/
 
 # 前端资源文件（不开源：美术素材、音频等）
-ascend-frontend/assets/
+frontend/assets/

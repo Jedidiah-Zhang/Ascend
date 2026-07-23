@@ -1,7 +1,7 @@
 """网络层整合测试 — 验证 Python TCP Server 与 WorldTree 事件桥接。
 
 用法:
-    PYTHONPATH=ascend-backend .venv/bin/python -m pytest tests/integration/test_net.py -v -s
+    PYTHONPATH=backend .venv/bin/python -m pytest backend/tests/integration/test_net.py -v -s
 """
 
 import socket

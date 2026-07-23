@@ -47,7 +47,7 @@ Ascend fills this gap: a reproducible, intervenable causal world produces spatio
 ### Tech Stack
 
 - **Godot 4.x**: rendering, UI, input, audio
-- **Python backend** (`ascend-backend/`): all core logic
+- **Python backend** (`backend/`): all core logic
 - **Communication**: MessagePack over TCP, localhost
 - Dependencies in `requirements.txt`
 
@@ -66,10 +66,9 @@ The system consists of three parts:
 ### Directory Structure
 
 ```
-ascend-backend/   Python backend (core logic)
-ascend-frontend/  Godot frontend
+backend/   Python backend (core logic)
+frontend/  Godot frontend
 docs/             Design documents
-tests/            Tests
 lang/             Localization resources
 requirements.txt  Python dependencies
 ```
@@ -98,11 +97,11 @@ Full design documents in `docs/`, organized by module (in Chinese):
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cd ascend-backend
+cd backend
 python run_server.py
 ```
 
-The Godot frontend is in `ascend-frontend/`, open with Godot 4.x.
+The Godot frontend is in `frontend/`, open with Godot 4.x.
 
 ---
 

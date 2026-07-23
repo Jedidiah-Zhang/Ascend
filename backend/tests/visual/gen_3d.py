@@ -6,8 +6,8 @@
   - 湖泊：3D surface 平面（湖面高程）
 
 用法:
-    cd ascend-backend && PYTHONPATH=. python ../tests/visual/gen_3d.py
-    浏览器打开 tests/visual/output/terrain_3d.html
+    cd backend && PYTHONPATH=. python tests/visual/gen_3d.py
+    浏览器打开 ascending-backend/tests/visual/output/terrain_3d.html
 """
 
 import os

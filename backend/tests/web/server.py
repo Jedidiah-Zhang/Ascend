@@ -1,7 +1,7 @@
 """世界地图可视化 Web 服务器 — 开发调试用。
 
 用法:
-    cd ascend-backend && PYTHONPATH=. python ../tests/web/server.py
+    cd backend && PYTHONPATH=. python tests/web/server.py
     浏览器打开 http://localhost:8080
 """
 
@@ -19,9 +19,9 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor
 
-# 确保 ascend-backend 在 sys.path 中
+# 确保 backend 在 sys.path 中
 _HERE = Path(__file__).resolve().parent
-_BACKEND = _HERE.parent.parent / "ascend-backend"
+_BACKEND = _HERE.parent.parent
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 

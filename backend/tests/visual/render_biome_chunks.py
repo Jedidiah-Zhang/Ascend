@@ -5,7 +5,7 @@
 2. biome_membership.png — 跨群系边界的隶属度渐变带
 
 用法:
-    cd ascend-backend && PYTHONPATH=. ../.venv/bin/python ../tests/visual/render_biome_chunks.py
+    cd backend && PYTHONPATH=. ../.venv/bin/python tests/visual/render_biome_chunks.py
 """
 
 import os

@@ -2,10 +2,10 @@
 
 用法:
     # 作为 pytest 运行
-    PYTHONPATH=ascend-backend .venv/bin/python -m pytest tests/integration/test_game_loop.py -v -s
+    PYTHONPATH=backend .venv/bin/python -m pytest backend/tests/integration/test_game_loop.py -v -s
 
     # 直接运行
-    PYTHONPATH=ascend-backend .venv/bin/python tests/integration/test_game_loop.py
+    PYTHONPATH=backend .venv/bin/python backend/tests/integration/test_game_loop.py
 """
 
 import time as _real_time

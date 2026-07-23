@@ -509,11 +509,11 @@ class TestGraphConsistency:
 运行方式:
 
   # CI 快速（默认）
-  pytest tests/bench/test_world_tree_stress.py -v
+  pytest backend/tests/bench/test_world_tree_stress.py -v
 
   # 中等压力
-  STRESS_SCALE=medium pytest tests/bench/test_world_tree_stress.py -v
+  STRESS_SCALE=medium pytest backend/tests/bench/test_world_tree_stress.py -v
 
   # 完整压力（30M 事件，预计 5-10 分钟）
-  STRESS_SCALE=large pytest tests/bench/test_world_tree_stress.py -v -s
+  STRESS_SCALE=large pytest backend/tests/bench/test_world_tree_stress.py -v -s
 """

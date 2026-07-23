@@ -1,7 +1,7 @@
 """Tile 粒度完整地图渲染 — 将指定区域的 chunk 拼接为一张 PNG，海拔渐变色。
 
 用法:
-    cd ascend-backend && PYTHONPATH=. ../.venv/bin/python ../tests/visual/render_tiles.py
+    cd backend && PYTHONPATH=. ../.venv/bin/python tests/visual/render_tiles.py
 """
 
 import os

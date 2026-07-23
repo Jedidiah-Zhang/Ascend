@@ -4,9 +4,9 @@
 启动 GameEngine，监听 Godot 前端连接。
 
 用法:
-    cd ascend-backend && PYTHONPATH=. python run_server.py
+    cd backend && PYTHONPATH=. python run_server.py
     或从项目根:
-    cd ascend-backend && PYTHONPATH=. ../.venv/bin/python run_server.py
+    cd backend && PYTHONPATH=. ../.venv/bin/python run_server.py
 
 按 Ctrl+C 停止。
 """
@@ -15,7 +15,7 @@ import sys
 import time as _real_time
 from pathlib import Path
 
-# 确保 ascend-backend 在 sys.path 中
+# 确保 backend 在 sys.path 中
 sys.path.insert(0, str(Path(__file__).parent))
 
 from ascend.log import setup_logging

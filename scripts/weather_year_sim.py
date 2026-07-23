@@ -1,7 +1,7 @@
 """天气系统年模拟 — 使用真实后端流程 + tick 加速。
 
 用法:
-    cd ascend-backend && PYTHONPATH=. ../.venv/bin/python ../scripts/weather_year_sim.py [--seed=42] [--fraction=1.0]
+    cd backend && PYTHONPATH=. ../.venv/bin/python ../scripts/weather_year_sim.py [--seed=42] [--fraction=1.0]
 """
 
 import argparse

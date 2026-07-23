@@ -13,7 +13,7 @@
   - seed=42 为规范测试种子
   - 无 parametrize，使用显式循环
   - 所有类和方法有中文 docstring
-  - PYTHONPATH=ascend-backend
+  - PYTHONPATH=backend
 """
 
 import math
@@ -343,8 +343,8 @@ class TestVisualOutput:
     """每步生成可视化 PNG（手动运行）。
 
     用法:
-        cd ascend-backend && PYTHONPATH=. ../.venv/bin/python -m pytest \
-            ../tests/unit/test_continent.py::TestVisualOutput -v -s
+        cd backend && PYTHONPATH=. ../.venv/bin/python -m pytest \
+            backend/tests/unit/test_continent.py::TestVisualOutput -v -s
     """
 
     # 输出目录相对于项目根

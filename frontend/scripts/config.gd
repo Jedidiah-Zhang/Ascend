@@ -14,7 +14,7 @@ const RECONNECT_INTERVAL: float = 2.0
 const MAX_MESSAGE_SIZE: int = 16 * 1024 * 1024  # 16 MiB
 
 const VENV_PYTHON_REL: String = ".venv/bin/python"
-const BACKEND_SCRIPT_REL: String = "ascend-backend/run_server.py"
+const BACKEND_SCRIPT_REL: String = "backend/run_server.py"
 const BACKEND_STARTUP_TIMEOUT: float = 10.0
 
 # ═══════════════════════════════════════════════════════════

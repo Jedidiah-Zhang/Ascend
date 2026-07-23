@@ -211,7 +211,7 @@ func _spawn_backend_process() -> void:
 	"""拉起 Python 后端进程并进入等待端口就绪状态。"""
 	var project_root: String = ProjectSettings.globalize_path("res://..")
 	var python_path: String = project_root.path_join(VENV_PYTHON_REL)
-	var backend_dir: String = project_root.path_join("ascend-backend")
+	var backend_dir: String = project_root.path_join("backend")
 	var script_path: String = backend_dir.path_join("run_server.py")
 
 	if not FileAccess.file_exists(python_path):

@@ -1,7 +1,7 @@
 """可视化地图生成管线各阶段输出 — 多种子对比。
 
 用法:
-    cd ascend-backend && PYTHONPATH=. ../.venv/bin/python ../tests/visual/gen_pipeline_stages.py
+    cd backend && PYTHONPATH=. ../.venv/bin/python tests/visual/gen_pipeline_stages.py
 """
 
 import time
