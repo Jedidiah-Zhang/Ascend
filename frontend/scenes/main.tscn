@@ -1,33 +1,65 @@
-[gd_scene format=3 uid="uid://cw1nttcy0m3yo"]
+[gd_scene format=3 uid="uid://eig4auifroc6"]
 
-[ext_resource type="Script" path="res://scripts/world/main_world.gd" id="1"]
-[ext_resource type="PackedScene" path="res://scenes/world/world.tscn" id="2_sugp2"]
-[ext_resource type="Script" path="res://scripts/ui/terminal_widget.gd" id="4_tefeu"]
-[ext_resource type="Script" path="res://scripts/ui/debug_overlay.gd" id="5_debug"]
-[ext_resource type="Script" path="res://scripts/ui/event_log.gd" id="6_eventlog"]
+[ext_resource type="Script" uid="uid://bf3a2roe7m8ry" path="res://scripts/world/main_world.gd" id="1_6g3y2"]
+[ext_resource type="Script" uid="uid://carmjpelgpmpt" path="res://scripts/ui/terminal_widget.gd" id="1_kefov"]
+[ext_resource type="Script" uid="uid://dyjbrovf27uoi" path="res://scripts/ui/debug_overlay.gd" id="2_mt54i"]
+[ext_resource type="Script" uid="uid://br07478oh2w3f" path="res://scripts/ui/event_log.gd" id="3_le0cj"]
 
-[node name="Main" type="Node2D" unique_id=1387621545]
-script = ExtResource("1")
+[node name="Main" type="Node3D" unique_id=408287164]
+script = ExtResource("1_6g3y2")
 
-[node name="World" parent="." unique_id=1115777730 instance=ExtResource("2_sugp2")]
+[node name="World" type="Node3D" parent="." unique_id=1562502663]
 
-[node name="TerminalLayer" type="CanvasLayer" parent="." unique_id=730525796]
+[node name="Camera3D" type="Camera3D" parent="World" unique_id=1571819711]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 20.8, 12)
+projection = 1
+size = 20.0
+
+[node name="SunLight" type="DirectionalLight3D" parent="World" unique_id=1590699765]
+transform = Transform3D(0.70710677, 0.4055798, -0.579228, 0, 0.81915206, 0.57357645, 0.70710677, -0.4055798, 0.579228, 0, 0, 0)
+light_color = Color(1, 0.95, 0.85, 1)
+light_energy = 1.2
+shadow_enabled = true
+directional_shadow_mode = 2
+directional_shadow_split_1 = 0.1
+directional_shadow_split_2 = 0.25
+directional_shadow_split_3 = 0.5
+directional_shadow_blend_splits = true
+directional_shadow_fade_start = 1.0
+directional_shadow_max_distance = 500.0
+directional_shadow_pancake_size = 5.0
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="World" unique_id=1024341688]
+
+[node name="Terrain" type="Node3D" parent="World" unique_id=189123503]
+
+[node name="ChunkPool" type="Node3D" parent="World/Terrain" unique_id=1839068375]
+
+[node name="Water" type="Node3D" parent="World" unique_id=789455065]
+
+[node name="Entities" type="Node3D" parent="World" unique_id=1186880012]
+
+[node name="Caves" type="Node3D" parent="World" unique_id=513881144]
+
+[node name="WeatherFX" type="Node3D" parent="World" unique_id=1885910856]
+
+[node name="TerminalLayer" type="CanvasLayer" parent="." unique_id=1305862034]
 layer = 100
 
-[node name="TerminalWidget" type="Control" parent="TerminalLayer" unique_id=1154699806]
+[node name="TerminalWidget" type="Control" parent="TerminalLayer" unique_id=1918146443]
 layout_mode = 3
 anchors_preset = 0
-script = ExtResource("4_tefeu")
+script = ExtResource("1_kefov")
 
-[node name="DebugLayer" type="CanvasLayer" parent="."]
+[node name="DebugLayer" type="CanvasLayer" parent="." unique_id=1804508177]
 layer = 200
 
-[node name="DebugOverlay" type="Control" parent="DebugLayer"]
+[node name="DebugOverlay" type="Control" parent="DebugLayer" unique_id=1782253028]
 layout_mode = 3
 anchors_preset = 0
-script = ExtResource("5_debug")
+script = ExtResource("2_mt54i")
 
-[node name="EventLog" type="Control" parent="DebugLayer"]
+[node name="EventLog" type="Control" parent="DebugLayer" unique_id=626064299]
 layout_mode = 3
 anchors_preset = 0
-script = ExtResource("6_eventlog")
+script = ExtResource("3_le0cj")
