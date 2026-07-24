@@ -45,8 +45,8 @@ void fragment() {
 	float blend = mix(posterized, t, 0.3);
 	vec4 water_color = mix(shallow_color, deep_color, blend);
 
-	// 3. Fresnel 高光
-	float fresnel = specular_strength;
+	// 3. 高光
+	float highlight = specular_strength;
 
 	// 4. 波纹 alpha
 	float time = TIME * wave_speed;
@@ -56,6 +56,6 @@ void fragment() {
 	float shore_factor = 1.0 - exp(-water_depth / max(shore_fade_range, 0.01));
 
 	// 6. 输出
-	ALBEDO = water_color.rgb + fresnel;
+	ALBEDO = water_color.rgb + highlight;
 	ALPHA = clamp(water_color.a + ripple, 0.0, 1.0) * shore_factor;
 }

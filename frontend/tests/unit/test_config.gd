@@ -18,10 +18,6 @@ func test_tile_map_size_positive() -> void:
 		"TILE_MAP_SIZE 必须 > 0")
 
 
-func test_camera_zoom_range_valid() -> void:
-	assert_lte(Config.CAMERA_ZOOM_MIN, Config.CAMERA_ZOOM_MAX,
-		"ZOOM_MIN 必须 <= ZOOM_MAX")
-
 
 func test_message_size_reasonable() -> void:
 	assert_gt(Config.MAX_MESSAGE_SIZE, 1024,

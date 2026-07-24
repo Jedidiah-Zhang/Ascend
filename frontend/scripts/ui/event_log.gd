@@ -85,10 +85,7 @@ func _draw() -> void:
 # ── 公共接口 ────────────────────────────────────────────────
 
 func push_event(line: String) -> void:
-	var arr: Array[String] = []
-	arr.append(line)
-	arr.append_array(_lines)
-	_lines = arr
+	_lines.insert(0, line)
 	if _lines.size() > 20:
 		_lines.resize(20)
 	_pending_redraw = true

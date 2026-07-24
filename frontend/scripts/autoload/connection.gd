@@ -358,14 +358,17 @@ func _read_messages() -> void:
 
 
 func _flush_send_queue() -> void:
-	"""发送队列中的消息。"""
+	"""发送队列中的消息。失败时仅保留未发送部分，避免重发已成功的数据。"""
 	if _stream == null or _send_queue.is_empty():
 		return
+	var sent: int = 0
 	for frame in _send_queue:
 		var err: Error = _stream.put_data(frame)
 		if err != OK:
 			push_error("Connection: send error: %d" % err)
+			_send_queue = _send_queue.slice(sent)
 			return
+		sent += 1
 	_send_queue.clear()
 
 

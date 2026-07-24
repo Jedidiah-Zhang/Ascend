@@ -24,29 +24,6 @@ const BACKEND_STARTUP_TIMEOUT: float = 10.0
 const TILE_MAP_SIZE: int = 200  # 每个 chunk 的 tile 数
 
 # ═══════════════════════════════════════════════════════════
-# Camera — 相机
-# ═══════════════════════════════════════════════════════════
-
-const CAMERA_PAN_SPEED: float = 600.0
-const CAMERA_ZOOM_STEP: float = 0.15
-const CAMERA_ZOOM_MIN: float = 0.15
-const CAMERA_ZOOM_MAX: float = 4.0
-
-# ═══════════════════════════════════════════════════════════
-# Map — 地图
-# ═══════════════════════════════════════════════════════════
-
-const INITIAL_VIEW_RADIUS: int = 2
-const STREAM_MARGIN: int = 1
-const UNLOAD_RADIUS: int = 3
-const MAX_PENDING_TILES: int = 3
-const PLAYER_SPEED: float = 80.0
-const PLACE_TIME_BUDGET_US: int = 5000
-
-## 玩家位置上报后端的间隔（秒）
-const MOVE_REPORT_INTERVAL: float = 0.2
-
-# ═══════════════════════════════════════════════════════════
 # 3D — 透视等轴视角 3D 渲染
 # ═══════════════════════════════════════════════════════════
 
