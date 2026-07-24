@@ -18,7 +18,7 @@ const PLAYER_FAST_MULT: float = Config.PLAYER_3D_FAST_MULT
 
 const CHUNK_SIZE: int = Config.TILE_MAP_SIZE
 const STREAM_MARGIN: int = 1
-const UNLOAD_MARGIN: int = 2
+const UNLOAD_MARGIN: int = 1
 const MAX_PENDING: int = 3
 
 # ── 地形映射 ──────────────────────────────────────────────
@@ -221,8 +221,8 @@ func get_debug_terrain_at(world_pos: Vector2) -> Dictionary:
 	var cx: int = floori(world_pos.x / float(CHUNK_SIZE))
 	var cz: int = floori(world_pos.y / float(CHUNK_SIZE))
 	var key := Vector2i(cx, cz)
-	var chunk: Dictionary = _chunks.get(key, {})
-	if chunk == null:
+	var chunk = _chunks.get(key)
+	if chunk == null or not (chunk is Dictionary):
 		return {}
 	var elev: Array = chunk.get("elevation", [])
 	var slope: Array = chunk.get("slope", [])
@@ -245,8 +245,8 @@ func get_debug_climate_at(world_pos: Vector2) -> Dictionary:
 	var cx: int = floori(world_pos.x / float(CHUNK_SIZE))
 	var cz: int = floori(world_pos.y / float(CHUNK_SIZE))
 	var key := Vector2i(cx, cz)
-	var chunk: Dictionary = _chunks.get(key, {})
-	if chunk == null:
+	var chunk = _chunks.get(key)
+	if chunk == null or not (chunk is Dictionary):
 		return {}
 	var result: Dictionary = {}
 	if chunk.has("temperature"):
@@ -259,10 +259,13 @@ func get_debug_climate_at(world_pos: Vector2) -> Dictionary:
 
 
 func get_debug_chunk_stats() -> Dictionary:
+	var cached: int = 0
+	for key in _chunks:
+		if _chunks[key] is Dictionary and not _loaded.has(key):
+			cached += 1
 	return {
 		"loaded": _loaded.size(),
-		"placing": 0,
-		"cached": 0,
+		"cached": cached,
 		"pending": _pending.size(),
 	}
 
@@ -270,9 +273,6 @@ func get_debug_chunk_stats() -> Dictionary:
 func get_debug_timing() -> Dictionary:
 	return {
 		"stream": _stream_us,
-		"place": 0,
-		"erase": 0,
-		"queue": 0,
 		"conn": Connection.last_process_us,
 	}
 
@@ -349,13 +349,14 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 func _process(delta: float) -> void:
 	_process_camera(delta)
 
-	if _debug_overlay and _debug_overlay.is_shown():
-		_debug_overlay.process_sections(delta)
-
 	if Connection.status != Connection.Status.CONNECTED:
+		if _debug_overlay and _debug_overlay.is_shown():
+			_debug_overlay.process_sections(delta)
 		return
 
 	if _terminal and _terminal.is_open():
+		if _debug_overlay and _debug_overlay.is_shown():
+			_debug_overlay.process_sections(delta)
 		return
 
 	if _event_log:
@@ -365,6 +366,9 @@ func _process(delta: float) -> void:
 
 	_stream_chunks()
 	_process_input(delta)
+
+	if _debug_overlay and _debug_overlay.is_shown():
+		_debug_overlay.process_sections(delta)
 
 
 func _unhandled_input(_event: InputEvent) -> void:

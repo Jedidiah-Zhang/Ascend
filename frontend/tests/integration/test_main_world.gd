@@ -116,7 +116,6 @@ func test_debug_chunk_stats_defaults() -> void:
 
 	var stats: Dictionary = main.get_debug_chunk_stats()
 	assert_eq(stats["loaded"], 0)
-	assert_eq(stats["placing"], 0)
 	assert_eq(stats["cached"], 0)
 	assert_eq(stats["pending"], 0)
 
@@ -126,8 +125,6 @@ func test_debug_timing_has_expected_keys() -> void:
 
 	var timing: Dictionary = main.get_debug_timing()
 	assert_true(timing.has("stream"))
-	assert_true(timing.has("place"))
-	assert_true(timing.has("erase"))
 	assert_true(timing.has("conn"))
 
 
