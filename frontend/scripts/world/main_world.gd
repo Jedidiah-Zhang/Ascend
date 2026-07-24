@@ -58,8 +58,8 @@ var _chunks: Dictionary = {}
 var _pending: Dictionary = {}
 ## 已渲染的 chunk: {Vector2i(cx, cy): true}
 var _loaded: Dictionary = {}
-## 待请求 tile 数据的队列
-var _tile_queue: Array[Vector2i] = []
+## 待请求 tile 数据的队列（Dict 做 O(1) 去重）
+var _tile_queue: Dictionary = {}
 
 ## 性能计时（微秒）
 var _stream_us: int = 0
@@ -535,6 +535,13 @@ func _handle_response(message: Dictionary) -> void:
 				_chunks[key] = chunk
 				_pending.erase(key)
 
+				var player_cx: int = floori(_player_pos.x / float(CHUNK_SIZE))
+				var player_cy: int = floori(_player_pos.z / float(CHUNK_SIZE))
+				var unload_r: int = _stream_radius() + UNLOAD_MARGIN
+				if abs(cx - player_cx) > unload_r or abs(cy - player_cy) > unload_r:
+					_chunks.erase(key)
+					continue
+
 				var elev: Array = chunk.get("elevation", [])
 				var terr: Array = chunk.get("terrain", [])
 				if elev.size() == CHUNK_SIZE * CHUNK_SIZE and terr.size() == CHUNK_SIZE * CHUNK_SIZE:
@@ -550,6 +557,9 @@ func _handle_response(message: Dictionary) -> void:
 ## ── 流式 chunk 管理 ──────────────────────────────────────
 
 func _stream_chunks() -> void:
+	if Connection.status != Connection.Status.CONNECTED:
+		return
+
 	var t0: int = Time.get_ticks_usec()
 
 	var center_cx: int = floori(_player_pos.x / float(CHUNK_SIZE))
@@ -565,25 +575,20 @@ func _stream_chunks() -> void:
 			if not _chunks.has(key):
 				_chunks[key] = null
 				coords.append([key.x, key.y])
+			elif not _loaded.has(key) and not _pending.has(key):
+				_tile_queue[key] = true
 
 	if not coords.is_empty():
 		_send_chunk_request(coords, false)
 
-	for dx in range(-stream_r, stream_r + 1):
-		for dy in range(-stream_r, stream_r + 1):
-			var key := Vector2i(center_cx + dx, center_cy + dy)
-			if _chunks.has(key) and _chunks[key] != null:
-				if _loaded.has(key):
-					continue
-				if _pending.has(key):
-					continue
-				if key not in _tile_queue:
-					_tile_queue.append(key)
-
 	var pending_count: int = _pending.size()
-	while not _tile_queue.is_empty() and pending_count < MAX_PENDING:
-		var key: Vector2i = _tile_queue.pop_front()
+	for key in _tile_queue.keys():
+		if pending_count >= MAX_PENDING:
+			break
+		if _pending.has(key):
+			continue
 		_pending[key] = true
+		_tile_queue.erase(key)
 		_send_chunk_request([[key.x, key.y]], true)
 		pending_count += 1
 
@@ -594,7 +599,7 @@ func _stream_radius() -> int:
 	var half_fov_rad: float = deg_to_rad(CAMERA_FOV * 0.5)
 	var visible_half: float = _camera_distance * tan(half_fov_rad) * 1.5
 	var radius: int = ceili(visible_half / float(CHUNK_SIZE))
-	return maxi(STREAM_MARGIN, radius + 1)
+	return maxi(STREAM_MARGIN, radius)
 
 
 func _send_chunk_request(coords: Array[Array], include_tiles: bool) -> void:
