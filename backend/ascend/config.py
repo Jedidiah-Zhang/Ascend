@@ -262,14 +262,18 @@ STEEP_GRADIENT: float = 1.0             # 陡坡梯度阈值 (m/m)
 # Storage — 持久化与缓存
 # ═══════════════════════════════════════════════════════════════
 
+import os as _os
+
+_PROJECT_ROOT: str = _os.path.normpath(_os.path.join(_os.path.dirname(__file__), "..", ".."))
+
 # ChunkStore
-CHUNK_STORE_DB_PATH: str = "save/chunks.db"
+CHUNK_STORE_DB_PATH: str = _os.path.join(_PROJECT_ROOT, "save", "chunks.db")
 CHUNK_STORE_MAX_SIZE: int = 49          # LRU 缓存最大 chunk 数
 
 # WorldTree 归档
 WT_MAX_MEMORY_EVENTS: int = 100_000     # 内存最大事件数
 WT_GRAPH_WARMUP_EVENTS: int = 10_000    # 图预热事件数
-WT_ARCHIVE_PATH: str = "save/events.db"
+WT_ARCHIVE_PATH: str = _os.path.join(_PROJECT_ROOT, "save", "events.db")
 
 # SQLite 性能参数
 SQLITE_JOURNAL_MODE: str = "WAL"

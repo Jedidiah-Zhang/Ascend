@@ -13,6 +13,7 @@
 
 import sys
 import time as _real_time
+import glob
 from pathlib import Path
 
 # 确保 backend 在 sys.path 中
@@ -22,10 +23,24 @@ from ascend.log import setup_logging
 from ascend.game import GameEngine, SERVER_HOST, SERVER_PORT
 
 AUTO_STOP_DELAY: float = 3.0
+LOG_RETENTION_DAYS: int = 7
+
+
+def _cleanup_old_logs() -> None:
+    """删除超过 LOG_RETENTION_DAYS 天的旧日志文件。"""
+    project_root = Path(__file__).parent.parent
+    log_dir = project_root / "logs"
+    if not log_dir.is_dir():
+        return
+    cutoff = _real_time.time() - LOG_RETENTION_DAYS * 86400
+    for log_file in glob.glob(str(log_dir / "*.log")):
+        if Path(log_file).stat().st_mtime < cutoff:
+            Path(log_file).unlink()
 
 
 def main() -> None:
     """启动游戏引擎并等待 Ctrl+C 或客户端全部断开后自动退出。"""
+    _cleanup_old_logs()
     setup_logging()
 
     engine = GameEngine(seed=42)

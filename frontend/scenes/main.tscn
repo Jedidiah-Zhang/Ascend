@@ -3,7 +3,7 @@
 [ext_resource type="Script" uid="uid://bf3a2roe7m8ry" path="res://scripts/world/main_world.gd" id="1_6g3y2"]
 [ext_resource type="Script" uid="uid://carmjpelgpmpt" path="res://scripts/ui/terminal_widget.gd" id="1_kefov"]
 [ext_resource type="Script" uid="uid://dyjbrovf27uoi" path="res://scripts/ui/debug_overlay.gd" id="2_mt54i"]
-[ext_resource type="Shader" uid="uid://dv62n8xrydrrt" path="res://shaders/water_depth_fog.gdshader" id="2_tbgi4"]
+[ext_resource type="Shader" uid="uid://dv62n8xrydrrt" path="res://assets/shaders/water_depth_fog.gdshader" id="2_tbgi4"]
 [ext_resource type="Script" uid="uid://br07478oh2w3f" path="res://scripts/ui/event_log.gd" id="3_le0cj"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_tefeu"]
