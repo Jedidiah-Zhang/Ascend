@@ -61,7 +61,7 @@ def make_weather_handler(weather_engine, i18n):
             report = weather_engine.get_weather_report(cx, cy)
             if report is None:
                 continue
-            wp, sunrise_h, sunset_h, _, intensity = report
+            wp, sunrise_h, sunset_h, _, intensity, sun_azimuth = report
 
             # 先 round 再 classify —— 显示数值与等级一致
             temp = round(wp.temperature, 1)
@@ -92,6 +92,7 @@ def make_weather_handler(weather_engine, i18n):
                 "sun_tier": classify_sunshine(sun),
                 "sunrise": round(sunrise_h, 1),
                 "sunset": round(sunset_h, 1),
+                "sun_azimuth": round(sun_azimuth, 1),
                 "sunshine_intensity": intensity,
                 "light_tier": classify_sunlight_intensity(intensity),
                 "weather": weather_desc,

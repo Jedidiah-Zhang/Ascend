@@ -81,4 +81,5 @@ zoom_out={
 [rendering]
 
 environment/defaults/default_clear_color=Color(0.1, 0.1, 0.12, 1)
+rendering/shadows/directional_shadow/size=8192
 2d/snap/snap_2d_vertices_to_pixel=true

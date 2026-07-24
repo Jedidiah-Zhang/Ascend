@@ -305,6 +305,7 @@ class WeatherEngine:
         """
         self._clock = clock
         self._seed = seed
+        self._sun_azimuth = random.Random(seed + 99999).uniform(0.0, 360.0)
         self._wt = world_tree_arg if world_tree_arg is not None else _default_wt
         self._atmosphere = AtmosphereField(seed=seed)
         self._fields: dict[tuple[int, int], WeatherField] = {}
@@ -535,7 +536,7 @@ class WeatherEngine:
         return params
 
     def get_weather_report(self, cx: int, cy: int) -> (
-            "tuple[WeatherParams, float, float, float, float] | None"):
+            "tuple[WeatherParams, float, float, float, float, float] | None"):
         """一次计算返回当前时刻的完整天气报告（网络 handler 专用）。
 
         相比分别调用 get_weather + get_daylight_info，天文与噪声只算一次，
@@ -547,8 +548,9 @@ class WeatherEngine:
 
         Returns:
             (WeatherParams, sunrise_hour, sunset_hour, daylight_hours,
-            sunshine_intensity) 或 None（chunk 未注册时）。
+            sunshine_intensity, sun_azimuth) 或 None（chunk 未注册时）。
             sunshine_intensity 为 0~1 归一化值。
+            sun_azimuth 为太阳方位角（0~360°）。
         """
         key = (cx, cy)
         field = self._fields.get(key)
@@ -561,7 +563,7 @@ class WeatherEngine:
         intensity = self._sunlight_intensity(
             field, ctx["hour"], sr, ss, params.rainfall,
             ctx["drift_x"], ctx["drift_y"])
-        return (params, sr, ss, ss - sr, intensity)
+        return (params, sr, ss, ss - sr, intensity, self._sun_azimuth)
 
     def get_tiers(self, cx: int, cy: int,
                   time: int | None = None) -> dict[str, int] | None:
@@ -593,7 +595,7 @@ class WeatherEngine:
     def get_daylight_info(self, cx: int, cy: int,
                           time: int | None = None,
                           rainfall: float = 0.0
-                          ) -> tuple[float, float, float, float] | None:
+                           ) -> tuple[float, float, float, float, float] | None:
         """查询任意 chunk 在当前或过去时刻的日出日落 + 日照强度。
 
         Args:
@@ -605,9 +607,10 @@ class WeatherEngine:
                       应改用 get_weather_report()，无需手工穿递。
 
         Returns:
-            (sunrise_hour, sunset_hour, daylight_hours, sunshine_intensity)
-            或 None（chunk 未注册时）。
+            (sunrise_hour, sunset_hour, daylight_hours, sunshine_intensity,
+            sun_azimuth) 或 None（chunk 未注册时）。
             sunshine_intensity 为 0~1 归一化值，0=黑夜 1=正午烈日。
+            sun_azimuth 为太阳方位角（0~360°）。
 
         Raises:
             ValueError: time 为未来时刻。
@@ -626,8 +629,7 @@ class WeatherEngine:
         intensity = self._sunlight_intensity(
             field, ctx["hour"], sr, ss, rainfall,
             ctx["drift_x"], ctx["drift_y"])
-        return (sr, ss, ss - sr, intensity)
-
+        return (sr, ss, ss - sr, intensity, self._sun_azimuth)
     # ── 公开：调试控制 API ──────────────────────────────────────
 
     def set_rain(self, cx: int, cy: int, active: bool) -> bool | None:

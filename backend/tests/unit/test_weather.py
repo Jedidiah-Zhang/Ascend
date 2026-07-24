@@ -1333,7 +1333,7 @@ class TestSunlightIntensity:
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
         dl = e.get_daylight_info(0, 0)
         assert dl is not None
-        sr, ss, daylight, intensity = dl
+        sr, ss, daylight, intensity, _sun_azimuth = dl
         assert daylight > 0
         assert intensity > 0.8  # 正午强度接近 1
         e.shutdown()
@@ -1518,8 +1518,8 @@ class TestWeatherQueryAPI:
 class TestWeatherReport:
     """get_weather_report 组合查询测试（handler 专用路径）。"""
 
-    def test_report_returns_five_tuple(self):
-        """返回 (params, sunrise, sunset, daylight, intensity) 五元组。"""
+    def test_report_returns_six_tuple(self):
+        """返回 (params, sunrise, sunset, daylight, intensity, sun_azimuth) 六元组。"""
         from ascend.weather.weather_engine import WeatherEngine
         wt = WorldTree()
         clock = WorldClock()
@@ -1527,11 +1527,12 @@ class TestWeatherReport:
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
         report = e.get_weather_report(0, 0)
         assert report is not None
-        params, sr, ss, daylight, intensity = report
+        params, sr, ss, daylight, intensity, sun_azimuth = report
         assert params is not None
         assert sr < ss
         assert daylight == pytest.approx(ss - sr)
         assert 0.0 <= intensity <= 1.0
+        assert 0.0 <= sun_azimuth <= 360.0
         e.shutdown()
 
     def test_report_unregistered_returns_none(self):

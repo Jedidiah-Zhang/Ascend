@@ -53,12 +53,12 @@ def _make_params(temp=20.0, hum=60.0, wind=3.0, sun=12.0, rain=0.0):
     )
 
 
-def _make_engine(params=None, sr=6.0, ss=18.0, intensity=0.9):
-    """构造 mock WeatherEngine，get_weather_report 返回固定五元组。"""
+def _make_engine(params=None, sr=6.0, ss=18.0, intensity=0.9, sun_azimuth=135.0):
+    """构造 mock WeatherEngine，get_weather_report 返回固定六元组。"""
     engine = MagicMock()
     if params is None:
         params = _make_params()
-    engine.get_weather_report.return_value = (params, sr, ss, ss - sr, intensity)
+    engine.get_weather_report.return_value = (params, sr, ss, ss - sr, intensity, sun_azimuth)
     return engine
 
 
@@ -92,7 +92,7 @@ class TestWeatherHandlerShape:
         for key in ("cx", "cy", "temperature", "temp_tier",
                     "humidity", "hum_tier", "wind_speed",
                     "wind_tier", "sunshine", "sun_tier",
-                    "sunrise", "sunset", "sunshine_intensity",
+                    "sunrise", "sunset", "sun_azimuth", "sunshine_intensity",
                     "light_tier", "weather"):
             assert key in r, f"缺少字段: {key}"
         assert "daylight_hours" not in r

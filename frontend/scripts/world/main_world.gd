@@ -77,6 +77,20 @@ var _player_pos: Vector3 = Vector3.ZERO
 var _birth_chunk: Vector2i = Vector2i.ZERO
 var _has_birth: bool = false
 
+## 当前游戏时间
+var _game_hour: float = 6.0
+var _game_minute: int = 0
+## 日出日落时间（从后端天气查询获取）
+var _sunrise: float = 6.0
+var _sunset: float = 18.0
+## 太阳方位角（0-360，从后端种子派生）
+var _sun_azimuth: float = 45.0
+## 日照强度（0-1，来自后端）
+var _sunshine_intensity: float = 0.5
+## 天气轮询计时器
+var _weather_query_timer: float = 0.0
+const WEATHER_QUERY_INTERVAL: float = 1.0
+
 
 func _ready() -> void:
 	_terminal.remote_command_submitted.connect(_on_terminal_command)
@@ -137,13 +151,11 @@ func _configure_environment() -> void:
 	# ── 阴影配置 ──
 	if _sun_light:
 		_sun_light.shadow_enabled = true
-		_sun_light.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+		_sun_light.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 		_sun_light.directional_shadow_blend_splits = true
-		_sun_light.directional_shadow_split_1 = 0.05
-		_sun_light.directional_shadow_split_2 = 0.15
-		_sun_light.directional_shadow_split_3 = 0.25
-		_sun_light.shadow_bias = 0.15
-		_sun_light.shadow_normal_bias = 5.0
+		_sun_light.directional_shadow_split_1 = 0.3
+		_sun_light.shadow_bias = 0.05
+		_sun_light.shadow_normal_bias = 0.2
 
 	print("MainWorld3D: Environment configured — ambient=%.1f, bg=%s" % [env.ambient_light_energy, env.background_color])
 
@@ -366,6 +378,12 @@ func _process(delta: float) -> void:
 	_stream_chunks()
 	_process_input(delta)
 
+	_weather_query_timer += delta
+	if _weather_query_timer >= WEATHER_QUERY_INTERVAL:
+		_weather_query_timer = 0.0
+		_query_weather()
+	_update_lighting()
+
 	if _debug_overlay and _debug_overlay.is_shown():
 		_debug_overlay.process_sections(delta)
 
@@ -400,9 +418,9 @@ func _apply_camera_transform() -> void:
 
 	# 阴影覆盖全部可见地形
 	if _sun_light:
-		_sun_light.directional_shadow_max_distance = _camera_distance * 1.5 + 500.0
+		_sun_light.directional_shadow_max_distance = _camera_distance + 200.0
 		_sun_light.directional_shadow_fade_start = 0.99
-		_sun_light.position = _camera_focus
+		_sun_light.position = _camera_focus + Vector3(0, 200, 0)
 
 
 func _process_input(delta: float) -> void:
@@ -495,6 +513,10 @@ func _handle_event(message: Dictionary) -> void:
 	var payload: Dictionary = message.get("payload", {})
 	var data: Dictionary = payload.get("data", {})
 
+	if event_type == "minute_change":
+		_game_hour = float(payload.get("game_hour", _game_hour))
+		_game_minute = int(payload.get("game_minute", _game_minute))
+
 	if event_type == "player_teleported":
 		var tx: float = float(data.get("x", _player_pos.x))
 		var tz: float = float(data.get("y", _player_pos.z))
@@ -550,6 +572,18 @@ func _handle_response(message: Dictionary) -> void:
 				if elev.size() == CHUNK_SIZE * CHUNK_SIZE and terr.size() == CHUNK_SIZE * CHUNK_SIZE:
 					if not _loaded.has(key):
 						_build_terrain_chunk(cx, cy, terr, elev)
+		"get_weather":
+			var weathers: Array = payload.get("weathers", [])
+			if weathers.size() > 0:
+				var w: Dictionary = weathers[0]
+				if w.has("sunrise"):
+					_sunrise = float(w["sunrise"])
+				if w.has("sunset"):
+					_sunset = float(w["sunset"])
+				if w.has("sun_azimuth"):
+					_sun_azimuth = float(w["sun_azimuth"])
+				if w.has("sunshine_intensity"):
+					_sunshine_intensity = float(w["sunshine_intensity"])
 		"terminal_cmd":
 			if _terminal:
 				_terminal.write(payload.get("output", ""))
@@ -635,3 +669,60 @@ func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> vo
 func _handle_error(message: Dictionary) -> void:
 	var error_msg: String = message.get("error", "unknown error")
 	push_error("MainWorld3D: server error: %s" % error_msg)
+
+
+func _query_weather() -> void:
+	if Connection.status != Connection.Status.CONNECTED:
+		return
+	var chunk: Vector2i = Vector2i(
+		floori(_player_pos.x / float(CHUNK_SIZE)),
+		floori(_player_pos.z / float(CHUNK_SIZE)))
+	Connection.send({
+		"type": "request",
+		"request_type": "get_weather",
+		"payload": {"chunks": [[chunk.x, chunk.y]]},
+	})
+
+
+func _update_lighting() -> void:
+	if _sun_light == null or _world_env == null:
+		return
+
+	var hour_float: float = _game_hour + _game_minute / 60.0
+	var daylight: float = _sunset - _sunrise
+	if daylight <= 0.0:
+		return
+
+	var is_day: bool = hour_float >= _sunrise and hour_float < _sunset
+	var day_progress: float = clampf((hour_float - _sunrise) / daylight, 0.0, 1.0)
+	var sun_altitude: float = sin(day_progress * PI) if is_day else 0.0
+
+	const SHADOW_CUTOFF: float = 0.15
+	if sun_altitude < SHADOW_CUTOFF:
+		_sun_light.shadow_enabled = false
+	else:
+		_sun_light.shadow_enabled = true
+		_sun_light.shadow_bias = 0.05 / sun_altitude
+
+	if is_day:
+		_sun_light.rotation_degrees.x = lerpf(0.0, -90.0, sun_altitude)
+		_sun_light.rotation_degrees.y = _sun_azimuth + day_progress * 180.0
+	else:
+		_sun_light.rotation_degrees.x = 10.0
+		_sun_light.rotation_degrees.y = _sun_azimuth
+
+	var intensity: float = _sunshine_intensity
+	var warmth: float = 1.0 - sun_altitude
+	_sun_light.light_color = Color(1.0, 1.0 - warmth * 0.3, 1.0 - warmth * 0.7, 1.0)
+	_sun_light.light_energy = intensity * 1.2 if is_day else 0.0
+
+	var env: Environment = _world_env.environment
+	if env:
+		var day_ambient := Color(0.55, 0.55, 0.6, 1.0)
+		var night_ambient := Color(0.08, 0.08, 0.2, 1.0)
+		env.ambient_light_color = night_ambient.lerp(day_ambient, intensity)
+		env.ambient_light_energy = lerpf(0.25, 1.0, intensity)
+
+		var day_bg := Color(0.15, 0.15, 0.5, 1.0)
+		var night_bg := Color(0.02, 0.02, 0.08, 1.0)
+		env.background_color = night_bg.lerp(day_bg, intensity)
