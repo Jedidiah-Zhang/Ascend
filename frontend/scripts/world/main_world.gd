@@ -21,14 +21,17 @@ const STREAM_MARGIN: int = 1
 const UNLOAD_MARGIN: int = 1
 const MAX_PENDING: int = 3
 
-# ── 地形映射 ──────────────────────────────────────────────
-# 后端 TerrainType (int) → MeshLibrary item_id
-# 0=草地→3(平原), 1=沙地→2(沙滩), 2=沃土→8(沃土), 3=岩石→5(岩石),
-# 4=陡坡→4(丘陵), 5=山巅→6(高山), 6=浅水→9(水底), 7=深水→9(水底),
-# 8=沼泽→4(丘陵)
-const TERRAIN_TO_MESH: PackedInt32Array = [3, 2, 8, 5, 4, 6, 9, 9, 4]
-
-const MESH_LIBRARY_PATH: String = "res://assets/terrain/terrain_mesh_library.tres"
+const TERRAIN_TEXTURES: Dictionary = {
+	1: "res://assets/terrain/textures/top_shallow_water.png",
+	2: "res://assets/terrain/textures/top_sand.png",
+	3: "res://assets/terrain/textures/top_plains.png",
+	4: "res://assets/terrain/textures/top_hills.png",
+	5: "res://assets/terrain/textures/top_rock.png",
+	6: "res://assets/terrain/textures/top_mountain.png",
+	7: "res://assets/terrain/textures/top_snow.png",
+	8: "res://assets/terrain/textures/top_fertile.png",
+	9: "res://assets/terrain/textures/top_underwater_floor.png",
+}
 
 ## 终端节点
 @onready var _terminal: TerminalWidget = $TerminalLayer/TerminalWidget
@@ -60,6 +63,8 @@ var _pending: Dictionary = {}
 var _loaded: Dictionary = {}
 ## 待请求 tile 数据的队列（Dict 做 O(1) 去重）
 var _tile_queue: Dictionary = {}
+## 缓存从 MeshLibrary 提取的材质: item_id → Material
+var _terrain_materials: Dictionary = {}
 
 ## 性能计时（微秒）
 var _stream_us: int = 0
@@ -290,50 +295,27 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 	if _loaded.has(key) or _terrain_parent.has_node(NodePath("Chunk_%d_%d" % [cx, cy])):
 		return
 
-	var mesh_lib: MeshLibrary = load(MESH_LIBRARY_PATH)
-	if mesh_lib == null:
-		push_error("MainWorld3D: failed to load MeshLibrary: %s" % MESH_LIBRARY_PATH)
+	var materials := _lazy_load_materials()
+	if materials.is_empty():
 		return
 
-	var gridmap := GridMap.new()
-	gridmap.name = "Chunk_%d_%d" % [cx, cy]
-	gridmap.mesh_library = mesh_lib
-	gridmap.cell_size = Vector3(1.0, 1.0, 1.0)
-	gridmap.position = Vector3(float(cx * CS), 0.0, float(cy * CS))
+	var mesh: ArrayMesh = TerrainMeshBuilder.build(terrain, elevation, materials)
 
-	var placed := 0
-	for z in CS:
-		for x in CS:
-			var idx := z * CS + x
-			var elev: float = float(elevation[idx])
-
-			var terrain_id: int = int(terrain[idx]) if idx < terrain.size() else 0
-			if terrain_id < 0 or terrain_id >= TERRAIN_TO_MESH.size():
-				continue
-			var item_id: int = TERRAIN_TO_MESH[terrain_id]
-
-			# 非水域 tile 且海拔 < 0 → 跳过
-			var is_water := (terrain_id == 6 or terrain_id == 7)
-			if not is_water and elev < 0.0:
-				continue
-			# 水域 tile 的海底可能为负海拔
-			if is_water and elev < -50.0:
-				continue
-
-			var wy := roundi(elev)
-			gridmap.set_cell_item(Vector3i(x, wy, z), item_id)
-			placed += 1
-
-	if placed == 0:
+	if mesh.get_surface_count() == 0:
 		_loaded[key] = true
 		return
 
-	_terrain_parent.add_child(gridmap)
+	var mi := MeshInstance3D.new()
+	mi.name = "Chunk_%d_%d" % [cx, cy]
+	mi.mesh = mesh
+	mi.position = Vector3(float(cx * CS), 0.0, float(cy * CS))
+
+	_terrain_parent.add_child(mi)
 	_loaded[key] = true
-	print("MainWorld3D: chunk (%d,%d) — %d cells via GridMap" % [cx, cy, placed])
+	print("MainWorld3D: chunk (%d,%d) — %d surfaces" % [cx, cy, mesh.get_surface_count()])
 
 	# 首次 chunk 覆盖玩家时，吸附玩家到地面
-	if not _camera_grounded and placed > 0:
+	if not _camera_grounded:
 		if cx == floori(_player_pos.x / float(CS)) and cy == floori(_player_pos.z / float(CS)):
 			_camera_grounded = true
 			var ground_y := _get_ground_elevation_at(_player_pos)
@@ -344,6 +326,23 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 				_player.visible = true
 				_apply_camera_transform()
 				print("MainWorld3D: player grounded at y=%.1f" % _player_pos.y)
+
+
+func _lazy_load_materials() -> Dictionary:
+	if _terrain_materials.is_empty():
+		for item_id in range(1, 10):
+			var tex_path: String = TERRAIN_TEXTURES.get(item_id, "")
+			if tex_path.is_empty():
+				continue
+			var tex: Texture2D = load(tex_path)
+			if tex == null:
+				push_error("MainWorld3D: failed to load texture: %s" % tex_path)
+				continue
+			var mat := StandardMaterial3D.new()
+			mat.albedo_texture = tex
+			mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+			_terrain_materials[item_id] = mat
+	return _terrain_materials
 
 
 func _process(delta: float) -> void:
