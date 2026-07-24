@@ -18,6 +18,7 @@ Usage:
 extends Node
 
 const Config = preload("res://scripts/config.gd")
+const FrameCodecClass = preload("res://scripts/utils/frame_codec.gd")
 
 
 # ── 信号 ──────────────────────────────────────────────────
@@ -58,10 +59,10 @@ const PROBE_TIMEOUT: float = 0.2
 var _recv_buf: PackedByteArray = PackedByteArray()
 ## 待发送消息队列
 var _send_queue: Array[PackedByteArray] = []
+## 帧编解码器
+var _codec: FrameCodec = FrameCodecClass.new()
 ## TCP 流
 var _stream: StreamPeerTCP = null
-## 当前序列号
-var _seq: int = 0
 ## 重连计时器
 var _reconnect_timer: float = 0.0
 ## 目标主机/端口
@@ -184,18 +185,10 @@ func disconnect_from_server() -> void:
 func send(message: Dictionary) -> void:
 	"""发送一条消息。"""
 	if not message.has("seq"):
-		message["seq"] = _next_seq()
-	var encoded: PackedByteArray = MsgPack.encode(message)
-	if encoded.is_empty():
-		push_error("Connection: failed to encode message")
+		message["seq"] = _codec.next_seq()
+	var framed: PackedByteArray = _codec.frame_encode(message)
+	if framed.is_empty():
 		return
-	var length: int = encoded.size()
-	var framed: PackedByteArray = PackedByteArray()
-	framed.append((length >> 24) & 0xff)
-	framed.append((length >> 16) & 0xff)
-	framed.append((length >> 8) & 0xff)
-	framed.append(length & 0xff)
-	framed.append_array(encoded)
 	_send_queue.append(framed)
 
 
@@ -354,17 +347,10 @@ func _read_messages() -> void:
 	var data: PackedByteArray = chunk[1]
 	_recv_buf.append_array(data)
 
-	while _recv_buf.size() >= 4:
-		var msg_len: int = (_recv_buf[0] << 24) | (_recv_buf[1] << 16) | (_recv_buf[2] << 8) | _recv_buf[3]
-		if msg_len <= 0 or msg_len > MAX_MESSAGE_SIZE:
-			push_error("Connection: invalid message length: %d" % msg_len)
-			_recv_buf.clear()
-			return
-		if _recv_buf.size() < 4 + msg_len:
-			break
-		var body: PackedByteArray = _recv_buf.slice(4, 4 + msg_len)
-		_recv_buf = _recv_buf.slice(4 + msg_len)
+	var result: Dictionary = _codec.frame_decode(_recv_buf, MAX_MESSAGE_SIZE)
+	_recv_buf = result["remaining"]
 
+	for body: PackedByteArray in result["bodies"]:
 		_decode_mutex.lock()
 		_decode_input.append(body)
 		_decode_mutex.unlock()
@@ -381,12 +367,6 @@ func _flush_send_queue() -> void:
 			push_error("Connection: send error: %d" % err)
 			return
 	_send_queue.clear()
-
-
-func _next_seq() -> int:
-	"""生成下一个序列号。"""
-	_seq += 1
-	return _seq
 
 
 # ── 后台解码线程 ──────────────────────────────────────────

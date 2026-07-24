@@ -157,7 +157,6 @@ graph TD
     CLK3 -->|注入| CMD3
 
     GEN3 -->|"ContinentData"| TILE3
-    GEN3 -->|注入| CMD3
 
     CAL3 -->|注入| CMD3
     I18N -->|注入| CMD3
