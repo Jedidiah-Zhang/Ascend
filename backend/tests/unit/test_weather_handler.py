@@ -89,11 +89,11 @@ class TestWeatherHandlerShape:
         results = resp["payload"]["weathers"]
         assert len(results) == 1
         r = results[0]
-        for key in ("cx", "cy", "temperature", "temp_perception",
-                    "humidity", "hum_perception", "wind_speed",
-                    "wind_perception", "sunshine", "sun_perception",
+        for key in ("cx", "cy", "temperature", "temp_tier",
+                    "humidity", "hum_tier", "wind_speed",
+                    "wind_tier", "sunshine", "sun_tier",
                     "sunrise", "sunset", "sunshine_intensity",
-                    "light_perception", "weather"):
+                    "light_tier", "weather"):
             assert key in r, f"缺少字段: {key}"
         assert "daylight_hours" not in r
 
@@ -113,39 +113,43 @@ class TestWeatherHandlerShape:
 
 
 class TestWeatherHandlerRoundClassify:
-    """先 round 后 classify —— 显示数值与感知标签一致。"""
+    """先 round 后 classify —— 显示数值与等级标签一致。"""
 
     def test_temp_boundary_rounds_up_to_warm(self):
-        """24.96 → 显示 25.0，标签必须是 warm（25.0 所属类别）。"""
+        """24.96 → 显示 25.0，temp_tier 为 int（25.0 对应等级 6）。"""
         engine = _make_engine(params=_make_params(temp=24.96))
         handle = make_weather_handler(engine, FakeI18n())["get_weather"]
         r = handle(_request([[0, 0]]))["payload"]["weathers"][0]
         assert r["temperature"] == 25.0
-        assert r["temp_perception"] == "perception.temp.warm"
+        assert r["temp_tier"] == 6
+        assert isinstance(r["temp_tier"], int)
 
     def test_temp_below_boundary_stays_mild(self):
-        """24.9 → 显示 24.9，标签 mild。"""
+        """24.9 → 显示 24.9，temp_tier 为 int（24.9 对应等级 5）。"""
         engine = _make_engine(params=_make_params(temp=24.9))
         handle = make_weather_handler(engine, FakeI18n())["get_weather"]
         r = handle(_request([[0, 0]]))["payload"]["weathers"][0]
         assert r["temperature"] == 24.9
-        assert r["temp_perception"] == "perception.temp.mild"
+        assert r["temp_tier"] == 5
+        assert isinstance(r["temp_tier"], int)
 
-    def test_sun_perception_from_displayed_sunshine(self):
-        """sun_perception 从显示的 sunshine 值分类（11.96 → 12.0 → very_long）。"""
+    def test_sun_tier_from_displayed_sunshine(self):
+        """sun_tier 从显示的 sunshine 值分类（11.96 → 12.0 → tier 4）。"""
         engine = _make_engine(params=_make_params(sun=11.96), sr=7.0, ss=17.0)
         handle = make_weather_handler(engine, FakeI18n())["get_weather"]
         r = handle(_request([[0, 0]]))["payload"]["weathers"][0]
         assert r["sunshine"] == 12.0
-        assert r["sun_perception"] == "perception.sun.very_long"
+        assert r["sun_tier"] == 4
+        assert isinstance(r["sun_tier"], int)
 
-    def test_light_perception_from_rounded_intensity(self):
-        """light_perception 从 round(intensity, 2) 分类（0.796 → 0.80 → intense）。"""
+    def test_light_tier_from_rounded_intensity(self):
+        """light_tier 从 round(intensity, 2) 分类（0.796 → 0.80 → tier 4）。"""
         engine = _make_engine(intensity=0.796)
         handle = make_weather_handler(engine, FakeI18n())["get_weather"]
         r = handle(_request([[0, 0]]))["payload"]["weathers"][0]
         assert r["sunshine_intensity"] == 0.8
-        assert r["light_perception"] == "perception.light.intense"
+        assert r["light_tier"] == 4
+        assert isinstance(r["light_tier"], int)
 
 
 class TestWeatherHandlerPrecip:

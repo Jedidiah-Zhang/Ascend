@@ -25,24 +25,24 @@ func test_apply_weather_data_updates_all_fields() -> void:
 	var weather_data: Dictionary = {
 		"weather": "雨",
 		"temperature": 25.5,
-		"temp_perception": "凉爽",
+		"temp_tier": 6,
 		"humidity": 80.0,
-		"hum_perception": "潮湿",
+		"hum_tier": 3,
 		"wind_speed": 5.2,
-		"wind_perception": "微风",
+		"wind_tier": 2,
 		"sunshine": 6.0,
-		"sun_perception": "中等",
+		"sun_tier": 2,
 	}
 	section.on_world_response("get_weather", {"weathers": [weather_data]})
 	assert_eq(section.current_weather, "雨")
 	assert_eq(section.temperature, 25.5)
-	assert_eq(section.temp_perception, "凉爽")
+	assert_eq(section.temp_tier, 6)
 	assert_eq(section.humidity, 80.0)
-	assert_eq(section.hum_perception, "潮湿")
+	assert_eq(section.hum_tier, 3)
 	assert_eq(section.wind_speed, 5.2)
-	assert_eq(section.wind_perception, "微风")
+	assert_eq(section.wind_tier, 2)
 	assert_eq(section.sunshine, 6.0)
-	assert_eq(section.sun_perception, "中等")
+	assert_eq(section.sun_tier, 2)
 
 
 func test_get_lines_after_weather_update() -> void:
@@ -50,27 +50,27 @@ func test_get_lines_after_weather_update() -> void:
 	var weather_data: Dictionary = {
 		"weather": "雪",
 		"temperature": -5.0,
-		"temp_perception": "寒冷",
+		"temp_tier": 1,
 		"humidity": 40.0,
-		"hum_perception": "干燥",
+		"hum_tier": 1,
 		"wind_speed": 12.0,
-		"wind_perception": "强风",
+		"wind_tier": 3,
 		"sunshine": 2.0,
-		"sun_perception": "弱",
+		"sun_tier": 1,
 		"sunrise": 6.5,
 		"sunset": 18.25,
 		"sunshine_intensity": 0.35,
-		"light_perception": "昏暗",
+		"light_tier": 2,
 	}
 	section.on_world_response("get_weather", {"weathers": [weather_data]})
 	var lines: PackedStringArray = section.get_lines()
 
 	assert_string_contains(lines[0], "天气: 雪")
-	assert_string_contains(lines[1], "-5.0°C(寒冷)")
-	assert_string_contains(lines[1], "40%(干燥)")
-	assert_string_contains(lines[1], "12.0 m/s(强风)")
-	assert_string_contains(lines[2], "日照 2.0h(弱)")
-	assert_string_contains(lines[3], "光照 0.35(昏暗)")
+	assert_string_contains(lines[1], "-5.0°C(L1)")
+	assert_string_contains(lines[1], "40%(L1)")
+	assert_string_contains(lines[1], "12.0 m/s(L3)")
+	assert_string_contains(lines[2], "日照 2.0h(L1)")
+	assert_string_contains(lines[3], "光照 0.35(L2)")
 	assert_string_contains(lines[3], "日出 06:30 → 日落 18:15")
 
 

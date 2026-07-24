@@ -421,15 +421,15 @@ class CommandExecutor:
         lines = [
             t("console.weather_header", cx=cx, cy=cy),
             f"  {t('console.weather_temp')}: {temp}°C"
-            f" ({t('perception.temp.' + classify_temperature(temp))})",
+            f" (tier {classify_temperature(temp)})",
             f"  {t('console.weather_hum')}: {hum}%"
-            f" ({t('perception.hum.' + classify_humidity(hum))})",
+            f" (tier {classify_humidity(hum)})",
             f"  {t('console.weather_wind')}: {wind} m/s"
-            f" ({t('perception.wind.' + classify_wind(wind))})",
+            f" (tier {classify_wind(wind)})",
             f"  {t('console.weather_sun')}: {sun}h"
-            f" ({t('perception.sun.' + classify_sunshine(sun))})"
+            f" (tier {classify_sunshine(sun)})"
             f"  |  {t('console.weather_light')}: {light}"
-            f" ({t('perception.light.' + classify_sunlight_intensity(light))})",
+            f" (tier {classify_sunlight_intensity(light)})",
             f"  {t('console.weather_precip')}: {precip}",
             f"  {t('console.weather_sun_times', sunrise=self._fmt_hour(sunrise_h), sunset=self._fmt_hour(sunset_h))}",
         ]

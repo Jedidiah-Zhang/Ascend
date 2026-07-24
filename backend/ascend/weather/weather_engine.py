@@ -34,11 +34,11 @@ from ascend.config import (
     SUNSHINE_PERTURB_SCALE,
     DIURNAL_TO_SEASONAL_RATIO,
     HUMIDITY_DIURNAL_SCALE, HUMIDITY_SEASONAL_SCALE,
-    TEMP_PERCEPTION_BOUNDARIES,
-    HUMIDITY_PERCEPTION_BOUNDARIES,
-    WIND_PERCEPTION_BOUNDARIES,
-    SUNSHINE_PERCEPTION_BOUNDARIES,
-    SUNLIGHT_INTENSITY_BOUNDARIES,
+    TEMP_TIER_BOUNDARIES,
+    HUMIDITY_TIER_BOUNDARIES,
+    WIND_TIER_BOUNDARIES,
+    SUNSHINE_TIER_BOUNDARIES,
+    SUNLIGHT_INTENSITY_TIER_BOUNDARIES,
     TEMP_BOUNDS as _TEMP_BOUNDS,
     HUMIDITY_BOUNDS as _HUMIDITY_BOUNDS,
     WIND_BOUNDS as _WIND_BOUNDS,
@@ -79,99 +79,98 @@ _SEASONALITY_HUMIDITY_SHARPNESS: dict[SeasonalityMode, float] = {
     SeasonalityMode.ALPINE: 0.0,
 }
 
-# ── 感知分类 ────────────────────────────────────────────────
+# ── 分级函数 ────────────────────────────────────────────────
 
-def _classify_perception(value: float,
-                         boundaries: tuple[tuple[float, str], ...]) -> str:
-    """按阈值边界分类。
+def _classify(value: float, boundaries: tuple[float, ...]) -> int:
+    """按阈值返回等级索引（0-based）。
 
     Args:
         value: 待分类的数值。
-        boundaries: (上限, 标签) 的升序元组，最后一个上限为 float("inf")。
+        boundaries: 阈值升序元组。
 
     Returns:
-        str，value 所属区间的标签（value < 首个满足的上限）。
+        int，value < boundaries[i] 的最小 i，或在边界外返回 len(boundaries)。
     """
-    for limit, label in boundaries:
+    for i, limit in enumerate(boundaries):
         if value < limit:
-            return label
-    return boundaries[-1][1]
+            return i
+    return len(boundaries)
 
 
 def classify_temperature(temp: float,
-                         boundaries: tuple[tuple[float, str], ...]
-                         = TEMP_PERCEPTION_BOUNDARIES) -> str:
-    """温度 → 感知类别。
+                         boundaries: tuple[float, ...]
+                         = TEMP_TIER_BOUNDARIES) -> int:
+    """温度 → 等级索引。
 
     Args:
         temp: 温度 (°C)。
-        boundaries: 可选自定义边界，默认用全局配置。
-                    用于不同物种/场景的敏感度调整。
+        boundaries: 可选自定义阈值，默认用全局配置。
+                    用于不同物种/场景的分级调整。
 
     Returns:
-        str，感知标签（bitter_cold/…/extreme_heat）。
+        int，等级索引（0=最冷，len(boundaries)=最热）。
     """
-    return _classify_perception(temp, boundaries)
+    return _classify(temp, boundaries)
 
 
 def classify_humidity(hum: float,
-                      boundaries: tuple[tuple[float, str], ...]
-                      = HUMIDITY_PERCEPTION_BOUNDARIES) -> str:
-    """湿度 → 感知类别。
+                      boundaries: tuple[float, ...]
+                      = HUMIDITY_TIER_BOUNDARIES) -> int:
+    """湿度 → 等级索引。
 
     Args:
         hum: 相对湿度 (%)。
-        boundaries: 可选自定义边界，默认用全局配置。
+        boundaries: 可选自定义阈值，默认用全局配置。
 
     Returns:
-        str，感知标签（dry/…/oppressive）。
+        int，等级索引（0=最干燥，len(boundaries)=最潮湿）。
     """
-    return _classify_perception(hum, boundaries)
+    return _classify(hum, boundaries)
 
 
 def classify_wind(speed: float,
-                  boundaries: tuple[tuple[float, str], ...]
-                  = WIND_PERCEPTION_BOUNDARIES) -> str:
-    """风速 → 感知类别。
+                  boundaries: tuple[float, ...]
+                  = WIND_TIER_BOUNDARIES) -> int:
+    """风速 → 等级索引。
 
     Args:
         speed: 风速 (m/s)。
-        boundaries: 可选自定义边界，默认用全局配置。
+        boundaries: 可选自定义阈值，默认用全局配置。
 
     Returns:
-        str，感知标签（calm/…/gale）。
+        int，等级索引（0=无风，len(boundaries)=最大风力）。
     """
-    return _classify_perception(speed, boundaries)
+    return _classify(speed, boundaries)
 
 
 def classify_sunshine(sun: float,
-                      boundaries: tuple[tuple[float, str], ...]
-                      = SUNSHINE_PERCEPTION_BOUNDARIES) -> str:
-    """日照时长 → 感知类别。
+                      boundaries: tuple[float, ...]
+                      = SUNSHINE_TIER_BOUNDARIES) -> int:
+    """日照时长 → 等级索引。
 
     Args:
         sun: 日照时长 (小时/天)。
-        boundaries: 可选自定义边界，默认用全局配置。
+        boundaries: 可选自定义阈值，默认用全局配置。
 
     Returns:
-        str，感知标签（very_short/…/extreme）。
+        int，等级索引（0=最短，len(boundaries)=最长）。
     """
-    return _classify_perception(sun, boundaries)
+    return _classify(sun, boundaries)
 
 
 def classify_sunlight_intensity(intensity: float,
-                                boundaries: tuple[tuple[float, str], ...]
-                                = SUNLIGHT_INTENSITY_BOUNDARIES) -> str:
-    """日照强度 (0~1) → 感知类别。
+                                boundaries: tuple[float, ...]
+                                = SUNLIGHT_INTENSITY_TIER_BOUNDARIES) -> int:
+    """日照强度 (0~1) → 等级索引。
 
     Args:
         intensity: 归一化日照强度，0=黑夜 1=正午烈日。
-        boundaries: 可选自定义边界，默认用全局配置。
+        boundaries: 可选自定义阈值，默认用全局配置。
 
     Returns:
-        str，感知标签（dark/…/intense）。
+        int，等级索引（0=最暗，len(boundaries)=最亮）。
     """
-    return _classify_perception(intensity, boundaries)
+    return _classify(intensity, boundaries)
 
 
 # 降雨事件档位：climate → (mean_intensity mm/h, mean_duration h,
@@ -564,11 +563,11 @@ class WeatherEngine:
             ctx["drift_x"], ctx["drift_y"])
         return (params, sr, ss, ss - sr, intensity)
 
-    def get_perceptions(self, cx: int, cy: int,
-                        time: int | None = None) -> dict[str, str] | None:
-        """查询任意 chunk 在当前或过去时刻的感知类别。
+    def get_tiers(self, cx: int, cy: int,
+                  time: int | None = None) -> dict[str, int] | None:
+        """查询任意 chunk 在当前或过去时刻的等级索引。
 
-        便捷方法，返回 {"temperature": "cool", "humidity": "dry", ...}。
+        便捷方法，返回 {"temperature": 3, "humidity": 1, ...}。
 
         Args:
             cx: chunk X 坐标。
@@ -883,54 +882,58 @@ class WeatherEngine:
         for (cx, cy), field in self._fields.items():
             rain = self._rain_schedules.get((cx, cy))
             params, sr, ss = self._compute_params(field, now, ctx, rain)
-            # 温度 — 感知类别变化时发布（首刻静默初始化，初始状态走查询 API）
-            temp_perception = classify_temperature(params.temperature)
-            if field.last_temp_perception is None:
-                field.last_temp_perception = temp_perception
-            elif temp_perception != field.last_temp_perception:
+            # 温度 — 等级变化时发布（首刻静默初始化，初始状态走查询 API）
+            temp_tier = classify_temperature(params.temperature)
+            if field.last_temp_tier is None:
+                field.last_temp_tier = temp_tier
+            elif temp_tier != field.last_temp_tier:
                 self._publish(cx, cy, now, "temperature_change", {
                     "temperature": float(params.temperature),
-                    "perception": temp_perception,
+                    "prev_tier": field.last_temp_tier,
+                    "tier": temp_tier,
                     "season": season,
                     "time_of_day": int(tod),
                 })
-                field.last_temp_perception = temp_perception
-            # 湿度 — 感知类别变化时发布
-            hum_perception = classify_humidity(params.humidity)
-            if field.last_humidity_perception is None:
-                field.last_humidity_perception = hum_perception
-            elif hum_perception != field.last_humidity_perception:
+                field.last_temp_tier = temp_tier
+            # 湿度 — 等级变化时发布
+            hum_tier = classify_humidity(params.humidity)
+            if field.last_humidity_tier is None:
+                field.last_humidity_tier = hum_tier
+            elif hum_tier != field.last_humidity_tier:
                 self._publish(cx, cy, now, "humidity_change", {
                     "humidity": float(params.humidity),
-                    "perception": hum_perception,
+                    "prev_tier": field.last_humidity_tier,
+                    "tier": hum_tier,
                     "time_of_day": int(tod),
                 })
-                field.last_humidity_perception = hum_perception
-            # 风 — 感知类别变化时发布（风向使用 tick 级预计算值）
-            wind_perception = classify_wind(params.wind_speed)
-            if field.last_wind_perception is None:
-                field.last_wind_perception = wind_perception
-            elif wind_perception != field.last_wind_perception:
+                field.last_humidity_tier = hum_tier
+            # 风 — 等级变化时发布（风向使用 tick 级预计算值）
+            wind_tier = classify_wind(params.wind_speed)
+            if field.last_wind_tier is None:
+                field.last_wind_tier = wind_tier
+            elif wind_tier != field.last_wind_tier:
                 self._publish(cx, cy, now, "wind_change", {
                     "wind_speed": float(params.wind_speed),
-                    "perception": wind_perception,
+                    "prev_tier": field.last_wind_tier,
+                    "tier": wind_tier,
                     "wind_dir_x": float(wind_x),
                     "wind_dir_y": float(wind_y),
                     "time_of_day": int(tod),
                 })
-                field.last_wind_perception = wind_perception
-            # 日照 — 感知类别变化时发布
-            sun_perception = classify_sunshine(params.sunshine)
-            if field.last_sunshine_perception is None:
-                field.last_sunshine_perception = sun_perception
-            elif sun_perception != field.last_sunshine_perception:
+                field.last_wind_tier = wind_tier
+            # 日照 — 等级变化时发布
+            sun_tier = classify_sunshine(params.sunshine)
+            if field.last_sunshine_tier is None:
+                field.last_sunshine_tier = sun_tier
+            elif sun_tier != field.last_sunshine_tier:
                 self._publish(cx, cy, now, "sunshine_change", {
                     "sunshine": float(params.sunshine),
-                    "perception": sun_perception,
+                    "prev_tier": field.last_sunshine_tier,
+                    "tier": sun_tier,
                     "season": season,
                     "time_of_day": int(tod),
                 })
-                field.last_sunshine_perception = sun_perception
+                field.last_sunshine_tier = sun_tier
             # per-chunk 昼夜切换（复用 _compute_params 返回的 sr/ss）
             is_day = sr <= hour < ss
             if (field.last_is_daytime is not None

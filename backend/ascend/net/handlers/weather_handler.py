@@ -4,7 +4,7 @@
 
 输入防护：逐坐标校验（畸形坐标跳过不毁整批）、批量上限
 MAX_WEATHER_QUERY_CHUNKS（防超大请求卡游戏线程）。
-所有感知标签从"四舍五入后的显示值"分类，保证面板数值与标签一致。
+所有等级标签从"四舍五入后的显示值"分类，保证面板数值与标签一致。
 """
 
 from ascend.config import MAX_WEATHER_QUERY_CHUNKS
@@ -17,28 +17,6 @@ from ascend.weather.weather_engine import (
 from ascend.log import get_logger
 
 logger = get_logger(__name__)
-
-PERCEPTION_NS = {
-    "temp": "perception.temp",
-    "hum": "perception.hum",
-    "wind": "perception.wind",
-    "sun": "perception.sun",
-    "light": "perception.light",
-}
-
-
-def _tr_perception(i18n, category: str, label: str) -> str:
-    """翻译感知标签。
-
-    Args:
-        i18n: I18n 翻译管理器。
-        category: 感知类别（PERCEPTION_NS 的键：temp/hum/wind/sun/light）。
-        label: 引擎输出的原始标签（如 "cool"）。
-
-    Returns:
-        str，翻译后的标签文本。
-    """
-    return i18n.t("%s.%s" % (PERCEPTION_NS[category], label))
 
 
 def make_weather_handler(weather_engine, i18n):
@@ -85,7 +63,7 @@ def make_weather_handler(weather_engine, i18n):
                 continue
             wp, sunrise_h, sunset_h, _, intensity = report
 
-            # 先 round 再 classify —— 显示数值与感知标签一致
+            # 先 round 再 classify —— 显示数值与等级一致
             temp = round(wp.temperature, 1)
             hum = round(wp.humidity, 1)
             wind = round(wp.wind_speed, 1)
@@ -105,22 +83,17 @@ def make_weather_handler(weather_engine, i18n):
                 "cx": cx,
                 "cy": cy,
                 "temperature": temp,
-                "temp_perception": _tr_perception(
-                    i18n, "temp", classify_temperature(temp)),
+                "temp_tier": classify_temperature(temp),
                 "humidity": hum,
-                "hum_perception": _tr_perception(
-                    i18n, "hum", classify_humidity(hum)),
+                "hum_tier": classify_humidity(hum),
                 "wind_speed": wind,
-                "wind_perception": _tr_perception(
-                    i18n, "wind", classify_wind(wind)),
+                "wind_tier": classify_wind(wind),
                 "sunshine": sun,
-                "sun_perception": _tr_perception(
-                    i18n, "sun", classify_sunshine(sun)),
+                "sun_tier": classify_sunshine(sun),
                 "sunrise": round(sunrise_h, 1),
                 "sunset": round(sunset_h, 1),
                 "sunshine_intensity": intensity,
-                "light_perception": _tr_perception(
-                    i18n, "light", classify_sunlight_intensity(intensity)),
+                "light_tier": classify_sunlight_intensity(intensity),
                 "weather": weather_desc,
             })
 

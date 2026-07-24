@@ -11,19 +11,19 @@ extends "res://scripts/ui/debug_section.gd"
 var current_weather: String = "晴"
 
 var temperature: float = 0.0
-var temp_perception: String = ""
+var temp_tier: int = -1
 var _has_temp: bool = false
 
 var humidity: float = 0.0
-var hum_perception: String = ""
+var hum_tier: int = -1
 var _has_hum: bool = false
 
 var wind_speed: float = 0.0
-var wind_perception: String = ""
+var wind_tier: int = -1
 var _has_wind: bool = false
 
 var sunshine: float = 0.0
-var sun_perception: String = ""
+var sun_tier: int = -1
 var _has_sun: bool = false
 
 var sunrise: float = 0.0
@@ -31,7 +31,7 @@ var sunset: float = 0.0
 var _has_daylight_info: bool = false
 
 var sunshine_intensity: float = 0.0
-var light_perception: String = ""
+var light_tier: int = -1
 var _has_intensity: bool = false
 
 ## 轮询累积计时器（秒）
@@ -82,19 +82,19 @@ func _apply_weather_data(data: Dictionary) -> void:
 		current_weather = str(data["weather"])
 	if data.has("temperature"):
 		temperature = float(data["temperature"])
-		temp_perception = str(data.get("temp_perception", ""))
+		temp_tier = int(data.get("temp_tier", -1))
 		_has_temp = true
 	if data.has("humidity"):
 		humidity = float(data["humidity"])
-		hum_perception = str(data.get("hum_perception", ""))
+		hum_tier = int(data.get("hum_tier", -1))
 		_has_hum = true
 	if data.has("wind_speed"):
 		wind_speed = float(data["wind_speed"])
-		wind_perception = str(data.get("wind_perception", ""))
+		wind_tier = int(data.get("wind_tier", -1))
 		_has_wind = true
 	if data.has("sunshine"):
 		sunshine = float(data["sunshine"])
-		sun_perception = str(data.get("sun_perception", ""))
+		sun_tier = int(data.get("sun_tier", -1))
 		_has_sun = true
 	if data.has("sunrise"):
 		sunrise = float(data["sunrise"])
@@ -102,7 +102,7 @@ func _apply_weather_data(data: Dictionary) -> void:
 		_has_daylight_info = true
 	if data.has("sunshine_intensity"):
 		sunshine_intensity = float(data["sunshine_intensity"])
-		light_perception = str(data.get("light_perception", ""))
+		light_tier = int(data.get("light_tier", -1))
 		_has_intensity = true
 
 
@@ -112,20 +112,20 @@ func get_lines() -> PackedStringArray:
 
 	var meteo: PackedStringArray = []
 	if _has_temp:
-		meteo.append("%.1f°C(%s)" % [temperature, temp_perception])
+		meteo.append("%.1f°C(L%d)" % [temperature, temp_tier])
 	if _has_hum:
-		meteo.append("%.0f%%(%s)" % [humidity, hum_perception])
+		meteo.append("%.0f%%(L%d)" % [humidity, hum_tier])
 	if _has_wind:
-		meteo.append("%.1f m/s(%s)" % [wind_speed, wind_perception])
+		meteo.append("%.1f m/s(L%d)" % [wind_speed, wind_tier])
 	if not meteo.is_empty():
 		lines.append("  ".join(meteo))
 
 	if _has_sun:
-		lines.append("日照 %.1fh(%s)" % [sunshine, sun_perception])
+		lines.append("日照 %.1fh(L%d)" % [sunshine, sun_tier])
 
 	var sun_parts: PackedStringArray = []
 	if _has_intensity:
-		sun_parts.append("光照 %.2f(%s)" % [sunshine_intensity, light_perception])
+		sun_parts.append("光照 %.2f(L%d)" % [sunshine_intensity, light_tier])
 	if _has_daylight_info:
 		var sr_h: int = int(sunrise)
 		var sr_m: int = int((sunrise - sr_h) * 60)

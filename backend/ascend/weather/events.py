@@ -1,9 +1,8 @@
-"""天气事件 schema 注册 — 感知层事件 + 离散事件。
+"""天气事件 schema 注册 — 等级变化事件 + 离散事件。
 
 事件类型：
   - temperature_change / humidity_change / wind_change / sunshine_change：
-       感知类别变化时发布（如 "cold"→"cool"、"dry"→"comfortable"），
-       附带 numeric 值和 perception 标签。
+        等级变化时发布（如 tier 2→3），附带 numeric 值、prev_tier 和 tier。
   - precipitation_start / precipitation_stop：降雨事件切换
   - cold_snap_start / cold_snap_stop：寒潮事件切换
   - heat_wave_start / heat_wave_stop：热浪事件切换
@@ -21,27 +20,27 @@ def register_weather_schemas(wt) -> None:
     """在指定 WorldTree 实例上注册天气事件 schema。"""
     wt.register_event_schema(
         "temperature_change",
-        required={"temperature": float, "perception": str, "season": int,
-                  "time_of_day": int},
-        description="温度感知类别变化时发布。perception 为感知标签（cold/cool/comfortable 等）。",
+        required={"temperature": float, "prev_tier": int, "tier": int,
+                  "season": int, "time_of_day": int},
+        description="温度等级变化时发布。prev_tier 为变化前等级，tier 为当前等级。",
     )
     wt.register_event_schema(
         "humidity_change",
-        required={"humidity": float, "perception": str, "time_of_day": int},
-        description="湿度感知类别变化时发布。perception 为感知标签（dry/comfortable/humid 等）。",
+        required={"humidity": float, "prev_tier": int, "tier": int,
+                  "time_of_day": int},
+        description="湿度等级变化时发布。prev_tier 为变化前等级，tier 为当前等级。",
     )
     wt.register_event_schema(
         "wind_change",
-        required={"wind_speed": float, "perception": str,
+        required={"wind_speed": float, "prev_tier": int, "tier": int,
                   "wind_dir_x": float, "wind_dir_y": float, "time_of_day": int},
-        description="风速感知类别变化时发布。perception 为感知标签（calm/breezy/windy 等）。",
+        description="风速等级变化时发布。prev_tier 为变化前等级，tier 为当前等级。",
     )
     wt.register_event_schema(
         "sunshine_change",
-        required={"sunshine": float, "perception": str, "season": int,
-                  "time_of_day": int},
-        description="日照时长感知类别变化时发布。perception 为时长分级标签"
-                    "（very_short/short/moderate/long/very_long/extreme）。",
+        required={"sunshine": float, "prev_tier": int, "tier": int,
+                  "season": int, "time_of_day": int},
+        description="日照时长等级变化时发布。prev_tier 为变化前等级，tier 为当前等级。",
     )
     wt.register_event_schema(
         "precipitation_start",

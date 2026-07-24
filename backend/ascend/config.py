@@ -199,54 +199,27 @@ MODIFIER_REPLENISH_THRESHOLD: int = 1
 MAX_WEATHER_QUERY_CHUNKS: int = 64      # get_weather 单请求最大 chunk 数（防超大请求卡游戏线程）
 
 
-# 感知层天气分类阈值 — (上限, 标签)，按数值升序排列
-# 事件仅在感知类别变化时发布，不再按固定数值间隔
-TEMP_PERCEPTION_BOUNDARIES: tuple[tuple[float, str], ...] = (
-    (-10.0, "bitter_cold"),
-    (-3.0,  "freezing"),
-    (5.0,   "cold"),
-    (13.0,  "chilly"),
-    (20.0,  "cool"),
-    (25.0,  "mild"),
-    (30.0,  "warm"),
-    (36.0,  "hot"),
-    (43.0,  "scorching"),
-    (float("inf"), "extreme_heat"),
+# 天气分级阈值 — 按数值升序排列，返回值为区间索引（0-based）
+# 事件仅在等级变化时发布（含 prev_tier 用于判定趋势）
+TEMP_TIER_BOUNDARIES: tuple[float, ...] = (
+    -10.0, -3.0, 5.0, 13.0, 20.0, 25.0, 30.0, 36.0, 43.0,
 )
 
-HUMIDITY_PERCEPTION_BOUNDARIES: tuple[tuple[float, str], ...] = (
-    (25.0, "dry"),
-    (50.0, "comfortable"),
-    (72.0, "humid"),
-    (88.0, "very_humid"),
-    (float("inf"), "oppressive"),
+HUMIDITY_TIER_BOUNDARIES: tuple[float, ...] = (
+    25.0, 50.0, 72.0, 88.0,
 )
 
-WIND_PERCEPTION_BOUNDARIES: tuple[tuple[float, str], ...] = (
-    (1.5,  "calm"),
-    (4.0,  "light_breeze"),
-    (8.0,  "breezy"),
-    (14.0, "windy"),
-    (23.0, "strong"),
-    (float("inf"), "gale"),
+WIND_TIER_BOUNDARIES: tuple[float, ...] = (
+    1.5, 4.0, 8.0, 14.0, 23.0,
 )
 
-SUNSHINE_PERCEPTION_BOUNDARIES: tuple[tuple[float, str], ...] = (
-    (1.5,  "very_short"),
-    (4.5,  "short"),
-    (8.0,  "moderate"),
-    (12.0, "long"),
-    (15.5, "very_long"),
-    (float("inf"), "extreme"),
+SUNSHINE_TIER_BOUNDARIES: tuple[float, ...] = (
+    1.5, 4.5, 8.0, 12.0, 15.5,
 )
 
-# 日照强度感知分类 (0~1 归一化，0=黑夜 1=正午烈日)
-SUNLIGHT_INTENSITY_BOUNDARIES: tuple[tuple[float, str], ...] = (
-    (0.01, "dark"),
-    (0.25, "dim"),
-    (0.55, "moderate"),
-    (0.80, "bright"),
-    (float("inf"), "intense"),
+# 日照强度分级 (0~1 归一化，0=黑夜 1=正午烈日)
+SUNLIGHT_INTENSITY_TIER_BOUNDARIES: tuple[float, ...] = (
+    0.01, 0.25, 0.55, 0.80,
 )
 
 # 物理边界
