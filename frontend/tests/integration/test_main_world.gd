@@ -179,6 +179,46 @@ func test_shadow_disabled_below_cutoff() -> void:
 	assert_false(main._sun_light.shadow_enabled, "日出瞬间太阳高度角为 0，应关闭阴影")
 
 
+func test_sunrise_smooth_energy_ramp() -> void:
+	var main: Node3D = _make_world_instance()
+	main._sunshine_intensity = 1.0
+	main._game_hour = main._sunrise + (main._sunset - main._sunrise) * 0.02
+
+	main._update_lighting()
+	var full: float = 1.0 * 1.2
+	assert_gt(main._sun_light.light_energy, 0.0, "日出后直射光应从 0 渐入")
+	assert_lt(main._sun_light.light_energy, full, "日出初期直射光不应瞬间满能量")
+
+
+func test_sunset_shadow_opacity_fades() -> void:
+	var main: Node3D = _make_world_instance()
+	main._game_hour = main._sunset - (main._sunset - main._sunrise) * 0.01
+
+	main._update_lighting()
+	assert_eq(main._sun_light.shadow_opacity, 0.0, "日落前阴影应淡出为 0")
+
+
+func test_shadow_opacity_gradient_region() -> void:
+	var main: Node3D = _make_world_instance()
+	main._game_hour = main._sunrise + (main._sunset - main._sunrise) * 0.04
+
+	main._update_lighting()
+	var op: float = main._sun_light.shadow_opacity
+	assert_gt(op, 0.0, "低角度渐变区阴影不应全透明")
+	assert_lt(op, 1.0, "低角度渐变区阴影不应全不透明")
+
+
+func test_ambient_smooth_at_sunrise() -> void:
+	var main: Node3D = _make_world_instance()
+	main._sunshine_intensity = 1.0
+	main._game_hour = main._sunrise + (main._sunset - main._sunrise) * 0.02
+
+	main._update_lighting()
+	var env: Environment = main._world_env.environment
+	assert_gt(env.ambient_light_energy, 0.5, "日出初期环境光应高于夜间最小值")
+	assert_lt(env.ambient_light_energy, 1.0, "日出初期环境光不应瞬间满值")
+
+
 func test_shadow_enabled_at_noon_with_tight_coverage() -> void:
 	var main: Node3D = _make_world_instance()
 	main._game_hour = (main._sunrise + main._sunset) * 0.5

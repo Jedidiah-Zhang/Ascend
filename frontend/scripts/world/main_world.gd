@@ -752,7 +752,13 @@ func _update_lighting() -> void:
 	var sun_altitude: float = sin(day_progress * PI) if is_day else 0.0
 	_last_sun_altitude = sun_altitude
 
-	if sun_altitude < SHADOW_CUTOFF:
+	# 日出日落平滑 ramp：高度角 0→0.35 间渐入渐出，所有亮度量共用，消除跳变
+	var sun_ramp: float = smoothstep(0.0, 0.35, sun_altitude)
+
+	# 阴影：低角度时 opacity 渐变淡出，避免阴影瞬间出现/消失
+	var shadow_t: float = clampf((sun_altitude - SHADOW_CUTOFF) / 0.05, 0.0, 1.0)
+	_sun_light.shadow_opacity = shadow_t
+	if sun_altitude < SHADOW_CUTOFF - 0.05:
 		_sun_light.shadow_enabled = false
 	else:
 		_sun_light.shadow_enabled = true
@@ -764,25 +770,25 @@ func _update_lighting() -> void:
 		_sun_light.shadow_bias = SHADOW_BIAS_BASE / maxf(sun_altitude, 0.1)
 	_sun_light.directional_shadow_max_distance = _compute_shadow_coverage(sun_altitude)
 
-	if is_day:
-		_sun_light.rotation_degrees.x = lerpf(0.0, -90.0, sun_altitude)
-		_sun_light.rotation_degrees.y = _sun_azimuth + day_progress * 180.0
-	else:
-		_sun_light.rotation_degrees.x = 10.0
-		_sun_light.rotation_degrees.y = _sun_azimuth
+	# 太阳方向：全天连续曲线，夜间延续地平线角度（此时能量为 0，方向无关）
+	_sun_light.rotation_degrees.x = lerpf(0.0, -90.0, sun_altitude)
+	_sun_light.rotation_degrees.y = _sun_azimuth + day_progress * 180.0
 
 	var intensity: float = _sunshine_intensity
 	var warmth: float = 1.0 - sun_altitude
 	_sun_light.light_color = Color(1.0, 1.0 - warmth * 0.3, 1.0 - warmth * 0.7, 1.0)
-	_sun_light.light_energy = intensity * 1.2 if is_day else 0.0
+	# 直射光 = 后端日照（含降雨衰减）× 高度角平滑渐入
+	_sun_light.light_energy = intensity * 1.2 * sun_ramp
 
 	var env: Environment = _world_env.environment
 	if env:
+		# 环境光/背景由高度角 ramp 驱动（时间平滑），再乘天气调制（雨天天光略暗）
+		var env_t: float = sun_ramp * (0.4 + 0.6 * intensity)
 		var day_ambient := Color(0.55, 0.55, 0.6, 1.0)
-		var night_ambient := Color(0.08, 0.08, 0.2, 1.0)
-		env.ambient_light_color = night_ambient.lerp(day_ambient, intensity)
-		env.ambient_light_energy = lerpf(0.25, 1.0, intensity)
+		var night_ambient := Color(0.14, 0.15, 0.32, 1.0)
+		env.ambient_light_color = night_ambient.lerp(day_ambient, env_t)
+		env.ambient_light_energy = lerpf(0.5, 1.0, env_t)
 
 		var day_bg := Color(0.15, 0.15, 0.5, 1.0)
 		var night_bg := Color(0.02, 0.02, 0.08, 1.0)
-		env.background_color = night_bg.lerp(day_bg, intensity)
+		env.background_color = night_bg.lerp(day_bg, env_t)
