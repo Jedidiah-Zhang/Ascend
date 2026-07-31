@@ -1,6 +1,7 @@
 extends GutTest
 
 const Config = preload("res://scripts/config.gd")
+const TerrainMeshBuilder = preload("res://scripts/world/terrain_mesh_builder.gd")
 const CS: int = Config.TILE_MAP_SIZE
 
 
@@ -138,11 +139,107 @@ func test_stream_radius_minimum() -> void:
 	assert_gt(r, 0, "半径应 > 0")
 
 
+# ── 阴影覆盖 ──────────────────────────────────────────────
+
+func test_shadow_coverage_scales_with_zoom() -> void:
+	var main: Node3D = _make_world_instance()
+
+	main._camera_distance = 400.0
+	var near: float = main._compute_shadow_coverage(0.5)
+	main._camera_distance = 1200.0
+	var far: float = main._compute_shadow_coverage(0.5)
+
+	assert_gt(far, near, "拉远时覆盖范围应扩大")
+	assert_lt(far, near * 4.0, "覆盖范围应与可视范围线性相关")
+
+
+func test_shadow_coverage_covers_visible_footprint() -> void:
+	var main: Node3D = _make_world_instance()
+	main._camera_distance = 400.0
+
+	var coverage: float = main._compute_shadow_coverage(0.5)
+	var radius: float = main._compute_visible_radius()
+	assert_gt(coverage, radius, "覆盖半径应大于可视半径")
+	assert_lt(coverage, radius * 2.0, "覆盖应紧凑，避免浪费阴影分辨率")
+
+
+func test_low_sun_expands_shadow_coverage() -> void:
+	var main: Node3D = _make_world_instance()
+
+	var low: float = main._compute_shadow_coverage(0.15)
+	var noon: float = main._compute_shadow_coverage(0.5)
+	assert_gt(low, noon, "低角度太阳时应放大覆盖范围")
+
+
+func test_shadow_disabled_below_cutoff() -> void:
+	var main: Node3D = _make_world_instance()
+	main._game_hour = main._sunrise
+
+	main._update_lighting()
+	assert_false(main._sun_light.shadow_enabled, "日出瞬间太阳高度角为 0，应关闭阴影")
+
+
+func test_shadow_enabled_at_noon_with_tight_coverage() -> void:
+	var main: Node3D = _make_world_instance()
+	main._game_hour = (main._sunrise + main._sunset) * 0.5
+
+	main._update_lighting()
+	assert_true(main._sun_light.shadow_enabled, "正午应开启阴影")
+	var expected: float = main._compute_shadow_coverage(1.0)
+	assert_almost_eq(main._sun_light.directional_shadow_max_distance, expected, 0.01)
+
+
+# ── 正交相机（阴影精度核心） ────────────────────────────────
+
+func test_camera_is_orthographic_with_zoom_mapped_size() -> void:
+	var main: Node3D = _make_world_instance()
+	assert_eq(main._camera.projection, Camera3D.PROJECTION_ORTHOGONAL, "应为真正交投影")
+
+	var expected: float = main.CAMERA_DISTANCE_DEFAULT * tan(deg_to_rad(main.CAMERA_FOV * 0.5))
+	assert_almost_eq(main._camera.size, expected, 0.01, "size 应由相机距离映射")
+
+
+func test_camera_slab_contains_visible_ground() -> void:
+	var main: Node3D = _make_world_instance()
+	main._camera_distance = 400.0
+	main._apply_camera_transform()
+
+	var half_perp: float = 400.0 * tan(deg_to_rad(main.CAMERA_FOV * 0.5))
+	var elevation: float = asin(1.0 / sqrt(3.0))
+	var ground_half: float = half_perp / sin(elevation)
+
+	assert_lt(main._camera.near, 400.0 - ground_half, "近平面应在地面最近边之前")
+	assert_gt(main._camera.far, 400.0 + ground_half, "远平面应覆盖地面最远边")
+	assert_lt(main._camera.far, 1000.0, "远平面应紧凑：阴影范围 = 相机视锥，视锥越薄阴影越精")
+
+
+func test_camera_slab_zoom_scales_range() -> void:
+	var main: Node3D = _make_world_instance()
+	main._camera_distance = 1200.0
+	main._apply_camera_transform()
+	var far_zoom: float = main._camera.far
+
+	main._camera_distance = 60.0
+	main._apply_camera_transform()
+	var near_zoom: float = main._camera.far
+
+	assert_gt(far_zoom, near_zoom, "拉远时视锥范围应扩大（阴影范围随之扩大）")
+
+
 # ── 地形映射 ────────────────────────────────────────────────
 
 func test_terrain_mapping_length() -> void:
+	assert_eq(TerrainMeshBuilder.TERRAIN_TO_MESH.size(), 9, "应有 9 种地形类型映射")
+
+
+func test_terrain_materials_use_vertex_colors() -> void:
 	var main: Node3D = _make_world_instance()
-	assert_eq(main.TERRAIN_TO_MESH.size(), 9, "应有 9 种地形类型映射")
+	var mats: Dictionary = main._lazy_load_materials()
+	assert_false(mats.is_empty(), "应加载到地形材质")
+	for item_id: int in mats:
+		var mat: StandardMaterial3D = mats[item_id]
+		assert_true(mat.vertex_color_use_as_albedo,
+			"地形材质应启用顶点色倍乘，否则 AO 顶点色不生效 (item_id=%d)" % item_id)
 
 
 # ── Chunk 卸载 ──────────────────────────────────────────────

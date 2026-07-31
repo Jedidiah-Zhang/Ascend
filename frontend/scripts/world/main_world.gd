@@ -21,6 +21,26 @@ const STREAM_MARGIN: int = 1
 const UNLOAD_MARGIN: int = 1
 const MAX_PENDING: int = 3
 
+# ── 阴影常量 ──────────────────────────────────────────────
+
+## 阴影覆盖范围 = 可视半径 × 该余量（max_distance 是半径语义，阴影相机覆盖可视区 + 边缘外遮挡物余量）
+const SHADOW_COVERAGE_MARGIN: float = 1.35
+## 太阳高度角低于该值时关闭阴影
+const SHADOW_CUTOFF: float = 0.1
+## 低角度区间上限：低于该值开始放大覆盖范围、压扁 pancake
+const SHADOW_LOW_ANGLE_CEIL: float = 0.25
+## 低角度时覆盖范围的最大放大倍率（低角度阴影被拉长）
+const SHADOW_LOW_ANGLE_EXPAND: float = 3.0
+## 低角度时 pancake 尺寸（压缩阴影相机深度视锥）
+const SHADOW_LOW_ANGLE_PANCAKE: float = 80.0
+const SHADOW_BASE_PANCAKE: float = 20.0
+const SHADOW_BIAS_BASE: float = 0.07
+const SHADOW_NORMAL_BIAS: float = 0.2
+## 相机近/远平面紧贴地形 slab 时的余量：最高物体高度 + 安全边距
+## （正交投影下阴影范围 = 相机视锥，slab 越薄阴影精度越高）
+const SHADOW_TALL_ALLOWANCE: float = 60.0
+const SHADOW_SLAB_MARGIN: float = 20.0
+
 const TERRAIN_TEXTURES: Dictionary = {
 	1: "res://assets/terrain/textures/top_shallow_water.png",
 	2: "res://assets/terrain/textures/top_sand.png",
@@ -87,6 +107,8 @@ var _sunset: float = 18.0
 var _sun_azimuth: float = 45.0
 ## 日照强度（0-1，来自后端）
 var _sunshine_intensity: float = 0.5
+## 最近一次计算的太阳高度角（供阴影覆盖计算缓存）
+var _last_sun_altitude: float = 0.5
 ## 天气轮询计时器
 var _weather_query_timer: float = 0.0
 const WEATHER_QUERY_INTERVAL: float = 1.0
@@ -123,10 +145,9 @@ func _configure_camera() -> void:
 	if _camera == null:
 		push_error("MainWorld3D: Camera3D not found!")
 		return
-	_camera.projection = Camera3D.PROJECTION_PERSPECTIVE
-	_camera.fov = CAMERA_FOV
-	_camera.near = 1.0
-	_camera.far = 20000.0
+	# 真正交投影：size 控制可视范围，near/far 紧贴地形 slab。
+	# 正交相机下阴影范围 = 相机视锥 → 阴影精度全图一致，缩放自然控制精度。
+	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	_camera_distance = CAMERA_DISTANCE_DEFAULT
 	_camera_focus = _player_pos
 	_apply_camera_transform()
@@ -151,11 +172,13 @@ func _configure_environment() -> void:
 	# ── 阴影配置 ──
 	if _sun_light:
 		_sun_light.shadow_enabled = true
-		_sun_light.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-		_sun_light.directional_shadow_blend_splits = true
-		_sun_light.directional_shadow_split_1 = 0.3
-		_sun_light.shadow_bias = 0.05
-		_sun_light.shadow_normal_bias = 0.2
+		_sun_light.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+		_sun_light.shadow_bias = SHADOW_BIAS_BASE
+		_sun_light.shadow_normal_bias = SHADOW_NORMAL_BIAS
+		_sun_light.shadow_blur = 0.4
+		_sun_light.directional_shadow_pancake_size = SHADOW_BASE_PANCAKE
+		_sun_light.directional_shadow_fade_start = 0.85
+		_sun_light.directional_shadow_max_distance = _compute_shadow_coverage(0.5)
 
 	print("MainWorld3D: Environment configured — ambient=%.1f, bg=%s" % [env.ambient_light_energy, env.background_color])
 
@@ -353,6 +376,8 @@ func _lazy_load_materials() -> Dictionary:
 			var mat := StandardMaterial3D.new()
 			mat.albedo_texture = tex
 			mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+			# 顶点色 AO（悬崖接触阴影）依赖此开关，默认 false 会直接忽略顶点色
+			mat.vertex_color_use_as_albedo = true
 			_terrain_materials[item_id] = mat
 	return _terrain_materials
 
@@ -411,15 +436,22 @@ func _process_camera(_delta: float) -> void:
 
 
 func _apply_camera_transform() -> void:
-	# 等轴方向：45°偏航 + ~35°俯角
 	var dir := Vector3(1, 1, 1).normalized()
 	_camera.position = _camera_focus + dir * _camera_distance
 	_camera.look_at(_camera_focus, Vector3.UP)
 
-	# 阴影覆盖全部可见地形
+	# 正交投影 size = 距离 × tan(FOV/2)，保持原缩放手感；
+	# near/far 紧贴可视地形 slab（含最高物体余量），阴影范围随之精确覆盖屏幕。
+	var half_perp: float = _camera_distance * tan(deg_to_rad(CAMERA_FOV * 0.5))
+	_camera.size = half_perp
+	var elevation: float = asin(1.0 / sqrt(3.0))
+	var ground_half: float = half_perp / sin(elevation)
+	_camera.near = maxf(
+		_camera_distance - ground_half - SHADOW_TALL_ALLOWANCE - SHADOW_SLAB_MARGIN, 1.0)
+	_camera.far = _camera_distance + ground_half + SHADOW_SLAB_MARGIN
+
 	if _sun_light:
-		_sun_light.directional_shadow_max_distance = _camera_distance + 200.0
-		_sun_light.directional_shadow_fade_start = 0.99
+		_sun_light.directional_shadow_max_distance = _compute_shadow_coverage(_last_sun_altitude)
 		_sun_light.position = _camera_focus + Vector3(0, 200, 0)
 
 
@@ -633,10 +665,32 @@ func _stream_chunks() -> void:
 
 
 func _stream_radius() -> int:
-	var half_fov_rad: float = deg_to_rad(CAMERA_FOV * 0.5)
-	var visible_half: float = _camera_distance * tan(half_fov_rad) * 1.5
-	var radius: int = ceili(visible_half / float(CHUNK_SIZE))
+	var visible_radius: float = _compute_visible_radius() * 1.5
+	var radius: int = ceili(visible_radius / float(CHUNK_SIZE))
 	return maxi(STREAM_MARGIN, radius)
+
+
+func _compute_visible_radius() -> float:
+	"""相机在 (1,1,1) 方向、FOV 5° 下可视地面的对角线半径。"""
+	var half_perp: float = _camera_distance * tan(deg_to_rad(CAMERA_FOV * 0.5))
+	var elevation: float = asin(1.0 / sqrt(3.0))
+	var ground_depth: float = half_perp / sin(elevation)
+	return sqrt(half_perp * half_perp + ground_depth * ground_depth)
+
+
+func _compute_shadow_coverage(sun_altitude: float) -> float:
+	"""阴影覆盖半径 = 可视半径 × 余量（含边缘遮挡物投射余量）；低角度太阳时按比例放大。
+
+	注意 directional_shadow_max_distance 是"距相机半径"语义：过大的余量会白白稀释
+	8192 texel 阴影分辨率，因此正午仅保留 1.35 倍，低角度拉长阴影由 3 倍放大兜底。
+	"""
+	var coverage: float = _compute_visible_radius() * SHADOW_COVERAGE_MARGIN
+	if sun_altitude < SHADOW_LOW_ANGLE_CEIL:
+		var t: float = clampf(
+			(sun_altitude - SHADOW_CUTOFF) / (SHADOW_LOW_ANGLE_CEIL - SHADOW_CUTOFF),
+			0.0, 1.0)
+		coverage *= lerpf(SHADOW_LOW_ANGLE_EXPAND, 1.0, t)
+	return coverage
 
 
 func _send_chunk_request(coords: Array[Array], include_tiles: bool) -> void:
@@ -696,13 +750,19 @@ func _update_lighting() -> void:
 	var is_day: bool = hour_float >= _sunrise and hour_float < _sunset
 	var day_progress: float = clampf((hour_float - _sunrise) / daylight, 0.0, 1.0)
 	var sun_altitude: float = sin(day_progress * PI) if is_day else 0.0
+	_last_sun_altitude = sun_altitude
 
-	const SHADOW_CUTOFF: float = 0.15
 	if sun_altitude < SHADOW_CUTOFF:
 		_sun_light.shadow_enabled = false
 	else:
 		_sun_light.shadow_enabled = true
-		_sun_light.shadow_bias = 0.05 / sun_altitude
+		var low_angle_t: float = clampf(
+			(sun_altitude - SHADOW_CUTOFF) / (SHADOW_LOW_ANGLE_CEIL - SHADOW_CUTOFF),
+			0.0, 1.0)
+		_sun_light.directional_shadow_pancake_size = lerpf(
+			SHADOW_LOW_ANGLE_PANCAKE, SHADOW_BASE_PANCAKE, low_angle_t)
+		_sun_light.shadow_bias = SHADOW_BIAS_BASE / maxf(sun_altitude, 0.1)
+	_sun_light.directional_shadow_max_distance = _compute_shadow_coverage(sun_altitude)
 
 	if is_day:
 		_sun_light.rotation_degrees.x = lerpf(0.0, -90.0, sun_altitude)
