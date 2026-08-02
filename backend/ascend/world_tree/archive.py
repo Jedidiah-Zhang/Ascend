@@ -7,6 +7,7 @@
 import json
 import os
 import sqlite3
+import threading
 
 from ascend.config import (
     SQLITE_JOURNAL_MODE,
@@ -39,11 +40,15 @@ class EventArchive:
     def __init__(self, path: str) -> None:
         """打开或创建归档数据库。
 
+        连接允许跨线程使用（WorldTree 的 tick 线程写归档，
+        客户端接收线程读归档），所有数据库操作由内部锁串行化。
+
         Args:
             path: SQLite 数据库文件路径。
         """
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        self._db = sqlite3.connect(path)
+        self._lock: threading.Lock = threading.Lock()
+        self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.execute(f"PRAGMA journal_mode={SQLITE_JOURNAL_MODE}")
         self._db.execute(f"PRAGMA synchronous={SQLITE_SYNCHRONOUS}")
@@ -58,7 +63,7 @@ class EventArchive:
             含路径和事件数量的 repr 字符串。
         """
         try:
-            count = self._db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+            count = self.event_count()
         except sqlite3.Error:
             count = 0
         return f"EventArchive(events={count})"
@@ -174,22 +179,23 @@ class EventArchive:
                 if pid != ev.initiator_id:
                     edge_rows.append((ev.id, pid, "co_participant"))
 
-        with self._db:
-            self._db.executemany(
-                "INSERT OR IGNORE INTO events VALUES ("
-                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
-                ")",
-                event_rows,
-            )
-            self._db.executemany(
-                "INSERT OR IGNORE INTO event_entities VALUES (?, ?, ?)",
-                entity_rows,
-            )
-            if edge_rows:
+        with self._lock:
+            with self._db:
                 self._db.executemany(
-                    "INSERT OR IGNORE INTO event_edges VALUES (?, ?, ?)",
-                    edge_rows,
+                    "INSERT OR IGNORE INTO events VALUES ("
+                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+                    ")",
+                    event_rows,
                 )
+                self._db.executemany(
+                    "INSERT OR IGNORE INTO event_entities VALUES (?, ?, ?)",
+                    entity_rows,
+                )
+                if edge_rows:
+                    self._db.executemany(
+                        "INSERT OR IGNORE INTO event_edges VALUES (?, ?, ?)",
+                        edge_rows,
+                    )
 
     # ── 查询 ──────────────────────────────────────────
 
@@ -205,13 +211,13 @@ class EventArchive:
         Returns:
             重建的 Event 实例，不存在时返回 None。
         """
-        row = self._db.execute(
-            "SELECT * FROM events WHERE id = ?", (event_id,)
-        ).fetchone()
-        if row is None:
-            return None
-        return self._row_to_event(row)
-
+        with self._lock:
+            row = self._db.execute(
+                "SELECT * FROM events WHERE id = ?", (event_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            return self._row_to_event(row)
     def query_time_range(
         self,
         start_time: int,
@@ -242,7 +248,8 @@ class EventArchive:
             params.append(initiator_type)
 
         sql += " ORDER BY timestamp"
-        rows = self._db.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self._db.execute(sql, params).fetchall()
         return [self._row_to_event(r) for r in rows]
 
     def query_entity(
@@ -263,17 +270,18 @@ class EventArchive:
         Returns:
             该实体在时间范围内的事件列表，按时间排序。
         """
-        rows = self._db.execute(
-            """
-            SELECT DISTINCT e.* FROM events e
-            INNER JOIN event_entities ee ON e.id = ee.event_id
-            WHERE ee.entity_id = ?
-              AND e.timestamp >= ?
-              AND e.timestamp <= ?
-            ORDER BY e.timestamp
-            """,
-            (entity_id, start_time, end_time),
-        ).fetchall()
+        with self._lock:
+            rows = self._db.execute(
+                """
+                SELECT DISTINCT e.* FROM events e
+                INNER JOIN event_entities ee ON e.id = ee.event_id
+                WHERE ee.entity_id = ?
+                  AND e.timestamp >= ?
+                  AND e.timestamp <= ?
+                ORDER BY e.timestamp
+                """,
+                (entity_id, start_time, end_time),
+            ).fetchall()
         return [self._row_to_event(r) for r in rows]
 
     def query_region(
@@ -318,7 +326,8 @@ class EventArchive:
             params.append(end_time)
 
         sql += " ORDER BY timestamp"
-        rows = self._db.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self._db.execute(sql, params).fetchall()
         return [self._row_to_event(r) for r in rows]
 
     def query_edges(
@@ -334,23 +343,26 @@ class EventArchive:
             (from_id, to_id, relation_type) 元组列表。
         """
         if direction == "out":
-            rows = self._db.execute(
-                "SELECT from_id, to_id, relation_type "
-                "FROM event_edges WHERE from_id = ?",
-                (event_id,),
-            ).fetchall()
+            with self._lock:
+                rows = self._db.execute(
+                    "SELECT from_id, to_id, relation_type "
+                    "FROM event_edges WHERE from_id = ?",
+                    (event_id,),
+                ).fetchall()
         elif direction == "in":
-            rows = self._db.execute(
-                "SELECT from_id, to_id, relation_type "
-                "FROM event_edges WHERE to_id = ?",
-                (event_id,),
-            ).fetchall()
+            with self._lock:
+                rows = self._db.execute(
+                    "SELECT from_id, to_id, relation_type "
+                    "FROM event_edges WHERE to_id = ?",
+                    (event_id,),
+                ).fetchall()
         else:
-            rows = self._db.execute(
-                "SELECT from_id, to_id, relation_type "
-                "FROM event_edges WHERE from_id = ? OR to_id = ?",
-                (event_id, event_id),
-            ).fetchall()
+            with self._lock:
+                rows = self._db.execute(
+                    "SELECT from_id, to_id, relation_type "
+                    "FROM event_edges WHERE from_id = ? OR to_id = ?",
+                    (event_id, event_id),
+                ).fetchall()
         return [(r[0], r[1], r[2]) for r in rows]
 
     def query_edges_bulk(
@@ -367,12 +379,37 @@ class EventArchive:
         if not event_ids:
             return []
         placeholders = ",".join(["?"] * len(event_ids))
-        rows = self._db.execute(
-            f"SELECT from_id, to_id, relation_type FROM event_edges "
-            f"WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})",
-            event_ids * 2,
-        ).fetchall()
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT from_id, to_id, relation_type FROM event_edges "
+                f"WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})",
+                event_ids * 2,
+            ).fetchall()
         return [(r[0], r[1], r[2]) for r in rows]
+
+    def query_recent_ids(self, limit: int) -> list[str]:
+        """查询归档中最近的（最大）事件 ID，用于图预热。
+
+        Args:
+            limit: 最多返回的事件数。
+
+        Returns:
+            按时间倒序的事件 ID 列表。
+        """
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id FROM events ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def event_count(self) -> int:
+        """归档中的事件总数。"""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT COUNT(*) FROM events"
+            ).fetchone()
+            return row[0] if row else 0
 
     # ── 反序列化 ──────────────────────────────────────
 
@@ -416,5 +453,9 @@ class EventArchive:
     # ── 生命周期 ──────────────────────────────────────
 
     def close(self) -> None:
-        """关闭数据库连接。"""
-        self._db.close()
+        """关闭数据库连接（幂等）。"""
+        with self._lock:
+            if self._db is None:
+                return
+            self._db.close()
+            self._db = None

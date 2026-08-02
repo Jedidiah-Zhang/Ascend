@@ -923,6 +923,75 @@ class TestEventArchive:
         results = bus.get_events_in_range(0, 60)
         assert len(results) == 0  # ts=0,60 已被 trim 丢弃
 
+    def test_archive_merge_same_timestamp_boundary(self):
+        """同时间戳事件跨归档/内存边界时不丢失（权重分层 trim）。
+
+        回归：旧实现用 earliest_ts 截断归档查询，同一 tick 内低权重事件
+        （已归档）和高权重事件（留在内存）并存时，已归档事件被静默排除。
+        """
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        bus = WorldTree(validate=False, archive_path=path)
+        try:
+            ev_low = make_event(timestamp=100, id="ev_low", weight=1)
+            ev_high = make_event(timestamp=100, id="ev_high", weight=5)
+            ev_later = make_event(timestamp=200, id="ev_later", weight=1)
+            bus.publish(ev_low)
+            bus.publish(ev_high)
+            bus.publish(ev_later)
+
+            bus._trim(200)  # ev_low 归档，ev_high 因权重保留（同 tick 跨边界）
+
+            assert bus.get_event_by_id("ev_low") is not None
+            assert bus.get_event_by_id("ev_high") is not None
+
+            # 时间范围查询应返回全部 3 条
+            results = bus.get_events_in_range(0, 300)
+            assert {e.id for e in results} == {"ev_low", "ev_high", "ev_later"}
+
+            # 实体查询应返回全部 3 条
+            results = bus.get_entity_events("a", 0, 300)
+            assert {e.id for e in results} == {"ev_low", "ev_high", "ev_later"}
+
+            # 区域查询应返回全部 3 条
+            results = bus.get_events_in_region(
+                (0, 0), radius=0, start_time=0, end_time=300)
+            assert {e.id for e in results} == {"ev_low", "ev_high", "ev_later"}
+
+            # 结果按时间排序（同 tick 保持发布顺序）
+            assert results[0].timestamp <= results[1].timestamp <= results[2].timestamp
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_archive_query_from_other_thread(self):
+        """归档连接可从客户端线程安全查询（check_same_thread=False）。
+
+        回归：生产模型中 tick 线程写归档、客户端接收线程读归档，
+        同一连接跨线程使用会抛 ProgrammingError。
+        """
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        bus = WorldTree(validate=False, archive_path=path)
+        try:
+            bus.publish(make_event(timestamp=0, id="ev_old"))
+            bus._trim(10)  # 归档 ev_old
+
+            results: list[Event] = []
+            thread = threading.Thread(
+                target=lambda: results.extend(bus.get_events_in_range(0, 10)),
+            )
+            thread.start()
+            thread.join(timeout=5)
+
+            assert not thread.is_alive()
+            assert {e.id for e in results} == {"ev_old"}
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
 
 # ── 事件权重 ──────────────────────────────────────────
 

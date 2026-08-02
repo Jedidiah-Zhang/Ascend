@@ -400,7 +400,7 @@ class CommandExecutor:
                     "console.weather_chunk_unregistered", cx=cx, cy=cy,
                 ),
             )
-        wp, sunrise_h, sunset_h, _, intensity = report
+        wp, sunrise_h, sunset_h, _, intensity, _ = report
 
         from ascend.weather.weather_engine import (
             classify_temperature, classify_humidity, classify_wind,

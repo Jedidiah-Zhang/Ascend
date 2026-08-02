@@ -79,6 +79,9 @@ var _camera_grounded: bool = false
 var _chunks: Dictionary = {}
 ## 正在请求中的 chunk: {Vector2i(cx, cy): true}
 var _pending: Dictionary = {}
+## 正在请求字段数据（不含 tile）的 chunk: {Vector2i(cx, cy): true}
+## 与 _pending 分开记账：字段响应到达时不清 tile 请求的标记
+var _batch_pending: Dictionary = {}
 ## 已渲染的 chunk: {Vector2i(cx, cy): true}
 var _loaded: Dictionary = {}
 ## 待请求 tile 数据的队列（Dict 做 O(1) 去重）
@@ -524,6 +527,11 @@ func _on_connected(host: String, port: int) -> void:
 
 func _on_disconnected() -> void:
 	print("MainWorld3D: disconnected")
+	# 在途请求的响应永远不会到达：清空请求状态，重连后 _stream_chunks
+	# 会为所有未加载 chunk 重新入队请求（已加载的地形节点保留）
+	_pending.clear()
+	_batch_pending.clear()
+	_tile_queue.clear()
 
 
 func _on_message(message: Dictionary) -> void:
@@ -590,7 +598,14 @@ func _handle_response(message: Dictionary) -> void:
 				var cy: int = int(chunk.get("cy", 0))
 				var key := Vector2i(cx, cy)
 				_chunks[key] = chunk
-				_pending.erase(key)
+				# 按响应类型分别清除标记：仅含字段的响应不动 tile 请求的
+				# _pending 标记，否则会每帧重发 tile 请求直到其响应到达
+				var has_tiles: bool = (
+					chunk.get("terrain", []).size() == CHUNK_SIZE * CHUNK_SIZE)
+				if has_tiles:
+					_pending.erase(key)
+				else:
+					_batch_pending.erase(key)
 
 				var player_cx: int = floori(_player_pos.x / float(CHUNK_SIZE))
 				var player_cy: int = floori(_player_pos.z / float(CHUNK_SIZE))
@@ -648,6 +663,8 @@ func _stream_chunks() -> void:
 				_tile_queue[key] = true
 
 	if not coords.is_empty():
+		for c in coords:
+			_batch_pending[Vector2i(c[0], c[1])] = true
 		_send_chunk_request(coords, false)
 
 	var pending_count: int = _pending.size()
@@ -717,6 +734,7 @@ func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> vo
 			_loaded.erase(key)
 			_chunks.erase(key)
 			_pending.erase(key)
+			_batch_pending.erase(key)
 			print("MainWorld3D: unloaded chunk (%d,%d)" % [cx, cy])
 
 

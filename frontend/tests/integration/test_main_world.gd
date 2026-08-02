@@ -310,3 +310,68 @@ func test_unload_preserves_nearby_chunks() -> void:
 
 	assert_true(main._loaded.has(near_key), "近距离区块不应卸载")
 	assert_true(main._chunks.has(near_key), "近距离区块数据应保留")
+
+
+# ── 请求状态管理（_pending / _batch_pending 分离） ─────────
+
+func test_field_only_response_keeps_tile_pending() -> void:
+	"""字段响应（无 terrain）不应清除 tile 请求的 _pending 标记。
+
+	回归：旧实现无条件 _pending.erase(key)，导致 tile 请求标记被抹掉、
+	每帧重发 include_tiles=true 请求，直到 tile 响应到达。
+	"""
+	var main: Node3D = _make_world_instance()
+	var key := Vector2i(0, 0)
+	main._pending[key] = true
+	main._batch_pending[key] = true
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {"chunks": [{"cx": 0, "cy": 0, "temperature": 20.0}]},
+	})
+
+	assert_true(main._pending.has(key), "tile 请求标记应保留")
+	assert_false(main._batch_pending.has(key), "字段请求标记应清除")
+
+
+func test_tile_response_clears_tile_pending() -> void:
+	"""含 terrain 的响应清除 tile 请求标记。"""
+	var main: Node3D = _make_world_instance()
+	var key := Vector2i(0, 0)
+	main._pending[key] = true
+	main._loaded[key] = true  # 预标记已加载，跳过网格构建，只验证状态
+
+	var elev: Array = []
+	elev.resize(CS * CS)
+	elev.fill(10.0)
+	var terr: Array = []
+	terr.resize(CS * CS)
+	terr.fill(2)
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {"chunks": [{"cx": 0, "cy": 0, "terrain": terr, "elevation": elev}]},
+	})
+
+	assert_false(main._pending.has(key), "tile 请求标记应清除")
+
+
+func test_disconnect_clears_pending_state() -> void:
+	"""断线后应清空在途请求状态，重连后地形块才能重新请求。
+
+	回归：旧实现断线不清 _pending，重连后这些 chunk 永远被跳过，
+	玩家周围地形永久缺失。
+	"""
+	var main: Node3D = _make_world_instance()
+	var key := Vector2i(3, 2)
+	main._pending[key] = true
+	main._batch_pending[key] = true
+	main._tile_queue[key] = true
+
+	main._on_disconnected()
+
+	assert_true(main._pending.is_empty(), "断线后 tile 请求应清空")
+	assert_true(main._batch_pending.is_empty(), "断线后字段请求应清空")
+	assert_true(main._tile_queue.is_empty(), "断线后 tile 队列应清空")

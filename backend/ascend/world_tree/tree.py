@@ -62,6 +62,10 @@ class WorldTree:
         self._publish_count: int = 0
         self._trim_count: int = 0
         self._async_dispatch_count: int = 0
+        # 最近一次 trim 的截止时间：归档中所有事件 timestamp < 此值。
+        # 权重分层 trim 后归档与内存窗口的时间边界可能交叉（同 tick 事件
+        # 一部分归档、一部分保留），查询合并以该值判定范围是否重叠。
+        self._last_trim_cutoff: int | None = None
         self._event_log: list[Event] = []
         self._id_index: dict[str, Event] = {}
         self._subscriptions: dict[
@@ -326,6 +330,39 @@ class WorldTree:
         finally:
             self._async_dispatch_count += 1
 
+    # ── 归档合并 ──────────────────────────────────────
+
+    def _should_merge_archive(self, start_time: int) -> bool:
+        """查询范围是否与归档数据重叠。
+
+        归档中事件的 timestamp 均 < 最近一次 trim 截止时间；
+        内存为空（如重启后）时归档可能包含任意历史事件，一律合并。
+        """
+        if self._archive is None:
+            return False
+        if not self._event_log:
+            return True
+        cutoff = self._last_trim_cutoff
+        return cutoff is not None and start_time < cutoff
+
+    @staticmethod
+    def _merge_archived(
+        archived: list[Event], in_memory: list[Event],
+    ) -> list[Event]:
+        """合并归档与内存事件：按 ID 去重后按时间排序。
+
+        权重分层 trim 允许同一 tick 的事件一部分在归档、一部分在内存，
+        因此不能依赖时间边界拼接，必须完整查询后合并去重。
+        """
+        merged: list[Event] = []
+        seen: set[str] = set()
+        for ev in sorted(archived + in_memory, key=lambda e: e.timestamp):
+            if ev.id in seen:
+                continue
+            seen.add(ev.id)
+            merged.append(ev)
+        return merged
+
     # ── 查询 ──────────────────────────────────────────
 
     def get_events_in_range(
@@ -363,19 +400,15 @@ class WorldTree:
                     continue
                 results.append(ev)
 
-            earliest_ts = (
-                self._event_log[0].timestamp if self._event_log else None
-            )
-            archive = self._archive
-
-        # 若查询范围超出内存窗口，从归档合并
-        if archive and earliest_ts is not None and start_time < earliest_ts:
-            arch_end = min(end_time, earliest_ts - 0.001)
-            archived = archive.query_time_range(
-                start_time, arch_end,
+        # 若查询范围与归档数据重叠，从归档完整查询后合并去重。
+        # 不能用 earliest_ts 截断归档查询：同时间戳事件可能分层分布在
+        # 归档（低权重）和内存（高权重），截断会静默丢失已归档事件。
+        if self._should_merge_archive(start_time):
+            archived = self._archive.query_time_range(
+                start_time, end_time,
                 event_type=event_type, initiator_type=initiator_type,
             )
-            return archived + results
+            return self._merge_archived(archived, results)
 
         return results
 
@@ -463,27 +496,16 @@ class WorldTree:
                                     continue
                                 results.append(ev)
 
-            earliest_ts = (
-                self._event_log[0].timestamp if self._event_log else None
-            )
-            archive = self._archive
-
-        # 若查询范围超出内存窗口，从归档合并
-        if (
-            archive and earliest_ts is not None
-            and start_time is not None
-            and start_time < earliest_ts
+        # 若查询范围与归档数据重叠，从归档完整查询后合并去重
+        if self._archive is not None and (
+            start_time is None or self._should_merge_archive(start_time)
         ):
-            arch_end = min(
-                end_time if end_time is not None else float("inf"),
-                earliest_ts - 1,
-            )
-            archived = archive.query_region(
+            archived = self._archive.query_region(
                 center_chunk, radius,
                 layer_id=layer_id,
-                start_time=start_time, end_time=arch_end,
+                start_time=start_time, end_time=end_time,
             )
-            return archived + results
+            return self._merge_archived(archived, results)
 
         return results
 
@@ -521,16 +543,12 @@ class WorldTree:
                 )
                 in_memory = events[lo:hi]
 
-            earliest_ts = (
-                self._event_log[0].timestamp if self._event_log else None
+        # 若查询范围与归档数据重叠，从归档完整查询后合并去重
+        if self._should_merge_archive(start_time):
+            archived = self._archive.query_entity(
+                entity_id, start_time, end_time,
             )
-            archive = self._archive
-
-        # 若查询范围超出内存窗口，从归档合并
-        if archive and earliest_ts is not None and start_time < earliest_ts:
-            arch_end = min(end_time, earliest_ts - 0.001)
-            archived = archive.query_entity(entity_id, start_time, arch_end)
-            return archived + in_memory
+            return self._merge_archived(archived, in_memory)
 
         return in_memory
 
@@ -584,11 +602,7 @@ class WorldTree:
         if self._archive is None:
             return 0
 
-        rows = self._archive._db.execute(
-            "SELECT id FROM events ORDER BY timestamp DESC LIMIT ?",
-            (max_events,),
-        ).fetchall()
-        event_ids = [r[0] for r in rows]
+        event_ids = self._archive.query_recent_ids(max_events)
         if not event_ids:
             return 0
 
@@ -650,6 +664,7 @@ class WorldTree:
             self._trim_cycle += 1
             cycle = self._trim_cycle
             self._trim_count += 1
+            self._last_trim_cutoff = before_time
 
             # 权重分层：按 weight 分别处理前缀中的事件
             to_archive: list[Event] = []
@@ -739,11 +754,7 @@ class WorldTree:
             archive_count = 0
             if self._archive:
                 try:
-                    row = self._archive._db.execute(
-                        "SELECT COUNT(*) FROM events"
-                    ).fetchone()
-                    if row:
-                        archive_count = row[0]
+                    archive_count = self._archive.event_count()
                 except Exception:
                     pass
 
@@ -791,3 +802,4 @@ class WorldTree:
             self._publish_count = 0
             self._trim_count = 0
             self._async_dispatch_count = 0
+            self._last_trim_cutoff = None
