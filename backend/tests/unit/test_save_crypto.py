@@ -39,27 +39,6 @@ class TestSaveKeys:
                 "sign_key": "!!!not-base64!!!",
             })
 
-    def test_save_and_load_roundtrip(self, tmp_path):
-        """密钥写入文件后可读回。"""
-        path = str(tmp_path / "key.json")
-        keys = SaveKeys.generate()
-        keys.save(path)
-        loaded = SaveKeys.load(path)
-        assert loaded.fernet_key == keys.fernet_key
-        assert loaded.sign_key == keys.sign_key
-
-    def test_load_missing_file_raises(self, tmp_path):
-        """缺失的密钥文件报 SaveCryptoError。"""
-        with pytest.raises(SaveCryptoError):
-            SaveKeys.load(str(tmp_path / "nope.json"))
-
-    def test_load_corrupted_file_raises(self, tmp_path):
-        """损坏的密钥 JSON 报 SaveCryptoError。"""
-        path = tmp_path / "key.json"
-        path.write_text("{not json", encoding="utf-8")
-        with pytest.raises(SaveCryptoError):
-            SaveKeys.load(str(path))
-
 
 class TestEncryptDecrypt:
     """加解密往返与防篡改。"""
@@ -117,3 +96,39 @@ class TestEncryptDecrypt:
         assert len(sig) == 32
         assert keys.sign_bytes(b"payload") == sig
         assert keys.sign_bytes(b"payload!") != sig
+
+
+class TestSecretsObfuscation:
+    """密钥混淆层（manifest.secrets_blob）。"""
+
+    def test_protect_from_protected_roundtrip(self):
+        """混淆往返还原同一密钥对。"""
+        keys = SaveKeys.generate()
+        blob = keys.protect("world-abc", 12345)
+        restored = SaveKeys.from_protected(blob, "world-abc", 12345)
+        assert restored.fernet_key == keys.fernet_key
+        assert restored.sign_key == keys.sign_key
+
+    def test_blob_is_not_plaintext(self):
+        """混淆串不含明文密钥材料。"""
+        keys = SaveKeys.generate()
+        blob = keys.protect("world-abc", 12345)
+        assert "fernet_key" not in blob
+        assert "sign_key" not in blob
+
+    def test_wrong_identity_rejected(self):
+        """存档身份（world_id/seed）不符时拒绝解出。"""
+        keys = SaveKeys.generate()
+        blob = keys.protect("world-abc", 12345)
+        with pytest.raises(SaveCryptoError):
+            SaveKeys.from_protected(blob, "world-other", 12345)
+        with pytest.raises(SaveCryptoError):
+            SaveKeys.from_protected(blob, "world-abc", 99999)
+
+    def test_tampered_blob_rejected(self):
+        """篡改混淆串拒绝解出。"""
+        keys = SaveKeys.generate()
+        blob = keys.protect("world-abc", 12345)
+        bad = ("A" if blob[0] != "A" else "B") + blob[1:]
+        with pytest.raises(SaveCryptoError):
+            SaveKeys.from_protected(bad, "world-abc", 12345)

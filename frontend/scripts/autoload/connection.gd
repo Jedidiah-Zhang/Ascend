@@ -94,6 +94,10 @@ var _decode_input: Array[PackedByteArray] = []
 var _decode_output: Array[Dictionary] = []
 var _decode_running: bool = false
 
+## 当前断线事件是否已广播（读档重建期间会有多次失败重连尝试，
+## 仅第一次广播 connection_lost，避免 UI/日志反复刷断线）
+var _outage_emitted: bool = false
+
 ## 上帧 _process 耗时（微秒），供调试面板读取
 var last_process_us: int = 0
 
@@ -186,6 +190,7 @@ func disconnect_from_server() -> void:
 		_stream.disconnect_from_host()
 		_stream = null
 	status = Status.DISCONNECTED
+	_outage_emitted = true
 	_recv_buf.clear()
 	_send_queue.clear()
 	_stop_decode_thread()
@@ -340,17 +345,22 @@ func _poll_connection() -> void:
 		StreamPeerTCP.STATUS_CONNECTED:
 			if status == Status.CONNECTING:
 				status = Status.CONNECTED
+				_outage_emitted = false
 				_start_decode_thread()
 				connection_established.emit(_host, _port)
 		StreamPeerTCP.STATUS_CONNECTING:
 			pass
 		_:
-			push_warning("Connection: lost, status=%d" % s)
 			_stream = null
 			status = Status.DISCONNECTED
 			_reconnect_timer = RECONNECT_INTERVAL
-			_stop_decode_thread()
-			connection_lost.emit()
+			# 断线事件只广播一次：读档重建期间反复失败的重连尝试
+			# 不应让 UI 每次断连都闪错误（连接由重建后的新服务恢复）
+			if not _outage_emitted:
+				_outage_emitted = true
+				push_warning("Connection: lost, status=%d" % s)
+				_stop_decode_thread()
+				connection_lost.emit()
 
 
 func _read_messages() -> void:

@@ -28,8 +28,9 @@ backend/tests/.coverage.*
 # 控制台历史
 .ascend_history
 
-# 运行数据（归档、存档等）
-save/
+# 运行数据（归档、存档等，根目录 save/；注意 /save/ 锚定，
+# 否则会误排除 backend/ascend/save/ 源码模块）
+/save/
 
 # 可视化输出（测试生成的 PNG，不提交）
 backend/tests/visual/output/

@@ -21,10 +21,11 @@ static func game_time_string(ticks: int) -> String:
 	"""
 	if ticks < 0:
 		ticks = 0
-	var day: int = ticks / Config.GAME_DAY + 1
+	# floori(浮点除法) 显式取整，避免 INTEGER_DIVISION 警告（GDScript 无 // 运算符）
+	var day: int = floori(ticks / float(Config.GAME_DAY)) + 1
 	var day_ticks: int = ticks % Config.GAME_DAY
-	var hour: int = day_ticks / Config.GAME_HOUR
-	var minute: int = (day_ticks % Config.GAME_HOUR) / (Config.GAME_HOUR / 60)
+	var hour: int = floori(day_ticks / float(Config.GAME_HOUR))
+	var minute: int = floori((day_ticks % Config.GAME_HOUR) / float(Config.GAME_MINUTE))
 	return "第 %d 天 %02d:%02d" % [day, hour, minute]
 
 
@@ -35,10 +36,10 @@ static func duration_string(total_sec: float) -> String:
 	var sec: int = int(total_sec)
 	if sec < 60:
 		return "%d 秒" % sec
-	var minutes: int = sec / 60
+	var minutes: int = floori(sec / 60.0)
 	if minutes < 60:
 		return "%d 分钟" % minutes
-	var hours: int = minutes / 60
+	var hours: int = floori(minutes / 60.0)
 	var mins: int = minutes % 60
 	if mins == 0:
 		return "%d 小时" % hours
@@ -52,8 +53,8 @@ static func datetime_string(unix_sec: float) -> String:
 	return Time.get_datetime_string_from_unix_time(int(unix_sec), false)
 
 
-static func seed_string(seed: int) -> String:
+static func seed_string(world_seed: int) -> String:
 	"""种子展示（0 = 随机）。"""
-	if seed == 0:
+	if world_seed == 0:
 		return "随机"
-	return str(seed)
+	return str(world_seed)

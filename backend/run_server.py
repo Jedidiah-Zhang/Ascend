@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Ascend 后端服务器启动脚本。
 
-启动 GameEngine，监听 Godot 前端连接。
+以服务模式启动（GameEngine.start_service）：TCP 端口立即就绪，
+仅提供存档管理请求；世界在大陆生成（5-30s+）只在 save_load
+读档/新建进入时执行——主菜单不再等待地图生成。
 
 用法:
     cd backend && PYTHONPATH=. python run_server.py
@@ -39,12 +41,12 @@ def _cleanup_old_logs() -> None:
 
 
 def main() -> None:
-    """启动游戏引擎并等待 Ctrl+C 或客户端全部断开后自动退出。"""
+    """服务模式启动，等待 Ctrl+C 或客户端全部断开后自动退出。"""
     _cleanup_old_logs()
     setup_logging()
 
     engine = GameEngine(seed=42)
-    engine.start()
+    engine.start_service()
 
     print(f"Ascend 服务器运行在 {SERVER_HOST}:{SERVER_PORT}")
     print("按 Ctrl+C 停止，或关闭所有前端后自动退出")

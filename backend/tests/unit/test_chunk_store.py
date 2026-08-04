@@ -209,3 +209,37 @@ class TestChunkStorePersistence:
             store.close()
             if store2 is not None:
                 store2.close()
+
+
+class TestVerify:
+    """数据库完整性校验（读档防篡改）。"""
+
+    def test_verify_passes_on_clean_db(self, db_path):
+        """正常数据库校验通过。"""
+        store = ChunkStore(db_path)
+        try:
+            store.verify()
+        finally:
+            store.close()
+
+    def test_verify_rejects_corrupted_db(self, db_path):
+        """结构性损坏的数据库校验失败（拒绝加载）。"""
+        import os
+        import sqlite3
+        con = sqlite3.connect(db_path)
+        con.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+        con.execute("INSERT INTO t VALUES (1, 'hello')")
+        con.commit()
+        con.close()
+        # 破坏数据页的页类型字节（页结构损坏，integrity_check 可检测；
+        # 记录内字节翻转无页校验和，不在本校验范围内）
+        size = os.path.getsize(db_path)
+        with open(db_path, "r+b") as f:
+            f.seek(size // 2 & ~0xFFF)  # 对齐到页首
+            f.write(b"\x00")            # 页类型 0x0D(表叶) → 0x00 非法
+        store = ChunkStore(db_path)
+        try:
+            with pytest.raises(ValueError):
+                store.verify()
+        finally:
+            store.close()

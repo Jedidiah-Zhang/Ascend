@@ -31,12 +31,23 @@ class TestCreateWorld:
     """存档位创建。"""
 
     def test_creates_directory_structure(self, manager, world):
-        """创建活目录 + 密钥 + manifest + 快照目录。"""
+        """创建世界目录 + manifest + 快照子目录（密钥藏于 manifest）。"""
         wdir = manager.world_dir(world)
         assert os.path.isdir(wdir)
         assert os.path.isfile(manager.manifest_path(world))
-        assert os.path.isfile(manager.key_path(world))
         assert os.path.isdir(manager.snapshot_dir(world))
+        # 密钥不落盘独立文件，藏于 manifest.secrets_blob
+        assert manager.get_manifest(world).secrets_blob is not None
+        # 快照是世界的子目录，活文件与快照同一目录
+        assert os.path.dirname(manager.snapshot_dir(world)) == wdir
+
+    def test_world_dir_is_one_directory_per_world(self, manager, world):
+        """一个存档位 = 一个目录（活文件 + snapshots/ 同根）。"""
+        wdir = manager.world_dir(world)
+        entries = sorted(os.listdir(wdir))
+        assert "manifest.json" in entries
+        assert "key.json" not in entries
+        assert "snapshots" in entries
 
     def test_manifest_fields(self, manager, world):
         """manifest 记录名称/种子/ID。"""
@@ -231,7 +242,7 @@ class TestSnapshot:
         manager.extract_snapshot(malicious)
         # 没有逃逸：saves 根目录下无 evil.txt
         assert not os.path.exists(os.path.join(manager.root, "evil.txt"))
-        assert not os.path.exists(os.path.join(manager.live_dir(), "evil.txt"))
+        assert not os.path.exists(os.path.join(manager.world_dir(world), "evil.txt"))
 
     def test_snapshot_kept_after_extract(self, manager, world):
         """快照文件本身在回滚后保留（可反复回滚）。"""
@@ -239,6 +250,110 @@ class TestSnapshot:
         path = os.path.join(manager.snapshot_dir(world), filename)
         manager.extract_snapshot(path)
         assert os.path.isfile(path)
+
+    def test_same_second_snapshots_do_not_collide(self, manager, world):
+        """同一秒内多次快照互不覆盖（文件名唯一化）。"""
+        f1 = manager.create_snapshot(world, suffix="manual")
+        f2 = manager.create_snapshot(world, suffix="manual")
+        assert f1 != f2
+        assert len(manager.list_snapshots(world)) == 2
+
+    def test_snapshot_after_checkpoint_keeps_wal_data(self, manager, world, tmp_path):
+        """WAL checkpoint 后打包：快照内 chunk/事件数据完整（回归 #P0-1）。
+
+        复现引擎 snapshot_current 的顺序：flush → checkpoint → 打包；
+        若缺 checkpoint，WAL 模式拷贝的 .db 会丢失全部数据。
+        """
+        import sqlite3
+
+        from ascend.space import BiomeType, ClimateZone, WeatherParams
+        from ascend.space.chunk import ChunkData
+        from ascend.space.chunk_store import ChunkStore
+        from ascend.space.tile_grid import TileGrid
+        from ascend.world_tree.archive import EventArchive
+        from ascend.world_tree.event import Event
+        from ascend.world_tree.affected import AffectedParty
+
+        # 引擎运行中：两库均打开并已有数据
+        cs = ChunkStore(manager.chunks_db_path(world))
+        ar = EventArchive(manager.events_db_path(world))
+        try:
+            for cx, cy in [(0, 0), (1, 0)]:
+                chunk = ChunkData(
+                    cx=cx, cy=cy,
+                    biome=BiomeType.TEMPERATE_MIXED_FOREST,
+                    climate_zone=ClimateZone.TEMPERATE_FOREST,
+                    annual_baseline=WeatherParams(15.0, 800.0, 12.0, 100.0, 60.0, 5.0),
+                )
+                chunk.generate_tiles(TileGrid())
+                cs.put(chunk)
+                cs.mark_dirty(cx, cy)
+            cs.flush_dirty()
+            ar.archive([
+                Event(
+                    timestamp=100 + i, location=(0, 0, None, None),
+                    initiator_type="system", initiator_id="t",
+                    event_type="test", weight=1,
+                    affected=[AffectedParty("t", "subject")],
+                )
+                for i in range(10)
+            ])
+            # 快照前 checkpoint（snapshot_current 语义）
+            cs.checkpoint()
+            ar.checkpoint()
+            filename = manager.create_snapshot(world, suffix="manual")
+        finally:
+            cs.close()
+            ar.close()
+
+        # 回滚到全新存档根，验证数据完整
+        new_root = tmp_path / "fresh"
+        mgr2 = SaveManager(root=str(new_root))
+        snapshot_path = os.path.join(manager.snapshot_dir(world), filename)
+        restored_id = mgr2.extract_snapshot(snapshot_path)
+        assert restored_id == world
+        cs2 = ChunkStore(mgr2.chunks_db_path(world))
+        ar2 = EventArchive(mgr2.events_db_path(world))
+        try:
+            assert cs2.contains_tiles(0, 0)
+            assert cs2.contains_tiles(1, 0)
+            assert ar2.event_count() == 10
+        finally:
+            cs2.close()
+            ar2.close()
+
+    def test_extract_snapshot_world_id_override(self, manager, world, tmp_path):
+        """复制存档的快照回滚须以目标 world_id 覆盖（回归 #P0-2）。"""
+        manager.write_state(world, {"clock": {"time": 100, "speed": 1.0,
+                                              "paused": False}, "player": {},
+                                    "archive_max_timestamp": 0})
+        filename = manager.create_snapshot(world, suffix="manual")
+        new_id = manager.export_world(world)
+        copied_snapshot = os.path.join(
+            manager.snapshot_dir(new_id), filename
+        )
+        # 不覆盖 → 仍指向原世界（回滚会动原世界，属危险用法）
+        assert manager.extract_snapshot(copied_snapshot) == world
+        # 显式覆盖 → 展开为复制档
+        assert manager.extract_snapshot(
+            copied_snapshot, world_id=new_id,
+        ) == new_id
+        manifest = manager.get_manifest(new_id)
+        assert manifest.world_id == new_id
+
+    def test_export_skips_junk_files(self, manager, world):
+        """导出只复制规范文件，排除 -wal/-shm/.tmp 残留。"""
+        wdir = manager.world_dir(world)
+        for junk in ("chunks.db-wal", "chunks.db-shm", "state.json.enc.tmp"):
+            with open(os.path.join(wdir, junk), "w", encoding="utf-8") as f:
+                f.write("junk")
+        new_id = manager.export_world(world)
+        files = os.listdir(manager.world_dir(new_id))
+        assert "chunks.db-wal" not in files
+        assert "chunks.db-shm" not in files
+        assert "state.json.enc.tmp" not in files
+        assert "manifest.json" in files
+        assert "key.json" not in files
 
 
 class TestWorldOps:
@@ -282,3 +397,45 @@ class TestWorldOps:
         loaded = manager.get_manifest(world)
         assert loaded.game_time == 500
         assert loaded.play_duration_sec == 120.5
+
+
+class TestSecretsInManifest:
+    """密钥藏于 manifest.secrets_blob。"""
+
+    def test_keys_stored_in_manifest_not_file(self, manager, world):
+        """写读状态使用 manifest 内密钥，无独立密钥文件。"""
+        manager.write_state(world, {"clock": {"time": 7}})
+        entries = sorted(os.listdir(manager.world_dir(world)))
+        assert "key.json" not in entries
+        assert manager.read_state(world) == {"clock": {"time": 7}}
+
+    def test_manifest_secrets_blob_not_plaintext(self, manager, world):
+        """manifest 里的密钥是混淆串，不暴露明文密钥。"""
+        blob = manager.get_manifest(world).secrets_blob
+        assert blob is not None
+        assert "fernet_key" not in blob
+        assert "sign_key" not in blob
+
+    def test_export_reprotects_secrets(self, manager, world):
+        """导出副本用新 world_id 重新混淆密钥，可正常读写。"""
+        manager.write_state(world, {"clock": {"time": 5}})
+        new_id = manager.export_world(world)
+        assert manager.read_state(new_id) == {"clock": {"time": 5}}
+        manager.write_state(new_id, {"clock": {"time": 999}})
+        assert manager.read_state(new_id) == {"clock": {"time": 999}}
+        assert manager.read_state(world) == {"clock": {"time": 5}}
+
+    def test_snapshot_roundtrip_with_manifest_secrets(self, manager, world, tmp_path):
+        """快照内密钥从 manifest 解出（无需 key.json）。"""
+        manager.write_state(world, {"clock": {"time": 100, "speed": 1.0,
+                                              "paused": False}, "player": {},
+                                    "archive_max_timestamp": 0})
+        filename = manager.create_snapshot(world, suffix="manual")
+        snapshot_path = os.path.join(manager.snapshot_dir(world), filename)
+        state = manager.read_snapshot_state(snapshot_path)
+        assert state["clock"]["time"] == 100
+        new_root = tmp_path / "fresh"
+        mgr2 = SaveManager(root=str(new_root))
+        restored = mgr2.extract_snapshot(snapshot_path)
+        assert restored == world
+        assert mgr2.read_state(world)["clock"]["time"] == 100

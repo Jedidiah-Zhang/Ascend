@@ -654,6 +654,26 @@ class WorldTree:
             return None
         return self._archive.max_timestamp()
 
+    def checkpoint_archive(self) -> None:
+        """WAL 强制写回归档主库（快照打包前调用）。
+
+        存档快照直接拷贝 events.db 文件，WAL 模式下未 checkpoint 的
+        提交会丢失；打包前调用保证快照内事件归档完整。
+        """
+        if self._archive is not None:
+            self._archive.checkpoint()
+
+    def verify_archive(self) -> None:
+        """校验事件归档数据库完整性（读档时调用，设计文档承诺）。
+
+        防篡改：损坏/被外部工具改写的归档拒绝加载。
+
+        Raises:
+            ValueError: 完整性校验失败。
+        """
+        if self._archive is not None:
+            self._archive.verify()
+
     def _trim(self, before_time: int) -> int:
         """移除早于指定时间的事件体以回收内存（内部方法，权重感知）。
 
@@ -805,11 +825,15 @@ class WorldTree:
         """等待所有正在执行的异步回调完成。
 
         阻塞直到线程池中所有已提交的 subscribe_async 回调执行完毕。
-        应在游戏退出前调用，避免异步任务被强制中断。
+        应在游戏退出/读档重建前调用，避免异步任务被强制中断。
 
-        调用后异步订阅者不再接收新事件。
+        注意：读档重建（_reload）会复用同一 WorldTree 实例，此处
+        等待后重建线程池，保证后续 subscribe_async 仍可用。
         """
         self._async_executor.shutdown(wait=True)
+        self._async_executor = ThreadPoolExecutor(
+            thread_name_prefix="worldtree",
+        )
 
     def clear(self) -> None:
         """清空所有事件和订阅。

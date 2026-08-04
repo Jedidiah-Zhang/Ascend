@@ -11,7 +11,7 @@ extends Control
 
 class_name MainMenu
 
-const FontUtils = preload("res://scripts/utils/font_utils.gd")
+# FontUtils 为全局类（font_utils.gd class_name），无需 preload 常量
 
 const SAVE_SELECT_SCENE: String = "res://scenes/save_select.tscn"
 
@@ -145,7 +145,10 @@ func _input(event: InputEvent) -> void:
 		var index: int = _hit_button(event.position)
 		if index >= 0:
 			_activate(index)
-			get_viewport().set_input_as_handled()
+			# change_scene_to_file 即时切场景，节点出树后 viewport 为 null
+			var vp := get_viewport()
+			if vp:
+				vp.set_input_as_handled()
 
 
 func _hit_button(pos: Vector2) -> int:

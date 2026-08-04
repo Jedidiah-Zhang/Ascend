@@ -467,6 +467,32 @@ class EventArchive:
 
     # ── 生命周期 ──────────────────────────────────────
 
+    def checkpoint(self) -> None:
+        """WAL 强制写回主库（快照打包前调用，保证文件副本完整）。"""
+        with self._lock:
+            self._db.execute("PRAGMA wal_checkpoint(FULL)")
+
+    def verify(self) -> None:
+        """校验数据库完整性（PRAGMA integrity_check，设计文档承诺）。
+
+        读档时调用：数据库是明文 SQLite，防篡改靠完整性校验——
+        损坏/被外部工具改写时拒绝加载。
+
+        Raises:
+            ValueError: 完整性校验失败（数据库损坏或被篡改）。
+        """
+        try:
+            with self._lock:
+                rows = self._db.execute("PRAGMA integrity_check").fetchall()
+        except sqlite3.DatabaseError as exc:
+            logger.error("EventArchive 完整性校验失败: %s", exc)
+            raise ValueError(
+                "存档事件归档损坏或被篡改，拒绝加载"
+            ) from exc
+        if not rows or rows[0][0] != "ok":
+            logger.error("EventArchive 完整性校验失败: %s", rows[:5])
+            raise ValueError("存档事件归档损坏或被篡改，拒绝加载")
+
     def close(self) -> None:
         """关闭数据库连接（幂等）。"""
         with self._lock:

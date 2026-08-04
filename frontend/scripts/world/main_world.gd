@@ -95,7 +95,7 @@ var _terrain_materials: Dictionary = {}
 ## 性能计时（微秒）
 var _stream_us: int = 0
 
-## 玩家实体占位
+## 玩家实体占位（世界就绪后才创建，见 _ensure_player）
 var _player: Node3D
 ## 玩家世界位置（XZ 平面移动，Y 由地形决定）
 var _player_pos: Vector3 = Vector3.ZERO
@@ -106,6 +106,12 @@ var _has_birth: bool = false
 var _player_entity_id: String = ""
 ## 移动上报计时器（节流）
 var _move_report_timer: float = 0.0
+
+## 世界生成中提示（出生点到达前显示，_has_birth 后隐藏）
+var _loading_label: Label
+## 出生点探测请求节流计时器（世界生成可能耗时数秒）
+var _birth_request_timer: float = 0.0
+const BIRTH_REQUEST_INTERVAL: float = 1.0
 
 ## 当前游戏时间
 var _game_hour: float = 6.0
@@ -133,13 +139,13 @@ func _ready() -> void:
 
 	_terrain_parent = $World/Terrain/ChunkPool
 
-	_create_player()
+	# 玩家节点不在 _ready 创建：须等后端世界就绪（出生点到达）后才创建，
+	# 与后端语义一致（服务模式/读档重建期间不存在世界与玩家）
+	_create_loading_label()
 
 	_setup_debug_overlay()
 	_configure_camera()
 	_configure_environment()
-
-	Connection.connect_to_server()
 
 
 func _exit_tree() -> void:
@@ -193,6 +199,13 @@ func _configure_environment() -> void:
 	print("MainWorld3D: Environment configured — ambient=%.1f, bg=%s" % [env.ambient_light_energy, env.background_color])
 
 
+func _ensure_player() -> void:
+	"""玩家节点惰性创建：仅在世界就绪（出生点已知）后调用，幂等。"""
+	if _player != null:
+		return
+	_create_player()
+
+
 func _create_player() -> void:
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(0.8, 1.8, 0.8)
@@ -214,6 +227,25 @@ func _create_player() -> void:
 	_player_pos = Vector3.ZERO
 	_player.position = _player_pos
 	print("MainWorld3D: player created")
+
+
+func _create_loading_label() -> void:
+	"""世界生成中的居中提示（出生点到达后隐藏）。"""
+	var layer := CanvasLayer.new()
+	layer.name = "LoadingLayer"
+	layer.layer = 50
+	var label := Label.new()
+	label.name = "WorldLoadingLabel"
+	label.text = "正在生成世界..."
+	label.add_theme_font_override("font", FontUtils.get_mono_font())
+	label.add_theme_font_size_override("font_size", 18)
+	label.add_theme_color_override("font_color", Color(0.9, 0.9, 0.95))
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(label)
+	add_child(layer)
+	_loading_label = label
 
 
 func _get_ground_elevation_at(pos: Vector3) -> float:
@@ -238,6 +270,10 @@ func _set_birth_chunk(cx: int, cy: int) -> void:
 		return
 	_has_birth = true
 	_birth_chunk = Vector2i(cx, cy)
+	# 世界已就绪：此时才创建玩家节点并隐藏加载提示
+	_ensure_player()
+	if _loading_label:
+		_loading_label.visible = false
 	# 与后端权威出生点约定一致：出生 chunk 原点（PlayerService.birth_position）
 	_player_pos.x = float(cx * CHUNK_SIZE)
 	_player_pos.z = float(cy * CHUNK_SIZE)
@@ -332,6 +368,7 @@ func _update_player_ground() -> void:
 	var ground_y := _get_ground_elevation_at(_player_pos)
 	if not is_nan(ground_y):
 		_player_pos.y = maxf(ground_y, 0.0) + 1.0
+		_ensure_player()
 		_player.position = _player_pos
 
 
@@ -367,6 +404,7 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 			var ground_y := _get_ground_elevation_at(_player_pos)
 			if not is_nan(ground_y):
 				_player_pos.y = maxf(ground_y, 0.0) + 1.0
+				_ensure_player()
 				_player.position = _player_pos
 				_camera_focus = _player_pos
 				_player.visible = true
@@ -402,6 +440,21 @@ func _process(delta: float) -> void:
 		return
 
 	if _terminal and _terminal.is_open():
+		if _debug_overlay and _debug_overlay.is_shown():
+			_debug_overlay.process_sections(delta)
+		return
+
+	# 世界未就绪（读档重建中）：仅周期探测出生点，不流式加载/创建玩家
+	if not _has_birth:
+		_birth_request_timer += delta
+		if _birth_request_timer >= BIRTH_REQUEST_INTERVAL:
+			_birth_request_timer = 0.0
+			Connection.send({
+				"type": "request",
+				"request_type": "get_chunks",
+				"payload": {"chunks": [[0, 0]], "include_tiles": false,
+					"force_fields": false},
+			})
 		if _debug_overlay and _debug_overlay.is_shown():
 			_debug_overlay.process_sections(delta)
 		return
@@ -537,6 +590,8 @@ func _setup_debug_overlay() -> void:
 
 func _on_connected(host: String, port: int) -> void:
 	print("MainWorld3D: connected to %s:%d" % [host, port])
+	if not _has_birth and _loading_label:
+		_loading_label.text = "正在生成世界..."
 	Connection.send({
 		"type": "request",
 		"request_type": "entity_snapshot",
@@ -551,6 +606,10 @@ func _on_connected(host: String, port: int) -> void:
 
 func _on_disconnected() -> void:
 	print("MainWorld3D: disconnected")
+	# 世界场景的断连 = 后端读档重建窗口（场景仅在 save_load 后可达），
+	# 保持"正在生成世界..."提示；后端真死时超时由重连状态兜底
+	if not _has_birth and _loading_label:
+		_loading_label.text = "正在生成世界..."
 	# 在途请求的响应永远不会到达：清空请求状态，重连后 _stream_chunks
 	# 会为所有未加载 chunk 重新入队请求（已加载的地形节点保留）
 	_pending.clear()
@@ -612,9 +671,13 @@ func _handle_response(message: Dictionary) -> void:
 
 	match request_type:
 		"get_chunks":
-			if not _has_birth and payload.has("birth_chunk"):
-				var bc: Array = payload["birth_chunk"]
-				_set_birth_chunk(bc[0], bc[1])
+			# 世界未就绪时，该响应只用于取出生点（世界就绪信号）；
+			# 请求坐标是探测用的 (0,0)，chunk 数据无意义，不缓存
+			if not _has_birth:
+				if payload.has("birth_chunk"):
+					var bc: Array = payload["birth_chunk"]
+					_set_birth_chunk(bc[0], bc[1])
+				return
 
 			var chunks: Array = payload.get("chunks", [])
 			for chunk in chunks:
@@ -691,6 +754,7 @@ func _apply_authoritative_position(payload: Dictionary) -> void:
 	_update_player_ground()
 	_camera_focus = _player_pos
 	_apply_camera_transform()
+	_ensure_player()
 	_player.visible = true
 
 

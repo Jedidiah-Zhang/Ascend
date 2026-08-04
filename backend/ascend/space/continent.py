@@ -20,6 +20,8 @@
 """
 
 from array import array
+import pickle
+import zlib
 from dataclasses import dataclass, field
 from typing import Union
 
@@ -42,6 +44,59 @@ from ascend.config import (
 from ascend.log import get_logger
 
 logger = get_logger(__name__)
+
+# 大陆缓存格式版本：生成算法变更（侵蚀/水文/气候）时递增，
+# 旧缓存自动失效重新生成（同一 seed 的结果必须完全一致才能缓存）
+CONTINENT_CACHE_VERSION: int = 1
+
+
+def serialize_continent(data: "ContinentData") -> bytes:
+    """ContinentData → 压缩字节（大陆缓存落盘格式）。
+
+    大陆宏观场是 seed 的确定性函数，生成耗时 5-30s（侵蚀+水文模拟）；
+    落盘缓存后读档直接反序列化恢复，秒级完成。
+
+    注：pickle 反序列化仅用于本地游戏缓存（非网络数据）。
+    """
+    blob = pickle.dumps({
+        "format": "ascend-continent",
+        "version": CONTINENT_CACHE_VERSION,
+        "seed": data.seed,
+        "width": data.grid_width,
+        "height": data.grid_height,
+        "data": data,
+    }, protocol=pickle.HIGHEST_PROTOCOL)
+    return zlib.compress(blob, 9)
+
+
+def deserialize_continent(raw: bytes) -> "ContinentData | None":
+    """压缩字节 → ContinentData。
+
+    Returns:
+        ContinentData；格式/版本不符或数据损坏时返回 None
+        （调用方据此重新生成并覆盖缓存）。
+    """
+    try:
+        blob = zlib.decompress(raw)
+        header = pickle.loads(blob)
+    except Exception:
+        return None
+    if not isinstance(header, dict):
+        return None
+    if header.get("format") != "ascend-continent":
+        return None
+    if header.get("version") != CONTINENT_CACHE_VERSION:
+        return None
+    data = header.get("data")
+    if not isinstance(data, ContinentData):
+        return None
+    if (
+        data.grid_width != header.get("width")
+        or data.grid_height != header.get("height")
+        or data.seed != header.get("seed")
+    ):
+        return None
+    return data
 
 
 @dataclass

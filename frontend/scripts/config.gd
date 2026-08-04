@@ -27,6 +27,7 @@ const TILE_MAP_SIZE: int = 200  # 每个 chunk 的 tile 数
 # 游戏时间常量（与后端 ascend/config.py 同步）
 const TICK_RATE: int = 24           # 1 真实秒 = 24 tick
 const GAME_HOUR: int = 7200         # 1 游戏小时 = 7200 tick
+const GAME_MINUTE: int = 120        # 1 游戏分钟 = 120 tick
 const GAME_DAY: int = 172800        # 1 游戏天 = 172800 tick
 const GAME_YEAR: int = 62208000     # 1 游戏年 = 360 游戏天
 

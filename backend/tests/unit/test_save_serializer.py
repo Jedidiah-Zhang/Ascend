@@ -6,7 +6,9 @@ EntityManager.restore / PlayerService.restore 的静默恢复语义。
 
 import pytest
 
-from ascend.save.serializer import collect_state, apply_state, aligned_time
+from ascend.save.serializer import (
+    collect_state, apply_state, apply_clock, apply_player, aligned_time,
+)
 from ascend.time import WorldClock
 from ascend.entity import EntityManager, PlayerService
 from ascend.world_tree import world_tree as _real_wt
@@ -105,6 +107,48 @@ class TestApplyState:
         }
         with pytest.raises(ValueError):
             apply_state(state, clock, player)
+
+
+class TestApplyClock:
+    """时钟恢复（拆分的 apply_clock）。"""
+
+    def test_restores_clock_only(self, clock):
+        """仅恢复时钟，不触碰玩家。"""
+        state = {
+            "clock": {"time": 999, "speed": 3.0, "paused": True},
+            "player": {"entity_id": "x", "x": 5.0, "y": 6.0},
+            "archive_max_timestamp": 0,
+        }
+        apply_clock(state, clock)
+        assert clock.time == 999
+        assert clock.speed == 3.0
+        assert clock.paused is True
+
+    def test_missing_clock_defaults(self, clock):
+        """缺 clock 字段时默认 0/1.0/False。"""
+        apply_clock({}, clock)
+        assert clock.time == 0
+        assert clock.speed == 1.0
+        assert clock.paused is False
+
+
+class TestApplyPlayer:
+    """玩家恢复（拆分的 apply_player）。"""
+
+    def test_restores_player_only(self, clock, player):
+        """仅恢复玩家实体（静默）。"""
+        entity_id = player.entity.id
+        state = {
+            "player": {"entity_id": entity_id, "x": 11.0, "y": 22.0},
+        }
+        apply_player(state, player)
+        assert player.position == (11.0, 22.0)
+        assert player.entity.id == entity_id
+
+    def test_no_entity_id_is_noop(self, clock, player):
+        """无 entity_id 时不操作。"""
+        apply_player({"player": {"entity_id": None, "x": 0.0, "y": 0.0}}, player)
+        assert player.entity.id is not None  # 保持原实体
 
 
 class TestAlignedTime:

@@ -70,12 +70,19 @@ def make_save_handlers(save_manager, game_engine=None):
         }
 
     def handle_save_snapshot(msg: dict) -> dict:
-        """手动保存：为世界创建回退点快照。"""
+        """手动保存：为世界创建回退点快照。
+
+        引擎可用时走 snapshot_current（flush + WAL checkpoint + 打包），
+        保证快照内 chunk/事件数据完整；纯磁盘模式直接打包。
+        """
         payload = _payload(msg)
         world_id = str(payload.get("world_id", "")).strip()
         if not world_id:
             raise ValueError("缺少 world_id")
-        filename = save_manager.create_snapshot(world_id, suffix="manual")
+        if game_engine is not None:
+            filename = game_engine.snapshot_current(suffix="manual")
+        else:
+            filename = save_manager.create_snapshot(world_id, suffix="manual")
         return {
             "type": "response",
             "request_type": "save_snapshot",
@@ -87,6 +94,9 @@ def make_save_handlers(save_manager, game_engine=None):
 
         回滚语义（设计文档）：快照展开为活目录前，引擎重建流程会
         先自动快照当前状态（保护回滚前分支）。
+
+        world_id 与 snapshot 同时给出 = 把快照作为该世界回滚
+        （复制存档（save_export）后快照仍指向原世界，必须指定目标）。
         """
         payload = _payload(msg)
         world_id = str(payload.get("world_id", "")).strip() or None
@@ -94,7 +104,7 @@ def make_save_handlers(save_manager, game_engine=None):
         if not world_id and not snapshot:
             raise ValueError("缺少 world_id 或 snapshot")
         if world_id:
-            save_manager.get_manifest(world_id)  # 校验存在性
+            save_manager.get_manifest(world_id)  # 校验目标存在性
         if game_engine is None:
             raise ValueError("引擎不可用，无法读档")
         if getattr(game_engine, "_pending_load", None):

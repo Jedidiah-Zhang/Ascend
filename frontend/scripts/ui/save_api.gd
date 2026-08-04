@@ -38,11 +38,11 @@ static func list_request() -> Dictionary:
 	return {"type": "request", "request_type": LIST, "payload": {}}
 
 
-static func create_request(name: String, seed: int = 0) -> Dictionary:
+static func create_request(save_name: String, world_seed: int = 0) -> Dictionary:
 	"""新建存档位请求（seed=0 后端随机）。"""
 	return {
 		"type": "request", "request_type": CREATE,
-		"payload": {"name": name, "seed": seed},
+		"payload": {"name": save_name, "seed": world_seed},
 	}
 
 

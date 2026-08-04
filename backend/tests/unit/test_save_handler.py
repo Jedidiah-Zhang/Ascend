@@ -108,6 +108,20 @@ class TestSaveLoad:
         resp = handlers["save_load"](_req("save_load", {"snapshot": filename}))
         assert engine._pending_load == (None, filename)
 
+    def test_load_snapshot_with_world_id_override(self, manager, handlers):
+        """world_id + snapshot 同时给出 = 目标覆盖回滚（复制档场景）。"""
+        world_id = manager.create_world("世界", seed=1).world_id
+        manager.create_snapshot(world_id)
+        new_id = manager.export_world(world_id)
+        filename = manager.list_snapshots(new_id)[0]["file"]
+        engine = self._FakeEngine()
+        handlers = make_save_handlers(manager, engine)
+        resp = handlers["save_load"](_req("save_load", {
+            "world_id": new_id, "snapshot": filename,
+        }))
+        assert engine._pending_load == (new_id, filename)
+        assert resp["payload"]["world_id"] == new_id
+
     def test_unknown_world_rejected(self, tmp_path, handlers):
         """不存在的 world_id 拒绝（不置位）。"""
         engine = self._FakeEngine()

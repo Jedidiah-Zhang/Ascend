@@ -243,6 +243,36 @@ class ChunkStore:
                 logger.info("已 flush %d 个 dirty chunk", count)
             return count
 
+    def checkpoint(self) -> None:
+        """WAL 强制写回主库（快照打包前调用，保证文件副本完整）。
+
+        WAL 模式下提交的数据可能仍留在 -wal 文件，直接拷贝 .db
+        会丢失这些数据；checkpoint 后 .db 即为完整一致快照。
+        """
+        with self._lock:
+            self._db.execute("PRAGMA wal_checkpoint(FULL)")
+
+    def verify(self) -> None:
+        """校验数据库完整性（PRAGMA integrity_check，设计文档承诺）。
+
+        读档时调用：数据库是明文 SQLite，防篡改靠完整性校验——
+        损坏/被外部工具改写时拒绝加载。
+
+        Raises:
+            ValueError: 完整性校验失败（数据库损坏或被篡改）。
+        """
+        try:
+            with self._lock:
+                rows = self._db.execute("PRAGMA integrity_check").fetchall()
+        except sqlite3.DatabaseError as exc:
+            logger.error("ChunkStore 完整性校验失败: %s", exc)
+            raise ValueError(
+                "存档 chunk 数据库损坏或被篡改，拒绝加载"
+            ) from exc
+        if not rows or rows[0][0] != "ok":
+            logger.error("ChunkStore 完整性校验失败: %s", rows[:5])
+            raise ValueError("存档 chunk 数据库损坏或被篡改，拒绝加载")
+
     def close(self) -> None:
         """关闭 ChunkStore，先 flush 再关闭数据库。"""
         self.flush()

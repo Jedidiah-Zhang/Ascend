@@ -14,9 +14,8 @@ extends Control
 
 class_name SaveSelect
 
-const FontUtils = preload("res://scripts/utils/font_utils.gd")
-const SaveApi = preload("res://scripts/ui/save_api.gd")
-const SaveInfoFormatter = preload("res://scripts/ui/save_info_formatter.gd")
+# FontUtils / SaveApi / SaveInfoFormatter 均为全局类（各自 class_name），
+# 无需 preload 常量（preload 同名常量会遮蔽全局类并产生警告）
 
 const MAIN_MENU_SCENE: String = "res://scenes/main_menu.tscn"
 const MAIN_WORLD_SCENE: String = "res://scenes/main.tscn"
@@ -82,7 +81,7 @@ var _confirm_delete_row: int = -1
 ## 请求已发出等待响应中
 var _busy: bool = false
 
-## 重命名/新建输入模式: "" 无, "rename" 重命名, "create" 新建
+## 输入模式: "" 无, "rename" 重命名（新建不再弹窗，直接默认名创建）
 var _input_mode: String = ""
 ## 输入目标行索引
 var _input_row: int = -1
@@ -107,12 +106,18 @@ func _ready() -> void:
 	add_child(_name_input)
 
 	Connection.message_received.connect(_on_message)
+	Connection.connection_lost.connect(_on_connection_lost)
+	Connection.backend_failed.connect(_on_backend_failed)
 	_refresh_list()
 
 
 func _exit_tree() -> void:
 	if Connection.message_received.is_connected(_on_message):
 		Connection.message_received.disconnect(_on_message)
+	if Connection.connection_lost.is_connected(_on_connection_lost):
+		Connection.connection_lost.disconnect(_on_connection_lost)
+	if Connection.backend_failed.is_connected(_on_backend_failed):
+		Connection.backend_failed.disconnect(_on_backend_failed)
 
 
 # ── 数据 ──────────────────────────────────────────────────
@@ -143,6 +148,25 @@ func _apply_worlds(payload: Dictionary) -> void:
 func _set_error(text: String) -> void:
 	_status_text = text
 	_status_color = STATUS_ERR_COLOR
+	queue_redraw()
+
+
+# ── 连接中断 ──────────────────────────────────────────────
+
+func _on_connection_lost() -> void:
+	"""连接断开时复位忙状态（响应可能永远不来，避免 UI 卡死）。"""
+	if _busy:
+		_busy = false
+		_confirm_delete_row = -1
+		_set_error("连接中断，操作未完成 — 请重试")
+	queue_redraw()
+
+
+func _on_backend_failed(reason: String) -> void:
+	"""后端启动失败：同样复位忙状态。"""
+	_busy = false
+	_confirm_delete_row = -1
+	_set_error("后端不可用：%s" % reason)
 	queue_redraw()
 
 
@@ -259,7 +283,7 @@ func _draw_input_dialog() -> void:
 	draw_rect(dlg_rect, PANEL_COLOR)
 	draw_rect(dlg_rect, Color(1, 1, 1, 0.15), false, 1.0)
 
-	var prompt: String = "新存档名称" if _input_mode == "create" else "重命名为"
+	var prompt: String = "重命名为"
 	draw_string(_font, dlg_rect.position + Vector2(16, 26), prompt,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 14, TITLE_COLOR)
 
@@ -301,13 +325,18 @@ func _input(event: InputEvent) -> void:
 			queue_redraw()
 		elif event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 			_handle_click(event.position)
-			get_viewport().set_input_as_handled()
+			# _handle_click 可能即时切场景（进入/返回），节点出树后 viewport 为 null
+			var vp := get_viewport()
+			if vp:
+				vp.set_input_as_handled()
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		if _input_mode != "":
 			_close_input()
 		else:
 			_go_back()
-		get_viewport().set_input_as_handled()
+		var vp := get_viewport()
+		if vp:
+			vp.set_input_as_handled()
 
 
 func _update_hover(pos: Vector2) -> void:
@@ -356,7 +385,7 @@ func _handle_click(pos: Vector2) -> void:
 		_go_back()
 		return
 	if _create_rect.has_point(pos):
-		_open_input("create", -1)
+		_create_new_world()
 		return
 	for entry in _action_rects:
 		if entry["rect"].has_point(pos):
@@ -392,10 +421,35 @@ func _activate_action(row: int, action: int) -> void:
 
 # ── 输入对话框 ────────────────────────────────────────────
 
+func _create_new_world() -> void:
+	"""新建游戏：默认名 = 当前日期时间，直接创建进入（无需弹窗输入）。
+
+	想改名的玩家创建后经「重命名」修改。
+	"""
+	if _busy:
+		return
+	_busy = true
+	_status_text = "正在创建世界..."
+	_status_color = STATUS_WAIT_COLOR
+	Connection.send(SaveApi.create_request(_default_save_name(), 0))
+	queue_redraw()
+
+
+static func _default_save_name() -> String:
+	"""新建存档的默认名称（当前日期时间，分钟精度）。"""
+	var now := Time.get_datetime_dict_from_system()
+	return "%04d-%02d-%02d %02d:%02d" % [
+		now["year"], now["month"], now["day"],
+		now["hour"], now["minute"],
+	]
+
+
+# ── 输入对话框（仅重命名） ────────────────────────────────
+
 func _open_input(mode: String, row: int) -> void:
 	_input_mode = mode
 	_input_row = row
-	if mode == "rename" and row >= 0 and row < _worlds.size():
+	if row >= 0 and row < _worlds.size():
 		_name_input.text = str(_worlds[row]["name"])
 	else:
 		_name_input.text = ""
@@ -413,22 +467,17 @@ func _close_input() -> void:
 
 
 func _on_name_submitted(text: String) -> void:
-	var name: String = text.strip_edges()
-	if name.is_empty():
+	var save_name: String = text.strip_edges()
+	if save_name.is_empty():
 		_set_error("名称不能为空")
 		return
-	if _input_mode == "create":
-		_busy = true
-		_status_text = "正在创建世界..."
-		Connection.send(SaveApi.create_request(name, 0))
-	elif _input_mode == "rename":
-		if _input_row < 0 or _input_row >= _worlds.size():
-			_close_input()
-			return
-		var world_id: String = str(_worlds[_input_row]["world_id"])
-		_busy = true
-		_status_text = "正在重命名..."
-		Connection.send(SaveApi.rename_request(world_id, name))
+	if _input_row < 0 or _input_row >= _worlds.size():
+		_close_input()
+		return
+	var world_id: String = str(_worlds[_input_row]["world_id"])
+	_busy = true
+	_status_text = "正在重命名..."
+	Connection.send(SaveApi.rename_request(world_id, save_name))
 	_close_input()
 
 

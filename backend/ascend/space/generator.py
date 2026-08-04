@@ -10,12 +10,13 @@
 每个分块的生成逻辑为纯函数链，不依赖外部可变状态。
 """
 
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ascend.log import get_logger
 from .noise import PerlinNoise
 from .tile_grid import TILE_MAP_SIZE
-from .continent import ContinentGenerator
+from .continent import ContinentGenerator, serialize_continent, deserialize_continent
 from .climate import (
     ClimateZone,
     annual_baseline,
@@ -50,6 +51,7 @@ class WorldGenerator:
         seed: int = 0,
         *,
         executor: ThreadPoolExecutor | None = None,
+        continent_cache_path: str | None = None,
     ) -> None:
         """初始化世界生成器。
 
@@ -58,10 +60,14 @@ class WorldGenerator:
         Args:
             seed: 世界种子。相同种子生成相同世界。
             executor: 外部线程池，None 时每次并行创建临时线程池。
+            continent_cache_path: 大陆宏观场缓存文件路径（None 不落盘）。
+                由 GameEngine 传入存档内的 continent.bin——大陆是 seed 的
+                确定性函数，缓存随档分发，保证换机后首次加载也秒开。
         """
         self._seed = seed
         self._executor = executor
         self._continent = None  # ContinentGenerator 惰性创建
+        self._continent_cache_path = continent_cache_path
 
         # 种子衍生相位偏移 — 确保不同 seed 的 (0,0) 采样到不同噪声值。
         # 偏移量 ~数百 chunk，相当于"种子在无限噪声空间中选择不同起点"。
@@ -95,6 +101,10 @@ class WorldGenerator:
         本方法强制预生成，供 GameEngine 在启动时主动触发，
         并把 ContinentData 暴露给出生点选择 / TileGenerator。
 
+        磁盘缓存（<world_id>/continent.bin，由 GameEngine 传入路径）：
+        大陆宏观场是 seed 的确定性函数，生成耗时 5-30s；缓存随档分发，
+        命中直接反序列化恢复（秒级），缓存失效/损坏时重新生成并覆盖。
+
         生成后补充沙漠档的 moisture 噪声动态值域（continent 生成时
         无 moisture 噪声实例，此处补算）。
 
@@ -102,10 +112,44 @@ class WorldGenerator:
             ContinentData 宏观场（缓存于 self._continent）。
         """
         if self._continent is None:
-            self._continent = ContinentGenerator(seed=self._seed).generate()
-            self._supplement_moisture_range()
-            logger.info("大陆生成完成: %s", self._continent)
+            cache_path = self._continent_cache_path
+            if cache_path:
+                self._continent = self._load_continent_cache(cache_path)
+            if self._continent is None:
+                self._continent = ContinentGenerator(seed=self._seed).generate()
+                self._supplement_moisture_range()
+                if cache_path:
+                    self._save_continent_cache(cache_path, self._continent)
+                logger.info("大陆生成完成: %s", self._continent)
+            else:
+                logger.info("大陆从缓存恢复: %s", self._continent)
         return self._continent
+
+    # ── 大陆磁盘缓存 ──────────────────────────────────────
+
+    def _load_continent_cache(self, path: str) -> "ContinentData | None":
+        """从磁盘恢复大陆宏观场；无缓存/损坏/版本不符返回 None。"""
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "rb") as f:
+                data = deserialize_continent(f.read())
+        except OSError:
+            return None
+        if data is None:
+            logger.warning("大陆缓存失效（版本或数据损坏），将重新生成: %s", path)
+        return data
+
+    def _save_continent_cache(self, path: str, data: "ContinentData") -> None:
+        """序列化大陆宏观场到磁盘（原子写，生成算法变更时覆盖）。"""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(serialize_continent(data))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        logger.info("大陆缓存已写入: %s", path)
 
     def _supplement_moisture_range(self) -> None:
         """补充沙漠档 moisture 噪声的动态值域。
