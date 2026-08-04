@@ -317,6 +317,11 @@ class WeatherEngine:
         self._unsub = self._wt.subscribe("minute_change", self._on_minute_change)
         logger.debug("天气引擎初始化 seed=%d", seed)
 
+    @property
+    def seed(self) -> int:
+        """大气场噪声种子（存档序列化用，与 __repr__ 展示一致）。"""
+        return self._seed
+
     def __repr__(self) -> str:
         return (
             f"WeatherEngine(seed={self._seed}, "

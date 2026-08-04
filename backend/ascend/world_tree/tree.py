@@ -78,6 +78,7 @@ class WorldTree:
         self._archive: EventArchive | None = (
             EventArchive(archive_path) if archive_path else None
         )
+        self._archive_path: str | None = archive_path
         self._async_executor: ThreadPoolExecutor = ThreadPoolExecutor(
             thread_name_prefix="worldtree",
         )
@@ -621,13 +622,35 @@ class WorldTree:
         避免在模块导入时就需要确定这些参数。
 
         Args:
-            archive_path: SQLite 归档路径。None 保持现状。
+            archive_path: SQLite 归档路径。None 保持现状。路径变化时
+                关闭旧归档并切换（读档切存档位时使用）。
             max_memory_events: 内存事件上限。None 保持现状。
         """
-        if archive_path is not None and self._archive is None:
-            self._archive = EventArchive(archive_path)
+        if archive_path is not None:
+            if self._archive is not None and self._archive_path != archive_path:
+                logger.info(
+                    "切换事件归档: %s → %s", self._archive_path, archive_path
+                )
+                self._archive.close()
+                self._archive = None
+            if self._archive is None:
+                self._archive = EventArchive(archive_path)
+                self._archive_path = archive_path
         if max_memory_events is not None:
             self._max_memory_events = max_memory_events
+
+    def archived_max_timestamp(self) -> int | None:
+        """归档内最新事件的时间戳（读档时钟对齐用）。
+
+        事件实时落盘（trim 写归档），可能比周期写入的 state 更新——
+        恢复时钟取 max(state.time, 该值) 防止世界时间倒流。
+
+        Returns:
+            最新事件时间戳，未启用归档或归档为空时返回 None。
+        """
+        if self._archive is None:
+            return None
+        return self._archive.max_timestamp()
 
     def _trim(self, before_time: int) -> int:
         """移除早于指定时间的事件体以回收内存（内部方法，权重感知）。

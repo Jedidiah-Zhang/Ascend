@@ -206,6 +206,13 @@ MAX_WEATHER_QUERY_CHUNKS: int = 64      # get_weather 单请求最大 chunk 数�
 # 地图请求 API
 MAX_CHUNK_QUERY: int = 512              # get_chunks 单请求最大 chunk 数（防超大请求卡游戏线程）
 
+# ═══════════════════════════════════════════════════════════════
+# Save — 存档（实时写入频率）
+# ═══════════════════════════════════════════════════════════════
+
+SAVE_STATE_INTERVAL: float = 5.0        # state.json 实时写入间隔（真实秒）
+SAVE_CHUNK_FLUSH_INTERVAL: float = 30.0 # dirty chunk 定时 flush 间隔（真实秒）
+
 
 # 天气分级阈值 — 按数值升序排列，返回值为区间索引（0-based）
 # 事件仅在等级变化时发布（含 prev_tier 用于判定趋势）
@@ -288,6 +295,11 @@ SQLITE_JOURNAL_MODE: str = "WAL"
 SQLITE_SYNCHRONOUS: str = "NORMAL"
 SQLITE_MMAP_SIZE: int = 268435456       # 256MB 内存映射
 SQLITE_CACHE_SIZE: int = -8000          # 8MB 页缓存（负数 = KB）
+
+# 存档根目录（用户主目录 .ascend/saves，可在设置中调整）
+import os as _os
+SAVE_ROOT: str = _os.path.join(_os.path.expanduser("~"), ".ascend", "saves")
+SAVE_FORMAT_VERSION: int = 1            # 存档格式版本（迁移用）
 
 # ═══════════════════════════════════════════════════════════════
 # UI — 终端与调试

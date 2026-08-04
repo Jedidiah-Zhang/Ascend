@@ -139,6 +139,26 @@ class WorldClock:
         """恢复时间推进。"""
         self._paused = False
 
+    def restore(self, *, time: int, speed: float = 1.0, paused: bool = False) -> None:
+        """读档恢复时钟状态（世界外元操作，不触发任何回调）。
+
+        由存档系统在引擎启动前调用，等价于"从存档时间点继续"。
+
+        Args:
+            time: 世界时间（tick 数），需 >= 0。
+            speed: 时间倍率。
+            paused: 是否暂停。
+        """
+        if time < 0:
+            raise ValueError(f"time 不能为负，实际为 {time}")
+        if speed < 0:
+            raise ValueError(f"speed 不能为负，实际为 {speed}")
+        self._time = int(time)
+        self._speed = float(speed)
+        self._paused = bool(paused)
+        self._accumulator = 0.0
+        logger.info("时钟恢复: time=%d speed=%.1f paused=%s", self._time, self._speed, self._paused)
+
     # ── 推进 ──────────────────────────────────────────────
 
     def tick(self) -> None:

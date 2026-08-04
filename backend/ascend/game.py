@@ -11,6 +11,7 @@
   6. 配置世界树归档 + 启动 tick 循环（时钟+日历随之运转）
 """
 
+import os
 import random
 import threading
 import time as _real_time
@@ -29,6 +30,9 @@ from ascend.config import (
     WT_MAX_MEMORY_EVENTS,
     WT_ARCHIVE_PATH,
     WT_GRAPH_WARMUP_EVENTS,
+    SAVE_ROOT,
+    SAVE_STATE_INTERVAL,
+    SAVE_CHUNK_FLUSH_INTERVAL,
 )
 from ascend.log import get_logger
 from ascend.net import GameServer, MessageDispatcher, EventBridge
@@ -37,6 +41,7 @@ from ascend.net.handlers.terminal_handler import make_terminal_handler
 from ascend.net.handlers.weather_handler import make_weather_handler
 from ascend.net.handlers.player_handler import make_player_handler
 from ascend.net.handlers.entity_handler import make_entity_handlers
+from ascend.net.handlers.save_handler import make_save_handlers
 from ascend.space import WorldGenerator, TileGenerator
 from ascend.space.chunk_store import ChunkStore
 from ascend.entity import EntityManager, PlayerService
@@ -45,6 +50,7 @@ from ascend.terminal import CommandExecutor
 from ascend.time import WorldClock, GameCalendar
 from ascend.i18n import I18n
 from ascend.world_tree import world_tree, Event, AffectedParty
+from ascend.save import SaveManager, collect_state, aligned_time
 
 logger = get_logger(__name__)
 
@@ -92,6 +98,15 @@ class GameEngine:
         self.tile_generator: TileGenerator | None = None
         self.birth_chunk: tuple[int, int] | None = None
         self.chunk_store: ChunkStore | None = None
+        # 存档
+        self.save_manager: SaveManager | None = None
+        self.world_id: str | None = None      # 当前存档位（None=无存档模式）
+        self._manifest = None                 # 内存中的 Manifest（touch 用）
+        self._load_state: dict | None = None  # 读档恢复的状态
+        self._pending_load: tuple | None = None  # 待执行读档请求 (world_id, snapshot)
+        self._last_state_save: float = 0.0    # 上次 state 落盘时刻（monotonic）
+        self._last_chunk_flush: float = 0.0   # 上次 dirty chunk flush 时刻
+        self._world_start_monotonic: float = 0.0
         self._running: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -130,29 +145,64 @@ class GameEngine:
         else:
             self.clock.resume()
 
-    def start(self) -> None:
+    def start(
+        self,
+        *,
+        world_id: str | None = None,
+        snapshot: str | None = None,
+    ) -> None:
         """初始化所有子系统并在后台启动 tick 循环。
 
-        流程:
-          1. 随机 seed（seed=0 时）
-          2. 主动生成大陆宏观场
-          3. 随机选取出生点
-          4. 预生成周边区块的详细 tile 层
-          5. 创建实体管理器
-          6. TCP 服务器 + 消息分发器
-          7. 世界树归档配置
-          8. 发布 world_initialized 事件
-          9. 启动 tick 循环（时钟+日历随之运转）
+        启动模式:
+          - 无参: 随机种子新世界（无存档模式，测试/调试用）
+          - world_id: 从存档位读档（seed/时钟/玩家/DB 路径全部恢复）
+          - snapshot: 从快照回滚（展开为活目录后按读档处理）
+
+        读档流程:
+          1. 恢复时钟（对齐归档时间，防时间倒流）
+          2. 按 manifest.seed 重建大陆宏观场
+          3. 以存档目录路径打开 ChunkStore / 事件归档
+          4. 静默恢复玩家实体（不发布 entity_born，Issue #20/#25 语义）
 
         幂等：已在运行时调用无效果。
         """
         if self._running.is_set():
             return
 
-        # 1. 随机 seed
+        # 0. 存档准备
+        self.save_manager = SaveManager(SAVE_ROOT)
+        self._load_state = None
+        self._manifest = None
+        if snapshot is not None:
+            world_id = self.save_manager.extract_snapshot(snapshot)
+        if world_id is not None:
+            manifest = self.save_manager.get_manifest(world_id)
+            self._manifest = manifest
+            self.world_id = world_id
+            self.seed = manifest.seed
+            # state 文件存在才读档恢复；新世界首次进入尚无 state
+            if os.path.isfile(self.save_manager.state_path(world_id)):
+                self._load_state = self.save_manager.read_state(world_id)
+        else:
+            self.world_id = None
+
+        # 0b. 读档恢复时钟（须先于日历创建，避免虚假 day_change 事件）
+        if self._load_state is not None:
+            self.clock.restore(
+                time=aligned_time(self._load_state),
+                speed=float((self._load_state.get("clock") or {}).get("speed", 1.0)),
+                paused=bool((self._load_state.get("clock") or {}).get("paused", False)),
+            )
+
+        # 0c. 重建日历（基于恢复后的时钟；stop 后为 None 或需重启）
+        if self.calendar is not None:
+            self.calendar.shutdown()
+        self.calendar = GameCalendar(clock=self.clock)
+
+        # 1. 随机 seed（仅无存档模式）
         if self.seed == 0:
             self.seed = random.randint(1, 2**31 - 1)
-        logger.info("游戏引擎启动: seed=%d", self.seed)
+        logger.info("游戏引擎启动: seed=%d world=%s", self.seed, self.world_id)
 
         # 2. 世界生成器 + 主动生成大陆宏观场（侵蚀+水文，耗时约 30s）
         self.world_gen = WorldGenerator(seed=self.seed)
@@ -162,13 +212,20 @@ class GameEngine:
         )
         logger.info("大陆生成完成: %s", continent)
 
-        # 3. 随机出生点（陆地、海拔适中的温和低地）
-        self.birth_chunk = self._select_birth_point(continent, self.seed)
+        # 3. 出生点（读档优先用存档中的出生点）
+        if self._manifest is not None and self._manifest.birth_chunk:
+            self.birth_chunk = tuple(self._manifest.birth_chunk)
+        else:
+            self.birth_chunk = self._select_birth_point(continent, self.seed)
         logger.info("出生点: chunk %s", self.birth_chunk)
 
-        # 3b. 初始化 ChunkStore（LRU 缓存 + SQLite 持久化）
+        # 3b. 初始化 ChunkStore（读档时直接以存档内路径打开）
+        db_path = (
+            self.save_manager.chunks_db_path(self.world_id)
+            if self.world_id else CHUNK_STORE_DB_PATH
+        )
         self.chunk_store = ChunkStore(
-            CHUNK_STORE_DB_PATH, max_size=CHUNK_STORE_MAX_SIZE,
+            db_path, max_size=CHUNK_STORE_MAX_SIZE,
             on_evict=self._on_chunk_evicted,
         )
 
@@ -182,7 +239,7 @@ class GameEngine:
         # 5. 实体管理器（接入事件管线）
         self.entity_manager = EntityManager()
 
-        # 5a. 权威玩家实体（壳子版：位置权威在后端，前端本地预测）
+        # 5a. 权威玩家实体（读档静默恢复，不发布 entity_born）
         # 地图为有界矩形：chunk 坐标 ∈ [0, grid//2)，玩家坐标越界钳制
         self.player_service = PlayerService(
             self.entity_manager, self.clock, self.birth_chunk,
@@ -191,8 +248,18 @@ class GameEngine:
                 continent.grid_height // 2,
             ),
         )
-        self.player_service.birth()
-        logger.info("玩家实体已诞生: %r", self.player_service)
+        player_state = (
+            self._load_state.get("player", {}) if self._load_state else {}
+        )
+        if player_state.get("entity_id"):
+            self.player_service.restore(
+                player_state["entity_id"],
+                player_state.get("x", 0.0),
+                player_state.get("y", 0.0),
+            )
+        else:
+            self.player_service.birth()
+        logger.info("玩家实体就绪: %r", self.player_service)
 
         # 5b. 天气引擎（接入已加载 chunk 的天气基线）
         self.weather_engine = WeatherEngine(self.clock, seed=self.seed)
@@ -241,6 +308,12 @@ class GameEngine:
             self.dispatcher.register(req_type, handler)
         logger.info("已注册实体处理程序: %s", list(entity_handlers.keys()))
 
+        # 7e. 存档处理程序（状态通道：列表/快照/读档）
+        save_handlers = make_save_handlers(self.save_manager, self)
+        for req_type, handler in save_handlers.items():
+            self.dispatcher.register(req_type, handler)
+        logger.info("已注册存档处理程序: %s", list(save_handlers.keys()))
+
         # 8. 终端指令执行器
         self._executor = CommandExecutor(
             clock=self.clock,
@@ -269,20 +342,29 @@ class GameEngine:
         self.dispatcher.register("player_interact", _placeholder_ok)
 
         # 9. 世界树：归档 + 内存限制 + 图预热
+        # （读档时切换到存档内归档路径，旧归档自动关闭）
+        archive_path = (
+            self.save_manager.events_db_path(self.world_id)
+            if self.world_id else WT_ARCHIVE_PATH
+        )
         world_tree.configure(
-            archive_path=WT_ARCHIVE_PATH,
+            archive_path=archive_path,
             max_memory_events=WT_MAX_MEMORY_EVENTS,
         )
         world_tree.warmup_graph(max_events=WT_GRAPH_WARMUP_EVENTS)
         logger.info(
             "已配置世界树: archive=%s max_memory=%d",
-            WT_ARCHIVE_PATH, WT_MAX_MEMORY_EVENTS,
+            archive_path, WT_MAX_MEMORY_EVENTS,
         )
 
-        # 10. 发布世界初始化事件（时钟此时停在 epoch，尚未推进）
+        # 10. 发布世界初始化事件（时钟此时停在 epoch/存档时间，尚未推进）
         self._publish_world_initialized()
+        self._persist_manifest()
 
         # 11. 启动 tick 循环——clock.tick() 推进时间，calendar 自动收事件
+        self._last_state_save = _real_time.monotonic()
+        self._last_chunk_flush = self._last_state_save
+        self._world_start_monotonic = self._last_state_save
         self._running.set()
         self._thread = threading.Thread(
             target=self._run_loop, name="game-engine", daemon=True
@@ -293,12 +375,15 @@ class GameEngine:
     def stop(self) -> None:
         """停止引擎并清理所有子系统。
 
+        退出前执行最终保存（flush + 最终 state 落盘），
+        等价 MC 关服保存——实时存档保证此步幂等、开销小。
+
         幂等：已停止时调用无效果。
         """
         if not self._running.is_set():
             return
         self._running.clear()
-        if self._thread:
+        if self._thread and threading.current_thread() is not self._thread:
             self._thread.join(timeout=3.0)
             if self._thread.is_alive():
                 # tick 线程可能卡在耗时 handler（如同步生成 chunk）。
@@ -309,7 +394,15 @@ class GameEngine:
                 self._thread.join(timeout=10.0)
                 if self._thread.is_alive():
                     logger.error("tick 线程仍未退出，强制继续资源清理")
-            self._thread = None
+        self._thread = None
+        self._cleanup()
+
+    def _cleanup(self) -> None:
+        """释放所有子系统资源（stop 与读档重建共用）。
+
+        停服是世界外操作：不发 entity_died（那会向因果历史写入虚假
+        死亡），直接释放内存；实体状态持久化是存档系统的职责。
+        """
         if hasattr(self, 'event_bridge') and self.event_bridge:
             self.event_bridge.uninstall()
             self.event_bridge = None
@@ -317,14 +410,13 @@ class GameEngine:
         if self.server:
             self.server.stop()
             self.server = None
+        self._save_state_now()
         if self.calendar:
             self.calendar.shutdown()
             self.calendar = None
         if self.weather_engine:
             self.weather_engine.shutdown()
             self.weather_engine = None
-        # 停服是世界外操作：不发 entity_died（那会向因果历史写入虚假
-        # 死亡），直接释放内存；实体状态持久化是存档系统的职责。
         self.player_service = None
         self.entity_manager = None
         self.tile_generator = None
@@ -335,6 +427,7 @@ class GameEngine:
             self.world_gen = None
         if self._executor:
             self._executor = None
+        self._load_state = None
         logger.info("游戏引擎已停止")
 
     def _on_chunk_evicted(self, cx: int, cy: int) -> None:
@@ -473,6 +566,92 @@ class GameEngine:
             },
         ))
 
+    # ── 存档（实时保存 / 读档重建） ──────────────────────
+
+    def _persist_manifest(self) -> None:
+        """回写 manifest（出生点/游玩信息），存档选择页数据源。"""
+        if not self.world_id or not self.save_manager or not self._manifest:
+            return
+        manifest = self._manifest
+        if self.birth_chunk:
+            manifest.birth_chunk = self.birth_chunk
+        manifest.touch(
+            self.save_manager.manifest_path(self.world_id),
+            game_time=self.clock.time,
+            play_duration_sec=self._play_duration(),
+        )
+
+    def _play_duration(self) -> float:
+        """累计游玩时长（真实秒）。"""
+        base = self._manifest.play_duration_sec if self._manifest else 0.0
+        if self._world_start_monotonic:
+            base += _real_time.monotonic() - self._world_start_monotonic
+        return base
+
+    def _save_state_now(self) -> None:
+        """立即将当前状态落盘（周期保存/退出保存共用）。
+
+        世界外元操作：不产生历史、不进因果图。
+        """
+        if not self.world_id or not self.save_manager:
+            return
+        if self.player_service is None or self.clock is None:
+            return
+        state = collect_state(
+            self.clock, self.player_service, self.weather_engine,
+            world_tree.archived_max_timestamp(),
+        )
+        self.save_manager.write_state(self.world_id, state)
+        self._persist_manifest()
+
+    def _maybe_save_state(self) -> None:
+        """周期实时保存：state 每 5s、dirty chunk 每 30s（MC 同款节奏）。
+
+        单次失败不中断游戏循环，记录后下个周期重试。
+        """
+        now = _real_time.monotonic()
+        if now - self._last_state_save >= SAVE_STATE_INTERVAL:
+            self._last_state_save = now
+            try:
+                self._save_state_now()
+            except Exception:
+                logger.exception("周期状态保存失败")
+        if self.chunk_store and now - self._last_chunk_flush >= SAVE_CHUNK_FLUSH_INTERVAL:
+            self._last_chunk_flush = now
+            try:
+                self.chunk_store.flush_dirty()
+            except Exception:
+                logger.exception("dirty chunk 定时保存失败")
+
+    def _reload(self, world_id: str | None = None, snapshot: str | None = None) -> None:
+        """读档重建：清理当前世界并按目标重启。
+
+        运行在 tick 线程内部（由 save_load 请求触发）：
+          1. 停止旧世界并最终保存
+          2. 回滚时先自动快照保护当前状态（DB 已关闭，快照一致）
+          3. 快照展开为活目录（替换旧的）
+          4. 按目标重建世界
+
+        Args:
+            world_id: 目标存档位；None 时从快照决定。
+            snapshot: 快照文件路径（回滚）；None 时加载活目录。
+        """
+        logger.info("读档重建: world=%s snapshot=%s", world_id, snapshot)
+        self._running.clear()
+        self._cleanup()
+        try:
+            if snapshot is not None:
+                # 回滚保护：先把当前（已最终保存的）活目录快照起来，
+                # 回滚后仍可从该自动快照找回回滚前的分支
+                current = self.world_id
+                if current:
+                    self.save_manager.create_snapshot(current, suffix="auto")
+                world_id = self.save_manager.extract_snapshot(snapshot)
+            self.start(world_id=world_id)
+        except Exception:
+            logger.exception("读档重建失败")
+            raise
+
     # ── 内部 ──────────────────────────────────────────
 
     def _run_loop(self) -> None:
@@ -483,6 +662,9 @@ class GameEngine:
             避免紧循环占满 CPU 刷日志；
           - 连续异常达到 _MAX_CONSECUTIVE_ERRORS 次触发熔断，
             自动清除运行标志退出循环（资源清理仍由 stop() 负责）。
+
+        读档：_pending_load 置位时退出循环并执行 _reload
+        （仍在 tick 线程内，可安全调用 _cleanup/start）。
         """
         consecutive_errors = 0
         while self._running.is_set():
@@ -507,6 +689,16 @@ class GameEngine:
             sleep_time = TICK_DT - elapsed
             if sleep_time > 0:
                 _real_time.sleep(sleep_time)
+            if self._pending_load:
+                break
+
+        pending = self._pending_load
+        if pending:
+            self._pending_load = None
+            try:
+                self._reload(*pending)
+            except Exception:
+                logger.exception("读档重建失败")
 
     def _tick(self) -> None:
         """单个 tick：推进时钟 + 处理所有排队消息。
@@ -523,3 +715,4 @@ class GameEngine:
                 executor.add_active_time(TICK_DT)
         if dispatcher:
             dispatcher.process()
+        self._maybe_save_state()

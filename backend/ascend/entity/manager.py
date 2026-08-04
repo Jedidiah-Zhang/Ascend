@@ -146,6 +146,59 @@ class EntityManager:
         )
         return entity
 
+    def restore(
+        self,
+        entity_id: str,
+        entity_type: EntityType,
+        chunk_x: int,
+        chunk_y: int,
+        tile_x: int | None = None,
+        tile_y: int | None = None,
+        *,
+        layer_id: int = 0,
+        controller: Controller = Controller.NONE,
+        data: dict | None = None,
+        born_at: int = 0,
+    ) -> Entity:
+        """静默恢复实体（读档用），不发布 entity_born 事件。
+
+        读档 = 重建内存状态——实体不是此刻诞生的，发布事件会向因果
+        历史写入虚假诞生（Issue #20/#25 语义）。本方法供存档系统
+        恢复实体表（全量恢复在 #25 落地，当前仅玩家实体使用）。
+
+        Args:
+            entity_id: 实体原 ID（保持存档身份不变）。
+            其余参数语义同 birth()。
+
+        Returns:
+            恢复的实体。
+        """
+        entity = Entity(
+            entity_type=entity_type,
+            chunk_x=chunk_x,
+            chunk_y=chunk_y,
+            tile_x=tile_x,
+            tile_y=tile_y,
+            born_at=born_at,
+            layer_id=layer_id,
+            controller=controller,
+            id=entity_id,
+            data=data,
+        )
+        self._entities[entity.id] = entity
+        self._type_index.setdefault(entity_type, set()).add(entity.id)
+        self._spatial_index.setdefault(
+            spatial_key(
+                entity.layer_id, entity.chunk_x, entity.chunk_y,
+                entity.tile_x, entity.tile_y,
+            ), set(),
+        ).add(entity.id)
+        logger.debug(
+            "restore: %s type=%s controller=%s at chunk %s",
+            entity.id, entity_type.name, controller.name, entity.chunk,
+        )
+        return entity
+
     def death(self, entity_id: str, *, game_time: int = 0) -> Entity | None:
         """实体在虚拟世界死亡/消亡：移除并发布 entity_died 事件。
 

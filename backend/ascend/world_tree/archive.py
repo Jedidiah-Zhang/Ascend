@@ -411,6 +411,21 @@ class EventArchive:
             ).fetchone()
             return row[0] if row else 0
 
+    def max_timestamp(self) -> int | None:
+        """归档中最新事件的时间戳。
+
+        供存档系统做读档时钟对齐：恢复时钟须 >= 该值，
+        否则世界时间会倒流（事件实时落盘，可能比 state 更新）。
+
+        Returns:
+            最大时间戳，归档为空时返回 None。
+        """
+        with self._lock:
+            row = self._db.execute(
+                "SELECT MAX(timestamp) FROM events"
+            ).fetchone()
+            return row[0] if row and row[0] is not None else None
+
     # ── 反序列化 ──────────────────────────────────────
 
     @staticmethod

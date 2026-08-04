@@ -185,6 +185,43 @@ class PlayerService:
         """
         return self.teleport(*self.birth_position)
 
+    def restore(self, entity_id: str, x: float, y: float) -> Entity:
+        """读档恢复玩家实体（静默，不发布 entity_born / 移动事件）。
+
+        实体表全量恢复（Issue #25）后优先复用 manager 中已恢复的实体；
+        当前阶段实体表未持久化，按存档身份静默重建该实体。
+
+        Args:
+            entity_id: 存档中的玩家实体 ID。
+            x, y: 存档时的权威位置（全局 tile 坐标）。
+
+        Returns:
+            恢复的玩家实体。
+        """
+        clamped = self._clamp_to_bounds(float(x), float(y))
+        cx, cy, tx, ty = split_coords(clamped[0], clamped[1])
+        entity = self._manager.get(entity_id)
+        if entity is None:
+            entity = self._manager.restore(
+                entity_id,
+                EntityType.CREATURE, cx, cy, tx, ty,
+                controller=Controller.PLAYER,
+                data={"fx": clamped[0], "fy": clamped[1]},
+                born_at=self._clock.time,
+            )
+        else:
+            # 实体表已恢复（#25）：仅校准精确位置与整数索引
+            entity.set_data("fx", clamped[0])
+            entity.set_data("fy", clamped[1])
+            if (entity.chunk_x, entity.chunk_y, entity.tile_x, entity.tile_y) \
+                    != (cx, cy, tx, ty):
+                self._manager.move(entity.id, cx, cy, tx, ty)
+        self._entity = entity
+        logger.info(
+            "玩家实体已恢复: %s at (%.1f, %.1f)", entity.id, clamped[0], clamped[1],
+        )
+        return entity
+
     # ── 内部 ──────────────────────────────────────────────
 
     def _apply_position(self, x: float, y: float) -> tuple[float, float]:

@@ -220,6 +220,29 @@ class ChunkStore:
             if count:
                 logger.info("已 flush %d 个 chunk", count)
 
+    def flush_dirty(self) -> int:
+        """仅将 dirty 标记的 chunk 写回 SQLite（周期实时保存用）。
+
+        与 flush() 的区别：只写玩家修改过的 chunk，不触碰 clean 缓存，
+        满足实时存档的低开销周期落盘（脏数据最多滞后一个周期）。
+
+        Returns:
+            实际写入的 chunk 数。
+        """
+        with self._lock:
+            count = 0
+            for key in list(self._dirty):
+                chunk = self._cache.get(key)
+                if chunk is not None and chunk.tile_grid is not None:
+                    self._save_tiles(*key, chunk.tile_grid)
+                    count += 1
+                self._dirty.discard(key)
+            if count:
+                self._db.commit()
+            if count:
+                logger.info("已 flush %d 个 dirty chunk", count)
+            return count
+
     def close(self) -> None:
         """关闭 ChunkStore，先 flush 再关闭数据库。"""
         self.flush()
