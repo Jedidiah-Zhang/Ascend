@@ -60,6 +60,10 @@ def main() -> None:
             if client_count > 0:
                 had_client = True
                 empty_since = None
+            elif getattr(engine, "_reloading", False):
+                # 读档重建期间 server 暂不可用（可能持续数十秒）：
+                # 抑制自动停止，等待新 server 就绪
+                empty_since = None
             elif had_client and empty_since is None:
                 empty_since = _real_time.monotonic()
             elif had_client and empty_since is not None:

@@ -15,13 +15,20 @@ const MAX_MESSAGE_SIZE: int = 16 * 1024 * 1024  # 16 MiB
 
 const VENV_PYTHON_REL: String = ".venv/bin/python"
 const BACKEND_SCRIPT_REL: String = "backend/run_server.py"
-const BACKEND_STARTUP_TIMEOUT: float = 10.0
+## 后端启动超时：大陆生成（侵蚀+水文）耗时 5-30s+，须覆盖整个启动窗口
+const BACKEND_STARTUP_TIMEOUT: float = 60.0
 
 # ═══════════════════════════════════════════════════════════
 # World — 世界
 # ═══════════════════════════════════════════════════════════
 
 const TILE_MAP_SIZE: int = 200  # 每个 chunk 的 tile 数
+
+# 游戏时间常量（与后端 ascend/config.py 同步）
+const TICK_RATE: int = 24           # 1 真实秒 = 24 tick
+const GAME_HOUR: int = 7200         # 1 游戏小时 = 7200 tick
+const GAME_DAY: int = 172800        # 1 游戏天 = 172800 tick
+const GAME_YEAR: int = 62208000     # 1 游戏年 = 360 游戏天
 
 # ═══════════════════════════════════════════════════════════
 # 3D — 正交等轴视角 3D 渲染（相机方向 (1,1,1)，见视觉风格设计文档）

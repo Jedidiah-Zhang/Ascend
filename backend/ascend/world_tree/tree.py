@@ -20,6 +20,8 @@ from .event import Event, LocationFilter, SUB_CELL_SIZE, SUB_CELLS, spatial_key,
 from .graph import EventGraph
 from .registry import SchemaRegistry
 
+logger = get_logger(__name__)
+
 
 class WorldTree:
     """事件总线。

@@ -107,6 +107,7 @@ class GameEngine:
         self._last_state_save: float = 0.0    # 上次 state 落盘时刻（monotonic）
         self._last_chunk_flush: float = 0.0   # 上次 dirty chunk flush 时刻
         self._world_start_monotonic: float = 0.0
+        self._reloading: bool = False         # 读档重建中（run_server 据此抑制自动停止）
         self._running: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -199,9 +200,11 @@ class GameEngine:
             self.calendar.shutdown()
         self.calendar = GameCalendar(clock=self.clock)
 
-        # 1. 随机 seed（仅无存档模式）
+        # 1. 随机 seed（seed=0 时自动随机；读档时回写 manifest 保持一致性）
         if self.seed == 0:
             self.seed = random.randint(1, 2**31 - 1)
+            if self._manifest is not None:
+                self._manifest.seed = self.seed
         logger.info("游戏引擎启动: seed=%d world=%s", self.seed, self.world_id)
 
         # 2. 世界生成器 + 主动生成大陆宏观场（侵蚀+水文，耗时约 30s）
@@ -637,6 +640,7 @@ class GameEngine:
             snapshot: 快照文件路径（回滚）；None 时加载活目录。
         """
         logger.info("读档重建: world=%s snapshot=%s", world_id, snapshot)
+        self._reloading = True
         self._running.clear()
         self._cleanup()
         try:
@@ -651,6 +655,8 @@ class GameEngine:
         except Exception:
             logger.exception("读档重建失败")
             raise
+        finally:
+            self._reloading = False
 
     # ── 内部 ──────────────────────────────────────────
 
