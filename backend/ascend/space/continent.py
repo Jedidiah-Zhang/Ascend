@@ -20,7 +20,8 @@
 """
 
 from array import array
-import pickle
+import io
+import struct
 import zlib
 from dataclasses import dataclass, field
 from typing import Union
@@ -45,9 +46,132 @@ from ascend.log import get_logger
 
 logger = get_logger(__name__)
 
-# 大陆缓存格式版本：生成算法变更（侵蚀/水文/气候）时递增，
-# 旧缓存自动失效重新生成（同一 seed 的结果必须完全一致才能缓存）
-CONTINENT_CACHE_VERSION: int = 1
+# 大陆缓存格式版本：生成算法变更（侵蚀/水文/气候）或序列化格式
+# 变更（如 v1 pickle → v2 显式二进制）时递增，旧缓存自动失效重新生成
+# （同一 seed 的结果必须完全一致才能缓存）
+CONTINENT_CACHE_VERSION: int = 2
+
+# ── 二进制序列化（显式 schema，非 pickle） ────────────────
+# 缓存随档分发（存档可分享）：pickle 反序列化可执行任意代码，
+# 恶意分享存档 = 加载即 RCE；本格式只解析 struct/array 字节，
+# 无代码执行面，截断/篡改数据一律拒绝（返回 None 重新生成）。
+# 布局（小端）:
+#   magic "ASCNT" + version u8
+#   seed i64, grid_width i32, grid_height i32, cell_size f64
+#   land_mask      u32 n + n×u8        （布尔掩码按 0/1 字节）
+#   elevation      u32 n + n×f64
+#   river_width    u32 n + n×f64
+#   hydrology      u8 present
+#     lake_basins  u32 count; each: u32 cells_n + cells_n×i32 + f64×2
+#     flow_acc     u32 n + n×f64
+#     directions   u32 n + n×i8
+#     filled_dem   u32 n + n×f64
+#     river_network u8 present
+#       width i32, height i32
+#       rivers u32 count; each:
+#         u32 pts_n + pts_n×(f64 x, f64 y, f64 flow, i32 strahler)
+#         + i32 source_idx + i32 outlet_idx + u32 pn + pn×i32
+#       node_grid u32 count; each: i32 key, i32 x, i32 y
+#   subdiv_ranges  u32 count; each: i32 zone, f64 p10, f64 p90
+#   chunk_climate  u32 count; each: i32 cx, i32 cy, f64×3, i32 zone
+# 网格字段（land_mask/elevation/river_width/flow_acc/directions/
+# filled_dem）长度须 == grid_width × grid_height（防截断/篡改）。
+_MAGIC: bytes = b"ASCNT"
+
+
+def _w_u8(buf: io.BytesIO, v: int) -> None:
+    buf.write(struct.pack("<B", v))
+
+
+def _w_i32(buf: io.BytesIO, v: int) -> None:
+    buf.write(struct.pack("<i", v))
+
+
+def _w_i64(buf: io.BytesIO, v: int) -> None:
+    buf.write(struct.pack("<q", v))
+
+
+def _w_f64(buf: io.BytesIO, v: float) -> None:
+    buf.write(struct.pack("<d", v))
+
+
+def _w_i32_array(buf: io.BytesIO, values) -> None:
+    _w_i32(buf, len(values))
+    if values:
+        buf.write(struct.pack(f"<{len(values)}i", *values))
+
+
+def _w_i8_array(buf: io.BytesIO, values) -> None:
+    _w_i32(buf, len(values))
+    if values:
+        buf.write(struct.pack(f"<{len(values)}b", *values))
+
+
+def _w_f64_array(buf: io.BytesIO, values) -> None:
+    _w_i32(buf, len(values))
+    if values:
+        buf.write(array("d", values).tobytes())
+
+
+def _w_land_mask(buf: io.BytesIO, values) -> None:
+    """布尔掩码按 0/1 字节数组写入。"""
+    _w_i32(buf, len(values))
+    if values:
+        buf.write(bytes(1 if v else 0 for v in values))
+
+
+class _Reader:
+    """带边界检查的顺序读取器（截断/负长度抛 ValueError）。"""
+
+    __slots__ = ("_buf", "_pos")
+
+    def __init__(self, raw: bytes) -> None:
+        self._buf = raw
+        self._pos = 0
+
+    def _take(self, n: int) -> bytes:
+        end = self._pos + n
+        if end > len(self._buf):
+            raise ValueError("数据截断")
+        data = self._buf[self._pos:end]
+        self._pos = end
+        return data
+
+    def u8(self) -> int:
+        return struct.unpack("<B", self._take(1))[0]
+
+    def i32(self) -> int:
+        return struct.unpack("<i", self._take(4))[0]
+
+    def i64(self) -> int:
+        return struct.unpack("<q", self._take(8))[0]
+
+    def f64(self) -> float:
+        return struct.unpack("<d", self._take(8))[0]
+
+    def i32_array(self) -> list[int]:
+        n = self.i32()
+        if n < 0:
+            raise ValueError("非法长度")
+        if n == 0:
+            return []
+        return list(struct.unpack(f"<{n}i", self._take(4 * n)))
+
+    def i8_array(self) -> list[int]:
+        n = self.i32()
+        if n < 0:
+            raise ValueError("非法长度")
+        if n == 0:
+            return []
+        return list(struct.unpack(f"<{n}b", self._take(n)))
+
+    def f64_array(self) -> "array":
+        n = self.i32()
+        if n < 0:
+            raise ValueError("非法长度")
+        if n == 0:
+            return array("d")
+        return array("d", self._take(8 * n))
 
 
 def serialize_continent(data: "ContinentData") -> bytes:
@@ -56,47 +180,183 @@ def serialize_continent(data: "ContinentData") -> bytes:
     大陆宏观场是 seed 的确定性函数，生成耗时 5-30s（侵蚀+水文模拟）；
     落盘缓存后读档直接反序列化恢复，秒级完成。
 
-    注：pickle 反序列化仅用于本地游戏缓存（非网络数据）。
+    显式二进制 schema（见模块注释）：无代码执行面，随档分发安全。
     """
-    blob = pickle.dumps({
-        "format": "ascend-continent",
-        "version": CONTINENT_CACHE_VERSION,
-        "seed": data.seed,
-        "width": data.grid_width,
-        "height": data.grid_height,
-        "data": data,
-    }, protocol=pickle.HIGHEST_PROTOCOL)
-    return zlib.compress(blob, 9)
+    buf = io.BytesIO()
+    buf.write(_MAGIC)
+    _w_u8(buf, CONTINENT_CACHE_VERSION)
+    _w_i64(buf, int(data.seed))
+    _w_i32(buf, data.grid_width)
+    _w_i32(buf, data.grid_height)
+    _w_f64(buf, float(data.cell_size))
+    _w_land_mask(buf, data.land_mask)
+    _w_f64_array(buf, data.elevation_field)
+    _w_f64_array(buf, data.river_width)
+    h = data.hydrology
+    _w_u8(buf, 1 if h is not None else 0)
+    if h is not None:
+        _w_i32(buf, len(h.lake_basins))
+        for basin in h.lake_basins:
+            _w_i32_array(buf, basin.cells)
+            _w_f64(buf, float(basin.surface_elev))
+            _w_f64(buf, float(basin.area_km2))
+        _w_f64_array(buf, h.flow_acc)
+        _w_i8_array(buf, h.directions)
+        _w_f64_array(buf, h.filled_dem)
+        net = h.river_network
+        _w_u8(buf, 1 if net is not None else 0)
+        if net is not None:
+            _w_i32(buf, net.width)
+            _w_i32(buf, net.height)
+            _w_i32(buf, len(net.rivers))
+            for r in net.rivers:
+                _w_i32(buf, len(r.points))
+                for p in r.points:
+                    _w_f64(buf, float(p.x))
+                    _w_f64(buf, float(p.y))
+                    _w_f64(buf, float(p.flow))
+                    _w_i32(buf, int(p.strahler))
+                _w_i32(buf, r.source_idx)
+                _w_i32(buf, r.outlet_idx)
+                _w_i32_array(buf, r.parent_indices)
+            _w_i32(buf, len(net.node_grid))
+            for key, (nx, ny) in net.node_grid.items():
+                _w_i32(buf, int(key))
+                _w_i32(buf, int(nx))
+                _w_i32(buf, int(ny))
+    _w_i32(buf, len(data.subdiv_ranges))
+    for zone, (p10, p90) in data.subdiv_ranges.items():
+        _w_i32(buf, int(zone))
+        _w_f64(buf, float(p10))
+        _w_f64(buf, float(p90))
+    _w_i32(buf, len(data._chunk_climate))
+    for (cx, cy), (temp, rain, sea_temp, zone) in data._chunk_climate.items():
+        _w_i32(buf, int(cx))
+        _w_i32(buf, int(cy))
+        _w_f64(buf, float(temp))
+        _w_f64(buf, float(rain))
+        _w_f64(buf, float(sea_temp))
+        _w_i32(buf, int(zone))
+    return zlib.compress(buf.getvalue(), 9)
 
 
 def deserialize_continent(raw: bytes) -> "ContinentData | None":
     """压缩字节 → ContinentData。
 
     Returns:
-        ContinentData；格式/版本不符或数据损坏时返回 None
+        ContinentData；格式/版本不符、数据损坏或截断时返回 None
         （调用方据此重新生成并覆盖缓存）。
     """
+    # 惰性导入避免循环依赖（hydrology/streamlines 不依赖本模块，
+    # 但本模块在生成路径中才用到它们）
+    from .hydrology import HydrologyData, LakeBasin
+    from .streamlines import RiverNetwork, River, RiverPoint
     try:
         blob = zlib.decompress(raw)
-        header = pickle.loads(blob)
+        r = _Reader(blob)
+        if r._take(len(_MAGIC)) != _MAGIC:
+            return None
+        if r.u8() != CONTINENT_CACHE_VERSION:
+            return None
+        seed = r.i64()
+        width = r.i32()
+        height = r.i32()
+        cell_size = r.f64()
+        n = width * height
+        if n <= 0:
+            return None
+        land_mask = [v != 0 for v in r.i8_array()]
+        elevation = r.f64_array()
+        river_width = r.f64_array()
+        if len(land_mask) != n or len(elevation) != n or len(river_width) != n:
+            return None
+        hydrology = None
+        if r.u8():
+            basin_count = r.i32()
+            if basin_count < 0:
+                return None
+            lake_basins = []
+            for _ in range(basin_count):
+                lake_basins.append(LakeBasin(
+                    cells=r.i32_array(),
+                    surface_elev=r.f64(),
+                    area_km2=r.f64(),
+                ))
+            # 原数据结构：flow_acc/filled_dem 为 list，directions 为 list
+            # （与 Hydrologydata 定义一致）；elevation/river_width 为 array
+            flow_acc = r.f64_array().tolist()
+            directions = r.i8_array()
+            filled_dem = r.f64_array().tolist()
+            if (
+                len(flow_acc) != n
+                or len(directions) != n
+                or len(filled_dem) != n
+            ):
+                return None
+            river_network = None
+            if r.u8():
+                net_w = r.i32()
+                net_h = r.i32()
+                river_count = r.i32()
+                if river_count < 0:
+                    return None
+                rivers = []
+                for _ in range(river_count):
+                    pts_n = r.i32()
+                    if pts_n < 0:
+                        return None
+                    points = []
+                    for _ in range(pts_n):
+                        points.append(RiverPoint(
+                            x=r.f64(), y=r.f64(), flow=r.f64(),
+                            strahler=r.i32(),
+                        ))
+                    rivers.append(River(
+                        points=points,
+                        source_idx=r.i32(),
+                        outlet_idx=r.i32(),
+                        parent_indices=r.i32_array(),
+                    ))
+                grid_count = r.i32()
+                if grid_count < 0:
+                    return None
+                node_grid = {}
+                for _ in range(grid_count):
+                    key = r.i32()
+                    node_grid[key] = (r.i32(), r.i32())
+                river_network = RiverNetwork(
+                    width=net_w, height=net_h,
+                    rivers=rivers, node_grid=node_grid,
+                )
+            hydrology = HydrologyData(
+                lake_basins=lake_basins, flow_acc=flow_acc,
+                directions=directions, filled_dem=filled_dem,
+                river_network=river_network,
+            )
+        subdiv_count = r.i32()
+        if subdiv_count < 0:
+            return None
+        subdiv_ranges = {}
+        for _ in range(subdiv_count):
+            zone = r.i32()
+            subdiv_ranges[zone] = (r.f64(), r.f64())
+        climate_count = r.i32()
+        if climate_count < 0:
+            return None
+        chunk_climate = {}
+        for _ in range(climate_count):
+            cx = r.i32()
+            cy = r.i32()
+            chunk_climate[(cx, cy)] = (r.f64(), r.f64(), r.f64(), r.i32())
+        return ContinentData(
+            seed=int(seed),
+            grid_width=width, grid_height=height, cell_size=cell_size,
+            land_mask=land_mask, elevation_field=elevation,
+            river_width=river_width, hydrology=hydrology,
+            subdiv_ranges=subdiv_ranges, _chunk_climate=chunk_climate,
+        )
     except Exception:
         return None
-    if not isinstance(header, dict):
-        return None
-    if header.get("format") != "ascend-continent":
-        return None
-    if header.get("version") != CONTINENT_CACHE_VERSION:
-        return None
-    data = header.get("data")
-    if not isinstance(data, ContinentData):
-        return None
-    if (
-        data.grid_width != header.get("width")
-        or data.grid_height != header.get("height")
-        or data.seed != header.get("seed")
-    ):
-        return None
-    return data
 
 
 @dataclass

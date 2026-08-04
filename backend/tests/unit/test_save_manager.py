@@ -11,7 +11,7 @@ import pytest
 
 from ascend.save.manager import SaveManager, SNAPSHOT_SUFFIX
 from ascend.save.manifest import Manifest, SaveFormatError, MANIFEST_NAME
-from ascend.save.crypto import SaveCryptoError
+from ascend.save.crypto import SaveCryptoError, SaveKeys
 
 
 @pytest.fixture()
@@ -100,6 +100,101 @@ class TestCreateWorld:
         json.dump(data, open(path, "w", encoding="utf-8"))
         with pytest.raises(SaveFormatError):
             manager.get_manifest(world)
+
+
+class TestNameUniqueness:
+    """存档名称唯一性（创建/重命名拒绝重名，复制自动副本后缀）。"""
+
+    def test_create_duplicate_name_rejected(self, manager):
+        """重名创建拒绝。"""
+        manager.create_world("我的世界", seed=1)
+        with pytest.raises(ValueError, match="已存在"):
+            manager.create_world("我的世界", seed=2)
+
+    def test_create_whitespace_name_rejected(self, manager):
+        """纯空白名称拒绝（去空白后为空）。"""
+        with pytest.raises(ValueError, match="不能为空"):
+            manager.create_world("   ", seed=1)
+
+    def test_rename_to_existing_rejected(self, manager):
+        """重命名为已有名称拒绝。"""
+        a = manager.create_world("世界A", seed=1).world_id
+        manager.create_world("世界B", seed=2)
+        with pytest.raises(ValueError, match="已存在"):
+            manager.rename_world(a, "世界B")
+
+    def test_rename_keeps_own_name_allowed(self, manager):
+        """保持自身名称（未改名）允许。"""
+        a = manager.create_world("世界A", seed=1).world_id
+        manager.rename_world(a, "世界A")  # 不抛异常
+
+    def test_rename_to_free_name_allowed(self, manager):
+        """重命名为空闲名称成功。"""
+        a = manager.create_world("世界A", seed=1).world_id
+        manager.rename_world(a, "新名称")
+        assert manager.get_manifest(a).name == "新名称"
+
+    def test_export_gets_copy_suffix(self, manager):
+        """复制档名称自动追加"副本"后缀（原档仍占用原名称）。"""
+        a = manager.create_world("我的世界", seed=1).world_id
+        new_id = manager.export_world(a)
+        assert manager.get_manifest(new_id).name == "我的世界 副本"
+        assert manager.get_manifest(a).name == "我的世界"
+
+    def test_export_second_copy_increments_suffix(self, manager):
+        """多次复制时副本后缀递增编号。"""
+        a = manager.create_world("我的世界", seed=1).world_id
+        c1 = manager.export_world(a)
+        c2 = manager.export_world(a)
+        assert manager.get_manifest(c1).name == "我的世界 副本"
+        assert manager.get_manifest(c2).name == "我的世界 副本 2"
+        assert len(manager.list_worlds()) == 3
+
+
+class TestSeedZero:
+    """种子创建时定案（P0 回归：seed=0 密钥身份失配）。"""
+
+    def test_seed_zero_randomized_at_create(self, manager):
+        """seed=0（随机占位）在创建时随机化，manifest 出生即一致。"""
+        manifest = manager.create_world("随机种子", seed=0)
+        assert 1 <= manifest.seed <= 2**31 - 1
+        # 密钥混淆层与 manifest 身份一致：state 可正常读写
+        manager.write_state(manifest.world_id, {"clock": {"time": 5}})
+        assert manager.read_state(manifest.world_id)["clock"]["time"] == 5
+
+    def test_explicit_seed_preserved(self, manager):
+        """显式种子原样保留，state 可正常读写。"""
+        manifest = manager.create_world("固定种子", seed=12345)
+        assert manifest.seed == 12345
+        manager.write_state(manifest.world_id, {"clock": {"time": 1}})
+        assert manager.read_state(manifest.world_id)["clock"]["time"] == 1
+
+    def test_rekey_migrates_legacy_seed_zero(self, manager):
+        """旧版 seed=0 存档（创建时未随机化）：rekey 迁移后可用。"""
+        world_id = "legacy-world"
+        wdir = manager.world_dir(world_id)
+        os.makedirs(wdir)
+        os.makedirs(manager.snapshot_dir(world_id))
+        manifest = Manifest(name="旧档", seed=0, world_id=world_id)
+        manifest.secrets_blob = SaveKeys.generate().protect(world_id, 0)
+        manifest.write(manager.manifest_path(world_id))
+        # 旧行为复现：seed 变更但未重混淆 → state 加解密失配
+        stale = manager.get_manifest(world_id)
+        stale.seed = 999
+        stale.write(manager.manifest_path(world_id))
+        with pytest.raises(SaveCryptoError):
+            manager.write_state(world_id, {"clock": {"time": 5}})
+        # rekey：用旧 seed 解出、新 seed 重混淆
+        manager.rekey(world_id, old_seed=0, new_seed=999)
+        assert manager.get_manifest(world_id).seed == 999
+        manager.write_state(world_id, {"clock": {"time": 5}})
+        assert manager.read_state(world_id)["clock"]["time"] == 5
+
+    def test_rekey_wrong_old_seed_rejected(self, manager):
+        """旧 seed 不对时 rekey 拒绝（存档身份不符）。"""
+        world_id = manager.create_world("世界", seed=7).world_id
+        with pytest.raises(SaveCryptoError):
+            manager.rekey(world_id, old_seed=0, new_seed=999)
 
 
 class TestStateIO:

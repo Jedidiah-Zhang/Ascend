@@ -61,13 +61,52 @@ class TestSaveCreate:
             handlers["save_create"](_req("save_create", {"name": "  "}))
 
     def test_default_random_seed(self, manager, handlers):
-        """seed 缺省为 0（引擎随机）。"""
+        """seed 缺省为 0 → 创建时随机化并写入 manifest（P0 回归）。
+
+        旧行为：seed=0 保留到首次进入才随机化，导致 secrets_blob
+        身份与 manifest 失配、state 加解密失败。
+        """
         resp = handlers["save_create"](_req("save_create", {"name": "x"}))
-        assert manager.get_manifest(resp["payload"]["world_id"]).seed == 0
+        manifest = manager.get_manifest(resp["payload"]["world_id"])
+        assert 1 <= manifest.seed <= 2**31 - 1
+        manager.write_state(manifest.world_id, {"clock": {"time": 3}})
+        assert manager.read_state(manifest.world_id)["clock"]["time"] == 3
+
+    def test_duplicate_name_rejected(self, manager, handlers):
+        """重名创建经协议层拒绝（错误信息含名称）。"""
+        handlers["save_create"](_req("save_create", {"name": "重名档", "seed": 1}))
+        with pytest.raises(ValueError, match="重名档"):
+            handlers["save_create"](_req("save_create", {"name": "重名档", "seed": 2}))
+
+    def test_duplicate_rename_rejected(self, manager, handlers):
+        """重命名为已有名称经协议层拒绝。"""
+        a = manager.create_world("世界A", seed=1).world_id
+        manager.create_world("世界B", seed=2)
+        with pytest.raises(ValueError, match="世界B"):
+            handlers["save_rename"](_req("save_rename", {
+                "world_id": a, "name": "世界B",
+            }))
 
 
 class TestSaveSnapshot:
     """手动快照。"""
+
+    class _RecordingEngine:
+        """记录 snapshot_current 调用并真实落盘的最小引擎替身。
+
+        模拟真实引擎语义：非当前加载世界时直接打包活目录。
+        """
+
+        def __init__(self, manager, world_id: str | None = None) -> None:
+            self._manager = manager
+            self.world_id = world_id
+            self.calls: list[tuple] = []
+
+        def snapshot_current(self, **kwargs) -> str:
+            self.calls.append(kwargs)
+            return self._manager.create_snapshot(
+                kwargs["world_id"], suffix=kwargs["suffix"],
+            )
 
     def test_creates_snapshot(self, manager, handlers):
         """为世界创建 manual 快照并返回文件名。"""
@@ -79,6 +118,37 @@ class TestSaveSnapshot:
         """缺 world_id 拒绝。"""
         with pytest.raises(ValueError):
             handlers["save_snapshot"](_req("save_snapshot", {}))
+
+    def test_unknown_world_rejected(self, manager, handlers):
+        """目标存档不存在拒绝（不落盘）。"""
+        with pytest.raises(Exception):
+            handlers["save_snapshot"](_req("save_snapshot", {"world_id": "nope"}))
+
+    def test_routes_to_loaded_world_via_engine(self, manager):
+        """引擎加载目标世界：走 snapshot_current（flush+checkpoint 路径）。"""
+        world_id = manager.create_world("世界", seed=1).world_id
+        engine = self._RecordingEngine(manager, world_id=world_id)
+        handlers = make_save_handlers(manager, engine)
+        resp = handlers["save_snapshot"](_req("save_snapshot", {"world_id": world_id}))
+        assert engine.calls == [{"world_id": world_id, "suffix": "manual"}]
+        assert resp["payload"]["file"].endswith(".ascendsave")
+
+    def test_routes_idle_world_to_plain_snapshot(self, manager):
+        """目标非当前加载世界（服务模式）：直接打包，不误用当前世界。
+
+        回归：旧实现忽略 payload 的 world_id，engine 可用时总是
+        快照当前加载世界（服务模式下报"当前无存档位"）。
+        """
+        idle_id = manager.create_world("闲置档", seed=1).world_id
+        loaded_id = manager.create_world("当前档", seed=2).world_id
+        engine = self._RecordingEngine(manager, world_id=loaded_id)
+        handlers = make_save_handlers(manager, engine)
+        resp = handlers["save_snapshot"](_req("save_snapshot", {"world_id": idle_id}))
+        # 引擎路径收到目标 world_id（snapshot_current 内部处理非当前世界）
+        assert engine.calls == [{"world_id": idle_id, "suffix": "manual"}]
+        # 快照落在目标世界目录（而非当前世界）
+        assert len(manager.list_snapshots(idle_id)) == 1
+        assert len(manager.list_snapshots(loaded_id)) == 0
 
 
 class TestSaveLoad:

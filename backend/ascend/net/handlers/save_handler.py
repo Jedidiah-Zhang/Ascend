@@ -72,15 +72,20 @@ def make_save_handlers(save_manager, game_engine=None):
     def handle_save_snapshot(msg: dict) -> dict:
         """手动保存：为世界创建回退点快照。
 
-        引擎可用时走 snapshot_current（flush + WAL checkpoint + 打包），
-        保证快照内 chunk/事件数据完整；纯磁盘模式直接打包。
+        引擎可用时走 snapshot_current（目标即当前世界时 flush +
+        WAL checkpoint + 打包，保证快照内 chunk/事件数据完整；
+        目标为未加载世界/服务模式时其 DB 未打开，直接打包一致快照）；
+        纯磁盘模式直接打包。
         """
         payload = _payload(msg)
         world_id = str(payload.get("world_id", "")).strip()
         if not world_id:
             raise ValueError("缺少 world_id")
+        save_manager.get_manifest(world_id)  # 校验目标存在性
         if game_engine is not None:
-            filename = game_engine.snapshot_current(suffix="manual")
+            filename = game_engine.snapshot_current(
+                world_id=world_id, suffix="manual",
+            )
         else:
             filename = save_manager.create_snapshot(world_id, suffix="manual")
         return {

@@ -222,6 +222,16 @@ class TestVerify:
         finally:
             store.close()
 
+    def test_checkpoint_completes_clean_db(self, db_path):
+        """WAL checkpoint 在正常数据库上完整执行（busy=0 静默通过）。"""
+        store = ChunkStore(db_path)
+        try:
+            store.checkpoint()
+            # 幂等：重复调用不报错
+            store.checkpoint()
+        finally:
+            store.close()
+
     def test_verify_rejects_corrupted_db(self, db_path):
         """结构性损坏的数据库校验失败（拒绝加载）。"""
         import os

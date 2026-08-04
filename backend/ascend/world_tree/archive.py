@@ -8,6 +8,7 @@ import json
 import os
 import sqlite3
 import threading
+import time as _real_time
 
 from ascend.config import (
     SQLITE_JOURNAL_MODE,
@@ -469,8 +470,22 @@ class EventArchive:
 
     def checkpoint(self) -> None:
         """WAL 强制写回主库（快照打包前调用，保证文件副本完整）。"""
-        with self._lock:
-            self._db.execute("PRAGMA wal_checkpoint(FULL)")
+        for attempt in range(3):
+            with self._lock:
+                rows = self._db.execute(
+                    "PRAGMA wal_checkpoint(FULL)"
+                ).fetchall()
+            if not rows or rows[0][0] == 0:
+                return
+            # busy=1：其它连接（如 mmap 读）占用了 WAL 锁，稍后重试
+            logger.warning(
+                "WAL checkpoint 未完全执行 (attempt=%d, busy=%d): %s",
+                attempt + 1, rows[0][0], rows[0],
+            )
+            _real_time.sleep(0.01)
+        logger.error(
+            "WAL checkpoint 连续失败，快照可能缺失未写回数据: %s", rows[0],
+        )
 
     def verify(self) -> None:
         """校验数据库完整性（PRAGMA integrity_check，设计文档承诺）。

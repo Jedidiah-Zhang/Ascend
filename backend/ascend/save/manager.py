@@ -27,6 +27,7 @@ GameEngine 负责把运行时状态喂给 write_state，读档时从 read_state 
 import io
 import json
 import os
+import random
 import shutil
 import time as _real_time
 import uuid
@@ -121,30 +122,71 @@ class SaveManager:
     def create_world(self, name: str, seed: int, *, world_id: str | None = None) -> Manifest:
         """创建新的存档位（活目录 + 密钥 + 初版 manifest）。
 
+        种子在创建时定案：seed=0（前端"随机"占位）在此随机化并写入
+        manifest——存档身份（world_id+seed）出生即一致，密钥混淆层
+        （secrets_blob 绑定 world_id+seed）不会与 manifest 失配
+        （回归：旧版在首次进入时随机化，导致 blob 身份失配、
+        state 加解密全部失败）。
+
         Args:
-            name: 存档名称（存档选择页展示）。
-            seed: 世界种子。
+            name: 存档名称（存档选择页展示；全集合唯一，重名拒绝）。
+            seed: 世界种子；0 = 创建时随机。
             world_id: 可选，指定 ID（测试用）；缺省自动生成。
 
         Returns:
             新建的 Manifest。
+
+        Raises:
+            ValueError: 名称为空或与现有存档重名。
         """
+        name = str(name).strip()
         if not name:
             raise ValueError("存档名称不能为空")
+        self._ensure_name_unique(name)
+        seed = int(seed)
+        if seed == 0:
+            seed = random.randint(1, 2**31 - 1)
         world_id = world_id or uuid.uuid4().hex
         wdir = self.world_dir(world_id)
         os.makedirs(wdir, exist_ok=False)
         os.makedirs(self.snapshot_dir(world_id), exist_ok=True)
         now = _real_time.time()
         manifest = Manifest(
-            name=name, seed=int(seed), world_id=world_id,
+            name=name, seed=seed, world_id=world_id,
             created_at=now, last_played_at=now,
         )
         # 密钥不落盘明文：加密后藏入 manifest.secrets_blob 随档分发
-        manifest.secrets_blob = SaveKeys.generate().protect(world_id, int(seed))
+        manifest.secrets_blob = SaveKeys.generate().protect(world_id, seed)
         manifest.write(self.manifest_path(world_id))
         logger.info("创建存档位: %s (%s, seed=%d)", world_id, name, seed)
         return manifest
+
+    def rekey(self, world_id: str, *, old_seed: int, new_seed: int) -> None:
+        """存档身份（seed）变更后重混淆密钥并回写 manifest。
+
+        密钥混淆层绑定 (world_id, seed)；seed 变更后须用旧 seed 解出
+        密钥、新 seed 重新混淆，否则后续 state 加解密解不出密钥。
+        供旧版 seed=0 存档首次进入随机化时迁移使用。
+
+        Args:
+            world_id: 世界 ID。
+            old_seed: 现 manifest.secrets_blob 派生所用的旧 seed。
+            new_seed: 新的世界种子。
+
+        Raises:
+            SaveFormatError: 存档不存在。
+            SaveCryptoError: 旧 seed 解不出密钥（存档身份不符）。
+        """
+        manifest = self.get_manifest(world_id)
+        keys = SaveKeys.from_protected(
+            manifest.secrets_blob, world_id, old_seed,
+        )
+        manifest.secrets_blob = keys.protect(world_id, new_seed)
+        manifest.seed = new_seed
+        manifest.write(self.manifest_path(world_id))
+        logger.info(
+            "存档重混淆: %s seed %d → %d", world_id, old_seed, new_seed,
+        )
 
     def get_manifest(self, world_id: str) -> Manifest:
         """读取世界的 manifest。
@@ -195,16 +237,19 @@ class SaveManager:
 
         Args:
             world_id: 世界 ID。
-            name: 新名称。
+            name: 新名称（全集合唯一，重名拒绝；保持自身名称允许）。
 
         Returns:
             更新后的 Manifest。
 
         Raises:
             SaveFormatError: 世界不存在。
+            ValueError: 名称为空或与其它存档重名。
         """
+        name = str(name).strip()
         if not name:
             raise ValueError("存档名称不能为空")
+        self._ensure_name_unique(name, exclude_world_id=world_id)
         manifest = self.get_manifest(world_id)
         manifest.name = name
         manifest.write(self.manifest_path(world_id))
@@ -254,6 +299,10 @@ class SaveManager:
         # 密钥混淆层绑定存档身份：须用原 ID 解出、新 ID 重新混淆
         new_manifest = Manifest.read(self.manifest_path(new_id))
         new_manifest.world_id = new_id
+        # 名称唯一：副本追加"副本"后缀（原档仍占用原名称）
+        new_manifest.name = self._unique_copy_name(
+            new_manifest.name, exclude_world_id=new_id,
+        )
         if new_manifest.secrets_blob:
             keys = SaveKeys.from_protected(
                 new_manifest.secrets_blob, world_id, new_manifest.seed,
@@ -261,7 +310,7 @@ class SaveManager:
             new_manifest.secrets_blob = keys.protect(new_id, new_manifest.seed)
         new_manifest.created_at = _real_time.time()
         new_manifest.write(self.manifest_path(new_id))
-        logger.info("复制存档: %s → %s", world_id, new_id)
+        logger.info("复制存档: %s → %s (%s)", world_id, new_id, new_manifest.name)
         return new_id
 
     # ── 实时状态 ──────────────────────────────────────────
@@ -521,6 +570,55 @@ class SaveManager:
             zf.close()
 
     # ── 内部 ──────────────────────────────────────────────
+
+    def _existing_names(self, exclude_world_id: str | None = None) -> set[str]:
+        """收集全集合存档名称（损坏 manifest 跳过；可排除指定世界）。"""
+        names: set[str] = set()
+        if not os.path.isdir(self._root):
+            return names
+        for entry in os.listdir(self._root):
+            if entry == exclude_world_id:
+                continue
+            mp = os.path.join(self._root, entry, MANIFEST_NAME)
+            if not os.path.isfile(mp):
+                continue
+            try:
+                names.add(Manifest.read(mp).name)
+            except SaveFormatError:
+                logger.warning("跳过损坏存档（名称收集）: %s", entry)
+        return names
+
+    def _ensure_name_unique(
+        self, name: str, *, exclude_world_id: str | None = None,
+    ) -> None:
+        """校验存档名称唯一（精确匹配）。
+
+        Raises:
+            ValueError: 与现有存档重名。
+        """
+        if name in self._existing_names(exclude_world_id=exclude_world_id):
+            raise ValueError(f"存档名称已存在：{name}")
+
+    def _unique_copy_name(self, name: str, *, exclude_world_id: str) -> str:
+        """为复制档生成唯一名称：被占用时追加"副本"后缀并递增编号。
+
+        Args:
+            name: 原档名称。
+            exclude_world_id: 排除的新档 ID（其 manifest 已写入原名称）。
+
+        Returns:
+            唯一名称（"X" → "X 副本" → "X 副本 2" → ...）。
+        """
+        existing = self._existing_names(exclude_world_id=exclude_world_id)
+        if name not in existing:
+            return name
+        base = f"{name} 副本"
+        candidate = base
+        i = 2
+        while candidate in existing:
+            candidate = f"{base} {i}"
+            i += 1
+        return candidate
 
     def _load_keys(self, world_id: str) -> SaveKeys:
         """从 manifest.secrets_blob 解出世界的密钥对。

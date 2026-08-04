@@ -75,6 +75,23 @@ class TestContinentSerialize:
         assert deserialize_continent(b"\x00garbage\xff\xfe") is None
         assert deserialize_continent(b"") is None
 
+    def test_truncated_binary_rejected(self):
+        """截断的二进制缓存拒绝加载（防损坏/防恶意构造）。"""
+        original = _small_continent(seed=42)
+        raw = serialize_continent(original)
+        assert deserialize_continent(raw[: len(raw) // 2]) is None
+
+    def test_legacy_pickle_format_rejected(self):
+        """旧版 pickle 缓存（可执行任意代码）拒绝加载（安全回归）。"""
+        import pickle
+        import zlib
+        payload = pickle.dumps({
+            "format": "ascend-continent",
+            "version": CONTINENT_CACHE_VERSION,
+            "data": _small_continent(seed=1),
+        })
+        assert deserialize_continent(zlib.compress(payload)) is None
+
     def test_version_mismatch_returns_none(self):
         """版本不符返回 None（算法变更后旧缓存失效）。"""
         original = _small_continent()
@@ -88,11 +105,11 @@ class TestContinentSerialize:
         assert deserialize_continent(stale) is None
 
     def test_wrong_seed_rejected(self):
-        """头部 seed 与数据不符拒绝加载。"""
+        """头部 seed 与数据不符拒绝加载（防篡改/错档缓存）。"""
         original = _small_continent(seed=1)
         restored = deserialize_continent(serialize_continent(original))
-        # 反序列化函数本身信任头部；防篡改场景由外层校验——此处验证
-        # 正常路径 seed 保留
+        # 反序列化函数本身信任头部；seed 与生成器不符的场景由外层
+        # ensure_continent 校验（见 test_cache_seed_mismatch_regenerates）
         assert restored.seed == 1
 
 
@@ -179,3 +196,35 @@ class TestWorldGeneratorCache:
         wg = WorldGenerator(seed=66)
         assert wg.ensure_continent() is fake
         assert not os.path.exists(self._cache_path(tmp_path, 66))
+
+    def test_cache_seed_mismatch_regenerates(self, tmp_path, monkeypatch):
+        """缓存 seed 与生成器不符（错档/旧随机化窗口残留）：重新生成并覆盖。
+
+        回归：旧实现只校验缓存自身一致性，不校验与 self._seed 的匹配——
+        崩溃窗口（manifest seed 未落盘）或拷贝错档会加载错误大陆，
+        世界静默不一致。
+        """
+        other = _small_continent(seed=111)  # 其它种子的缓存
+        fake = _small_continent(seed=222)  # 期望种子的生成结果（预计算，避免 mock 自递归）
+        cache_path = self._cache_path(tmp_path, 222)
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "wb") as f:
+            f.write(serialize_continent(other))
+
+        calls = {"n": 0}
+
+        def _fake_generate(self, *a, **k):
+            calls["n"] += 1
+            return fake
+
+        monkeypatch.setattr(
+            "ascend.space.continent.ContinentGenerator.generate",
+            _fake_generate,
+        )
+        wg = WorldGenerator(seed=222, continent_cache_path=cache_path)
+        cont = wg.ensure_continent()
+        assert calls["n"] == 1, "seed 不符应触发重新生成"
+        assert cont.seed == 222
+        # 覆盖后的缓存恢复为正确种子
+        with open(cache_path, "rb") as f:
+            assert deserialize_continent(f.read()).seed == 222

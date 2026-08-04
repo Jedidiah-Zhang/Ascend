@@ -262,11 +262,20 @@ class GameEngine:
             self.calendar.shutdown()
         self.calendar = GameCalendar(clock=self.clock)
 
-        # 1. 随机 seed（seed=0 时自动随机；读档时回写 manifest 保持一致性）
+        # 1. 种子（seed=0 仅在无存档模式启动时随机；存档世界在
+        # create_world 时已定案——见 SaveManager.create_world）。
+        # 旧版存档（创建于 seed 随机化前）的 manifest.seed 仍为 0：
+        # 首次进入随机化并重混淆密钥，否则 state 加解密失配。
         if self.seed == 0:
-            self.seed = random.randint(1, 2**31 - 1)
             if self._manifest is not None:
-                self._manifest.seed = self.seed
+                new_seed = random.randint(1, 2**31 - 1)
+                self.save_manager.rekey(
+                    self.world_id, old_seed=0, new_seed=new_seed,
+                )
+                self._manifest.seed = new_seed
+                self.seed = new_seed
+            else:
+                self.seed = random.randint(1, 2**31 - 1)
         logger.info("游戏引擎启动: seed=%d world=%s", self.seed, self.world_id)
 
         # 2. 世界生成器 + 主动生成大陆宏观场（侵蚀+水文，首次约 5-30s，
@@ -722,7 +731,7 @@ class GameEngine:
             except Exception:
                 logger.exception("dirty chunk 定时保存失败")
 
-    def snapshot_current(self, suffix: str = "manual") -> str:
+    def snapshot_current(self, world_id: str | None = None, suffix: str = "manual") -> str:
         """创建一致性快照：flush 全部缓存 → 两库 WAL checkpoint → 打包。
 
         必须经此入口而非直接调 save_manager.create_snapshot——
@@ -730,20 +739,32 @@ class GameEngine:
         （实测快照回滚后 chunk/事件表完全缺失）。
 
         Args:
+            world_id: 目标存档位；None = 当前已加载世界。
+                目标非当前加载世界（含服务模式）时其 DB 未打开，
+                直接打包活目录即为一致快照；当前世界才需
+                flush + checkpoint（其 WAL 可能含未写回数据）。
             suffix: 快照来源标识（manual/auto）。
 
         Returns:
             快照文件名（不含目录）。
+
+        Raises:
+            ValueError: 当前无存档位。
+            SaveFormatError: 目标存档不存在。
         """
-        if not self.world_id or not self.save_manager:
+        if world_id is None:
+            world_id = self.world_id
+        if not world_id or not self.save_manager:
             raise ValueError("当前无存档位，无法创建快照")
-        # 注：显式 is not None —— ChunkStore 定义 __len__，空缓存时
-        # bool(store) 为 False，真值判断会静默跳过 flush/checkpoint
-        if self.chunk_store is not None:
-            self.chunk_store.flush()
-            self.chunk_store.checkpoint()
-        world_tree.checkpoint_archive()
-        return self.save_manager.create_snapshot(self.world_id, suffix=suffix)
+        if world_id == self.world_id:
+            # 当前加载的世界：DB 打开中，须先提交缓存并 checkpoint，
+            # 否则打包的 .db 缺 WAL 内数据（注：is not None——
+            # ChunkStore 定义 __len__，空缓存时 bool 为 False）
+            if self.chunk_store is not None:
+                self.chunk_store.flush()
+                self.chunk_store.checkpoint()
+            world_tree.checkpoint_archive()
+        return self.save_manager.create_snapshot(world_id, suffix=suffix)
 
     def _reload(self, world_id: str | None = None, snapshot: str | None = None) -> None:
         """读档重建：清理旧世界并按目标重建（网络层常驻，客户端不断线）。

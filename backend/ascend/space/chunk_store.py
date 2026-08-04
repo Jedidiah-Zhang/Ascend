@@ -17,6 +17,7 @@
 import os
 import sqlite3
 import threading
+import time as _real_time
 from collections import OrderedDict
 from collections.abc import Callable
 
@@ -249,8 +250,22 @@ class ChunkStore:
         WAL 模式下提交的数据可能仍留在 -wal 文件，直接拷贝 .db
         会丢失这些数据；checkpoint 后 .db 即为完整一致快照。
         """
-        with self._lock:
-            self._db.execute("PRAGMA wal_checkpoint(FULL)")
+        for attempt in range(3):
+            with self._lock:
+                rows = self._db.execute(
+                    "PRAGMA wal_checkpoint(FULL)"
+                ).fetchall()
+            if not rows or rows[0][0] == 0:
+                return
+            # busy=1：其它连接（如 mmap 读）占用了 WAL 锁，稍后重试
+            logger.warning(
+                "WAL checkpoint 未完全执行 (attempt=%d, busy=%d): %s",
+                attempt + 1, rows[0][0], rows[0],
+            )
+            _real_time.sleep(0.01)
+        logger.error(
+            "WAL checkpoint 连续失败，快照可能缺失未写回数据: %s", rows[0],
+        )
 
     def verify(self) -> None:
         """校验数据库完整性（PRAGMA integrity_check，设计文档承诺）。
