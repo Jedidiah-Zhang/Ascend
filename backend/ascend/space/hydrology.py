@@ -510,7 +510,7 @@ def erode(
     rainfall: list[float],
     w: int, h: int,
     *,
-    iterations: int = 20,
+    iterations: int = 10,
     erodibility: float = 0.01,
     tolerance: float = 0.05,
     min_iterations: int = 3,

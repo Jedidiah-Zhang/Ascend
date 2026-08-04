@@ -17,6 +17,7 @@
 
 import math
 
+from ascend.config import LAKE_DEEP_AREA_KM2, LAKE_DEEP_DEPTH_M, LAKE_WETLAND_DEPTH_MAX
 from .terrain import TerrainType
 from .tile_grid import TileGrid, TILE_MAP_SIZE
 
@@ -103,7 +104,7 @@ def _flatten_lake_surface(
         macro_elev_grid: 预计算宏观海拔网格（行优先，200×200）。
     """
     size = tile_grid.size
-    has_deep_zone = area_km2 > 1.0
+    has_deep_zone = area_km2 > LAKE_DEEP_AREA_KM2
 
     for ty in range(size):
         for tx in range(size):
@@ -121,7 +122,7 @@ def _flatten_lake_surface(
             # 水面以下 → 水体
             depth = surface_elev - macro_elev
 
-            if depth > 3.0 and has_deep_zone:
+            if depth > LAKE_DEEP_DEPTH_M and has_deep_zone:
                 tile_grid.set(tx, ty, TerrainType.DEEP_WATER)
             else:
                 current = tile_grid.get(tx, ty)
@@ -161,7 +162,7 @@ def _generate_wetland_fringe(
 
             # 湿地 = 湖面以上 0-2m
             wetland_depth = macro_elev - surface_elev
-            if not (0.0 < wetland_depth <= 2.0):
+            if not (0.0 < wetland_depth <= LAKE_WETLAND_DEPTH_MAX):
                 continue
 
             # 只有非水体、非山地 tile 可以变为湿地
@@ -171,7 +172,7 @@ def _generate_wetland_fringe(
                 continue
 
             # 越接近湖面，越大概率是湿地（概率 = 1 - wetland_depth/2）
-            prob_threshold = 1.0 - wetland_depth / 2.0
+            prob_threshold = 1.0 - wetland_depth / LAKE_WETLAND_DEPTH_MAX
             wx = world_x0 + tx
             wy = world_y0 + ty
             hash_val = ((wx * 2654435761 + wy * 1597334677) & 0xFFFFFFFF) / 0xFFFFFFFF

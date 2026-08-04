@@ -27,6 +27,7 @@ logger = get_logger(__name__)
 
 from ascend.config import (
     NOISE_FREQ_DERIVED as _FREQ_DERIVED,
+    MOISTURE_TILE_FREQUENCY as _MOISTURE_FREQ,
 )
 
 
@@ -124,8 +125,8 @@ class WorldGenerator:
                 _, _, _, zone = cont.get_chunk_climate(cx, cy)
                 if zone != int(ClimateZone.DESERT):
                     continue
-                moisture = self._sample_derived_noise(self._noise_moisture, cx, cy, 6)
-                moisture_vals.append(moisture)
+        moisture = self._sample_moisture_at_chunk(cx, cy)
+        moisture_vals.append(moisture)
         if len(moisture_vals) < 10:
             return
         moisture_vals.sort()
@@ -183,6 +184,27 @@ class WorldGenerator:
         p = self._phase[phase_idx]
         return noise.octave(cx + p, cy + p, octaves=4, frequency=_FREQ_DERIVED)
 
+    def _sample_moisture_at_chunk(self, cx: int, cy: int) -> float:
+        """采样 chunk 中心 moisture（世界坐标场，与 tile 层同一噪声场）。
+
+        chunk 级群系标签与 tile 级隶属度必须来自同一噪声场：tile 层
+        （tile_gen）在世界 tile 坐标采样 MOISTURE_TILE_FREQUENCY 场，
+        此处取 chunk 中心世界坐标采样同场，保证 chunk 标签与中心 tile
+        的群系细分一致。不带相位偏移（相位仅用于 chunk 级独用通道的
+        种子去相关；moisture 跨两级使用，必须去掉）。
+
+        Args:
+            cx, cy: 分块坐标。
+
+        Returns:
+            噪声值 [-1, 1]。
+        """
+        return self._noise_moisture.octave(
+            cx * TILE_MAP_SIZE + TILE_MAP_SIZE // 2,
+            cy * TILE_MAP_SIZE + TILE_MAP_SIZE // 2,
+            octaves=4, frequency=_MOISTURE_FREQ,
+        )
+
     # ── 单分块同步生成 ───────────────────────────────────
 
     def generate_chunk(self, cx: int, cy: int) -> ChunkData:
@@ -210,7 +232,7 @@ class WorldGenerator:
         climate = _CZ(zone)
 
         # 3. 群系 — 从连续属性 + moisture 噪声映射（档内细分，边界自然渐变）
-        moisture = self._sample_derived_noise(self._noise_moisture, cx, cy, 6)
+        moisture = self._sample_moisture_at_chunk(cx, cy)
         biome = biome_from_attrs(
             temperature, rainfall, altitude, sea_temp,
             moisture_noise=moisture, subdiv_ranges=self._continent.subdiv_ranges,
@@ -298,7 +320,7 @@ class WorldGenerator:
         temperature, rainfall, sea_temp, _zone = (
             self._continent.get_chunk_climate(cx, cy)
         )
-        moisture = self._sample_derived_noise(self._noise_moisture, cx, cy, 6)
+        moisture = self._sample_moisture_at_chunk(cx, cy)
         return biome_from_attrs(
             temperature, rainfall, altitude, sea_temp,
             moisture_noise=moisture,

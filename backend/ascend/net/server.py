@@ -6,8 +6,6 @@
 
 import socket
 import threading
-import time
-from collections.abc import Callable
 from ascend.log import get_logger
 from ascend.net.client_handler import ClientHandler
 from ascend.net.protocol import encode_message
@@ -42,8 +40,9 @@ class GameServer:
         self._accept_thread: threading.Thread | None = None
         self._clients: list["ClientHandler"] = []
         self._clients_lock: threading.Lock = threading.Lock()
-        self._receive_queue: list[dict] = []
+        self._receive_queue: list[tuple[int, dict]] = []
         self._receive_lock: threading.Lock = threading.Lock()
+        self._next_client_id: int = 0
 
     def __repr__(self) -> str:
         """返回服务器状态摘要。
@@ -119,15 +118,31 @@ class GameServer:
             for client in self._clients:
                 client.send(frame)
 
+    def send_to(self, client_id: int, message: dict) -> None:
+        """向指定客户端定向发送消息（请求-响应路由用）。
+
+        线程安全，可从游戏线程调用。
+
+        Args:
+            client_id: 目标客户端 ID（ClientHandler.client_id）。
+            message: 要发送的消息字典。
+        """
+        frame = encode_message(message)
+        with self._clients_lock:
+            for client in self._clients:
+                if client.client_id == client_id:
+                    client.send(frame)
+                    return
+
     # ── 接收 ──────────────────────────────────────────
 
-    def receive_all(self) -> list[dict]:
+    def receive_all(self) -> list[tuple[int, dict]]:
         """取出所有排队消息（消费队列）。
 
         从游戏线程调用，获取 Godot 发来的玩家指令。
 
         Returns:
-            消息字典列表，无消息时返回空列表。
+            (client_id, message) 元组列表，无消息时返回空列表。
         """
         with self._receive_lock:
             if not self._receive_queue:
@@ -145,6 +160,8 @@ class GameServer:
                 conn, addr = self._socket.accept()
                 logger.info("新连接: %s:%d", addr[0], addr[1])
                 handler = ClientHandler(conn, addr, self._on_message, self._on_disconnect)
+                handler.client_id = self._next_client_id
+                self._next_client_id += 1
                 with self._clients_lock:
                     self._clients.append(handler)
                 handler.start()
@@ -155,10 +172,10 @@ class GameServer:
                     logger.exception("accept 错误")
                 break
 
-    def _on_message(self, message: dict) -> None:
+    def _on_message(self, handler: "ClientHandler", message: dict) -> None:
         """客户端消息回调（从客户端线程调用）。"""
         with self._receive_lock:
-            self._receive_queue.append(message)
+            self._receive_queue.append((handler.client_id, message))
 
     def _on_disconnect(self, handler: "ClientHandler") -> None:
         """客户端断开回调（从客户端线程调用）。"""

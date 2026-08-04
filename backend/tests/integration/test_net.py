@@ -251,7 +251,7 @@ class TestClientToServer:
     """客户端→服务器方向消息测试。"""
 
     def test_receive_client_message(self, server, client_socket) -> None:
-        """客户端发送消息，服务器 receive_all() 可收到。"""
+        """客户端发送消息，服务器 receive_all() 可收到（含 client_id）。"""
         time.sleep(0.2)
 
         msg = {"type": "request", "request_type": "ping", "seq": 1, "payload": {}}
@@ -260,8 +260,10 @@ class TestClientToServer:
         time.sleep(0.2)
         messages = server.receive_all()
         assert len(messages) == 1
-        assert messages[0]["type"] == "request"
-        assert messages[0]["request_type"] == "ping"
+        client_id, received = messages[0]
+        assert received["type"] == "request"
+        assert received["request_type"] == "ping"
+        assert client_id == 0, "首个连接的客户端 ID 应为 0"
 
     def test_multiple_client_messages(self, server, client_socket) -> None:
         """多条消息一次性拉取。"""

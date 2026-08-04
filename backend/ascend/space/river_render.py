@@ -10,6 +10,7 @@
 
 import math
 
+from ascend.config import RIVER_WIDTH_MIN, RIVER_WIDTH_MAX
 from .terrain import TerrainType
 from .tile_grid import TileGrid, TILE_MAP_SIZE
 
@@ -87,7 +88,7 @@ def _render_streamlines(
                 wy = p.y * cell_size
                 tx = int(wx - world_x0)
                 ty = int(wy - world_y0)
-                width = _river_width(p.flow, max_acc)
+                width = _river_width(continent, wx, wy, p.flow, max_acc)
                 _fill_circle(tile_grid, tx, ty, int(width / 2) + 1, width, size)
             continue
 
@@ -97,7 +98,7 @@ def _render_streamlines(
             wy = p.y * cell_size
             tx = int(wx - world_x0)
             ty = int(wy - world_y0)
-            width = _river_width(p.flow, max_acc)
+            width = _river_width(continent, wx, wy, p.flow, max_acc)
             radius = int(width / 2) + 1
 
             if 0 <= tx < size and 0 <= ty < size:
@@ -108,13 +109,14 @@ def _render_streamlines(
 
         # 插值填充点间间隙
         _fill_gaps(tile_grid, points, world_x0, world_y0,
-                    cell_size, max_acc, size)
+                    continent, cell_size, max_acc, size)
 
 
 def _fill_gaps(
     tile_grid: TileGrid,
     points: list,
     world_x0: int, world_y0: int,
+    continent,
     cell_size: float,
     max_acc: float,
     size: int,
@@ -139,7 +141,10 @@ def _fill_gaps(
         dist = math.sqrt((tx1 - tx0) ** 2 + (ty1 - ty0) ** 2)
         steps = max(1, int(dist))
 
-        width = _river_width((p0.flow + p1.flow) * 0.5, max_acc)
+        width = _river_width(
+            continent, (wx0 + wx1) * 0.5, (wy0 + wy1) * 0.5,
+            (p0.flow + p1.flow) * 0.5, max_acc,
+        )
         radius = int(width / 2) + 1
 
         for s in range(steps + 1):
@@ -153,13 +158,24 @@ def _fill_gaps(
 # ── 河道宽度 ──────────────────────────────────────────────
 
 
-def _river_width(flow: float, max_acc: float) -> float:
-    """对数流量 → 河道宽度 (m)。"""
+def _river_width(continent, wx: float, wy: float,
+                 flow: float, max_acc: float) -> float:
+    """河道宽度 (m)。
+
+    优先采样层1河流宽度场（continent.sample_river_width）——与
+    hydrology.compute_river_width 同源、与出生点避让同源、跨 chunk
+    连续（消除按 chunk 局部 max 归一化的边界接缝）。
+    场外点（插值为 0，如流线与宽度场的边界差）回退到对数流量公式，
+    范围取 config 的 RIVER_WIDTH_MIN/MAX（2m~80m，与层1一致）。
+    """
+    field_w = continent.sample_river_width(wx, wy)
+    if field_w > 0.0:
+        return field_w
     if max_acc <= 0:
-        return 2.0
+        return RIVER_WIDTH_MIN
     ratio = flow / max_acc
     log_ratio = math.log(1.0 + ratio * 20.0) / math.log(21.0)
-    return 2.0 + 13.0 * log_ratio  # 2m~15m
+    return RIVER_WIDTH_MIN + (RIVER_WIDTH_MAX - RIVER_WIDTH_MIN) * log_ratio
 
 
 def _fill_circle(

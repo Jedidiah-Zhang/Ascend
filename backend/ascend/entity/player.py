@@ -52,6 +52,7 @@ class PlayerService:
         clock: WorldClock,
         birth_chunk: tuple[int, int],
         world_tree_arg=None,
+        max_chunk: tuple[int, int] | None = None,
     ) -> None:
         """初始化玩家服务。
 
@@ -60,10 +61,14 @@ class PlayerService:
             clock: 世界时钟（事件时间戳）。
             birth_chunk: 出生 chunk 坐标，birth 与 teleport_home 的落点。
             world_tree_arg: 可选 WorldTree 实例（测试注入隔离）。
+            max_chunk: 地图 chunk 上限（不含，即 chunk 坐标 ∈ [0, max_chunk)）。
+                为 None 时不限制（测试/无界模式）。玩家坐标越界时钳制到
+                地图边界内，保证玩家无法访问地图界限外。
         """
         self._manager = entity_manager
         self._clock = clock
         self._birth_chunk = birth_chunk
+        self._max_chunk = max_chunk
         self._wt = world_tree_arg if world_tree_arg is not None else _default_wt
         if world_tree_arg is not None:
             world_tree_arg.register_event_schema(
@@ -133,7 +138,7 @@ class PlayerService:
     def move_to(self, x: float, y: float) -> tuple[float, float]:
         """权威移动到指定坐标（前端 player_move 上报入口）。
 
-        壳子实现：无条件接受。未来的碰撞/速度/边界校验统一加在此处，
+        边界校验在 _apply_position 统一执行：坐标越界时钳制到地图边界，
         返回值即为裁决后的权威位置，前端据此纠正本地预测。
 
         Args:
@@ -183,7 +188,7 @@ class PlayerService:
     # ── 内部 ──────────────────────────────────────────────
 
     def _apply_position(self, x: float, y: float) -> tuple[float, float]:
-        """写入权威位置：更新 float 精确值，跨 tile 时同步整数索引。
+        """写入权威位置：边界钳制 + 更新 float 精确值，跨 tile 时同步整数索引。
 
         Args:
             x: 全局 tile X 坐标。
@@ -195,6 +200,13 @@ class PlayerService:
         if self._entity is None:
             self.birth()
         entity = self._entity
+        clamped = self._clamp_to_bounds(x, y)
+        if clamped != (x, y):
+            logger.warning(
+                "玩家坐标越界被钳制: (%.1f, %.1f) → (%.1f, %.1f)",
+                x, y, clamped[0], clamped[1],
+            )
+        x, y = clamped
         entity.set_data("fx", x)
         entity.set_data("fy", y)
         cx, cy, tx, ty = split_coords(x, y)
@@ -203,3 +215,26 @@ class PlayerService:
                 entity.id, cx, cy, tx, ty, game_time=self._clock.time,
             )
         return (x, y)
+
+    def _clamp_to_bounds(self, x: float, y: float) -> tuple[float, float]:
+        """将坐标钳制到地图范围 [0, max_chunk × TILE_MAP_SIZE) 内。
+
+        地图为有界矩形：chunk 坐标 ∈ [0, max_chunk)，对应的 tile 坐标
+        有效范围 [0, max_chunk × TILE_MAP_SIZE)。钳制上限取最后一块
+        tile 的起点（max - 1），保证玩家始终处于合法 chunk 内。
+
+        Args:
+            x: 全局 tile X 坐标。
+            y: 全局 tile Y 坐标。
+
+        Returns:
+            钳制后的坐标（未设置 max_chunk 时原样返回）。
+        """
+        if self._max_chunk is None:
+            return (x, y)
+        max_x = self._max_chunk[0] * TILE_MAP_SIZE - 1.0
+        max_y = self._max_chunk[1] * TILE_MAP_SIZE - 1.0
+        return (
+            min(max(x, 0.0), max_x),
+            min(max(y, 0.0), max_y),
+        )

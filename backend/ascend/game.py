@@ -183,8 +183,13 @@ class GameEngine:
         self.entity_manager = EntityManager()
 
         # 5a. 权威玩家实体（壳子版：位置权威在后端，前端本地预测）
+        # 地图为有界矩形：chunk 坐标 ∈ [0, grid//2)，玩家坐标越界钳制
         self.player_service = PlayerService(
             self.entity_manager, self.clock, self.birth_chunk,
+            max_chunk=(
+                continent.grid_width // 2,
+                continent.grid_height // 2,
+            ),
         )
         self.player_service.birth()
         logger.info("玩家实体已诞生: %r", self.player_service)
@@ -252,8 +257,13 @@ class GameEngine:
         logger.info("已注册终端处理程序: %s", list(term_handlers.keys()))
 
         # 8b. 占位 handler：尚未实现的功能返回空成功响应
-        def _placeholder_ok(_msg: dict) -> dict:
-            return {"type": "response", "payload": {}}
+        # （需携带 request_type，与真实 handler 的响应约定一致）
+        def _placeholder_ok(msg: dict) -> dict:
+            return {
+                "type": "response",
+                "request_type": msg.get("request_type", ""),
+                "payload": {},
+            }
 
         self.dispatcher.register("open_menu", _placeholder_ok)
         self.dispatcher.register("player_interact", _placeholder_ok)

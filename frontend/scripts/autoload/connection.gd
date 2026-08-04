@@ -25,12 +25,13 @@ const FrameCodecClass = preload("res://scripts/utils/frame_codec.gd")
 
 signal connection_established(host: String, port: int)
 signal connection_lost()
+signal backend_failed(reason: String)
 signal message_received(message: Dictionary)
 
 
 # ── 枚举 ──────────────────────────────────────────────────
 
-enum Status { DISCONNECTED, CONNECTING, CONNECTED }
+enum Status { DISCONNECTED, CONNECTING, CONNECTED, FAILED }
 var status: Status = Status.DISCONNECTED
 
 
@@ -121,10 +122,14 @@ func _process(delta: float) -> void:
 	if _awaiting_backend:
 		_backend_startup_timer += delta
 		if _backend_startup_timer > BACKEND_STARTUP_TIMEOUT:
-			push_error("Connection: backend startup timed out after %.0fs" % BACKEND_STARTUP_TIMEOUT)
+			# 启动超时 → 终态 FAILED：停止无休止重连，等待用户手动重试
+			# （错误通道 = backend_failed 信号 + FAILED 状态，此处仅提示）
+			push_warning("Connection: backend startup timed out after %.0fs" % BACKEND_STARTUP_TIMEOUT)
 			_awaiting_backend = false
 			_close_probe()
 			_kill_backend()
+			status = Status.FAILED
+			backend_failed.emit("backend startup timed out (%.0fs)" % BACKEND_STARTUP_TIMEOUT)
 			last_process_us = Time.get_ticks_usec() - t0
 			return
 
@@ -154,6 +159,8 @@ func _process(delta: float) -> void:
 				_read_messages()
 				_collect_decoded()
 				_flush_send_queue()
+		Status.FAILED:
+			pass  # 终态：不自动重试，等待 connect_to_server() 手动重置
 
 	last_process_us = Time.get_ticks_usec() - t0
 
@@ -161,11 +168,15 @@ func _process(delta: float) -> void:
 # ── 公共接口 ──────────────────────────────────────────────
 
 func connect_to_server(host: String = DEFAULT_HOST, port: int = DEFAULT_PORT) -> void:
-	"""连接到指定服务器。"""
+	"""连接到指定服务器。
+
+	FAILED 终态（后端启动超时）可经此重置并重新尝试。
+	"""
 	_host = host
 	_port = port
 	if status == Status.CONNECTED:
 		disconnect_from_server()
+	status = Status.DISCONNECTED
 	_connect()
 
 
@@ -209,14 +220,17 @@ func _spawn_backend_process() -> void:
 
 	if not FileAccess.file_exists(python_path):
 		push_error("Connection: Python not found at %s" % python_path)
+		_enter_failed_state("Python not found at %s" % python_path)
 		return
 	if not FileAccess.file_exists(script_path):
 		push_error("Connection: backend script not found at %s" % script_path)
+		_enter_failed_state("backend script not found at %s" % script_path)
 		return
 
 	var pid: int = OS.create_process(python_path, [script_path], false)
 	if pid == -1:
 		push_error("Connection: failed to start backend process")
+		_enter_failed_state("failed to start backend process")
 		return
 
 	_backend_pid = pid
@@ -225,6 +239,12 @@ func _spawn_backend_process() -> void:
 	_backend_check_timer = BACKEND_CHECK_INTERVAL
 	set_process(true)
 	print("Connection: backend started (PID: %d), waiting for port..." % pid)
+
+
+func _enter_failed_state(reason: String) -> void:
+	"""进入终态 FAILED：停止自动重连，通知 UI 显示错误。"""
+	status = Status.FAILED
+	backend_failed.emit(reason)
 
 
 func _kill_backend() -> void:
@@ -275,7 +295,7 @@ func _close_probe() -> void:
 func _on_probe_succeeded() -> void:
 	"""端口开放：后端已就绪。"""
 	if _awaiting_backend:
-		print("Connection: backend ready on %s:%d (waited %.1fs)" % [DEFAULT_HOST, DEFAULT_PORT, _backend_startup_timer])
+		print("Connection: backend ready on %s:%d (waited %.1fs)" % [_host, _port, _backend_startup_timer])
 		_awaiting_backend = false
 		_probe_before_spawn = false
 		if _stream != null:
@@ -283,8 +303,9 @@ func _on_probe_succeeded() -> void:
 			_stream = null
 		_connect()
 	elif _probe_before_spawn:
-		print("Connection: backend already running on %s:%d" % [DEFAULT_HOST, DEFAULT_PORT])
+		print("Connection: backend already running on %s:%d" % [_host, _port])
 		_probe_before_spawn = false
+		_connect()
 
 
 func _on_probe_failed() -> void:

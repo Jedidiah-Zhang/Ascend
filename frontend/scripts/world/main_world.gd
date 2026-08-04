@@ -1,4 +1,4 @@
-"""主世界 3D 场景 — 透视等轴视角 + 流式 chunk 地形。
+"""主世界 3D 场景 — 正交等轴视角 + 流式 chunk 地形。
 """
 extends Node3D
 
@@ -21,6 +21,9 @@ const STREAM_MARGIN: int = 1
 const UNLOAD_MARGIN: int = 1
 const MAX_PENDING: int = 3
 
+## 玩家移动上报节流间隔（秒）
+const MOVE_REPORT_INTERVAL: float = 0.2
+
 # ── 阴影常量 ──────────────────────────────────────────────
 
 ## 阴影覆盖范围 = 可视半径 × 该余量（max_distance 是半径语义，阴影相机覆盖可视区 + 边缘外遮挡物余量）
@@ -41,14 +44,14 @@ const SHADOW_NORMAL_BIAS: float = 0.2
 const SHADOW_TALL_ALLOWANCE: float = 60.0
 const SHADOW_SLAB_MARGIN: float = 20.0
 
+## 与 terrain_mesh_builder.gd 的 TERRAIN_TO_MESH 对齐的材质表
+## （item_id → 纹理路径）；死纹理（top_shallow_water/top_snow）已移除
 const TERRAIN_TEXTURES: Dictionary = {
-	1: "res://assets/terrain/textures/top_shallow_water.png",
 	2: "res://assets/terrain/textures/top_sand.png",
 	3: "res://assets/terrain/textures/top_plains.png",
 	4: "res://assets/terrain/textures/top_hills.png",
 	5: "res://assets/terrain/textures/top_rock.png",
 	6: "res://assets/terrain/textures/top_mountain.png",
-	7: "res://assets/terrain/textures/top_snow.png",
 	8: "res://assets/terrain/textures/top_fertile.png",
 	9: "res://assets/terrain/textures/top_underwater_floor.png",
 }
@@ -99,6 +102,10 @@ var _player_pos: Vector3 = Vector3.ZERO
 ## 出生 chunk（后端权威）
 var _birth_chunk: Vector2i = Vector2i.ZERO
 var _has_birth: bool = false
+## 本地控制的玩家实体 ID（player_state 提供，后端权威）
+var _player_entity_id: String = ""
+## 移动上报计时器（节流）
+var _move_report_timer: float = 0.0
 
 ## 当前游戏时间
 var _game_hour: float = 6.0
@@ -231,8 +238,9 @@ func _set_birth_chunk(cx: int, cy: int) -> void:
 		return
 	_has_birth = true
 	_birth_chunk = Vector2i(cx, cy)
-	_player_pos.x = float(cx * CHUNK_SIZE + CHUNK_SIZE / 2.0)
-	_player_pos.z = float(cy * CHUNK_SIZE + CHUNK_SIZE / 2.0)
+	# 与后端权威出生点约定一致：出生 chunk 原点（PlayerService.birth_position）
+	_player_pos.x = float(cx * CHUNK_SIZE)
+	_player_pos.z = float(cy * CHUNK_SIZE)
 	_player.position = _player_pos
 	_camera_focus = _player_pos
 	_apply_camera_transform()
@@ -368,8 +376,8 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 
 func _lazy_load_materials() -> Dictionary:
 	if _terrain_materials.is_empty():
-		for item_id in range(1, 10):
-			var tex_path: String = TERRAIN_TEXTURES.get(item_id, "")
+		for item_id in TERRAIN_TEXTURES:
+			var tex_path: String = TERRAIN_TEXTURES[item_id]
 			if tex_path.is_empty():
 				continue
 			var tex: Texture2D = load(tex_path)
@@ -480,6 +488,12 @@ func _process_input(delta: float) -> void:
 		_camera_focus = _player_pos
 		_apply_camera_transform()
 
+		# 节流上报权威位置（后端裁决并回传，越界等非法位置由后端钳制）
+		_move_report_timer += delta
+		if _move_report_timer >= MOVE_REPORT_INTERVAL:
+			_move_report_timer = 0.0
+			_send_player_move()
+
 	if Input.is_action_just_pressed("interact"):
 		Connection.send({
 			"type": "request",
@@ -500,6 +514,16 @@ func _on_terminal_command(command: String) -> void:
 		"type": "request",
 		"request_type": "terminal_cmd",
 		"payload": {"command": command},
+	})
+
+
+func _send_player_move() -> void:
+	if not _has_birth:
+		return
+	Connection.send({
+		"type": "request",
+		"request_type": "player_move",
+		"payload": {"x": _player_pos.x, "y": _player_pos.z},
 	})
 
 
@@ -631,11 +655,43 @@ func _handle_response(message: Dictionary) -> void:
 					_sun_azimuth = float(w["sun_azimuth"])
 				if w.has("sunshine_intensity"):
 					_sunshine_intensity = float(w["sunshine_intensity"])
+		"player_state":
+			# 权威玩家实体 ID + 位置（吸附初始位置）
+			_player_entity_id = str(payload.get("entity_id", _player_entity_id))
+			_apply_authoritative_position(payload)
+		"entity_snapshot":
+			# 全量实体快照：仅消费本地控制的玩家实体（其余实体渲染后续接入）
+			var entities: Array = payload.get("entities", [])
+			for ent in entities:
+				if ent.get("controller", "") != "PLAYER":
+					continue
+				var ent_id: String = str(ent.get("id", ""))
+				if not _player_entity_id.is_empty() and ent_id != _player_entity_id:
+					continue
+				_player_entity_id = ent_id
+				_apply_authoritative_position(ent)
+		"player_move":
+			# 权威裁决结果：后端可能钳制越界坐标，本地据此纠正
+			_apply_authoritative_position(payload)
 		"terminal_cmd":
 			if _terminal:
 				_terminal.write(payload.get("output", ""))
 		_:
 			pass
+
+
+func _apply_authoritative_position(payload: Dictionary) -> void:
+	"""按后端权威位置吸附玩家（player_state / player_move 响应 / 快照）。"""
+	var ax: float = float(payload.get("x", _player_pos.x))
+	var az: float = float(payload.get("y", _player_pos.z))
+	if ax == _player_pos.x and az == _player_pos.z:
+		return
+	_player_pos.x = ax
+	_player_pos.z = az
+	_update_player_ground()
+	_camera_focus = _player_pos
+	_apply_camera_transform()
+	_player.visible = true
 
 
 ## ── 流式 chunk 管理 ──────────────────────────────────────

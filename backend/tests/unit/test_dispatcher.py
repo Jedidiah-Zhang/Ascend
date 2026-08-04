@@ -22,12 +22,12 @@ class TestMessageDispatcher:
         Act:
             调用 process()。
         Assert:
-            handler 被正确调用，broadcast 收到响应。
+            handler 被正确调用，send_to 收到定向响应。
         """
         # Arrange
         mock_server = MagicMock()
         mock_server.receive_all.return_value = [
-            {"type": "request", "request_type": "ping", "seq": 1, "payload": {}}
+            (0, {"type": "request", "request_type": "ping", "seq": 1, "payload": {}})
         ]
 
         handler_called = False
@@ -45,16 +45,45 @@ class TestMessageDispatcher:
 
         # Assert
         assert handler_called, "handler 未被调用"
-        # broadcast 应被调用两次（一次是 register 过程没有广播，一次是 dispatch 后）
-        # 但 register 不涉及 broadcast, process 中 handler 返回了响应
-        # 验证 broadcast 收到正确的响应
+        # 响应应定向发送给请求方客户端（client_id=0），而非广播
         expected_response = {
             "type": "response",
             "request_type": "ping",
             "payload": {"result": "pong"},
             "seq": 1,
         }
-        mock_server.broadcast.assert_called_once_with(expected_response)
+        mock_server.send_to.assert_called_once_with(0, expected_response)
+
+    # ── T1b: 多客户端响应定向路由 ─────────────────────────────────────
+
+    def test_T1b_response_routed_to_requesting_client(self):
+        """两个客户端并发请求时，响应分别定向到各自请求方。
+
+        Arrange:
+            mock server 返回两条来自不同 client_id 的请求。
+        Act:
+            调用 process()。
+        Assert:
+            send_to 分别以各自 client_id 调用。
+        """
+        mock_server = MagicMock()
+        mock_server.receive_all.return_value = [
+            (0, {"type": "request", "request_type": "ping", "seq": 1, "payload": {}}),
+            (2, {"type": "request", "request_type": "ping", "seq": 9, "payload": {}}),
+        ]
+
+        def handle_ping(msg: dict) -> dict:
+            return {"type": "response", "request_type": "ping", "payload": {}}
+
+        dispatcher = MessageDispatcher(mock_server)
+        dispatcher.register("ping", handle_ping)
+
+        dispatcher.process()
+
+        calls = mock_server.send_to.call_args_list
+        assert len(calls) == 2
+        assert (0, {"type": "response", "request_type": "ping", "payload": {}, "seq": 1}) in [c.args for c in calls]
+        assert (2, {"type": "response", "request_type": "ping", "payload": {}, "seq": 9}) in [c.args for c in calls]
 
     # ── T2: 未知 request_type ──────────────────────────────────────────
 
@@ -66,11 +95,11 @@ class TestMessageDispatcher:
         Act:
             调用 process()。
         Assert:
-            broadcast 收到 error 响应，包含 "unknown request_type"。
+            send_to 收到 error 响应，包含 "unknown request_type"。
         """
         mock_server = MagicMock()
         mock_server.receive_all.return_value = [
-            {"type": "request", "request_type": "unknown_action", "seq": 1, "payload": {}}
+            (0, {"type": "request", "request_type": "unknown_action", "seq": 1, "payload": {}})
         ]
 
         dispatcher = MessageDispatcher(mock_server)
@@ -82,7 +111,7 @@ class TestMessageDispatcher:
             "seq": 1,
             "error": "unknown request_type: unknown_action",
         }
-        mock_server.broadcast.assert_called_once_with(expected_error)
+        mock_server.send_to.assert_called_once_with(0, expected_error)
 
     # ── T3: Handler 异常 ──────────────────────────────────────────────
 
@@ -94,11 +123,11 @@ class TestMessageDispatcher:
         Act:
             调用 process()。
         Assert:
-            broadcast 收到 error 响应，error 字段包含异常信息。
+            send_to 收到 error 响应，error 字段包含异常信息。
         """
         mock_server = MagicMock()
         mock_server.receive_all.return_value = [
-            {"type": "request", "request_type": "crash", "seq": 2, "payload": {}}
+            (0, {"type": "request", "request_type": "crash", "seq": 2, "payload": {}})
         ]
 
         def broken_handler(msg: dict) -> dict:
@@ -115,7 +144,7 @@ class TestMessageDispatcher:
             "seq": 2,
             "error": "something went wrong",
         }
-        mock_server.broadcast.assert_called_once_with(expected_error)
+        mock_server.send_to.assert_called_once_with(0, expected_error)
 
     # ── T4: 忽略非 request 消息 ───────────────────────────────────────
 
@@ -131,7 +160,7 @@ class TestMessageDispatcher:
         """
         mock_server = MagicMock()
         mock_server.receive_all.return_value = [
-            {"type": "event", "event_type": "test", "payload": {}}
+            (0, {"type": "event", "event_type": "test", "payload": {}})
         ]
 
         handler_called = False
@@ -147,7 +176,7 @@ class TestMessageDispatcher:
         dispatcher.process()
 
         assert not handler_called, "handler 不应被调用"
-        mock_server.broadcast.assert_not_called()
+        mock_server.send_to.assert_not_called()
 
     # ── 辅助测试：重复注册会报错 ─────────────────────────────────────
 
@@ -180,7 +209,7 @@ class TestMessageDispatcher:
 
         # 不应抛出任何异常
         dispatcher.process()
-        mock_server.broadcast.assert_not_called()
+        mock_server.send_to.assert_not_called()
 
     # ── 辅助测试：handler 返回 None 不广播 ────────────────────────────
 
@@ -188,14 +217,14 @@ class TestMessageDispatcher:
         """handler 返回 None 时不调用 broadcast。"""
         mock_server = MagicMock()
         mock_server.receive_all.return_value = [
-            {"type": "request", "request_type": "silent", "seq": 1, "payload": {}}
+            (0, {"type": "request", "request_type": "silent", "seq": 1, "payload": {}})
         ]
 
         dispatcher = MessageDispatcher(mock_server)
         dispatcher.register("silent", lambda msg: None)
 
         dispatcher.process()
-        mock_server.broadcast.assert_not_called()
+        mock_server.send_to.assert_not_called()
 
     # ── 辅助测试：repr ────────────────────────────────────────────────
 

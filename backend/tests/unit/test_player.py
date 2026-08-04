@@ -227,6 +227,55 @@ class TestTeleport:
         assert events[0].timestamp == clock.time
 
 
+class TestMapBounds:
+    """地图边界钳制测试（max_chunk 设置时）。"""
+
+    @pytest.fixture
+    def bounded(self, wt, clock):
+        """带地图边界 (2, 3) 的 PlayerService 固件（未 birth）。
+
+        地图 tile 范围: x ∈ [0, 2*200)，y ∈ [0, 3*200)。
+        """
+        manager = EntityManager(world_tree_arg=wt)
+        return PlayerService(
+            manager, clock, birth_chunk=(0, 0), world_tree_arg=wt,
+            max_chunk=(2, 3),
+        )
+
+    def test_move_inside_bounds_unchanged(self, bounded):
+        """边界内移动原样接受。"""
+        bounded.birth()
+        result = bounded.move_to(100.0, 300.0)
+        assert result == (100.0, 300.0)
+
+    def test_move_beyond_max_clamped(self, bounded):
+        """超过地图上限的坐标钳制到边界内。"""
+        bounded.birth()
+        result = bounded.move_to(9999.0, 8888.0)
+        assert result == (2.0 * TILE_MAP_SIZE - 1.0, 3.0 * TILE_MAP_SIZE - 1.0)
+        assert bounded.entity.chunk == (1, 2)
+
+    def test_move_negative_clamped_to_origin(self, bounded):
+        """负坐标钳制到地图原点。"""
+        bounded.birth()
+        result = bounded.move_to(-50.0, -30.0)
+        assert result == (0.0, 0.0)
+        assert bounded.entity.chunk == (0, 0)
+
+    def test_teleport_beyond_max_clamped(self, bounded):
+        """传送越界同样被钳制（tp 指令路径）。"""
+        bounded.birth()
+        result = bounded.teleport(1e9, 1e9)
+        assert result == (2.0 * TILE_MAP_SIZE - 1.0, 3.0 * TILE_MAP_SIZE - 1.0)
+        assert bounded.position == result
+
+    def test_no_bounds_accepts_any_coords(self, service):
+        """未设置 max_chunk 时保持无界行为（向后兼容）。"""
+        service.birth()
+        result = service.move_to(-0.5, -250.0)
+        assert result == (-0.5, -250.0)
+
+
 class TestRepr:
     """__repr__ 测试。"""
 

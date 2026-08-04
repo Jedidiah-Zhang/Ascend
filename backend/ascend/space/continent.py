@@ -24,7 +24,24 @@ from dataclasses import dataclass, field
 from typing import Union
 
 from .noise import PerlinNoise
-from .climate import LAPSE_RATE
+from .climate import ClimateZone, LAPSE_RATE
+from ascend.config import (
+    EROSION_ITERATIONS,
+    LAKE_MIN_PIXELS,
+    RIVER_FLOW_THRESHOLD,
+    RIVER_MIN_LENGTH,
+    RIVER_WIDTH_THRESHOLD,
+    ELEVATION_TARGET_P99,
+    ELEVATION_SCALE_FACTOR,
+    CONTINENTALITY_K,
+    CONTINENTALITY_D0_KM,
+    RAINSHADOW_DECAY_KM,
+    RAINSHADOW_SECONDARY_WEIGHT,
+    RAINSHADOW_MIN_FACTOR,
+)
+from ascend.log import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -94,12 +111,19 @@ class ContinentData:
 
         Returns:
             (mean_temp, annual_rainfall, sea_level_temp, climate_zone)：
-            越界返回默认海洋气候 (-20, 0, -20, 0)。
+            越界（地图界限外）返回一致的极地深海默认值
+            (-20, 0, -20, POLAR_TUNDRA)——地图为有界矩形，界限外
+            统一视为极地深海，避免各字段自相矛盾（此前默认 zone=0
+            即热带雨林，与 -20°C 温度/深海海拔矛盾）。
         """
         key = (cx, cy)
         if key in self._chunk_climate:
             return self._chunk_climate[key]
-        return -20.0, 0.0, -20.0, 0
+        logger.debug(
+            "get_chunk_climate: chunk (%d,%d) 超出地图界限，返回极地深海默认",
+            cx, cy,
+        )
+        return -20.0, 0.0, -20.0, int(ClimateZone.POLAR_TUNDRA)
 
     def __repr__(self) -> str:
         land = sum(1 for v in self.land_mask if v)
@@ -272,7 +296,8 @@ class ContinentGenerator:
 
         # Step 3: 侵蚀（降雨驱动水流累积）—— 提取完整水文状态
         from .hydrology import erode, extract_lake_basins, HydrologyData
-        erosion_result = erode(elevation, rain_field, w, h, iterations=10)
+        erosion_result = erode(elevation, rain_field, w, h,
+                               iterations=EROSION_ITERATIONS)
 
         # 用侵蚀后的海拔替换原始海拔（河流已雕刻，地形已塑形）
         elevation = erosion_result.dem
@@ -280,7 +305,7 @@ class ContinentGenerator:
         # Step 4: 湖泊盆地提取
         lake_basins = extract_lake_basins(
             elevation, erosion_result.filled_dem, land_mask, w, h,
-            min_size=5,
+            min_size=LAKE_MIN_PIXELS,
         )
 
         # Step 4b: 流线河流网络 — RK4 沿海拔梯度场追踪自然弯曲流线
@@ -289,7 +314,7 @@ class ContinentGenerator:
             elevation,
             erosion_result.directions, erosion_result.flow_acc,
             land_mask, w, h,
-            threshold=500.0, min_length=20,
+            threshold=RIVER_FLOW_THRESHOLD, min_length=RIVER_MIN_LENGTH,
         )
 
         hydrology = HydrologyData(
@@ -304,7 +329,7 @@ class ContinentGenerator:
         from .hydrology import compute_river_width
         river_width = compute_river_width(
             elevation, w, h,
-            land_mask=land_mask, threshold=20.0,
+            land_mask=land_mask, threshold=RIVER_WIDTH_THRESHOLD,
             directions=erosion_result.directions,
             flow_acc=erosion_result.flow_acc,
             lake_basins=lake_basins,
@@ -490,7 +515,7 @@ class ContinentGenerator:
             return
         p90 = self._percentile(land_vals, 0.90)
         p99 = self._percentile(land_vals, 0.99)
-        target_p99 = 2500.0
+        target_p99 = ELEVATION_TARGET_P99
         if p99 >= target_p99 or p99 <= p90:
             return
         # 线性拉伸 (p90, p99] → (p90, target_p99]
@@ -688,7 +713,7 @@ class ContinentGenerator:
         sea_level = sorted_vals[sea_idx]
 
         # 列表推导 — 比 .append() 循环快
-        elevation = [(m - sea_level) * 4000.0 for m in mixed]
+        elevation = [(m - sea_level) * ELEVATION_SCALE_FACTOR for m in mixed]
         land_mask = [e > 0 for e in elevation]
         return land_mask, elevation
 
@@ -740,8 +765,8 @@ class ContinentGenerator:
         temp_field, rain_field, climate_field = _compute_climate_c(
             elev_arr, lat_arr, rain_raw_arr, shadow_arr, dist_to_ocean,
             w, h, gx, gy,
-            continentality_k=3.0,
-            continentality_d0=200.0,
+            continentality_k=CONTINENTALITY_K,
+            continentality_d0=CONTINENTALITY_D0_KM,
             cell_size_km=self._params.sample_resolution / 1000.0,
         )
 
@@ -774,10 +799,10 @@ class ContinentGenerator:
             elev_arr, w, h,
             primary_angle=wind_angle,
             secondary_angle=secondary_angle,
-            secondary_weight=0.2,
-            decay_length_km=4.0,   # 抬升衰减距离 (km)
+            secondary_weight=RAINSHADOW_SECONDARY_WEIGHT,
+            decay_length_km=RAINSHADOW_DECAY_KM,   # 抬升衰减距离 (km)
             cell_size_km=self._params.sample_resolution / 1000.0,
-            min_factor=0.15,
+            min_factor=RAINSHADOW_MIN_FACTOR,
         )
         return factors.tolist()
 

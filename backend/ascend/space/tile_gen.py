@@ -31,6 +31,9 @@ from ascend.config import (
     BASE_ROCK_THRESHOLD as _BASE_ROCK_THRESHOLD,
     BASE_PEAK_THRESHOLD as _BASE_PEAK_THRESHOLD,
     STEEP_GRADIENT as _STEEP_GRADIENT,
+    MOISTURE_TILE_FREQUENCY as _MOISTURE_FREQ,
+    TERRAIN_NOISE_FREQUENCY as _TERRAIN_NOISE_FREQ,
+    TERRAIN_NOISE_AMPLITUDE as _TERRAIN_NOISE_AMP,
 )
 
 
@@ -115,24 +118,27 @@ class TileGenerator:
 
         grid = TileGrid()
         cont = self._continent
-        detail_freq = 0.005
 
         # 批量采样细节噪声
         noise_field = self._detail_noise.octave_grid(
             world_x0 + 0.5, world_y0 + 0.5, size, size,
-            frequency=detail_freq, octaves=4,
+            frequency=_TERRAIN_NOISE_FREQ, octaves=4,
         )
 
-        # 批量采样 moisture 噪声
+        # 批量采样 moisture 噪声 — 世界坐标场，与 chunk 级
+        # （generator._sample_moisture_at_chunk）同一频率同一八度数，
+        # 保证 chunk 标签与 tile 隶属度一致
         moisture_field = self._moisture_noise.octave_grid(
             world_x0 + 0.5, world_y0 + 0.5, size, size,
-            frequency=0.005, octaves=2,
+            frequency=_MOISTURE_FREQ, octaves=4,
         )
 
-        # 预分配宏观海拔缓存（仅在有湖泊时用于后续复用）
+        # 预分配宏观海拔缓存（坡度计算用——避免 ±50m 细节噪声
+        # 产生虚假陡坡；有湖泊时同时供湖泊渲染复用）
+        macro_elev_arr = [0.0] * (size * size)
+
         hyd = cont.hydrology
         has_lakes = hyd is not None and hyd.lake_basins
-        macro_cache = [0.0] * (size * size) if has_lakes else None
 
         # chunk 中心气候（整 chunk 复用，减少 40,000 次到 1 次）
         cc_temp, cc_rain, _, _ = self._continent.get_chunk_climate(cx, cy)
@@ -147,7 +153,7 @@ class TileGenerator:
                 macro_elev = cont.sample_altitude_bilinear(wx, wy)
 
                 # 细节噪声（±50m，波长 200m → 自然过渡）
-                detail = noise_field[idx] * 50.0
+                detail = noise_field[idx] * _TERRAIN_NOISE_AMP
                 elev = macro_elev + detail
 
                 # 海平面温度 = chunk 中心基线 + tile 海拔递减
@@ -165,12 +171,12 @@ class TileGenerator:
                 grid.set(tx, ty, terrain)
                 grid.set_elevation(tx, ty, elev)
 
-                # 缓存宏观海拔（供湖泊渲染复用）
-                if macro_cache is not None:
-                    macro_cache[idx] = macro_elev
+                # 缓存宏观海拔（坡度计算 + 湖泊渲染复用）
+                macro_elev_arr[idx] = macro_elev
 
-        # 坡度计算 + STEEP_SLOPE 重分类（基于局部梯度而非绝对海拔）
-        _compute_slopes(grid)
+        # 坡度计算 + STEEP_SLOPE 重分类（基于宏观海拔的局部梯度，
+        # 不含 ±50m 细节噪声——噪声纹理不应产生虚假陡坡）
+        _compute_slopes(grid, source=macro_elev_arr)
         _reclassify_steep(grid)
 
         # 叠加水体（河流 + 湖泊）
@@ -190,7 +196,7 @@ class TileGenerator:
                 render_lake_chunk(
                     grid, world_x0, world_y0,
                     hyd.lake_basins, cont,
-                    macro_elev_grid=macro_cache,
+                    macro_elev_grid=macro_elev_arr,
                 )
 
         return grid
@@ -304,11 +310,17 @@ class TileGenerator:
 # ── 坡度计算与陡坡重分类 ──────────────────────────────────
 
 
-def _compute_slopes(grid: TileGrid) -> None:
+def _compute_slopes(grid: TileGrid, source: list[float] | None = None) -> None:
     """计算每个 tile 的最大局部梯度（m/m），存入 grid._slope。
 
     对每个 tile，比较其高程与 8 邻域（chunk 内）的高程差，
     取最大值作为该 tile 的坡度。边界 tile 仅考虑 chunk 内的邻居。
+
+    Args:
+        grid: 目标 TileGrid。
+        source: 可选高程源数组（如宏观海拔）。为 None 时用 grid 自身
+            高程（含细节噪声）。坡度应反映地形而非噪声纹理，生成
+            管线传宏观海拔数组。
     """
     size = grid.size
     directions = [(-1, -1), (0, -1), (1, -1), (-1, 0),
@@ -316,12 +328,19 @@ def _compute_slopes(grid: TileGrid) -> None:
 
     for y in range(size):
         for x in range(size):
-            elev = grid.get_elevation(x, y)
+            elev = (
+                source[y * size + x] if source is not None
+                else grid.get_elevation(x, y)
+            )
             max_delta = 0.0
             for dx, dy in directions:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < size and 0 <= ny < size:
-                    delta = abs(elev - grid.get_elevation(nx, ny))
+                    ne = (
+                        source[ny * size + nx] if source is not None
+                        else grid.get_elevation(nx, ny)
+                    )
+                    delta = abs(elev - ne)
                     if delta > max_delta:
                         max_delta = delta
             grid.set_slope(x, y, max_delta)

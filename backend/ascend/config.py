@@ -93,6 +93,11 @@ NOISE_FREQ_LATITUDE: float = 0.0003   # 纬度噪声（超低频，暖/冷带宽
 NOISE_FREQ_RAINFALL: float = 0.004    # 降雨噪声（低频，区域降水模式）
 NOISE_FREQ_DERIVED: float = 0.005     # 派生参数噪声（中频，日照/湿度/风速）
 
+# 群系细分 moisture 噪声（tile 级世界坐标频率——与 chunk 级 NOISE_FREQ_DERIVED
+# 同空间尺度：chunk 级在块坐标用 0.005，tile 级换算到世界坐标后频率除以
+# TILE_MAP_SIZE，保证 chunk 标签与 tile 隶属度来自同一噪声场）
+MOISTURE_TILE_FREQUENCY: float = NOISE_FREQ_DERIVED / TILE_MAP_SIZE
+
 # 地形噪声
 TERRAIN_NOISE_FREQUENCY: float = 0.005
 TERRAIN_NOISE_OCTAVES: int = 4
@@ -197,6 +202,9 @@ MODIFIER_REPLENISH_THRESHOLD: int = 1
 
 # 天气查询 API
 MAX_WEATHER_QUERY_CHUNKS: int = 64      # get_weather 单请求最大 chunk 数（防超大请求卡游戏线程）
+
+# 地图请求 API
+MAX_CHUNK_QUERY: int = 512              # get_chunks 单请求最大 chunk 数（防超大请求卡游戏线程）
 
 
 # 天气分级阈值 — 按数值升序排列，返回值为区间索引（0-based）

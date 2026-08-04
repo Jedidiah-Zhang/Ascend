@@ -35,6 +35,7 @@
   "console.speed_invalid": "Invalid speed '{value}', must be a number ≥0 (0=pause)",
   "console.time_usage": "Usage: time [speed <n> | pause | resume | jump [d] | tick [n]]",
   "console.invalid_number": "Invalid number '{value}', must be an integer ≥1",
+  "console.tick_limit": "time tick single-run limit is {limit} frames, above it is rejected",
   "console.weather_usage": "Usage: weather status [cx cy] | weather set <rain|cold_snap|heat_wave|storm> <on|off> [cx cy]",
   "console.weather_unavailable": "Weather engine not available",
   "console.weather_chunk_unregistered": "chunk ({cx},{cy}) has no registered weather data",

@@ -5,9 +5,9 @@
   - 湿度/风速 = baseline + 大气扰动
   - 降雨 = 事件调度（RainSchedule，从年降雨量推算频率/持续/强度）
 
-事件按感知类别发布（"cold"→"cool"、"dry"→"comfortable" 等）：
+事件按等级发布（整数 tier + prev_tier，边界见 config `*_TIER_BOUNDARIES`）：
   - 感知层事件：temperature_change / humidity_change / wind_change / sunshine_change
-    仅在类别跨越边界时触发，附带精确 numeric 值。
+    仅在等级跨越边界时触发，附带精确 numeric 值与 prev_tier/tier。
   - 离散事件：precipitation_start/stop / season_change / sunrise/sunset / extreme weather
   - API 查询：get_weather(cx, cy, time) 获取任意位置当前/过去时刻的精确值
 

@@ -256,6 +256,23 @@ class TestTimeSpeed:
             result = executor.execute(cmd)
             assert result.success is False, cmd
 
+    def test_T11b_speed_non_finite_rejected(self, executor):
+        """NaN/inf 流速视为非法，不写入时钟。
+
+        Arrange:
+            CommandExecutor。
+        Act:
+            执行 "time speed nan" / "time speed inf" / "time speed -inf"
+            / "time speed 1e999"。
+        Assert:
+            均 success=False，且 clock.speed 保持原值 1.0（不熔断引擎）。
+        """
+        for cmd in ("time speed nan", "time speed inf",
+                    "time speed -inf", "time speed 1e999"):
+            result = executor.execute(cmd)
+            assert result.success is False, cmd
+            assert executor._clock.speed == 1.0, cmd
+
 
 class TestTimeTick:
     """time tick 指令测试。"""
@@ -304,6 +321,21 @@ class TestTimeTick:
         result = executor.execute("time tick abc")
         assert result.success is False
         assert "abc" in result.output or "无效" in result.output
+
+    def test_T14b_tick_over_limit_rejected(self, executor):
+        """超过单次上限的 tick 被拒绝，不冻结游戏线程。
+
+        Arrange:
+            CommandExecutor。
+        Act:
+            执行 "time tick 1000000"。
+        Assert:
+            success=False，且 tick_count 未变化。
+        """
+        before = executor._clock.tick_count
+        result = executor.execute("time tick 1000000")
+        assert result.success is False
+        assert executor._clock.tick_count == before
 
 
 class TestTimeJump:
@@ -697,6 +729,22 @@ class TestTeleportCommand:
         for cmd in ("tp 1", "tp a b"):
             result = executor_player.execute(cmd)
             assert result.success is False, cmd
+
+    def test_tp_non_finite_rejected(self, executor_player):
+        """NaN/inf 坐标视为非法，不进入传送路径。
+
+        Arrange:
+            executor_player。
+        Act:
+            执行 "tp nan 5"、"tp inf inf"。
+        Assert:
+            均 success=False，玩家位置不变。
+        """
+        before = executor_player._player.position
+        for cmd in ("tp nan 5", "tp inf inf", "tp -inf 0"):
+            result = executor_player.execute(cmd)
+            assert result.success is False, cmd
+        assert executor_player._player.position == before
 
 
 # ══════════════════════════════════════════════════════════

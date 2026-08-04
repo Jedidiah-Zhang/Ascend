@@ -219,3 +219,22 @@ class TestMapHandlers:
         for i, (cx, cy) in enumerate(coords):
             assert chunks[i]["cx"] == cx
             assert chunks[i]["cy"] == cy
+
+    def test_get_chunks_over_limit_truncated(self, handlers):
+        """超过 MAX_CHUNK_QUERY 的请求被截断，不生成全部 chunk。"""
+        from ascend.config import MAX_CHUNK_QUERY
+
+        handle = handlers["get_chunks"]
+        coords = [[i, i] for i in range(MAX_CHUNK_QUERY + 100)]
+
+        msg = {
+            "type": "request",
+            "request_type": "get_chunks",
+            "seq": 7,
+            "payload": {"chunks": coords},
+        }
+
+        response = handle(msg)
+        chunks = response["payload"]["chunks"]
+
+        assert len(chunks) == MAX_CHUNK_QUERY

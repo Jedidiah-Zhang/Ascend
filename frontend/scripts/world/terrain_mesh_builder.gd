@@ -8,7 +8,14 @@ const Config = preload("res://scripts/config.gd")
 
 const CHUNK_SIZE: int = Config.TILE_MAP_SIZE
 
-const TERRAIN_TO_MESH: PackedInt32Array = [3, 2, 8, 5, 4, 6, 9, 9, 4]
+## terrain_id → MeshLibrary item_id 映射（以 backend/ascend/space/terrain.py
+## 的 TerrainType 为唯一事实源）：
+##   0 GRASSLAND → 3 plains       1 SAND → 2 sand
+##   2 FERTILE_SOIL → 8 fertile   3 ROCK → 5 rock
+##   4 STEEP_SLOPE → 4 hills      5 MOUNTAIN_PEAK → 6 mountain
+##   6 SHALLOW_WATER → 9 underwater_floor   7 DEEP_WATER → 9 underwater_floor
+##   8 MARSH → 3 plains（无专用纹理，用草地近似，避免误用丘陵网格）
+const TERRAIN_TO_MESH: PackedInt32Array = [3, 2, 8, 5, 4, 6, 9, 9, 3]
 
 const UV_BL := Vector2(0, 1)
 const UV_BR := Vector2(1, 1)

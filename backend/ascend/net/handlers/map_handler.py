@@ -5,7 +5,7 @@
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ascend.config import TILE_WORKERS
+from ascend.config import MAX_CHUNK_QUERY, TILE_WORKERS
 from ascend.log import get_logger
 from ascend.net.handlers import parse_coord
 
@@ -56,6 +56,16 @@ def make_map_handlers(gen, tile_gen=None, birth_chunk=None, chunk_store=None,
                 logger.warning("get_chunks: 非法坐标 %r，跳过", c)
                 continue
             coord_tuples.append(parsed)
+
+        # 请求量上限：chunk 生成（含 tile 层）同步跑在游戏线程，
+        # 无上限的单条消息可冻结引擎数秒（与 weather_handler 的
+        # MAX_WEATHER_QUERY_CHUNKS 同理）。
+        if len(coord_tuples) > MAX_CHUNK_QUERY:
+            logger.warning(
+                "get_chunks: 请求 %d 个 chunk 超过上限 %d，截断",
+                len(coord_tuples), MAX_CHUNK_QUERY,
+            )
+            coord_tuples = coord_tuples[:MAX_CHUNK_QUERY]
 
         if not coord_tuples:
             return {

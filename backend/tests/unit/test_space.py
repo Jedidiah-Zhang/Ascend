@@ -13,6 +13,7 @@ Coverage 目标:
 """
 
 import pytest
+from ascend.config import MOISTURE_TILE_FREQUENCY
 from ascend.space import (
     PerlinNoise,
     ClimateZone,
@@ -1060,7 +1061,7 @@ class TestTileGenerator:
             )
             moisture_field = gen._moisture_noise.octave_grid(
                 world_x0 + 0.5, world_y0 + 0.5, size, size,
-                frequency=0.005, octaves=2,
+                frequency=MOISTURE_TILE_FREQUENCY, octaves=4,
             )
 
             for ty in range(0, size, 4):
@@ -1106,6 +1107,9 @@ class TestTileGenerator:
             assert isinstance(result1[2], float)
             assert isinstance(result1[3], int)
 
-        # 越界 chunk 返回默认海洋气候
+        # 越界 chunk 返回一致的极地深海默认（不再返回与 -20°C 矛盾的
+        # 热带雨林 zone=0）
         invalid = cont.get_chunk_climate(-1, -1)
-        assert invalid == (-20.0, 0.0, -20.0, 0)
+        assert invalid == (
+            -20.0, 0.0, -20.0, int(ClimateZone.POLAR_TUNDRA),
+        )

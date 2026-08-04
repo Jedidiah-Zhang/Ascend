@@ -88,8 +88,9 @@ func test_birth_chunk_sets_player_position() -> void:
 	main._set_birth_chunk(5, 3)
 	assert_true(main._has_birth)
 	assert_eq(main._birth_chunk, Vector2i(5, 3))
-	assert_eq(main._player_pos.x, 5.0 * CS + CS / 2.0)
-	assert_eq(main._player_pos.z, 3.0 * CS + CS / 2.0)
+	# 与后端权威出生点约定一致：chunk 原点（非 chunk 中心）
+	assert_eq(main._player_pos.x, 5.0 * CS)
+	assert_eq(main._player_pos.z, 3.0 * CS)
 
 
 func test_birth_chunk_only_set_once() -> void:
@@ -375,3 +376,50 @@ func test_disconnect_clears_pending_state() -> void:
 	assert_true(main._pending.is_empty(), "断线后 tile 请求应清空")
 	assert_true(main._batch_pending.is_empty(), "断线后字段请求应清空")
 	assert_true(main._tile_queue.is_empty(), "断线后 tile 队列应清空")
+
+
+# ── 权威位置（player_state / player_move / entity_snapshot） ──
+
+func test_player_state_sets_entity_id_and_position() -> void:
+	var main: Node3D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "player_state",
+		"payload": {"entity_id": "abc123", "x": 123.0, "y": 456.0},
+	})
+
+	assert_eq(main._player_entity_id, "abc123")
+	assert_eq(main._player_pos.x, 123.0)
+	assert_eq(main._player_pos.z, 456.0)
+
+
+func test_player_move_response_applies_authoritative_position() -> void:
+	var main: Node3D = _make_world_instance()
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "player_move",
+		"payload": {"x": 10.0, "y": 20.0},
+	})
+
+	assert_eq(main._player_pos.x, 10.0, "越界钳制后的权威位置应被采纳")
+	assert_eq(main._player_pos.z, 20.0)
+
+
+func test_entity_snapshot_consumes_player_entity() -> void:
+	var main: Node3D = _make_world_instance()
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "entity_snapshot",
+		"payload": {"entities": [
+			{"id": "npc1", "controller": "AI", "x": 1.0, "y": 2.0},
+			{"id": "plr1", "controller": "PLAYER", "x": 30.0, "y": 40.0},
+		]},
+	})
+
+	assert_eq(main._player_entity_id, "plr1", "应识别 controller=PLAYER 的实体")
+	assert_eq(main._player_pos.x, 30.0)
+	assert_eq(main._player_pos.z, 40.0)

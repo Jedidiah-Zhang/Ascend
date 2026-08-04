@@ -23,20 +23,21 @@ class ClientHandler:
         self,
         sock: socket.socket,
         addr: tuple[str, int],
-        on_message: Callable[[dict], None],
-        on_disconnect: Callable[["ClientHandler"], None],
+            on_message: Callable[[ClientHandler, dict], None],
+            on_disconnect: Callable[["ClientHandler"], None],
     ) -> None:
         """初始化客户端处理器。
 
         Args:
             sock: 已 accept 的客户端 socket。
             addr: 客户端地址 (host, port)。
-            on_message: 收到完整消息时的回调。
+            on_message: 收到完整消息时的回调 (handler, message)。
             on_disconnect: 连接断开时的回调。
         """
         self.sock: socket.socket = sock
         self.addr: tuple[str, int] = addr
-        self._on_message: Callable[[dict], None] = on_message
+        self.client_id: int = -1
+        self._on_message: Callable[[ClientHandler, dict], None] = on_message
         self._on_disconnect: Callable[["ClientHandler"], None] = on_disconnect
         self._recv_thread: threading.Thread | None = None
         self._running: bool = False
@@ -98,7 +99,7 @@ class ClientHandler:
                     message = read_frame(buffer)
                     if message is None:
                         break
-                    self._on_message(message)
+                    self._on_message(self, message)
             except socket.timeout:
                 continue
             except ProtocolError as exc:

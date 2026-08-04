@@ -11,6 +11,7 @@
     lang / events / help / quit             独立指令
 """
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -54,6 +55,9 @@ class CommandExecutor:
 
     # weather set 的合法状态词
     _ON_OFF: frozenset = frozenset({"on", "off"})
+
+    # time tick 单次执行上限（step 同步触发日历边界回调，过大冻结游戏线程）
+    MAX_TICK_STEPS: int = 10_000
 
     def __init__(
         self,
@@ -248,6 +252,14 @@ class CommandExecutor:
                     output=self._i18n.t("console.invalid_number",
                                         value=rest[0] if rest else ""),
                 )
+            # 单次执行上限：step() 同步触发日历边界回调，超大 count
+            # 会冻结游戏线程数秒
+            if count > self.MAX_TICK_STEPS:
+                return CommandResult(
+                    success=False,
+                    output=self._i18n.t("console.tick_limit",
+                                        limit=self.MAX_TICK_STEPS),
+                )
             return CommandResult(success=True, output=self._cmd_tick(count))
         return CommandResult(
             success=False, output=self._i18n.t("console.time_usage"),
@@ -270,7 +282,7 @@ class CommandExecutor:
             speed = float(args[0])
         except ValueError:
             speed = -1.0
-        if speed < 0:
+        if not math.isfinite(speed) or speed < 0:
             return CommandResult(
                 success=False,
                 output=self._i18n.t("console.speed_invalid", value=args[0]),
@@ -327,6 +339,9 @@ class CommandExecutor:
 
     def _cmd_tick(self, count: int = 1) -> str:
         """手动推进 N tick（忽略暂停和速度，调试用）。
+
+        每次 step 都会触发日历边界回调，超大 count 会冻结游戏线程，
+        因此限制单次执行上限（见 _h_time_tick）。
 
         Args:
             count: 要推进的 tick 数。
@@ -691,6 +706,10 @@ class CommandExecutor:
             x = float(args[0])
             y = float(args[1])
         except ValueError:
+            return CommandResult(
+                success=False, output=self._i18n.t("console.tp_usage"),
+            )
+        if not math.isfinite(x) or not math.isfinite(y):
             return CommandResult(
                 success=False, output=self._i18n.t("console.tp_usage"),
             )

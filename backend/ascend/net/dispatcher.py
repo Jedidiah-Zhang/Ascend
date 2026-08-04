@@ -1,7 +1,10 @@
 """消息分发器 — 根据 request_type 将传入请求路由到注册的处理程序。
 
 线程安全。从游戏线程调用 process()（不是从服务器接收线程）。
+响应定向发送给请求方客户端（非广播），事件流仍走广播通道。
 """
+
+from collections.abc import Callable
 
 from ascend.log import get_logger
 
@@ -23,10 +26,10 @@ class MessageDispatcher:
         """初始化分发器。
 
         Args:
-            server: GameServer 实例（用于接收消息和广播响应）。
+            server: GameServer 实例（用于接收消息和定向发送响应）。
         """
         self._server = server
-        self._handlers: dict[str, callable] = {}
+        self._handlers: dict[str, Callable[[dict], dict | None]] = {}
 
     def __repr__(self) -> str:
         """返回分发器状态摘要。
@@ -38,7 +41,7 @@ class MessageDispatcher:
             f"MessageDispatcher(handlers={list(self._handlers.keys())})"
         )
 
-    def register(self, request_type: str, handler: callable) -> None:
+    def register(self, request_type: str, handler: Callable[[dict], dict | None]) -> None:
         """注册一个请求处理程序。
 
         Args:
@@ -58,13 +61,14 @@ class MessageDispatcher:
     def process(self) -> None:
         """处理所有排队消息（每个游戏 tick 调用一次）。"""
         messages = self._server.receive_all()
-        for msg in messages:
-            self._dispatch(msg)
+        for client_id, msg in messages:
+            self._dispatch(client_id, msg)
 
-    def _dispatch(self, msg: dict) -> None:
-        """将一条消息路由到其处理程序。
+    def _dispatch(self, client_id: int, msg: dict) -> None:
+        """将一条消息路由到其处理程序，响应定向回请求方。
 
         Args:
+            client_id: 请求来源客户端 ID。
             msg: 从客户端收到的消息字典。
         """
         msg_type = msg.get("type", "")
@@ -75,7 +79,7 @@ class MessageDispatcher:
         req_type = msg.get("request_type", "")
         if not req_type:
             logger.warning("请求缺少 request_type")
-            self._server.broadcast({
+            self._server.send_to(client_id, {
                 "type": "error",
                 "request_type": "",
                 "seq": msg.get("seq", 0),
@@ -86,7 +90,7 @@ class MessageDispatcher:
         handler = self._handlers.get(req_type)
         if handler is None:
             logger.warning("无处理程序: request_type=%s", req_type)
-            self._server.broadcast({
+            self._server.send_to(client_id, {
                 "type": "error",
                 "request_type": req_type,
                 "seq": msg.get("seq", 0),
@@ -98,10 +102,10 @@ class MessageDispatcher:
             response = handler(msg)
             if response is not None:
                 response["seq"] = msg.get("seq", 0)
-                self._server.broadcast(response)
+                self._server.send_to(client_id, response)
         except Exception as exc:
             logger.exception("处理程序错误: request_type=%s", req_type)
-            self._server.broadcast({
+            self._server.send_to(client_id, {
                 "type": "error",
                 "request_type": req_type,
                 "seq": msg.get("seq", 0),

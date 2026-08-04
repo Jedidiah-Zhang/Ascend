@@ -35,6 +35,7 @@
   "console.speed_invalid": "无效流速 '{value}'，需为 ≥0 的数字（0=暂停）",
   "console.time_usage": "用法: time [speed <n> | pause | resume | jump [d] | tick [n]]",
   "console.invalid_number": "无效数值 '{value}'，需为 ≥1 的整数",
+  "console.tick_limit": "time tick 单次上限 {limit} 帧，超出会被拒绝",
   "console.weather_usage": "用法: weather status [cx cy] | weather set <rain|cold_snap|heat_wave|storm> <on|off> [cx cy]",
   "console.weather_unavailable": "天气引擎不可用",
   "console.weather_chunk_unregistered": "chunk ({cx},{cy}) 未注册天气数据",
