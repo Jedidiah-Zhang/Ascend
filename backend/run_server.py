@@ -5,6 +5,8 @@
 仅提供存档管理请求；世界在大陆生成（5-30s+）只在 save_load
 读档/新建进入时执行——主菜单不再等待地图生成。
 
+网络层常驻：读档重建只替换世界观，客户端全程不断线。
+
 用法:
     cd backend && PYTHONPATH=. python run_server.py
     或从项目根:
@@ -63,8 +65,8 @@ def main() -> None:
                 had_client = True
                 empty_since = None
             elif getattr(engine, "_reloading", False):
-                # 读档重建期间 server 暂不可用（可能持续数十秒）：
-                # 抑制自动停止，等待新 server 就绪
+                # 读档重建中：tick 线程忙于世界生成，客户端数可能短暂
+                # 变化，抑制自动停止（网络层常驻，重建后恢复）
                 empty_since = None
             elif had_client and empty_since is None:
                 empty_since = _real_time.monotonic()

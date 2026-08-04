@@ -14,6 +14,31 @@ from ascend.game import GameEngine
 GAME_ENGINE_PORT = 9081
 
 
+def _patch_fast_worldgen(monkeypatch):
+    """快路径世界生成：小大陆 + 跳过初始区块，避免真实生成耗时。
+
+    只替换生成来源，生命周期/网络/存档流程全走真实路径。
+    """
+    from ascend.game import GameEngine
+    from ascend.space.continent import ContinentGenerator, ContinentParams
+
+    def _fast_continent(gen, *args, **kwargs):
+        return ContinentGenerator(
+            seed=gen._seed,
+            params=ContinentParams(
+                width_km=6, height_km=4, sample_resolution=200,
+            ),
+        ).generate()
+
+    monkeypatch.setattr(
+        GameEngine, "_generate_initial_chunks", lambda self, continent: None,
+    )
+    monkeypatch.setattr(
+        "ascend.space.generator.WorldGenerator.ensure_continent",
+        _fast_continent,
+    )
+
+
 class TestGameEngine:
     """GameEngine 生命周期测试。"""
 
@@ -188,3 +213,89 @@ class TestGameEngine:
         with pytest.raises((ConnectionRefusedError, OSError)):
             sock2.connect(("127.0.0.1", GAME_ENGINE_PORT))
         sock2.close()
+
+
+class TestServerWorldDecoupling:
+    """服务器与世界观解耦：读档重建不重启服务器，客户端不断线。"""
+
+    def test_service_mode_then_reload_keeps_server(self, monkeypatch):
+        """服务模式 → 读档：服务器实例不变、世界请求注册、世界观可换。"""
+        _patch_fast_worldgen(monkeypatch)
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            old_server = engine.server
+            assert old_server is not None and old_server.is_running
+            assert "get_chunks" not in engine.dispatcher._handlers
+            assert "save_list" in engine.dispatcher._handlers
+
+            world_id = engine.save_manager.create_world("测试世界", seed=7).world_id
+            engine._reload(world_id=world_id)
+
+            # 服务器保持同一实例且运行中（客户端未断线）
+            assert engine.server is old_server
+            assert engine.server.is_running
+            assert engine.world_id == world_id
+            assert engine._service_mode is False
+            assert engine.birth_chunk is not None
+            assert "get_chunks" in engine.dispatcher._handlers
+            assert "player_move" in engine.dispatcher._handlers
+            assert "save_list" in engine.dispatcher._handlers
+
+            # 清理世界观：网络层保留，世界请求被注销
+            engine._cleanup_world()
+            assert engine.server is old_server
+            assert engine.server.is_running
+            assert "get_chunks" not in engine.dispatcher._handlers
+            assert "save_list" in engine.dispatcher._handlers
+            assert engine.chunk_store is None
+            assert engine.player_service is None
+        finally:
+            engine.stop()
+
+    def test_reload_failure_falls_back_to_service_mode(self, monkeypatch):
+        """读档失败（目标不存在）：回到服务模式，服务器保持在线。"""
+        _patch_fast_worldgen(monkeypatch)
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            old_server = engine.server
+
+            with pytest.raises(Exception):
+                engine._reload(world_id="no-such-world")
+
+            # 兜底：服务模式（无世界），网络层与存档管理仍可用
+            assert engine.server is old_server
+            assert engine.server.is_running
+            assert engine._service_mode is True
+            assert engine.world_id is None
+            assert engine._running.is_set()
+            assert "get_chunks" not in engine.dispatcher._handlers
+            assert "save_list" in engine.dispatcher._handlers
+        finally:
+            engine.stop()
+
+    def test_world_swap_switches_handlers(self, monkeypatch):
+        """世界 A → 世界 B 连续重建：新世界闭包覆盖旧闭包。"""
+        _patch_fast_worldgen(monkeypatch)
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            old_server = engine.server
+            mgr = engine.save_manager
+            world_a = mgr.create_world("世界A", seed=7).world_id
+            world_b = mgr.create_world("世界B", seed=8).world_id
+
+            engine._reload(world_id=world_a)
+            assert engine.world_id == world_a
+
+            engine._reload(world_id=world_b)
+            assert engine.world_id == world_b
+            assert engine.seed == 8
+            assert engine.server is old_server
+            assert engine.server.is_running
+            assert "get_chunks" in engine.dispatcher._handlers
+            # 旧世界的存档/快照处理仍可用
+            assert "save_list" in engine.dispatcher._handlers
+        finally:
+            engine.stop()

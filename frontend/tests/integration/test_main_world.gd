@@ -102,6 +102,63 @@ func test_birth_chunk_only_set_once() -> void:
 	assert_eq(main._birth_chunk, Vector2i(2, 2), "出生区块只应设置一次")
 
 
+# ── 世界就绪事件（服务器/世界观解耦后的就绪信号） ─────────
+
+func test_world_initialized_sets_birth_and_requests_state() -> void:
+	"""world_initialized 事件：设置出生点并重新拉取权威玩家状态。
+
+	回归：连接全程不断线后，entity_snapshot / player_state 原由
+	_on_connected 触发，读档重建后必须由事件重新请求。
+	"""
+	var main: Node3D = _make_world_instance()
+
+	main._on_world_initialized({"birth_chunk": [5, 3]})
+
+	assert_true(main._has_birth)
+	assert_eq(main._birth_chunk, Vector2i(5, 3))
+	assert_eq(main._player_pos.x, 5.0 * CS)
+	assert_false(main._loading_label.visible, "世界就绪后应隐藏加载提示")
+
+
+func test_world_initialized_resets_previous_world_state() -> void:
+	"""world_initialized 应清空旧世界的 chunk/地形（换世界读档）。"""
+	var main: Node3D = _make_world_instance()
+	main._set_birth_chunk(2, 2)
+	main._chunks[Vector2i(0, 0)] = {"elevation": []}
+	main._loaded[Vector2i(0, 0)] = true
+	main._pending[Vector2i(1, 1)] = true
+
+	main._on_world_initialized({"birth_chunk": [8, 8]})
+
+	assert_eq(main._birth_chunk, Vector2i(8, 8), "应切到新世界的出生点")
+	assert_true(main._chunks.is_empty(), "旧世界 chunk 数据应清空")
+	assert_true(main._loaded.is_empty(), "旧世界地形标记应清空")
+	assert_true(main._pending.is_empty(), "旧世界在途请求应清空")
+
+
+func test_world_reloading_resets_state_and_shows_label() -> void:
+	"""world_reloading 事件：复位世界状态并显示加载提示。"""
+	var main: Node3D = _make_world_instance()
+	main._set_birth_chunk(2, 2)
+	main._chunks[Vector2i(0, 0)] = {"elevation": []}
+	main._loaded[Vector2i(0, 0)] = true
+
+	main._on_world_reloading({"world_id": "next"})
+
+	assert_false(main._has_birth, "重建开始后出生点应复位")
+	assert_true(main._chunks.is_empty(), "旧世界数据应清空")
+	assert_true(main._loading_label.visible, "重建期间应显示加载提示")
+
+
+func test_reset_world_state_is_idempotent() -> void:
+	"""连续复位（reloading → initialized）不应报错。"""
+	var main: Node3D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+	main._reset_world_state()
+	main._reset_world_state()
+	assert_false(main._has_birth)
+
+
 # ── Debug 数据 getter ───────────────────────────────────────
 
 func test_debug_player_info_defaults() -> void:
@@ -320,9 +377,13 @@ func test_field_only_response_keeps_tile_pending() -> void:
 
 	回归：旧实现无条件 _pending.erase(key)，导致 tile 请求标记被抹掉、
 	每帧重发 include_tiles=true 请求，直到 tile 响应到达。
+
+	注：须先设置出生点（world_initialized 事件驱动语义），
+	使响应走正常流式路径而非"世界未就绪"分支。
 	"""
 	var main: Node3D = _make_world_instance()
 	var key := Vector2i(0, 0)
+	main._set_birth_chunk(0, 0)
 	main._pending[key] = true
 	main._batch_pending[key] = true
 
@@ -340,6 +401,7 @@ func test_tile_response_clears_tile_pending() -> void:
 	"""含 terrain 的响应清除 tile 请求标记。"""
 	var main: Node3D = _make_world_instance()
 	var key := Vector2i(0, 0)
+	main._set_birth_chunk(0, 0)
 	main._pending[key] = true
 	main._loaded[key] = true  # 预标记已加载，跳过网格构建，只验证状态
 

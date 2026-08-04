@@ -2,13 +2,22 @@
 
 在后台线程中运行 tick 循环，以固定频率处理传入的客户端消息。
 
+架构（服务器与世界观解耦）:
+  - 网络层（GameServer / MessageDispatcher / EventBridge）常驻：
+    引擎启动即就绪（服务模式），跨读档重建存活，客户端全程不断线；
+  - 世界观（生成器 / ChunkStore / 实体 / 天气 / 日历 / 事件归档）随
+    读档重建整体替换，由 start() 构建、_cleanup_world() 释放；
+  - 世界就绪信号 = world_initialized 事件（含出生点），前端据此接入；
+    world_reloading 事件在重建开始时广播（前端显示加载提示）。
+
 启动流程:
-  1. 随机 seed（seed=0 时自动随机）
-  2. 主动生成大陆宏观场（侵蚀+水文，约 30s）
-  3. 随机选取出生点（海岸低地，避开河流/湖泊，海陆地形多样）
-  4. 预生成出生点周边 radius 个 chunk 的详细 tile 层
-  5. 创建实体管理器接入事件管线
-  6. 配置世界树归档 + 启动 tick 循环（时钟+日历随之运转）
+  1. 网络层就绪（服务模式：仅存档管理，不生成世界）
+  2. save_load 请求 → tick 线程内读档重建：随机 seed（读档取 manifest.seed）
+  3. 主动生成大陆宏观场（侵蚀+水文，约 30s；缓存命中秒级）
+  4. 随机选取出生点（海岸低地，避开河流/湖泊，海陆地形多样）
+  5. 预生成出生点周边 radius 个 chunk 的详细 tile 层
+  6. 创建实体管理器接入事件管线
+  7. 配置世界树归档 + 启动 tick 循环（时钟+日历随之运转）
 """
 
 import os
@@ -88,6 +97,7 @@ class GameEngine:
         self.world_gen: WorldGenerator | None = None
         self.server: GameServer | None = None
         self.dispatcher: MessageDispatcher | None = None
+        self.event_bridge: EventBridge | None = None
         self.clock: WorldClock = WorldClock()
         self.calendar: GameCalendar | None = GameCalendar(clock=self.clock)  # shutdown 后为 None
         self.i18n: I18n = I18n()
@@ -109,6 +119,7 @@ class GameEngine:
         self._world_start_monotonic: float = 0.0
         self._reloading: bool = False         # 读档重建中（run_server 据此抑制自动停止）
         self._service_mode: bool = False      # 服务模式：仅网络+存档，无世界
+        self._world_request_types: set[str] = set()  # 世界观处理程序清单（读档时重注册）
         self._running: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -156,23 +167,49 @@ class GameEngine:
 
         时钟不推进（无日历事件、不进归档）；tick 循环仅处理网络消息。
 
+        网络层（服务器/分发器/事件桥）在此常驻启动：之后 start()
+        读档只替换世界观，不重启服务器，客户端全程不断线。
+
         幂等：已在运行时调用无效果。
         """
         if self._running.is_set():
             return
-        self.save_manager = SaveManager(SAVE_ROOT)
+        self._ensure_network()
+        self._service_mode = True
+        self.world_id = None
+        self._manifest = None
+        self._running.set()
+        self._ensure_tick_thread()
+        logger.info(
+            "服务模式已启动: %s:%d（世界将在读档时生成）",
+            SERVER_HOST, SERVER_PORT,
+        )
+
+    def _ensure_network(self) -> None:
+        """确保网络层就绪（服务器/分发器/事件桥/存档处理程序），幂等。
+
+        服务器与世界观解耦：跨读档重建常驻，客户端不断线。
+        存档处理程序与世界观无关，只注册一次；世界观处理程序由
+        _register_world_handlers 在读档时以 replace 覆盖。
+        """
+        if self.server is not None:
+            return
+        if self.save_manager is None:
+            self.save_manager = SaveManager(SAVE_ROOT)
         self.server = GameServer(host=SERVER_HOST, port=SERVER_PORT)
         self.server.start()
         self.dispatcher = MessageDispatcher(self.server)
         save_handlers = make_save_handlers(self.save_manager, self)
         for req_type, handler in save_handlers.items():
             self.dispatcher.register(req_type, handler)
-        logger.info(
-            "服务模式已启动: %s:%d（世界将在读档时生成）",
-            SERVER_HOST, SERVER_PORT,
-        )
-        self._service_mode = True
-        self._running.set()
+        self.event_bridge = EventBridge(world_tree, self.server)
+        self.event_bridge.install()
+        logger.info("网络层已就绪: %s:%d", SERVER_HOST, SERVER_PORT)
+
+    def _ensure_tick_thread(self) -> None:
+        """确保 tick 循环线程存活（常驻线程，跨读档重建不重建）。"""
+        if self._thread is not None and self._thread.is_alive():
+            return
         self._thread = threading.Thread(
             target=self._run_loop, name="game-engine", daemon=True
         )
@@ -202,7 +239,6 @@ class GameEngine:
         self._service_mode = False
 
         # 0. 存档准备
-        self.save_manager = SaveManager(SAVE_ROOT)
         self._load_state = None
         self._manifest = None
         if world_id is not None:
@@ -310,49 +346,8 @@ class GameEngine:
             )
         logger.info("天气引擎已接入 %d 个 chunk", len(self.chunk_store))
 
-        # 6. TCP 服务器
-        self.server = GameServer(host=SERVER_HOST, port=SERVER_PORT)
-        self.server.start()
-
-        # 6b. 事件桥接器 — 将 WorldTree 事件转发给 Godot 前端
-        self.event_bridge = EventBridge(world_tree, self.server)
-        self.event_bridge.install()
-        logger.info("事件桥接器已安装")
-
-        # 7. 消息分发器
-        self.dispatcher = MessageDispatcher(self.server)
-        handlers = make_map_handlers(
-            self.world_gen, tile_gen=self.tile_generator,
-            birth_chunk=self.birth_chunk, chunk_store=self.chunk_store,
-            weather_engine=self.weather_engine,
-        )
-        for req_type, handler in handlers.items():
-            self.dispatcher.register(req_type, handler)
-        logger.info("已注册地图处理程序: %s", list(handlers.keys()))
-
-        # 7b. 天气查询处理程序
-        weather_handlers = make_weather_handler(self.weather_engine, self.i18n)
-        for req_type, handler in weather_handlers.items():
-            self.dispatcher.register(req_type, handler)
-        logger.info("已注册天气查询处理程序: %s", list(weather_handlers.keys()))
-
-        # 7c. 玩家状态处理程序
-        player_handlers = make_player_handler(self.player_service)
-        for req_type, handler in player_handlers.items():
-            self.dispatcher.register(req_type, handler)
-        logger.info("已注册玩家处理程序: %s", list(player_handlers.keys()))
-
-        # 7d. 实体快照处理程序（状态通道：前端接入时初始化实体视图）
-        entity_handlers = make_entity_handlers(self.entity_manager)
-        for req_type, handler in entity_handlers.items():
-            self.dispatcher.register(req_type, handler)
-        logger.info("已注册实体处理程序: %s", list(entity_handlers.keys()))
-
-        # 7e. 存档处理程序（状态通道：列表/快照/读档）
-        save_handlers = make_save_handlers(self.save_manager, self)
-        for req_type, handler in save_handlers.items():
-            self.dispatcher.register(req_type, handler)
-        logger.info("已注册存档处理程序: %s", list(save_handlers.keys()))
+        # 5c. 网络层（幂等：服务模式已就绪则保持，客户端不断线）
+        self._ensure_network()
 
         # 8. 终端指令执行器
         self._executor = CommandExecutor(
@@ -364,22 +359,9 @@ class GameEngine:
             player_service=self.player_service,
             entity_manager=self.entity_manager,
         )
-        term_handlers = make_terminal_handler(self._executor)
-        for req_type, handler in term_handlers.items():
-            self.dispatcher.register(req_type, handler)
-        logger.info("已注册终端处理程序: %s", list(term_handlers.keys()))
 
-        # 8b. 占位 handler：尚未实现的功能返回空成功响应
-        # （需携带 request_type，与真实 handler 的响应约定一致）
-        def _placeholder_ok(msg: dict) -> dict:
-            return {
-                "type": "response",
-                "request_type": msg.get("request_type", ""),
-                "payload": {},
-            }
-
-        self.dispatcher.register("open_menu", _placeholder_ok)
-        self.dispatcher.register("player_interact", _placeholder_ok)
+        # 8b. 世界观处理程序（replace 语义：读档重建时覆盖旧闭包）
+        self._register_world_handlers()
 
         # 9. 世界树：归档 + 内存限制 + 图预热
         # （读档时切换到存档内归档路径，旧归档自动关闭）
@@ -409,15 +391,13 @@ class GameEngine:
         self._publish_world_initialized()
         self._persist_manifest()
 
-        # 11. 启动 tick 循环——clock.tick() 推进时间，calendar 自动收事件
+        # 11. 启动 tick 循环——clock.tick() 推进时间，calendar 自动收事件。
+        # 常驻线程：服务模式已启动时复用，跨读档重建不重建。
         self._last_state_save = _real_time.monotonic()
         self._last_chunk_flush = self._last_state_save
         self._world_start_monotonic = self._last_state_save
         self._running.set()
-        self._thread = threading.Thread(
-            target=self._run_loop, name="game-engine", daemon=True
-        )
-        self._thread.start()
+        self._ensure_tick_thread()
         logger.info("游戏引擎在后台运行 (tick=%.1f Hz)", TICK_RATE)
 
     def stop(self) -> None:
@@ -445,20 +425,18 @@ class GameEngine:
         self._thread = None
         self._cleanup()
 
-    def _cleanup(self) -> None:
-        """释放所有子系统资源（stop 与读档重建共用）。
+    def _cleanup_world(self) -> None:
+        """释放世界观子系统（读档重建与退出共用）；网络层保留。
 
         停服是世界外操作：不发 entity_died（那会向因果历史写入虚假
         死亡），直接释放内存；实体状态持久化是存档系统的职责。
+
+        网络层（服务器/分发器/事件桥）不在此释放：读档重建时客户端
+        保持连接，世界就绪后经 world_initialized 事件恢复。
         """
-        if hasattr(self, 'event_bridge') and self.event_bridge:
-            self.event_bridge.uninstall()
-            self.event_bridge = None
         world_tree.await_async()
-        if self.server:
-            self.server.stop()
-            self.server = None
         self._save_state_now()
+        self._unregister_world_handlers()
         if self.calendar:
             self.calendar.shutdown()
             self.calendar = None
@@ -468,7 +446,9 @@ class GameEngine:
         self.player_service = None
         self.entity_manager = None
         self.tile_generator = None
-        if self.chunk_store:
+        # 注：显式 is not None —— ChunkStore 定义 __len__，空缓存时
+        # bool(store) 为 False，真值判断会静默跳过 close（回归测试暴露）
+        if self.chunk_store is not None:
             self.chunk_store.close()
             self.chunk_store = None
         if self.world_gen:
@@ -476,6 +456,18 @@ class GameEngine:
         if self._executor:
             self._executor = None
         self._load_state = None
+        logger.info("世界观已清理（网络层保留）")
+
+    def _cleanup(self) -> None:
+        """完全停止：世界观 + 网络层。"""
+        self._cleanup_world()
+        if self.event_bridge:
+            self.event_bridge.uninstall()
+            self.event_bridge = None
+        if self.server:
+            self.server.stop()
+            self.server = None
+        self.dispatcher = None
         logger.info("游戏引擎已停止")
 
     def _on_chunk_evicted(self, cx: int, cy: int) -> None:
@@ -620,6 +612,61 @@ class GameEngine:
 
     # ── 存档（实时保存 / 读档重建） ──────────────────────
 
+    def _register_world_handlers(self) -> None:
+        """注册绑定世界观子系统的处理程序（replace：读档重建时覆盖旧闭包）。
+
+        世界观处理程序闭包引用本次 start() 构建的子系统实例；
+        世界重建后必须整体替换，否则旧闭包会访问已销毁的对象。
+        """
+        handlers: dict = {}
+        handlers.update(make_map_handlers(
+            self.world_gen, tile_gen=self.tile_generator,
+            birth_chunk=self.birth_chunk, chunk_store=self.chunk_store,
+            weather_engine=self.weather_engine,
+        ))
+        handlers.update(make_weather_handler(self.weather_engine, self.i18n))
+        handlers.update(make_player_handler(self.player_service))
+        handlers.update(make_entity_handlers(self.entity_manager))
+        handlers.update(make_terminal_handler(self._executor))
+        # 占位 handler：尚未实现的功能返回空成功响应
+        # （需携带 request_type，与真实 handler 的响应约定一致）
+        def _placeholder_ok(msg: dict) -> dict:
+            return {
+                "type": "response",
+                "request_type": msg.get("request_type", ""),
+                "payload": {},
+            }
+        handlers["open_menu"] = _placeholder_ok
+        handlers["player_interact"] = _placeholder_ok
+        self._world_request_types = set(handlers)
+        for req_type, handler in handlers.items():
+            self.dispatcher.replace(req_type, handler)
+        logger.info("世界观处理程序已注册: %s", sorted(handlers))
+
+    def _unregister_world_handlers(self) -> None:
+        """注销世界观处理程序（世界卸载后旧闭包指向已销毁子系统）。"""
+        if not self.dispatcher:
+            return
+        for req_type in self._world_request_types:
+            self.dispatcher.unregister(req_type)
+        self._world_request_types.clear()
+
+    def _broadcast_world_reloading(self, world_id, snapshot) -> None:
+        """广播世界重建提示（前端显示加载提示）。
+
+        直接经服务器广播而非 world_tree 事件：世界重建是世界外元操作，
+        不产生历史、不进因果图、不入归档。
+        """
+        if self.server:
+            self.server.broadcast({
+                "type": "event",
+                "event_type": "world_reloading",
+                "payload": {"data": {
+                    "world_id": world_id,
+                    "snapshot": snapshot,
+                }},
+            })
+
     def _persist_manifest(self) -> None:
         """回写 manifest（出生点/游玩信息），存档选择页数据源。"""
         if not self.world_id or not self.save_manager or not self._manifest:
@@ -668,7 +715,7 @@ class GameEngine:
                 self._save_state_now()
             except Exception:
                 logger.exception("周期状态保存失败")
-        if self.chunk_store and now - self._last_chunk_flush >= SAVE_CHUNK_FLUSH_INTERVAL:
+        if self.chunk_store is not None and now - self._last_chunk_flush >= SAVE_CHUNK_FLUSH_INTERVAL:
             self._last_chunk_flush = now
             try:
                 self.chunk_store.flush_dirty()
@@ -690,21 +737,24 @@ class GameEngine:
         """
         if not self.world_id or not self.save_manager:
             raise ValueError("当前无存档位，无法创建快照")
-        if self.chunk_store:
+        # 注：显式 is not None —— ChunkStore 定义 __len__，空缓存时
+        # bool(store) 为 False，真值判断会静默跳过 flush/checkpoint
+        if self.chunk_store is not None:
             self.chunk_store.flush()
             self.chunk_store.checkpoint()
         world_tree.checkpoint_archive()
         return self.save_manager.create_snapshot(self.world_id, suffix=suffix)
 
     def _reload(self, world_id: str | None = None, snapshot: str | None = None) -> None:
-        """读档重建：清理当前世界并按目标重启。
+        """读档重建：清理旧世界并按目标重建（网络层常驻，客户端不断线）。
 
         运行在 tick 线程内部（由 save_load 请求触发）：
-          1. 回滚时先最终保存 + 一致性快照保护当前分支（DB 仍打开，
+          1. 广播 world_reloading（前端复位世界状态并显示加载提示）
+          2. 回滚时先最终保存 + 一致性快照保护当前分支（DB 仍打开，
              snapshot_current 负责 flush + checkpoint）
-          2. 清理旧世界（含最终保存）
-          3. 快照展开为活目录（目标 world_id 覆盖由调用方传入）
-          4. 按目标重建世界
+          3. 清理世界观（服务器/分发器/事件桥保留）
+          4. 快照展开为活目录（目标 world_id 覆盖由调用方传入）
+          5. 按目标重建世界（world_initialized 事件 = 就绪信号）
 
         Args:
             world_id: 目标存档位（快照回滚时可指定覆盖目标）；
@@ -717,12 +767,13 @@ class GameEngine:
         previous_world = self.world_id
         cleaned = False
         try:
+            self._broadcast_world_reloading(world_id, snapshot)
             if snapshot is not None and self.world_id:
                 # 回滚保护：先把当前（已最终保存的）活目录快照起来，
                 # 回滚后仍可从该自动快照找回回滚前的分支
                 self._save_state_now()
                 self.snapshot_current(suffix="auto")
-            self._cleanup()
+            self._cleanup_world()
             cleaned = True
             if snapshot is not None:
                 world_id = self.save_manager.extract_snapshot(
@@ -732,12 +783,22 @@ class GameEngine:
         except Exception:
             logger.exception("读档重建失败")
             if not cleaned:
-                self._cleanup()
+                self._cleanup_world()
+            recovered = False
             try:
-                # 兜底：尝试回到重建前的世界，避免后端整体死亡
-                self.start(world_id=previous_world)
+                if previous_world is not None:
+                    self.start(world_id=previous_world)
+                    recovered = True
             except Exception:
-                logger.critical("读档失败后无法恢复旧世界，引擎已停止")
+                logger.exception("恢复旧世界失败，转入服务模式")
+            if not recovered:
+                # 兜底：回到服务模式（无世界）——网络层仍在线，
+                # 存档管理可用，前端可重新发起读档
+                self._cleanup_world()
+                self.world_id = None
+                self._manifest = None
+                self._service_mode = True
+                self._running.set()
             raise
         finally:
             self._reloading = False
@@ -745,7 +806,7 @@ class GameEngine:
     # ── 内部 ──────────────────────────────────────────
 
     def _run_loop(self) -> None:
-        """Tick 循环（运行在后台线程）。
+        """Tick 循环（常驻后台线程，跨世界重建存活）。
 
         异常防护：
           - 单次 _tick 异常不中断循环，但异常路径也会 sleep，
@@ -753,8 +814,8 @@ class GameEngine:
           - 连续异常达到 _MAX_CONSECUTIVE_ERRORS 次触发熔断，
             自动清除运行标志退出循环（资源清理仍由 stop() 负责）。
 
-        读档：_pending_load 置位时退出循环并执行 _reload
-        （仍在 tick 线程内，可安全调用 _cleanup/start）。
+        读档：_pending_load 置位时在本线程内执行 _reload（世界重建
+        期间网络层常驻、客户端不断线），完成后循环继续。
         """
         consecutive_errors = 0
         while self._running.is_set():
@@ -780,15 +841,12 @@ class GameEngine:
             if sleep_time > 0:
                 _real_time.sleep(sleep_time)
             if self._pending_load:
-                break
-
-        pending = self._pending_load
-        if pending:
-            self._pending_load = None
-            try:
-                self._reload(*pending)
-            except Exception:
-                logger.exception("读档重建失败")
+                pending = self._pending_load
+                self._pending_load = None
+                try:
+                    self._reload(*pending)
+                except Exception:
+                    logger.exception("读档重建失败")
 
     def _tick(self) -> None:
         """单个 tick：推进时钟 + 处理所有排队消息。

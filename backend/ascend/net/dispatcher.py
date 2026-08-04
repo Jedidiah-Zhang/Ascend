@@ -58,6 +58,29 @@ class MessageDispatcher:
         self._handlers[request_type] = handler
         logger.debug("注册处理程序: request_type=%s", request_type)
 
+    def replace(self, request_type: str, handler: Callable[[dict], dict | None]) -> None:
+        """注册或覆盖一个请求处理程序（读档重建时复用同一分发器）。
+
+        与 register 的区别：已注册时静默覆盖而非报错——世界观切换
+        时旧闭包指向已销毁的子系统，须以新世界的闭包替换。
+        """
+        existed = request_type in self._handlers
+        self._handlers[request_type] = handler
+        logger.debug(
+            "%s处理程序: request_type=%s",
+            "覆盖" if existed else "注册", request_type,
+        )
+
+    def unregister(self, request_type: str) -> None:
+        """注销一个请求处理程序（服务模式下世界观请求不应被受理）。
+
+        Args:
+            request_type: 要注销的请求类型字符串。
+        """
+        if request_type in self._handlers:
+            del self._handlers[request_type]
+            logger.debug("注销处理程序: request_type=%s", request_type)
+
     def process(self) -> None:
         """处理所有排队消息（每个游戏 tick 调用一次）。"""
         messages = self._server.receive_all()

@@ -190,6 +190,52 @@ class TestMessageDispatcher:
         with pytest.raises(ValueError, match="已注册"):
             dispatcher.register("dup", lambda msg: None)
 
+    # ── 辅助测试：replace / unregister（读档重建复用分发器） ────────
+
+    def test_replace_overwrites_existing(self):
+        """replace 覆盖已注册处理程序（读档重建时换新世界闭包）。"""
+        mock_server = MagicMock()
+        mock_server.receive_all.return_value = [
+            (0, {"type": "request", "request_type": "get_chunks", "seq": 1, "payload": {}})
+        ]
+        dispatcher = MessageDispatcher(mock_server)
+        calls = {"n": 0}
+
+        def old_handler(msg):
+            calls["n"] += 1
+            return None
+
+        def new_handler(msg):
+            calls["n"] += 10
+            return None
+
+        dispatcher.register("get_chunks", old_handler)
+        dispatcher.replace("get_chunks", new_handler)
+        dispatcher.replace("player_state", old_handler)  # 未注册时等同注册
+
+        dispatcher.process()
+        assert calls["n"] == 10  # 新闭包生效
+        assert "get_chunks" in dispatcher._handlers
+        assert "player_state" in dispatcher._handlers
+
+    def test_unregister_removes_handler(self):
+        """unregister 注销处理程序后，请求按未知类型处理；幂等。"""
+        mock_server = MagicMock()
+        mock_server.receive_all.return_value = [
+            (0, {"type": "request", "request_type": "get_chunks", "seq": 1, "payload": {}})
+        ]
+        dispatcher = MessageDispatcher(mock_server)
+        dispatcher.register("get_chunks", lambda msg: None)
+
+        dispatcher.unregister("get_chunks")
+        dispatcher.unregister("never-existed")  # 幂等
+
+        dispatcher.process()
+        assert "get_chunks" not in dispatcher._handlers
+        mock_server.send_to.assert_called_once()
+        error_msg = mock_server.send_to.call_args[0][1]
+        assert "unknown request_type" in error_msg["error"]
+
     # ── 辅助测试：process 空队列不报错 ────────────────────────────────
 
     def test_process_empty_queue(self):

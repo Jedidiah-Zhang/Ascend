@@ -94,8 +94,8 @@ var _decode_input: Array[PackedByteArray] = []
 var _decode_output: Array[Dictionary] = []
 var _decode_running: bool = false
 
-## 当前断线事件是否已广播（读档重建期间会有多次失败重连尝试，
-## 仅第一次广播 connection_lost，避免 UI/日志反复刷断线）
+## 当前断线事件是否已广播（服务器与世界观解耦后读档重建不再断连；
+## 此处仅防后端进程死亡后反复失败重连的刷屏——每次断线期只广播一次）
 var _outage_emitted: bool = false
 
 ## 上帧 _process 耗时（微秒），供调试面板读取

@@ -109,7 +109,8 @@ var _move_report_timer: float = 0.0
 
 ## 世界生成中提示（出生点到达前显示，_has_birth 后隐藏）
 var _loading_label: Label
-## 出生点探测请求节流计时器（世界生成可能耗时数秒）
+## 出生点探测请求节流计时器（兜底：world_initialized 事件丢失时的
+## 新场景就绪信号——正常路径由事件驱动，见 _on_world_initialized）
 var _birth_request_timer: float = 0.0
 const BIRTH_REQUEST_INTERVAL: float = 1.0
 
@@ -224,7 +225,8 @@ func _create_player() -> void:
 	_player.add_child(player_body)
 	_player.visible = false  # 等出生点和地形就绪后再显示
 	$World.add_child(_player)
-	_player_pos = Vector3.ZERO
+	# 注：不复位 _player_pos——惰性创建可能发生在权威位置已写入之后
+	# （回归：_apply_authoritative_position → _ensure_player 时位置被清零）
 	_player.position = _player_pos
 	print("MainWorld3D: player created")
 
@@ -281,6 +283,56 @@ func _set_birth_chunk(cx: int, cy: int) -> void:
 	_camera_focus = _player_pos
 	_apply_camera_transform()
 	print("MainWorld3D: birth chunk (%d,%d), player at (%.0f, %.0f)" % [cx, cy, _player_pos.x, _player_pos.z])
+
+
+# ── 世界就绪事件（服务器与世界观解耦后的就绪信号） ────────
+
+func _on_world_reloading(_data: Dictionary) -> void:
+	"""后端开始读档重建（连接保持，旧世界数据即将失效）：复位并提示。"""
+	_reset_world_state()
+	if _loading_label:
+		_loading_label.text = "正在生成世界..."
+		_loading_label.visible = true
+
+
+func _on_world_initialized(data: Dictionary) -> void:
+	"""新世界就绪（后端每完成一次读档/新建发布）：接入并拉取权威状态。
+
+	连接全程不断线：必须主动重新请求玩家实体/状态
+	（entity_snapshot / player_state 原由 _on_connected 触发）。
+	"""
+	_reset_world_state()
+	if _loading_label:
+		_loading_label.visible = false
+	var bc: Array = data.get("birth_chunk", [])
+	if bc.size() >= 2:
+		_set_birth_chunk(int(bc[0]), int(bc[1]))
+	Connection.send({
+		"type": "request",
+		"request_type": "entity_snapshot",
+		"payload": {},
+	})
+	Connection.send({
+		"type": "request",
+		"request_type": "player_state",
+		"payload": {},
+	})
+
+
+func _reset_world_state() -> void:
+	"""清空旧世界的 chunk 缓存与地形节点（世界重建后旧数据失效）。"""
+	_has_birth = false
+	_birth_chunk = Vector2i.ZERO
+	_chunks.clear()
+	_pending.clear()
+	_batch_pending.clear()
+	_tile_queue.clear()
+	_loaded.clear()
+	if _player:
+		_player.visible = false
+	if _terrain_parent:
+		for child in _terrain_parent.get_children():
+			child.queue_free()
 
 
 # ── 调试数据 getter（供 DebugSection 自行拉取）────────────
@@ -590,8 +642,6 @@ func _setup_debug_overlay() -> void:
 
 func _on_connected(host: String, port: int) -> void:
 	print("MainWorld3D: connected to %s:%d" % [host, port])
-	if not _has_birth and _loading_label:
-		_loading_label.text = "正在生成世界..."
 	Connection.send({
 		"type": "request",
 		"request_type": "entity_snapshot",
@@ -606,10 +656,7 @@ func _on_connected(host: String, port: int) -> void:
 
 func _on_disconnected() -> void:
 	print("MainWorld3D: disconnected")
-	# 世界场景的断连 = 后端读档重建窗口（场景仅在 save_load 后可达），
-	# 保持"正在生成世界..."提示；后端真死时超时由重连状态兜底
-	if not _has_birth and _loading_label:
-		_loading_label.text = "正在生成世界..."
+	# 服务器与世界观解耦后，读档重建不再断连——此处仅处理真实断线：
 	# 在途请求的响应永远不会到达：清空请求状态，重连后 _stream_chunks
 	# 会为所有未加载 chunk 重新入队请求（已加载的地形节点保留）
 	_pending.clear()
@@ -635,6 +682,14 @@ func _handle_event(message: Dictionary) -> void:
 	var event_type: String = message.get("event_type", "")
 	var payload: Dictionary = message.get("payload", {})
 	var data: Dictionary = payload.get("data", {})
+
+	# 世界重建信号：世界外元操作，不进事件日志
+	if event_type == "world_reloading":
+		_on_world_reloading(data)
+		return
+	if event_type == "world_initialized":
+		_on_world_initialized(data)
+		return
 
 	if event_type == "minute_change":
 		_game_hour = float(payload.get("game_hour", _game_hour))

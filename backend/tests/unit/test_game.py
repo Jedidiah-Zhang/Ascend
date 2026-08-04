@@ -63,6 +63,30 @@ class TestTickCircuitBreaker:
         assert not engine._running.is_set()
 
 
+class TestReloadLoop:
+    """读档重建：常驻 tick 线程内执行 _reload 后循环继续。"""
+
+    def test_pending_load_runs_reload_and_continues(self):
+        """_pending_load 置位时在循环内执行 _reload，完成后循环不退出。"""
+        engine = GameEngine(seed=1)
+        engine._tick = lambda: None
+        received: list[tuple] = []
+
+        def _fake_reload(*args):
+            received.append(args)
+            engine._running.clear()  # 模拟重建完成后的正常退出
+
+        engine._reload = _fake_reload
+        engine._pending_load = ("world-x", None)
+        engine._running.set()
+
+        engine._run_loop()
+
+        assert received == [("world-x", None)]
+        assert engine._pending_load is None
+        assert not engine._running.is_set()
+
+
 class TestSelectBirthPoint:
     """_select_birth_point 出生点选取。"""
 
