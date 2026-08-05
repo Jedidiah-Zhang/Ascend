@@ -62,6 +62,42 @@ func test_esc_toggles_menu() -> void:
 	assert_false(get_tree().paused, "关闭后应恢复游戏")
 
 
+# ── ESC 分流（终端打开时归终端） ───────────────────────────
+
+func test_esc_ignored_while_terminal_open() -> void:
+	"""终端打开时 ESC 不弹暂停菜单（放行给终端关闭）。"""
+	var menu: Control = _make_pause_menu()
+	var term: TerminalWidget = autoqfree(TerminalWidget.new())
+	add_child(term)
+	term.open()
+	menu.set_terminal(term)
+
+	menu._input(_make_esc_event())
+
+	assert_false(menu.visible, "终端打开时 ESC 不应弹暂停菜单")
+	assert_false(get_tree().paused)
+
+
+func test_esc_opens_menu_after_terminal_closed() -> void:
+	"""终端关闭后 ESC 恢复弹暂停菜单。"""
+	var menu: Control = _make_pause_menu()
+	var term: TerminalWidget = autoqfree(TerminalWidget.new())
+	add_child(term)
+	menu.set_terminal(term)
+
+	menu._input(_make_esc_event())
+	assert_true(menu.visible, "终端未打开时 ESC 应弹暂停菜单")
+	menu.close()
+
+
+func test_esc_without_terminal_still_toggles() -> void:
+	"""未注入终端引用（独立场景）时 ESC 行为不变。"""
+	var menu: Control = _make_pause_menu()
+	menu._input(_make_esc_event())
+	assert_true(menu.visible)
+	menu.close()
+
+
 # ── 按钮动作 ───────────────────────────────────────────────
 
 func test_resume_button_closes_menu() -> void:
@@ -106,3 +142,55 @@ func test_show_status_resets_saving() -> void:
 	menu.show_status("已保存", false)
 	assert_false(menu._saving, "响应回填后应复位存档中状态")
 	assert_string_contains(menu._status_text, "已保存")
+
+
+# ── 保存完成提示（2 秒自动消失） ───────────────────────────
+
+func test_show_save_complete_shows_node_number() -> void:
+	"""保存完成应显示「节点 N」并启动自动消失计时。"""
+	var menu: Control = _make_pause_menu()
+	menu.open()
+	menu.show_save_complete(3)
+	assert_eq(menu._status_text, "保存完成（节点 3）")
+	assert_gt(menu._status_hide_timer, 0.0, "应启动自动消失计时")
+	assert_false(menu._saving)
+
+
+func test_show_save_complete_without_number() -> void:
+	"""编号未知（异常路径）时只显示保存完成。"""
+	var menu: Control = _make_pause_menu()
+	menu.open()
+	menu.show_save_complete(0)
+	assert_eq(menu._status_text, "保存完成")
+	assert_gt(menu._status_hide_timer, 0.0)
+
+
+func test_save_complete_hides_after_timeout() -> void:
+	"""保存完成提示应在 2 秒后自动消失。"""
+	var menu: Control = _make_pause_menu()
+	menu.open()
+	menu.show_save_complete(2)
+	menu._process(menu.SAVE_STATUS_HIDE_SECONDS + 0.1)
+	assert_eq(menu._status_text, "", "超时后应清空提示")
+
+
+func test_save_complete_hides_incrementally() -> void:
+	"""计时按帧递减，未到 2 秒不清空。"""
+	var menu: Control = _make_pause_menu()
+	menu.open()
+	menu.show_save_complete(2)
+	menu._process(1.0)
+	assert_eq(menu._status_text, "保存完成（节点 2）", "未到超时不应清空")
+	assert_lt(menu._status_hide_timer, menu.SAVE_STATUS_HIDE_SECONDS)
+	menu._process(1.1)
+	assert_eq(menu._status_text, "")
+
+
+func test_other_statuses_stay_permanent() -> void:
+	"""错误/占位提示不自动消失（仅保存完成带计时）。"""
+	var menu: Control = _make_pause_menu()
+	menu.open()
+	menu.show_status("存档失败：xxx", true)
+	assert_eq(menu._status_hide_timer, 0.0)
+	menu._process(3.0)
+	assert_eq(menu._status_text, "存档失败：xxx", "错误提示应常驻")

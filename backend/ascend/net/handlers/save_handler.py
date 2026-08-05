@@ -4,7 +4,8 @@
 元操作，不产生历史、不进因果图。
 
 协议（docs/世界框架/存档系统/设计.md）:
-    save_list       → {payload: {worlds: [摘要...], snapshots: [...]}}
+    save_list       → {payload: {worlds: [摘要...], snapshots: [...],
+                                  current_world_id: 当前加载世界}}
     save_create     {payload: {name, seed?}} → {payload: {world_id}}
     save_snapshot   {payload: {world_id}} → {payload: {file}}
     save_load       {payload: {world_id?|snapshot?}} → {payload: {world_id}}
@@ -42,17 +43,39 @@ def make_save_handlers(save_manager, game_engine=None):
     """
 
     def handle_save_list(_msg: dict) -> dict:
-        """列出所有存档位与快照（存档选择页数据源）。"""
+        """列出所有存档位与快照（存档选择页数据源）。
+
+        快照条目附血缘字段（时间线分叉视图用）：
+          parent    创建时活目录来源（回滚目标快照文件名，"" = 世界初始）
+          game_time 创建时刻的世界时间（tick）
+          seq       世界内单调递增的权威排序键（创建顺序，时间线/
+                    编号/串链排序的单一事实来源；旧档由后端迁移合成）
+        世界摘要附 live_origin（当前活目录来源，即"当前时间点"的父节点）；
+        顶层 current_world_id = 引擎当前加载的世界（"最后进入"标注）。
+        """
         worlds = save_manager.list_worlds()
         snapshots: list[dict] = []
         for w in worlds:
+            lineage = save_manager.snapshot_lineage(w["world_id"])
+            w["live_origin"] = lineage.get("live_origin", "")
             for s in save_manager.list_snapshots(w["world_id"]):
                 s["world_id"] = w["world_id"]
+                entry = lineage.get("snapshots", {}).get(s["file"], {})
+                s["parent"] = str(entry.get("parent", ""))
+                s["game_time"] = int(entry.get("game_time", 0))
+                s["seq"] = int(entry.get("seq", 0))
                 snapshots.append(s)
+        current_world_id = ""
+        if game_engine is not None:
+            current_world_id = getattr(game_engine, "world_id", None) or ""
         return {
             "type": "response",
             "request_type": "save_list",
-            "payload": {"worlds": worlds, "snapshots": snapshots},
+            "payload": {
+                "worlds": worlds,
+                "snapshots": snapshots,
+                "current_world_id": current_world_id,
+            },
         }
 
     def handle_save_create(msg: dict) -> dict:

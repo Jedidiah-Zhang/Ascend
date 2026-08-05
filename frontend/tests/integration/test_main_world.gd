@@ -22,6 +22,13 @@ func test_main_scene_is_node3d() -> void:
 	assert_true(instance is Node3D)
 
 
+func test_pause_menu_wired_with_terminal() -> void:
+	"""暂停菜单应注入终端引用（终端打开时 ESC 归终端）。"""
+	var main: Node3D = _make_world_instance()
+	assert_eq(main._pause_menu._terminal, main._terminal,
+		"ESC 分流依赖终端引用注入")
+
+
 # ── Chunk 地形查询（纯逻辑方法） ──────────────────────────────
 
 func _make_world_instance() -> Node3D:
@@ -493,30 +500,87 @@ func test_pause_save_sends_snapshot_request() -> void:
 	assert_true(main._pause_menu._saving, "请求在途期间应处于存档中状态")
 
 
-func test_save_snapshot_response_updates_pause_menu() -> void:
-	"""save_snapshot 响应应回填暂停菜单（成功提示）。"""
+func test_save_snapshot_response_queues_number_lookup() -> void:
+	"""save_snapshot 响应：记下文件并回查 save_list（菜单保持正在保存）。"""
 	var main: Node3D = _make_world_instance()
+	main._world_id = "w-abc"
 	main._pause_menu._saving = true
 
 	main._handle_response({
 		"type": "response",
 		"request_type": "save_snapshot",
-		"payload": {"file": "snap-1.tar.zst"},
+		"payload": {"file": "snap-1.ascendsave"},
 	})
 
-	assert_string_contains(main._pause_menu._status_text, "已保存快照")
-	assert_false(main._pause_menu._saving, "成功回填后应复位存档中状态")
+	assert_eq(main._save_file, "snap-1.ascendsave", "应暂存待编号的快照")
+	assert_true(main._pause_menu._saving, "编号回查期间应保持正在保存")
+
+
+func test_save_list_lookup_reports_node_number() -> void:
+	"""save_list 回查：按保存顺序计算节点编号并回填菜单。"""
+	var main: Node3D = _make_world_instance()
+	main._world_id = "w-abc"
+	main._save_file = "snap-new"
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "save_list",
+		"payload": {"snapshots": [
+			{"world_id": "w-abc", "file": "snap-1", "saved_at": 100.0, "suffix": "manual"},
+			{"world_id": "w-abc", "file": "snap-new", "saved_at": 200.0, "suffix": "manual"},
+			{"world_id": "w-abc", "file": "snap-2", "saved_at": 300.0, "suffix": "auto"},
+			{"world_id": "other", "file": "snap-x", "saved_at": 50.0, "suffix": "manual"},
+		]},
+	})
+
+	assert_string_contains(main._pause_menu._status_text, "节点 2",
+		"应按保存顺序编号（其它世界/来源不参与）")
+	assert_eq(main._save_file, "", "回查完成后应清空暂存")
+	assert_false(main._pause_menu._saving)
+
+
+func test_save_number_lookup_fallback_without_number() -> void:
+	"""快照不在列表中（异常）时显示保存完成而不带编号。"""
+	var main: Node3D = _make_world_instance()
+	main._world_id = "w-abc"
+	main._save_file = "snap-ghost"
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "save_list",
+		"payload": {"snapshots": []},
+	})
+
+	assert_eq(main._pause_menu._status_text, "保存完成", "未找到时不应显示节点号")
+	assert_eq(main._save_file, "", "回查完成后应清空暂存")
+
+
+func test_save_snapshot_error_clears_lookup() -> void:
+	"""save_snapshot 错误：清空待编号状态并提示失败。"""
+	var main: Node3D = _make_world_instance()
+	main._save_file = "snap-pending"
+
+	main._handle_error({
+		"type": "error",
+		"request_type": "save_snapshot",
+		"error": "缺少 world_id",
+	})
+	assert_push_error("缺少 world_id")
+
+	assert_string_contains(main._pause_menu._status_text, "存档失败")
+	assert_eq(main._save_file, "", "失败后应清空待编号状态")
 
 
 func test_save_snapshot_error_updates_pause_menu() -> void:
 	"""save_snapshot 错误响应应回填暂停菜单（失败提示）。"""
 	var main: Node3D = _make_world_instance()
 
-	ignore_error_when_calling(main, "_handle_error", [{
+	main._handle_error({
 		"type": "error",
 		"request_type": "save_snapshot",
 		"error": "缺少 world_id",
-	}])
+	})
+	assert_push_error("缺少 world_id")
 
 	assert_string_contains(main._pause_menu._status_text, "存档失败")
 

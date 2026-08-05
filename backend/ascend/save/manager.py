@@ -47,18 +47,27 @@ CHUNKS_DB: str = "chunks.db"
 EVENTS_DB: str = "events.db"
 SNAPSHOT_DIR: str = "snapshots"
 SNAPSHOT_SUFFIX: str = ".ascendsave"
+# 快照血缘（时间线分叉）元数据：{live_origin, snapshots: {file: {parent, game_time, saved_at, seq}}}
+LINEAGE_FILE: str = "lineage.json"
+# 保留策略：auto（回滚保护）环形保留最近 N 个，quit（退出保存）保留最近 K 个；
+# manual（手动）永久保留。live_origin 指向的快照永不自动淘汰
+# （当前时间点的来源），因此同一来源的实际上限 = N + 1。
+AUTO_SNAPSHOT_KEEP: int = 20
+QUIT_SNAPSHOT_KEEP: int = 3
 # 大陆宏观场缓存（可再生数据，随档分发保证换机后首次加载也秒开）
 CONTINENT_FILE: str = "continent.bin"
 
 # 快照打包的固定文件集合（密钥藏于 manifest.secrets_blob，无需独立文件；
-# continent.bin 可再生，不进快照，保持回退点精简）
+# continent.bin 可再生，不进快照，保持回退点精简；lineage 为世界级元数据，
+# 不随快照打包——快照依赖世界内 lineage 提供父子上下文）
 _SNAPSHOT_ENTRIES: tuple[str, ...] = (
     MANIFEST_NAME, STATE_FILE, ENTITIES_FILE, CHUNKS_DB, EVENTS_DB,
 )
 
 # 存档位活目录中的规范文件集合（导出/复制只拷这些，排除 WAL/临时文件；
-# 含 continent.bin——同 seed 确定性产物，随档复制保证副本首次加载秒开）
-_LIVE_ENTRIES: tuple[str, ...] = _SNAPSHOT_ENTRIES + (CONTINENT_FILE,)
+# 含 continent.bin——同 seed 确定性产物，随档复制保证副本首次加载秒开；
+# lineage.json 随档复制，保证副本的时间线上下文完整）
+_LIVE_ENTRIES: tuple[str, ...] = _SNAPSHOT_ENTRIES + (CONTINENT_FILE, LINEAGE_FILE)
 
 
 class SaveManager:
@@ -104,6 +113,10 @@ class SaveManager:
 
     def state_path(self, world_id: str) -> str:
         return os.path.join(self.world_dir(world_id), STATE_FILE)
+
+    def lineage_path(self, world_id: str) -> str:
+        """世界血缘文件路径（时间线分叉元数据）。"""
+        return os.path.join(self.world_dir(world_id), LINEAGE_FILE)
 
     def chunks_db_path(self, world_id: str) -> str:
         """世界专属 chunk 数据库路径（引擎直接以该路径打开）。"""
@@ -360,14 +373,123 @@ class SaveManager:
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise SaveFormatError(f"存档状态损坏: {exc}") from exc
 
+    # ── 快照血缘（时间线分叉） ─────────────────────────────
+
+    def snapshot_lineage(self, world_id: str) -> dict:
+        """读取世界血缘：快照的父子关系与当前活目录来源。
+
+        Returns:
+            {"live_origin": str|"", "snapshots": {file: {parent, game_time,
+             saved_at, seq}}}。文件缺失时返回空血缘（初始世界无快照）。
+            旧版条目（无 seq）按 (saved_at, game_time) 合成一次——
+            seq 是唯一的权威排序键，其余时间字段仅作展示。
+        """
+        default: dict = {"live_origin": "", "snapshots": {}}
+        path = self.lineage_path(world_id)
+        if not os.path.isfile(path):
+            return default
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+            logger.warning("血缘文件损坏，按空血缘处理: %s (%s)", path, exc)
+            return default
+        if not isinstance(data, dict):
+            return default
+        data.setdefault("live_origin", "")
+        data.setdefault("snapshots", {})
+        if not isinstance(data["snapshots"], dict):
+            data["snapshots"] = {}
+        self._migrate_lineage_seqs(data["snapshots"])
+        return data
+
+    @staticmethod
+    def _migrate_lineage_seqs(snapshots: dict) -> None:
+        """为旧版血缘条目合成 seq（权威排序键）。
+
+        任一条目缺 seq 即整体按 (saved_at, game_time, file) 重排编号
+        （一次性迁移；随后每次写入自然落盘）。保证「血缘内 seq 唯一、
+        与创建顺序一致」，是时间线/编号/串链的单一事实来源。
+        """
+        entries = [
+            (name, entry) for name, entry in snapshots.items()
+            if isinstance(entry, dict) and "seq" not in entry
+        ]
+        if not entries:
+            return
+        existing = [
+            int(entry["seq"]) for entry in snapshots.values()
+            if isinstance(entry, dict) and "seq" in entry
+        ]
+        next_seq = (max(existing) + 1) if existing else 0
+        entries.sort(key=lambda kv: (
+            float(kv[1].get("saved_at", 0.0)),
+            int(kv[1].get("game_time", 0)),
+            kv[0],
+        ))
+        for _name, entry in entries:
+            entry["seq"] = next_seq
+            next_seq += 1
+
+    def _write_lineage(self, world_id: str, lineage: dict) -> None:
+        """原子写入血缘文件（世界外元数据，失败不阻断主流程）。"""
+        try:
+            tmp = self.lineage_path(world_id) + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(lineage, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.lineage_path(world_id))
+        except OSError as exc:
+            logger.warning("血缘文件写入失败: %s (%s)", world_id, exc)
+
+    def _record_snapshot_lineage(
+        self, world_id: str, filename: str,
+        game_time: int, saved_at: float,
+    ) -> None:
+        """记录快照血缘条目并更新活目录来源。
+
+        parent = 创建时活目录来源（最近一个快照 / "" = 世界初始）；
+        创建后活目录来源更新为该快照——活状态从快照内容继续，
+        连续保存（含回滚保护等自动快照）自动串链：后一个快照
+        从最近一个派生。回滚（extract_snapshot）会再次改来源。
+
+        seq = 世界内单调递增的权威排序键（创建顺序，不受回滚后
+        游戏时间倒退影响），时间线/编号/串链排序的唯一事实来源。
+        """
+        lineage = self.snapshot_lineage(world_id)
+        seqs = [
+            int(entry["seq"]) for entry in lineage["snapshots"].values()
+            if isinstance(entry, dict) and "seq" in entry
+        ]
+        lineage["snapshots"][filename] = {
+            "parent": lineage.get("live_origin", ""),
+            "game_time": int(game_time),
+            "saved_at": float(saved_at),
+            "seq": (max(seqs) + 1) if seqs else 0,
+        }
+        lineage["live_origin"] = filename
+        self._write_lineage(world_id, lineage)
+
+    def set_live_origin(self, world_id: str, snapshot_file: str) -> None:
+        """记录活目录来源：回滚后调用，标记当前时间点从该快照派生。"""
+        lineage = self.snapshot_lineage(world_id)
+        lineage["live_origin"] = snapshot_file
+        self._write_lineage(world_id, lineage)
+
     # ── 快照 ──────────────────────────────────────────────
 
-    def create_snapshot(self, world_id: str, *, suffix: str = "manual") -> str:
+    def create_snapshot(
+        self, world_id: str, *, suffix: str = "manual",
+        game_time: int | None = None,
+    ) -> str:
         """把活目录打包为加密快照单文件（手动保存/回滚保护）。
 
         Args:
             world_id: 世界 ID。
             suffix: 快照来源标识（manual/auto/quit），拼入文件名。
+            game_time: 创建时刻的世界时间（tick）；None 时从活目录
+                state.json 读取（引擎路径传入更准，磁盘路径兜底）。
 
         Returns:
             快照文件名（不含目录）。
@@ -404,8 +526,123 @@ class SaveManager:
         with open(path, "wb") as f:
             f.write(header)
             f.write(encrypted)
+
+        # 血缘记录（时间线分叉数据源）：game_time 缺省时读活目录状态
+        if game_time is None:
+            try:
+                game_time = int(
+                    self.read_state(world_id).get("clock", {}).get("time", 0)
+                )
+            except (SaveFormatError, SaveCryptoError):
+                game_time = 0
+        self._record_snapshot_lineage(
+            world_id, filename, game_time, _real_time.time(),
+        )
         logger.info("创建快照: %s → %s", world_id, filename)
+        # 保留策略：每次创建后淘汰超量快照（失败不阻断快照本身）
+        try:
+            self.prune_snapshots(world_id)
+        except OSError as exc:
+            logger.warning("快照保留策略执行失败: %s (%s)", world_id, exc)
         return filename
+
+    def delete_snapshot(self, world_id: str, filename: str) -> None:
+        """删除快照并重接血缘父链（子树提升），保持血缘自洽。
+
+        被删节点的直接子节点 parent 提升为被删节点的 parent；
+        live_origin 指向被删节点时同步回退到其 parent（"" = 世界初始）。
+        血缘重接后持久化血缘恒满足「parent ∈ 存活集 or ''」，
+        时间线的串链回退降级为纯防御路径（suffix 过滤/外部删文件）。
+
+        文件与血缘条目均可缺失（容忍外部删文件后的清理），
+        两者皆不存在时仅记录警告。
+
+        Raises:
+            OSError: 快照文件删除失败（血缘已先行自洽重接）。
+        """
+        filename = os.path.basename(str(filename))
+        if not filename.endswith(SNAPSHOT_SUFFIX):
+            filename += SNAPSHOT_SUFFIX
+        lineage = self.snapshot_lineage(world_id)
+        snaps = lineage.get("snapshots", {})
+        entry = snaps.get(filename)
+        if isinstance(entry, dict):
+            parent = str(entry.get("parent", ""))
+            snaps.pop(filename, None)
+            # 子树提升：直接子节点改挂到被删节点的父节点
+            for child in snaps.values():
+                if isinstance(child, dict) and child.get("parent") == filename:
+                    child["parent"] = parent
+            if lineage.get("live_origin") == filename:
+                lineage["live_origin"] = parent
+            self._write_lineage(world_id, lineage)
+        path = os.path.join(self.snapshot_dir(world_id), filename)
+        if os.path.isfile(path):
+            os.remove(path)
+            logger.info("删除快照: %s → %s", world_id, filename)
+        elif not isinstance(entry, dict):
+            logger.warning("快照不存在（文件与血缘条目均缺失）: %s/%s",
+                           world_id, filename)
+
+    def prune_snapshots(
+        self, world_id: str, *,
+        keep_auto: int = AUTO_SNAPSHOT_KEEP,
+        keep_quit: int = QUIT_SNAPSHOT_KEEP,
+    ) -> int:
+        """按保留策略淘汰超量快照（手动快照永久保留）。
+
+        规则：
+          - auto（回滚保护）环形保留最近 keep_auto 个；
+          - quit（退出保存）保留最近 keep_quit 个；
+          - live_origin 指向的快照永不淘汰（当前时间点的来源，
+            淘汰会让时间线的「当前点」悬空）；
+          - 血缘条目存在但文件已缺失的孤儿条目一并清理（重接父链）。
+        淘汰经 delete_snapshot 逐个重接血缘父链，血缘保持自洽。
+
+        Returns:
+            淘汰数量。
+        """
+        sdir = self.snapshot_dir(world_id)
+        lineage = self.snapshot_lineage(world_id)
+        live_origin = lineage.get("live_origin", "")
+        to_delete: list[str] = []
+
+        # 1. 血缘孤儿条目清理（文件已不存在）
+        if os.path.isdir(sdir):
+            on_disk = set(os.listdir(sdir))
+        else:
+            on_disk = set()
+        for name in lineage.get("snapshots", {}):
+            if name not in on_disk and name != live_origin:
+                to_delete.append(name)
+
+        # 2. 按来源分组保留策略（组内按血缘 seq = 创建顺序；
+        #    文件名同秒内排序任意，不能作时间序依据）
+        lineage_by_name: dict[str, int] = {}
+        for name, entry in lineage.get("snapshots", {}).items():
+            if isinstance(entry, dict):
+                lineage_by_name[name] = int(entry.get("seq", -1))
+        groups: dict[str, list[tuple[str, int]]] = {}
+        if os.path.isdir(sdir):
+            for name in sorted(os.listdir(sdir)):
+                if not name.endswith(SNAPSHOT_SUFFIX):
+                    continue
+                suffix = name.removesuffix(SNAPSHOT_SUFFIX).rsplit("-", 1)[-1]
+                groups.setdefault(suffix, []).append(
+                    (name, lineage_by_name.get(name, -1)),
+                )
+        for suffix, keep in (("auto", keep_auto), ("quit", keep_quit)):
+            group = sorted(groups.get(suffix, []), key=lambda kv: kv[1])
+            names = [name for name, _ in group]
+            if live_origin in names:
+                names.remove(live_origin)
+            to_delete.extend(names[:max(0, len(names) - keep)])
+
+        for filename in to_delete:
+            self.delete_snapshot(world_id, filename)
+        if to_delete:
+            logger.info("快照保留策略淘汰 %d 个: %s", len(to_delete), world_id)
+        return len(to_delete)
 
     def list_snapshots(self, world_id: str) -> list[dict]:
         """列出世界的快照（按文件名升序 = 时间序）。
@@ -462,6 +699,21 @@ class SaveManager:
         finally:
             zf.close()
 
+    def _resolve_snapshot_path(self, snapshot_path: str, world_id: str | None) -> str:
+        """快照路径解析：绝对/带目录路径原样使用；裸文件名从目标世界的
+        快照目录解析（协议 save_load 下发的是文件名）。
+
+        Returns:
+            可打开的快照路径（解析失败时返回原路径，由调用方报错）。
+        """
+        if os.path.isfile(snapshot_path):
+            return snapshot_path
+        if not os.path.dirname(snapshot_path) and world_id:
+            candidate = os.path.join(self.snapshot_dir(world_id), snapshot_path)
+            if os.path.isfile(candidate):
+                return candidate
+        return snapshot_path
+
     def extract_snapshot(
         self, snapshot_path: str, world_id: str | None = None,
     ) -> str:
@@ -470,7 +722,8 @@ class SaveManager:
         原活目录被覆盖前应已完成自动快照保护（由调用方负责）。
 
         Args:
-            snapshot_path: 快照文件路径。
+            snapshot_path: 快照文件路径（绝对路径、相对路径或文件名——
+                文件名从目标世界的快照目录解析）。
             world_id: 目标 world_id 覆盖。快照内 manifest 记录的是
                 创建时所属世界；复制存档（export）后快照仍指向原世界，
                 回滚到复制档时必须显式传入目标 ID，避免覆盖原世界。
@@ -482,6 +735,7 @@ class SaveManager:
             SaveCryptoError: 快照解密/校验失败。
             SaveFormatError: 快照损坏或展开失败。
         """
+        snapshot_path = self._resolve_snapshot_path(snapshot_path, world_id)
         header, zf = self._open_snapshot(snapshot_path)
         try:
             keys = SaveKeys.from_dict(header)
@@ -563,6 +817,17 @@ class SaveManager:
                 os.rename(snaps_backup, os.path.join(wdir, SNAPSHOT_DIR))
             if cont_backup and os.path.isfile(cont_backup):
                 os.rename(cont_backup, os.path.join(wdir, CONTINENT_FILE))
+            # 血缘文件随活目录被替换进了 backup：回滚后必须保留原血缘
+            # （否则分叉上下文丢失），再记录活目录新来源（本次回滚目标）
+            lineage_backup = os.path.join(backup, LINEAGE_FILE)
+            if os.path.isfile(lineage_backup):
+                try:
+                    shutil.copy2(
+                        lineage_backup, os.path.join(wdir, LINEAGE_FILE),
+                    )
+                except OSError:
+                    logger.warning("血缘文件回滚保留失败: %s", world_id)
+            self.set_live_origin(world_id, os.path.basename(snapshot_path))
             shutil.rmtree(backup, ignore_errors=True)
             logger.info("快照展开为活目录: %s", world_id)
             return world_id

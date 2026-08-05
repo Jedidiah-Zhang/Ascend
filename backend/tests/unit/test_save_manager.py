@@ -9,7 +9,9 @@ import os
 
 import pytest
 
-from ascend.save.manager import SaveManager, SNAPSHOT_SUFFIX
+from ascend.save.manager import (
+    SaveManager, SNAPSHOT_SUFFIX, AUTO_SNAPSHOT_KEEP, QUIT_SNAPSHOT_KEEP,
+)
 from ascend.save.manifest import Manifest, SaveFormatError, MANIFEST_NAME
 from ascend.save.crypto import SaveCryptoError, SaveKeys
 
@@ -449,6 +451,296 @@ class TestSnapshot:
         assert "state.json.enc.tmp" not in files
         assert "manifest.json" in files
         assert "key.json" not in files
+
+
+class TestLineage:
+    """快照血缘（时间线分叉元数据）。"""
+
+    def test_lineage_records_parent_and_game_time(self, manager, world):
+        """创建快照记录血缘：parent=活目录来源，game_time 取自 state。"""
+        manager.write_state(world, {"clock": {"time": 500}})
+        filename = manager.create_snapshot(world, suffix="manual")
+        lineage = manager.snapshot_lineage(world)
+        assert lineage["live_origin"] == filename, "活目录来源应更新为最新快照"
+        entry = lineage["snapshots"][filename]
+        assert entry["parent"] == ""
+        assert entry["game_time"] == 500
+
+    def test_consecutive_snapshots_chain(self, manager, world):
+        """连续保存自动串链：后一个快照从最近一个派生（非世界初始）。
+
+        回归：旧实现 live_origin 仅在回滚时更新，连续快照的 parent
+        全为 ""（都挂在世界初始上），无法体现「从最近手动存档派生」。
+        """
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual", game_time=100)
+        manager.write_state(world, {"clock": {"time": 200}})
+        s2 = manager.create_snapshot(world, suffix="manual", game_time=200)
+        manager.write_state(world, {"clock": {"time": 300}})
+        s3 = manager.create_snapshot(world, suffix="manual", game_time=300)
+        lineage = manager.snapshot_lineage(world)
+        assert lineage["live_origin"] == s3
+        assert lineage["snapshots"][s1]["parent"] == ""
+        assert lineage["snapshots"][s2]["parent"] == s1, "S2 应从 S1 派生"
+        assert lineage["snapshots"][s3]["parent"] == s2, "S3 应从 S2 派生"
+
+    def test_lineage_game_time_param_overrides(self, manager, world):
+        """引擎路径显式传 game_time（比周期 state 更准）。"""
+        manager.write_state(world, {"clock": {"time": 10}})
+        filename = manager.create_snapshot(world, game_time=999)
+        entry = manager.snapshot_lineage(world)["snapshots"][filename]
+        assert entry["game_time"] == 999
+
+    def test_extract_sets_live_origin(self, manager, world):
+        """回滚后活目录来源 = 回滚目标快照。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap = manager.create_snapshot(world, suffix="manual")
+        path = os.path.join(manager.snapshot_dir(world), snap)
+        manager.extract_snapshot(path)
+        assert manager.snapshot_lineage(world)["live_origin"] == snap
+
+    def test_extract_accepts_bare_filename(self, manager, world):
+        """裸文件名（协议 save_load 下发形式）应从目标世界快照目录解析。
+
+        回归：旧实现直接按路径 open，裸文件名 FileNotFoundError，
+        前端回滚请求整体失败（引擎回退服务模式）。
+        """
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap = manager.create_snapshot(world, suffix="manual")
+        manager.extract_snapshot(snap, world_id=world)
+        assert manager.snapshot_lineage(world)["live_origin"] == snap
+
+    def test_fork_parent_is_rollback_target(self, manager, world):
+        """回滚后保存的新快照 parent = 回滚目标（分叉语义）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap_a = manager.create_snapshot(world, suffix="manual")
+        path = os.path.join(manager.snapshot_dir(world), snap_a)
+        manager.extract_snapshot(path)
+        # 回滚后继续玩，再保存 → 新快照从 snap_a 派生
+        manager.write_state(world, {"clock": {"time": 150}})
+        snap_b = manager.create_snapshot(world, suffix="manual")
+        lineage = manager.snapshot_lineage(world)
+        assert lineage["snapshots"][snap_b]["parent"] == snap_a
+        assert lineage["live_origin"] == snap_b, "保存后活目录来源 = 最新快照"
+
+    def test_lineage_survives_extract(self, manager, world):
+        """回滚展开不丢血缘上下文（原快照条目保留）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap_a = manager.create_snapshot(world, suffix="manual")
+        manager.write_state(world, {"clock": {"time": 200}})
+        manager.create_snapshot(world, suffix="manual")
+        path = os.path.join(manager.snapshot_dir(world), snap_a)
+        manager.extract_snapshot(path)
+        lineage = manager.snapshot_lineage(world)
+        assert len(lineage["snapshots"]) == 2, "回滚不应丢原血缘条目"
+        assert lineage["live_origin"] == snap_a
+
+    def test_export_copies_lineage(self, manager, world):
+        """复制存档携带血缘（副本时间线上下文完整）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        filename = manager.create_snapshot(world, suffix="manual")
+        new_id = manager.export_world(world)
+        lineage = manager.snapshot_lineage(new_id)
+        assert len(lineage["snapshots"]) == 1
+        assert lineage["live_origin"] == filename
+
+
+    def test_lineage_seq_monotonic(self, manager, world):
+        """血缘 seq 单调递增（权威排序键，与游戏时间倒退无关）。"""
+        manager.write_state(world, {"clock": {"time": 300}})
+        s1 = manager.create_snapshot(world, suffix="manual", game_time=300)
+        manager.write_state(world, {"clock": {"time": 100}})  # 回滚后时间倒退
+        s2 = manager.create_snapshot(world, suffix="manual", game_time=100)
+        lineage = manager.snapshot_lineage(world)
+        assert lineage["snapshots"][s1]["seq"] == 0
+        assert lineage["snapshots"][s2]["seq"] == 1, "seq 反映创建顺序而非游戏时间"
+
+    def test_lineage_migrates_legacy_entries(self, manager, world):
+        """旧版血缘条目（无 seq）按 (saved_at, game_time) 合成。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        lineage = manager.snapshot_lineage(world)
+        for entry in lineage["snapshots"].values():
+            entry.pop("seq", None)
+        lineage["snapshots"][s2]["saved_at"] = 1.0  # 改写为最早
+        with open(manager.lineage_path(world), "w", encoding="utf-8") as f:
+            json.dump(lineage, f, ensure_ascii=False, indent=2)
+        migrated = manager.snapshot_lineage(world)
+        assert migrated["snapshots"][s2]["seq"] == 0
+        assert migrated["snapshots"][s1]["seq"] == 1, "s2 更早所以编号在前"
+
+    def test_lineage_migration_skips_modern_entries(self, manager, world):
+        """已含 seq 的条目不被迁移重排。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        manager.write_state(world, {"clock": {"time": 200}})
+        s2 = manager.create_snapshot(world, suffix="manual")
+        lineage = manager.snapshot_lineage(world)
+        lineage["snapshots"]["@2030-01-01-000000-aaaaaa-manual.ascendsave"] = {
+            "parent": "", "game_time": 50, "saved_at": 1.0,
+        }
+        with open(manager.lineage_path(world), "w", encoding="utf-8") as f:
+            json.dump(lineage, f, ensure_ascii=False, indent=2)
+        migrated = manager.snapshot_lineage(world)
+        assert migrated["snapshots"][s1]["seq"] == 0, "现代条目编号不动"
+        assert migrated["snapshots"][s2]["seq"] == 1
+        assert migrated["snapshots"]["@2030-01-01-000000-aaaaaa-manual.ascendsave"]["seq"] == 2, \
+            "仅旧条目接续编号"
+
+
+class TestSnapshotDelete:
+    """快照删除与血缘重接（子树提升）。"""
+
+    def test_delete_reparents_children(self, manager, world):
+        """删除中间节点：子节点 parent 提升为被删节点的 parent。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        s3 = manager.create_snapshot(world, suffix="manual")
+        manager.delete_snapshot(world, s2)
+        lineage = manager.snapshot_lineage(world)
+        assert s2 not in lineage["snapshots"], "血缘条目随文件删除"
+        assert lineage["snapshots"][s3]["parent"] == s1, "子节点重接到祖父"
+        assert os.path.isfile(os.path.join(manager.snapshot_dir(world), s1))
+        assert not os.path.isfile(os.path.join(manager.snapshot_dir(world), s2))
+        assert os.path.isfile(os.path.join(manager.snapshot_dir(world), s3))
+
+    def test_delete_live_origin_falls_back_to_parent(self, manager, world):
+        """删除 live_origin：来源回退到其 parent（"" = 世界初始）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        manager.delete_snapshot(world, s2)
+        lineage = manager.snapshot_lineage(world)
+        assert lineage["live_origin"] == s1
+
+    def test_delete_root_live_origin(self, manager, world):
+        """删除作为链头的 live_origin：来源回退到世界初始。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        manager.delete_snapshot(world, s1)
+        lineage = manager.snapshot_lineage(world)
+        assert lineage["live_origin"] == ""
+
+    def test_delete_unknown_tolerated(self, manager, world):
+        """删除不存在的快照不报错（容忍外部删文件后的清理）。"""
+        manager.delete_snapshot(world, "@2020-01-01-000000-000000-manual.ascendsave")
+
+    def test_delete_chain_keeps_consistency(self, manager, world):
+        """连续删除多个节点后血缘仍满足 parent ∈ 存活集 or ''。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        s3 = manager.create_snapshot(world, suffix="manual")
+        s4 = manager.create_snapshot(world, suffix="manual")
+        manager.delete_snapshot(world, s1)
+        manager.delete_snapshot(world, s3)
+        lineage = manager.snapshot_lineage(world)
+        for name, entry in lineage["snapshots"].items():
+            assert entry["parent"] in lineage["snapshots"] or entry["parent"] == "", \
+                f"血缘自洽被破坏: {name} → {entry['parent']}"
+        assert lineage["snapshots"][s2]["parent"] == ""
+        assert lineage["snapshots"][s4]["parent"] == s2, "s3 删除后 s4 重接到 s2"
+
+
+class TestSnapshotPrune:
+    """保留策略（auto 环形 / quit 保留最近 / manual 永久）。"""
+
+    def test_prune_auto_ring_keeps_newest(self, manager, world):
+        """auto 快照超量时环形淘汰最旧的（live_origin 额外保护 → N+1）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        created = []
+        for i in range(AUTO_SNAPSHOT_KEEP + 5):
+            created.append(manager.create_snapshot(world, suffix="auto"))
+        remaining = manager.list_snapshots(world)
+        files = [s["file"] for s in remaining]
+        assert len(files) == AUTO_SNAPSHOT_KEEP + 1, \
+            "live_origin（最新自动快照）额外保护"
+        assert set(files) == set(created[-(AUTO_SNAPSHOT_KEEP + 1):]), \
+            "保留最近 N+1 个（淘汰最旧的）"
+        lineage = manager.snapshot_lineage(world)
+        for name, entry in lineage["snapshots"].items():
+            assert entry["parent"] in lineage["snapshots"] or entry["parent"] == ""
+
+    def test_prune_keeps_manual_forever(self, manager, world):
+        """manual 快照不受保留策略影响（用户回退点永久保留）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        for _ in range(AUTO_SNAPSHOT_KEEP + 5):
+            manager.create_snapshot(world, suffix="auto")
+        manager.create_snapshot(world, suffix="manual")
+        remaining = manager.list_snapshots(world)
+        assert len([s for s in remaining if s["suffix"] == "manual"]) == 1
+
+    def test_prune_quit_keeps_recent(self, manager, world):
+        """quit 快照保留最近 K+1 个（live_origin 保护）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        created = []
+        for _ in range(QUIT_SNAPSHOT_KEEP + 3):
+            created.append(manager.create_snapshot(world, suffix="quit"))
+        remaining = manager.list_snapshots(world)
+        files = [s["file"] for s in remaining]
+        assert len(files) == QUIT_SNAPSHOT_KEEP + 1
+        assert set(files) == set(created[-(QUIT_SNAPSHOT_KEEP + 1):])
+
+    def test_prune_preserves_live_origin(self, manager, world):
+        """live_origin 指向的快照永不淘汰（当前时间点的来源）。
+
+        回滚到较旧的自动快照后，即使该点已落出保留窗口，
+        仍被额外保护（它定义了时间线的「当前时间点」）。
+        """
+        manager.write_state(world, {"clock": {"time": 100}})
+        created = []
+        for _ in range(8):
+            created.append(manager.create_snapshot(world, suffix="auto"))
+        origin = created[2]
+        manager.set_live_origin(world, origin)  # 模拟回滚到较旧自动点
+        manager.prune_snapshots(world, keep_auto=3)
+        remaining = manager.list_snapshots(world)
+        files = [s["file"] for s in remaining]
+        assert origin in files, "活目录来源快照不能被淘汰"
+        assert len(files) == 4, "keep 窗口内最新 3 个 + 受保护的来源"
+
+    def test_prune_cleans_orphan_lineage(self, manager, world):
+        """血缘条目存在但文件缺失的孤儿被清理，子节点重接。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        os.remove(os.path.join(manager.snapshot_dir(world), s1))
+        manager.prune_snapshots(world)
+        lineage = manager.snapshot_lineage(world)
+        assert s1 not in lineage["snapshots"], "孤儿血缘条目被清理"
+        assert lineage["snapshots"][s2]["parent"] == "", "子节点重接到祖父"
+
+    def test_prune_returns_deleted_count(self, manager, world):
+        """返回淘汰数量（无淘汰时为零）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        manager.create_snapshot(world, suffix="manual")
+        assert manager.prune_snapshots(world) == 0
+
+    def test_prune_manual_triggered_on_create(self, manager, world):
+        """创建快照自动触发保留策略（一次创建即淘汰超量 auto）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        for _ in range(AUTO_SNAPSHOT_KEEP + 3):
+            manager.create_snapshot(world, suffix="auto")
+        manager.create_snapshot(world, suffix="manual")
+        remaining = manager.list_snapshots(world)
+        autos = [s for s in remaining if s["suffix"] == "auto"]
+        assert len(autos) == AUTO_SNAPSHOT_KEEP, "auto 上限保持生效"
+
+    def test_prune_does_not_touch_other_suffixes(self, manager, world):
+        """手动指定 keep 上限时仅影响对应来源。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        for _ in range(5):
+            manager.create_snapshot(world, suffix="auto")
+        for _ in range(5):
+            manager.create_snapshot(world, suffix="quit")
+        manager.prune_snapshots(world, keep_auto=2, keep_quit=1)
+        remaining = manager.list_snapshots(world)
+        autos = [s for s in remaining if s["suffix"] == "auto"]
+        quits = [s for s in remaining if s["suffix"] == "quit"]
+        assert len(autos) == 2
+        assert len(quits) == 2, "live_origin（最后一个 quit）额外保护"
 
 
 class TestWorldOps:

@@ -108,6 +108,8 @@ var _has_birth: bool = false
 var _player_entity_id: String = ""
 ## 当前存档位 ID（world_initialized 事件提供；手动存档用，空 = 未就绪）
 var _world_id: String = ""
+## 待计算节点编号的快照文件（save_snapshot 响应后经 save_list 回查）
+var _save_file: String = ""
 ## 移动上报计时器（节流）
 var _move_report_timer: float = 0.0
 
@@ -144,6 +146,7 @@ func _ready() -> void:
 
 	if _pause_menu:
 		_pause_menu.save_requested.connect(_on_pause_save_requested)
+		_pause_menu.set_terminal(_terminal)
 
 	_terrain_parent = $World/Terrain/ChunkPool
 
@@ -679,6 +682,7 @@ func _on_disconnected() -> void:
 	_pending.clear()
 	_batch_pending.clear()
 	_tile_queue.clear()
+	_save_file = ""
 
 
 func _on_message(message: Dictionary) -> void:
@@ -812,10 +816,33 @@ func _handle_response(message: Dictionary) -> void:
 			if _terminal:
 				_terminal.write(payload.get("output", ""))
 		"save_snapshot":
-			if _pause_menu:
-				_pause_menu.show_status("已保存快照: %s" % str(payload.get("file", "")), false)
+			# 回查 save_list 计算节点编号（与存档选择页编号一致），
+			# 期间暂停菜单保持「正在保存...」
+			_save_file = str(payload.get("file", ""))
+			if not _save_file.is_empty():
+				Connection.send(SaveApi.list_request())
+		"save_list":
+			_resolve_save_number(payload)
 		_:
 			pass
+
+
+func _resolve_save_number(payload: Dictionary) -> void:
+	"""save_snapshot 后的 save_list 回查：计算新快照的节点编号并回填菜单。"""
+	if _save_file.is_empty():
+		return
+	var file: String = _save_file
+	_save_file = ""
+	var snaps: Array = []
+	if not _world_id.is_empty():
+		for s in payload.get("snapshots", []):
+			if s is Dictionary and str(s.get("world_id", "")) == _world_id:
+				var suffix: String = str(s.get("suffix", ""))
+				if suffix == "manual" or suffix == "auto":
+					snaps.append(s)
+	var number: int = TimelineLayout.save_order_ids(snaps).find(file) + 1
+	if _pause_menu:
+		_pause_menu.show_save_complete(number)
 
 
 func _apply_authoritative_position(payload: Dictionary) -> void:
@@ -937,6 +964,7 @@ func _handle_error(message: Dictionary) -> void:
 	var error_msg: String = message.get("error", "unknown error")
 	push_error("MainWorld3D: server error: %s" % error_msg)
 	if message.get("request_type", "") == SaveApi.SNAPSHOT and _pause_menu:
+		_save_file = ""
 		_pause_menu.show_status("存档失败：%s" % error_msg, true)
 
 

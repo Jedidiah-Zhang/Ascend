@@ -50,7 +50,10 @@ static func datetime_string(unix_sec: float) -> String:
 	"""Unix 秒 → "YYYY-MM-DD HH:MM"（本地时区）。"""
 	if unix_sec <= 0.0:
 		return "—"
-	return Time.get_datetime_string_from_unix_time(int(unix_sec), false)
+	var dt := Time.get_datetime_dict_from_unix_time(int(unix_sec))
+	return "%04d-%02d-%02d %02d:%02d" % [
+		dt["year"], dt["month"], dt["day"], dt["hour"], dt["minute"],
+	]
 
 
 static func seed_string(world_seed: int) -> String:

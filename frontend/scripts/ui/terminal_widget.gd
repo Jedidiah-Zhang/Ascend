@@ -124,6 +124,13 @@ func _input(event: InputEvent) -> void:
 	if not _is_open:
 		return
 
+	# ESC 关闭终端（不触发暂停菜单：pause_menu 见终端打开时放行）
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == Key.KEY_ESCAPE:
+			close()
+			get_viewport().set_input_as_handled()
+			return
+
 	if event is InputEventKey and event.pressed and not event.echo:
 		var key: Key = event.keycode
 		var ctrl: bool = event.ctrl_pressed

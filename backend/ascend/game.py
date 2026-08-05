@@ -766,7 +766,14 @@ class GameEngine:
                 self.chunk_store.flush()
                 self.chunk_store.checkpoint()
             world_tree.checkpoint_archive()
-        return self.save_manager.create_snapshot(world_id, suffix=suffix)
+            # 血缘 game_time：当前世界用引擎时钟（比周期 state 落盘更新）；
+            # 非当前世界由 create_snapshot 读其活目录状态兜底
+            game_time = self.clock.time if self.clock else None
+        else:
+            game_time = None
+        return self.save_manager.create_snapshot(
+            world_id, suffix=suffix, game_time=game_time,
+        )
 
     def _reload(self, world_id: str | None = None, snapshot: str | None = None) -> None:
         """读档重建：清理旧世界并按目标重建（网络层常驻，客户端不断线）。

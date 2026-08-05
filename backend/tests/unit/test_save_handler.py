@@ -28,9 +28,11 @@ class TestSaveList:
     """存档列表。"""
 
     def test_empty_root(self, handlers):
-        """无存档时返回空列表。"""
+        """无存档时返回空列表（current_world_id 恒存在）。"""
         resp = handlers["save_list"](_req("save_list"))
-        assert resp["payload"] == {"worlds": [], "snapshots": []}
+        assert resp["payload"]["worlds"] == []
+        assert resp["payload"]["snapshots"] == []
+        assert resp["payload"]["current_world_id"] == ""
 
     def test_lists_world_and_snapshots(self, manager, handlers):
         """列表含世界摘要与快照归属。"""
@@ -43,6 +45,51 @@ class TestSaveList:
         assert payload["worlds"][0]["name"] == "世界"
         assert payload["worlds"][0]["snapshot_count"] == 1
         assert payload["snapshots"][0]["world_id"] == world_id
+
+    def test_list_carries_lineage_fields(self, manager, handlers):
+        """快照条目含血缘字段，世界摘要含 live_origin（时间线分叉数据）。"""
+        world_id = manager.create_world("世界", seed=1).world_id
+        manager.write_state(world_id, {"clock": {"time": 300}})
+        snap = manager.create_snapshot(world_id, suffix="manual")
+        resp = handlers["save_list"](_req("save_list"))
+        payload = resp["payload"]
+        assert payload["worlds"][0]["live_origin"] == snap, "活目录来源 = 最新快照"
+        s = payload["snapshots"][0]
+        assert s["file"] == snap
+        assert s["parent"] == ""
+        assert s["game_time"] == 300
+        assert s["seq"] == 0, "血缘权威排序键随条目下发"
+
+    def test_list_carries_legacy_seq_migration(self, manager, handlers):
+        """旧档（血缘无 seq）列表时经迁移合成 seq，排序键仍可用。"""
+        world_id = manager.create_world("世界", seed=1).world_id
+        snap_a = manager.create_snapshot(world_id, suffix="manual")
+        snap_b = manager.create_snapshot(world_id, suffix="manual")
+        lineage = manager.snapshot_lineage(world_id)
+        # 手工剥掉 seq 并改写 saved_at，模拟旧版血缘文件（a 比 b 早）
+        for entry in lineage["snapshots"].values():
+            entry.pop("seq", None)
+        lineage["snapshots"][snap_a]["saved_at"] = 1.0
+        with open(manager.lineage_path(world_id), "w", encoding="utf-8") as f:
+            import json
+            json.dump(lineage, f, ensure_ascii=False, indent=2)
+        resp = handlers["save_list"](_req("save_list"))
+        seqs = {s["file"]: s["seq"] for s in resp["payload"]["snapshots"]}
+        assert seqs[snap_a] == 0, "旧条目按 saved_at 顺序合成"
+        assert seqs[snap_b] == 1
+
+    def test_list_reports_current_world(self, manager):
+        """current_world_id = 引擎当前加载的世界（最后进入标注数据源）。"""
+        world_id = manager.create_world("世界", seed=1).world_id
+
+        class _Engine:
+            """最小引擎替身：仅暴露当前加载世界。"""
+
+        _Engine.world_id = world_id
+
+        handlers = make_save_handlers(manager, game_engine=_Engine())
+        resp = handlers["save_list"](_req("save_list"))
+        assert resp["payload"]["current_world_id"] == world_id
 
 
 class TestSaveCreate:

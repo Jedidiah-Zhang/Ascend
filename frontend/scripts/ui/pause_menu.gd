@@ -57,11 +57,15 @@ const BUTTONS: Array = [
 
 ## 未实现功能的占位说明（与主菜单一致）
 const SETTINGS_NOTE: String = "未实现"
+## 保存完成提示的自动消失时长（秒）
+const SAVE_STATUS_HIDE_SECONDS: float = 2.0
 
 
 # ── 属性 ──────────────────────────────────────────────────
 
 var _font: Font = null
+## 调试终端引用（打开时 ESC 归终端：关闭控制台而非弹出菜单）
+var _terminal: TerminalWidget = null
 ## 悬停按钮 key
 var _hover_key: String = ""
 ## 按钮矩形: key → Rect2（_draw 时更新）
@@ -71,6 +75,8 @@ var _status_text: String = ""
 var _status_color: Color = STATUS_WAIT_COLOR
 ## 手动存档请求已发出等待响应中
 var _saving: bool = false
+## 保存完成提示的剩余显示时间（≤0 = 常驻）
+var _status_hide_timer: float = 0.0
 
 
 # ── 生命周期 ──────────────────────────────────────────────
@@ -120,12 +126,40 @@ func toggle() -> void:
 		open()
 
 
+func set_terminal(term: TerminalWidget) -> void:
+	"""注入调试终端引用：终端打开时 ESC 不弹菜单（放行给终端）。"""
+	_terminal = term
+
+
 func show_status(text: String, is_error: bool = false) -> void:
-	"""显示存档结果等状态文本（main_world 回填）。"""
+	"""显示存档结果等状态文本（main_world 回填），常驻不自动消失。"""
 	_saving = false
+	_status_hide_timer = 0.0
 	_status_text = text
 	_status_color = STATUS_ERR_COLOR if is_error else STATUS_OK_COLOR
 	queue_redraw()
+
+
+func show_save_complete(number: int) -> void:
+	"""保存完成：显示「节点 N」2 秒后自动消失。"""
+	_saving = false
+	_status_hide_timer = SAVE_STATUS_HIDE_SECONDS
+	if number > 0:
+		_status_text = "保存完成（节点 %d）" % number
+	else:
+		_status_text = "保存完成"
+	_status_color = STATUS_OK_COLOR
+	queue_redraw()
+
+
+func _process(delta: float) -> void:
+	"""保存完成提示计时（暂停期间仍运行：本节点 ALWAYS）。"""
+	if _status_hide_timer > 0.0:
+		_status_hide_timer -= delta
+		if _status_hide_timer <= 0.0:
+			_status_text = ""
+			_status_hide_timer = 0.0
+			queue_redraw()
 
 
 # ── 输入 ──────────────────────────────────────────────────
@@ -133,6 +167,9 @@ func show_status(text: String, is_error: bool = false) -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE:
+			# 终端打开时 ESC 归终端（关闭控制台）；仅地图界面弹暂停菜单
+			if _terminal != null and _terminal.is_open():
+				return
 			toggle()
 			var vp := get_viewport()
 			if vp:
@@ -228,6 +265,7 @@ func _activate(key: String) -> void:
 			_start_save()
 		"settings":
 			_saving = false
+			_status_hide_timer = 0.0
 			_status_text = "设置：%s" % SETTINGS_NOTE
 			_status_color = STATUS_WAIT_COLOR
 			queue_redraw()
@@ -243,6 +281,7 @@ func _start_save() -> void:
 	if _saving:
 		return
 	_saving = true
+	_status_hide_timer = 0.0
 	_status_text = "正在保存..."
 	_status_color = STATUS_WAIT_COLOR
 	queue_redraw()

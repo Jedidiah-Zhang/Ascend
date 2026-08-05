@@ -44,6 +44,22 @@ func test_slash_toggles_open() -> void:
 	assert_true(w.is_open())
 
 
+func test_esc_closes_when_open() -> void:
+	"""ESC 关闭终端（不弹暂停菜单的职责在 pause_menu 侧）。"""
+	var w: TerminalWidget = _create_widget()
+	w._input(_make_key_event(KEY_SLASH))
+	assert_true(w.is_open())
+	w._input(_make_key_event(KEY_ESCAPE))
+	assert_false(w.is_open(), "终端打开时 ESC 应关闭终端")
+
+
+func test_esc_does_not_open_when_closed() -> void:
+	"""终端关闭时 ESC 不应打开终端（归属暂停菜单）。"""
+	var w: TerminalWidget = _create_widget()
+	w._input(_make_key_event(KEY_ESCAPE))
+	assert_false(w.is_open())
+
+
 func test_slash_toggles_close() -> void:
 	var w: TerminalWidget = _create_widget()
 	w._input(_make_key_event(KEY_SLASH))

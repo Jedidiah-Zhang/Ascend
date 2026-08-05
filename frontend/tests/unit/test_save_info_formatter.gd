@@ -70,7 +70,7 @@ func test_datetime_zero_is_placeholder() -> void:
 
 func test_datetime_format() -> void:
 	var s: String = SaveInfoFormatter.datetime_string(1754000000)
-	assert_match(s, "????-??-?? ??:??")
+	assert_true(s.match("????-??-?? ??:??"), "应格式化为 YYYY-MM-DD HH:MM，实际: %s" % s)
 
 
 # ── 种子 ──────────────────────────────────────────────────

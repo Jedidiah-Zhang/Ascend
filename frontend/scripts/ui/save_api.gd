@@ -7,13 +7,19 @@
 请求由 UI 层发送，响应由 UI 层转发给解析函数。
 
 协议（docs/世界框架/存档系统/技术.md）:
-    save_list   → {worlds: [...], snapshots: [...]}
+    save_list   → {worlds: [...], snapshots: [...], current_world_id}
     save_create {name, seed?} → {world_id}
     save_snapshot {world_id} → {file}
     save_load   {world_id?|snapshot?} → {world_id}
     save_rename {world_id, name} → {world_id, name}
     save_delete {world_id} → {}
     save_export {world_id} → {world_id}
+
+快照条目附带血缘字段（时间线分叉视图数据源）:
+	parent    创建时活目录来源（回滚目标快照 file，"" = 世界初始）
+    game_time 创建时刻的世界时间（tick）
+世界摘要附带 live_origin（当前活目录来源）；save_list 顶层
+current_world_id = 引擎当前加载的世界（"最后进入"标注）。
 """
 
 class_name SaveApi
@@ -101,6 +107,7 @@ const _WORLD_DEFAULTS: Dictionary = {
 	"format_version": 1,
 	"snapshot_count": 0,
 	"latest_snapshot_at": null,
+	"live_origin": "",
 }
 
 
@@ -123,8 +130,14 @@ static func parse_worlds(payload: Dictionary) -> Array:
 		w["game_time"] = int(w["game_time"])
 		w["play_duration_sec"] = float(w["play_duration_sec"])
 		w["snapshot_count"] = int(w["snapshot_count"])
+		w["live_origin"] = str(w["live_origin"])
 		result.append(w)
 	return result
+
+
+static func parse_current_world_id(payload: Dictionary) -> String:
+	"""解析 save_list 顶层的当前加载世界（"最后进入"标注数据源）。"""
+	return str(payload.get("current_world_id", ""))
 
 
 static func parse_snapshots(payload: Dictionary) -> Array:

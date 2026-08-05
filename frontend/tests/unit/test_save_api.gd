@@ -117,6 +117,36 @@ func test_parse_worlds_type_coercion() -> void:
 	assert_eq(w["snapshot_count"], 3)
 
 
+func test_parse_worlds_live_origin() -> void:
+	"""live_origin 应透传（回滚后非空）并兜底为空串。"""
+	var worlds: Array = SaveApi.parse_worlds({
+		"worlds": [{"world_id": "a", "live_origin": "@2026-01-01-000000-aaaaaa-manual.ascendsave"}],
+	})
+	assert_eq(worlds[0]["live_origin"], "@2026-01-01-000000-aaaaaa-manual.ascendsave")
+	var fallback: Array = SaveApi.parse_worlds({"worlds": [{"world_id": "b"}]})
+	assert_eq(fallback[0]["live_origin"], "")
+
+
+func test_parse_snapshots_keeps_lineage_fields() -> void:
+	"""快照血缘字段（parent/game_time）应透传。"""
+	var snaps: Array = SaveApi.parse_snapshots({
+		"snapshots": [{
+			"file": "snap1", "parent": "snap0", "game_time": 12345,
+			"world_id": "w1",
+		}],
+	})
+	assert_eq(snaps.size(), 1)
+	assert_eq(snaps[0]["parent"], "snap0")
+	assert_eq(snaps[0]["game_time"], 12345)
+
+
+func test_parse_current_world_id() -> void:
+	"""save_list 顶层 current_world_id 解析（缺失兜底空串）。"""
+	assert_eq(SaveApi.parse_current_world_id({"current_world_id": "w-now"}), "w-now")
+	assert_eq(SaveApi.parse_current_world_id({}), "")
+	assert_eq(SaveApi.parse_current_world_id({"current_world_id": 42}), "42")
+
+
 func test_parse_snapshots_duplicates() -> void:
 	var payload := {"snapshots": [{"file": "a.ascendsave"}, "junk"]}
 	var snaps: Array = SaveApi.parse_snapshots(payload)

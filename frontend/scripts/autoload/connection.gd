@@ -108,6 +108,10 @@ var last_process_us: int = 0
 
 func _ready() -> void:
 	"""自动加载初始化。编辑器模式下跳过，游戏运行时自动启动后端。"""
+	# 网络层必须免疫暂停：暂停菜单（get_tree().paused）打开期间
+	# 仍需收发消息——否则存档请求发不出去、响应收不回来，
+	# 「正在保存...」永久卡住（回归：暂停菜单引入后暴露）。
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	if Engine.is_editor_hint():
 		set_process(false)
 		return

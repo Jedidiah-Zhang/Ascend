@@ -102,6 +102,24 @@ func test_default_constants_match_config() -> void:
 
 # ── 后端进程终止（优雅关闭） ────────────────────────────────
 
+func test_network_layer_survives_pause() -> void:
+	"""网络层应免疫暂停（暂停菜单打开时仍须收发消息）。
+
+	回归：暂停期间 Connection._process 冻结 → 存档请求发不出去、
+	响应收不回来，「正在保存...」永久卡住。
+	"""
+	assert_eq(Connection.process_mode, Node.PROCESS_MODE_ALWAYS,
+		"暂停时网络层必须继续处理")
+
+
+func test_process_still_works_while_paused() -> void:
+	"""树暂停时 Connection._process 仍可驱动（不崩溃、状态不破坏）。"""
+	get_tree().paused = true
+	Connection._process(0.016)
+	Connection._process(0.016)
+	get_tree().paused = false
+	pass_test("暂停期间驱动网络层无异常")
+
 func test_graceful_stop_constants() -> void:
 	"""优雅终止常量：等待后端最终落盘的超时兜底。"""
 	assert_eq(Connection.BACKEND_STOP_TIMEOUT_MS, 3000, "超时兜底 3s")
