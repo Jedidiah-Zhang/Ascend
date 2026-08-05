@@ -52,6 +52,8 @@ const BACKEND_STARTUP_TIMEOUT: float = Config.BACKEND_STARTUP_TIMEOUT
 const BACKEND_CHECK_INTERVAL: float = 0.5
 ## 单次端口探测的连接超时（秒）
 const PROBE_TIMEOUT: float = 0.2
+## 等待后端优雅退出（最终落盘）的超时（毫秒），超时后强杀兜底
+const BACKEND_STOP_TIMEOUT_MS: int = 3000
 
 
 # ── 属性 ──────────────────────────────────────────────────
@@ -253,10 +255,25 @@ func _enter_failed_state(reason: String) -> void:
 
 
 func _kill_backend() -> void:
-	"""关闭后端进程。"""
+	"""终止后端进程：先 SIGTERM 优雅停止，超时未退再强杀兜底。
+
+	回归：旧实现直接 OS.kill 强杀，绕过后端优雅关闭路径
+	（run_server.py 的 SIGTERM handler → engine.stop() 最终落盘），
+	退出时丢失最近一次周期保存后的状态。
+
+	注：本 Godot 构建的 OS.kill() 仅接受 pid（强杀语义），
+	SIGTERM 经 OS.execute("kill") 发送。
+	"""
 	if _backend_pid <= 0:
 		return
-	OS.kill(_backend_pid)
+	OS.execute("kill", ["-TERM", str(_backend_pid)])
+	print("Connection: backend stopping gracefully (PID: %d)" % _backend_pid)
+	var deadline: int = Time.get_ticks_msec() + BACKEND_STOP_TIMEOUT_MS
+	while OS.is_process_running(_backend_pid) and Time.get_ticks_msec() < deadline:
+		OS.delay_msec(50)
+	if OS.is_process_running(_backend_pid):
+		push_warning("Connection: backend not stopped in time, force killing (PID: %d)" % _backend_pid)
+		OS.kill(_backend_pid)
 	print("Connection: backend stopped (PID: %d)" % _backend_pid)
 	_backend_pid = -1
 	_awaiting_backend = false

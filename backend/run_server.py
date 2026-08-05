@@ -12,10 +12,15 @@
     或从项目根:
     cd backend && PYTHONPATH=. ../.venv/bin/python run_server.py
 
-按 Ctrl+C 停止。
+按 Ctrl+C 停止；前端退出时会发送 SIGTERM 优雅停止（先落盘再退出）。
+
+环境变量:
+    ASCEND_SERVER_PORT: 覆盖监听端口（测试隔离用，默认 ascend/config.py）。
 """
 
+import os
 import sys
+import signal
 import time as _real_time
 import glob
 from pathlib import Path
@@ -47,10 +52,31 @@ def main() -> None:
     _cleanup_old_logs()
     setup_logging()
 
+    # 测试隔离：ASCEND_SERVER_PORT 覆盖监听端口（game.py 模块级
+    # 常量在导入时绑定，需在引擎构造前原位替换）
+    listen_port = SERVER_PORT
+    port_override = os.environ.get("ASCEND_SERVER_PORT", "").strip()
+    if port_override:
+        listen_port = int(port_override)
+        from ascend import game as _game_mod
+
+        _game_mod.SERVER_PORT = listen_port
+
+    # SIGTERM（前端优雅关闭时发送）：结束主循环，走 engine.stop()
+    # 最终落盘（state + chunk flush + WAL），避免强杀丢状态
+    stop_requested = False
+
+    def _handle_sigterm(_signum: int, _frame: object) -> None:
+        nonlocal stop_requested
+        stop_requested = True
+        print("\n收到 SIGTERM，正在保存并停止...")
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     engine = GameEngine(seed=42)
     engine.start_service()
 
-    print(f"Ascend 服务器运行在 {SERVER_HOST}:{SERVER_PORT}")
+    print(f"Ascend 服务器运行在 {SERVER_HOST}:{listen_port}")
     print("按 Ctrl+C 停止，或关闭所有前端后自动退出")
 
     had_client: bool = False
@@ -58,6 +84,9 @@ def main() -> None:
 
     try:
         while True:
+            if stop_requested:
+                print("正在停止...")
+                break
             _real_time.sleep(0.5)
             client_count = engine.server.client_count if engine.server else 0
 

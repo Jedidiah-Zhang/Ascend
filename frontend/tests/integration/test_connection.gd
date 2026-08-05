@@ -98,3 +98,17 @@ func test_default_constants_match_config() -> void:
 	assert_eq(Connection.DEFAULT_PORT, Config.DEFAULT_PORT)
 	assert_eq(Connection.RECONNECT_INTERVAL, Config.RECONNECT_INTERVAL)
 	assert_eq(Connection.MAX_MESSAGE_SIZE, Config.MAX_MESSAGE_SIZE)
+
+
+# ── 后端进程终止（优雅关闭） ────────────────────────────────
+
+func test_graceful_stop_constants() -> void:
+	"""优雅终止常量：等待后端最终落盘的超时兜底。"""
+	assert_eq(Connection.BACKEND_STOP_TIMEOUT_MS, 3000, "超时兜底 3s")
+
+
+func test_kill_backend_noop_without_pid() -> void:
+	"""无后端进程（pid<=0）时终止应立即返回，不阻塞、不报错。"""
+	Connection._backend_pid = -1
+	Connection._kill_backend()
+	assert_eq(Connection._backend_pid, -1, "无进程时不应改动 pid")
