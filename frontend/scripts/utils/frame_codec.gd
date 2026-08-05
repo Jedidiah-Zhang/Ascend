@@ -1,7 +1,10 @@
 """帧编解码器 — 协议帧的构造与解析，纯逻辑 RefCounted 类。
 
-每条消息 = 4 字节大端长度前缀 + MsgPack 体
+每条消息 = 4 字节大端长度前缀 + JSON 体
 与 Connection Node 解耦，可独立测试。
+
+帧格式与后端 ascend/net/protocol.py 保持一致（struct.pack(">I")）：
+跨语言一致性由 tests/unit/test_frame_codec.gd 与后端 protocol 测试锁定。
 """
 
 class_name FrameCodec
@@ -17,7 +20,7 @@ func next_seq() -> int:
 
 
 func frame_encode(message: Dictionary) -> PackedByteArray:
-	var encoded: PackedByteArray = MsgPack.encode(message)
+	var encoded: PackedByteArray = JsonCodec.encode(message)
 	if encoded.is_empty():
 		push_error("FrameCodec: failed to encode message")
 		return PackedByteArray()

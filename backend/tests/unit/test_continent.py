@@ -75,6 +75,21 @@ class TestContinentOutline:
         data = _get_data(seed=CANONICAL_SEED)
         assert isinstance(data, ContinentData)
 
+    def test_generate_reports_progress_stages(self):
+        """generate(progress_cb) 按管线顺序回调各阶段名（前端进度条数据源）。"""
+        from ascend.space.continent import ContinentGenerator
+        stages: list[str] = []
+        data = ContinentGenerator(seed=CANONICAL_SEED).generate(
+            progress_cb=stages.append,
+        )
+        assert data is not None
+        assert stages[0] == ContinentGenerator.STAGE_ELEVATION
+        assert stages[-1] == ContinentGenerator.STAGE_DONE
+        assert ContinentGenerator.STAGE_CLIMATE in stages
+        assert ContinentGenerator.STAGE_EROSION in stages
+        # 阶段名唯一（无重复回调）
+        assert len(stages) == len(set(stages))
+
     def test_continent_is_finite(self):
         """大陆数据在声明边界内，无越界。
 

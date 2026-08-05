@@ -288,7 +288,7 @@ func _begin_probe() -> void:
 	_close_probe()
 	var probe := StreamPeerTCP.new()
 	_probe_elapsed = 0.0
-	if probe.connect_to_host(DEFAULT_HOST, DEFAULT_PORT) != OK:
+	if probe.connect_to_host(_host, _port) != OK:
 		_on_probe_failed()
 		return
 	_probe = probe
@@ -467,7 +467,7 @@ func _decode_worker() -> void:
 		if body.is_empty():
 			continue
 
-		var message: Variant = MsgPack.decode(body)
+		var message: Variant = JsonCodec.decode(body)
 		if message == null or not message is Dictionary:
 			push_error("Connection: decode failed in worker thread")
 			continue

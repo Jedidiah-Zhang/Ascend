@@ -7,6 +7,7 @@
 from collections.abc import Callable
 
 from ascend.log import get_logger
+from ascend.net.protocol import make_error
 
 logger = get_logger(__name__)
 
@@ -102,23 +103,16 @@ class MessageDispatcher:
         req_type = msg.get("request_type", "")
         if not req_type:
             logger.warning("请求缺少 request_type")
-            self._server.send_to(client_id, {
-                "type": "error",
-                "request_type": "",
-                "seq": msg.get("seq", 0),
-                "error": "missing request_type",
-            })
+            self._server.send_to(client_id, make_error(
+                "", "missing request_type", seq=msg.get("seq", 0)))
             return
 
         handler = self._handlers.get(req_type)
         if handler is None:
             logger.warning("无处理程序: request_type=%s", req_type)
-            self._server.send_to(client_id, {
-                "type": "error",
-                "request_type": req_type,
-                "seq": msg.get("seq", 0),
-                "error": f"unknown request_type: {req_type}",
-            })
+            self._server.send_to(client_id, make_error(
+                req_type, f"unknown request_type: {req_type}",
+                seq=msg.get("seq", 0)))
             return
 
         try:
@@ -128,9 +122,7 @@ class MessageDispatcher:
                 self._server.send_to(client_id, response)
         except Exception as exc:
             logger.exception("处理程序错误: request_type=%s", req_type)
-            self._server.send_to(client_id, {
-                "type": "error",
-                "request_type": req_type,
-                "seq": msg.get("seq", 0),
-                "error": str(exc),
-            })
+            # 不回传内部异常细节（可能含路径/SQL）；前端只见通用错误
+            self._server.send_to(client_id, make_error(
+                req_type, f"处理失败: {type(exc).__name__}",
+                seq=msg.get("seq", 0)))

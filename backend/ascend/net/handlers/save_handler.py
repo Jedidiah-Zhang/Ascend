@@ -18,6 +18,7 @@ save_load 为异步：置位引擎读档请求后立即返回，重建在 tick �
 """
 
 from ascend.log import get_logger
+from ascend.net.protocol import make_response
 
 logger = get_logger(__name__)
 
@@ -68,15 +69,14 @@ def make_save_handlers(save_manager, game_engine=None):
         current_world_id = ""
         if game_engine is not None:
             current_world_id = getattr(game_engine, "world_id", None) or ""
-        return {
-            "type": "response",
-            "request_type": "save_list",
-            "payload": {
+        return make_response(
+                "save_list",
+                {
                 "worlds": worlds,
                 "snapshots": snapshots,
                 "current_world_id": current_world_id,
             },
-        }
+            )
 
     def handle_save_create(msg: dict) -> dict:
         """创建新存档位（新游戏第一步，随后 save_load 进入世界）。"""
@@ -86,11 +86,10 @@ def make_save_handlers(save_manager, game_engine=None):
             raise ValueError("存档名称不能为空")
         seed = int(payload.get("seed", 0) or 0)
         manifest = save_manager.create_world(name, seed)
-        return {
-            "type": "response",
-            "request_type": "save_create",
-            "payload": {"world_id": manifest.world_id},
-        }
+        return make_response(
+                "save_create",
+                {"world_id": manifest.world_id},
+            )
 
     def handle_save_snapshot(msg: dict) -> dict:
         """手动保存：为世界创建回退点快照。
@@ -111,11 +110,10 @@ def make_save_handlers(save_manager, game_engine=None):
             )
         else:
             filename = save_manager.create_snapshot(world_id, suffix="manual")
-        return {
-            "type": "response",
-            "request_type": "save_snapshot",
-            "payload": {"file": filename},
-        }
+        return make_response(
+                "save_snapshot",
+                {"file": filename},
+            )
 
     def handle_save_load(msg: dict) -> dict:
         """读档（活目录或快照回滚），异步重建。
@@ -135,15 +133,12 @@ def make_save_handlers(save_manager, game_engine=None):
             save_manager.get_manifest(world_id)  # 校验目标存在性
         if game_engine is None:
             raise ValueError("引擎不可用，无法读档")
-        if getattr(game_engine, "_pending_load", None):
-            raise ValueError("已有读档请求在处理中")
-        game_engine._pending_load = (world_id, snapshot)
+        game_engine.request_load(world_id, snapshot)
         target = world_id if world_id else snapshot
-        return {
-            "type": "response",
-            "request_type": "save_load",
-            "payload": {"world_id": target},
-        }
+        return make_response(
+                "save_load",
+                {"world_id": target},
+            )
 
     def handle_save_rename(msg: dict) -> dict:
         """重命名存档位。"""
@@ -153,11 +148,10 @@ def make_save_handlers(save_manager, game_engine=None):
         if not world_id:
             raise ValueError("缺少 world_id")
         save_manager.rename_world(world_id, name)
-        return {
-            "type": "response",
-            "request_type": "save_rename",
-            "payload": {"world_id": world_id, "name": name},
-        }
+        return make_response(
+                "save_rename",
+                {"world_id": world_id, "name": name},
+            )
 
     def handle_save_delete(msg: dict) -> dict:
         """删除存档位（连带快照）。"""
@@ -166,11 +160,10 @@ def make_save_handlers(save_manager, game_engine=None):
         if not world_id:
             raise ValueError("缺少 world_id")
         save_manager.delete_world(world_id)
-        return {
-            "type": "response",
-            "request_type": "save_delete",
-            "payload": {},
-        }
+        return make_response(
+                "save_delete",
+                {},
+            )
 
     def handle_save_export(msg: dict) -> dict:
         """复制世界为新的存档位（Issue #14 "复制存档"）。"""
@@ -179,11 +172,10 @@ def make_save_handlers(save_manager, game_engine=None):
         if not world_id:
             raise ValueError("缺少 world_id")
         new_id = save_manager.export_world(world_id)
-        return {
-            "type": "response",
-            "request_type": "save_export",
-            "payload": {"world_id": new_id},
-        }
+        return make_response(
+                "save_export",
+                {"world_id": new_id},
+            )
 
     return {
         "save_list": handle_save_list,

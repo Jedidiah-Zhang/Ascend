@@ -10,6 +10,7 @@ MVP 阶段同步调用，内存存储。
 """
 
 import bisect
+import sqlite3
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -240,7 +241,6 @@ class WorldTree:
             event: 要分发的事件。
             callbacks: 已解析的回调列表（由 publish 在锁内抓取）。
         """
-        logger = get_logger(__name__)
         for cb in callbacks:
             try:
                 cb(event)
@@ -325,7 +325,6 @@ class WorldTree:
         try:
             callback(event)
         except Exception:
-            logger = get_logger(__name__)
             logger.exception(
                 "异步回调执行失败: event_id=%s event_type=%s callback=%s",
                 event.id, event.event_type, callback.__name__,
@@ -761,7 +760,6 @@ class WorldTree:
                     bucket.discard(ev)
 
             removed_count = len(removed_ids)
-            logger = get_logger(__name__)
             logger.info(
                 "修剪事件(cycle=%d): 移除 %d 条(时间 < %.0f)，"
                 "保留 %d 条高权重，剩余 %d 条",
@@ -800,8 +798,8 @@ class WorldTree:
             if self._archive:
                 try:
                     archive_count = self._archive.event_count()
-                except Exception:
-                    pass
+                except sqlite3.Error as exc:
+                    logger.warning("归档统计查询失败: %s", exc)
 
             return {
                 "publish_count": self._publish_count,
@@ -836,14 +834,31 @@ class WorldTree:
         )
 
     def clear(self) -> None:
-        """清空所有事件和订阅。
-
-        仅用于测试重置，生产环境不调用。
-        """
+        """清空所有事件、索引和订阅（测试重置用）。"""
         with self._lock:
             self._event_log.clear()
             self._id_index.clear()
             self._subscriptions.clear()
+            self._entity_index.clear()
+            self._spatial_index.clear()
+            self._graph = EventGraph()
+            self._trim_cycle = 0
+            self._publish_count = 0
+            self._trim_count = 0
+            self._async_dispatch_count = 0
+            self._last_trim_cutoff = None
+
+    def reset(self) -> None:
+        """重置世界数据（读档重建用），保留订阅。
+
+        清空事件日志、索引、因果图与修剪状态，但保留订阅：
+        EventBridge 跨世界常驻（网络层不重建），清掉订阅会断掉
+        事件广播链路。旧世界的子系统订阅由其各自 shutdown()
+        负责注销，此处只重置数据面。
+        """
+        with self._lock:
+            self._event_log.clear()
+            self._id_index.clear()
             self._entity_index.clear()
             self._spatial_index.clear()
             self._graph = EventGraph()

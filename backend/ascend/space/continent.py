@@ -23,6 +23,7 @@ from array import array
 import io
 import struct
 import zlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Union
 
@@ -41,6 +42,18 @@ from ascend.config import (
     RAINSHADOW_DECAY_KM,
     RAINSHADOW_SECONDARY_WEIGHT,
     RAINSHADOW_MIN_FACTOR,
+    CONTINENT_BLEND_WEIGHT,
+    TERRAIN_BLEND_WEIGHT,
+    CENTER_BIAS_WEIGHT,
+    CLIMATE_CALIB_RAINFALL_REF,
+    CLIMATE_CALIB_TEMP_MIN,
+    CLIMATE_CALIB_TEMP_MAX,
+    CLIMATE_CALIB_HOT_THRESHOLD,
+    CLIMATE_CALIB_COLD_RANGE,
+    CLIMATE_CALIB_HOT_RAINFALL_TARGET,
+    CLIMATE_CALIB_HOT_STRETCH_PARAM,
+    CLIMATE_CALIB_COLD_RAINFALL_TARGET,
+    CLIMATE_CALIB_COLD_STRETCH_PARAM,
 )
 from ascend.log import get_logger
 
@@ -50,6 +63,17 @@ logger = get_logger(__name__)
 # 变更（如 v1 pickle → v2 显式二进制）时递增，旧缓存自动失效重新生成
 # （同一 seed 的结果必须完全一致才能缓存）
 CONTINENT_CACHE_VERSION: int = 2
+
+# Knuth 乘法哈希：seed → 确定性角度 [0, 2π)（温度梯度/盛行风向共用）
+def _seed_angle(seed: int) -> float:
+    """seed → 确定性角度 [0, 2π)。
+
+    Knuth 乘法哈希将任意整数种子均匀映射到角度；温度梯度方向
+    与盛行风向均由此派生（各自独立调用点，同一 seed 结果相同）。
+    """
+    import math
+
+    return ((seed * 2654435761) & 0xFFFFFFFF) / 0xFFFFFFFF * 2.0 * math.pi
 
 # ── 二进制序列化（显式 schema，非 pickle） ────────────────
 # 缓存随档分发（存档可分享）：pickle 反序列化可执行任意代码，
@@ -355,7 +379,9 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
             river_width=river_width, hydrology=hydrology,
             subdiv_ranges=subdiv_ranges, _chunk_climate=chunk_climate,
         )
-    except Exception:
+    except (struct.error, zlib.error, ValueError, IndexError) as exc:
+        # 截断/篡改数据 → 缓存失效重新生成（有日志，便于区分真 bug）
+        logger.warning("大陆缓存反序列化失败（重新生成）: %s", exc)
         return None
 
 
@@ -581,7 +607,18 @@ class ContinentGenerator:
 
     # ── 主入口 ──────────────────────────────────────────────
 
-    def generate(self) -> ContinentData:
+    # 生成阶段名（进度广播用，前端按此显示阶段文案）
+    STAGE_ELEVATION = "elevation"
+    STAGE_CLIMATE = "climate"
+    STAGE_EROSION = "erosion"
+    STAGE_WATER = "water"
+    STAGE_WIDTH = "width"
+    STAGE_DONE = "done"
+
+    def generate(
+        self,
+        progress_cb: "Callable[[str], None] | None" = None,
+    ) -> ContinentData:
         """执行完整的层1生成管线。
 
         管线顺序：
@@ -590,17 +627,31 @@ class ContinentGenerator:
 
         校准步骤保证 8 档气候覆盖：海拔/降雨/温度场分别做保结构的
         分位数拉伸，确保值域覆盖各气候档位的判定阈值。
+
+        Args:
+            progress_cb: 可选阶段回调，每个生成阶段开始时以阶段名
+                调用（STAGE_* 常量）。供前端进度条展示，缓存命中时
+                不进入本方法（由调用方上报 STAGE_DONE）。
+
+        Returns:
+            ContinentData 宏观场。
         """
+        def _report(stage: str) -> None:
+            if progress_cb is not None:
+                progress_cb(stage)
+
         w = self._grid_width
         h = self._grid_height
 
         # Step 1: 海拔 + 陆地掩码（湖泊由水文系统接管）
+        _report(self.STAGE_ELEVATION)
         land_mask, elevation = self._generate_elevation(w, h)
 
         # Step 1b: 海拔校准 — 保证高山（≥2000m）存在
         self._ensure_elevation_range(elevation, land_mask)
 
         # Step 2: 气候（温度、降雨、气候带）—— 降雨在侵蚀之前生成
+        _report(self.STAGE_CLIMATE)
         temp_field, rain_field, climate_field = (
             self._compute_climate(elevation, land_mask, w, h))
 
@@ -610,6 +661,7 @@ class ContinentGenerator:
         )
 
         # Step 3: 侵蚀（降雨驱动水流累积）—— 提取完整水文状态
+        _report(self.STAGE_EROSION)
         from .hydrology import erode, extract_lake_basins, HydrologyData
         erosion_result = erode(elevation, rain_field, w, h,
                                iterations=EROSION_ITERATIONS)
@@ -618,6 +670,7 @@ class ContinentGenerator:
         elevation = erosion_result.dem
 
         # Step 4: 湖泊盆地提取
+        _report(self.STAGE_WATER)
         lake_basins = extract_lake_basins(
             elevation, erosion_result.filled_dem, land_mask, w, h,
             min_size=LAKE_MIN_PIXELS,
@@ -641,6 +694,7 @@ class ContinentGenerator:
         )
 
         # Step 5: 河流宽度场（复用侵蚀+水文数据，避免重复计算）
+        _report(self.STAGE_WIDTH)
         from .hydrology import compute_river_width
         river_width = compute_river_width(
             elevation, w, h,
@@ -672,6 +726,7 @@ class ContinentGenerator:
                 sea_temp = temp + alt * LAPSE_RATE / 1000.0
                 chunk_climate[(cx, cy)] = (temp, rain, sea_temp, zone)
 
+        _report(self.STAGE_DONE)
         return ContinentData(
             grid_width=w, grid_height=h,
             cell_size=self._params.sample_resolution,
@@ -734,23 +789,23 @@ class ContinentGenerator:
         # 降雨校准参数 (原 _ensure_rainfall_range)
         rain_p3 = self._percentile(land_rains, 0.03)
         rain_p10 = self._percentile(land_rains, 0.10)
-        do_rain_cal = not (rain_p3 <= 100.0 or rain_p10 <= rain_p3)
+        do_rain_cal = not (rain_p3 <= CLIMATE_CALIB_RAINFALL_REF or rain_p10 <= rain_p3)
 
         # 温度校准参数 (原 _ensure_temperature_range)
         temp_p2 = self._percentile(land_temps, 0.02)
         temp_p98 = self._percentile(land_temps, 0.98)
         do_temp_cal = (
             temp_p98 - temp_p2 >= 1.0
-            and not (temp_p2 <= -12.0 and temp_p98 >= 30.0)
+            and not (temp_p2 <= CLIMATE_CALIB_TEMP_MIN and temp_p98 >= CLIMATE_CALIB_TEMP_MAX)
         )
 
         # Phase 3: 应用降雨和温度校准，同时收集交叉校准所需数据
         # （交叉校准需要在温度校准之后收集，因为用校准后的温度分区）
         if do_rain_cal:
-            rain_scale = (rain_p10 - 100.0) / (rain_p10 - rain_p3)
+            rain_scale = (rain_p10 - CLIMATE_CALIB_RAINFALL_REF) / (rain_p10 - rain_p3)
         if do_temp_cal:
-            temp_scale = (30.0 - (-12.0)) / (temp_p98 - temp_p2)
-            temp_offset = -12.0 - temp_p2 * temp_scale
+            temp_scale = (CLIMATE_CALIB_TEMP_MAX - CLIMATE_CALIB_TEMP_MIN) / (temp_p98 - temp_p2)
+            temp_offset = CLIMATE_CALIB_TEMP_MIN - temp_p2 * temp_scale
 
         hot_rains: list[float] = []   # 热区(T>=20) 的降雨值
         cold_rains: list[float] = []  # 冷区(-5<=T<5) 的降雨值
@@ -760,7 +815,7 @@ class ContinentGenerator:
 
             # 降雨校准（仅陆地）
             if is_land and do_rain_cal and rain[i] < rain_p10:
-                rain[i] = max(0.0, 100.0 + (rain[i] - rain_p3) * rain_scale)
+                rain[i] = max(0.0, CLIMATE_CALIB_RAINFALL_REF + (rain[i] - rain_p3) * rain_scale)
 
             # 温度校准（陆地+海洋统一应用，消除海陆边界跳变）
             if do_temp_cal:
@@ -772,9 +827,9 @@ class ContinentGenerator:
             # 收集校准后的交叉校准数据（仅陆地）
             t = temp[i]
             r = rain[i]
-            if t >= 20.0:
+            if t >= CLIMATE_CALIB_HOT_THRESHOLD:
                 hot_rains.append(r)
-            elif -5.0 <= t < 5.0:
+            elif CLIMATE_CALIB_COLD_RANGE[0] <= t < CLIMATE_CALIB_COLD_RANGE[1]:
                 cold_rains.append(r)
 
         # Phase 4: 排序交叉校准数据 + 计算参数
@@ -787,7 +842,7 @@ class ContinentGenerator:
         if do_hot_cal:
             hot_p20 = hot_rains[int(len(hot_rains) * 0.20)]
             hot_max = hot_rains[-1]
-            do_hot_cal = hot_max < 1500.0 and hot_max > hot_p20
+            do_hot_cal = hot_max < CLIMATE_CALIB_HOT_RAINFALL_TARGET and hot_max > hot_p20
 
         do_cold_cal = len(cold_rains) > 100
         cold_p40 = 0.0
@@ -795,7 +850,7 @@ class ContinentGenerator:
         if do_cold_cal:
             cold_p40 = cold_rains[int(len(cold_rains) * 0.40)]
             cold_max = cold_rains[-1]
-            do_cold_cal = cold_max < 500.0 and cold_max > cold_p40
+            do_cold_cal = cold_max < CLIMATE_CALIB_COLD_RAINFALL_TARGET and cold_max > cold_p40
 
         # Phase 5: 应用交叉校准 + 重分类（单次遍历）
         for i in range(n):
@@ -806,12 +861,16 @@ class ContinentGenerator:
             r = rain[i]
 
             # 交叉校准——使用已校准的温湿度值
-            if do_hot_cal and t >= 20.0 and r > hot_p20:
+            if do_hot_cal and t >= CLIMATE_CALIB_HOT_THRESHOLD and r > hot_p20:
                 frac = (r - hot_p20) / (hot_max - hot_p20)
-                rain[i] = 200.0 + frac * 1600.0
-            elif do_cold_cal and -5.0 <= t < 5.0 and r > cold_p40:
+                rain[i] = CLIMATE_CALIB_HOT_STRETCH_PARAM[0] + frac * CLIMATE_CALIB_HOT_STRETCH_PARAM[1]
+            elif (
+                do_cold_cal
+                and CLIMATE_CALIB_COLD_RANGE[0] <= t < CLIMATE_CALIB_COLD_RANGE[1]
+                and r > cold_p40
+            ):
                 frac = (r - cold_p40) / (cold_max - cold_p40)
-                rain[i] = 300.0 + frac * 300.0
+                rain[i] = CLIMATE_CALIB_COLD_STRETCH_PARAM[0] + frac * CLIMATE_CALIB_COLD_STRETCH_PARAM[1]
 
             # 重分类
             climate_field[i] = int(classify(temp[i], rain[i], elevation[i]))
@@ -1018,7 +1077,9 @@ class ContinentGenerator:
                 center = 1.0 - dist * 2.5
                 if center < 0.0:
                     center = 0.0
-                mixed[i] = continent_field[i] * 0.7 + terrain_field[i] * 0.3 + center * 0.12
+                mixed[i] = (continent_field[i] * CONTINENT_BLEND_WEIGHT
+                            + terrain_field[i] * TERRAIN_BLEND_WEIGHT
+                            + center * CENTER_BIAS_WEIGHT)
                 i += 1
 
         target = self._params.land_ratio
@@ -1049,7 +1110,7 @@ class ContinentGenerator:
         import math
 
         # seed → 随机温度梯度方向
-        angle = ((self._seed * 2654435761) & 0xFFFFFFFF) / 0xFFFFFFFF * 2.0 * math.pi
+        angle = _seed_angle(self._seed)
         gx = math.cos(angle)
         gy = math.sin(angle)
 
@@ -1104,7 +1165,7 @@ class ContinentGenerator:
         from .hydrology import _rain_shadow_omnidirectional_c
 
         # seed → 连续风向角（与温度梯度相同的 Knuth 乘法哈希）
-        wind_angle = ((self._seed * 2654435761) & 0xFFFFFFFF) / 0xFFFFFFFF * 2.0 * math.pi
+        wind_angle = _seed_angle(self._seed)
 
         # 次风向：偏移 45°，模拟环境风切变
         secondary_angle = wind_angle + math.pi / 4.0

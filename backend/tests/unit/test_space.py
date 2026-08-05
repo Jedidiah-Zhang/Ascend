@@ -176,16 +176,38 @@ class TestClimateZone:
         """高山海拔覆盖热带纬度气候。"""
         assert classify(30.0, 3000.0, 2500.0) == ClimateZone.ALPINE
 
+    def test_c_ext_classify_consistent_with_python(self):
+        """C 端 classify_climate 与 Python classify 全范围一致性。
+
+        _hydrology.c 的 #define 阈值与 ascend.config 双源，此测试以
+        扫描方式锁定两实现等价，防止单侧改阈值导致漂移。
+        """
+        from ascend.space.hydrology import classify_climate_c
+        temps = [-30.0, -12.0, -5.0, -4.9, 0.0, 4.9, 5.0, 8.0, 19.9,
+                 20.0, 24.0, 36.0, 40.0]
+        rains = [0.0, 100.0, 199.9, 200.0, 400.0, 599.9, 600.0, 800.0,
+                 1499.9, 1500.0, 2000.0, 3500.0]
+        alts = [0.0, 500.0, 1999.9, 2000.0, 2500.0, 4000.0]
+        for temp in temps:
+            for rain in rains:
+                for alt in alts:
+                    expected = int(classify(temp, rain, alt))
+                    assert classify_climate_c(temp, rain, alt) == expected, (
+                        f"C/Python 分类不一致: temp={temp} rain={rain} alt={alt}"
+                    )
+
     def test_polar_overrides_desert(self):
         """极地严寒优先于沙漠干旱判定。"""
         assert classify(-10.0, 50.0, 0.0) == ClimateZone.POLAR_TUNDRA
 
     def test_sea_level_temperature_range(self):
-        """纬度噪声映射到合理海平面温度范围。"""
+        """纬度噪声映射与 C 生产公式一致（lat_n*25+10，clamp [-20,38]）。"""
         from ascend.space.climate import sea_level_temperature
-        assert sea_level_temperature(-1.0) < 0.0
-        assert sea_level_temperature(1.0) > 30.0
-        assert sea_level_temperature(0.0) == pytest.approx(15.0)
+        assert sea_level_temperature(-1.0) == pytest.approx(-15.0)
+        assert sea_level_temperature(1.0) == pytest.approx(35.0)
+        assert sea_level_temperature(0.0) == pytest.approx(10.0)
+        assert sea_level_temperature(-5.0) == pytest.approx(-20.0)  # clamp 下界
+        assert sea_level_temperature(5.0) == pytest.approx(38.0)    # clamp 上界
 
     def test_lapse_rate(self):
         """气温直减率：升高 1000m 应降 9.0°C（游戏性放大值）。"""

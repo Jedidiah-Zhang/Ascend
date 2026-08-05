@@ -8,6 +8,8 @@ from ascend.log import get_logger
 
 from .schema import EventSchema
 
+logger = get_logger(__name__)
+
 
 class SchemaRegistry:
     """事件类型注册表。
@@ -66,7 +68,6 @@ class SchemaRegistry:
             description=description,
         )
         self._schemas[event_type] = schema
-        logger = get_logger(__name__)
         logger.debug("注册事件 schema: %s", event_type)
         return schema
 

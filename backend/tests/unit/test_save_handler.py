@@ -202,10 +202,17 @@ class TestSaveLoad:
     """读档（异步置位）。"""
 
     class _FakeEngine:
-        """最小引擎替身：记录 pending_load。"""
+        """最小引擎替身：实现 request_load（校验并置位）。"""
 
         def __init__(self) -> None:
             self._pending_load = None
+
+        def request_load(
+            self, world_id: str | None = None, snapshot: str | None = None,
+        ) -> None:
+            if self._pending_load is not None:
+                raise ValueError("已有读档请求在处理中")
+            self._pending_load = (world_id, snapshot)
 
     def test_load_world_sets_pending(self, manager, handlers):
         """save_load 置位引擎读档请求并返回目标。"""

@@ -18,26 +18,19 @@
 
 import ctypes
 import math
-import subprocess
 from array import array
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# ── C 扩展加载（与 _perlin.so 相同模式） ───────────────────
+from ._cext import load_c_extension
+
+# ── C 扩展加载（与 _perlin.so / _streamlines.so 共用加载器） ──
 
 _HERE = Path(__file__).resolve().parent
-_HYDRO_SO = _HERE / "_hydrology.so"
-_HYDRO_C = _HERE / "_hydrology.c"
-
-if not _HYDRO_SO.exists() or _HYDRO_C.stat().st_mtime > _HYDRO_SO.stat().st_mtime:
-    subprocess.run(
-        ["gcc", "-O3", "-march=native", "-ffast-math", "-funroll-loops",
-         "-shared", "-fPIC", "-o", str(_HYDRO_SO), str(_HYDRO_C), "-lm"],
-        check=True, cwd=str(_HERE),
-    )
-
-_HYDRO = ctypes.CDLL(str(_HYDRO_SO))
+_HYDRO = load_c_extension(
+    str(_HERE / "_hydrology.c"), str(_HERE / "_hydrology.so"), link_flags=["-lm"],
+)
 
 # compute_d8
 _HYDRO.hydrology_compute_d8.argtypes = [
@@ -135,6 +128,29 @@ _HYDRO.hydrology_compute_climate.argtypes = [
     ctypes.POINTER(ctypes.c_int),     # climate_out
 ]
 _HYDRO.hydrology_compute_climate.restype = None
+
+# classify_climate（与 climate.classify 的一致性测试入口）
+_HYDRO.hydrology_classify.argtypes = [
+    ctypes.c_double, ctypes.c_double, ctypes.c_double,  # temp, rainfall, altitude
+]
+_HYDRO.hydrology_classify.restype = ctypes.c_int
+
+
+def classify_climate_c(temp: float, rainfall: float, altitude: float) -> int:
+    """C 端气候分类（与 climate.classify 保持一致的镜像实现）。
+
+    阈值硬编码于 _hydrology.c（#define），测试 test_climate_consistency
+    以扫描方式锁定 C/Python 两实现的一致性，防止单侧修改漂移。
+
+    Args:
+        temp: 年均温度 (°C)。
+        rainfall: 年降雨量 (mm)。
+        altitude: 海拔 (m)。
+
+    Returns:
+        int(ClimateZone) 枚举值。
+    """
+    return int(_HYDRO.hydrology_classify(temp, rainfall, altitude))
 
 
 def _compute_d8_c(dem: array, w: int, h: int) -> array:
@@ -420,14 +436,6 @@ class HydrologyData:
 # D8 方向常量
 _DX = [1, -1, 0, 0, 1, -1, 1, -1]
 _DY = [0, 0, 1, -1, 1, 1, -1, -1]
-_DIAG = [False, False, False, False, True, True, True, True]
-
-
-def _dem_at(dem: list[float], w: int, h: int, x: int, y: int) -> float:
-    """安全读取 DEM 值，越界返回 inf。"""
-    if 0 <= x < w and 0 <= y < h:
-        return dem[y * w + x]
-    return float("inf")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -735,6 +743,22 @@ def extract_lake_basins(
     return basins
 
 
+def river_width_log(ratio: float) -> float:
+    """河流宽度归一化系数 — 对数压缩（单一事实来源）。
+
+    流量比值 [0, 1] → [0, 1] 的对数映射：上游收窄、下游拓宽，
+    避免宽度随流量线性爆炸。与 river_render._river_width 回退分支
+    共用，任一改动需同步另一侧（tests 锁定行为）。
+
+    Args:
+        ratio: 流量与最大流量之比 [0, 1]。
+
+    Returns:
+        宽度归一化系数 [0, 1]。
+    """
+    return math.log(1.0 + ratio * 20.0) / math.log(21.0)
+
+
 def compute_river_width(
     dem: list[float],
     w: int, h: int,
@@ -793,8 +817,7 @@ def compute_river_width(
         max_acc = max(acc[i] for i in river_indices)
         for i in river_indices:
             ratio = acc[i] / max_acc
-            log_ratio = math.log(1.0 + ratio * 20.0) / math.log(21.0)
-            widths[i] = min_width + (max_width - min_width) * log_ratio
+            widths[i] = min_width + (max_width - min_width) * river_width_log(ratio)
 
     # ── 湖泊宽度 ──
     if lake_basins is not None:

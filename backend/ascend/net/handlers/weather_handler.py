@@ -11,10 +11,11 @@ from ascend.config import MAX_WEATHER_QUERY_CHUNKS
 from ascend.net.handlers import parse_coord as _parse_coord
 from ascend.weather.weather_engine import (
     classify_temperature, classify_humidity, classify_wind, classify_sunshine,
-    classify_sunlight_intensity,
+    classify_sunlight_intensity, precip_type_for,
 )
 
 from ascend.log import get_logger
+from ascend.net.protocol import make_response
 
 logger = get_logger(__name__)
 
@@ -72,7 +73,7 @@ def make_weather_handler(weather_engine, i18n):
             rain = wp.rainfall
 
             if rain > 0:
-                precip_type_key = "weather.snow" if temp <= 0 else "weather.rain"
+                precip_type_key = "weather.snow" if precip_type_for(temp) == "snow" else "weather.rain"
                 weather_desc = i18n.t("weather.intensity",
                                       type=i18n.t(precip_type_key),
                                       intensity="%.1f" % rain)
@@ -98,11 +99,10 @@ def make_weather_handler(weather_engine, i18n):
                 "weather": weather_desc,
             })
 
-        return {
-            "type": "response",
-            "request_type": "get_weather",
-            "payload": {"weathers": results},
-        }
+        return make_response(
+                "get_weather",
+                {"weathers": results},
+            )
 
     return {
         "get_weather": handle_get_weather,

@@ -11,6 +11,7 @@
 """
 
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ascend.log import get_logger
@@ -94,7 +95,9 @@ class WorldGenerator:
 
     # ── 海拔查询 ──────────────────────────────────────────
 
-    def ensure_continent(self):
+    def ensure_continent(
+        self, progress_cb: "Callable[[str], None] | None" = None,
+    ) -> "ContinentData":
         """主动生成并缓存宏观大陆数据，返回 ContinentData。
 
         默认 get_altitude 是惰性生成，首次调用才跑（侵蚀慢）。
@@ -107,6 +110,10 @@ class WorldGenerator:
 
         生成后补充沙漠档的 moisture 噪声动态值域（continent 生成时
         无 moisture 噪声实例，此处补算）。
+
+        Args:
+            progress_cb: 可选阶段回调（ContinentGenerator.generate 的
+                STAGE_* 阶段名）；缓存命中时以 STAGE_DONE 单阶段回调。
 
         Returns:
             ContinentData 宏观场（缓存于 self._continent）。
@@ -127,12 +134,16 @@ class WorldGenerator:
                     )
                     self._continent = None
             if self._continent is None:
-                self._continent = ContinentGenerator(seed=self._seed).generate()
+                self._continent = ContinentGenerator(
+                    seed=self._seed,
+                ).generate(progress_cb=progress_cb)
                 self._supplement_moisture_range()
                 if cache_path:
                     self._save_continent_cache(cache_path, self._continent)
                 logger.info("大陆生成完成: %s", self._continent)
             else:
+                if progress_cb is not None:
+                    progress_cb(ContinentGenerator.STAGE_DONE)
                 logger.info("大陆从缓存恢复: %s", self._continent)
         return self._continent
 
@@ -180,8 +191,8 @@ class WorldGenerator:
                 _, _, _, zone = cont.get_chunk_climate(cx, cy)
                 if zone != int(ClimateZone.DESERT):
                     continue
-        moisture = self._sample_moisture_at_chunk(cx, cy)
-        moisture_vals.append(moisture)
+                moisture = self._sample_moisture_at_chunk(cx, cy)
+                moisture_vals.append(moisture)
         if len(moisture_vals) < 10:
             return
         moisture_vals.sort()

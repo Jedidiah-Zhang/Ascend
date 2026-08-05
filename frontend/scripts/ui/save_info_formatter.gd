@@ -14,6 +14,11 @@ extends RefCounted
 const Config = preload("res://scripts/config.gd")
 
 
+static func hhmm_string(hour: int, minute: int) -> String:
+	"""游戏小时/分钟 → "HH:MM"（事件时间戳等共用格式化）。"""
+	return "%02d:%02d" % [hour, minute]
+
+
 static func game_time_string(ticks: int) -> String:
 	"""tick 数 → "第 N 天 HH:MM"。
 

@@ -12,6 +12,7 @@
 """
 
 from ascend.log import get_logger
+from ascend.net.protocol import make_response
 
 logger = get_logger(__name__)
 
@@ -54,15 +55,14 @@ def make_player_handler(player_service):
         """
         x, y = player_service.position
         entity = player_service.entity
-        return {
-            "type": "response",
-            "request_type": "player_state",
-            "payload": {
+        return make_response(
+                "player_state",
+                {
                 "entity_id": entity.id if entity else "",
                 "x": x,
                 "y": y,
             },
-        }
+            )
 
     def handle_player_move(msg: dict) -> dict:
         """处理 player_move 请求：上报位置 → 权威裁决 → 回传。
@@ -85,11 +85,10 @@ def make_player_handler(player_service):
             ax, ay = player_service.position
         else:
             ax, ay = player_service.move_to(x, y)
-        return {
-            "type": "response",
-            "request_type": "player_move",
-            "payload": {"x": ax, "y": ay},
-        }
+        return make_response(
+                "player_move",
+                {"x": ax, "y": ay},
+            )
 
     return {
         "player_state": handle_player_state,

@@ -71,8 +71,3 @@ func on_world_response(_request_type: String, _payload: Dictionary) -> void:
 func get_lines() -> PackedStringArray:
 	"""返回要渲染的文本行列表。子类必须覆写此方法。"""
 	return PackedStringArray()
-
-
-func update_from_backend(_data: Dictionary) -> void:
-	"""接收后端推送数据。子类按需覆写。"""
-	pass

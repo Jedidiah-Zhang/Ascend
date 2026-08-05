@@ -130,14 +130,22 @@ class GameCalendar:
         Args:
             game_time: 当前游戏时间（tick）。
         """
+        current_day = self.day_at(game_time)
+        if game_time < self._last_game_time:
+            # 时钟倒退（生产流程不会发生：读档时日历随时钟重建）：
+            # 静默重同步，不发布倒退的 day_end/day_change 事件——
+            # 下游模块按"日期递增"假设运转，倒退事件会破坏其状态。
+            self._day = current_day
+            self._hour = int(self.time_of_day(game_time) / GAME_HOUR)
+            self._minute = int((game_time % GAME_HOUR) / GAME_MINUTE)
+            self._last_game_time = game_time
+            logger.warning("日历检测到时钟倒退，静默重同步到 day=%d", current_day)
+            return
         self._last_game_time = game_time
 
-        current_day = int(game_time / GAME_DAY) + 1
         if current_day != self._day:
             previous_day = self._day
             real_skipped = current_day - previous_day - 1
-            if real_skipped < 0:
-                real_skipped = 0
 
             world_tree.publish(Event(
                 timestamp=game_time,
@@ -175,7 +183,7 @@ class GameCalendar:
                 previous_day, current_day, self.elapsed_days, real_skipped,
             )
 
-        current_hour = int((game_time % GAME_DAY) / GAME_HOUR)
+        current_hour = int(self.time_of_day(game_time) / GAME_HOUR)
         if self._hour is None:
             self._hour = current_hour
         elif current_hour != self._hour:

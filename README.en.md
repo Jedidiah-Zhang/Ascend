@@ -48,7 +48,7 @@ Ascend fills this gap: a reproducible, intervenable causal world produces spatio
 
 - **Godot 4.x**: rendering, UI, input, audio
 - **Python backend** (`backend/`): all core logic
-- **Communication**: MessagePack over TCP, localhost
+- **Communication**: JSON over TCP, localhost (MessagePack migration planned)
 - Dependencies in `requirements.txt`
 
 ### Layered Architecture

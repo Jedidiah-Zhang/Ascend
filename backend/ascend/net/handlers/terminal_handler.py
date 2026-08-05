@@ -5,6 +5,7 @@
 """
 
 from ascend.log import get_logger
+from ascend.net.protocol import make_response
 
 logger = get_logger(__name__)
 
@@ -38,22 +39,20 @@ def make_terminal_handler(executor):
         command: str = payload.get("command", "")
 
         if not command:
-            return {
-                "type": "response",
-                "request_type": "terminal_cmd",
-                "payload": {"success": True, "output": ""},
-            }
+            return make_response(
+                    "terminal_cmd",
+                    {"success": True, "output": ""},
+                )
 
         logger.debug("terminal_cmd: %s", command)
         result = executor.execute(command)
         logger.debug("terminal_cmd 完成: success=%s, output_len=%d",
                       result.success, len(result.output))
 
-        return {
-            "type": "response",
-            "request_type": "terminal_cmd",
-            "payload": {"success": result.success, "output": result.output},
-        }
+        return make_response(
+                "terminal_cmd",
+                {"success": result.success, "output": result.output},
+            )
 
     return {
         "terminal_cmd": handle_terminal_cmd,

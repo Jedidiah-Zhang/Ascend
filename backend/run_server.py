@@ -52,15 +52,11 @@ def main() -> None:
     _cleanup_old_logs()
     setup_logging()
 
-    # 测试隔离：ASCEND_SERVER_PORT 覆盖监听端口（game.py 模块级
-    # 常量在导入时绑定，需在引擎构造前原位替换）
+    # 测试隔离：ASCEND_SERVER_PORT 覆盖监听端口（直接传给引擎构造参数）
     listen_port = SERVER_PORT
     port_override = os.environ.get("ASCEND_SERVER_PORT", "").strip()
     if port_override:
         listen_port = int(port_override)
-        from ascend import game as _game_mod
-
-        _game_mod.SERVER_PORT = listen_port
 
     # SIGTERM（前端优雅关闭时发送）：结束主循环，走 engine.stop()
     # 最终落盘（state + chunk flush + WAL），避免强杀丢状态
@@ -73,7 +69,7 @@ def main() -> None:
 
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
-    engine = GameEngine(seed=42)
+    engine = GameEngine(seed=42, port=listen_port)
     engine.start_service()
 
     print(f"Ascend 服务器运行在 {SERVER_HOST}:{listen_port}")
@@ -93,7 +89,7 @@ def main() -> None:
             if client_count > 0:
                 had_client = True
                 empty_since = None
-            elif getattr(engine, "_reloading", False):
+            elif engine.is_reloading:
                 # 读档重建中：tick 线程忙于世界生成，客户端数可能短暂
                 # 变化，抑制自动停止（网络层常驻，重建后恢复）
                 empty_since = None

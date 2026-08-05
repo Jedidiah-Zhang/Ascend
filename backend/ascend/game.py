@@ -33,7 +33,6 @@ from ascend.config import (
     INITIAL_CHUNK_RADIUS,
     BIRTH_ELEV_MIN,
     BIRTH_ELEV_MAX,
-    TILE_MAP_SIZE,
     CHUNK_STORE_MAX_SIZE,
     CHUNK_STORE_DB_PATH,
     WT_MAX_MEMORY_EVENTS,
@@ -45,6 +44,7 @@ from ascend.config import (
 )
 from ascend.log import get_logger
 from ascend.net import GameServer, MessageDispatcher, EventBridge
+from ascend.net.protocol import make_response
 from ascend.net.handlers.map_handler import make_map_handlers
 from ascend.net.handlers.terminal_handler import make_terminal_handler
 from ascend.net.handlers.weather_handler import make_weather_handler
@@ -88,13 +88,17 @@ class GameEngine:
     # tick 循环连续异常熔断阈值
     _MAX_CONSECUTIVE_ERRORS: int = 5
 
-    def __init__(self, seed: int = 0) -> None:
+    def __init__(self, seed: int = 0, host: str = SERVER_HOST, port: int = SERVER_PORT) -> None:
         """初始化引擎。
 
         Args:
             seed: 世界种子。0 表示启动时自动随机。
+            host: 服务器监听地址。
+            port: 服务器监听端口。
         """
         self.seed: int = seed
+        self._host: str = host
+        self._port: int = port
         self.world_gen: WorldGenerator | None = None
         self.server: GameServer | None = None
         self.dispatcher: MessageDispatcher | None = None
@@ -123,6 +127,11 @@ class GameEngine:
         self._world_request_types: set[str] = set()  # 世界观处理程序清单（读档时重注册）
         self._running: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
+
+    @property
+    def is_reloading(self) -> bool:
+        """读档重建中（网络层常驻，世界生成期间抑制外部自动停止）。"""
+        return self._reloading
 
     def __repr__(self) -> str:
         """返回引擎状态摘要。
@@ -197,7 +206,7 @@ class GameEngine:
             return
         if self.save_manager is None:
             self.save_manager = SaveManager(SAVE_ROOT)
-        self.server = GameServer(host=SERVER_HOST, port=SERVER_PORT)
+        self.server = GameServer(host=self._host, port=self._port)
         self.server.start()
         self.dispatcher = MessageDispatcher(self.server)
         save_handlers = make_save_handlers(self.save_manager, self)
@@ -288,7 +297,9 @@ class GameEngine:
         self.world_gen = WorldGenerator(
             seed=self.seed, continent_cache_path=continent_cache_path,
         )
-        continent = self.world_gen.ensure_continent()
+        continent = self.world_gen.ensure_continent(
+            progress_cb=self._broadcast_world_progress,
+        )
         self.tile_generator = TileGenerator(
             seed=self.seed, continent=continent,
         )
@@ -319,7 +330,8 @@ class GameEngine:
                     f"存档 chunk 数据校验失败: {exc}"
                 ) from exc
 
-        # 4. 预生成出生点周边区块
+        # 4. 预生成出生点周边区块（前端就绪后请求时立即命中缓存）
+        self._broadcast_world_progress("chunks")
         self._generate_initial_chunks(continent)
         logger.info(
             "已生成周边 %d 个区块 (radius=%d)",
@@ -410,6 +422,26 @@ class GameEngine:
         self._ensure_tick_thread()
         logger.info("游戏引擎在后台运行 (tick=%.1f Hz)", TICK_RATE)
 
+    def request_load(
+        self, world_id: str | None = None, snapshot: str | None = None,
+    ) -> None:
+        """请求读档重建（异步，tick 线程内执行）。
+
+        网络层入口：校验并置位读档请求；已有请求在处理时抛 ValueError。
+        重建失败时引擎广播 world_reloading_failed 事件（前端可感知并
+        结束加载状态），不在此处同步抛异常——调用方已先行返回"已受理"。
+
+        Args:
+            world_id: 目标存档位。
+            snapshot: 快照文件（回滚）；None 时加载活目录。
+
+        Raises:
+            ValueError: 已有读档请求在处理中。
+        """
+        if self._pending_load is not None:
+            raise ValueError("已有读档请求在处理中")
+        self._pending_load = (world_id, snapshot)
+
     def stop(self) -> None:
         """停止引擎并清理所有子系统。
 
@@ -445,6 +477,7 @@ class GameEngine:
         保持连接，世界就绪后经 world_initialized 事件恢复。
         """
         world_tree.await_async()
+        world_tree.reset()  # 读档重建：清旧世界事件/索引/因果图，保留订阅
         self._save_state_now()
         self._unregister_world_handlers()
         if self.calendar:
@@ -632,7 +665,7 @@ class GameEngine:
         handlers: dict = {}
         handlers.update(make_map_handlers(
             self.world_gen, tile_gen=self.tile_generator,
-            birth_chunk=self.birth_chunk, chunk_store=self.chunk_store,
+            chunk_store=self.chunk_store,
             weather_engine=self.weather_engine,
         ))
         handlers.update(make_weather_handler(self.weather_engine, self.i18n))
@@ -642,11 +675,7 @@ class GameEngine:
         # 占位 handler：尚未实现的功能返回空成功响应
         # （需携带 request_type，与真实 handler 的响应约定一致）
         def _placeholder_ok(msg: dict) -> dict:
-            return {
-                "type": "response",
-                "request_type": msg.get("request_type", ""),
-                "payload": {},
-            }
+            return make_response(msg.get("request_type", ""), {})
         handlers["open_menu"] = _placeholder_ok
         handlers["player_interact"] = _placeholder_ok
         self._world_request_types = set(handlers)
@@ -676,6 +705,33 @@ class GameEngine:
                     "world_id": world_id,
                     "snapshot": snapshot,
                 }},
+            })
+
+    def _broadcast_world_reloading_failed(self, world_id, snapshot) -> None:
+        """广播读档重建失败（前端结束加载提示并展示错误）。
+
+        与 _broadcast_world_reloading 同为世界外元操作，直接经服务器广播。
+        """
+        if self.server:
+            self.server.broadcast({
+                "type": "event",
+                "event_type": "world_reloading_failed",
+                "payload": {"data": {
+                    "world_id": world_id,
+                    "snapshot": snapshot,
+                }},
+            })
+
+    def _broadcast_world_progress(self, stage: str) -> None:
+        """广播世界生成阶段进度（前端进度条文案）。
+
+        世界外元操作，直接经服务器广播；大陆生成每个阶段开始时调用。
+        """
+        if self.server:
+            self.server.broadcast({
+                "type": "event",
+                "event_type": "world_progress",
+                "payload": {"data": {"stage": stage}},
             })
 
     def _persist_manifest(self) -> None:
@@ -877,6 +933,7 @@ class GameEngine:
                     self._reload(*pending)
                 except Exception:
                     logger.exception("读档重建失败")
+                    self._broadcast_world_reloading_failed(*pending)
 
     def _tick(self) -> None:
         """单个 tick：推进时钟 + 处理所有排队消息。

@@ -48,7 +48,7 @@ Ascend 试图填补该交叉领域的空白：以可复现、可干预的因果�
 
 - **Godot 4.x**：渲染、UI、输入、音频
 - **Python 后端**（`backend/`）：全部核心逻辑
-- **通信**：MessagePack over TCP，localhost
+- **通信**：JSON over TCP，localhost（规划迁移至 MessagePack）
 - 依赖见 `requirements.txt`
 
 ### 架构分层

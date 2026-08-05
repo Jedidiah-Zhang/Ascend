@@ -397,7 +397,10 @@ func test_field_only_response_keeps_tile_pending() -> void:
 	main._handle_response({
 		"type": "response",
 		"request_type": "get_chunks",
-		"payload": {"chunks": [{"cx": 0, "cy": 0, "temperature": 20.0}]},
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "temperature": 20.0}],
+			"include_tiles": false,
+		},
 	})
 
 	assert_true(main._pending.has(key), "tile 请求标记应保留")
@@ -422,7 +425,10 @@ func test_tile_response_clears_tile_pending() -> void:
 	main._handle_response({
 		"type": "response",
 		"request_type": "get_chunks",
-		"payload": {"chunks": [{"cx": 0, "cy": 0, "terrain": terr, "elevation": elev}]},
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "terrain": terr, "elevation": elev}],
+			"include_tiles": true,
+		},
 	})
 
 	assert_false(main._pending.has(key), "tile 请求标记应清除")

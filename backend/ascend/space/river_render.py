@@ -5,7 +5,7 @@
 
 用法:
     from ascend.space.river_render import render_river_chunk
-    render_river_chunk(tile_grid, world_x0, world_y0, hydrology, cont, seed=42)
+    render_river_chunk(tile_grid, world_x0, world_y0, hydrology, cont)
 """
 
 import math
@@ -13,6 +13,7 @@ import math
 from ascend.config import RIVER_WIDTH_MIN, RIVER_WIDTH_MAX
 from .terrain import TerrainType
 from .tile_grid import TileGrid, TILE_MAP_SIZE
+from .hydrology import river_width_log
 
 
 def render_river_chunk(
@@ -20,8 +21,6 @@ def render_river_chunk(
     world_x0: int, world_y0: int,
     hydrology,  # HydrologyData
     continent,  # ContinentData
-    *,
-    seed: int = 0,
 ) -> None:
     """在 chunk 内渲染所有河流（流线网络）。
 
@@ -30,7 +29,6 @@ def render_river_chunk(
         world_x0, world_y0: chunk 左上角世界坐标(tile 单位)。
         hydrology: 层1 水文数据。
         continent: 层1 大陆数据(用于 cell_size 转换)。
-        seed: 随机种子(未使用,兼容签名)。
     """
     if hydrology is None or hydrology.river_network is None:
         return
@@ -174,8 +172,7 @@ def _river_width(continent, wx: float, wy: float,
     if max_acc <= 0:
         return RIVER_WIDTH_MIN
     ratio = flow / max_acc
-    log_ratio = math.log(1.0 + ratio * 20.0) / math.log(21.0)
-    return RIVER_WIDTH_MIN + (RIVER_WIDTH_MAX - RIVER_WIDTH_MIN) * log_ratio
+    return RIVER_WIDTH_MIN + (RIVER_WIDTH_MAX - RIVER_WIDTH_MIN) * river_width_log(ratio)
 
 
 def _fill_circle(

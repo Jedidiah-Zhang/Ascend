@@ -44,6 +44,26 @@ const SHADOW_NORMAL_BIAS: float = 0.2
 const SHADOW_TALL_ALLOWANCE: float = 60.0
 const SHADOW_SLAB_MARGIN: float = 20.0
 
+# ── 光照调参常量（日出日落平滑曲线共用） ────────────────────
+
+## 太阳高度角渐入上界：0→0.35 间平滑过渡，消除亮度跳变
+const SUN_RAMP_CEIL: float = 0.35
+## 阴影透明度渐变带宽（围绕 SHADOW_CUTOFF）
+const SHADOW_FADE_BAND: float = 0.05
+## 低角度时 shadow_bias 放大保护的分母下限（防除零/过小偏置）
+const SHADOW_BIAS_MIN_ALT: float = 0.1
+## 直射光强度倍率（后端日照 0~1 → 场景光强）
+const SUN_ENERGY_SCALE: float = 1.2
+## 天气调制中环境光的基量/天气占比（env_t = sun_ramp × (BASE + WEATHER×intensity)）
+const ENV_BASE_WEIGHT: float = 0.4
+const ENV_WEATHER_WEIGHT: float = 0.6
+
+## 日间环境光/背景色（_configure_environment 与 _update_lighting 共用）
+const DAY_AMBIENT: Color = Color(0.55, 0.55, 0.6, 1.0)
+const NIGHT_AMBIENT: Color = Color(0.14, 0.15, 0.32, 1.0)
+const DAY_BG: Color = Color(0.15, 0.15, 0.5, 1.0)
+const NIGHT_BG: Color = Color(0.02, 0.02, 0.08, 1.0)
+
 ## 与 terrain_mesh_builder.gd 的 TERRAIN_TO_MESH 对齐的材质表
 ## （item_id → 纹理路径）；死纹理（top_shallow_water/top_snow）已移除
 const TERRAIN_TEXTURES: Dictionary = {
@@ -55,6 +75,19 @@ const TERRAIN_TEXTURES: Dictionary = {
 	8: "res://assets/terrain/textures/top_fertile.png",
 	9: "res://assets/terrain/textures/top_underwater_floor.png",
 }
+
+
+static func _world_to_chunk(wx: float, wz: float) -> Vector2i:
+	"""世界坐标 → chunk 坐标（全文件单一换算实现）。
+
+	注意：前端 3D 世界 Z 轴对应后端 2D 坐标的 Y 轴。
+	"""
+	return Vector2i(floori(wx / float(CHUNK_SIZE)), floori(wz / float(CHUNK_SIZE)))
+
+
+static func _tile_index(tx: int, tz: int) -> int:
+	"""chunk 内 tile 行优先索引（与后端 tile 数组布局一致）。"""
+	return tz * CHUNK_SIZE + tx
 
 ## 终端节点
 @onready var _terminal: TerminalWidget = $TerminalLayer/TerminalWidget
@@ -115,10 +148,6 @@ var _move_report_timer: float = 0.0
 
 ## 世界生成中提示（出生点到达前显示，_has_birth 后隐藏）
 var _loading_label: Label
-## 出生点探测请求节流计时器（兜底：world_initialized 事件丢失时的
-## 新场景就绪信号——正常路径由事件驱动，见 _on_world_initialized）
-var _birth_request_timer: float = 0.0
-const BIRTH_REQUEST_INTERVAL: float = 1.0
 
 ## 当前游戏时间
 var _game_hour: float = 6.0
@@ -192,9 +221,9 @@ func _configure_environment() -> void:
 		_world_env.environment = env
 
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.15, 0.15, 0.5, 1)
+	env.background_color = DAY_BG
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.55, 0.55, 0.6, 1)
+	env.ambient_light_color = DAY_AMBIENT
 	env.ambient_light_energy = 1.0
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
 
@@ -263,20 +292,19 @@ func _create_loading_label() -> void:
 
 
 func _get_ground_elevation_at(pos: Vector3) -> float:
-	var cx: int = floori(pos.x / float(CHUNK_SIZE))
-	var cz: int = floori(pos.z / float(CHUNK_SIZE))
-	var key := Vector2i(cx, cz)
+	var chunk_pos := _world_to_chunk(pos.x, pos.z)
+	var key := chunk_pos
 	var chunk = _chunks.get(key)
 	if not (chunk is Dictionary):
 		return NAN
 	var elev: Array = chunk.get("elevation", [])
 	if elev.size() < CHUNK_SIZE * CHUNK_SIZE:
 		return NAN
-	var tx: int = int(pos.x) - cx * CHUNK_SIZE
-	var tz: int = int(pos.z) - cz * CHUNK_SIZE
+	var tx: int = int(pos.x) - chunk_pos.x * CHUNK_SIZE
+	var tz: int = int(pos.z) - chunk_pos.y * CHUNK_SIZE
 	if tx < 0 or tx >= CHUNK_SIZE or tz < 0 or tz >= CHUNK_SIZE:
 		return NAN
-	return float(elev[tz * CHUNK_SIZE + tx])
+	return float(elev[_tile_index(tx, tz)])
 
 
 func _set_birth_chunk(cx: int, cy: int) -> void:
@@ -306,6 +334,33 @@ func _on_world_reloading(_data: Dictionary) -> void:
 	if _loading_label:
 		_loading_label.text = "正在生成世界..."
 		_loading_label.visible = true
+
+
+func _on_world_reloading_failed(_data: Dictionary) -> void:
+	"""读档重建失败（后端已自动恢复/转入服务模式）：结束加载提示。"""
+	_reset_world_state()
+	if _loading_label:
+		_loading_label.text = "读档失败"
+		_loading_label.visible = false
+
+
+## 世界生成阶段 → 加载提示文案（与后端 ContinentGenerator.STAGE_* 对齐）
+const WORLD_STAGE_LABELS: Dictionary = {
+	"elevation": "正在生成地形...",
+	"climate": "正在生成气候...",
+	"erosion": "正在侵蚀塑形...",
+	"water": "正在汇聚湖泊河流...",
+	"width": "正在雕刻河道...",
+	"chunks": "正在准备出生区域...",
+	"done": "正在进入世界...",
+}
+
+
+func _on_world_progress(data: Dictionary) -> void:
+	"""世界生成阶段进度（大陆生成 5-30s 期间逐阶段更新提示）。"""
+	if not _has_birth and _loading_label:
+		var stage: String = str(data.get("stage", ""))
+		_loading_label.text = str(WORLD_STAGE_LABELS.get(stage, "正在生成世界..."))
 
 
 func _on_world_initialized(data: Dictionary) -> void:
@@ -363,17 +418,13 @@ func get_debug_camera_info() -> Dictionary:
 func get_debug_player_info() -> Dictionary:
 	return {
 		"world_pos": Vector2(_player_pos.x, _player_pos.z),
-		"chunk": Vector2i(
-			floori(_player_pos.x / float(CHUNK_SIZE)),
-			floori(_player_pos.z / float(CHUNK_SIZE))),
+		"chunk": _world_to_chunk(_player_pos.x, _player_pos.z),
 		"elevation": _player_pos.y - 1.0,
 	}
 
 
 func get_debug_terrain_at(world_pos: Vector2) -> Dictionary:
-	var cx: int = floori(world_pos.x / float(CHUNK_SIZE))
-	var cz: int = floori(world_pos.y / float(CHUNK_SIZE))
-	var key := Vector2i(cx, cz)
+	var key := _world_to_chunk(world_pos.x, world_pos.y)
 	var chunk = _chunks.get(key)
 	if chunk == null or not (chunk is Dictionary):
 		return {}
@@ -381,11 +432,11 @@ func get_debug_terrain_at(world_pos: Vector2) -> Dictionary:
 	var slope: Array = chunk.get("slope", [])
 	if elev.size() < CHUNK_SIZE * CHUNK_SIZE:
 		return {}
-	var tx: int = int(world_pos.x) - cx * CHUNK_SIZE
-	var tz: int = int(world_pos.y) - cz * CHUNK_SIZE
+	var tx: int = int(world_pos.x) - key.x * CHUNK_SIZE
+	var tz: int = int(world_pos.y) - key.y * CHUNK_SIZE
 	if tx < 0 or tx >= CHUNK_SIZE or tz < 0 or tz >= CHUNK_SIZE:
 		return {}
-	var idx: int = tz * CHUNK_SIZE + tx
+	var idx: int = _tile_index(tx, tz)
 	var result: Dictionary = {}
 	if idx < elev.size():
 		result["elevation"] = int(elev[idx])
@@ -395,9 +446,7 @@ func get_debug_terrain_at(world_pos: Vector2) -> Dictionary:
 
 
 func get_debug_climate_at(world_pos: Vector2) -> Dictionary:
-	var cx: int = floori(world_pos.x / float(CHUNK_SIZE))
-	var cz: int = floori(world_pos.y / float(CHUNK_SIZE))
-	var key := Vector2i(cx, cz)
+	var key := _world_to_chunk(world_pos.x, world_pos.y)
 	var chunk = _chunks.get(key)
 	if chunk == null or not (chunk is Dictionary):
 		return {}
@@ -465,7 +514,7 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 
 	# 首次 chunk 覆盖玩家时，吸附玩家到地面
 	if not _camera_grounded:
-		if cx == floori(_player_pos.x / float(CS)) and cy == floori(_player_pos.z / float(CS)):
+		if _world_to_chunk(_player_pos.x, _player_pos.z) == Vector2i(cx, cy):
 			_camera_grounded = true
 			var ground_y := _get_ground_elevation_at(_player_pos)
 			if not is_nan(ground_y):
@@ -510,25 +559,14 @@ func _process(delta: float) -> void:
 			_debug_overlay.process_sections(delta)
 		return
 
-	# 世界未就绪（读档重建中）：仅周期探测出生点，不流式加载/创建玩家
+	# 世界未就绪（读档重建中）：不流式加载/创建玩家，等待 world_initialized
 	if not _has_birth:
-		_birth_request_timer += delta
-		if _birth_request_timer >= BIRTH_REQUEST_INTERVAL:
-			_birth_request_timer = 0.0
-			Connection.send({
-				"type": "request",
-				"request_type": "get_chunks",
-				"payload": {"chunks": [[0, 0]], "include_tiles": false,
-					"force_fields": false},
-			})
 		if _debug_overlay and _debug_overlay.is_shown():
 			_debug_overlay.process_sections(delta)
 		return
 
 	if _event_log:
-		_event_log.set_player_chunk(Vector2i(
-			floori(_player_pos.x / float(CHUNK_SIZE)),
-			floori(_player_pos.z / float(CHUNK_SIZE))))
+		_event_log.set_player_chunk(_world_to_chunk(_player_pos.x, _player_pos.z))
 
 	_stream_chunks()
 	_process_input(delta)
@@ -541,10 +579,6 @@ func _process(delta: float) -> void:
 
 	if _debug_overlay and _debug_overlay.is_shown():
 		_debug_overlay.process_sections(delta)
-
-
-func _unhandled_input(_event: InputEvent) -> void:
-	pass
 
 
 func _process_camera(_delta: float) -> void:
@@ -708,6 +742,12 @@ func _handle_event(message: Dictionary) -> void:
 	if event_type == "world_reloading":
 		_on_world_reloading(data)
 		return
+	if event_type == "world_reloading_failed":
+		_on_world_reloading_failed(data)
+		return
+	if event_type == "world_progress":
+		_on_world_progress(data)
+		return
 	if event_type == "world_initialized":
 		_on_world_initialized(data)
 		return
@@ -725,8 +765,10 @@ func _handle_event(message: Dictionary) -> void:
 		_camera_focus = _player_pos
 		_apply_camera_transform()
 		if _event_log:
-			_event_log.push_event("[%02d:%02d] 传送至 (%.0f, %.0f)" % [
-				payload.get("game_hour", 0), payload.get("game_minute", 0),
+			_event_log.push_event("[%s] 传送至 (%.0f, %.0f)" % [
+				SaveInfoFormatter.hhmm_string(
+					int(payload.get("game_hour", 0)),
+					int(payload.get("game_minute", 0))),
 				tx, tz])
 		return
 
@@ -747,15 +789,10 @@ func _handle_response(message: Dictionary) -> void:
 
 	match request_type:
 		"get_chunks":
-			# 世界未就绪时，该响应只用于取出生点（世界就绪信号）；
-			# 请求坐标是探测用的 (0,0)，chunk 数据无意义，不缓存
-			if not _has_birth:
-				if payload.has("birth_chunk"):
-					var bc: Array = payload["birth_chunk"]
-					_set_birth_chunk(bc[0], bc[1])
-				return
-
 			var chunks: Array = payload.get("chunks", [])
+			# 请求参数回显：include_tiles=true = 完整版（含地形数组），
+			# false = 字段版。不再用数组长度等形状启发式判型
+			var has_tiles: bool = payload.get("include_tiles", false)
 			for chunk in chunks:
 				var cx: int = int(chunk.get("cx", 0))
 				var cy: int = int(chunk.get("cy", 0))
@@ -763,17 +800,14 @@ func _handle_response(message: Dictionary) -> void:
 				_chunks[key] = chunk
 				# 按响应类型分别清除标记：仅含字段的响应不动 tile 请求的
 				# _pending 标记，否则会每帧重发 tile 请求直到其响应到达
-				var has_tiles: bool = (
-					chunk.get("terrain", []).size() == CHUNK_SIZE * CHUNK_SIZE)
 				if has_tiles:
 					_pending.erase(key)
 				else:
 					_batch_pending.erase(key)
 
-				var player_cx: int = floori(_player_pos.x / float(CHUNK_SIZE))
-				var player_cy: int = floori(_player_pos.z / float(CHUNK_SIZE))
+				var player_chunk := _world_to_chunk(_player_pos.x, _player_pos.z)
 				var unload_r: int = _stream_radius() + UNLOAD_MARGIN
-				if abs(cx - player_cx) > unload_r or abs(cy - player_cy) > unload_r:
+				if abs(cx - player_chunk.x) > unload_r or abs(cy - player_chunk.y) > unload_r:
 					_chunks.erase(key)
 					continue
 
@@ -868,8 +902,9 @@ func _stream_chunks() -> void:
 
 	var t0: int = Time.get_ticks_usec()
 
-	var center_cx: int = floori(_player_pos.x / float(CHUNK_SIZE))
-	var center_cy: int = floori(_player_pos.z / float(CHUNK_SIZE))
+	var center := _world_to_chunk(_player_pos.x, _player_pos.z)
+	var center_cx: int = center.x
+	var center_cy: int = center.y
 	var stream_r := _stream_radius()
 
 	_unload_distant_chunks(center_cx, center_cy, stream_r)
@@ -971,9 +1006,7 @@ func _handle_error(message: Dictionary) -> void:
 func _query_weather() -> void:
 	if Connection.status != Connection.Status.CONNECTED:
 		return
-	var chunk: Vector2i = Vector2i(
-		floori(_player_pos.x / float(CHUNK_SIZE)),
-		floori(_player_pos.z / float(CHUNK_SIZE)))
+	var chunk: Vector2i = _world_to_chunk(_player_pos.x, _player_pos.z)
 	Connection.send({
 		"type": "request",
 		"request_type": "get_weather",
@@ -995,13 +1028,13 @@ func _update_lighting() -> void:
 	var sun_altitude: float = sin(day_progress * PI) if is_day else 0.0
 	_last_sun_altitude = sun_altitude
 
-	# 日出日落平滑 ramp：高度角 0→0.35 间渐入渐出，所有亮度量共用，消除跳变
-	var sun_ramp: float = smoothstep(0.0, 0.35, sun_altitude)
+	# 日出日落平滑 ramp：高度角 0→SUN_RAMP_CEIL 间渐入渐出，所有亮度量共用，消除跳变
+	var sun_ramp: float = smoothstep(0.0, SUN_RAMP_CEIL, sun_altitude)
 
 	# 阴影：低角度时 opacity 渐变淡出，避免阴影瞬间出现/消失
-	var shadow_t: float = clampf((sun_altitude - SHADOW_CUTOFF) / 0.05, 0.0, 1.0)
+	var shadow_t: float = clampf((sun_altitude - SHADOW_CUTOFF) / SHADOW_FADE_BAND, 0.0, 1.0)
 	_sun_light.shadow_opacity = shadow_t
-	if sun_altitude < SHADOW_CUTOFF - 0.05:
+	if sun_altitude < SHADOW_CUTOFF - SHADOW_FADE_BAND:
 		_sun_light.shadow_enabled = false
 	else:
 		_sun_light.shadow_enabled = true
@@ -1010,7 +1043,7 @@ func _update_lighting() -> void:
 			0.0, 1.0)
 		_sun_light.directional_shadow_pancake_size = lerpf(
 			SHADOW_LOW_ANGLE_PANCAKE, SHADOW_BASE_PANCAKE, low_angle_t)
-		_sun_light.shadow_bias = SHADOW_BIAS_BASE / maxf(sun_altitude, 0.1)
+		_sun_light.shadow_bias = SHADOW_BIAS_BASE / maxf(sun_altitude, SHADOW_BIAS_MIN_ALT)
 	_sun_light.directional_shadow_max_distance = _compute_shadow_coverage(sun_altitude)
 
 	# 太阳方向：全天连续曲线，夜间延续地平线角度（此时能量为 0，方向无关）
@@ -1021,17 +1054,13 @@ func _update_lighting() -> void:
 	var warmth: float = 1.0 - sun_altitude
 	_sun_light.light_color = Color(1.0, 1.0 - warmth * 0.3, 1.0 - warmth * 0.7, 1.0)
 	# 直射光 = 后端日照（含降雨衰减）× 高度角平滑渐入
-	_sun_light.light_energy = intensity * 1.2 * sun_ramp
+	_sun_light.light_energy = intensity * SUN_ENERGY_SCALE * sun_ramp
 
 	var env: Environment = _world_env.environment
 	if env:
 		# 环境光/背景由高度角 ramp 驱动（时间平滑），再乘天气调制（雨天天光略暗）
-		var env_t: float = sun_ramp * (0.4 + 0.6 * intensity)
-		var day_ambient := Color(0.55, 0.55, 0.6, 1.0)
-		var night_ambient := Color(0.14, 0.15, 0.32, 1.0)
-		env.ambient_light_color = night_ambient.lerp(day_ambient, env_t)
+		var env_t: float = sun_ramp * (ENV_BASE_WEIGHT + ENV_WEATHER_WEIGHT * intensity)
+		env.ambient_light_color = NIGHT_AMBIENT.lerp(DAY_AMBIENT, env_t)
 		env.ambient_light_energy = lerpf(0.5, 1.0, env_t)
 
-		var day_bg := Color(0.15, 0.15, 0.5, 1.0)
-		var night_bg := Color(0.02, 0.02, 0.08, 1.0)
-		env.background_color = night_bg.lerp(day_bg, env_t)
+		env.background_color = NIGHT_BG.lerp(DAY_BG, env_t)

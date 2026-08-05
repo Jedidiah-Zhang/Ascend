@@ -14,6 +14,33 @@ class ProtocolError(Exception):
     """协议错误（帧长度无效、JSON 解析失败等）。"""
 
 
+def make_response(request_type: str, payload: dict) -> dict:
+    """构造标准响应信封（全网络层单一构造点）。
+
+    Args:
+        request_type: 对应请求类型（响应回显）。
+        payload: 响应载荷。
+
+    Returns:
+        响应字典。
+    """
+    return {"type": "response", "request_type": request_type, "payload": payload}
+
+
+def make_error(request_type: str, error: str, seq: int = 0) -> dict:
+    """构造错误响应信封。
+
+    Args:
+        request_type: 对应请求类型（"" = 未知）。
+        error: 错误信息。
+        seq: 请求序号（回显）。
+
+    Returns:
+        错误响应字典。
+    """
+    return {"type": "error", "request_type": request_type, "seq": seq, "error": error}
+
+
 def encode_message(message: dict) -> bytes:
     """将字典编码为带长度前缀的字节串。
 
@@ -23,7 +50,7 @@ def encode_message(message: dict) -> bytes:
     Returns:
         长度前缀 (4B) + UTF-8 JSON 体。
     """
-    body = json.dumps(message, ensure_ascii=False, default=str).encode("utf-8")
+    body = json.dumps(message, ensure_ascii=False).encode("utf-8")
     length = len(body)
     return struct.pack(">I", length) + body
 

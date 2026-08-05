@@ -97,10 +97,9 @@ func set_player_chunk(chunk: Vector2i) -> void:
 
 func on_world_event(event_type: String, payload: Dictionary) -> void:
 	var data: Dictionary = payload.get("data", {})
-	var ts := "%02d:%02d" % [
-		payload.get("game_hour", 0),
-		payload.get("game_minute", 0),
-	]
+	var ts := SaveInfoFormatter.hhmm_string(
+		int(payload.get("game_hour", 0)),
+		int(payload.get("game_minute", 0)))
 
 	match event_type:
 		"minute_change":

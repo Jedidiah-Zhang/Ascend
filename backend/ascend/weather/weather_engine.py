@@ -59,13 +59,13 @@ from ascend.config import (
 
 from .atmosphere import AtmosphereField
 from .diurnal import (
-    sunrise_hour, sunset_hour, hour_of_game_time,
+    sunrise_hour, sunset_hour, hour_of_game_time, diurnal_phase,
     _solar_declination,
 )
 from .events import register_weather_schemas
 from .weather_modifier import ModifierSchedule, WEATHER_MODIFIERS
 from .rain_events import RainSchedule
-from .season import season_of, day_of_season
+from .season import season_of, season_phase, day_of_season
 from .weather_field import WeatherField
 
 logger = get_logger(__name__)
@@ -80,6 +80,27 @@ _SEASONALITY_HUMIDITY_SHARPNESS: dict[SeasonalityMode, float] = {
 }
 
 # ── 分级函数 ────────────────────────────────────────────────
+
+def _chunk_seed(world_seed: int, cx: int, cy: int) -> int:
+    """chunk 坐标 → 确定性 RNG 种子（降雨/修改器调度共用，单一实现）。
+
+    同一世界种子 + 同一 chunk 坐标 → 同一种子，保证存档/事件流确定性。
+    """
+    return (world_seed * 1_000_003 + cx) * 1_000_003 + cy
+
+
+def _modifier_seed(chunk_seed: int, type_name: str) -> int:
+    """chunk 种子 + 修改器类型 → 独立 RNG 种子（类型间去相关）。"""
+    return chunk_seed + zlib.crc32(type_name.encode()) % 1000
+
+
+def precip_type_for(temperature: float) -> str:
+    """降水类型判定 — 事件侧与查询侧（weather_handler）共用的单一实现。
+
+    冰点阈值 0°C：<=0 为雪、>0 为雨。统一先 round(1) 再判定，
+    保证事件广播与 UI 显示文案一致。
+    """
+    return "snow" if round(temperature, 1) <= 0 else "rain"
 
 def _classify(value: float, boundaries: tuple[float, ...]) -> int:
     """按阈值返回等级索引（0-based）。
@@ -380,7 +401,7 @@ class WeatherEngine:
         mean_intensity, mean_duration_h, ramp_up, ramp_down = _RAIN_PROFILE.get(
             climate, (5.0, 2.0, 0.2, 0.2),
         )
-        chunk_seed = (self._seed * 1_000_003 + cx) * 1_000_003 + cy
+        chunk_seed = _chunk_seed(self._seed, cx, cy)
         rain = RainSchedule(
             random.Random(chunk_seed),
             baseline.rainfall, mean_intensity, mean_duration_h,
@@ -392,7 +413,7 @@ class WeatherEngine:
         for config in WEATHER_MODIFIERS.values():
             if config.rates.get(climate, 0.0) <= 0:
                 continue
-            ext_seed = chunk_seed + zlib.crc32(config.type_name.encode()) % 1000
+            ext_seed = _modifier_seed(chunk_seed, config.type_name)
             ext = ModifierSchedule(random.Random(ext_seed), config, climate)
             self._modifier_schedules[(cx, cy, config.type_name)] = ext
             self._seed_modifier(ext)
@@ -450,30 +471,27 @@ class WeatherEngine:
 
         Returns:
             dict，含 _compute_params 需要的全部 tick 级预计算值：
-            day/season/dos/hour/day_of_year_val/wind_x/wind_y/
+            season/hour/day_of_year_val/wind_x/wind_y/
             drift_x/drift_y/solar_decl/season_cos/diurnal_cos。
         """
         day = now // GAME_DAY + 1
         season = int(season_of(day))
-        dos = day_of_season(day)
         hour = hour_of_game_time(now)  # 带小数小时，昼夜偏移需要精确时间
         day_of_year_val = (now // GAME_DAY) % 360
         wind_x, wind_y = self._atmosphere.wind_vector(now)
         # 大气扰动漂移偏移 — tick 级常数
         drift = now * ATMOSPHERE_DRIFT_RATE
         # 季节/昼夜余弦基 — phase 对所有 chunk 相同，只有 amplitude 不同
-        season_progress = season + dos / 90.0  # SEASON_LENGTH_DAYS=90
-        season_phase = (season_progress - 1.5) / 4.0 * 2.0 * math.pi  # SEASONS_PER_YEAR=4
-        season_cos = math.cos(season_phase)
-        diurnal_phase = (hour - 14.0) / 24.0 * 2.0 * math.pi  # DIURNAL_PEAK_HOUR=14
+        season_cos = math.cos(season_phase(day))
+        diurnal_cos = math.cos(diurnal_phase(hour))
         return {
-            "day": day, "season": season, "dos": dos, "hour": hour,
+            "season": season, "hour": hour,
             "day_of_year_val": day_of_year_val,
             "wind_x": wind_x, "wind_y": wind_y,
             "drift_x": wind_x * drift, "drift_y": wind_y * drift,
             "solar_decl": _solar_declination(day_of_year_val),
             "season_cos": season_cos,
-            "diurnal_cos": math.cos(diurnal_phase),
+            "diurnal_cos": diurnal_cos,
         }
 
     def _sunlight_intensity(self, field: WeatherField, hour: float,
@@ -698,8 +716,8 @@ class WeatherEngine:
             if not active:
                 return False
             config = WEATHER_MODIFIERS[type_name]
-            chunk_seed = (self._seed * 1_000_003 + cx) * 1_000_003 + cy
-            ext_seed = chunk_seed + zlib.crc32(config.type_name.encode()) % 1000
+            chunk_seed = _chunk_seed(self._seed, cx, cy)
+            ext_seed = _modifier_seed(chunk_seed, config.type_name)
             sched = ModifierSchedule(
                 random.Random(ext_seed), config, self._climates.get(chunk_key),
             )
@@ -816,15 +834,26 @@ class WeatherEngine:
             altitude=bl.altitude, humidity=humidity, wind_speed=wind_speed,
         ), sr, ss
 
-    def _seed_rain(self, rain: RainSchedule) -> None:
-        """注册时预排 RAIN_FORECAST_DEPTH 个未来降雨事件并 seed_current。"""
+    def _seed_schedule(self, schedule, depth: int) -> None:
+        """注册时预排 depth 个未来事件并 seed_current（rain/modifier 共用）。
+
+        Args:
+            schedule: 实现 latest_end_tick / generate_next / push /
+                seed_current 接口的调度对象。
+            depth: 预排事件深度。
+        """
         now = self._clock.time
         latest_end = now
-        for _ in range(RAIN_FORECAST_DEPTH):
-            event = rain.generate_next(latest_end)
-            rain.push(event)
-            latest_end = event.start_tick + event.duration
-        rain.seed_current(now)
+        for _ in range(depth):
+            earliest = latest_end if latest_end is not None else now
+            event = schedule.generate_next(earliest)
+            schedule.push(event)
+            latest_end = schedule.latest_end_tick()
+        schedule.seed_current(now)
+
+    def _seed_rain(self, rain: RainSchedule) -> None:
+        """注册时预排 RAIN_FORECAST_DEPTH 个未来降雨事件并 seed_current。"""
+        self._seed_schedule(rain, RAIN_FORECAST_DEPTH)
 
     def _replenish_schedule(self, schedule, now: int,
                             depth: int, threshold: int) -> None:
@@ -851,13 +880,7 @@ class WeatherEngine:
 
     def _seed_modifier(self, schedule: ModifierSchedule) -> None:
         """注册时预排 MODIFIER_FORECAST_DEPTH 个未来修改器事件并 seed_current。"""
-        now = self._clock.time
-        latest_end = now
-        for _ in range(MODIFIER_FORECAST_DEPTH):
-            event = schedule.generate_next(latest_end)
-            schedule.push(event)
-            latest_end = event.end_tick
-        schedule.seed_current(now)
+        self._seed_schedule(schedule, MODIFIER_FORECAST_DEPTH)
 
     def _replenish_modifier(self, key: tuple[int, int, str], now: int) -> None:
         """裁剪过期 + 补算修改器事件。"""
@@ -954,9 +977,8 @@ class WeatherEngine:
             # 降水（rain 已在循环顶部预查找）
             if rain is not None and rain.pop_due(now):
                 if rain.is_raining(now):
-                    precip_type = "snow" if params.temperature <= 0 else "rain"
                     self._publish(cx, cy, now, "precipitation_start", {
-                        "precip_type": precip_type,
+                        "precip_type": precip_type_for(params.temperature),
                         "intensity": float(params.rainfall),
                         "time_of_day": int(tod),
                     })

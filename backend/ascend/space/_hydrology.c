@@ -857,3 +857,10 @@ void hydrology_compute_climate(
         climate_out[i] = classify_climate(temp, rainfall, elev);
     }
 }
+
+/* ── classify_climate 导出 ──────────────────────────────────── */
+
+/* 纯分类函数导出：供 ctypes 直接调用，与 Python climate.classify 一致性测试用。 */
+int hydrology_classify(double temp, double rainfall, double altitude) {
+    return classify_climate(temp, rainfall, altitude);
+}

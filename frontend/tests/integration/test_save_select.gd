@@ -173,8 +173,8 @@ func test_row_click_toggles_expansion() -> void:
 	assert_eq(sel._expanded_row, 0, "点击行应展开时间线")
 
 	# 展开后下方行下移
-	var y0: float = sel._row_display_y(0, sel.HEADER_H, 100.0)
-	var y1: float = sel._row_display_y(1, sel.HEADER_H, 100.0)
+	var y0: float = sel._row_display_y(0, sel.HEADER_H)
+	var y1: float = sel._row_display_y(1, sel.HEADER_H)
 	assert_eq(y1 - y0, sel.ROW_H + sel.ROW_GAP + sel.TL_INLINE_H + sel.TL_GAP,
 		"展开行下方的行应整体下移")
 

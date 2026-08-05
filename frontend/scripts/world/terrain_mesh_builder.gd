@@ -17,6 +17,12 @@ const CHUNK_SIZE: int = Config.TILE_MAP_SIZE
 ##   8 MARSH → 3 plains（无专用纹理，用草地近似，避免误用丘陵网格）
 const TERRAIN_TO_MESH: PackedInt32Array = [3, 2, 8, 5, 4, 6, 9, 9, 3]
 
+## 与后端 TerrainType 枚举对齐的水域 id（SHALLOW_WATER=6, DEEP_WATER=7）
+const SHALLOW_WATER_ID: int = 6
+const DEEP_WATER_ID: int = 7
+## 低于该海拔的水域格不渲染（深水被水面覆盖，无需侧壁）
+const WATER_FLOOR_CUTOFF: float = -50.0
+
 const UV_BL := Vector2(0, 1)
 const UV_BR := Vector2(1, 1)
 const UV_TR := Vector2(1, 0)
@@ -52,10 +58,10 @@ static func build(terrain: Array, elevation: Array, materials: Dictionary) -> Ar
 			var item_id: int = TERRAIN_TO_MESH[terrain_id]
 
 			var elev: float = float(elevation[idx])
-			var is_water := (terrain_id == 6 or terrain_id == 7)
+			var is_water := (terrain_id == SHALLOW_WATER_ID or terrain_id == DEEP_WATER_ID)
 			if not is_water and elev < 0.0:
 				continue
-			if is_water and elev < -50.0:
+			if is_water and elev < WATER_FLOOR_CUTOFF:
 				continue
 
 			var wy := roundi(elev)
@@ -124,11 +130,11 @@ static func _side_visible(x: int, z: int, dx: int, dz: int, wy: int,
 	if ntid < 0 or ntid >= TERRAIN_TO_MESH.size():
 		return true
 
-	var n_water := (ntid == 6 or ntid == 7)
+	var n_water := (ntid == SHALLOW_WATER_ID or ntid == DEEP_WATER_ID)
 	var n_elev: float = float(elevation[nidx]) if nidx < elevation.size() else 0.0
 	if not n_water and n_elev < 0.0:
 		return true
-	if n_water and n_elev < -50.0:
+	if n_water and n_elev < WATER_FLOOR_CUTOFF:
 		return true
 
 	return wy != roundi(n_elev)

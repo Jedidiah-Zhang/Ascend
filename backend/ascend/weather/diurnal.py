@@ -13,6 +13,20 @@ import math
 from ascend.config import GAME_DAY, GAME_HOUR, DIURNAL_PEAK_HOUR, OBLIQUITY_DEG
 
 
+def diurnal_phase(hour: float) -> float:
+    """小时 → 昼夜余弦相位（单一事实来源）。
+
+    14:00 余弦为 1（峰值），02:00 为 -1（谷值）。
+
+    Args:
+        hour: 当前小时 [0, 24)，可带小数。
+
+    Returns:
+        相位（弧度），cos 值取昼夜曲线。
+    """
+    return (hour - DIURNAL_PEAK_HOUR) / 24.0 * 2 * math.pi
+
+
 def diurnal_temp_offset(hour: float, amplitude: float) -> float:
     """日内温度偏移（余弦曲线）。
 
@@ -25,8 +39,7 @@ def diurnal_temp_offset(hour: float, amplitude: float) -> float:
     Returns:
         温度偏移 (°C)，范围 [-amplitude, +amplitude]。
     """
-    phase = (hour - DIURNAL_PEAK_HOUR) / 24.0 * 2 * math.pi
-    return amplitude * math.cos(phase)
+    return amplitude * math.cos(diurnal_phase(hour))
 
 
 def diurnal_humidity_offset(hour: float, amplitude: float) -> float:
@@ -41,8 +54,7 @@ def diurnal_humidity_offset(hour: float, amplitude: float) -> float:
     Returns:
         湿度偏移 (pp)，范围 [-amplitude, +amplitude]。
     """
-    phase = (hour - DIURNAL_PEAK_HOUR) / 24.0 * 2 * math.pi
-    return -amplitude * math.cos(phase)
+    return -amplitude * math.cos(diurnal_phase(hour))
 
 
 def hour_of_game_time(game_time: int) -> float:
@@ -77,11 +89,31 @@ def _solar_declination(day_of_year: int) -> float:
     )
 
 
+def _half_day_hours(day_of_year: int, latitude_deg: float,
+                    solar_decl: float | None = None) -> float:
+    """白昼半程时长（小时）— sunrise/sunset/daylight 共享的单一实现。
+
+    基于太阳赤纬公式，处理极昼（half=12h → 日出 0h）和极夜
+    （half=0h → 日出 12h）边界。
+
+    Args:
+        day_of_year: 年内日 [0, 360)。
+        latitude_deg: 纬度（度），北纬为正 [-90, 90]。
+        solar_decl: 可选预计算太阳赤纬（弧度）。
+
+    Returns:
+        白昼半程小时数 [0, 12]。
+    """
+    decl = solar_decl if solar_decl is not None else _solar_declination(day_of_year)
+    lat = math.radians(latitude_deg)
+    tan_product = max(-1.0, min(1.0, math.tan(lat) * math.tan(decl)))
+    half_day_deg = math.degrees(math.acos(-tan_product))
+    return half_day_deg / 15.0  # 15° = 360°/24h，度→小时
+
+
 def sunrise_hour(day_of_year: int, latitude_deg: float,
                  solar_decl: float | None = None) -> float:
     """给定日期和纬度 → 日出时刻（小时）。
-
-    基于太阳赤纬公式，处理极昼（0h）和极夜（12h）边界。
 
     Args:
         day_of_year: 年内日 [0, 360)。
@@ -91,13 +123,7 @@ def sunrise_hour(day_of_year: int, latitude_deg: float,
     Returns:
         日出时刻 [0, 12]。
     """
-    decl = solar_decl if solar_decl is not None else _solar_declination(day_of_year)
-    lat = math.radians(latitude_deg)
-    tan_product = math.tan(lat) * math.tan(decl)
-    tan_product = max(-1.0, min(1.0, tan_product))
-    half_day_deg = math.degrees(math.acos(-tan_product))
-    half_day_h = half_day_deg / 15.0
-    return 12.0 - half_day_h
+    return 12.0 - _half_day_hours(day_of_year, latitude_deg, solar_decl)
 
 
 def sunset_hour(day_of_year: int, latitude_deg: float,
@@ -112,13 +138,7 @@ def sunset_hour(day_of_year: int, latitude_deg: float,
     Returns:
         日落时刻 [12, 24]。
     """
-    decl = solar_decl if solar_decl is not None else _solar_declination(day_of_year)
-    lat = math.radians(latitude_deg)
-    tan_product = math.tan(lat) * math.tan(decl)
-    tan_product = max(-1.0, min(1.0, tan_product))
-    half_day_deg = math.degrees(math.acos(-tan_product))
-    half_day_h = half_day_deg / 15.0
-    return 12.0 + half_day_h
+    return 12.0 + _half_day_hours(day_of_year, latitude_deg, solar_decl)
 
 
 def daylight_hours(day_of_year: int, latitude_deg: float,

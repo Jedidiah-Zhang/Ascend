@@ -9,9 +9,7 @@
     防止恢复的世界"时间倒流"——事件归档实时落盘，可能比 state 更新。
 """
 
-from ascend.log import get_logger
 
-logger = get_logger(__name__)
 
 
 def collect_state(clock, player_service, weather_engine, archive_max_timestamp) -> dict:

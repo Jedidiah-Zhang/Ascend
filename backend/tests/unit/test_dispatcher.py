@@ -138,11 +138,12 @@ class TestMessageDispatcher:
 
         dispatcher.process()
 
+        # 内部异常细节不回传客户端（防泄漏路径/SQL），只给类型名
         expected_error = {
             "type": "error",
             "request_type": "crash",
             "seq": 2,
-            "error": "something went wrong",
+            "error": "处理失败: RuntimeError",
         }
         mock_server.send_to.assert_called_once_with(0, expected_error)
 

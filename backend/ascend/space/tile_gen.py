@@ -81,7 +81,7 @@ class TileGenerator:
         Returns:
             200×200 TileGrid。
         """
-        return self._generate(cx, cy, chunk=None)
+        return self._generate(cx, cy)
 
     def generate_chunk_for(self, chunk) -> TileGrid:
         """为已生成的 ChunkData 生成详细地形（推荐入口）。
@@ -95,9 +95,9 @@ class TileGenerator:
         Returns:
             200×200 TileGrid。
         """
-        return self._generate(chunk.cx, chunk.cy, chunk=chunk)
+        return self._generate(chunk.cx, chunk.cy)
 
-    def _generate(self, cx: int, cy: int, chunk) -> TileGrid:
+    def _generate(self, cx: int, cy: int) -> TileGrid:
         """内部生成逻辑。
 
         管线：
@@ -107,7 +107,6 @@ class TileGenerator:
 
         Args:
             cx, cy: chunk 坐标。
-            chunk: 可选 ChunkData（当前未直接使用，tile 级重采样保证连续）。
 
         Returns:
             200×200 TileGrid。
@@ -189,7 +188,6 @@ class TileGenerator:
                 render_river_chunk(
                     grid, world_x0, world_y0,
                     hyd, cont,
-                    seed=self._seed,
                 )
             if has_lakes:
                 from .lake_render import render_lake_chunk

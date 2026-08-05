@@ -7,19 +7,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ascend.config import MAX_CHUNK_QUERY, TILE_WORKERS
 from ascend.log import get_logger
+from ascend.net.protocol import make_response
 from ascend.net.handlers import parse_coord
 
 logger = get_logger(__name__)
 
 
-def make_map_handlers(gen, tile_gen=None, birth_chunk=None, chunk_store=None,
+def make_map_handlers(gen, tile_gen=None, chunk_store=None,
                       weather_engine=None):
     """为给定的 WorldGenerator 创建地图相关的请求处理程序。
 
     Args:
         gen: WorldGenerator 实例。
         tile_gen: TileGenerator 实例（可选），提供时支持 include_tiles。
-        birth_chunk: (cx, cy) 出生区块坐标（可选），会附带在响应中。
         chunk_store: ChunkStore 实例，LRU 缓存 + SQLite 持久化。
         weather_engine: WeatherEngine 实例（可选），动态生成 chunk 时自动注册天气。
 
@@ -68,11 +68,10 @@ def make_map_handlers(gen, tile_gen=None, birth_chunk=None, chunk_store=None,
             coord_tuples = coord_tuples[:MAX_CHUNK_QUERY]
 
         if not coord_tuples:
-            return {
-                "type": "response",
-                "request_type": "get_chunks",
-                "payload": {"chunks": []},
-            }
+            return make_response(
+                    "get_chunks",
+                    {"chunks": []},
+                )
 
         logger.debug("get_chunks: 请求 %d 个块 (include_tiles=%s)", len(coord_tuples), include_tiles)
 
@@ -151,14 +150,12 @@ def make_map_handlers(gen, tile_gen=None, birth_chunk=None, chunk_store=None,
 
         logger.debug("get_chunks: 返回 %d 个块 (缓存 %d, 新生成 %d)",
                      len(result_chunks), len(coord_tuples) - len(missing), len(missing))
-        response = {
-            "type": "response",
-            "request_type": "get_chunks",
-            "payload": {"chunks": result_chunks},
-        }
-        if birth_chunk is not None:
-            response["payload"]["birth_chunk"] = list(birth_chunk)
-        return response
+        # include_tiles 回显：前端据此区分"字段版/完整版"响应，
+        # 不再依赖 terrain 数组长度等数据形状启发式
+        return make_response(
+            "get_chunks",
+            {"chunks": result_chunks, "include_tiles": include_tiles},
+        )
 
     return {
         "get_chunks": handle_get_chunks,

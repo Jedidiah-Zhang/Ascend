@@ -1,6 +1,7 @@
-"""天气分区 — 每 0.5 秒通过 Connection 轮询 get_weather，自行管理计时与响应处理。
+"""天气分区 — 展示玩家所在 chunk 的实时天气。
 
-数据通过 on_world_response("get_weather") 接收，与具体世界脚本解耦。
+数据经 on_world_response("get_weather") 接收：main_world 负责轮询
+get_weather（1s 间隔）并广播响应，本分区不再自行轮询（单一 poller）。
 """
 
 class_name WeatherSection
@@ -34,39 +35,9 @@ var sunshine_intensity: float = 0.0
 var light_tier: int = -1
 var _has_intensity: bool = false
 
-## 轮询累积计时器（秒）
-var _query_accum: float = 0.0
-
-var _world: Node = null
-
 
 func _init() -> void:
 	label = "天气"
-
-
-func setup(world: Node) -> void:
-	_world = world
-
-
-func process_section(delta: float) -> void:
-	_query_accum += delta
-	if _query_accum < 0.5:
-		return
-	_query_accum = 0.0
-
-	if Connection.status != Connection.Status.CONNECTED:
-		return
-
-	var chunk: Vector2i = Vector2i.ZERO
-	if _world and _world.has_method("get_debug_player_info"):
-		var info: Dictionary = _world.get_debug_player_info()
-		chunk = info.get("chunk", Vector2i.ZERO)
-
-	Connection.send({
-		"type": "request",
-		"request_type": "get_weather",
-		"payload": {"chunks": [[chunk.x, chunk.y]]},
-	})
 
 
 func on_world_response(request_type: String, payload: Dictionary) -> void:
@@ -131,7 +102,9 @@ func get_lines() -> PackedStringArray:
 		var sr_m: int = int((sunrise - sr_h) * 60)
 		var ss_h: int = int(sunset)
 		var ss_m: int = int((sunset - ss_h) * 60)
-		sun_parts.append("日出 %02d:%02d → 日落 %02d:%02d" % [sr_h, sr_m, ss_h, ss_m])
+		sun_parts.append("日出 %s → 日落 %s" % [
+			SaveInfoFormatter.hhmm_string(sr_h, sr_m),
+			SaveInfoFormatter.hhmm_string(ss_h, ss_m)])
 	if not sun_parts.is_empty():
 		lines.append("  ".join(sun_parts))
 

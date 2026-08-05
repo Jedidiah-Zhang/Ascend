@@ -64,6 +64,23 @@ class TestCalendarInit:
         finally:
             cal.shutdown()
 
+    def test_clock_regression_resyncs_silently(self, capture):
+        """时钟倒退静默重同步，不发布倒退的 day/hour/minute 事件。"""
+        clock = WorldClock(epoch=6 * GAME_HOUR)
+        cal = GameCalendar(clock)
+        try:
+            clock.tick()                     # 静默初始化到 day1 06:00
+            clock.skip(GAME_DAY)             # 推进到 day2 06:00
+            assert cal.day == 2
+            before = len(_of_type(capture, "day_change"))
+            clock.restore(time=6 * GAME_HOUR)  # 倒退到 day1 06:00
+            clock.tick()
+            assert cal.day == 1
+            assert cal.hour == 6
+            assert _of_type(capture, "day_change")[before:] == []
+        finally:
+            cal.shutdown()
+
 
 class TestCalendarBoundaries:
     """边界事件。"""

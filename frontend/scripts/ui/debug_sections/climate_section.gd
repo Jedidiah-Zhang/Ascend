@@ -5,7 +5,7 @@
 """
 
 class_name ClimateSection
-extends "res://scripts/ui/debug_section.gd"
+extends "res://scripts/ui/debug_sections/tile_polling_section.gd"
 
 
 const CLIMATE_LABELS: Array[String] = [
@@ -29,27 +29,14 @@ var _has_humidity: bool = false
 ## 气候带编码，-1 表示未知
 var climate_zone: int = -1
 
-var _world: Node = null
-var _last_tile_pos: Vector2i = Vector2i(-999999, -999999)
-
 
 func _init() -> void:
 	label = "气候"
 
 
-func setup(world: Node) -> void:
-	_world = world
-
-
-func process_section(_delta: float) -> void:
-	if _world == null or not _world.has_method("get_debug_climate_at"):
-		return
-	var player_info: Dictionary = _world.get_debug_player_info()
-	var world_pos: Vector2 = player_info.get("world_pos", Vector2.ZERO)
-	var tile_pos := Vector2i(int(world_pos.x), int(world_pos.y))
-	if tile_pos == _last_tile_pos:
-		return
-
+func _poll(world_pos: Vector2) -> bool:
+	if not _world.has_method("get_debug_climate_at"):
+		return false
 	var all_received: bool = true
 	var climate_data: Dictionary = _world.get_debug_climate_at(world_pos)
 	if climate_data.has("temperature"):
@@ -66,9 +53,7 @@ func process_section(_delta: float) -> void:
 		climate_zone = climate_data["climate_zone"]
 	else:
 		all_received = false
-
-	if all_received:
-		_last_tile_pos = tile_pos
+	return all_received
 
 
 func get_lines() -> PackedStringArray:

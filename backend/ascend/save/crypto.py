@@ -30,9 +30,7 @@ from dataclasses import dataclass
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from ascend.log import get_logger
 
-logger = get_logger(__name__)
 
 # 前缀区长度：HMAC-SHA256 摘要 32 字节
 HMAC_LEN: int = 32

@@ -280,7 +280,7 @@ func _draw() -> void:
 	_hover_row = -1
 	_hover_action = {}
 	for i in _worlds.size():
-		var row_float: float = _row_display_y(i, list_top, list_rect.size.x)
+		var row_float: float = _row_display_y(i, list_top)
 		if row_float + ROW_H < list_top or row_float > list_bottom:
 			continue
 		var row_rect := Rect2(list_rect.position.x, row_float, list_rect.size.x, ROW_H)
@@ -300,7 +300,7 @@ func _draw() -> void:
 		_draw_input_dialog()
 
 
-func _row_display_y(index: int, list_top: float, _list_w: float) -> float:
+func _row_display_y(index: int, list_top: float) -> float:
 	"""行显示纵坐标：展开行下方行整体下移 TL_INLINE_H + TL_GAP。"""
 	var y: float = list_top - _scroll * (ROW_H + ROW_GAP)
 	for i in range(index):
@@ -487,7 +487,7 @@ func _update_hover(pos: Vector2) -> void:
 	var list_top: float = HEADER_H
 	var list_bottom: float = size.y - FOOTER_H
 	for i in _worlds.size():
-		var y: float = _row_display_y(i, list_top, size.x)
+		var y: float = _row_display_y(i, list_top)
 		if y <= list_bottom and y + ROW_H >= list_top \
 				and pos.x >= MARGIN and pos.x <= size.x - MARGIN \
 				and pos.y >= y and pos.y <= y + ROW_H:
@@ -538,7 +538,7 @@ func _hit_row(pos: Vector2) -> int:
 	var list_top: float = HEADER_H
 	var list_bottom: float = size.y - FOOTER_H
 	for i in _worlds.size():
-		var y: float = _row_display_y(i, list_top, size.x)
+		var y: float = _row_display_y(i, list_top)
 		if y <= list_bottom and y + ROW_H >= list_top \
 				and pos.x >= MARGIN and pos.x <= size.x - MARGIN \
 				and pos.y >= y and pos.y <= y + ROW_H:
@@ -874,12 +874,8 @@ func _create_new_world() -> void:
 
 
 static func _default_save_name() -> String:
-	"""新建存档的默认名称（当前日期时间，分钟精度）。"""
-	var now := Time.get_datetime_dict_from_system()
-	return "%04d-%02d-%02d %02d:%02d" % [
-		now["year"], now["month"], now["day"],
-		now["hour"], now["minute"],
-	]
+	"""新建存档的默认名称（当前日期时间，分钟精度，格式与存档列表一致）。"""
+	return SaveInfoFormatter.datetime_string(float(Time.get_unix_time_from_system()))
 
 
 # ── 输入对话框（仅重命名） ────────────────────────────────

@@ -64,6 +64,28 @@ def day_of_year(day: int) -> int:
     return (day - 1) % _DAYS_PER_YEAR
 
 
+def _season_phase_of(season: int, day_of_season_val: int) -> float:
+    """季节相位（弧度）— 余弦曲线的单一事实来源。
+
+    连续季节进度 progress = season + day_of_season/SEASON_LENGTH_DAYS，
+    夏季中点（progress=1.5）为 +1，冬季中点（progress=3.5）为 -1。
+    """
+    progress = season + day_of_season_val / SEASON_LENGTH_DAYS
+    return (progress - 1.5) / SEASONS_PER_YEAR * 2 * math.pi
+
+
+def season_phase(day: int) -> float:
+    """游戏日 → 季节余弦相位（供 weather_engine 与 offset 函数共用）。
+
+    Args:
+        day: 游戏日（从 1 开始）。
+
+    Returns:
+        相位（弧度），cos 值取季节曲线。
+    """
+    return _season_phase_of(season_of(day), day_of_season(day))
+
+
 def seasonal_temp_offset(
     season: Season, day_of_season_val: int, amplitude: float,
 ) -> float:
@@ -81,9 +103,9 @@ def seasonal_temp_offset(
     Returns:
         温度偏移 (°C)，范围 [-amplitude, +amplitude]。
     """
-    progress = season + day_of_season_val / SEASON_LENGTH_DAYS
-    phase = (progress - 1.5) / SEASONS_PER_YEAR * 2 * math.pi
-    return amplitude * math.cos(phase)
+    return amplitude * math.cos(
+        _season_phase_of(season, day_of_season_val)
+    )
 
 
 def seasonal_humidity_offset(
@@ -104,9 +126,7 @@ def seasonal_humidity_offset(
     Returns:
         湿度偏移 (pp)，范围 [-amplitude, +amplitude]。
     """
-    progress = season + day_of_season_val / SEASON_LENGTH_DAYS
-    phase = (progress - 1.5) / SEASONS_PER_YEAR * 2 * math.pi
-    raw = math.cos(phase)
+    raw = math.cos(_season_phase_of(season, day_of_season_val))
     if sharpness > 0:
         return amplitude * math.tanh(raw * sharpness)
     return amplitude * raw

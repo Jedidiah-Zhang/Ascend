@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS events (
     affected_json TEXT DEFAULT '[]'
 );
 
-CREATE TABLE event_entities (
+CREATE TABLE IF NOT EXISTS event_entities (
     event_id TEXT NOT NULL,
     entity_id TEXT NOT NULL,
     role TEXT NOT NULL,
@@ -28,17 +28,17 @@ CREATE TABLE event_entities (
     FOREIGN KEY (event_id) REFERENCES events(id)
 );
 
-CREATE INDEX idx_events_time
+CREATE INDEX IF NOT EXISTS idx_events_time
     ON events(timestamp);
-CREATE INDEX idx_events_initiator
+CREATE INDEX IF NOT EXISTS idx_events_initiator
     ON events(initiator_id);
-CREATE INDEX idx_events_chunk
+CREATE INDEX IF NOT EXISTS idx_events_chunk
     ON events(chunk_x, chunk_y);
-CREATE INDEX idx_events_layer_chunk
+CREATE INDEX IF NOT EXISTS idx_events_layer_chunk
     ON events(layer_id, chunk_x, chunk_y);
-CREATE INDEX idx_events_type
+CREATE INDEX IF NOT EXISTS idx_events_type
     ON events(event_type);
-CREATE INDEX idx_event_entities_entity
+CREATE INDEX IF NOT EXISTS idx_event_entities_entity
     ON event_entities(entity_id);
 
 CREATE TABLE IF NOT EXISTS event_edges (
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS event_edges (
     PRIMARY KEY (from_id, to_id, relation_type)
 );
 
-CREATE INDEX idx_event_edges_from
+CREATE INDEX IF NOT EXISTS idx_event_edges_from
     ON event_edges(from_id);
-CREATE INDEX idx_event_edges_to
+CREATE INDEX IF NOT EXISTS idx_event_edges_to
     ON event_edges(to_id);

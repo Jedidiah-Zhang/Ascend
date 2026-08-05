@@ -115,8 +115,8 @@ class ChunkStore:
     def put(self, chunk: ChunkData) -> None:
         """将 chunk 放入缓存，触发 LRU 淘汰。
 
-        若 chunk 已在缓存中，移到末尾（更新访问时间）。
-        淘汰的 chunk 自动写入 SQLite。
+        若 chunk 已在缓存中：替换为新内容并移到末尾（生成器重新
+        生成时缓存必须反映最新数据，否则旧 tile_grid 会误导消费者）。
 
         Args:
             chunk: 要缓存的 ChunkData。
@@ -124,6 +124,7 @@ class ChunkStore:
         key = chunk.chunk_key
         with self._lock:
             if key in self._cache:
+                self._cache[key] = chunk
                 self._cache.move_to_end(key)
                 return
             self._evict_if_needed()
@@ -217,7 +218,12 @@ class ChunkStore:
                     count += 1
             if count:
                 self._db.commit()
-            self._dirty.clear()
+            # 仅清除"已实际落盘"的 dirty 标记：tile_grid 为 None 的
+            # dirty chunk 未写盘，保留标记待下次 flush 重试，避免丢数据
+            self._dirty.intersection_update(
+                key for key, chunk in self._cache.items()
+                if chunk.tile_grid is None
+            )
             if count:
                 logger.info("已 flush %d 个 chunk", count)
 

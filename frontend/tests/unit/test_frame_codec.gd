@@ -20,7 +20,7 @@ func test_frame_encode_roundtrip_for_dict() -> void:
 	assert_eq(decoded["bodies"].size(), 1)
 
 	var body: PackedByteArray = decoded["bodies"][0]
-	var parsed: Variant = MsgPack.decode(body)
+	var parsed: Variant = JsonCodec.decode(body)
 	assert_eq_deep(parsed, msg)
 
 
@@ -34,8 +34,8 @@ func test_frame_encode_roundtrip_multiple_messages() -> void:
 
 	var decoded: Dictionary = codec.frame_decode(combined, MAX_SIZE)
 	assert_eq(decoded["bodies"].size(), 2)
-	assert_eq_deep(MsgPack.decode(decoded["bodies"][0]), {"a": 1.0})
-	assert_eq_deep(MsgPack.decode(decoded["bodies"][1]), {"b": 2.0})
+	assert_eq_deep(JsonCodec.decode(decoded["bodies"][0]), {"a": 1.0})
+	assert_eq_deep(JsonCodec.decode(decoded["bodies"][1]), {"b": 2.0})
 
 
 func test_frame_decode_incomplete_frame() -> void:

@@ -13,6 +13,7 @@
 
 from ascend.entity import Entity, EntityManager
 from ascend.log import get_logger
+from ascend.net.protocol import make_response
 
 logger = get_logger(__name__)
 
@@ -60,11 +61,10 @@ def make_entity_handlers(entity_manager: EntityManager):
         entities = [
             serialize_entity(e) for e in entity_manager.all_entities()
         ]
-        return {
-            "type": "response",
-            "request_type": "entity_snapshot",
-            "payload": {"entities": entities},
-        }
+        return make_response(
+                "entity_snapshot",
+                {"entities": entities},
+            )
 
     return {
         "entity_snapshot": handle_entity_snapshot,

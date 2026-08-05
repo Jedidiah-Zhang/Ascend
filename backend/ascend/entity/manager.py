@@ -112,14 +112,7 @@ class EntityManager:
             controller=controller,
             data=data,
         )
-        self._entities[entity.id] = entity
-        self._type_index.setdefault(entity_type, set()).add(entity.id)
-        self._spatial_index.setdefault(
-            spatial_key(
-                entity.layer_id, entity.chunk_x, entity.chunk_y,
-                entity.tile_x, entity.tile_y,
-            ), set(),
-        ).add(entity.id)
+        self._register(entity)
 
         gx, gy = entity.global_xy
         self._world_tree.publish(Event(
@@ -185,14 +178,7 @@ class EntityManager:
             id=entity_id,
             data=data,
         )
-        self._entities[entity.id] = entity
-        self._type_index.setdefault(entity_type, set()).add(entity.id)
-        self._spatial_index.setdefault(
-            spatial_key(
-                entity.layer_id, entity.chunk_x, entity.chunk_y,
-                entity.tile_x, entity.tile_y,
-            ), set(),
-        ).add(entity.id)
+        self._register(entity)
         logger.debug(
             "restore: %s type=%s controller=%s at chunk %s",
             entity.id, entity_type.name, controller.name, entity.chunk,
@@ -243,6 +229,17 @@ class EntityManager:
         logger.debug("death: %s type=%s", entity_id, entity.entity_type.name)
         return entity
 
+    def _register(self, entity: Entity) -> None:
+        """登记实体到全部索引（birth/restore 共用，单一实现）。"""
+        self._entities[entity.id] = entity
+        self._type_index.setdefault(entity.entity_type, set()).add(entity.id)
+        self._spatial_index.setdefault(
+            spatial_key(
+                entity.layer_id, entity.chunk_x, entity.chunk_y,
+                entity.tile_x, entity.tile_y,
+            ), set(),
+        ).add(entity.id)
+
     def move(
         self,
         entity_id: str,
@@ -273,9 +270,14 @@ class EntityManager:
             return False
 
         old_pos = entity.position
+        new_pos = (chunk_x, chunk_y, tile_x, tile_y)
+        if old_pos == new_pos:
+            # 精确原地（含 float 位置更新）：不发布噪声事件
+            logger.debug("move: %s 原地未动", entity_id)
+            return True
         old_key = spatial_key(
             entity.layer_id, entity.chunk_x, entity.chunk_y,
-            old_pos[2], old_pos[3],
+            entity.tile_x, entity.tile_y,
         )
         entity.chunk_x = chunk_x
         entity.chunk_y = chunk_y

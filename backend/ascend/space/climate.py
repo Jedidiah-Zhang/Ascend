@@ -67,12 +67,9 @@ class SeasonalityMode(IntEnum):
     ALPINE = 4        # 高山季节（随海拔剧变）
 
 
-# ── 物理常量 ──────────────────────────────────────────────
-# 以下值已迁移至 ascend.config，此处按原名重新导出以保持兼容
+# ── 物理常量（单一事实来源 ascend.config，此处按原名引用） ──────
 from ascend.config import (
     LAPSE_RATE,
-    SEA_LEVEL_TEMP_MIN as _SEA_LEVEL_TEMP_MIN,
-    SEA_LEVEL_TEMP_MAX as _SEA_LEVEL_TEMP_MAX,
     RAINFALL_MIN as _RAINFALL_MIN,
     RAINFALL_MAX as _RAINFALL_MAX,
     PARAM_BOUNDS as _PARAM_BOUNDS,
@@ -210,12 +207,18 @@ class WeatherParams:
 # ── 物理推导（纯函数）────────────────────────────────────
 
 def sea_level_temperature(latitude_noise: float) -> float:
-    """纬度噪声 → 海平面年均温度。
+    """纬度噪声 → 海平面年均温度（与 _hydrology.c 生产公式一致）。
 
     纬度噪声 [-1, +1]:
-      -1 → 极地 (~ -5°C)
-        0 → 中纬度 (~ 15°C)
+      -1 → 极地 (~ -15°C)
+        0 → 中纬度 (~ 10°C)
        +1 → 赤道 (~ 35°C)
+
+    注：生产链路（continent._compute_climate）在 C 端（_hydrology.c
+    compute_climate）计算同一映射：lat_n*25+10，clamp [-20, 38]。
+    此纯函数仅供调试可视化（tests/web/server.py），必须与 C 保持同步，
+    由 test_space.test_c_ext_classify_consistent_with_python 及
+    test_sea_level_temperature_range 双重锁定。
 
     Args:
         latitude_noise: 纬度噪声值 [-1, 1]。
@@ -223,10 +226,8 @@ def sea_level_temperature(latitude_noise: float) -> float:
     Returns:
         海平面年均温度 (°C)。
     """
-    t = _SEA_LEVEL_TEMP_MIN + (latitude_noise + 1.0) * 0.5 * (
-        _SEA_LEVEL_TEMP_MAX - _SEA_LEVEL_TEMP_MIN
-    )
-    return clamp(t, _PARAM_BOUNDS["temperature"][0], _PARAM_BOUNDS["temperature"][1])
+    t = latitude_noise * 25.0 + 10.0
+    return clamp(t, -20.0, 38.0)
 
 
 def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
@@ -257,7 +258,8 @@ def rainfall_from_noise(rainfall_noise: float) -> float:
 
 
 # ── 气候档位判定阈值（游戏设计常量，非物理精确值）──────────────
-# 已迁移至 ascend.config，此处按原名重新导出以保持兼容
+# 单一事实来源 ascend.config；_hydrology.c 端为镜像 #define，
+# 一致性由 test_space.test_c_ext_classify_consistent_with_python 锁定
 from ascend.config import (
     ALPINE_ALTITUDE as _ALPINE_ALTITUDE,
     POLAR_TEMP as _POLAR_TEMP,
@@ -363,7 +365,7 @@ def annual_baseline(
         lo, hi = lo_hi
         blo, bhi = bounds[bound_key]
         value = lo + (noise + 1.0) * 0.5 * (hi - lo)
-        return max(blo, min(bhi, value))
+        return clamp(value, blo, bhi)
 
     return WeatherParams(
         temperature=temperature,

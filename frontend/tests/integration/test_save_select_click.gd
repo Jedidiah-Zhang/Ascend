@@ -65,7 +65,7 @@ func test_real_click_flow_sends_rollback_request() -> void:
 	var framed: PackedByteArray = Connection._send_queue[queue_size_before]
 	var decoded: Dictionary = Connection._codec.frame_decode(framed)
 	assert_eq(decoded["bodies"].size(), 1)
-	var msg: Dictionary = MsgPack.decode(decoded["bodies"][0])
+	var msg: Dictionary = JsonCodec.decode(decoded["bodies"][0])
 	assert_eq(msg["type"], "request")
 	assert_eq(msg["request_type"], "save_load")
 	assert_eq(msg["payload"]["world_id"], "w1")
@@ -85,6 +85,6 @@ func test_click_live_node_loads_world() -> void:
 	assert_true(sel._busy)
 	var framed: PackedByteArray = Connection._send_queue[Connection._send_queue.size() - 1]
 	var decoded: Dictionary = Connection._codec.frame_decode(framed)
-	var msg: Dictionary = MsgPack.decode(decoded["bodies"][0])
+	var msg: Dictionary = JsonCodec.decode(decoded["bodies"][0])
 	assert_eq(msg["request_type"], "save_load")
 	assert_eq(msg["payload"]["snapshot"], "", "活目录加载不应带 snapshot")

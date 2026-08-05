@@ -16,12 +16,15 @@ from ascend.config import (
     SQLITE_MMAP_SIZE,
     SQLITE_CACHE_SIZE,
 )
+from ascend.log import get_logger
 
 from .event import Event
 from .affected import AffectedParty
 
 # SQLite DDL 文件与此文件同目录
 _SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sqlite.sql")
+
+logger = get_logger(__name__)
 
 
 class EventArchive:
@@ -74,9 +77,8 @@ class EventArchive:
     def _create_schema(self) -> None:
         """创建表和索引（幂等），迁移旧 schema。
 
-        DDL 定义在 schema.sqlite.sql 中，使用标准 SQL 语法。
-        幂等性由 Python 层保证——若表已存在则静默跳过。
-        对旧表自动添加缺失的 weight 列。
+        DDL 定义在 schema.sqlite.sql 中（全部 IF NOT EXISTS，一次跑完
+        不中断）；此处仅保留旧库缺列/缺表的 ALTER 历史迁移。
         """
         with open(_SCHEMA_PATH, encoding="utf-8") as f:
             ddl = f.read()
@@ -89,43 +91,19 @@ class EventArchive:
             else:
                 raise
 
-        # 迁移：旧 schema 可能缺少 weight 列
+        # 历史迁移：旧 schema（早于 DDL 收录）可能缺少 weight/layer_id 列。
+        # DDL 的 CREATE TABLE IF NOT EXISTS 不会给已存在的旧表补列，
+        # 此处的 ALTER 仅对旧库生效，新库直接跳过（列已存在）。
         try:
             self._db.execute("ALTER TABLE events ADD COLUMN weight INTEGER DEFAULT 1")
         except sqlite3.OperationalError:
             pass  # 列已存在
-
-        # 迁移：旧 schema 可能缺少 layer_id 列
         try:
             self._db.execute(
                 "ALTER TABLE events ADD COLUMN layer_id INTEGER NOT NULL DEFAULT 0"
             )
         except sqlite3.OperationalError:
             pass  # 列已存在
-        self._db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_events_layer_chunk "
-            "ON events(layer_id, chunk_x, chunk_y)"
-        )
-
-        # 迁移：旧 schema 可能缺少 event_edges 表
-        try:
-            self._db.execute(
-                "CREATE TABLE IF NOT EXISTS event_edges ("
-                "from_id TEXT NOT NULL, "
-                "to_id TEXT NOT NULL, "
-                "relation_type TEXT NOT NULL, "
-                "PRIMARY KEY (from_id, to_id, relation_type))"
-            )
-            self._db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_event_edges_from "
-                "ON event_edges(from_id)"
-            )
-            self._db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_event_edges_to "
-                "ON event_edges(to_id)"
-            )
-        except sqlite3.OperationalError:
-            pass
 
     # ── 写入 ──────────────────────────────────────────
 

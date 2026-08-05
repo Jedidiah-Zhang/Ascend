@@ -13,9 +13,8 @@ import time as _real_time
 from dataclasses import dataclass, asdict
 
 from ascend.config import SAVE_FORMAT_VERSION
-from ascend.log import get_logger
+from .io import atomic_write
 
-logger = get_logger(__name__)
 
 MANIFEST_NAME: str = "manifest.json"
 
@@ -94,12 +93,7 @@ class Manifest:
 
     def write(self, path: str) -> None:
         """原子写入 manifest 文件。"""
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.dict, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
+        atomic_write(path, json.dumps(self.dict, ensure_ascii=False, indent=2))
 
     @staticmethod
     def read(path: str) -> "Manifest":

@@ -165,6 +165,24 @@ class TestProtocol:
         assert result is None
         assert len(buf) == len(full) // 2  # 缓冲保留
 
+    def test_frame_format_golden_bytes(self) -> None:
+        """帧格式黄金字节 — 与前端 frame_codec.gd 的契约锁定。
+
+        前端实现：length = 4 字节大端无符号整数，随后 UTF-8 JSON 体
+        （见 frontend/scripts/utils/frame_codec.gd）。此测试锁定后端
+        产出的逐字节格式，任何一侧修改帧格式（如迁移 MessagePack）
+        都必须同时修改两侧并更新本测试。
+        """
+        msg = {"a": 1, "b": "中文"}
+        encoded = encode_message(msg)
+        length = struct.unpack(">I", encoded[:4])[0]
+        assert length == len(encoded) - 4
+        body = encoded[4:]
+        assert body == json.dumps(msg, ensure_ascii=False).encode("utf-8")
+        # 非 JSON 可序列化值必须显式报错，不得静默降级（default=str 已移除）
+        with pytest.raises(TypeError):
+            encode_message({"bad": {1, 2, 3}})
+
 
 class TestServer:
     """服务器功能测试。"""

@@ -32,27 +32,20 @@
 import ctypes
 import heapq
 import math
-import subprocess
 from array import array
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ._cext import load_c_extension
 
-# ── C 扩展加载（与 _perlin.so / _hydrology.so 相同模式） ──────
+
+# ── C 扩展加载（与 _perlin.so / _hydrology.so 共用加载器） ──────
 
 _HERE = Path(__file__).resolve().parent
-_STREAMLINES_SO = _HERE / "_streamlines.so"
-_STREAMLINES_C = _HERE / "_streamlines.c"
-
-if not _STREAMLINES_SO.exists() or _STREAMLINES_C.stat().st_mtime > _STREAMLINES_SO.stat().st_mtime:
-    subprocess.run(
-        ["gcc", "-O3", "-march=native", "-ffast-math", "-funroll-loops",
-         "-shared", "-fPIC", "-o", str(_STREAMLINES_SO), str(_STREAMLINES_C), "-lm"],
-        check=True, cwd=str(_HERE),
-    )
-
-_STREAMLINES = ctypes.CDLL(str(_STREAMLINES_SO))
+_STREAMLINES = load_c_extension(
+    str(_HERE / "_streamlines.c"), str(_HERE / "_streamlines.so"), link_flags=["-lm"],
+)
 
 _STREAMLINES.streamlines_trace_downstream.argtypes = [
     ctypes.c_int,                       # src_idx

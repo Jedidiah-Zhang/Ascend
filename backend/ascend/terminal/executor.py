@@ -18,6 +18,13 @@ from dataclasses import dataclass
 from ascend.world_tree import world_tree
 from ascend.log import get_logger
 from ascend.i18n import I18n
+from ascend.config import SUNRISE_HOUR, TILE_MAP_SIZE
+from ascend.entity import EntityType, split_coords, Controller
+from ascend.weather.weather_engine import (
+    classify_temperature, classify_humidity, classify_wind,
+    classify_sunshine, classify_sunlight_intensity, precip_type_for,
+)
+from ascend.weather.weather_modifier import WEATHER_MODIFIERS
 from ascend.time import WorldClock, GameCalendar, GAME_DAY, GAME_HOUR, GAME_MINUTE, GAME_YEAR
 
 logger = get_logger(__name__)
@@ -58,6 +65,17 @@ class CommandExecutor:
 
     # time tick 单次执行上限（step 同步触发日历边界回调，过大冻结游戏线程）
     MAX_TICK_STEPS: int = 10_000
+
+    # ── time 指令组子命令注册表（sub → 处理器(executor, rest)） ──
+    # 处理器签名与顶层 handler 不同（多收 executor 以访问 i18n），
+    # 组内复用由 lambda 闭包捕获 self。
+    _TIME_SUBS: dict[str, Callable[["CommandExecutor", list[str]], CommandResult]] = {
+        "speed": lambda e, rest: e._h_time_speed(rest),
+        "pause": lambda e, _r: CommandResult(success=True, output=e._cmd_pause()),
+        "resume": lambda e, _r: CommandResult(success=True, output=e._cmd_resume()),
+        "jump": lambda e, rest: e._h_time_jump(rest),
+        "tick": lambda e, rest: e._h_time_tick(rest),
+    }
 
     def __init__(
         self,
@@ -159,14 +177,14 @@ class CommandExecutor:
         cmd = parts[0].lower()
         args = parts[1:]
 
-        # quit — 独立处理 is_quit 标志
-        if cmd in CommandExecutor._QUIT_CMDS:
-            return CommandResult(success=True, output="", is_quit=True)
-
-        # 指令路由：O(1) dict 查找
+        # 指令路由：O(1) dict 查找（注册的 quit handler 优先于内置退出词）
         handler = self._handlers.get(cmd)
         if handler is not None:
             return handler(args)
+
+        # 内置退出指令（未注册专用 handler 时的兜底）
+        if cmd in CommandExecutor._QUIT_CMDS:
+            return CommandResult(success=True, output="", is_quit=True)
 
         # 未知指令
         return CommandResult(
@@ -228,42 +246,43 @@ class CommandExecutor:
             return CommandResult(success=True, output=self._cmd_time_status())
 
         sub = args[0].lower()
-        rest = args[1:]
-        if sub == "speed":
-            return self._h_time_speed(rest)
-        if sub == "pause":
-            return CommandResult(success=True, output=self._cmd_pause())
-        if sub == "resume":
-            return CommandResult(success=True, output=self._cmd_resume())
-        if sub == "jump":
-            days = self._parse_int(rest, 0, 1)
-            if days is None or days < 1:
-                return CommandResult(
-                    success=False,
-                    output=self._i18n.t("console.invalid_number",
-                                        value=rest[0] if rest else ""),
-                )
-            return CommandResult(success=True, output=self._cmd_jump(days))
-        if sub == "tick":
-            count = self._parse_int(rest, 0, 1)
-            if count is None or count < 1:
-                return CommandResult(
-                    success=False,
-                    output=self._i18n.t("console.invalid_number",
-                                        value=rest[0] if rest else ""),
-                )
-            # 单次执行上限：step() 同步触发日历边界回调，超大 count
-            # 会冻结游戏线程数秒
-            if count > self.MAX_TICK_STEPS:
-                return CommandResult(
-                    success=False,
-                    output=self._i18n.t("console.tick_limit",
-                                        limit=self.MAX_TICK_STEPS),
-                )
-            return CommandResult(success=True, output=self._cmd_tick(count))
-        return CommandResult(
-            success=False, output=self._i18n.t("console.time_usage"),
-        )
+        handler = self._TIME_SUBS.get(sub)
+        if handler is None:
+            return CommandResult(
+                success=False, output=self._i18n.t("console.time_usage"),
+            )
+        return handler(self, args[1:])
+
+    def _h_time_jump(self, rest: list[str]) -> CommandResult:
+        """time jump <days>：跳 N 天（校验与单次上限）。"""
+        days = self._parse_int(rest, 0, 1)
+        if days is None or days < 1:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t("console.invalid_number",
+                                    value=rest[0] if rest else ""),
+            )
+        return CommandResult(success=True, output=self._cmd_jump(days))
+
+    def _h_time_tick(self, rest: list[str]) -> CommandResult:
+        """time tick <count>：手动推进 N tick（校验与单次上限）。
+
+        step() 同步触发日历边界回调，超大 count 会冻结游戏线程数秒。
+        """
+        count = self._parse_int(rest, 0, 1)
+        if count is None or count < 1:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t("console.invalid_number",
+                                    value=rest[0] if rest else ""),
+            )
+        if count > self.MAX_TICK_STEPS:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t("console.tick_limit",
+                                    limit=self.MAX_TICK_STEPS),
+            )
+        return CommandResult(success=True, output=self._cmd_tick(count))
 
     def _h_time_speed(self, args: list[str]) -> CommandResult:
         """处理 time speed <n>：设置时间流速（0=暂停）。
@@ -363,7 +382,7 @@ class CommandExecutor:
             跳转后状态文本。
         """
         target_day = self._calendar.day + days
-        target = (target_day - 1) * GAME_DAY + 6 * GAME_HOUR
+        target = (target_day - 1) * GAME_DAY + SUNRISE_HOUR * GAME_HOUR
         skipped = target - self._clock.time
         self._clock.skip(skipped)
         return self._i18n.t("console.jumped", days=days, day=self._calendar.day)
@@ -417,10 +436,6 @@ class CommandExecutor:
             )
         wp, sunrise_h, sunset_h, _, intensity, _ = report
 
-        from ascend.weather.weather_engine import (
-            classify_temperature, classify_humidity, classify_wind,
-            classify_sunshine, classify_sunlight_intensity,
-        )
         t = self._i18n.t
         temp = round(wp.temperature, 1)
         hum = round(wp.humidity, 1)
@@ -428,7 +443,8 @@ class CommandExecutor:
         sun = round(wp.sunshine, 1)
         light = round(intensity, 2)
         if wp.rainfall > 0:
-            precip_key = "weather.snow" if temp <= 0 else "weather.rain"
+            precip_key = ("weather.snow" if precip_type_for(temp) == "snow"
+                          else "weather.rain")
             precip = t("weather.intensity", type=t(precip_key),
                        intensity=f"{wp.rainfall:.1f}")
         else:
@@ -459,8 +475,6 @@ class CommandExecutor:
         Returns:
             执行结果。
         """
-        from ascend.weather.weather_modifier import WEATHER_MODIFIERS
-
         if len(args) < 2:
             return CommandResult(
                 success=False, output=self._i18n.t("console.weather_usage"),
@@ -576,9 +590,6 @@ class CommandExecutor:
         Returns:
             执行结果。
         """
-        from ascend.config import TILE_MAP_SIZE
-        from ascend.entity import EntityType, split_coords
-
         if not args:
             return CommandResult(
                 success=False, output=self._i18n.t("console.entity_usage"),

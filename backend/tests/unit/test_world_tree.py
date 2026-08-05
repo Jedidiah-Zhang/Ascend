@@ -154,6 +154,19 @@ class TestEventGraph:
         observers = g.get_observers("rain")
         assert set(observers) == {"obs1", "obs2"}
 
+    def test_observers_excludes_non_observing_in_edges(self):
+        """回归：入边为 caused_by 但观测其它事件的节点不得判为观测者。"""
+        g = EventGraph()
+        rain = make_event(id="rain", event_type="weather_change")
+        other = make_event(id="other", event_type="physical_event")
+        effect = make_event(id="effect", event_type="weather_change", caused_by=["rain"])
+        g.add_event(rain)
+        g.add_event(other)
+        g.add_event(effect)
+        g.add_edge("effect", "other", "observes")
+        observers = g.get_observers("rain")
+        assert observers == []
+
     def test_has_path(self):
         g = EventGraph()
         a = make_event(id="a")
@@ -1225,6 +1238,19 @@ class TestStats:
         s = bus.stats
         assert s["publish_count"] == 0
         assert s["trim_count"] == 0
+
+    def test_reset_keeps_subscriptions(self):
+        """reset()（读档重建）清数据但保留订阅，事件仍可分发。"""
+        bus = WorldTree(validate=False)
+        received: list[Event] = []
+        bus.subscribe("weather_change", received.append)
+        bus.publish(make_event(event_type="weather_change", timestamp=1))
+        assert len(received) == 1
+
+        bus.reset()  # 读档重建语义
+        assert len(received) == 1  # 旧事件已清
+        bus.publish(make_event(event_type="weather_change", timestamp=2))
+        assert len(received) == 2, "reset 后订阅必须保留，事件仍能送达"
 
 
 # ── 异步分发 ──────────────────────────────────────────

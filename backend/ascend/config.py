@@ -126,6 +126,8 @@ CLIMATE_CALIB_HOT_THRESHOLD: float = 20.0
 CLIMATE_CALIB_COLD_RANGE: tuple[float, float] = (-5.0, 5.0)
 CLIMATE_CALIB_HOT_RAINFALL_TARGET: float = 1500.0
 CLIMATE_CALIB_HOT_STRETCH_PARAM: tuple[float, float] = (200.0, 1600.0)
+CLIMATE_CALIB_COLD_RAINFALL_TARGET: float = 500.0
+CLIMATE_CALIB_COLD_STRETCH_PARAM: tuple[float, float] = (300.0, 300.0)
 
 # 海拔校准
 ELEVATION_TARGET_P99: float = 2500.0   # 陆地 P99 目标海拔
@@ -136,8 +138,6 @@ ELEVATION_TARGET_P99: float = 2500.0   # 陆地 P99 目标海拔
 
 LAPSE_RATE: float = 9.0                # 气温直减率 (°C/1000m)，游戏性放大值
 
-SEA_LEVEL_TEMP_MIN: float = -5.0       # 海平面温度下限（极地）
-SEA_LEVEL_TEMP_MAX: float = 35.0       # 海平面温度上限（赤道）
 
 RAINFALL_MIN: float = 50.0             # 年降雨量下限 (mm)
 RAINFALL_MAX: float = 3500.0           # 年降雨量上限 (mm)
@@ -297,7 +297,6 @@ SQLITE_MMAP_SIZE: int = 268435456       # 256MB 内存映射
 SQLITE_CACHE_SIZE: int = -8000          # 8MB 页缓存（负数 = KB）
 
 # 存档根目录（用户主目录 .ascend/saves，可在设置中调整）
-import os as _os
 SAVE_ROOT: str = _os.path.join(_os.path.expanduser("~"), ".ascend", "saves")
 SAVE_FORMAT_VERSION: int = 1            # 存档格式版本（迁移用）
 

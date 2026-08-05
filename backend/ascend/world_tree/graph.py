@@ -213,8 +213,8 @@ class EventGraph:
         Returns:
             observation 类型的事件 ID 列表。
         """
-        return [f for f, _ in self._reverse.get(physical_event_id, [])
-                if any(r == "observes" for _, r in self._forward.get(f, []))]
+        return [f for f, r in self._reverse.get(physical_event_id, [])
+                if r == "observes"]
 
     def has_path(self, from_id: str, to_id: str, max_depth: int = 20) -> bool:
         """BFS 检查两事件之间是否存在有向路径。

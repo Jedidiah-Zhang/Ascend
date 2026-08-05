@@ -8,22 +8,15 @@
 
 import ctypes
 import random
-import subprocess
 from pathlib import Path
 
+from ._cext import load_c_extension
+
 _HERE = Path(__file__).resolve().parent
-_SO = _HERE / "_perlin.so"
-_C = _HERE / "_perlin.c"
 
-# 按需编译（.so 不存在或比 .c 旧）
-if not _SO.exists() or _C.stat().st_mtime > _SO.stat().st_mtime:
-    subprocess.run(
-        ["gcc", "-O3", "-march=native", "-ffast-math", "-funroll-loops",
-         "-shared", "-fPIC", "-o", str(_SO), str(_C), "-lm"],
-        check=True, cwd=str(_HERE),
-    )
-
-_LIB = ctypes.CDLL(str(_SO))
+_LIB = load_c_extension(
+    str(_HERE / "_perlin.c"), str(_HERE / "_perlin.so"), link_flags=["-lm"],
+)
 _LIB.perlin_sample.argtypes = [
     ctypes.POINTER(ctypes.c_int), ctypes.c_double, ctypes.c_double,
 ]

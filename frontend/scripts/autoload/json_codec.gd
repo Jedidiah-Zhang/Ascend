@@ -1,11 +1,11 @@
-"""序列化工具 — 当前使用 JSON，预留 MessagePack 接口。
+"""序列化工具 — 调试期使用 JSON 作为传输编码。
 
 演进路径: JSON (调试期) → MessagePack (正式期)
-切换时只需替换 encode/decode 实现，调用方无需修改。
+切换时新建 MessagePack 编解码类并替换调用点，勿在本类上改名复用。
 """
 
 extends RefCounted
-class_name MsgPack
+class_name JsonCodec
 
 
 static func encode(value: Variant) -> PackedByteArray:
@@ -19,7 +19,7 @@ static func encode(value: Variant) -> PackedByteArray:
 	"""
 	var json_str: String = JSON.stringify(value)
 	if json_str == "":
-		push_error("MsgPack: JSON encode failed for value: %s" % str(value))
+		push_error("JsonCodec: JSON encode failed for value: %s" % str(value))
 		return PackedByteArray()
 	return json_str.to_utf8_buffer()
 
@@ -38,5 +38,5 @@ static func decode(data: PackedByteArray) -> Variant:
 		return null
 	var result = JSON.parse_string(json_str)
 	if result == null:
-		push_error("MsgPack: JSON decode failed for: %s" % json_str.left(200))
+		push_error("JsonCodec: JSON decode failed for: %s" % json_str.left(200))
 	return result

@@ -37,6 +37,7 @@ from ascend.config import SAVE_ROOT
 from ascend.log import get_logger
 
 from .crypto import SaveKeys, SaveCryptoError
+from .io import atomic_write
 from .manifest import Manifest, SaveFormatError, MANIFEST_NAME
 
 logger = get_logger(__name__)
@@ -342,12 +343,7 @@ class SaveManager:
         payload = keys.encrypt(
             json.dumps(state, ensure_ascii=False).encode("utf-8")
         )
-        tmp = self.state_path(world_id) + ".tmp"
-        with open(tmp, "wb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self.state_path(world_id))
+        atomic_write(self.state_path(world_id), payload)
 
     def read_state(self, world_id: str) -> dict:
         """解密读取 state.json.enc。
@@ -434,12 +430,10 @@ class SaveManager:
     def _write_lineage(self, world_id: str, lineage: dict) -> None:
         """原子写入血缘文件（世界外元数据，失败不阻断主流程）。"""
         try:
-            tmp = self.lineage_path(world_id) + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(lineage, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, self.lineage_path(world_id))
+            atomic_write(
+                self.lineage_path(world_id),
+                json.dumps(lineage, ensure_ascii=False, indent=2),
+            )
         except OSError as exc:
             logger.warning("血缘文件写入失败: %s (%s)", world_id, exc)
 
@@ -776,7 +770,7 @@ class SaveManager:
                 # world_id 被覆盖时以覆盖后的 manifest 替换 zip 内原版
                 if override:
                     manifest.write(os.path.join(tmp_dir, MANIFEST_NAME))
-            except Exception:
+            except OSError:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 raise
 
@@ -798,7 +792,7 @@ class SaveManager:
                 os.rename(wdir, backup)
             try:
                 os.rename(tmp_dir, wdir)
-            except Exception:
+            except OSError:
                 # 回滚失败时恢复原目录（含快照与缓存）
                 if os.path.isdir(wdir):
                     shutil.rmtree(wdir, ignore_errors=True)

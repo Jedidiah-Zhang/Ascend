@@ -117,8 +117,9 @@ func _process(delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == Key.KEY_SLASH and not event.shift_pressed and not event.ctrl_pressed and not event.alt_pressed:
-			toggle()
-			get_viewport().set_input_as_handled()
+			if not _is_open:
+				toggle()
+				get_viewport().set_input_as_handled()
 			return
 
 	if not _is_open:

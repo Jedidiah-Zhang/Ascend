@@ -61,11 +61,12 @@ func test_esc_does_not_open_when_closed() -> void:
 
 
 func test_slash_toggles_close() -> void:
+	"""回归：打开状态下 "/" 不应关闭终端，应作为字符输入路径放行。"""
 	var w: TerminalWidget = _create_widget()
 	w._input(_make_key_event(KEY_SLASH))
 	assert_true(w.is_open())
 	w._input(_make_key_event(KEY_SLASH))
-	assert_false(w.is_open())
+	assert_true(w.is_open(), "打开状态下 / 不应关闭终端")
 
 
 func test_toggle_method() -> void:
