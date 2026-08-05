@@ -146,8 +146,17 @@ var _save_file: String = ""
 ## 移动上报计时器（节流）
 var _move_report_timer: float = 0.0
 
-## 世界生成中提示（出生点到达前显示，_has_birth 后隐藏）
+## 世界生成中提示（地形就绪前显示，_world_visible 后隐藏）
 var _loading_label: Label
+
+## 出生点附近地形是否已加载完成（就绪后才显示玩家/隐藏加载提示）
+var _world_visible: bool = false
+## 地形就绪等待计时（超时强制显示，防后端异常时玩家永久卡住）
+var _terrain_ready_timer: float = 0.0
+## 就绪判定半径：出生 chunk 周围 radius×radius 圈全部加载视为就绪
+const TERRAIN_READY_RADIUS: int = 1
+## 地形就绪等待超时（秒）
+const TERRAIN_READY_TIMEOUT: float = 8.0
 
 ## 当前游戏时间
 var _game_hour: float = 6.0
@@ -312,17 +321,43 @@ func _set_birth_chunk(cx: int, cy: int) -> void:
 		return
 	_has_birth = true
 	_birth_chunk = Vector2i(cx, cy)
-	# 世界已就绪：此时才创建玩家节点并隐藏加载提示
-	_ensure_player()
-	if _loading_label:
-		_loading_label.visible = false
 	# 与后端权威出生点约定一致：出生 chunk 原点（PlayerService.birth_position）
 	_player_pos.x = float(cx * CHUNK_SIZE)
 	_player_pos.z = float(cy * CHUNK_SIZE)
-	_player.position = _player_pos
+	if _player:
+		_player.position = _player_pos
 	_camera_focus = _player_pos
 	_apply_camera_transform()
+	# 地形就绪前保持加载提示（玩家节点在 _check_terrain_ready 就绪后创建）
+	if _loading_label:
+		_loading_label.text = "正在加载地形..."
+		_loading_label.visible = true
 	print("MainWorld3D: birth chunk (%d,%d), player at (%.0f, %.0f)" % [cx, cy, _player_pos.x, _player_pos.z])
+
+
+func _check_terrain_ready(force: bool = false) -> void:
+	"""出生点周围地形加载完成后切换为可见世界。
+
+	判定：出生 chunk 的 TERRAIN_READY_RADIUS 邻域全部加载（_loaded）；
+	force=true（超时兜底）跳过判定直接就绪，防后端异常时玩家永久卡住。
+	"""
+	if _world_visible or not _has_birth:
+		return
+	if not force:
+		for dx in range(-TERRAIN_READY_RADIUS, TERRAIN_READY_RADIUS + 1):
+			for dy in range(-TERRAIN_READY_RADIUS, TERRAIN_READY_RADIUS + 1):
+				if not _loaded.has(_birth_chunk + Vector2i(dx, dy)):
+					return
+	_world_visible = true
+	if _loading_label:
+		_loading_label.visible = false
+	_ensure_player()
+	_player.position = _player_pos
+	_player.visible = true
+	_update_player_ground()
+	_camera_focus = _player_pos
+	_apply_camera_transform()
+	print("MainWorld3D: 出生点地形就绪，世界可见")
 
 
 # ── 世界就绪事件（服务器与世界观解耦后的就绪信号） ────────
@@ -371,8 +406,6 @@ func _on_world_initialized(data: Dictionary) -> void:
 	"""
 	_reset_world_state()
 	_world_id = str(data.get("world_id", _world_id))
-	if _loading_label:
-		_loading_label.visible = false
 	var bc: Array = data.get("birth_chunk", [])
 	if bc.size() >= 2:
 		_set_birth_chunk(int(bc[0]), int(bc[1]))
@@ -391,6 +424,8 @@ func _on_world_initialized(data: Dictionary) -> void:
 func _reset_world_state() -> void:
 	"""清空旧世界的 chunk 缓存与地形节点（世界重建后旧数据失效）。"""
 	_has_birth = false
+	_world_visible = false
+	_terrain_ready_timer = 0.0
 	_birth_chunk = Vector2i.ZERO
 	_chunks.clear()
 	_pending.clear()
@@ -501,6 +536,7 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 
 	if mesh.get_surface_count() == 0:
 		_loaded[key] = true
+		_check_terrain_ready()
 		return
 
 	var mi := MeshInstance3D.new()
@@ -512,19 +548,17 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 	_loaded[key] = true
 	print("MainWorld3D: chunk (%d,%d) — %d surfaces" % [cx, cy, mesh.get_surface_count()])
 
-	# 首次 chunk 覆盖玩家时，吸附玩家到地面
+	# 首次 chunk 覆盖玩家时，记录地面高度（玩家节点统一由
+	# _check_terrain_ready 在出生点地形就绪后创建显示）
 	if not _camera_grounded:
 		if _world_to_chunk(_player_pos.x, _player_pos.z) == Vector2i(cx, cy):
 			_camera_grounded = true
 			var ground_y := _get_ground_elevation_at(_player_pos)
 			if not is_nan(ground_y):
 				_player_pos.y = maxf(ground_y, 0.0) + 1.0
-				_ensure_player()
-				_player.position = _player_pos
-				_camera_focus = _player_pos
-				_player.visible = true
-				_apply_camera_transform()
-				print("MainWorld3D: player grounded at y=%.1f" % _player_pos.y)
+				print("MainWorld3D: player ground y=%.1f" % _player_pos.y)
+
+	_check_terrain_ready()
 
 
 func _lazy_load_materials() -> Dictionary:
@@ -567,6 +601,12 @@ func _process(delta: float) -> void:
 
 	if _event_log:
 		_event_log.set_player_chunk(_world_to_chunk(_player_pos.x, _player_pos.z))
+
+	# 出生点地形就绪超时兜底：后端异常导致区块永不就绪时强制显示
+	if _has_birth and not _world_visible:
+		_terrain_ready_timer += delta
+		if _terrain_ready_timer >= TERRAIN_READY_TIMEOUT:
+			_check_terrain_ready(true)
 
 	_stream_chunks()
 	_process_input(delta)
@@ -891,7 +931,8 @@ func _apply_authoritative_position(payload: Dictionary) -> void:
 	_camera_focus = _player_pos
 	_apply_camera_transform()
 	_ensure_player()
-	_player.visible = true
+	# 地形就绪前不显示玩家（出生点加载完成后由 _check_terrain_ready 统一显示）
+	_player.visible = _world_visible
 
 
 ## ── 流式 chunk 管理 ──────────────────────────────────────

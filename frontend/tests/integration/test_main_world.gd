@@ -124,7 +124,8 @@ func test_world_initialized_sets_birth_and_requests_state() -> void:
 	assert_true(main._has_birth)
 	assert_eq(main._birth_chunk, Vector2i(5, 3))
 	assert_eq(main._player_pos.x, 5.0 * CS)
-	assert_false(main._loading_label.visible, "世界就绪后应隐藏加载提示")
+	assert_false(main._world_visible, "地形未就绪前世界不可见")
+	assert_true(main._loading_label.visible, "地形就绪前应保持加载提示")
 
 
 func test_world_initialized_resets_previous_world_state() -> void:
@@ -141,6 +142,43 @@ func test_world_initialized_resets_previous_world_state() -> void:
 	assert_true(main._chunks.is_empty(), "旧世界 chunk 数据应清空")
 	assert_true(main._loaded.is_empty(), "旧世界地形标记应清空")
 	assert_true(main._pending.is_empty(), "旧世界在途请求应清空")
+
+
+func test_terrain_ready_shows_world_after_neighborhood_loaded() -> void:
+	"""出生点 3×3 邻域全部加载后：隐藏加载提示并显示玩家。"""
+	var main: Node3D = _make_world_instance()
+	main._set_birth_chunk(4, 4)
+
+	assert_false(main._world_visible)
+	assert_true(main._loading_label.visible, "地形加载中应显示加载提示")
+
+	# 只加载部分邻域 → 仍不可见
+	main._loaded[Vector2i(3, 3)] = true
+	main._check_terrain_ready()
+	assert_false(main._world_visible, "邻域未全加载前不可见")
+
+	# 补全 3×3 邻域 → 就绪
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			main._loaded[Vector2i(4 + dx, 4 + dy)] = true
+	main._check_terrain_ready()
+
+	assert_true(main._world_visible, "邻域加载完成后世界可见")
+	assert_false(main._loading_label.visible, "就绪后应隐藏加载提示")
+	assert_true(main._player != null, "就绪后应创建玩家节点")
+	assert_true(main._player.visible, "就绪后玩家应可见")
+
+
+func test_terrain_ready_force_timeout_shows_world() -> void:
+	"""超时兜底：区块永不就绪时强制显示世界。"""
+	var main: Node3D = _make_world_instance()
+	main._set_birth_chunk(1, 1)
+
+	main._check_terrain_ready(true)
+
+	assert_true(main._world_visible, "超时兜底应强制就绪")
+	assert_false(main._loading_label.visible)
+	assert_true(main._player.visible)
 
 
 func test_world_reloading_resets_state_and_shows_label() -> void:

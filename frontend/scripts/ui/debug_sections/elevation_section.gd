@@ -13,6 +13,9 @@ var elevation_value: int = 0
 ## 当前格坡度（度数）
 var slope_value: float = 0.0
 
+## 是否已收到后端数据
+var _has_data: bool = false
+
 
 func _init() -> void:
 	label = "地形"

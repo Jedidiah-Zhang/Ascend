@@ -8,9 +8,6 @@ class_name TilePollingSection
 extends "res://scripts/ui/debug_section.gd"
 
 
-## 玩家所在格是否已收到全部字段数据
-var _has_data: bool = false
-
 var _world: Node = null
 var _last_tile_pos: Vector2i = Vector2i(-999999, -999999)
 
@@ -20,7 +17,7 @@ func setup(world: Node) -> void:
 
 
 ## 子类实现：查询世界脚本并逐字段刷新，返回是否全部字段就绪。
-func _poll(world_pos: Vector2) -> bool:
+func _poll(_world_pos: Vector2) -> bool:
 	return false
 
 
