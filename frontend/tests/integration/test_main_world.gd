@@ -442,6 +442,85 @@ func test_disconnect_clears_pending_state() -> void:
 
 # ── 权威位置（player_state / player_move / entity_snapshot） ──
 
+func test_world_initialized_records_world_id() -> void:
+	"""world_initialized 事件应记录当前存档位 ID（手动存档数据源）。"""
+	var main: Node3D = _make_world_instance()
+
+	main._on_world_initialized({"birth_chunk": [5, 3], "world_id": "w-abc"})
+
+	assert_eq(main._world_id, "w-abc")
+
+
+func test_world_initialized_keeps_world_id_when_missing() -> void:
+	"""事件缺 world_id（旧后端）时保留已有值。"""
+	var main: Node3D = _make_world_instance()
+	main._world_id = "w-keep"
+
+	main._on_world_initialized({"birth_chunk": [1, 1]})
+
+	assert_eq(main._world_id, "w-keep", "缺字段时应保持原值（弱后端容错）")
+
+
+func test_world_reloading_records_world_id() -> void:
+	"""world_reloading 事件应更新目标存档位 ID（切档场景）。"""
+	var main: Node3D = _make_world_instance()
+	main._world_id = "w-old"
+
+	main._on_world_reloading({"world_id": "w-next"})
+
+	assert_eq(main._world_id, "w-next")
+
+
+# ── 手动存档（暂停菜单） ────────────────────────────────────
+
+func test_pause_save_without_world_id_rejected() -> void:
+	"""世界未就绪（无 world_id）时手动存档应拒绝并提示。"""
+	var main: Node3D = _make_world_instance()
+
+	main._on_pause_save_requested()
+
+	assert_string_contains(main._pause_menu._status_text, "无法手动存档")
+
+
+func test_pause_save_sends_snapshot_request() -> void:
+	"""世界就绪时手动存档应发出 save_snapshot 请求（payload 携带 world_id）。"""
+	var main: Node3D = _make_world_instance()
+	main._world_id = "w-abc"
+
+	main._pause_menu._activate("save")
+
+	assert_false(main._pause_menu._status_text.contains("无法手动存档"))
+	assert_true(main._pause_menu._saving, "请求在途期间应处于存档中状态")
+
+
+func test_save_snapshot_response_updates_pause_menu() -> void:
+	"""save_snapshot 响应应回填暂停菜单（成功提示）。"""
+	var main: Node3D = _make_world_instance()
+	main._pause_menu._saving = true
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "save_snapshot",
+		"payload": {"file": "snap-1.tar.zst"},
+	})
+
+	assert_string_contains(main._pause_menu._status_text, "已保存快照")
+	assert_false(main._pause_menu._saving, "成功回填后应复位存档中状态")
+
+
+func test_save_snapshot_error_updates_pause_menu() -> void:
+	"""save_snapshot 错误响应应回填暂停菜单（失败提示）。"""
+	var main: Node3D = _make_world_instance()
+
+	ignore_error_when_calling(main, "_handle_error", [{
+		"type": "error",
+		"request_type": "save_snapshot",
+		"error": "缺少 world_id",
+	}])
+
+	assert_string_contains(main._pause_menu._status_text, "存档失败")
+
+
 func test_player_state_sets_entity_id_and_position() -> void:
 	var main: Node3D = _make_world_instance()
 	main._set_birth_chunk(0, 0)

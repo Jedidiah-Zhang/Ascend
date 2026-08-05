@@ -5,6 +5,7 @@
 [ext_resource type="Script" uid="uid://dyjbrovf27uoi" path="res://scripts/ui/debug_overlay.gd" id="2_mt54i"]
 [ext_resource type="Shader" uid="uid://dv62n8xrydrrt" path="res://assets/shaders/water_depth_fog.gdshader" id="2_tbgi4"]
 [ext_resource type="Script" uid="uid://br07478oh2w3f" path="res://scripts/ui/event_log.gd" id="3_le0cj"]
+[ext_resource type="Script" uid="uid://mtq3momcwf63" path="res://scripts/ui/pause_menu.gd" id="6_tefeu"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_tefeu"]
 render_priority = 0
@@ -12,7 +13,6 @@ shader = ExtResource("2_tbgi4")
 shader_parameter/shallow_color = Color(0.2, 0.7, 0.9, 0.35)
 shader_parameter/deep_color = Color(0.05, 0.15, 0.55, 0.9)
 shader_parameter/max_depth = 10.0
-shader_parameter/banding_steps = 4
 shader_parameter/wave_scale = 0.4
 shader_parameter/wave_speed = 0.06
 shader_parameter/shore_fade_range = 3.0
@@ -36,11 +36,10 @@ transform = Transform3D(0.70710677, 0.4055798, -0.579228, 0, 0.81915206, 0.57357
 light_color = Color(1, 0.95, 0.85, 1)
 light_energy = 1.2
 shadow_enabled = true
-directional_shadow_mode = 0
 shadow_bias = 0.07
 shadow_normal_bias = 0.2
 shadow_blur = 0.4
-directional_shadow_pancake_size = 20.0
+directional_shadow_mode = 0
 directional_shadow_fade_start = 0.85
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="World" unique_id=1024341688]
@@ -81,3 +80,11 @@ script = ExtResource("2_mt54i")
 layout_mode = 3
 anchors_preset = 0
 script = ExtResource("3_le0cj")
+
+[node name="PauseLayer" type="CanvasLayer" parent="." unique_id=1572906091]
+layer = 300
+
+[node name="PauseMenu" type="Control" parent="PauseLayer" unique_id=680735311]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("6_tefeu")

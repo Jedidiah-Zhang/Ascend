@@ -64,6 +64,8 @@ const TERRAIN_TEXTURES: Dictionary = {
 @onready var _debug_overlay: DebugOverlay = $DebugLayer/DebugOverlay
 ## 事件日志面板
 @onready var _event_log: EventLog = $DebugLayer/EventLog
+## ESC 暂停菜单
+@onready var _pause_menu: PauseMenu = $PauseLayer/PauseMenu
 ## WorldEnvironment 节点
 @onready var _world_env: WorldEnvironment = $World/WorldEnvironment
 ## 方向光（太阳）
@@ -104,6 +106,8 @@ var _birth_chunk: Vector2i = Vector2i.ZERO
 var _has_birth: bool = false
 ## 本地控制的玩家实体 ID（player_state 提供，后端权威）
 var _player_entity_id: String = ""
+## 当前存档位 ID（world_initialized 事件提供；手动存档用，空 = 未就绪）
+var _world_id: String = ""
 ## 移动上报计时器（节流）
 var _move_report_timer: float = 0.0
 
@@ -138,6 +142,9 @@ func _ready() -> void:
 	Connection.connection_lost.connect(_on_disconnected)
 	Connection.message_received.connect(_on_message)
 
+	if _pause_menu:
+		_pause_menu.save_requested.connect(_on_pause_save_requested)
+
 	_terrain_parent = $World/Terrain/ChunkPool
 
 	# 玩家节点不在 _ready 创建：须等后端世界就绪（出生点到达）后才创建，
@@ -156,6 +163,8 @@ func _exit_tree() -> void:
 		Connection.connection_lost.disconnect(_on_disconnected)
 	if Connection.message_received.is_connected(_on_message):
 		Connection.message_received.disconnect(_on_message)
+	if _pause_menu and _pause_menu.save_requested.is_connected(_on_pause_save_requested):
+		_pause_menu.save_requested.disconnect(_on_pause_save_requested)
 
 
 func _configure_camera() -> void:
@@ -254,8 +263,8 @@ func _get_ground_elevation_at(pos: Vector3) -> float:
 	var cx: int = floori(pos.x / float(CHUNK_SIZE))
 	var cz: int = floori(pos.z / float(CHUNK_SIZE))
 	var key := Vector2i(cx, cz)
-	var chunk: Dictionary = _chunks.get(key, {})
-	if chunk == null:
+	var chunk = _chunks.get(key)
+	if not (chunk is Dictionary):
 		return NAN
 	var elev: Array = chunk.get("elevation", [])
 	if elev.size() < CHUNK_SIZE * CHUNK_SIZE:
@@ -289,6 +298,7 @@ func _set_birth_chunk(cx: int, cy: int) -> void:
 
 func _on_world_reloading(_data: Dictionary) -> void:
 	"""后端开始读档重建（连接保持，旧世界数据即将失效）：复位并提示。"""
+	_world_id = str(_data.get("world_id", ""))
 	_reset_world_state()
 	if _loading_label:
 		_loading_label.text = "正在生成世界..."
@@ -302,6 +312,7 @@ func _on_world_initialized(data: Dictionary) -> void:
 	（entity_snapshot / player_state 原由 _on_connected 触发）。
 	"""
 	_reset_world_state()
+	_world_id = str(data.get("world_id", _world_id))
 	if _loading_label:
 		_loading_label.visible = false
 	var bc: Array = data.get("birth_chunk", [])
@@ -606,12 +617,18 @@ func _process_input(delta: float) -> void:
 			"payload": {}
 		})
 
-	if Input.is_action_just_pressed("menu"):
-		Connection.send({
-			"type": "request",
-			"request_type": "open_menu",
-			"payload": {}
-		})
+
+func _on_pause_save_requested() -> void:
+	"""暂停菜单「手动存档」：世界未就绪时拒绝，否则发快照请求。
+
+	请求是异步的（save_snapshot 为状态通道），结果在
+	_handle_response / _handle_error 中回填到暂停菜单。
+	"""
+	if _world_id.is_empty():
+		if _pause_menu:
+			_pause_menu.show_status("当前世界未就绪，无法手动存档", true)
+		return
+	Connection.send(SaveApi.snapshot_request(_world_id))
 
 
 func _on_terminal_command(command: String) -> void:
@@ -794,6 +811,9 @@ func _handle_response(message: Dictionary) -> void:
 		"terminal_cmd":
 			if _terminal:
 				_terminal.write(payload.get("output", ""))
+		"save_snapshot":
+			if _pause_menu:
+				_pause_menu.show_status("已保存快照: %s" % str(payload.get("file", "")), false)
 		_:
 			pass
 
@@ -916,6 +936,8 @@ func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> vo
 func _handle_error(message: Dictionary) -> void:
 	var error_msg: String = message.get("error", "unknown error")
 	push_error("MainWorld3D: server error: %s" % error_msg)
+	if message.get("request_type", "") == SaveApi.SNAPSHOT and _pause_menu:
+		_pause_menu.show_status("存档失败：%s" % error_msg, true)
 
 
 func _query_weather() -> void:

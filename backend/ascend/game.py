@@ -70,6 +70,7 @@ _NDY = (0, 0, 1, -1, 1, 1, -1, -1)
 world_tree.register_event_schema(
     "world_initialized",
     required={"seed": int, "birth_chunk": list, "loaded_chunks": int},
+    optional={"world_id": str},
     description="地图生成完毕、出生点确定、周边区块就绪后发布",
 )
 
@@ -613,6 +614,7 @@ class GameEngine:
             event_type="world_initialized",
             weight=5,
             data={
+                "world_id": self.world_id or "",
                 "seed": self.seed,
                 "birth_chunk": list(bc),
                 "loaded_chunks": len(self.chunk_store),
