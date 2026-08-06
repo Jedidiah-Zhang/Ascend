@@ -23,7 +23,7 @@ from ascend.space.tile_grid import TileGrid
 
 GOLDEN_SEED = 20260806
 # 2026-08-06 首次固化；同日坐标单位统一（tile=格点 1:1）后重新固化一次
-GOLDEN_HASH = "890fe52afef656e75ac13c1841d9641d920ab588d47b40e54e19064c5992e5a1"
+GOLDEN_HASH = "bae79ea69476afedec45abc6c5523898f023a4f44d796bd21169e7c2d8b77ff8"
 
 
 def _pipeline_digest(seed: int) -> str:

@@ -43,6 +43,7 @@ from ascend.config import (
     RAINSHADOW_SECONDARY_WEIGHT,
     RAINSHADOW_MIN_FACTOR,
     CONTINENT_BLEND_WEIGHT,
+    CONTINENT_SAMPLE_RESOLUTION_M,
     TERRAIN_BLEND_WEIGHT,
     CENTER_BIAS_WEIGHT,
     CLIMATE_CALIB_RAINFALL_REF,
@@ -493,12 +494,12 @@ class ContinentData:
         )
 
     def _grid_index(self, world_x: float, world_y: float) -> int | None:
-        """世界 tile 坐标 → 网格索引（1 tile = 100m = 1 格点，坐标 1:1）。
+        """世界 tile 坐标（米）→ 宏观场格索引（1 格 = 分辨率米）。
 
-        越界返回 None。
+        换算：格 = 米 / CONTINENT_SAMPLE_RESOLUTION_M。越界返回 None。
         """
-        gx = int(world_x)
-        gy = int(world_y)
+        gx = int(world_x / CONTINENT_SAMPLE_RESOLUTION_M)
+        gy = int(world_y / CONTINENT_SAMPLE_RESOLUTION_M)
         if 0 <= gx < self.grid_width and 0 <= gy < self.grid_height:
             return gy * self.grid_width + gx
         return None
@@ -514,7 +515,7 @@ class ContinentData:
         """从宏观海拔场采样（最近邻）。越界返回默认海洋深度。
 
         Args:
-            world_x, world_y: 世界 tile 坐标（1 tile = 1 格点）。
+            world_x, world_y: 世界 tile 坐标（米；换算见 _grid_index）。
         """
         idx = self._grid_index(world_x, world_y)
         if idx is None or idx >= len(self.elevation_field):
@@ -525,15 +526,15 @@ class ContinentData:
         """双线性插值采样宏观海拔，消除 100m 网格的块状伪影。
 
         Args:
-            world_x: 世界 tile X 坐标。
-            world_y: 世界 tile Y 坐标。
+            world_x: 世界 tile X 坐标（米）。
+            world_y: 世界 tile Y 坐标（米）。
 
         Returns:
             插值后的海拔 (m)。越界返回默认海洋深度。
         """
-        # 网格空间中的连续坐标（1 tile = 100m = 1 格点，直接作为格点坐标）
-        gx = world_x - 0.5
-        gy = world_y - 0.5
+        # 网格空间中的连续坐标（米 → 格：÷ 分辨率）
+        gx = world_x / CONTINENT_SAMPLE_RESOLUTION_M - 0.5
+        gy = world_y / CONTINENT_SAMPLE_RESOLUTION_M - 0.5
 
         x0 = int(gx)
         y0 = int(gy)
@@ -573,8 +574,8 @@ class ContinentData:
         if not self.river_width:
             return 0.0
 
-        gx = world_x - 0.5
-        gy = world_y - 0.5
+        gx = world_x / CONTINENT_SAMPLE_RESOLUTION_M - 0.5
+        gy = world_y / CONTINENT_SAMPLE_RESOLUTION_M - 0.5
         x0 = int(gx)
         y0 = int(gy)
         x1, y1 = x0 + 1, y0 + 1

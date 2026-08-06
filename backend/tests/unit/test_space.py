@@ -763,17 +763,17 @@ class TestTileGenerator:
         elev = cont.elevation_field
 
         # 确定本 chunk 会触及的大陆网格索引范围
-        # gx = cx*200 + tx - 0.5,  tx ∈ [0, 199]
-        gx_start = (cx * size + 0) - 0.5      # tx=0
-        gx_end = (cx * size + (size - 1)) - 0.5  # tx=199
+        # gx = (cx*200 + tx) / 分辨率 - 0.5,  tx ∈ [0, 199]
+        gx_start = (cx * size + 0) / 100.0 - 0.5      # tx=0
+        gx_end = (cx * size + (size - 1)) / 100.0 - 0.5  # tx=199
         # int() 向零截断，所以 min/max 取 int 而非 floor
         x0_min = int(gx_start)
         x0_max = int(gx_end)
         # 再加 x1=x0+1，所以 gx 范围需要覆盖到 max_x0+1
         gx_range = range(x0_min, x0_max + 2)  # inclusive upper bound
 
-        gy_start = (cy * size + 0) - 0.5
-        gy_end = (cy * size + (size - 1)) - 0.5
+        gy_start = (cy * size + 0) / 100.0 - 0.5
+        gy_end = (cy * size + (size - 1)) / 100.0 - 0.5
         y0_min = int(gy_start)
         y0_max = int(gy_end)
         gy_range = range(y0_min, y0_max + 2)
@@ -791,21 +791,21 @@ class TestTileGenerator:
 
         for ty in range(size):
             wy = cy * size + ty
-            gy = wy - 0.5
+            gy = wy / 100.0 - 0.5
             y0 = int(gy)
             frac_y = gy - y0
             y1 = y0 + 1
 
             for tx in range(size):
                 wx = cx * size + tx
-                gx_val = wx - 0.5
+                gx_val = wx / 100.0 - 0.5
                 x0 = int(gx_val)
                 frac_x = gx_val - x0
                 x1 = x0 + 1
 
                 if (x0 < 0 or x1 >= W or y0 < 0 or y1 >= H):
-                    gx_nn = int(wx)
-                    gy_nn = int(wy)
+                    gx_nn = int(wx / 100.0)
+                    gy_nn = int(wy / 100.0)
                     if 0 <= gx_nn < W and 0 <= gy_nn < H:
                         result[ty * size + tx] = elev[gy_nn * W + gx_nn]
                     else:
