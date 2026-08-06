@@ -41,6 +41,15 @@ const AO_TOP_MIN: float = 0.55
 const AO_SIDE_FACTOR: float = 0.68
 
 
+## 构建 chunk 合并 ArrayMesh：逐 tile 生成顶面（带 AO）与可见侧壁，按 item_id 分组 surface。
+##
+## Args:
+##     terrain: 长度 CHUNK_SIZE² 的 terrain_id 数组（行优先，越界补 0）。
+##     elevation: 长度 CHUNK_SIZE² 的海拔数组（行优先）。
+##     materials: item_id → Material 材质表（key 决定 surface 分组与材质）。
+##
+## Returns:
+##     合并后的 ArrayMesh（无可见面时 surface 数为 0）。
 static func build(terrain: Array, elevation: Array, materials: Dictionary) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
 	var CS: int = CHUNK_SIZE
@@ -98,6 +107,14 @@ static func build(terrain: Array, elevation: Array, materials: Dictionary) -> Ar
 	return mesh
 
 
+## 计算顶面 AO：四邻海拔高于本格时按高度差（上限 3 级）逐级削弱亮度。
+##
+## Args:
+##     x/z: 格内 tile 坐标；wy: 本格海拔（四舍五入）。
+##     elevation: chunk 高程数组；CS: chunk 边长。
+##
+## Returns:
+##     灰阶 Color（各通道一致，下限 AO_TOP_MIN）。
 static func _compute_top_ao(x: int, z: int, wy: int, elevation: Array, CS: int) -> Color:
 	var ao: float = 1.0
 	for d in [[0, 1], [0, -1], [1, 0], [-1, 0]]:
@@ -116,6 +133,14 @@ static func _compute_top_ao(x: int, z: int, wy: int, elevation: Array, CS: int) 
 	return Color(ao, ao, ao)
 
 
+## 判断侧壁是否可见：邻居越界或不可渲染（非法 id/低于水面遮罩）恒可见，否则看高度差。
+##
+## Args:
+##     x/z: 当前 tile 坐标；dx/dz: 邻居方向。
+##     wy: 当前格海拔（四舍五入）；terrain/elevation: chunk 数据数组；CS: chunk 边长。
+##
+## Returns:
+##     与邻居存在高度差时为 true（需渲染侧壁）。
 static func _side_visible(x: int, z: int, dx: int, dz: int, wy: int,
 		terrain: Array, elevation: Array, CS: int) -> bool:
 	var nx := x + dx
@@ -147,6 +172,7 @@ class _Collector:
 	var c: PackedColorArray
 	var i: PackedInt32Array
 
+	## 初始化顶点缓冲（顶点/法线/UV/颜色/索引为空数组）。
 	func _init() -> void:
 		v = PackedVector3Array()
 		n = PackedVector3Array()
@@ -154,9 +180,16 @@ class _Collector:
 		c = PackedColorArray()
 		i = PackedInt32Array()
 
+	## 顶点缓冲是否为空（无任何面）。
 	func is_empty() -> bool:
 		return v.is_empty()
 
+	## 追加一个四边形面（4 顶点 + 6 索引）：按面定义展开顶点，写入统一法线/UV 与顶点色。
+	##
+	## Args:
+	##     base: tile 基准点（面原点相对它偏移）。
+	##     f: 面定义字典（origin/u/v/n/idx）。
+	##     color: 顶点色（默认白 = 无 AO 调制）。
 	func add_quad(base: Vector3, f: Dictionary, color: Color = Color.WHITE) -> void:
 		var vi := v.size()
 		var o: Vector3 = base + f.origin

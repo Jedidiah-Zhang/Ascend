@@ -30,10 +30,19 @@ var _has_humidity: bool = false
 var climate_zone: int = -1
 
 
+## 构造函数：设置分区标签为"气候"。
 func _init() -> void:
 	label = "气候"
 
 
+## 查询当前 tile 的基线气候数据：从世界脚本 get_debug_climate_at 拉取
+## 年均温度/年均湿度/气候带，逐字段刷新并标记已收到；缺任一字段则返回未就绪。
+##
+## Args:
+##     world_pos: 玩家当前世界坐标（跨格后才调用）。
+##
+## Returns:
+##     三个字段（温度/湿度/气候带）全部收到返回 true。
 func _poll(world_pos: Vector2) -> bool:
 	if not _world.has_method("get_debug_climate_at"):
 		return false
@@ -56,6 +65,11 @@ func _poll(world_pos: Vector2) -> bool:
 	return all_received
 
 
+## 生成气候分区文本行：年均温/年均湿度与气候带名称
+## （未收到的字段显示"—"，气候带编码越界同样显示"—"）。
+##
+## Returns:
+##     两行 PackedStringArray（温湿度行 + 气候带行）。
 func get_lines() -> PackedStringArray:
 	var temp_str := "%.1f°C" % temperature if _has_temp else "—"
 	var humid_str := "%.0f%%" % humidity if _has_humidity else "—"

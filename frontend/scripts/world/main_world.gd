@@ -175,6 +175,8 @@ var _weather_query_timer: float = 0.0
 const WEATHER_QUERY_INTERVAL: float = 1.0
 
 
+## 节点就绪：连接终端命令/连接状态/消息信号，挂载暂停菜单保存回调，
+## 创建加载提示与地形容器引用，并初始化相机与环境。
 func _ready() -> void:
 	_terminal.remote_command_submitted.connect(_on_terminal_command)
 
@@ -197,6 +199,7 @@ func _ready() -> void:
 	_configure_environment()
 
 
+## 节点退出：断开 Connection 与暂停菜单信号，防止悬挂回调。
 func _exit_tree() -> void:
 	if Connection.connection_established.is_connected(_on_connected):
 		Connection.connection_established.disconnect(_on_connected)
@@ -208,6 +211,8 @@ func _exit_tree() -> void:
 		_pause_menu.save_requested.disconnect(_on_pause_save_requested)
 
 
+## 配置正交相机：size 控制可视范围，near/far 紧贴地形 slab（阴影范围 = 相机视锥），
+## 重置默认距离与焦点后应用变换。
 func _configure_camera() -> void:
 	if _camera == null:
 		push_error("MainWorld3D: Camera3D not found!")
@@ -219,6 +224,7 @@ func _configure_camera() -> void:
 	_camera_focus = _player_pos
 	_apply_camera_transform()
 
+## 配置 WorldEnvironment（纯色背景 + 环境光 + 线性色调映射）与太阳阴影参数。
 func _configure_environment() -> void:
 	if _world_env == null:
 		push_error("MainWorld3D: WorldEnvironment not found!")
@@ -257,6 +263,8 @@ func _ensure_player() -> void:
 	_create_player()
 
 
+## 创建玩家占位节点（红色立方体 + 身体 MeshInstance3D）：初始隐藏，
+## 位置取 _player_pos（惰性创建前可能已有权威位置，不复位）。
 func _create_player() -> void:
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(0.8, 1.8, 0.8)
@@ -300,6 +308,13 @@ func _create_loading_label() -> void:
 	_loading_label = label
 
 
+## 查询世界坐标处的地面海拔（来自已缓存 chunk 的高程数组）。
+##
+## Args:
+##     pos: 世界坐标（取 X/Z 定位 chunk 内 tile）。
+##
+## Returns:
+##     该 tile 海拔；chunk 未缓存、数据不全或 tile 越界时返回 NAN。
 func _get_ground_elevation_at(pos: Vector3) -> float:
 	var chunk_pos := _world_to_chunk(pos.x, pos.z)
 	var key := chunk_pos
@@ -316,6 +331,7 @@ func _get_ground_elevation_at(pos: Vector3) -> float:
 	return float(elev[_tile_index(tx, tz)])
 
 
+## 记录后端权威出生 chunk（仅首次生效）：玩家与相机焦点移到出生点并应用变换，更新加载提示。
 func _set_birth_chunk(cx: int, cy: int) -> void:
 	if _has_birth:
 		return
@@ -441,6 +457,10 @@ func _reset_world_state() -> void:
 
 # ── 调试数据 getter（供 DebugSection 自行拉取）────────────
 
+## 调试 getter：相机 XZ 位置与距离显示文本（供 DebugSection 自行拉取）。
+##
+## Returns:
+##     含 position/camera_display 的字典；相机缺失时返回空字典。
 func get_debug_camera_info() -> Dictionary:
 	if _camera == null:
 		return {}
@@ -450,6 +470,10 @@ func get_debug_camera_info() -> Dictionary:
 	}
 
 
+## 调试 getter：玩家世界坐标、所在 chunk 与地面海拔。
+##
+## Returns:
+##     含 world_pos/chunk/elevation 的字典。
 func get_debug_player_info() -> Dictionary:
 	return {
 		"world_pos": Vector2(_player_pos.x, _player_pos.z),
@@ -458,6 +482,13 @@ func get_debug_player_info() -> Dictionary:
 	}
 
 
+## 调试 getter：查询世界坐标所在 tile 的高程与坡度。
+##
+## Args:
+##     world_pos: 世界坐标（Vector2 的 y 即世界 Z 轴）。
+##
+## Returns:
+##     含 elevation/slope 的字典（字段缺失时省略）；chunk 未缓存、高程数据不全或坐标越界时返回空字典。
 func get_debug_terrain_at(world_pos: Vector2) -> Dictionary:
 	var key := _world_to_chunk(world_pos.x, world_pos.y)
 	var chunk = _chunks.get(key)
@@ -480,6 +511,13 @@ func get_debug_terrain_at(world_pos: Vector2) -> Dictionary:
 	return result
 
 
+## 调试 getter：查询世界坐标所在 chunk 的气候字段（温度/湿度/气候带）。
+##
+## Args:
+##     world_pos: 世界坐标（Vector2 的 y 即世界 Z 轴）。
+##
+## Returns:
+##     含 temperature/humidity/climate_zone 的字典（字段缺失或 chunk 未缓存时省略）。
 func get_debug_climate_at(world_pos: Vector2) -> Dictionary:
 	var key := _world_to_chunk(world_pos.x, world_pos.y)
 	var chunk = _chunks.get(key)
@@ -495,6 +533,10 @@ func get_debug_climate_at(world_pos: Vector2) -> Dictionary:
 	return result
 
 
+## 调试 getter：已加载/已缓存（未渲染）/请求中的 chunk 数量统计。
+##
+## Returns:
+##     含 loaded/cached/pending 计数的字典。
 func get_debug_chunk_stats() -> Dictionary:
 	var cached: int = 0
 	for key in _chunks:
@@ -507,6 +549,10 @@ func get_debug_chunk_stats() -> Dictionary:
 	}
 
 
+## 调试 getter：流式加载与连接处理耗时（微秒）。
+##
+## Returns:
+##     含 stream/conn 计时的字典。
 func get_debug_timing() -> Dictionary:
 	return {
 		"stream": _stream_us,
@@ -514,6 +560,7 @@ func get_debug_timing() -> Dictionary:
 	}
 
 
+## 按当前 tile 高程修正玩家 Y 坐标（+1.0 立于表面，负数钳制为 0）；无高程数据时不移动。
 func _update_player_ground() -> void:
 	var ground_y := _get_ground_elevation_at(_player_pos)
 	if not is_nan(ground_y):
@@ -522,6 +569,13 @@ func _update_player_ground() -> void:
 		_player.position = _player_pos
 
 
+## 构建并挂载单个地形 chunk 网格（已加载或节点存在时跳过；材质未就绪则放弃本次）。
+## 网格无 surface 时仅标记加载完成；首块覆盖玩家的 chunk 记录地面高度；结束后触发就绪检查。
+##
+## Args:
+##     cx/cy: chunk 坐标（决定节点名与挂载偏移）。
+##     terrain: chunk 的 terrain_id 数组（长度 CHUNK_SIZE²）。
+##     elevation: chunk 的高程数组（长度 CHUNK_SIZE²）。
 func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) -> void:
 	const CS: int = CHUNK_SIZE
 	var key := Vector2i(cx, cy)
@@ -561,6 +615,11 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 	_check_terrain_ready()
 
 
+## 按 TERRAIN_TEXTURES 表懒加载地形材质：最近邻过滤 + 顶点色作 albedo（支持 AO），
+## 失败纹理报错跳过；首次调用后缓存复用。
+##
+## Returns:
+##     item_id → Material 材质表。
 func _lazy_load_materials() -> Dictionary:
 	if _terrain_materials.is_empty():
 		for item_id in TERRAIN_TEXTURES:
@@ -580,6 +639,8 @@ func _lazy_load_materials() -> Dictionary:
 	return _terrain_materials
 
 
+## 每帧主循环：相机缩放 → 连接/终端/世界就绪三道闸门（未就绪仅刷调试覆盖层）→
+## 事件日志更新、就绪超时兜底、流式加载、移动输入、天气轮询（1s）与光照更新。
 func _process(delta: float) -> void:
 	_process_camera(delta)
 
@@ -621,6 +682,7 @@ func _process(delta: float) -> void:
 		_debug_overlay.process_sections(delta)
 
 
+## 处理滚轮缩放输入：相机距离按步长增减并钳制在最小/最大范围内。
 func _process_camera(_delta: float) -> void:
 	if _camera == null:
 		return
@@ -639,6 +701,8 @@ func _process_camera(_delta: float) -> void:
 		_apply_camera_transform()
 
 
+## 按焦点与距离摆位相机（沿 (1,1,1) 方向俯视焦点）并换算正交投影参数：
+## size = 距离×tan(FOV/2)，near/far 紧贴可视地形 slab；同步太阳位置与阴影覆盖距离。
 func _apply_camera_transform() -> void:
 	var dir := Vector3(1, 1, 1).normalized()
 	_camera.position = _camera_focus + dir * _camera_distance
@@ -659,6 +723,8 @@ func _apply_camera_transform() -> void:
 		_sun_light.position = _camera_focus + Vector3(0, 200, 0)
 
 
+## 处理移动与交互输入：相机朝向投影到水平面得前进/右向，位移玩家（Shift 加速），
+## 贴地并同步相机；移动节流到 MOVE_REPORT_INTERVAL 后上报权威位置；交互键发送 player_interact。
 func _process_input(delta: float) -> void:
 	var move_input := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	if move_input != Vector2.ZERO:
@@ -708,6 +774,7 @@ func _on_pause_save_requested() -> void:
 	Connection.send(SaveApi.snapshot_request(_world_id))
 
 
+## 终端命令回调：原样打包为 terminal_cmd 请求转发后端执行。
 func _on_terminal_command(command: String) -> void:
 	Connection.send({
 		"type": "request",
@@ -716,6 +783,7 @@ func _on_terminal_command(command: String) -> void:
 	})
 
 
+## 上报玩家当前位置为 player_move 请求（世界未就绪时跳过；后端裁决并可能钳制越界）。
 func _send_player_move() -> void:
 	if not _has_birth:
 		return
@@ -728,12 +796,14 @@ func _send_player_move() -> void:
 
 # ── 调试覆盖层 ──────────────────────────────────────────────
 
+## 注册调试覆盖层默认分区（传 self 供各分区自行拉取数据）。
 func _setup_debug_overlay() -> void:
 	_debug_overlay.setup_default_sections(self)
 
 
 # ── Connection 信号处理 ───────────────────────────────────
 
+## 连接建立回调：打印连接信息，主动拉取实体快照与玩家状态。
 func _on_connected(host: String, port: int) -> void:
 	print("MainWorld3D: connected to %s:%d" % [host, port])
 	Connection.send({
@@ -748,6 +818,7 @@ func _on_connected(host: String, port: int) -> void:
 	})
 
 
+## 连接断开回调：清空在途 chunk 请求状态（重连后 _stream_chunks 自动重新入队，已加载地形保留）。
 func _on_disconnected() -> void:
 	print("MainWorld3D: disconnected")
 	# 服务器与世界观解耦后，读档重建不再断连——此处仅处理真实断线：
@@ -759,6 +830,7 @@ func _on_disconnected() -> void:
 	_save_file = ""
 
 
+## 消息分发：按 type（event/response/error）路由到对应处理函数，未知类型告警。
 func _on_message(message: Dictionary) -> void:
 	var msg_type: String = message.get("type", "")
 
@@ -773,6 +845,9 @@ func _on_message(message: Dictionary) -> void:
 			push_warning("MainWorld3D: unknown message type: %s" % msg_type)
 
 
+## 事件分发：世界重建四类事件（reloading/failed/progress/initialized）直接处理不记日志；
+## minute_change 更新时间（落入通用广播）、player_teleported 同步位置并记日志（提前返回）；
+## 其余事件（含 minute_change）广播给调试覆盖层与事件日志。
 func _handle_event(message: Dictionary) -> void:
 	var event_type: String = message.get("event_type", "")
 	var payload: Dictionary = message.get("payload", {})
@@ -819,6 +894,9 @@ func _handle_event(message: Dictionary) -> void:
 		_event_log.on_world_event(event_type, payload)
 
 
+## 响应分发：按 request_type 处理 get_chunks（缓存/建网格/卸载越界）、get_weather（日出日落等）、
+## player_state/player_move（权威位置吸附）、entity_snapshot（本地玩家实体）、
+## terminal_cmd/save_snapshot/save_list；响应同时广播给调试分区。
 func _handle_response(message: Dictionary) -> void:
 	var request_type: String = message.get("request_type", "")
 	var payload: Dictionary = message.get("payload", {})
@@ -937,6 +1015,8 @@ func _apply_authoritative_position(payload: Dictionary) -> void:
 
 ## ── 流式 chunk 管理 ──────────────────────────────────────
 
+## 流式加载主循环：先卸载远离玩家的 chunk，再批量请求流半径内缺失 chunk 的字段数据，
+## 已缓存未加载的入 tile 队列，按 MAX_PENDING 限流逐块请求完整数据，末段记录耗时。
 func _stream_chunks() -> void:
 	if Connection.status != Connection.Status.CONNECTED:
 		return
@@ -979,6 +1059,10 @@ func _stream_chunks() -> void:
 	_stream_us = Time.get_ticks_usec() - t0
 
 
+## 计算流式加载半径（chunk 格数）：可视半径 ×1.5 向上取整，下限为 STREAM_MARGIN。
+##
+## Returns:
+##     以玩家 chunk 为中心的流式半径。
 func _stream_radius() -> int:
 	var visible_radius: float = _compute_visible_radius() * 1.5
 	var radius: int = ceili(visible_radius / float(CHUNK_SIZE))
@@ -1008,6 +1092,11 @@ func _compute_shadow_coverage(sun_altitude: float) -> float:
 	return coverage
 
 
+## 发送 get_chunks 请求（批量字段版或单块完整版，恒开 force_fields）。
+##
+## Args:
+##     coords: 请求的 chunk 坐标数组 [[cx, cy], ...]。
+##     include_tiles: true = 含地形/高程完整数据，false = 仅字段。
 func _send_chunk_request(coords: Array[Array], include_tiles: bool) -> void:
 	Connection.send({
 		"type": "request",
@@ -1020,6 +1109,8 @@ func _send_chunk_request(coords: Array[Array], include_tiles: bool) -> void:
 	})
 
 
+## 卸载远离玩家的已加载 chunk（距中心超出流半径 + UNLOAD_MARGIN）：
+## 释放地形节点并清空 chunk 缓存、已加载与在途请求标记（_tile_queue 保留）。
 func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> void:
 	var unload_r := stream_r + UNLOAD_MARGIN
 	for key in _loaded.keys():
@@ -1036,6 +1127,7 @@ func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> vo
 			print("MainWorld3D: unloaded chunk (%d,%d)" % [cx, cy])
 
 
+## 服务端错误处理：打印错误信息；快照请求失败时清空回查文件并在暂停菜单显示失败原因。
 func _handle_error(message: Dictionary) -> void:
 	var error_msg: String = message.get("error", "unknown error")
 	push_error("MainWorld3D: server error: %s" % error_msg)
@@ -1044,6 +1136,7 @@ func _handle_error(message: Dictionary) -> void:
 		_pause_menu.show_status("存档失败：%s" % error_msg, true)
 
 
+## 请求玩家所在 chunk 的天气数据（连接未建立时跳过）。
 func _query_weather() -> void:
 	if Connection.status != Connection.Status.CONNECTED:
 		return
@@ -1055,6 +1148,8 @@ func _query_weather() -> void:
 	})
 
 
+## 按游戏时间与天气调制光照：太阳高度角驱动阴影开关/透明度/覆盖距离/pancake/偏置，
+## 平滑 ramp 渐变环境光与背景色，直射光能量 = 后端日照 × 高度角渐入。
 func _update_lighting() -> void:
 	if _sun_light == null or _world_env == null:
 		return

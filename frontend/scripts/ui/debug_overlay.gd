@@ -48,6 +48,7 @@ var _refresh_accum: float = 0.0
 
 # ── 生命周期 ────────────────────────────────────────────────
 
+## 初始化覆盖层：锚点铺满全屏、忽略鼠标事件、加载等宽字体并默认隐藏。
 func _ready() -> void:
 	anchor_left = 0.0
 	anchor_top = 0.0
@@ -58,6 +59,10 @@ func _ready() -> void:
 	hide()
 
 
+## 捕获 F3 键切换覆盖层可见性，并消费该输入事件避免继续传播。
+##
+## Args:
+##     event: 输入事件，仅响应按键按下且非重复回显的 F3。
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_F3:
@@ -65,6 +70,10 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 
+## 按 REFRESH_INTERVAL 节流重绘：仅覆盖层可见时累计帧间隔，达到刷新间隔才请求重绘。
+##
+## Args:
+##     delta: 帧间隔（秒）。
 func _process(delta: float) -> void:
 	if not _shown:
 		return
@@ -74,6 +83,8 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 
+## 绘制调试面板：先测量各分区标签与文本行宽度计算背景尺寸，
+## 再绘制半透明背景、分区标签（绿色）与文本行（白色）。
 func _draw() -> void:
 	if not _shown or _font == null:
 		return
@@ -120,14 +131,29 @@ func _draw() -> void:
 
 # ── 公共接口 ────────────────────────────────────────────────
 
+## 注册调试分区，加入统一渲染列表。
+##
+## Args:
+##     section: 要注册的 DebugSection 实例。
 func add_section(section: DebugSection) -> void:
 	_sections.append(section)
 
 
+## 按标签从渲染列表移除分区。
+##
+## Args:
+##     label: 要移除的分区标签。
 func remove_section(label: String) -> void:
 	_sections = _sections.filter(func(s: DebugSection): return s.label != label)
 
 
+## 按标签查找已注册分区。
+##
+## Args:
+##     label: 分区标签。
+##
+## Returns:
+##     匹配的分区实例；未找到返回 null。
 func get_section(label: String) -> DebugSection:
 	for s: DebugSection in _sections:
 		if s.label == label:
@@ -153,29 +179,48 @@ func setup_default_sections(world: Node) -> void:
 	setup_sections(world)
 
 
+## 向所有分区注入世界脚本引用（调用各分区的 setup）。
+##
+## Args:
+##     world: 世界脚本节点（MainWorld 或 MainWorld3D）。
 func setup_sections(world: Node) -> void:
 	for section: DebugSection in _sections:
 		section.setup(world)
 
 
+## 统一调度所有启用分区的每帧处理（覆盖层可见时由世界脚本每帧调用）。
+##
+## Args:
+##     delta: 帧间隔（秒）。
 func process_sections(delta: float) -> void:
 	for section: DebugSection in _sections:
 		if section.enabled:
 			section.process_section(delta)
 
 
+## 将后端事件广播给所有启用分区（调用各分区 on_world_event）。
+##
+## Args:
+##     event_type: 事件类型（如 "minute_change"）。
+##     payload: 完整事件载荷（含 payload.data）。
 func broadcast_event(event_type: String, payload: Dictionary) -> void:
 	for section: DebugSection in _sections:
 		if section.enabled:
 			section.on_world_event(event_type, payload)
 
 
+## 将后端响应广播给所有启用分区（调用各分区 on_world_response）。
+##
+## Args:
+##     request_type: 请求类型（如 "get_weather"）。
+##     payload: 响应载荷。
 func broadcast_response(request_type: String, payload: Dictionary) -> void:
 	for section: DebugSection in _sections:
 		if section.enabled:
 			section.on_world_response(request_type, payload)
 
 
+## 切换覆盖层显示状态，同步 show/hide 并发出 toggled 信号供 EventLog 等面板联动。
 func toggle() -> void:
 	_shown = not _shown
 	if _shown:
@@ -185,5 +230,9 @@ func toggle() -> void:
 	toggled.emit(_shown)
 
 
+## 覆盖层当前是否可见。
+##
+## Returns:
+##     true 表示正在显示。
 func is_shown() -> bool:
 	return _shown

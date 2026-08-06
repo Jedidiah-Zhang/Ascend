@@ -38,6 +38,10 @@ static func _sort_key(snap: Dictionary) -> Dictionary:
 	}
 
 
+## 排序比较器：按 seq → saved_at → time（游戏时间，_sort_key 产出）逐级比较（sort_custom 用）。
+##
+## Returns:
+##     a 是否应排在 b 之前。
 static func _sort_cmp(a: Dictionary, b: Dictionary) -> bool:
 	if a["seq"] != b["seq"]:
 		return a["seq"] < b["seq"]

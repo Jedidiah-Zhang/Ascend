@@ -26,14 +26,24 @@ var _prev_real_msec: int = 0
 var _world: Node = null
 
 
+## 构造函数：设置分区标签为"性能"。
 func _init() -> void:
 	label = "性能"
 
 
+## 缓存世界脚本引用，供 process_section 拉取各环节耗时。
+##
+## Args:
+##     world: 世界脚本节点（MainWorld 或 MainWorld3D）。
 func setup(world: Node) -> void:
 	_world = world
 
 
+## 每帧更新 MSPT（EMA 平滑），并从世界脚本 get_debug_timing 拉取
+## 网络流式/连接耗时（微秒），用于定位性能瓶颈。
+##
+## Args:
+##     _delta: 帧间隔（秒），本分区不使用。
 func process_section(_delta: float) -> void:
 	update_msp_t()
 	if _world and _world.has_method("get_debug_timing"):
@@ -42,6 +52,12 @@ func process_section(_delta: float) -> void:
 		_conn_us = timing.get("conn", 0)
 
 
+## 响应 minute_change 事件：用游戏时间增量与两次事件间的真实流逝时间
+## 推算实测 TPS；首帧（无上一状态）或游戏时间回退时仅记录不计算。
+##
+## Args:
+##     event_type: 事件类型，仅处理 "minute_change"。
+##     payload: 事件载荷，读取 data.game_time 作为游戏时间戳。
 func on_world_event(event_type: String, payload: Dictionary) -> void:
 	if event_type != "minute_change":
 		return
@@ -57,11 +73,17 @@ func on_world_event(event_type: String, payload: Dictionary) -> void:
 	_prev_real_msec = now_msec
 
 
+## 读取引擎 TIME_PROCESS 监视器（帧耗时，秒）换算为毫秒，
+## 以指数移动平均（alpha=0.3，数十帧内收敛）平滑帧间抖动。
 func update_msp_t() -> void:
 	var raw_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
 	_mspt_ema = _MS_ALPHA * raw_ms + (1.0 - _MS_ALPHA) * _mspt_ema
 
 
+## 生成性能分区文本行：FPS/TPS、MSPT/网络连接耗时与流式耗时。
+##
+## Returns:
+##     三行 PackedStringArray（FPS/TPS 行、MSPT/网络行、流式行）。
 func get_lines() -> PackedStringArray:
 	var fps := Engine.get_frames_per_second()
 	return PackedStringArray([

@@ -14,14 +14,24 @@ var position: Vector2 = Vector2.ZERO
 var _camera_display: String = ""
 
 
+## 构造函数：设置分区标签为"相机"。
 func _init() -> void:
 	label = "相机"
 
 
+## 缓存世界脚本引用，供 process_section 拉取相机数据。
+##
+## Args:
+##     world: 世界脚本节点（MainWorld 或 MainWorld3D）。
 func setup(world: Node) -> void:
 	_world = world
 
 
+## 每帧从世界脚本 get_debug_camera_info 拉取相机世界位置与视野描述，
+## 结果为空字典时保持上次数据不变。
+##
+## Args:
+##     _delta: 帧间隔（秒），本分区不使用。
 func process_section(_delta: float) -> void:
 	if _world == null or not _world.has_method("get_debug_camera_info"):
 		return
@@ -32,6 +42,10 @@ func process_section(_delta: float) -> void:
 	_camera_display = info.get("camera_display", "")
 
 
+## 生成相机分区文本行：世界坐标与视野参数描述（未获取到时显示"—"）。
+##
+## Returns:
+##     两行 PackedStringArray（位置行 + 视野行）。
 func get_lines() -> PackedStringArray:
 	return PackedStringArray([
 		"位置: (%d, %d)" % [int(position.x), int(position.y)],

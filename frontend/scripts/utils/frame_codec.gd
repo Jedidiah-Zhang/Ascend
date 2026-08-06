@@ -14,11 +14,19 @@ extends RefCounted
 var seq: int = 0
 
 
+## 自增消息序号：每次调用 +1 并返回，保证同连接内消息序号单调递增。
 func next_seq() -> int:
 	seq += 1
 	return seq
 
 
+## 编码消息帧：JSON 序列化后前置 4 字节大端长度前缀（与后端 struct.pack(">I") 一致）。
+##
+## Args:
+##     message: 待发送的消息字典。
+##
+## Returns:
+##     完整协议帧（长度前缀 + JSON 体）；编码失败时返回空 PackedByteArray。
 func frame_encode(message: Dictionary) -> PackedByteArray:
 	var encoded: PackedByteArray = JsonCodec.encode(message)
 	if encoded.is_empty():
@@ -34,6 +42,15 @@ func frame_encode(message: Dictionary) -> PackedByteArray:
 	return framed
 
 
+## 解码缓冲区帧序列：循环切出完整帧体，长度非法（≤0 或超上限）时丢弃该缓冲，
+## 尾部不足一帧的字节保留在 remaining 中，待与下次收到的数据拼接后继续解析。
+##
+## Args:
+##     buffer: 收到的原始字节（可能含多帧 + 半帧尾部）。
+##     max_message_size: 单帧体长度上限（默认 16 MiB），防超大非法帧。
+##
+## Returns:
+##     {bodies: 完整帧体数组, remaining: 未凑齐一帧的剩余字节}。
 func frame_decode(buffer: PackedByteArray, max_message_size: int = 16 * 1024 * 1024) -> Dictionary:
 	var bodies: Array[PackedByteArray] = []
 	var remaining: PackedByteArray = buffer

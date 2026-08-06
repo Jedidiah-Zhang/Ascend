@@ -38,6 +38,8 @@ var _player_chunk: Vector2i = Vector2i(0, 0)
 
 # ── 生命周期 ────────────────────────────────────────────────
 
+## 初始化事件日志面板：全屏锚点、忽略鼠标事件、等宽字体，初始隐藏
+## 并订阅 DebugOverlay 的显隐切换信号。
 func _ready() -> void:
 	anchor_left = 0.0
 	anchor_top = 0.0
@@ -51,6 +53,8 @@ func _ready() -> void:
 		overlay.toggled.connect(_on_debug_toggled)
 
 
+## 节流刷新：有新事件后累计计时，达到 REFRESH_INTERVAL 才触发一次
+## 重绘（避免高频事件导致每帧重绘）。
 func _process(delta: float) -> void:
 	if not _pending_redraw:
 		return
@@ -61,6 +65,7 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 
+## 绘制右侧事件日志面板：半透明背景条、标题与最近事件行。
 func _draw() -> void:
 	if _font == null or _lines.is_empty():
 		return
@@ -84,6 +89,10 @@ func _draw() -> void:
 
 # ── 公共接口 ────────────────────────────────────────────────
 
+## 将一行日志插入列表头部，截断保留最近 20 条并标记待重绘。
+##
+## Args:
+##     line: 日志文本行。
 func push_event(line: String) -> void:
 	_lines.insert(0, line)
 	if _lines.size() > 20:
@@ -91,10 +100,20 @@ func push_event(line: String) -> void:
 	_pending_redraw = true
 
 
+## 记录玩家当前区块坐标（用于视野过滤远处事件）。
+##
+## Args:
+##     chunk: 玩家所在区块坐标。
 func set_player_chunk(chunk: Vector2i) -> void:
 	_player_chunk = chunk
 
 
+## 处理世界事件：minute_change 在换日时插入日期分隔行；
+## 各类天气事件转交 _push_weather_event 格式化并按视野过滤。
+##
+## Args:
+##     event_type: 事件类型（minute_change / temperature_change 等）。
+##     payload: 事件载荷（含 data 与可选 location 字段）。
 func on_world_event(event_type: String, payload: Dictionary) -> void:
 	var data: Dictionary = payload.get("data", {})
 	var ts := SaveInfoFormatter.hhmm_string(
@@ -115,6 +134,7 @@ func on_world_event(event_type: String, payload: Dictionary) -> void:
 
 # ── 内部实现 ────────────────────────────────────────────────
 
+## DebugOverlay 显隐切换回调：跟随其显示/隐藏本面板。
 func _on_debug_toggled(shown: bool) -> void:
 	if shown:
 		show()
@@ -122,6 +142,14 @@ func _on_debug_toggled(shown: bool) -> void:
 		hide()
 
 
+## 格式化天气事件并推送：事件区块超出玩家视野半径时忽略，
+## 按类型生成中文描述（温度 / 湿度 / 风速 / 日照 / 降雨起止）。
+##
+## Args:
+##     event_type: 天气事件类型。
+##     payload: 原始载荷（取 location 区块信息）。
+##     data: 载荷的 data 字段（取具体数值）。
+##     ts: 格式化时间戳（HH:MM）。
 func _push_weather_event(event_type: String, payload: Dictionary, data: Dictionary, ts: String) -> void:
 	var loc: Array = payload.get("location", [])
 	if not _is_within_view(loc):
@@ -148,6 +176,13 @@ func _push_weather_event(event_type: String, payload: Dictionary, data: Dictiona
 	push_event("[%s] [区块 %d,%d] %s" % [ts, cx, cy, body])
 
 
+## 判断事件区块是否在玩家视野半径 VIEW_RADIUS 内。
+##
+## Args:
+##     location_array: 事件 location 数组（[cx, cy]）。
+##
+## Returns:
+##     true = 在视野内或缺少位置信息（放行显示）。
 func _is_within_view(location_array: Array) -> bool:
 	if location_array.size() < 2:
 		return true

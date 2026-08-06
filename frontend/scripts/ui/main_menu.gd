@@ -54,6 +54,8 @@ var _status_text: String = "正在启动后端..."
 var _status_color: Color = STATUS_WAITING_COLOR
 
 
+## 初始化主菜单：全屏锚点、等宽字体，并订阅 Connection 的连接状态
+## 信号（连接成功 / 断开 / 后端失败）。
 func _ready() -> void:
 	anchor_left = 0.0
 	anchor_top = 0.0
@@ -69,6 +71,7 @@ func _ready() -> void:
 		Connection.backend_failed.connect(_on_backend_failed)
 
 
+## 离开场景树时断开 Connection 信号订阅，避免悬挂引用。
 func _exit_tree() -> void:
 	if Connection.connection_established.is_connected(_on_connected):
 		Connection.connection_established.disconnect(_on_connected)
@@ -78,12 +81,15 @@ func _exit_tree() -> void:
 		Connection.backend_failed.disconnect(_on_backend_failed)
 
 
+## 每帧触发重绘（悬停高亮与连接状态变化需持续刷新显示）。
 func _process(_delta: float) -> void:
 	queue_redraw()
 
 
 # ── 绘制 ──────────────────────────────────────────────────
 
+## 绘制主菜单：背景、标题与副标题、按钮列表（禁用态置灰、悬停高亮、
+## 未实现占位说明）、底部后端连接状态与版本号。
 func _draw() -> void:
 	if _font == null:
 		return
@@ -134,6 +140,10 @@ func _draw() -> void:
 
 # ── 输入 ──────────────────────────────────────────────────
 
+## 处理输入：鼠标移动更新悬停按钮，左键点击命中时执行对应动作。
+##
+## Args:
+##     event: 待处理的输入事件。
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var index: int = _hit_button(event.position)
@@ -151,6 +161,13 @@ func _input(event: InputEvent) -> void:
 				vp.set_input_as_handled()
 
 
+## 命中检测：返回包含 pos 的按钮索引。
+##
+## Args:
+##     pos: 鼠标位置。
+##
+## Returns:
+##     命中的按钮索引；未命中返回 -1。
 func _hit_button(pos: Vector2) -> int:
 	for i in _button_rects.size():
 		if _button_rects[i].has_point(pos):
@@ -158,6 +175,11 @@ func _hit_button(pos: Vector2) -> int:
 	return -1
 
 
+## 执行按钮动作：未启用按钮显示占位提示；「开始游戏」在后端连接失败
+## 时重试连接，否则切换至存档选择页。
+##
+## Args:
+##     index: 按钮索引（对应 _buttons 数组）。
 func _activate(index: int) -> void:
 	if index >= _buttons.size():
 		return
@@ -180,6 +202,8 @@ func _activate(index: int) -> void:
 
 # ── 连接状态 ──────────────────────────────────────────────
 
+## 根据 Connection 状态刷新底部状态文本与颜色
+## （已连接 / 连接中 / 断开重连 / 连接失败）。
 func _update_status() -> void:
 	match Connection.status:
 		Connection.Status.CONNECTED:
@@ -196,14 +220,17 @@ func _update_status() -> void:
 			_status_color = STATUS_ERROR_COLOR
 
 
+## 后端连接成功回调：刷新状态文本。
 func _on_connected(_host: String, _port: int) -> void:
 	_update_status()
 
 
+## 后端连接断开回调：刷新状态文本。
 func _on_disconnected() -> void:
 	_update_status()
 
 
+## 后端启动失败回调：显示失败原因并置错误色。
 func _on_backend_failed(reason: String) -> void:
 	_status_text = "后端启动失败：%s" % reason
 	_status_color = STATUS_ERROR_COLOR

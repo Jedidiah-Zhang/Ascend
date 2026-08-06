@@ -81,6 +81,8 @@ var _status_hide_timer: float = 0.0
 
 # ── 生命周期 ──────────────────────────────────────────────
 
+## 初始化暂停菜单：设置全屏锚点与鼠标事件拦截、ALWAYS 进程模式
+## （游戏暂停期间仍能响应 ESC 输入）与等宽字体，初始隐藏。
 func _ready() -> void:
 	anchor_left = 0.0
 	anchor_top = 0.0
@@ -164,6 +166,11 @@ func _process(delta: float) -> void:
 
 # ── 输入 ──────────────────────────────────────────────────
 
+## 处理输入：ESC 切换暂停菜单（调试终端打开时放行给终端），
+## 鼠标移动更新悬停高亮，左键点击命中按钮时执行对应动作。
+##
+## Args:
+##     event: 待处理的输入事件。
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE:
@@ -195,6 +202,8 @@ func _input(event: InputEvent) -> void:
 
 # ── 绘制 ──────────────────────────────────────────────────
 
+## 绘制暂停菜单：半透明遮罩、居中面板（标题 + 五个按钮 +
+## 设置占位提示 + 底部状态文本），并更新按钮命中矩形表。
 func _draw() -> void:
 	if _font == null:
 		return
@@ -233,6 +242,13 @@ func _draw() -> void:
 			NOTE_FONT_SIZE, _status_color)
 
 
+## 绘制单个按钮：按 danger 与悬停状态选取填充色，描边后居中绘制标签。
+##
+## Args:
+##     rect: 按钮矩形区域。
+##     label: 按钮显示文本。
+##     hovered: 是否处于悬停状态（决定高亮色）。
+##     danger: 是否为危险操作按钮（红色系配色）。
 func _draw_button(rect: Rect2, label: String, hovered: bool, danger: bool) -> void:
 	var fill: Color
 	if danger:
@@ -248,6 +264,13 @@ func _draw_button(rect: Rect2, label: String, hovered: bool, danger: bool) -> vo
 		label, HORIZONTAL_ALIGNMENT_LEFT, -1, BUTTON_FONT_SIZE, BUTTON_TEXT_COLOR)
 
 
+## 命中检测：返回包含 pos 的按钮 key。
+##
+## Args:
+##     pos: 鼠标位置（视口坐标）。
+##
+## Returns:
+##     命中的按钮 key；未命中返回空串。
 func _hit_button(pos: Vector2) -> String:
 	for key in _button_rects:
 		if _button_rects[key].has_point(pos):
@@ -257,6 +280,11 @@ func _hit_button(pos: Vector2) -> String:
 
 # ── 动作 ──────────────────────────────────────────────────
 
+## 执行按钮动作：继续游戏 / 发起存档 / 设置占位提示 / 返回主菜单
+## / 退出游戏；切换场景或退出前先恢复游戏（解除暂停）。
+##
+## Args:
+##     key: 按钮 key（见 BUTTONS 定义）。
 func _activate(key: String) -> void:
 	match key:
 		"resume":
@@ -277,6 +305,8 @@ func _activate(key: String) -> void:
 			get_tree().quit()
 
 
+## 发起手动存档：置 saving 状态并显示"正在保存..."提示，
+## 随后发出 save_requested 信号（结果由 main_world 回填）。
 func _start_save() -> void:
 	if _saving:
 		return

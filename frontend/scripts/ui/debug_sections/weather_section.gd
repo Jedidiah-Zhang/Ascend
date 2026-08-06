@@ -36,10 +36,17 @@ var light_tier: int = -1
 var _has_intensity: bool = false
 
 
+## 构造函数：设置分区标签为"天气"。
 func _init() -> void:
 	label = "天气"
 
 
+## 响应 get_weather 响应：取 weathers 数组首个条目交给 _apply_weather_data
+## 逐字段刷新（数据由 main_world 以 1s 间隔轮询，本分区不再自行拉取）。
+##
+## Args:
+##     request_type: 请求类型，仅处理 "get_weather"。
+##     payload: 响应载荷，weathers 为天气条目数组。
 func on_world_response(request_type: String, payload: Dictionary) -> void:
 	if request_type != "get_weather":
 		return
@@ -48,6 +55,12 @@ func on_world_response(request_type: String, payload: Dictionary) -> void:
 		_apply_weather_data(weathers[0])
 
 
+## 应用单条天气数据：按字段存在性逐项刷新降水描述、温度/湿度/风速
+## （各带分级 L 值）、日照时长、日出日落时间与光照强度，
+## 仅更新响应中已提供的字段，并相应置位对应 _has_* 标记。
+##
+## Args:
+##     data: 单个 weathers 条目字典（后端 get_weather 返回格式）。
 func _apply_weather_data(data: Dictionary) -> void:
 	if data.has("weather"):
 		current_weather = str(data["weather"])
@@ -77,6 +90,12 @@ func _apply_weather_data(data: Dictionary) -> void:
 		_has_intensity = true
 
 
+## 生成天气分区文本行：第一行恒为降水描述；其后按已收到的字段
+## 拼装气象（温度/湿度/风速）、日照时长与光照/日出日落行，
+## 日出日落时间用 SaveInfoFormatter 格式化为 HH:MM。
+##
+## Returns:
+##     按可用字段数量生成的 PackedStringArray。
 func get_lines() -> PackedStringArray:
 	var lines: PackedStringArray = []
 	lines.append("天气: %s" % current_weather)

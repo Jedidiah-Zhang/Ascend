@@ -160,6 +160,7 @@ var _tl_drag_last: Vector2 = Vector2.ZERO
 
 # ── 生命周期 ──────────────────────────────────────────────
 
+## 初始化界面：全屏锚点、等宽字体、名称输入框（隐藏），连接后端信号并请求存档列表。
 func _ready() -> void:
 	anchor_left = 0.0
 	anchor_top = 0.0
@@ -180,6 +181,7 @@ func _ready() -> void:
 	_refresh_list()
 
 
+## 节点退出场景树时断开与 Connection 的信号连接，避免悬挂引用。
 func _exit_tree() -> void:
 	if Connection.message_received.is_connected(_on_message):
 		Connection.message_received.disconnect(_on_message)
@@ -217,6 +219,10 @@ func _apply_worlds(payload: Dictionary) -> void:
 	queue_redraw()
 
 
+## 设置底部状态文本并切换为错误样式（红色），触发重绘。
+##
+## Args:
+##     text: 错误信息文本。
 func _set_error(text: String) -> void:
 	_status_text = text
 	_status_color = STATUS_ERR_COLOR
@@ -244,6 +250,7 @@ func _on_backend_failed(reason: String) -> void:
 
 # ── 绘制 ──────────────────────────────────────────────────
 
+## 绘制页面全部内容：背景、标题与返回按钮、存档列表（含展开行的行内时间线）、底部状态与「新建游戏」按钮、名称输入弹层。
 func _draw() -> void:
 	if _font == null:
 		return
@@ -310,6 +317,11 @@ func _row_display_y(index: int, list_top: float) -> float:
 	return y
 
 
+## 绘制单个存档行：名称、信息区（游戏时间/时长/快照数/最后游玩/种子）与右侧操作按钮，并把按钮矩形记入 _action_rects 供命中检测。
+##
+## Args:
+##     index: 世界在 _worlds 中的行索引。
+##     rect: 该行的绘制区域。
 func _draw_row(index: int, rect: Rect2) -> void:
 	var w: Dictionary = _worlds[index]
 	var hovered: bool = _hover_row == index
@@ -346,6 +358,13 @@ func _draw_row(index: int, rect: Rect2) -> void:
 		_action_rects.append({"rect": btn_rect, "row": index, "action": a})
 
 
+## 绘制通用自绘按钮：填充（危险色/悬停高亮）、描边、居中文字。
+##
+## Args:
+##     rect: 按钮区域。
+##     label: 按钮文字。
+##     hovered: 是否悬停高亮。
+##     danger: 是否危险操作（红色系），默认 false。
 func _draw_button(rect: Rect2, label: String, hovered: bool, danger: bool = false) -> void:
 	var fill: Color
 	if danger:
@@ -359,6 +378,7 @@ func _draw_button(rect: Rect2, label: String, hovered: bool, danger: bool = fals
 		label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, TEXT_COLOR)
 
 
+## 绘制重命名输入弹层：半透明遮罩 + 面板 + 提示文字，摆放输入框并自绘确定/取消按钮。
 func _draw_input_dialog() -> void:
 	var view_size: Vector2 = size
 	var dlg_w: float = 420.0
@@ -396,6 +416,10 @@ var _action_rects: Array = []
 var _max_scroll: float = 0.0
 
 
+## 处理全部输入：鼠标移动（拖拽平移/悬停更新）、滚轮（列表滚动或树区缩放/图例滚动）、左键点击分发、Esc 逐层关闭（时间线 → 输入框 → 返回）。
+##
+## Args:
+##     event: 输入事件。
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		if _tl_dragging:
@@ -454,6 +478,10 @@ func _handle_tree_wheel(dir: float, pos: Vector2) -> void:
 		_tl_pan = rel - (rel - _tl_pan) * (_tl_zoom / old_zoom)
 
 
+## 根据光标位置更新悬停状态（_hover_row / _hover_action / _tl_hover_id），按优先级：输入弹层按钮 → 返回/新建 → 时间线节点与图例行 → 行操作按钮 → 行主体。
+##
+## Args:
+##     pos: 光标位置。
 func _update_hover(pos: Vector2) -> void:
 	_hover_row = -1
 	_hover_action = {}
@@ -495,6 +523,10 @@ func _update_hover(pos: Vector2) -> void:
 			return
 
 
+## 左键点击分发：输入弹层按钮、返回/新建、时间线节点（激活/回滚确认）、树区空白开始拖拽、行操作按钮、行主体展开时间线；请求进行中忽略。
+##
+## Args:
+##     pos: 点击位置。
 func _handle_click(pos: Vector2) -> void:
 	if _busy:
 		return
@@ -812,6 +844,10 @@ func _hit_legend_row(pos: Vector2) -> String:
 	return ""
 
 
+## 点击时间线节点：当前时间点（LIVE）直接进入世界；快照首次点击进入待确认态，再次点击同一节点发起回滚（load_request 带 snapshot）。
+##
+## Args:
+##     id: 节点 id（TimelineLayout.LIVE_ID 或快照 file）。
 func _activate_timeline_node(id: String) -> void:
 	var world_id: String = str(_worlds[_expanded_row].get("world_id", ""))
 	if id == TimelineLayout.LIVE_ID:
@@ -831,6 +867,11 @@ func _activate_timeline_node(id: String) -> void:
 	queue_redraw()
 
 
+## 行操作按钮分发：进入（读档）、重命名（打开输入框）、复制（导出请求）、删除（两次点击确认后发请求）。
+##
+## Args:
+##     row: 世界行索引。
+##     action: ACTIONS 按钮索引。
 func _activate_action(row: int, action: int) -> void:
 	if row < 0 or row >= _worlds.size():
 		return
@@ -880,6 +921,11 @@ static func _default_save_name() -> String:
 
 # ── 输入对话框（仅重命名） ────────────────────────────────
 
+## 打开名称输入弹层：预填目标行现有名称，显示输入框并聚焦。
+##
+## Args:
+##     mode: 输入模式（目前仅 "rename"）。
+##     row: 目标行索引。
 func _open_input(mode: String, row: int) -> void:
 	_input_mode = mode
 	_input_row = row
@@ -892,6 +938,7 @@ func _open_input(mode: String, row: int) -> void:
 	queue_redraw()
 
 
+## 关闭名称输入弹层：复位输入模式与目标行，清空并隐藏输入框。
 func _close_input() -> void:
 	_input_mode = ""
 	_input_row = -1
@@ -900,6 +947,10 @@ func _close_input() -> void:
 	queue_redraw()
 
 
+## 名称输入框提交回调：去除首尾空白后发送重命名请求；空名报错，目标行失效时直接关闭弹层。
+##
+## Args:
+##     text: 输入框当前文本。
 func _on_name_submitted(text: String) -> void:
 	var save_name: String = text.strip_edges()
 	if save_name.is_empty():
@@ -917,6 +968,10 @@ func _on_name_submitted(text: String) -> void:
 
 # ── 流程 ──────────────────────────────────────────────────
 
+## 发起读档请求（加载活目录）并置忙状态，成功后由 save_load 响应切场景进入世界。
+##
+## Args:
+##     world_id: 目标世界 id。
 func _load_world(world_id: String) -> void:
 	_busy = true
 	_status_text = "正在进入世界..."
@@ -930,12 +985,17 @@ func _enter_world() -> void:
 	get_tree().change_scene_to_file(MAIN_WORLD_SCENE)
 
 
+## 返回主菜单场景。
 func _go_back() -> void:
 	get_tree().change_scene_to_file(MAIN_MENU_SCENE)
 
 
 # ── 消息处理 ──────────────────────────────────────────────
 
+## Connection 消息回调：response 按请求类型分发（列表应用、创建后进入世界、读档后切场景、改名/复制/删除后刷新），error 显示解析后的错误文本并复位忙状态。
+##
+## Args:
+##     message: 后端消息字典（type / request_type / payload）。
 func _on_message(message: Dictionary) -> void:
 	var msg_type: String = message.get("type", "")
 	var request_type: String = message.get("request_type", "")

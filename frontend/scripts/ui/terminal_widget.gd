@@ -114,6 +114,14 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 
+## 处理键盘输入：终端未打开时按 `/` 打开并拦截事件（打开时 `/` 同样被拦截、不输入）。
+##
+## 打开状态下拦截全部按键：Enter 执行当前输入、ESC 关闭终端、
+## 退格/删除编辑文本、左右方向键移动光标、上下方向键翻历史、
+## PageUp/PageDown 滚动输出、其余可打印字符插入光标处。
+##
+## Args:
+##     event: 待处理的输入事件（仅响应按下且非重复的按键）。
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == Key.KEY_SLASH and not event.shift_pressed and not event.ctrl_pressed and not event.alt_pressed:
