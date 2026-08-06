@@ -178,7 +178,10 @@ func _ready() -> void:
 	Connection.message_received.connect(_on_message)
 	Connection.connection_lost.connect(_on_connection_lost)
 	Connection.backend_failed.connect(_on_backend_failed)
-	_refresh_list()
+	Connection.connection_established.connect(_on_connected)
+	# 握手完成前 send() 会被丢弃：已连接才立即请求，否则等 connection_established
+	if Connection.status == Connection.Status.CONNECTED:
+		_refresh_list()
 
 
 ## 节点退出场景树时断开与 Connection 的信号连接，避免悬挂引用。
@@ -189,6 +192,15 @@ func _exit_tree() -> void:
 		Connection.connection_lost.disconnect(_on_connection_lost)
 	if Connection.backend_failed.is_connected(_on_backend_failed):
 		Connection.backend_failed.disconnect(_on_backend_failed)
+	if Connection.connection_established.is_connected(_on_connected):
+		Connection.connection_established.disconnect(_on_connected)
+
+
+## 连接就绪回调（握手完成）：拉取存档列表。
+## 进入场景时若连接尚在握手窗口，_ready 的首次请求会被 send() 丢弃——
+## 统一由本信号驱动，保证每次连接就绪都刷新。
+func _on_connected(_host: String, _port: int) -> void:
+	_refresh_list()
 
 
 # ── 数据 ──────────────────────────────────────────────────

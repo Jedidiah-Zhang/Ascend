@@ -104,7 +104,7 @@ class GameEngine:
         self.dispatcher: MessageDispatcher | None = None
         self.event_bridge: EventBridge | None = None
         self.clock: WorldClock = WorldClock()
-        self.calendar: GameCalendar | None = GameCalendar(clock=self.clock)  # shutdown 后为 None
+        self.calendar: GameCalendar | None = None  # start() 时创建（世界存在才需要日历）
         self.i18n: I18n = I18n()
         self._executor: CommandExecutor | None = None
         self.entity_manager: EntityManager | None = None

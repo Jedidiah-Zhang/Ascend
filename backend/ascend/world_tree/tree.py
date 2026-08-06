@@ -125,7 +125,7 @@ class WorldTree:
         if event.timestamp < 0:
             raise ValueError(f"时间戳不能为负: {event.timestamp}")
         location = event.location
-        if not isinstance(location, tuple) or len(location) < 2:
+        if not isinstance(location, tuple) or len(location) != 4:
             raise ValueError(f"位置格式无效: {location}")
 
     def _validate_schema(self, event: Event) -> None:

@@ -562,8 +562,8 @@ class WeatherEngine:
             "tuple[WeatherParams, float, float, float, float, float] | None"):
         """一次计算返回当前时刻的完整天气报告（网络 handler 专用）。
 
-        相比分别调用 get_weather + get_daylight_info，天文与噪声只算一次，
-        且降雨衰减自动使用含修改器效果的 rainfall，调用方无需穿递。
+        天文与噪声只算一次，且降雨衰减自动使用含修改器效果的 rainfall，
+        调用方无需穿递。
 
         Args:
             cx: chunk X 坐标。
@@ -615,44 +615,6 @@ class WeatherEngine:
             "sunshine": classify_sunshine(params.sunshine),
         }
 
-    def get_daylight_info(self, cx: int, cy: int,
-                          time: int | None = None,
-                          rainfall: float = 0.0
-                           ) -> tuple[float, float, float, float, float] | None:
-        """查询任意 chunk 在当前或过去时刻的日出日落 + 日照强度。
-
-        Args:
-            cx: chunk X 坐标。
-            cy: chunk Y 坐标。
-            time: 目标时刻（tick），None=当前时刻。仅允许当前或过去。
-            rainfall: 当前降雨强度 mm/h（含修改器效果），用于衰减日照。
-                      由调用方通过 get_weather() 获取后传入；网络 handler
-                      应改用 get_weather_report()，无需手工穿递。
-
-        Returns:
-            (sunrise_hour, sunset_hour, daylight_hours, sunshine_intensity,
-            sun_azimuth) 或 None（chunk 未注册时）。
-            sunshine_intensity 为 0~1 归一化值，0=黑夜 1=正午烈日。
-            sun_azimuth 为太阳方位角（0~360°）。
-
-        Raises:
-            ValueError: time 为未来时刻。
-        """
-        time = self._validate_time(time)
-        key = (cx, cy)
-        field = self._fields.get(key)
-        if field is None:
-            return None
-        ctx = self._tick_context(time)
-        lat = field.baseline.latitude
-        sr = sunrise_hour(ctx["day_of_year_val"], lat,
-                          solar_decl=ctx["solar_decl"])
-        ss = sunset_hour(ctx["day_of_year_val"], lat,
-                         solar_decl=ctx["solar_decl"])
-        intensity = self._sunlight_intensity(
-            field, ctx["hour"], sr, ss, rainfall,
-            ctx["drift_x"], ctx["drift_y"])
-        return (sr, ss, ss - sr, intensity, self._sun_azimuth)
     # ── 公开：调试控制 API ──────────────────────────────────────
 
     def set_rain(self, cx: int, cy: int, active: bool) -> bool | None:

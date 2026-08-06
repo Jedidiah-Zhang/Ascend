@@ -1322,7 +1322,7 @@ class TestSunlightIntensity:
         assert classify_sunlight_intensity(0.80) == 4
         assert classify_sunlight_intensity(1.0) == 4
 
-    def test_get_daylight_info_daytime_intensity(self):
+    def test_report_daytime_intensity(self):
         """白天正午日照强度接近 1。"""
         from ascend.weather.weather_engine import WeatherEngine
         from ascend.config import GAME_DAY
@@ -1331,14 +1331,14 @@ class TestSunlightIntensity:
         clock.skip(6 * GAME_HOUR)  # 12:00（正午）
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        dl = e.get_daylight_info(0, 0)
-        assert dl is not None
-        sr, ss, daylight, intensity, _sun_azimuth = dl
+        report = e.get_weather_report(0, 0)
+        assert report is not None
+        _params, _sr, _ss, daylight, intensity, _azimuth = report
         assert daylight > 0
         assert intensity > 0.8  # 正午强度接近 1
         e.shutdown()
 
-    def test_get_daylight_info_nighttime_intensity(self):
+    def test_report_nighttime_intensity(self):
         """夜间强度为 0。"""
         from ascend.weather.weather_engine import WeatherEngine
         wt = WorldTree()
@@ -1346,47 +1346,27 @@ class TestSunlightIntensity:
         clock.skip(14 * GAME_HOUR)  # 20:00（夜间）
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        dl = e.get_daylight_info(0, 0)
-        assert dl is not None
-        intensity = dl[3]
-        assert intensity == 0.0
+        report = e.get_weather_report(0, 0)
+        assert report is not None
+        assert report[4] == 0.0
         e.shutdown()
 
-    def test_get_daylight_info_unregistered(self):
-        from ascend.weather.weather_engine import WeatherEngine
-        wt = WorldTree()
-        clock = WorldClock()
-        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-        assert e.get_daylight_info(999, 999) is None
-        e.shutdown()
-
-    def test_rain_attenuates_intensity(self):
-        """正午暴雨（30 mm/h）时日照强度显著低于无雨。"""
+    def test_rain_attenuates_report_intensity(self):
+        """降雨衰减日照：强制降雨后的 report 强度显著低于无雨。"""
         from ascend.weather.weather_engine import WeatherEngine
         wt = WorldTree()
         clock = WorldClock()
         clock.skip(6 * GAME_HOUR)  # 12:00（正午）
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        clear = e.get_daylight_info(0, 0, rainfall=0.0)[3]
-        storm = e.get_daylight_info(0, 0, rainfall=30.0)[3]
-        assert clear > 0.8
-        # 30 mm/h 达到衰减上限：强度打两折
-        assert storm == pytest.approx(clear * 0.2, abs=0.06)
-        assert storm < clear * 0.5
-        e.shutdown()
-
-    def test_daylight_info_sunrise_before_sunset(self):
-        """日出时刻早于日落时刻。"""
-        from ascend.weather.weather_engine import WeatherEngine
-        wt = WorldTree()
-        clock = WorldClock()
-        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-        e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        dl = e.get_daylight_info(0, 0)
-        assert dl is not None
-        sr, ss = dl[0], dl[1]
-        assert sr < ss
+        clear = e.get_weather_report(0, 0)
+        assert clear is not None and clear[4] > 0.8
+        assert e.set_rain(0, 0, True) is True  # 均值强度立即生效
+        storm = e.get_weather_report(0, 0)
+        assert storm is not None
+        # 均值强度 5 mm/h 衰减系数 = 1 - min(5/30,1)*0.8 ≈ 0.87
+        assert storm[4] < clear[4]
+        assert storm[4] < clear[4] * 0.95
         e.shutdown()
 
 
@@ -1492,17 +1472,6 @@ class TestWeatherQueryAPI:
             e.get_tiers(0, 0, clock.time + GAME_DAY)
         e.shutdown()
 
-    def test_get_daylight_info_future_time_raises(self):
-        """get_daylight_info 查询未来时刻抛 ValueError。"""
-        from ascend.weather.weather_engine import WeatherEngine
-        wt = WorldTree()
-        clock = WorldClock()
-        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-        e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        with pytest.raises(ValueError):
-            e.get_daylight_info(0, 0, clock.time + 1)
-        e.shutdown()
-
     def test_get_weather_past_time_allowed(self):
         """查询当前/过去时刻不抛异常。"""
         from ascend.weather.weather_engine import WeatherEngine
@@ -1555,21 +1524,6 @@ class TestWeatherReport:
         assert report[0].temperature == pytest.approx(wp.temperature)
         assert report[0].humidity == pytest.approx(wp.humidity)
         assert report[0].rainfall == pytest.approx(wp.rainfall)
-        e.shutdown()
-
-    def test_report_consistent_with_daylight_info(self):
-        """report 的 sr/ss 与 get_daylight_info 一致（无雨时 intensity 也一致）。"""
-        from ascend.weather.weather_engine import WeatherEngine
-        wt = WorldTree()
-        clock = WorldClock()
-        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-        e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        report = e.get_weather_report(0, 0)
-        params = report[0]
-        dl = e.get_daylight_info(0, 0, rainfall=params.rainfall)
-        assert report[1] == pytest.approx(dl[0])  # sunrise
-        assert report[2] == pytest.approx(dl[1])  # sunset
-        assert report[4] == pytest.approx(dl[3])  # intensity
         e.shutdown()
 
     def test_get_weather_event_consistency(self):

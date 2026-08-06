@@ -648,8 +648,6 @@ class CommandExecutor:
         Returns:
             执行结果。
         """
-        from ascend.entity import Controller
-
         if len(args) != 1 or len(args[0]) < 4:
             return CommandResult(
                 success=False, output=self._i18n.t("console.entity_usage"),
