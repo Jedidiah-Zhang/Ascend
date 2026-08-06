@@ -452,7 +452,7 @@ func _input(event: InputEvent) -> void:
 			var vp := get_viewport()
 			if vp:
 				vp.set_input_as_handled()
-	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		if _expanded_row >= 0:
 			_close_timeline()
 		elif _input_mode != "":

@@ -28,6 +28,7 @@ import io
 import json
 import os
 import random
+import re
 import shutil
 import time as _real_time
 import uuid
@@ -43,6 +44,10 @@ from .manifest import Manifest, SaveFormatError, MANIFEST_NAME
 logger = get_logger(__name__)
 
 STATE_FILE: str = "state.json.enc"
+
+# world_id 规范格式：32 位小写十六进制（uuid4().hex）；也拦截
+# "…32 个任意字符"伪装——字符集限定防目录穿越的最终防线
+_WORLD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 ENTITIES_FILE: str = "entities.json.enc"
 CHUNKS_DB: str = "chunks.db"
 EVENTS_DB: str = "events.db"
@@ -94,6 +99,27 @@ class SaveManager:
     def __repr__(self) -> str:
         return f"SaveManager(root={self._root})"
 
+    # ── 校验 ──────────────────────────────────────────────
+
+    def _validate_world_id(self, world_id: str) -> str:
+        """校验 world_id 格式（32 位小写十六进制），所有入口统一放行。
+
+        拒绝路径穿越：world_id 直接拼入目录路径（world_dir），
+        任何非规范格式（含 ../、绝对路径、自定义串）一律拒绝。
+
+        Args:
+            world_id: 世界 ID。
+
+        Returns:
+            校验通过的原值。
+
+        Raises:
+            ValueError: 格式非法。
+        """
+        if not isinstance(world_id, str) or _WORLD_ID_RE.fullmatch(world_id) is None:
+            raise ValueError(f"非法 world_id: {world_id!r}")
+        return world_id
+
     # ── 路径 ──────────────────────────────────────────────
 
     @property
@@ -138,9 +164,7 @@ class SaveManager:
 
         种子在创建时定案：seed=0（前端"随机"占位）在此随机化并写入
         manifest——存档身份（world_id+seed）出生即一致，密钥混淆层
-        （secrets_blob 绑定 world_id+seed）不会与 manifest 失配
-        （回归：旧版在首次进入时随机化，导致 blob 身份失配、
-        state 加解密全部失败）。
+        （secrets_blob 绑定 world_id+seed）不会与 manifest 失配。
 
         Args:
             name: 存档名称（存档选择页展示；全集合唯一，重名拒绝）。
@@ -161,6 +185,7 @@ class SaveManager:
         if seed == 0:
             seed = random.randint(1, 2**31 - 1)
         world_id = world_id or uuid.uuid4().hex
+        self._validate_world_id(world_id)
         wdir = self.world_dir(world_id)
         os.makedirs(wdir, exist_ok=False)
         os.makedirs(self.snapshot_dir(world_id), exist_ok=True)
@@ -175,39 +200,13 @@ class SaveManager:
         logger.info("创建存档位: %s (%s, seed=%d)", world_id, name, seed)
         return manifest
 
-    def rekey(self, world_id: str, *, old_seed: int, new_seed: int) -> None:
-        """存档身份（seed）变更后重混淆密钥并回写 manifest。
-
-        密钥混淆层绑定 (world_id, seed)；seed 变更后须用旧 seed 解出
-        密钥、新 seed 重新混淆，否则后续 state 加解密解不出密钥。
-        供旧版 seed=0 存档首次进入随机化时迁移使用。
-
-        Args:
-            world_id: 世界 ID。
-            old_seed: 现 manifest.secrets_blob 派生所用的旧 seed。
-            new_seed: 新的世界种子。
-
-        Raises:
-            SaveFormatError: 存档不存在。
-            SaveCryptoError: 旧 seed 解不出密钥（存档身份不符）。
-        """
-        manifest = self.get_manifest(world_id)
-        keys = SaveKeys.from_protected(
-            manifest.secrets_blob, world_id, old_seed,
-        )
-        manifest.secrets_blob = keys.protect(world_id, new_seed)
-        manifest.seed = new_seed
-        manifest.write(self.manifest_path(world_id))
-        logger.info(
-            "存档重混淆: %s seed %d → %d", world_id, old_seed, new_seed,
-        )
-
     def get_manifest(self, world_id: str) -> Manifest:
         """读取世界的 manifest。
 
         Raises:
             SaveFormatError: 世界不存在或 manifest 损坏。
         """
+        self._validate_world_id(world_id)
         path = self.manifest_path(world_id)
         if not os.path.isfile(path):
             raise SaveFormatError(f"存档不存在: {world_id}")
@@ -226,7 +225,7 @@ class SaveManager:
             return result
         for entry in sorted(os.listdir(self._root)):
             path = os.path.join(self._root, entry)
-            # 跳过迁移残留/临时目录（.extract-* / .old-* / live / snapshots）
+            # 跳过运行期残留/临时目录（.extract-* / .old-* / live / snapshots）
             if not os.path.isdir(path) or not os.path.isfile(
                 os.path.join(path, MANIFEST_NAME)
             ):
@@ -260,6 +259,7 @@ class SaveManager:
             SaveFormatError: 世界不存在。
             ValueError: 名称为空或与其它存档重名。
         """
+        self._validate_world_id(world_id)
         name = str(name).strip()
         if not name:
             raise ValueError("存档名称不能为空")
@@ -275,6 +275,7 @@ class SaveManager:
         Raises:
             SaveFormatError: 世界不存在。
         """
+        self._validate_world_id(world_id)
         wdir = self.world_dir(world_id)
         if not os.path.isdir(wdir):
             raise SaveFormatError(f"存档不存在: {world_id}")
@@ -292,6 +293,7 @@ class SaveManager:
         Returns:
             新存档位的 world_id。
         """
+        self._validate_world_id(world_id)
         self.get_manifest(world_id)
         new_id = uuid.uuid4().hex
         new_dir = self.world_dir(new_id)
@@ -339,6 +341,7 @@ class SaveManager:
         Raises:
             SaveFormatError: 世界不存在。
         """
+        self._validate_world_id(world_id)
         keys = self._load_keys(world_id)
         payload = keys.encrypt(
             json.dumps(state, ensure_ascii=False).encode("utf-8")
@@ -352,6 +355,7 @@ class SaveManager:
             SaveFormatError: 世界不存在或状态文件缺失。
             SaveCryptoError: 解密/签名校验失败（被篡改）。
         """
+        self._validate_world_id(world_id)
         path = self.state_path(world_id)
         if not os.path.isfile(path):
             raise SaveFormatError(f"存档状态缺失: {world_id}")
@@ -377,9 +381,9 @@ class SaveManager:
         Returns:
             {"live_origin": str|"", "snapshots": {file: {parent, game_time,
              saved_at, seq}}}。文件缺失时返回空血缘（初始世界无快照）。
-            旧版条目（无 seq）按 (saved_at, game_time) 合成一次——
             seq 是唯一的权威排序键，其余时间字段仅作展示。
         """
+        self._validate_world_id(world_id)
         default: dict = {"live_origin": "", "snapshots": {}}
         path = self.lineage_path(world_id)
         if not os.path.isfile(path):
@@ -396,36 +400,7 @@ class SaveManager:
         data.setdefault("snapshots", {})
         if not isinstance(data["snapshots"], dict):
             data["snapshots"] = {}
-        self._migrate_lineage_seqs(data["snapshots"])
         return data
-
-    @staticmethod
-    def _migrate_lineage_seqs(snapshots: dict) -> None:
-        """为旧版血缘条目合成 seq（权威排序键）。
-
-        任一条目缺 seq 即整体按 (saved_at, game_time, file) 重排编号
-        （一次性迁移；随后每次写入自然落盘）。保证「血缘内 seq 唯一、
-        与创建顺序一致」，是时间线/编号/串链的单一事实来源。
-        """
-        entries = [
-            (name, entry) for name, entry in snapshots.items()
-            if isinstance(entry, dict) and "seq" not in entry
-        ]
-        if not entries:
-            return
-        existing = [
-            int(entry["seq"]) for entry in snapshots.values()
-            if isinstance(entry, dict) and "seq" in entry
-        ]
-        next_seq = (max(existing) + 1) if existing else 0
-        entries.sort(key=lambda kv: (
-            float(kv[1].get("saved_at", 0.0)),
-            int(kv[1].get("game_time", 0)),
-            kv[0],
-        ))
-        for _name, entry in entries:
-            entry["seq"] = next_seq
-            next_seq += 1
 
     def _write_lineage(self, world_id: str, lineage: dict) -> None:
         """原子写入血缘文件（世界外元数据，失败不阻断主流程）。"""
@@ -467,6 +442,7 @@ class SaveManager:
 
     def set_live_origin(self, world_id: str, snapshot_file: str) -> None:
         """记录活目录来源：回滚后调用，标记当前时间点从该快照派生。"""
+        self._validate_world_id(world_id)
         lineage = self.snapshot_lineage(world_id)
         lineage["live_origin"] = snapshot_file
         self._write_lineage(world_id, lineage)
@@ -554,6 +530,7 @@ class SaveManager:
         Raises:
             OSError: 快照文件删除失败（血缘已先行自洽重接）。
         """
+        self._validate_world_id(world_id)
         filename = os.path.basename(str(filename))
         if not filename.endswith(SNAPSHOT_SUFFIX):
             filename += SNAPSHOT_SUFFIX
@@ -596,6 +573,7 @@ class SaveManager:
         Returns:
             淘汰数量。
         """
+        self._validate_world_id(world_id)
         sdir = self.snapshot_dir(world_id)
         lineage = self.snapshot_lineage(world_id)
         live_origin = lineage.get("live_origin", "")
@@ -644,6 +622,7 @@ class SaveManager:
         Returns:
             [{file, saved_at, suffix, size}]。
         """
+        self._validate_world_id(world_id)
         sdir = self.snapshot_dir(world_id)
         result: list[dict] = []
         if not os.path.isdir(sdir):
@@ -729,6 +708,8 @@ class SaveManager:
             SaveCryptoError: 快照解密/校验失败。
             SaveFormatError: 快照损坏或展开失败。
         """
+        if world_id is not None:
+            self._validate_world_id(world_id)
         snapshot_path = self._resolve_snapshot_path(snapshot_path, world_id)
         header, zf = self._open_snapshot(snapshot_path)
         try:
@@ -774,55 +755,40 @@ class SaveManager:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 raise
 
-            # 原子替换活目录；快照子目录与大陆缓存（同 seed 确定性产物）
-            # 先移出再放回——回滚绝不能删除自己的回退点，也不应丢秒开缓存
+            # 原子替换活目录：整体 swap（2 次 rename）——回滚绝不能删除
+            # 自己的回退点（快照子目录），也不应丢秒开缓存（大陆场）；
+            # 二者从备份目录拷回，即使中途失败原目录也完整保留在 backup
             wdir = self.world_dir(world_id)
             backup = wdir + f".old-{uuid.uuid4().hex}"
-            snaps_backup: str | None = None
-            cont_backup: str | None = None
             if os.path.isdir(wdir):
-                snaps_dir = os.path.join(wdir, SNAPSHOT_DIR)
-                if os.path.isdir(snaps_dir):
-                    snaps_backup = wdir + f".snaps-{uuid.uuid4().hex}"
-                    os.rename(snaps_dir, snaps_backup)
-                cont_path = os.path.join(wdir, CONTINENT_FILE)
-                if os.path.isfile(cont_path):
-                    cont_backup = wdir + f".cont-{uuid.uuid4().hex}"
-                    os.rename(cont_path, cont_backup)
                 os.rename(wdir, backup)
             try:
                 os.rename(tmp_dir, wdir)
             except OSError:
-                # 回滚失败时恢复原目录（含快照与缓存）
+                # 回滚失败时恢复原目录（整体移回，快照与缓存一并还原）
                 if os.path.isdir(wdir):
                     shutil.rmtree(wdir, ignore_errors=True)
                 if os.path.isdir(backup):
                     os.rename(backup, wdir)
-                if snaps_backup and os.path.isdir(snaps_backup):
-                    os.makedirs(
-                        os.path.join(wdir, SNAPSHOT_DIR), exist_ok=True,
-                    )
-                    os.rename(snaps_backup, os.path.join(wdir, SNAPSHOT_DIR))
-                if cont_backup and os.path.isfile(cont_backup):
-                    os.rename(cont_backup, os.path.join(wdir, CONTINENT_FILE))
                 raise
-            if snaps_backup and os.path.isdir(snaps_backup):
-                os.makedirs(os.path.join(wdir, SNAPSHOT_DIR), exist_ok=True)
-                os.rename(snaps_backup, os.path.join(wdir, SNAPSHOT_DIR))
-            if cont_backup and os.path.isfile(cont_backup):
-                os.rename(cont_backup, os.path.join(wdir, CONTINENT_FILE))
-            # 血缘文件随活目录被替换进了 backup：回滚后必须保留原血缘
-            # （否则分叉上下文丢失），再记录活目录新来源（本次回滚目标）
-            lineage_backup = os.path.join(backup, LINEAGE_FILE)
-            if os.path.isfile(lineage_backup):
+            if os.path.isdir(backup):
                 try:
-                    shutil.copy2(
-                        lineage_backup, os.path.join(wdir, LINEAGE_FILE),
-                    )
+                    # 快照子目录（回退点自身）与大陆缓存从旧目录拷回
+                    old_snaps = os.path.join(backup, SNAPSHOT_DIR)
+                    if os.path.isdir(old_snaps):
+                        shutil.copytree(old_snaps, os.path.join(wdir, SNAPSHOT_DIR))
+                    old_cont = os.path.join(backup, CONTINENT_FILE)
+                    if os.path.isfile(old_cont):
+                        shutil.copy2(old_cont, os.path.join(wdir, CONTINENT_FILE))
+                    # 血缘文件随活目录被替换进了 backup：回滚后必须保留
+                    # 原血缘（否则分叉上下文丢失），再记录活目录新来源
+                    old_lineage = os.path.join(backup, LINEAGE_FILE)
+                    if os.path.isfile(old_lineage):
+                        shutil.copy2(old_lineage, os.path.join(wdir, LINEAGE_FILE))
                 except OSError:
-                    logger.warning("血缘文件回滚保留失败: %s", world_id)
+                    logger.warning("快照/缓存回拷失败（已展开，仅保底丢失）: %s", world_id)
+                shutil.rmtree(backup, ignore_errors=True)
             self.set_live_origin(world_id, os.path.basename(snapshot_path))
-            shutil.rmtree(backup, ignore_errors=True)
             logger.info("快照展开为活目录: %s", world_id)
             return world_id
         finally:

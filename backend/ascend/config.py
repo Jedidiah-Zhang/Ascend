@@ -298,7 +298,6 @@ SQLITE_CACHE_SIZE: int = -8000          # 8MB 页缓存（负数 = KB）
 
 # 存档根目录（用户主目录 .ascend/saves，可在设置中调整）
 SAVE_ROOT: str = _os.path.join(_os.path.expanduser("~"), ".ascend", "saves")
-SAVE_FORMAT_VERSION: int = 1            # 存档格式版本（迁移用）
 
 # ═══════════════════════════════════════════════════════════════
 # UI — 终端与调试

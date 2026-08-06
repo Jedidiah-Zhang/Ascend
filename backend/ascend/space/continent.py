@@ -15,8 +15,8 @@
     gen = ContinentGenerator(seed=42)
     data = gen.generate()
 
-    alt = data.sample_altitude(50000.0, 30000.0)
-    is_land = data.is_land(1200.5, 3400.2)
+    alt = data.sample_altitude(500.0, 300.0)
+    is_land = data.is_land(12.5, 34.2)
 """
 
 from array import array
@@ -56,6 +56,23 @@ from ascend.config import (
     CLIMATE_CALIB_COLD_STRETCH_PARAM,
 )
 from ascend.log import get_logger
+
+
+def center_distance(dx: float, dy: float) -> float:
+    """归一化坐标到矩形中心的 Chebyshev 距离，四象限对称。
+
+    中心偏置（center bias）用「距地图中心的距离」把陆地推向中心。
+    旧实现的手写分支在第三象限与负 y 轴出错（dx=0, dy=-2 时误算为 0，
+    中心偏置消失）；max(abs) 恒非负且象限对称，消除该缺陷。
+
+    Args:
+        dx: 归一化 X 偏移（[-1, 1]）。
+        dy: 归一化 Y 偏移（[-1, 1]）。
+
+    Returns:
+        非负距离 [0, 1]。
+    """
+    return max(abs(dx), abs(dy))
 
 logger = get_logger(__name__)
 
@@ -476,9 +493,12 @@ class ContinentData:
         )
 
     def _grid_index(self, world_x: float, world_y: float) -> int | None:
-        """世界坐标 → 网格索引。越界返回 None。"""
-        gx = int(world_x / self.cell_size)
-        gy = int(world_y / self.cell_size)
+        """世界 tile 坐标 → 网格索引（1 tile = 100m = 1 格点，坐标 1:1）。
+
+        越界返回 None。
+        """
+        gx = int(world_x)
+        gy = int(world_y)
         if 0 <= gx < self.grid_width and 0 <= gy < self.grid_height:
             return gy * self.grid_width + gx
         return None
@@ -491,7 +511,11 @@ class ContinentData:
         return self.land_mask[idx]
 
     def sample_altitude(self, world_x: float, world_y: float) -> float:
-        """从宏观海拔场采样（最近邻）。越界返回默认海洋深度。"""
+        """从宏观海拔场采样（最近邻）。越界返回默认海洋深度。
+
+        Args:
+            world_x, world_y: 世界 tile 坐标（1 tile = 1 格点）。
+        """
         idx = self._grid_index(world_x, world_y)
         if idx is None or idx >= len(self.elevation_field):
             return -3500.0
@@ -507,9 +531,9 @@ class ContinentData:
         Returns:
             插值后的海拔 (m)。越界返回默认海洋深度。
         """
-        # 网格空间中的连续坐标（以 cell_size 为单位）
-        gx = world_x / self.cell_size - 0.5
-        gy = world_y / self.cell_size - 0.5
+        # 网格空间中的连续坐标（1 tile = 100m = 1 格点，直接作为格点坐标）
+        gx = world_x - 0.5
+        gy = world_y - 0.5
 
         x0 = int(gx)
         y0 = int(gy)
@@ -549,8 +573,8 @@ class ContinentData:
         if not self.river_width:
             return 0.0
 
-        gx = world_x / self.cell_size - 0.5
-        gy = world_y / self.cell_size - 0.5
+        gx = world_x - 0.5
+        gy = world_y - 0.5
         x0 = int(gx)
         y0 = int(gy)
         x1, y1 = x0 + 1, y0 + 1
@@ -1071,9 +1095,7 @@ class ContinentGenerator:
             dy = (y * inv_h - 0.5) * 2.0
             for x in range(w):
                 dx = (x * inv_w - 0.5) * 2.0
-                dist = -dx if dx < -dy else (dy if dy > dx else dx)
-                if dist < 0:
-                    dist = -dist
+                dist = center_distance(dx, dy)
                 center = 1.0 - dist * 2.5
                 if center < 0.0:
                     center = 0.0

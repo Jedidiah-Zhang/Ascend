@@ -12,6 +12,8 @@ Coverage 目标:
     space/render.py    — 忽略 (终端调试工具, .coveragerc omit)
 """
 
+import struct
+
 import pytest
 from ascend.config import MOISTURE_TILE_FREQUENCY
 from ascend.space import (
@@ -607,32 +609,29 @@ class TestTileGrid:
             g.set(t.value, t.value, t)
             assert g.get(t.value, t.value) == t
 
-    def test_to_list(self):
-        """导出为 int 列表。"""
+    def test_to_bytes_roundtrip(self):
+        """to_bytes → from_bytes 往返无损（显式小端 BLOB 契约）。"""
         g = TileGrid()
         g.set(0, 0, TerrainType.DEEP_WATER)
-        lst = g.to_list()
-        assert len(lst) == TILE_MAP_SIZE * TILE_MAP_SIZE
-        assert lst[0] == int(TerrainType.DEEP_WATER)
-        assert lst[1] == int(TerrainType.GRASSLAND)
-        assert all(isinstance(v, int) for v in lst)
+        g.set(5, 5, TerrainType.ROCK)
+        g.set(100, 100, TerrainType.MARSH)
 
-    def test_from_list(self):
-        """从 int 列表还原。"""
-        g1 = TileGrid()
-        g1.set(5, 5, TerrainType.ROCK)
-        g1.set(100, 100, TerrainType.MARSH)
+        blob = g.to_bytes()
+        expected_len = 4 + TILE_MAP_SIZE * TILE_MAP_SIZE * (2 + 4 + 4)
+        assert len(blob) == expected_len
+        # 显式小端：版本头 + 首个地形 uint16 LE
+        assert blob[0:4] == struct.pack("<I", 1)
+        assert blob[4:6] == struct.pack("<H", int(TerrainType.DEEP_WATER))
 
-        lst = g1.to_list()
-        g2 = TileGrid.from_list(lst)
-        assert g2 == g1
+        g2 = TileGrid.from_bytes(blob)
+        assert g2.get(0, 0) == TerrainType.DEEP_WATER
         assert g2.get(5, 5) == TerrainType.ROCK
         assert g2.get(100, 100) == TerrainType.MARSH
 
-    def test_from_list_wrong_size(self):
-        """长度错误的列表应抛出 ValueError。"""
+    def test_from_bytes_wrong_size(self):
+        """长度错误的 BLOB 应抛出 ValueError。"""
         with pytest.raises(ValueError):
-            TileGrid.from_list([0] * 100)
+            TileGrid.from_bytes(b"\x01\x00\x00\x00" + b"\x00" * 100)
 
     def test_create_from_list(self):
         """从正确长度的列表构造（非 array 分支）。"""
@@ -759,23 +758,22 @@ class TestTileGenerator:
         但读取预取表而非索引 full elevation 数组。
         """
         size = 200
-        cell = cont.cell_size
         W = cont.grid_width
         H = cont.grid_height
         elev = cont.elevation_field
 
         # 确定本 chunk 会触及的大陆网格索引范围
-        # gx = cx*2 + tx/100 - 0.5,  tx ∈ [0, 199]
-        gx_start = (cx * size + 0) / cell - 0.5      # tx=0
-        gx_end = (cx * size + (size - 1)) / cell - 0.5  # tx=199
+        # gx = cx*200 + tx - 0.5,  tx ∈ [0, 199]
+        gx_start = (cx * size + 0) - 0.5      # tx=0
+        gx_end = (cx * size + (size - 1)) - 0.5  # tx=199
         # int() 向零截断，所以 min/max 取 int 而非 floor
         x0_min = int(gx_start)
         x0_max = int(gx_end)
         # 再加 x1=x0+1，所以 gx 范围需要覆盖到 max_x0+1
         gx_range = range(x0_min, x0_max + 2)  # inclusive upper bound
 
-        gy_start = (cy * size + 0) / cell - 0.5
-        gy_end = (cy * size + (size - 1)) / cell - 0.5
+        gy_start = (cy * size + 0) - 0.5
+        gy_end = (cy * size + (size - 1)) - 0.5
         y0_min = int(gy_start)
         y0_max = int(gy_end)
         gy_range = range(y0_min, y0_max + 2)
@@ -793,21 +791,21 @@ class TestTileGenerator:
 
         for ty in range(size):
             wy = cy * size + ty
-            gy = wy / cell - 0.5
+            gy = wy - 0.5
             y0 = int(gy)
             frac_y = gy - y0
             y1 = y0 + 1
 
             for tx in range(size):
                 wx = cx * size + tx
-                gx_val = wx / cell - 0.5
+                gx_val = wx - 0.5
                 x0 = int(gx_val)
                 frac_x = gx_val - x0
                 x1 = x0 + 1
 
                 if (x0 < 0 or x1 >= W or y0 < 0 or y1 >= H):
-                    gx_nn = int(wx / cell)
-                    gy_nn = int(wy / cell)
+                    gx_nn = int(wx)
+                    gy_nn = int(wy)
                     if 0 <= gx_nn < W and 0 <= gy_nn < H:
                         result[ty * size + tx] = elev[gy_nn * W + gx_nn]
                     else:
@@ -919,13 +917,14 @@ class TestTileGenerator:
         cont = ContinentGenerator(seed=42).generate()
         gen = TileGenerator(seed=42, continent=cont)
         # 找一个有流线河流穿过的 chunk — 必然有水体+陆地多种地形
+        # 河流点 p 是格点索引（x∈[0,1000)），chunk 覆盖 200 格×100m=20km
         net = cont.hydrology.river_network
         from collections import Counter
         chunk_counts = Counter()
         for river in net.rivers:
             for p in river.points:
-                cx = int(p.x * cont.cell_size / 200)
-                cy = int(p.y * cont.cell_size / 200)
+                cx = int(p.x // 200)
+                cy = int(p.y // 200)
                 chunk_counts[(cx, cy)] += 1
         best_chunk = chunk_counts.most_common(1)[0][0]
 

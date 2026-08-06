@@ -249,8 +249,9 @@ class EntityManager:
         tile_y: int | None = None,
         *,
         game_time: int = 0,
+        publish: bool = True,
     ) -> bool:
-        """移动实体到新位置（同层内），发布 entity_moved 事件。
+        """移动实体到新位置（同层内），默认发布 entity_moved 事件。
 
         跨层移动不在本方法职责内——跨层是离散动作（进入洞穴/出洞穴），
         应通过专用 transition API 实现，避免误操作。
@@ -260,6 +261,9 @@ class EntityManager:
             chunk_x, chunk_y: 新 chunk 坐标。
             tile_x, tile_y: 新 tile 坐标，可为 None。
             game_time: 当前游戏时间。
+            publish: False = 静默移动（读档校准用），不发布事件——
+                读档是重建内存状态，移动事件会向因果历史写入虚假记录
+                （含 game_time=0 的伪造时间戳）。
 
         Returns:
             True 表示移动成功，False 表示实体不存在。
@@ -293,23 +297,24 @@ class EntityManager:
             self._spatial_index.setdefault(new_key, set()).add(entity_id)
 
         gx, gy = entity.global_xy
-        self._world_tree.publish(Event(
-            timestamp=game_time,
-            location=entity.position,
-            layer_id=entity.layer_id,
-            initiator_type="system",
-            initiator_id="entity_manager",
-            affected=[AffectedParty(entity_id, "subject")],
-            event_type="entity_moved",
-            data={
-                "entity_id": entity_id,
-                "old_position": old_pos,
-                "new_position": entity.position,
-                "layer_id": entity.layer_id,
-                "x": gx,
-                "y": gy,
-            },
-        ))
+        if publish:
+            self._world_tree.publish(Event(
+                timestamp=game_time,
+                location=entity.position,
+                layer_id=entity.layer_id,
+                initiator_type="system",
+                initiator_id="entity_manager",
+                affected=[AffectedParty(entity_id, "subject")],
+                event_type="entity_moved",
+                data={
+                    "entity_id": entity_id,
+                    "old_position": old_pos,
+                    "new_position": entity.position,
+                    "layer_id": entity.layer_id,
+                    "x": gx,
+                    "y": gy,
+                },
+            ))
         logger.debug("move: %s %s → %s", entity_id, old_pos, entity.position)
         return True
 

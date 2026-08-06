@@ -81,11 +81,6 @@ func _exit_tree() -> void:
 		Connection.backend_failed.disconnect(_on_backend_failed)
 
 
-## 每帧触发重绘（悬停高亮与连接状态变化需持续刷新显示）。
-func _process(_delta: float) -> void:
-	queue_redraw()
-
-
 # ── 绘制 ──────────────────────────────────────────────────
 
 ## 绘制主菜单：背景、标题与副标题、按钮列表（禁用态置灰、悬停高亮、
@@ -204,6 +199,7 @@ func _activate(index: int) -> void:
 
 ## 根据 Connection 状态刷新底部状态文本与颜色
 ## （已连接 / 连接中 / 断开重连 / 连接失败）。
+## 事件驱动重绘：状态变化即 queue_redraw，无需每帧轮询。
 func _update_status() -> void:
 	match Connection.status:
 		Connection.Status.CONNECTED:
@@ -218,6 +214,7 @@ func _update_status() -> void:
 		Connection.Status.FAILED:
 			_status_text = "后端连接失败（详见输出）"
 			_status_color = STATUS_ERROR_COLOR
+	queue_redraw()
 
 
 ## 后端连接成功回调：刷新状态文本。

@@ -126,8 +126,8 @@ class WorldGenerator:
                     self._continent is not None
                     and self._continent.seed != self._seed
                 ):
-                    # 缓存属于其它种子（如旧版 seed 随机化窗口的残留、
-                    # 手动拷贝错档）：视为未命中，重新生成并覆盖
+                    # 缓存属于其它种子（如手动拷贝错档、缓存损坏）：
+                    # 视为未命中，重新生成并覆盖
                     logger.warning(
                         "大陆缓存 seed 不符（缓存=%d 期望=%d），重新生成: %s",
                         self._continent.seed, self._seed, cache_path,

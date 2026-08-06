@@ -126,6 +126,7 @@ class GameEngine:
         self._service_mode: bool = False      # 服务模式：仅网络+存档，无世界
         self._world_request_types: set[str] = set()  # 世界观处理程序清单（读档时重注册）
         self._running: threading.Event = threading.Event()
+        self._stop_requested: threading.Event = threading.Event()  # stop() 读档期取消标志
         self._thread: threading.Thread | None = None
 
     @property
@@ -274,18 +275,8 @@ class GameEngine:
 
         # 1. 种子（seed=0 仅在无存档模式启动时随机；存档世界在
         # create_world 时已定案——见 SaveManager.create_world）。
-        # 旧版存档（创建于 seed 随机化前）的 manifest.seed 仍为 0：
-        # 首次进入随机化并重混淆密钥，否则 state 加解密失配。
-        if self.seed == 0:
-            if self._manifest is not None:
-                new_seed = random.randint(1, 2**31 - 1)
-                self.save_manager.rekey(
-                    self.world_id, old_seed=0, new_seed=new_seed,
-                )
-                self._manifest.seed = new_seed
-                self.seed = new_seed
-            else:
-                self.seed = random.randint(1, 2**31 - 1)
+        if self.seed == 0 and self._manifest is None:
+            self.seed = random.randint(1, 2**31 - 1)
         logger.info("游戏引擎启动: seed=%d world=%s", self.seed, self.world_id)
 
         # 2. 世界生成器 + 主动生成大陆宏观场（侵蚀+水文，首次约 5-30s，
@@ -449,8 +440,20 @@ class GameEngine:
         等价 MC 关服保存——实时存档保证此步幂等、开销小。
 
         幂等：已停止时调用无效果。
+
+        读档取消：stop() 在读档重建（_pending_load 已置位、tick 线程
+        正在 _reload）期间被调用时，置 _stop_requested 取消标志——
+        _run_loop 在重建收尾后据此退出，_reload 的恢复路径也不得将
+        运行标志复活（否则引擎在 stop() 后继续运行）。
         """
+        self._stop_requested.set()
         if not self._running.is_set():
+            # 读档重建中（_reload 已清运行标志）：join 等待重建收尾，
+            # 循环检测到取消标志后自行退出
+            if self._thread and self._thread.is_alive():
+                self._thread.join(timeout=13.0)
+                self._thread = None
+                self._cleanup()
             return
         self._running.clear()
         if self._thread and threading.current_thread() is not self._thread:
@@ -884,7 +887,9 @@ class GameEngine:
                 self.world_id = None
                 self._manifest = None
                 self._service_mode = True
-                self._running.set()
+                if not self._stop_requested.is_set():
+                    # stop() 期间不复活运行标志：循环随后退出
+                    self._running.set()
             raise
         finally:
             self._reloading = False
@@ -904,7 +909,7 @@ class GameEngine:
         期间网络层常驻、客户端不断线），完成后循环继续。
         """
         consecutive_errors = 0
-        while self._running.is_set():
+        while self._running.is_set() and not self._stop_requested.is_set():
             tick_start = _real_time.monotonic()
             try:
                 self._tick()
@@ -932,7 +937,8 @@ class GameEngine:
                 try:
                     self._reload(*pending)
                 except Exception:
-                    logger.exception("读档重建失败")
+                    # 日志已在 _reload 内单点记录（含恢复路径上下文）；
+                    # 此处只广播失败事件，避免双份重复日志
                     self._broadcast_world_reloading_failed(*pending)
 
     def _tick(self) -> None:

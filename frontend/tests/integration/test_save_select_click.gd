@@ -44,6 +44,7 @@ func _move(sel: Control, pos: Vector2) -> void:
 
 func test_real_click_flow_sends_rollback_request() -> void:
 	"""真实合成点击：点节点两次 → 应发出带 world_id+snapshot 的 save_load。"""
+	Connection._hello_acked = true  # 白盒：模拟握手完成，放行消息入队
 	var sel: Control = _setup_timeline()
 	# 先真实绘制一帧，拿到节点矩形
 	sel.queue_redraw()
@@ -74,6 +75,7 @@ func test_real_click_flow_sends_rollback_request() -> void:
 
 func test_click_live_node_loads_world() -> void:
 	"""真实点击当前时间点 → 加载活目录（无 snapshot 字段）。"""
+	Connection._hello_acked = true  # 白盒：模拟握手完成，放行消息入队
 	var sel: Control = _setup_timeline()
 	sel.queue_redraw()
 	await wait_frames(2)

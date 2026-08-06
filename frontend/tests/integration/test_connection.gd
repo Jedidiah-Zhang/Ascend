@@ -77,6 +77,7 @@ func test_send_does_not_crash_when_disconnected() -> void:
 
 
 func test_send_adds_seq_when_missing() -> void:
+	Connection._hello_acked = true  # 白盒：模拟握手完成（send 仅握手后放行）
 	var msg: Dictionary = {"type": "request", "request_type": "test", "payload": {}}
 	assert_false(msg.has("seq"))
 	Connection.send(msg)
@@ -85,6 +86,7 @@ func test_send_adds_seq_when_missing() -> void:
 
 
 func test_send_multiple_messages() -> void:
+	Connection._hello_acked = true  # 白盒：模拟握手完成
 	Connection.send({"type": "request", "request_type": "a", "payload": {}})
 	Connection.send({"type": "request", "request_type": "b", "payload": {}})
 	Connection.send({"type": "request", "request_type": "c", "payload": {}})
@@ -98,6 +100,65 @@ func test_default_constants_match_config() -> void:
 	assert_eq(Connection.DEFAULT_PORT, Config.DEFAULT_PORT)
 	assert_eq(Connection.RECONNECT_INTERVAL, Config.RECONNECT_INTERVAL)
 	assert_eq(Connection.MAX_MESSAGE_SIZE, Config.MAX_MESSAGE_SIZE)
+
+
+# ── 握手超时（回归：ack 后计时停止） ───────────────────────
+
+func test_hello_ack_stops_timeout_countdown() -> void:
+	"""握手成功后超时计时必须停止，否则连接必然 10s 后误触发重连。
+
+	回归：_handle_handshake 收到 hello_ack 只置 _hello_acked，未重置
+	_hello_elapsed，且 _poll_connection 的计时不看 ack 状态——
+	每次连接握手成功 10s 后仍被判定为 hello timeout 断开重连。
+	"""
+	var listener := TCPServer.new()
+	assert_eq(listener.listen(0), OK)
+	var port: int = listener.get_local_port()
+
+	var stream := StreamPeerTCP.new()
+	assert_eq(stream.connect_to_host("127.0.0.1", port), OK)
+	Connection._stream = stream
+	# 等待 TCP 握手完成（内核完成三次握手即 STATUS_CONNECTED）
+	for i in 50:
+		stream.poll()
+		if stream.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+			break
+		await get_tree().process_frame
+	assert_eq(stream.get_status(), StreamPeerTCP.STATUS_CONNECTED,
+		"测试前置：TCP 应建立")
+
+	# 场景 A：未 ack —— 11s 后触发 hello timeout 重连
+	Connection._hello_sent = true
+	Connection._hello_acked = false
+	Connection._hello_elapsed = 0.0
+	Connection._poll_connection(11.0)
+	assert_eq(Connection.status, Connection.Status.DISCONNECTED,
+		"未 ack 时超过 HELLO_TIMEOUT 应重连")
+
+	# 场景 B：ack 已收 —— 同样 11s 不应再触发（修复核心）
+	var stream2 := StreamPeerTCP.new()
+	assert_eq(stream2.connect_to_host("127.0.0.1", port), OK)
+	Connection._stream = stream2
+	for i in 50:
+		stream2.poll()
+		if stream2.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+			break
+		await get_tree().process_frame
+	if stream2.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+		pass_test("TCP 无法重建，跳过场景 B（仍以场景 A 验证超时语义）")
+		listener.stop()
+		return
+	Connection._hello_sent = true
+	Connection._hello_acked = true
+	Connection._hello_elapsed = 0.0
+	Connection.status = Connection.Status.CONNECTED
+	Connection._poll_connection(11.0)
+	assert_eq(Connection.status, Connection.Status.CONNECTED,
+		"ack 后即使超过 HELLO_TIMEOUT 也不得断开重连")
+	Connection._hello_acked = false
+
+	listener.stop()
+	Connection.disconnect_from_server()
 
 
 # ── 后端进程终止（优雅关闭） ────────────────────────────────

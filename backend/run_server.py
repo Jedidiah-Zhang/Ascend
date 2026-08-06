@@ -28,11 +28,27 @@ from pathlib import Path
 # 确保 backend 在 sys.path 中
 sys.path.insert(0, str(Path(__file__).parent))
 
-from ascend.log import setup_logging
+from ascend.log import setup_logging, get_logger
 from ascend.game import GameEngine, SERVER_HOST, SERVER_PORT
 
 AUTO_STOP_DELAY: float = 3.0
 LOG_RETENTION_DAYS: int = 7
+TOKEN_FILE: str = ".ascend_token"  # 认证令牌文件（项目根，前端启动时读取）
+
+
+def _write_token_file(token: str) -> None:
+    """写入认证令牌文件（本地握手用，非机密传输通道）。
+
+    前端拉起的后端经此文件获取 token 完成握手；文件为项目根相对路径，
+    已加入 .gitignore。
+    """
+    project_root = Path(__file__).parent.parent
+    path = project_root / TOKEN_FILE
+    try:
+        path.write_text(token, encoding="utf-8")
+    except OSError:
+        logger = get_logger("run_server")
+        logger.warning("令牌文件写入失败: %s", path)
 
 
 def _cleanup_old_logs() -> None:
@@ -71,6 +87,8 @@ def main() -> None:
 
     engine = GameEngine(seed=42, port=listen_port)
     engine.start_service()
+    if engine.server is not None:
+        _write_token_file(engine.server.token)
 
     print(f"Ascend 服务器运行在 {SERVER_HOST}:{listen_port}")
     print("按 Ctrl+C 停止，或关闭所有前端后自动退出")

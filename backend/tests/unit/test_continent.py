@@ -45,6 +45,34 @@ def _get_data(seed: int = CANONICAL_SEED):
 # ════════════════════════════════════════════════════════════════
 
 
+class TestCenterDistance:
+    """center_distance 四象限对称性（Chebyshev 距离）。"""
+
+    def test_third_quadrant_negative_y_axis(self):
+        """回归：dx=0, dy=-2 旧实现误算为 0，现应为 2。"""
+        from ascend.space.continent import center_distance
+        assert center_distance(0.0, -2.0) == 2.0
+        assert center_distance(0.0, -1.5) == 1.5
+        assert center_distance(0.5, -2.0) == 2.0
+
+    def test_quadrant_symmetry(self):
+        """四象限等距点距离一致。"""
+        from ascend.space.continent import center_distance
+        assert center_distance(2.0, 2.0) == center_distance(-2.0, 2.0)
+        assert center_distance(2.0, 2.0) == center_distance(2.0, -2.0)
+        assert center_distance(2.0, 2.0) == center_distance(-2.0, -2.0)
+        assert center_distance(0.5, -0.3) == center_distance(0.5, 0.3)
+        assert center_distance(0.5, -0.3) == center_distance(-0.5, -0.3)
+
+    def test_center_and_axis(self):
+        """原点距离 0；主轴距离取另一轴绝对值。"""
+        from ascend.space.continent import center_distance
+        assert center_distance(0.0, 0.0) == 0.0
+        assert center_distance(3.0, 0.0) == 3.0
+        assert center_distance(0.0, -3.0) == 3.0
+        assert center_distance(-3.0, 0.0) == 3.0
+
+
 class TestContinentOutline:
     """大陆轮廓生成测试 — 有限大陆边界 + 海陆并存 + 确定性。"""
 
@@ -196,7 +224,7 @@ class TestContinentOutline:
         """sample_altitude 返回有效的浮点数。"""
         from ascend.space.continent import ContinentData
         data = _get_data(seed=CANONICAL_SEED)
-        alt = data.sample_altitude(50000.0, 30000.0)
+        alt = data.sample_altitude(500.0, 300.0)
         assert isinstance(alt, float)
         assert not math.isnan(alt)
         assert not math.isinf(alt)
@@ -205,11 +233,11 @@ class TestContinentOutline:
         """is_land 查询结果与 land_mask 一致。"""
         from ascend.space.continent import ContinentData
         data = _get_data(seed=CANONICAL_SEED)
-        # 在网格中心附近逐像素验证
+        # 在网格中心附近逐像素验证（tile 坐标 = 格点坐标 1:1）
         for gx in range(100, 200):
             for gy in range(100, 200):
-                world_x = gx * CELL_SIZE_M + CELL_SIZE_M / 2
-                world_y = gy * CELL_SIZE_M + CELL_SIZE_M / 2
+                world_x = gx + 0.5
+                world_y = gy + 0.5
                 from_mask = data.land_mask[gy * data.grid_width + gx]
                 from_query = data.is_land(world_x, world_y)
                 assert from_mask == from_query, (

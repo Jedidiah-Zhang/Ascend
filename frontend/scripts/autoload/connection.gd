@@ -1,8 +1,13 @@
 """Connection 单例 — 管理与 Python 后端的 TCP 连接。
 
 协议:
-  每条消息 = 4 字节大端长度前缀 + JSON 体
+  每条消息 = 1 字节协议版本 + 4 字节大端长度前缀 + JSON 体
   消息格式: {type, seq, payload, ...}
+
+握手:
+  TCP 建立后客户端先发 hello{token, protocol_version}，收到 hello_ack
+  才视为已连接（connection_established 信号），此后才允许发送普通消息；
+  后端在握手前收到非 hello 帧会直接断开。
 
 信号:
   connection_established(host: String, port: int)
@@ -41,6 +46,11 @@ const DEFAULT_HOST: String = Config.DEFAULT_HOST
 const DEFAULT_PORT: int = Config.DEFAULT_PORT
 const RECONNECT_INTERVAL: float = Config.RECONNECT_INTERVAL
 const MAX_MESSAGE_SIZE: int = Config.MAX_MESSAGE_SIZE
+const PROTOCOL_VERSION: int = Config.PROTOCOL_VERSION
+const TOKEN_FILE_REL: String = Config.TOKEN_FILE_REL
+const CONNECTING_TIMEOUT: float = Config.CONNECTING_TIMEOUT
+const HELLO_TIMEOUT: float = Config.HELLO_TIMEOUT
+const RECEIVE_TIMEOUT: float = Config.RECEIVE_TIMEOUT
 
 ## Python 虚拟环境相对路径（相对于项目根目录）
 const VENV_PYTHON_REL: String = Config.VENV_PYTHON_REL
@@ -99,6 +109,18 @@ var _decode_running: bool = false
 ## 当前断线事件是否已广播（服务器与世界观解耦后读档重建不再断连；
 ## 此处仅防后端进程死亡后反复失败重连的刷屏——每次断线期只广播一次）
 var _outage_emitted: bool = false
+
+## 握手状态：hello 是否已发出 / 是否已收到 hello_ack（未 ack 前视为未连接）
+var _hello_sent: bool = false
+var _hello_acked: bool = false
+var _hello_elapsed: float = 0.0
+## 认证令牌（项目根 .ascend_token，后端启动时写入）
+var _token: String = ""
+
+## 连接建立耗时计时（超过 CONNECTING_TIMEOUT 断开重连）
+var _connect_elapsed: float = 0.0
+## 最后收到数据的时刻（Time.get_ticks_msec，超过 RECEIVE_TIMEOUT 视为后端挂死）
+var _last_receive_msec: int = 0
 
 ## 上帧 _process 耗时（微秒），供调试面板读取
 var last_process_us: int = 0
@@ -162,13 +184,22 @@ func _process(delta: float) -> void:
 			if _reconnect_timer <= 0.0:
 				_connect()
 		Status.CONNECTING:
-			_poll_connection()
+			_connect_elapsed += delta
+			_poll_connection(delta)
+			if status == Status.CONNECTING and _connect_elapsed > CONNECTING_TIMEOUT:
+				push_warning("Connection: connect timeout (%.1fs), reconnecting" % CONNECTING_TIMEOUT)
+				_reset_for_reconnect(_stream.get_status() if _stream else StreamPeerTCP.STATUS_ERROR)
 		Status.CONNECTED:
-			_poll_connection()
+			_poll_connection(delta)
 			if status == Status.CONNECTED:
 				_read_messages()
 				_collect_decoded()
 				_flush_send_queue()
+				# 最后收包超时：后端挂死/网络黑洞时断开重连
+				if _last_receive_msec > 0 \
+						and Time.get_ticks_msec() - _last_receive_msec > int(RECEIVE_TIMEOUT * 1000.0):
+					push_warning("Connection: receive timeout (%.0fs), reconnecting" % RECEIVE_TIMEOUT)
+					_reset_for_reconnect(_stream.get_status() if _stream else StreamPeerTCP.STATUS_ERROR)
 		Status.FAILED:
 			pass  # 终态：不自动重试，等待 connect_to_server() 手动重置
 
@@ -205,7 +236,14 @@ func disconnect_from_server() -> void:
 
 
 func send(message: Dictionary) -> void:
-	"""发送一条消息。"""
+	"""发送一条消息。
+
+	握手（hello_ack）完成前调用会被丢弃：后端在认证前收到普通帧
+	会直接断开连接（见 backend/ascend/net/client_handler.py）。
+	"""
+	if not _hello_acked:
+		push_warning("Connection: send before handshake ack ignored")
+		return
 	if not message.has("seq"):
 		message["seq"] = _codec.next_seq()
 	var framed: PackedByteArray = _codec.frame_encode(message)
@@ -345,6 +383,11 @@ func _on_probe_failed() -> void:
 
 func _connect() -> void:
 	"""发起 TCP 连接。"""
+	_hello_sent = false
+	_hello_acked = false
+	_hello_elapsed = 0.0
+	_connect_elapsed = 0.0
+	_last_receive_msec = 0
 	_stream = StreamPeerTCP.new()
 	var err: Error = _stream.connect_to_host(_host, _port)
 	if err != OK:
@@ -356,32 +399,84 @@ func _connect() -> void:
 	set_process(true)
 
 
-func _poll_connection() -> void:
-	"""轮询连接状态。"""
+func _poll_connection(delta: float) -> void:
+	"""轮询连接状态。
+
+	TCP 建立后先发 hello 握手；握手未完成前不计为已连接，
+	握手超时（HELLO_TIMEOUT）则断开重连。
+	"""
 	if _stream == null:
 		return
 	_stream.poll()
 	var s: StreamPeerTCP.Status = _stream.get_status()
 	match s:
 		StreamPeerTCP.STATUS_CONNECTED:
-			if status == Status.CONNECTING:
+			if not _hello_sent:
 				status = Status.CONNECTED
 				_outage_emitted = false
 				_start_decode_thread()
-				connection_established.emit(_host, _port)
+				_load_token()
+				_send_hello()
+			else:
+				if not _hello_acked:
+					# 超时只对「等待 ack」有意义：握手成功后不再累计，
+					# 否则连接必然在 10s 后误触发重连
+					_hello_elapsed += delta
+					if _hello_elapsed > HELLO_TIMEOUT:
+						push_warning("Connection: hello timeout (%.1fs), reconnecting" % HELLO_TIMEOUT)
+						_reset_for_reconnect(s)
 		StreamPeerTCP.STATUS_CONNECTING:
 			pass
 		_:
-			_stream = null
-			status = Status.DISCONNECTED
-			_reconnect_timer = RECONNECT_INTERVAL
-			# 断线事件只广播一次：读档重建期间反复失败的重连尝试
-			# 不应让 UI 每次断连都闪错误（连接由重建后的新服务恢复）
-			if not _outage_emitted:
-				_outage_emitted = true
-				push_warning("Connection: lost, status=%d" % s)
-				_stop_decode_thread()
-				connection_lost.emit()
+			_reset_for_reconnect(s)
+
+
+func _reset_for_reconnect(s: StreamPeerTCP.Status) -> void:
+	"""连接失效：清理流与握手状态，进入重连等待（断线事件只广播一次）。"""
+	if _stream != null:
+		_stream.disconnect_from_host()
+		_stream = null
+	_hello_sent = false
+	_hello_acked = false
+	_hello_elapsed = 0.0
+	_connect_elapsed = 0.0
+	_last_receive_msec = 0
+	status = Status.DISCONNECTED
+	_reconnect_timer = RECONNECT_INTERVAL
+	# 断线事件只广播一次：读档重建期间反复失败的重连尝试
+	# 不应让 UI 每次断连都闪错误（连接由重建后的新服务恢复）
+	if not _outage_emitted:
+		_outage_emitted = true
+		push_warning("Connection: lost, status=%d" % s)
+		_stop_decode_thread()
+		connection_lost.emit()
+
+
+func _load_token() -> void:
+	"""从项目根 .ascend_token 读取认证令牌（后端启动时写入）。"""
+	if not _token.is_empty():
+		return
+	var project_root: String = ProjectSettings.globalize_path("res://..")
+	var token_path: String = project_root.path_join(TOKEN_FILE_REL)
+	var f: FileAccess = FileAccess.open(token_path, FileAccess.READ)
+	if f == null:
+		push_error("Connection: token file missing at %s" % token_path)
+		_token = ""
+		return
+	_token = f.get_line().strip_edges()
+	f.close()
+
+
+func _send_hello() -> void:
+	"""发送握手帧：认证令牌 + 协议版本（置于发送队列队首，最先发出）。"""
+	_hello_sent = true
+	_hello_elapsed = 0.0
+	var hello: Dictionary = {
+		"type": "hello",
+		"seq": _codec.next_seq(),
+		"payload": {"token": _token, "protocol_version": PROTOCOL_VERSION},
+	}
+	_send_queue.push_front(_codec.frame_encode(hello))
 
 
 func _read_messages() -> void:
@@ -398,6 +493,7 @@ func _read_messages() -> void:
 		return
 	var data: PackedByteArray = chunk[1]
 	_recv_buf.append_array(data)
+	_last_receive_msec = Time.get_ticks_msec()
 
 	var result: Dictionary = _codec.frame_decode(_recv_buf, MAX_MESSAGE_SIZE)
 	_recv_buf = result["remaining"]
@@ -478,7 +574,11 @@ func _decode_worker() -> void:
 
 
 func _collect_decoded() -> void:
-	"""主线程收集后台已解码的消息并发射信号。"""
+	"""主线程收集后台已解码的消息并发射信号。
+
+	握手完成前只消费握手消息（hello_ack / 认证或版本错误），
+	其余消息不广播（后端在认证前不会发送普通消息）。
+	"""
 	if _decode_mutex == null:
 		return
 	var messages: Array[Dictionary] = []
@@ -489,4 +589,26 @@ func _collect_decoded() -> void:
 	_decode_mutex.unlock()
 
 	for msg in messages:
+		if not _hello_acked:
+			if _handle_handshake(msg):
+				continue
+			push_warning("Connection: message before handshake ack dropped")
+			continue
 		message_received.emit(msg)
+
+
+func _handle_handshake(msg: Dictionary) -> bool:
+	"""处理握手完成前的服务器消息。返回 True 表示已消费（不广播）。"""
+	var mtype: String = msg.get("type", "")
+	if mtype == "hello_ack":
+		_hello_acked = true
+		_hello_elapsed = 0.0  # 握手完成：停止 ack 等待计时（防 10s 后误超时）
+		print("Connection: handshake ok")
+		connection_established.emit(_host, _port)
+		return true
+	if mtype == "error" and msg.get("request_type", "") == "hello":
+		var reason: String = msg.get("error", "unknown")
+		push_error("Connection: handshake rejected: %s" % reason)
+		_enter_failed_state("handshake rejected: %s" % reason)
+		return true
+	return false

@@ -6,6 +6,7 @@ TerrainType 的 int 值直接存入数组，每 chunk 80KB 地形 + 160KB 高度
 """
 
 import struct
+import sys
 from array import array
 
 from .terrain import TerrainType
@@ -145,45 +146,29 @@ class TileGrid:
             result.append([TerrainType(v) for v in self._data[start:end]])
         return result
 
-    # ── 整体序列化 ────────────────────────────────────────
-
-    def to_list(self) -> list[int]:
-        """导出地形类型为 Python int 列表（用于 JSON 发往 Godot）。"""
-        return list(self._data)
-
-    def to_elevation_list(self) -> list[float]:
-        """导出高度场为 Python float 列表（用于 2.5D 渲染发往 Godot）。"""
-        return list(self._elevation)
-
-    def to_slope_list(self) -> list[float]:
-        """导出坡度场为 Python float 列表（用于 isometric 渲染发往 Godot）。"""
-        return list(self._slope)
-
-    @classmethod
-    def from_list(
-        cls,
-        data: list[int],
-        elevation: list[float] | None = None,
-        slope: list[float] | None = None,
-    ) -> "TileGrid":
-        """从 int 列表还原。可选 elevation/slope 列表同步还原。
-
-        Args:
-            data: 长度为 40000 的 int 列表（地形）。
-            elevation: 长度为 40000 的 float 列表（高度），未提供则全 0。
-            slope: 长度为 40000 的 float 列表（坡度），未提供则全 0。
-        """
-        return cls(data=data, elevation=elevation, slope=slope)
-
-    # ── 二进制序列化（用于 SQLite 持久化） ────────────────
+    # ── 二进制序列化（网络传输 + SQLite 持久化） ──────────
 
     def to_bytes(self) -> bytes:
-        """序列化为紧凑二进制 BLOB。
+        """序列化为紧凑二进制 BLOB（显式小端）。
 
         格式: 4B version(LE) + 80KB terrain(uint16 LE) +
               160KB elevation(float32 LE) + 160KB slope(float32 LE)。
         """
         header = struct.pack("<I", _TILEGRID_VERSION)
+        if sys.byteorder != "little":
+            # 大端机器上显式转小端，保证网络/持久化字节序稳定
+            terrain_le = array("H", self._data)
+            elevation_le = array("f", self._elevation)
+            slope_le = array("f", self._slope)
+            terrain_le.byteswap()
+            elevation_le.byteswap()
+            slope_le.byteswap()
+            return (
+                header
+                + terrain_le.tobytes()
+                + elevation_le.tobytes()
+                + slope_le.tobytes()
+            )
         return header + self._data.tobytes() + self._elevation.tobytes() + self._slope.tobytes()
 
     @classmethod
@@ -218,6 +203,11 @@ class TileGrid:
         off += _BYTES_ELEV
         slope = array("f")
         slope.frombytes(data[off : off + _BYTES_ELEV])
+        if sys.byteorder != "little":
+            # array.frombytes 按本机字节序读，小端契约须显式转换
+            terrain.byteswap()
+            elevation.byteswap()
+            slope.byteswap()
         return cls(data=terrain, elevation=elevation, slope=slope)
 
     # ── 低级访问 ──────────────────────────────────────────

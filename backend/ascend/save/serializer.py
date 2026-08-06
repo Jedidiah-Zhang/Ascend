@@ -9,6 +9,27 @@
     防止恢复的世界"时间倒流"——事件归档实时落盘，可能比 state 更新。
 """
 
+import math
+
+
+def _validate_finite(value, name: str) -> float:
+    """校验数值为有限浮点（NaN 熔断：NaN 恒 False 的比较会绕过 < 0 校验）。
+
+    Args:
+        value: 待校验数值（int/float/字符串等可转换类型）。
+        name: 字段名（错误信息用）。
+
+    Returns:
+        校验通过的 float。
+
+    Raises:
+        ValueError: 非有限数值（NaN/±Inf）。
+    """
+    v = float(value)
+    if not math.isfinite(v):
+        raise ValueError(f"非法数值 {name}: {value!r}")
+    return v
+
 
 
 
@@ -77,12 +98,12 @@ def apply_clock(state: dict, clock) -> None:
         ValueError: 时钟字段非法。
     """
     clock_state = state.get("clock") or {}
-    time = int(clock_state.get("time", 0))
+    time = int(_validate_finite(clock_state.get("time", 0), "clock.time"))
     if time < 0:
         raise ValueError(f"非法时钟时间: {time}")
     clock.restore(
         time=time,
-        speed=float(clock_state.get("speed", 1.0)),
+        speed=_validate_finite(clock_state.get("speed", 1.0), "clock.speed"),
         paused=bool(clock_state.get("paused", False)),
     )
 
@@ -93,14 +114,17 @@ def apply_player(state: dict, player_service) -> None:
     Args:
         state: collect_state 输出的字典（或从存档解密的结果）。
         player_service: PlayerService 实例（未 birth）。
+
+    Raises:
+        ValueError: 玩家字段非法（NaN/Inf）。
     """
     player = state.get("player") or {}
     entity_id = player.get("entity_id")
     if entity_id:
         player_service.restore(
             entity_id,
-            float(player.get("x", 0.0)),
-            float(player.get("y", 0.0)),
+            _validate_finite(player.get("x", 0.0), "player.x"),
+            _validate_finite(player.get("y", 0.0), "player.y"),
         )
 
 

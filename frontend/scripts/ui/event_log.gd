@@ -151,7 +151,10 @@ func _on_debug_toggled(shown: bool) -> void:
 ##     data: 载荷的 data 字段（取具体数值）。
 ##     ts: 格式化时间戳（HH:MM）。
 func _push_weather_event(event_type: String, payload: Dictionary, data: Dictionary, ts: String) -> void:
-	var loc: Array = payload.get("location", [])
+	# location 可能缺失或为 null（弱后端）：统一兜底为空数组
+	var loc: Variant = payload.get("location", [])
+	if not loc is Array:
+		loc = []
 	if not _is_within_view(loc):
 		return
 	var cx: int = int(loc[0]) if loc.size() >= 1 else 0
@@ -179,12 +182,13 @@ func _push_weather_event(event_type: String, payload: Dictionary, data: Dictiona
 ## 判断事件区块是否在玩家视野半径 VIEW_RADIUS 内。
 ##
 ## Args:
-##     location_array: 事件 location 数组（[cx, cy]）。
+##     location_array: 事件 location 数组（[cx, cy]）；非数组或尺寸不足视为
+##         缺少位置信息（放行显示）。
 ##
 ## Returns:
 ##     true = 在视野内或缺少位置信息（放行显示）。
-func _is_within_view(location_array: Array) -> bool:
-	if location_array.size() < 2:
+func _is_within_view(location_array: Variant) -> bool:
+	if not location_array is Array or location_array.size() < 2:
 		return true
 	var ev_cx: int = int(location_array[0])
 	var ev_cy: int = int(location_array[1])

@@ -11,6 +11,26 @@ from ascend.config import GAME_DAY, GAME_HOUR, GAME_MINUTE
 
 logger = get_logger(__name__)
 
+
+def tick_to_hms(game_time: int) -> tuple[int, int, int]:
+    """tick 数 → (当日小时, 当日分钟, 当日秒)，前端展示的统一换算（单一事实源）。
+
+    事件广播（EventBridge）、终端时间显示（executor）等所有时刻换算
+    均经此函数，避免多处口径漂移。
+
+    Args:
+        game_time: 游戏时间（tick 数）。
+
+    Returns:
+        (小时, 分钟, 秒)，小时范围 [0, 24)。
+    """
+    tod = game_time % GAME_DAY
+    hour = tod // GAME_HOUR
+    minute = (tod % GAME_HOUR) // GAME_MINUTE
+    second = (tod % GAME_MINUTE) * 60 // GAME_MINUTE
+    return hour, minute, second
+
+
 world_tree.register_event_schema(
     "day_end",
     required={"day": int, "elapsed_days": int},

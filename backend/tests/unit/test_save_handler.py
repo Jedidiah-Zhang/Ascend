@@ -60,22 +60,14 @@ class TestSaveList:
         assert s["game_time"] == 300
         assert s["seq"] == 0, "血缘权威排序键随条目下发"
 
-    def test_list_carries_legacy_seq_migration(self, manager, handlers):
-        """旧档（血缘无 seq）列表时经迁移合成 seq，排序键仍可用。"""
+    def test_list_carries_seq(self, manager, handlers):
+        """save_list 返回血缘 seq（时间线排序键），条目写盘即含。"""
         world_id = manager.create_world("世界", seed=1).world_id
         snap_a = manager.create_snapshot(world_id, suffix="manual")
         snap_b = manager.create_snapshot(world_id, suffix="manual")
-        lineage = manager.snapshot_lineage(world_id)
-        # 手工剥掉 seq 并改写 saved_at，模拟旧版血缘文件（a 比 b 早）
-        for entry in lineage["snapshots"].values():
-            entry.pop("seq", None)
-        lineage["snapshots"][snap_a]["saved_at"] = 1.0
-        with open(manager.lineage_path(world_id), "w", encoding="utf-8") as f:
-            import json
-            json.dump(lineage, f, ensure_ascii=False, indent=2)
         resp = handlers["save_list"](_req("save_list"))
         seqs = {s["file"]: s["seq"] for s in resp["payload"]["snapshots"]}
-        assert seqs[snap_a] == 0, "旧条目按 saved_at 顺序合成"
+        assert seqs[snap_a] == 0
         assert seqs[snap_b] == 1
 
     def test_list_reports_current_world(self, manager):

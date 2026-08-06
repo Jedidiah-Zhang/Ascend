@@ -1,9 +1,10 @@
 """TCP 服务器 — 监听 Godot 前端连接。
 
-在后台线程运行，接收 Godot 消息并放入队列，
-同时从发送队列取出消息推送给 Godot。
+在后台线程运行 accept 循环，每个客户端一个接收线程 + 一个发送线程，
+游戏线程从队列取消息处理，send() 仅入队（不阻塞游戏线程）。
 """
 
+import secrets
 import socket
 import threading
 from ascend.log import get_logger
@@ -12,17 +13,20 @@ from ascend.net.protocol import encode_message
 
 logger = get_logger(__name__)
 
+RECEIVE_QUEUE_LIMIT: int = 1024  # 接收队列上限（消息），超限断开灌消息的客户端
+
 
 class GameServer:
     """TCP 服务器，管理 Godot 客户端连接。
 
-    在后台线程运行 accept 循环，每个客户端一个接收线程。
+    在后台线程运行 accept 循环，每个客户端两个线程（接收 + 发送）。
     线程安全：_send_queue 由锁保护，可从任意线程调用 broadcast()。
 
     Attributes:
         host: 监听地址。
         port: 监听端口。
         is_running: 服务器是否在运行。
+        token: 客户端握手认证令牌（启动时生成）。
     """
 
     def __init__(self, host: str = "127.0.0.1", port: int = 9081) -> None:
@@ -35,6 +39,7 @@ class GameServer:
         self.host: str = host
         self.port: int = port
         self.is_running: bool = False
+        self.token: str = secrets.token_hex(16)
 
         self._socket: socket.socket | None = None
         self._accept_thread: threading.Thread | None = None
@@ -116,6 +121,10 @@ class GameServer:
         frame = encode_message(message)
         with self._clients_lock:
             for client in self._clients:
+                # 未完成握手（hello_ack）的连接不广播：握手前收到的
+                # 其他帧会被前端丢弃并告警
+                if not client.verified:
+                    continue
                 client.send(frame)
 
     def send_to(self, client_id: int, message: dict) -> None:
@@ -159,7 +168,10 @@ class GameServer:
             try:
                 conn, addr = self._socket.accept()
                 logger.info("新连接: %s:%d", addr[0], addr[1])
-                handler = ClientHandler(conn, addr, self._on_message, self._on_disconnect)
+                handler = ClientHandler(
+                    conn, addr, self._on_message, self._on_disconnect,
+                    token=self.token,
+                )
                 handler.client_id = self._next_client_id
                 self._next_client_id += 1
                 with self._clients_lock:
@@ -175,6 +187,13 @@ class GameServer:
     def _on_message(self, handler: "ClientHandler", message: dict) -> None:
         """客户端消息回调（从客户端线程调用）。"""
         with self._receive_lock:
+            if len(self._receive_queue) >= RECEIVE_QUEUE_LIMIT:
+                logger.error(
+                    "接收队列超限 %d，断开 %s:%d",
+                    RECEIVE_QUEUE_LIMIT, handler.addr[0], handler.addr[1],
+                )
+                handler._request_close()  # 本回调在 recv 线程，close() 会自 join 死锁
+                return
             self._receive_queue.append((handler.client_id, message))
 
     def _on_disconnect(self, handler: "ClientHandler") -> None:

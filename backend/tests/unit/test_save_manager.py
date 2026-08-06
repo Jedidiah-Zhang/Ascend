@@ -90,18 +90,9 @@ class TestCreateWorld:
         assert bad_id not in ids
 
     def test_unknown_world_manifest_raises(self, manager):
-        """不存在的世界报 SaveFormatError。"""
+        """不存在的世界（合法 ID 格式）报 SaveFormatError。"""
         with pytest.raises(SaveFormatError):
-            manager.get_manifest("nope")
-
-    def test_format_version_mismatch_rejected(self, manager, world):
-        """format_version 不兼容时拒绝加载。"""
-        path = manager.manifest_path(world)
-        data = json.load(open(path, encoding="utf-8"))
-        data["format_version"] = 999
-        json.dump(data, open(path, "w", encoding="utf-8"))
-        with pytest.raises(SaveFormatError):
-            manager.get_manifest(world)
+            manager.get_manifest("0" * 32)
 
 
 class TestNameUniqueness:
@@ -170,33 +161,6 @@ class TestSeedZero:
         assert manifest.seed == 12345
         manager.write_state(manifest.world_id, {"clock": {"time": 1}})
         assert manager.read_state(manifest.world_id)["clock"]["time"] == 1
-
-    def test_rekey_migrates_legacy_seed_zero(self, manager):
-        """旧版 seed=0 存档（创建时未随机化）：rekey 迁移后可用。"""
-        world_id = "legacy-world"
-        wdir = manager.world_dir(world_id)
-        os.makedirs(wdir)
-        os.makedirs(manager.snapshot_dir(world_id))
-        manifest = Manifest(name="旧档", seed=0, world_id=world_id)
-        manifest.secrets_blob = SaveKeys.generate().protect(world_id, 0)
-        manifest.write(manager.manifest_path(world_id))
-        # 旧行为复现：seed 变更但未重混淆 → state 加解密失配
-        stale = manager.get_manifest(world_id)
-        stale.seed = 999
-        stale.write(manager.manifest_path(world_id))
-        with pytest.raises(SaveCryptoError):
-            manager.write_state(world_id, {"clock": {"time": 5}})
-        # rekey：用旧 seed 解出、新 seed 重混淆
-        manager.rekey(world_id, old_seed=0, new_seed=999)
-        assert manager.get_manifest(world_id).seed == 999
-        manager.write_state(world_id, {"clock": {"time": 5}})
-        assert manager.read_state(world_id)["clock"]["time"] == 5
-
-    def test_rekey_wrong_old_seed_rejected(self, manager):
-        """旧 seed 不对时 rekey 拒绝（存档身份不符）。"""
-        world_id = manager.create_world("世界", seed=7).world_id
-        with pytest.raises(SaveCryptoError):
-            manager.rekey(world_id, old_seed=0, new_seed=999)
 
 
 class TestStateIO:
@@ -321,7 +285,7 @@ class TestSnapshot:
         with zipfile.ZipFile(buffer, "w") as zf:
             zf.writestr("../evil.txt", "pwned")
             zf.writestr(MANIFEST_NAME, json.dumps({
-                "format_version": 1, "name": "x", "seed": 1,
+                "name": "x", "seed": 1,
                 "world_id": world,
             }))
         keys = SaveKeys.generate()
@@ -555,38 +519,13 @@ class TestLineage:
         assert lineage["snapshots"][s1]["seq"] == 0
         assert lineage["snapshots"][s2]["seq"] == 1, "seq 反映创建顺序而非游戏时间"
 
-    def test_lineage_migrates_legacy_entries(self, manager, world):
-        """旧版血缘条目（无 seq）按 (saved_at, game_time) 合成。"""
+    def test_lineage_entries_have_seq(self, manager, world):
+        """新格式血缘条目写入即含 seq（权威排序键）。"""
         manager.write_state(world, {"clock": {"time": 100}})
-        s1 = manager.create_snapshot(world, suffix="manual")
-        s2 = manager.create_snapshot(world, suffix="manual")
+        manager.create_snapshot(world, suffix="manual")
         lineage = manager.snapshot_lineage(world)
         for entry in lineage["snapshots"].values():
-            entry.pop("seq", None)
-        lineage["snapshots"][s2]["saved_at"] = 1.0  # 改写为最早
-        with open(manager.lineage_path(world), "w", encoding="utf-8") as f:
-            json.dump(lineage, f, ensure_ascii=False, indent=2)
-        migrated = manager.snapshot_lineage(world)
-        assert migrated["snapshots"][s2]["seq"] == 0
-        assert migrated["snapshots"][s1]["seq"] == 1, "s2 更早所以编号在前"
-
-    def test_lineage_migration_skips_modern_entries(self, manager, world):
-        """已含 seq 的条目不被迁移重排。"""
-        manager.write_state(world, {"clock": {"time": 100}})
-        s1 = manager.create_snapshot(world, suffix="manual")
-        manager.write_state(world, {"clock": {"time": 200}})
-        s2 = manager.create_snapshot(world, suffix="manual")
-        lineage = manager.snapshot_lineage(world)
-        lineage["snapshots"]["@2030-01-01-000000-aaaaaa-manual.ascendsave"] = {
-            "parent": "", "game_time": 50, "saved_at": 1.0,
-        }
-        with open(manager.lineage_path(world), "w", encoding="utf-8") as f:
-            json.dump(lineage, f, ensure_ascii=False, indent=2)
-        migrated = manager.snapshot_lineage(world)
-        assert migrated["snapshots"][s1]["seq"] == 0, "现代条目编号不动"
-        assert migrated["snapshots"][s2]["seq"] == 1
-        assert migrated["snapshots"]["@2030-01-01-000000-aaaaaa-manual.ascendsave"]["seq"] == 2, \
-            "仅旧条目接续编号"
+            assert "seq" in entry
 
 
 class TestSnapshotDelete:
@@ -743,6 +682,39 @@ class TestSnapshotPrune:
         assert len(quits) == 2, "live_origin（最后一个 quit）额外保护"
 
 
+class TestWorldIdValidation:
+    """world_id 格式校验：路径穿越与非法 ID 全部拒绝。"""
+
+    @pytest.mark.parametrize("bad_id", [
+        "../../../etc",
+        "..",
+        "/abs/path",
+        "w1",
+        "0" * 31,
+        "Z" * 32,  # 大写十六进制也不放行
+        "0" * 32 + "/x",
+        "0" * 32 + "\\x",
+        "",
+    ])
+    def test_invalid_world_id_rejected(self, manager, bad_id):
+        """非法 world_id 全部抛 ValueError（路径穿越注入）。"""
+        with pytest.raises(ValueError):
+            manager.get_manifest(bad_id)
+        with pytest.raises(ValueError):
+            manager.delete_world(bad_id)
+        with pytest.raises(ValueError):
+            manager.rename_world(bad_id, "x")
+        with pytest.raises(ValueError):
+            manager.write_state(bad_id, {})
+        with pytest.raises(ValueError):
+            manager.create_snapshot(bad_id)
+
+    def test_valid_world_id_accepted(self, manager):
+        """合法格式的未知 ID 走正常不存在路径（SaveFormatError）。"""
+        with pytest.raises(SaveFormatError):
+            manager.get_manifest("ab" * 16)
+
+
 class TestWorldOps:
     """世界级管理操作。"""
 
@@ -754,9 +726,9 @@ class TestWorldOps:
             manager.get_manifest(world)
 
     def test_delete_unknown_raises(self, manager):
-        """删除不存在的世界报错。"""
+        """删除不存在的世界（合法 ID 格式）报 SaveFormatError。"""
         with pytest.raises(SaveFormatError):
-            manager.delete_world("ghost")
+            manager.delete_world("f" * 32)
 
     def test_export_creates_independent_copy(self, manager, world):
         """导出复制为独立新世界，互不影响。"""

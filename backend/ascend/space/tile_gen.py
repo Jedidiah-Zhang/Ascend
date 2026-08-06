@@ -312,6 +312,7 @@ def _compute_slopes(grid: TileGrid, source: list[float] | None = None) -> None:
     """计算每个 tile 的最大局部梯度（m/m），存入 grid._slope。
 
     对每个 tile，比较其高程与 8 邻域（chunk 内）的高程差，
+    除以邻域距离（1 tile = 100m，对角 141.4m）得真实斜率，
     取最大值作为该 tile 的坡度。边界 tile 仅考虑 chunk 内的邻居。
 
     Args:
@@ -321,8 +322,9 @@ def _compute_slopes(grid: TileGrid, source: list[float] | None = None) -> None:
             管线传宏观海拔数组。
     """
     size = grid.size
-    directions = [(-1, -1), (0, -1), (1, -1), (-1, 0),
-                  (1, 0), (-1, 1), (0, 1), (1, 1)]
+    directions = [(-1, -1, 141.4), (0, -1, 100.0), (1, -1, 141.4),
+                  (-1, 0, 100.0), (1, 0, 100.0), (-1, 1, 141.4),
+                  (0, 1, 100.0), (1, 1, 141.4)]
 
     for y in range(size):
         for x in range(size):
@@ -330,18 +332,18 @@ def _compute_slopes(grid: TileGrid, source: list[float] | None = None) -> None:
                 source[y * size + x] if source is not None
                 else grid.get_elevation(x, y)
             )
-            max_delta = 0.0
-            for dx, dy in directions:
+            max_slope = 0.0
+            for dx, dy, dist in directions:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < size and 0 <= ny < size:
                     ne = (
                         source[ny * size + nx] if source is not None
                         else grid.get_elevation(nx, ny)
                     )
-                    delta = abs(elev - ne)
-                    if delta > max_delta:
-                        max_delta = delta
-            grid.set_slope(x, y, max_delta)
+                    slope = abs(elev - ne) / dist
+                    if slope > max_slope:
+                        max_slope = slope
+            grid.set_slope(x, y, max_slope)
 
 
 _WATER_TYPES = frozenset({TerrainType.DEEP_WATER, TerrainType.SHALLOW_WATER})

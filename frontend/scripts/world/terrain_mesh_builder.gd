@@ -50,7 +50,7 @@ const AO_SIDE_FACTOR: float = 0.68
 ##
 ## Returns:
 ##     合并后的 ArrayMesh（无可见面时 surface 数为 0）。
-static func build(terrain: Array, elevation: Array, materials: Dictionary) -> ArrayMesh:
+static func build(terrain: PackedInt32Array, elevation: PackedFloat32Array, materials: Dictionary) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
 	var CS: int = CHUNK_SIZE
 
@@ -61,12 +61,12 @@ static func build(terrain: Array, elevation: Array, materials: Dictionary) -> Ar
 	for z in CS:
 		for x in CS:
 			var idx := z * CS + x
-			var terrain_id: int = int(terrain[idx]) if idx < terrain.size() else 0
+			var terrain_id: int = terrain[idx] if idx < terrain.size() else 0
 			if terrain_id < 0 or terrain_id >= TERRAIN_TO_MESH.size():
 				continue
 			var item_id: int = TERRAIN_TO_MESH[terrain_id]
 
-			var elev: float = float(elevation[idx])
+			var elev: float = elevation[idx] if idx < elevation.size() else 0.0
 			var is_water := (terrain_id == SHALLOW_WATER_ID or terrain_id == DEEP_WATER_ID)
 			if not is_water and elev < 0.0:
 				continue
@@ -74,7 +74,9 @@ static func build(terrain: Array, elevation: Array, materials: Dictionary) -> Ar
 				continue
 
 			var wy := roundi(elev)
-			var c: _Collector = data[item_id]
+			var c: _Collector = data.get(item_id)
+			if c == null:
+				continue  # 该 item_id 无材质/收集器（调用方表缺失）：跳过而非崩溃
 			var b := Vector3(float(x), float(wy), float(z))
 
 			var ao_top: Color = _compute_top_ao(x, z, wy, elevation, CS)
@@ -115,7 +117,7 @@ static func build(terrain: Array, elevation: Array, materials: Dictionary) -> Ar
 ##
 ## Returns:
 ##     灰阶 Color（各通道一致，下限 AO_TOP_MIN）。
-static func _compute_top_ao(x: int, z: int, wy: int, elevation: Array, CS: int) -> Color:
+static func _compute_top_ao(x: int, z: int, wy: int, elevation: PackedFloat32Array, CS: int) -> Color:
 	var ao: float = 1.0
 	for d in [[0, 1], [0, -1], [1, 0], [-1, 0]]:
 		var nx: int = x + int(d[0])
@@ -125,7 +127,7 @@ static func _compute_top_ao(x: int, z: int, wy: int, elevation: Array, CS: int) 
 		var nidx: int = nz * CS + nx
 		if nidx >= elevation.size():
 			continue
-		var ne: float = float(elevation[nidx])
+		var ne: float = elevation[nidx]
 		var diff: int = roundi(ne) - wy
 		if diff > 0:
 			ao -= minf(float(diff), 3.0) * AO_STRENGTH_PER_LEVEL
@@ -142,7 +144,7 @@ static func _compute_top_ao(x: int, z: int, wy: int, elevation: Array, CS: int) 
 ## Returns:
 ##     与邻居存在高度差时为 true（需渲染侧壁）。
 static func _side_visible(x: int, z: int, dx: int, dz: int, wy: int,
-		terrain: Array, elevation: Array, CS: int) -> bool:
+		terrain: PackedInt32Array, elevation: PackedFloat32Array, CS: int) -> bool:
 	var nx := x + dx
 	var nz := z + dz
 
@@ -151,12 +153,12 @@ static func _side_visible(x: int, z: int, dx: int, dz: int, wy: int,
 		return true
 
 	var nidx := nz * CS + nx
-	var ntid: int = int(terrain[nidx]) if nidx < terrain.size() else 0
+	var ntid: int = terrain[nidx] if nidx < terrain.size() else 0
 	if ntid < 0 or ntid >= TERRAIN_TO_MESH.size():
 		return true
 
 	var n_water := (ntid == SHALLOW_WATER_ID or ntid == DEEP_WATER_ID)
-	var n_elev: float = float(elevation[nidx]) if nidx < elevation.size() else 0.0
+	var n_elev: float = elevation[nidx] if nidx < elevation.size() else 0.0
 	if not n_water and n_elev < 0.0:
 		return true
 	if n_water and n_elev < WATER_FLOOR_CUTOFF:

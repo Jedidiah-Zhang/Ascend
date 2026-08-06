@@ -21,6 +21,12 @@ const STREAM_MARGIN: int = 1
 const UNLOAD_MARGIN: int = 1
 const MAX_PENDING: int = 3
 
+## tile 二进制 BLOB 布局（与后端 ascend/space/tile_grid.py to_bytes 契约同步）：
+## 4B 版本头 + uint16 LE 地形 + float32 LE 高程 + float32 LE 坡度
+const _TILE_BLOB_HEADER: int = 4
+const _TILE_BLOB_TERRAIN: int = CHUNK_SIZE * CHUNK_SIZE * 2
+const _TILE_BLOB_ELEV: int = CHUNK_SIZE * CHUNK_SIZE * 4
+
 ## 玩家移动上报节流间隔（秒）
 const MOVE_REPORT_INTERVAL: float = 0.2
 
@@ -76,6 +82,17 @@ const TERRAIN_TEXTURES: Dictionary = {
 	9: "res://assets/terrain/textures/top_underwater_floor.png",
 }
 
+## 纹理加载失败时的纯色兜底（item_id → Color），与纹理主色调近似
+const _TERRAIN_FALLBACK_COLORS: Dictionary = {
+	2: Color(0.85, 0.78, 0.5),
+	3: Color(0.45, 0.62, 0.35),
+	4: Color(0.55, 0.5, 0.35),
+	5: Color(0.45, 0.42, 0.38),
+	6: Color(0.5, 0.48, 0.45),
+	8: Color(0.35, 0.45, 0.25),
+	9: Color(0.3, 0.38, 0.35),
+}
+
 
 static func _world_to_chunk(wx: float, wz: float) -> Vector2i:
 	"""世界坐标 → chunk 坐标（全文件单一换算实现）。
@@ -88,6 +105,26 @@ static func _world_to_chunk(wx: float, wz: float) -> Vector2i:
 static func _tile_index(tx: int, tz: int) -> int:
 	"""chunk 内 tile 行优先索引（与后端 tile 数组布局一致）。"""
 	return tz * CHUNK_SIZE + tx
+
+
+static func _decode_u16_array(raw: PackedByteArray) -> PackedInt32Array:
+	"""小端 uint16 数组 → PackedInt32Array（与后端 BLOB 布局一致）。"""
+	var out := PackedInt32Array()
+	var n: int = raw.size() >> 1  # BLOB 长度保证偶数（uint16 元素计数）
+	out.resize(n)
+	for i in n:
+		out[i] = raw.decode_u16(i * 2)
+	return out
+
+
+static func _decode_f32_array(raw: PackedByteArray) -> PackedFloat32Array:
+	"""小端 float32 数组 → PackedFloat32Array（与后端 BLOB 布局一致）。"""
+	var out := PackedFloat32Array()
+	var n: int = raw.size() >> 2  # BLOB 长度保证 4 字节对齐（float32 元素计数）
+	out.resize(n)
+	for i in n:
+		out[i] = raw.decode_float(i * 4)
+	return out
 
 ## 终端节点
 @onready var _terminal: TerminalWidget = $TerminalLayer/TerminalWidget
@@ -113,17 +150,16 @@ var _terrain_parent: Node3D
 ## 是否已对齐相机到地形表面
 var _camera_grounded: bool = false
 
-## chunk 状态追踪: {Vector2i(cx, cy): chunk_data_dict}
+## chunk 生命周期状态（单一状态机，替代旧五字典 _pending/_batch_pending/_tile_queue/_loaded）
+## 字段请求与完整请求由状态驱动：FIELD_REQUESTED → 字段响应到达存数据 → 流循环限流发完整请求
+## → TILE_REQUESTED → 完整响应解码 → RECEIVED → 材质就绪建网格 → BUILT。结构性无双请求。
+enum ChunkState { UNKNOWN, FIELD_REQUESTED, TILE_REQUESTED, RECEIVED, BUILT }
+
+## chunk 状态映射: {Vector2i(cx, cy): ChunkState}
+var _chunk_states: Dictionary = {}
+## chunk 数据缓存: {Vector2i(cx, cy): chunk_data_dict}
+## null = 字段请求已发、响应未到（字段在途）；Dictionary = 字段或完整数据已收到
 var _chunks: Dictionary = {}
-## 正在请求中的 chunk: {Vector2i(cx, cy): true}
-var _pending: Dictionary = {}
-## 正在请求字段数据（不含 tile）的 chunk: {Vector2i(cx, cy): true}
-## 与 _pending 分开记账：字段响应到达时不清 tile 请求的标记
-var _batch_pending: Dictionary = {}
-## 已渲染的 chunk: {Vector2i(cx, cy): true}
-var _loaded: Dictionary = {}
-## 待请求 tile 数据的队列（Dict 做 O(1) 去重）
-var _tile_queue: Dictionary = {}
 ## 缓存从 MeshLibrary 提取的材质: item_id → Material
 var _terrain_materials: Dictionary = {}
 
@@ -173,6 +209,9 @@ var _last_sun_altitude: float = 0.5
 ## 天气轮询计时器
 var _weather_query_timer: float = 0.0
 const WEATHER_QUERY_INTERVAL: float = 1.0
+## 光照更新节流间隔（墙钟秒）：光照量只随游戏分钟/天气事件变化
+var _lighting_timer: float = 0.0
+const LIGHTING_UPDATE_INTERVAL: float = 0.5
 
 
 ## 节点就绪：连接终端命令/连接状态/消息信号，挂载暂停菜单保存回调，
@@ -321,14 +360,16 @@ func _get_ground_elevation_at(pos: Vector3) -> float:
 	var chunk = _chunks.get(key)
 	if not (chunk is Dictionary):
 		return NAN
-	var elev: Array = chunk.get("elevation", [])
+	var elev: PackedFloat32Array = chunk.get("elevation", PackedFloat32Array())
 	if elev.size() < CHUNK_SIZE * CHUNK_SIZE:
 		return NAN
-	var tx: int = int(pos.x) - chunk_pos.x * CHUNK_SIZE
-	var tz: int = int(pos.z) - chunk_pos.y * CHUNK_SIZE
+	# floori 与 _world_to_chunk 的坐标语义一致：负坐标下 int() 向零
+	# 截断会算错 tile 索引（int(-0.5)=0 而 tile 应为 -1）
+	var tx: int = floori(pos.x) - chunk_pos.x * CHUNK_SIZE
+	var tz: int = floori(pos.z) - chunk_pos.y * CHUNK_SIZE
 	if tx < 0 or tx >= CHUNK_SIZE or tz < 0 or tz >= CHUNK_SIZE:
 		return NAN
-	return float(elev[_tile_index(tx, tz)])
+	return elev[_tile_index(tx, tz)]
 
 
 ## 记录后端权威出生 chunk（仅首次生效）：玩家与相机焦点移到出生点并应用变换，更新加载提示。
@@ -354,7 +395,7 @@ func _set_birth_chunk(cx: int, cy: int) -> void:
 func _check_terrain_ready(force: bool = false) -> void:
 	"""出生点周围地形加载完成后切换为可见世界。
 
-	判定：出生 chunk 的 TERRAIN_READY_RADIUS 邻域全部加载（_loaded）；
+	判定：出生 chunk 的 TERRAIN_READY_RADIUS 邻域全部 BUILT；
 	force=true（超时兜底）跳过判定直接就绪，防后端异常时玩家永久卡住。
 	"""
 	if _world_visible or not _has_birth:
@@ -362,7 +403,8 @@ func _check_terrain_ready(force: bool = false) -> void:
 	if not force:
 		for dx in range(-TERRAIN_READY_RADIUS, TERRAIN_READY_RADIUS + 1):
 			for dy in range(-TERRAIN_READY_RADIUS, TERRAIN_READY_RADIUS + 1):
-				if not _loaded.has(_birth_chunk + Vector2i(dx, dy)):
+				var key := _birth_chunk + Vector2i(dx, dy)
+				if _chunk_states.get(key, ChunkState.UNKNOWN) != ChunkState.BUILT:
 					return
 	_world_visible = true
 	if _loading_label:
@@ -438,16 +480,13 @@ func _on_world_initialized(data: Dictionary) -> void:
 
 
 func _reset_world_state() -> void:
-	"""清空旧世界的 chunk 缓存与地形节点（世界重建后旧数据失效）。"""
+	"""清空旧世界的 chunk 状态/数据与地形节点（世界重建后旧数据失效）。"""
 	_has_birth = false
 	_world_visible = false
 	_terrain_ready_timer = 0.0
 	_birth_chunk = Vector2i.ZERO
+	_chunk_states.clear()
 	_chunks.clear()
-	_pending.clear()
-	_batch_pending.clear()
-	_tile_queue.clear()
-	_loaded.clear()
 	if _player:
 		_player.visible = false
 	if _terrain_parent:
@@ -494,12 +533,13 @@ func get_debug_terrain_at(world_pos: Vector2) -> Dictionary:
 	var chunk = _chunks.get(key)
 	if chunk == null or not (chunk is Dictionary):
 		return {}
-	var elev: Array = chunk.get("elevation", [])
-	var slope: Array = chunk.get("slope", [])
+	var elev: PackedFloat32Array = chunk.get("elevation", PackedFloat32Array())
+	var slope: PackedFloat32Array = chunk.get("slope", PackedFloat32Array())
 	if elev.size() < CHUNK_SIZE * CHUNK_SIZE:
 		return {}
-	var tx: int = int(world_pos.x) - key.x * CHUNK_SIZE
-	var tz: int = int(world_pos.y) - key.y * CHUNK_SIZE
+	# floori：负坐标下 int() 向零截断会算错 tile 索引（见 _get_ground_elevation_at）
+	var tx: int = floori(world_pos.x) - key.x * CHUNK_SIZE
+	var tz: int = floori(world_pos.y) - key.y * CHUNK_SIZE
 	if tx < 0 or tx >= CHUNK_SIZE or tz < 0 or tz >= CHUNK_SIZE:
 		return {}
 	var idx: int = _tile_index(tx, tz)
@@ -507,7 +547,7 @@ func get_debug_terrain_at(world_pos: Vector2) -> Dictionary:
 	if idx < elev.size():
 		result["elevation"] = int(elev[idx])
 	if idx < slope.size():
-		result["slope"] = float(slope[idx])
+		result["slope"] = slope[idx]
 	return result
 
 
@@ -533,19 +573,26 @@ func get_debug_climate_at(world_pos: Vector2) -> Dictionary:
 	return result
 
 
-## 调试 getter：已加载/已缓存（未渲染）/请求中的 chunk 数量统计。
+## 调试 getter：已加载（BUILT）/缓存（RECEIVED）/请求中（FIELD/TILE_REQUESTED）计数。
 ##
 ## Returns:
 ##     含 loaded/cached/pending 计数的字典。
 func get_debug_chunk_stats() -> Dictionary:
+	var loaded: int = 0
 	var cached: int = 0
-	for key in _chunks:
-		if _chunks[key] is Dictionary and not _loaded.has(key):
-			cached += 1
+	var pending: int = 0
+	for key in _chunk_states:
+		match _chunk_states[key]:
+			ChunkState.BUILT:
+				loaded += 1
+			ChunkState.RECEIVED:
+				cached += 1
+			ChunkState.FIELD_REQUESTED, ChunkState.TILE_REQUESTED:
+				pending += 1
 	return {
-		"loaded": _loaded.size(),
+		"loaded": loaded,
 		"cached": cached,
-		"pending": _pending.size(),
+		"pending": pending,
 	}
 
 
@@ -569,17 +616,19 @@ func _update_player_ground() -> void:
 		_player.position = _player_pos
 
 
-## 构建并挂载单个地形 chunk 网格（已加载或节点存在时跳过；材质未就绪则放弃本次）。
-## 网格无 surface 时仅标记加载完成；首块覆盖玩家的 chunk 记录地面高度；结束后触发就绪检查。
+## 构建并挂载单个地形 chunk 网格（已 BUILT 或节点存在时跳过；材质未就绪保持
+## RECEIVED 由流循环重试——不触发任何网络请求，消除旧版无限重发循环）。
+## 网格无 surface 时仅标记 BUILT；首块覆盖玩家的 chunk 记录地面高度；结束后触发就绪检查。
 ##
 ## Args:
 ##     cx/cy: chunk 坐标（决定节点名与挂载偏移）。
 ##     terrain: chunk 的 terrain_id 数组（长度 CHUNK_SIZE²）。
 ##     elevation: chunk 的高程数组（长度 CHUNK_SIZE²）。
-func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) -> void:
+func _build_terrain_chunk(cx: int, cy: int, terrain: PackedInt32Array, elevation: PackedFloat32Array) -> void:
 	const CS: int = CHUNK_SIZE
 	var key := Vector2i(cx, cy)
-	if _loaded.has(key) or _terrain_parent.has_node(NodePath("Chunk_%d_%d" % [cx, cy])):
+	if _chunk_states.get(key, ChunkState.UNKNOWN) == ChunkState.BUILT \
+			or _terrain_parent.has_node(NodePath("Chunk_%d_%d" % [cx, cy])):
 		return
 
 	var materials := _lazy_load_materials()
@@ -589,7 +638,7 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 	var mesh: ArrayMesh = TerrainMeshBuilder.build(terrain, elevation, materials)
 
 	if mesh.get_surface_count() == 0:
-		_loaded[key] = true
+		_chunk_states[key] = ChunkState.BUILT
 		_check_terrain_ready()
 		return
 
@@ -599,7 +648,7 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 	mi.position = Vector3(float(cx * CS), 0.0, float(cy * CS))
 
 	_terrain_parent.add_child(mi)
-	_loaded[key] = true
+	_chunk_states[key] = ChunkState.BUILT
 	print("MainWorld3D: chunk (%d,%d) — %d surfaces" % [cx, cy, mesh.get_surface_count()])
 
 	# 首次 chunk 覆盖玩家时，记录地面高度（玩家节点统一由
@@ -616,7 +665,8 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: Array, elevation: Array) ->
 
 
 ## 按 TERRAIN_TEXTURES 表懒加载地形材质：最近邻过滤 + 顶点色作 albedo（支持 AO），
-## 失败纹理报错跳过；首次调用后缓存复用。
+## 纹理缺失时报错并补纯色材质（同一 item_id 下地形仍可渲染，不阻塞 chunk 构建）；
+## 首次调用后缓存复用。
 ##
 ## Returns:
 ##     item_id → Material 材质表。
@@ -624,17 +674,18 @@ func _lazy_load_materials() -> Dictionary:
 	if _terrain_materials.is_empty():
 		for item_id in TERRAIN_TEXTURES:
 			var tex_path: String = TERRAIN_TEXTURES[item_id]
-			if tex_path.is_empty():
-				continue
-			var tex: Texture2D = load(tex_path)
-			if tex == null:
-				push_error("MainWorld3D: failed to load texture: %s" % tex_path)
-				continue
 			var mat := StandardMaterial3D.new()
-			mat.albedo_texture = tex
-			mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 			# 顶点色 AO（悬崖接触阴影）依赖此开关，默认 false 会直接忽略顶点色
 			mat.vertex_color_use_as_albedo = true
+			if not tex_path.is_empty():
+				var tex: Texture2D = load(tex_path)
+				if tex != null:
+					mat.albedo_texture = tex
+				else:
+					# 纹理缺失：纯色材质兜底，避免无限重试阻塞 chunk 构建
+					push_error("MainWorld3D: failed to load texture: %s" % tex_path)
+					mat.albedo_color = _TERRAIN_FALLBACK_COLORS.get(item_id, Color(0.5, 0.5, 0.5))
+			mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 			_terrain_materials[item_id] = mat
 	return _terrain_materials
 
@@ -676,7 +727,12 @@ func _process(delta: float) -> void:
 	if _weather_query_timer >= WEATHER_QUERY_INTERVAL:
 		_weather_query_timer = 0.0
 		_query_weather()
-	_update_lighting()
+	# 光照更新节流：光照量随游戏分钟/天气事件变化，墙钟 0.5s 重算一次
+	# 足够平滑，避免每帧写 DirectionalLight3D/Environment（阴影参数开销大）
+	_lighting_timer += delta
+	if _lighting_timer >= LIGHTING_UPDATE_INTERVAL:
+		_lighting_timer = 0.0
+		_update_lighting()
 
 	if _debug_overlay and _debug_overlay.is_shown():
 		_debug_overlay.process_sections(delta)
@@ -818,15 +874,24 @@ func _on_connected(host: String, port: int) -> void:
 	})
 
 
-## 连接断开回调：清空在途 chunk 请求状态（重连后 _stream_chunks 自动重新入队，已加载地形保留）。
+## 连接断开回调：作废在途请求（重连后 _stream_chunks 自动重新入队）。
+##
+## 状态降级规则：
+##   - FIELD_REQUESTED 且无数据（字段在途）→ UNKNOWN（重连后重新字段请求）
+##   - FIELD_REQUESTED 有数据 / TILE_REQUESTED → 保留数据置 FIELD_REQUESTED（重连后重发完整请求）
+##   - RECEIVED / BUILT → 保留（数据仍有效，重连后恢复构建）
 func _on_disconnected() -> void:
 	print("MainWorld3D: disconnected")
-	# 服务器与世界观解耦后，读档重建不再断连——此处仅处理真实断线：
-	# 在途请求的响应永远不会到达：清空请求状态，重连后 _stream_chunks
-	# 会为所有未加载 chunk 重新入队请求（已加载的地形节点保留）
-	_pending.clear()
-	_batch_pending.clear()
-	_tile_queue.clear()
+	for key in _chunk_states.keys():
+		match _chunk_states[key]:
+			ChunkState.FIELD_REQUESTED:
+				if not (_chunks.get(key) is Dictionary):
+					_chunk_states.erase(key)
+					_chunks.erase(key)
+			ChunkState.TILE_REQUESTED:
+				_chunk_states[key] = ChunkState.FIELD_REQUESTED
+			_:
+				pass
 	_save_file = ""
 
 
@@ -915,25 +980,48 @@ func _handle_response(message: Dictionary) -> void:
 				var cx: int = int(chunk.get("cx", 0))
 				var cy: int = int(chunk.get("cy", 0))
 				var key := Vector2i(cx, cy)
-				_chunks[key] = chunk
-				# 按响应类型分别清除标记：仅含字段的响应不动 tile 请求的
-				# _pending 标记，否则会每帧重发 tile 请求直到其响应到达
-				if has_tiles:
-					_pending.erase(key)
-				else:
-					_batch_pending.erase(key)
+				var state: ChunkState = _chunk_states.get(key, ChunkState.UNKNOWN)
 
+				# 陈旧响应（卸载/世界重置后到达）：丢弃
+				if state == ChunkState.UNKNOWN:
+					continue
+
+				# 数据缓存：字段或完整数据（响应后覆盖旧值，两种响应同一字典）
+				_chunks[key] = chunk
+
+				# 越界卸载检查：响应到达的 chunk 若已远离玩家则立即卸载
 				var player_chunk := _world_to_chunk(_player_pos.x, _player_pos.z)
 				var unload_r: int = _stream_radius() + UNLOAD_MARGIN
 				if abs(cx - player_chunk.x) > unload_r or abs(cy - player_chunk.y) > unload_r:
-					_chunks.erase(key)
+					_forget_chunk(key)
 					continue
 
-				var elev: Array = chunk.get("elevation", [])
-				var terr: Array = chunk.get("terrain", [])
-				if elev.size() == CHUNK_SIZE * CHUNK_SIZE and terr.size() == CHUNK_SIZE * CHUNK_SIZE:
-					if not _loaded.has(key):
-						_build_terrain_chunk(cx, cy, terr, elev)
+				# 字段版响应：存数据，保持 FIELD_REQUESTED（流循环限流发完整请求）
+				if not has_tiles:
+					if state == ChunkState.TILE_REQUESTED:
+						# 服务器对完整请求回了字段版（异常）：降级重发完整请求
+						_chunk_states[key] = ChunkState.FIELD_REQUESTED
+					continue
+
+				# 完整版响应：解码 tile 数据 → RECEIVED → 立即尝试构建
+				_chunk_states[key] = ChunkState.RECEIVED
+				var tiles_raw: PackedByteArray = Marshalls.base64_to_raw(str(chunk.get("tiles_b64", "")))
+				var expected: int = _TILE_BLOB_HEADER + _TILE_BLOB_TERRAIN + _TILE_BLOB_ELEV * 2
+				if tiles_raw.size() != expected:
+					# 数据损坏：保持 RECEIVED 无效数据无法构建，重新入队完整请求
+					_chunk_states[key] = ChunkState.FIELD_REQUESTED
+					continue
+				var terr: PackedInt32Array = _decode_u16_array(
+					tiles_raw.slice(_TILE_BLOB_HEADER, _TILE_BLOB_HEADER + _TILE_BLOB_TERRAIN))
+				var elev: PackedFloat32Array = _decode_f32_array(
+					tiles_raw.slice(_TILE_BLOB_HEADER + _TILE_BLOB_TERRAIN,
+						_TILE_BLOB_HEADER + _TILE_BLOB_TERRAIN + _TILE_BLOB_ELEV))
+				var slope: PackedFloat32Array = _decode_f32_array(
+					tiles_raw.slice(_TILE_BLOB_HEADER + _TILE_BLOB_TERRAIN + _TILE_BLOB_ELEV, expected))
+				chunk["terrain"] = terr
+				chunk["elevation"] = elev
+				chunk["slope"] = slope
+				_build_terrain_chunk(cx, cy, terr, elev)
 		"get_weather":
 			var weathers: Array = payload.get("weathers", [])
 			if weathers.size() > 0:
@@ -1015,8 +1103,12 @@ func _apply_authoritative_position(payload: Dictionary) -> void:
 
 ## ── 流式 chunk 管理 ──────────────────────────────────────
 
-## 流式加载主循环：先卸载远离玩家的 chunk，再批量请求流半径内缺失 chunk 的字段数据，
-## 已缓存未加载的入 tile 队列，按 MAX_PENDING 限流逐块请求完整数据，末段记录耗时。
+## 流式加载主循环（状态机驱动，结构性无双请求）：
+##   1. 卸载远离玩家的 chunk（BUILT 释放节点，任意状态 → UNKNOWN）
+##   2. 半径内 UNKNOWN → 批量字段请求（→ FIELD_REQUESTED）
+##   3. RECEIVED（完整数据已到）→ 尝试构建网格（材质未就绪保持 RECEIVED，无网络请求）
+##   4. FIELD_REQUESTED 且字段数据已到 → 按 MAX_PENDING 限流发完整请求（→ TILE_REQUESTED）
+## 末段记录耗时。
 func _stream_chunks() -> void:
 	if Connection.status != Connection.Status.CONNECTED:
 		return
@@ -1030,33 +1122,52 @@ func _stream_chunks() -> void:
 
 	_unload_distant_chunks(center_cx, center_cy, stream_r)
 
+	# 1. 半径内 UNKNOWN → 批量字段请求
 	var coords: Array[Array] = []
 	for dx in range(-stream_r, stream_r + 1):
 		for dy in range(-stream_r, stream_r + 1):
 			var key := Vector2i(center_cx + dx, center_cy + dy)
-			if not _chunks.has(key):
+			if _chunk_states.get(key, ChunkState.UNKNOWN) == ChunkState.UNKNOWN:
+				_chunk_states[key] = ChunkState.FIELD_REQUESTED
 				_chunks[key] = null
 				coords.append([key.x, key.y])
-			elif not _loaded.has(key) and not _pending.has(key):
-				_tile_queue[key] = true
-
 	if not coords.is_empty():
-		for c in coords:
-			_batch_pending[Vector2i(c[0], c[1])] = true
 		_send_chunk_request(coords, false)
 
-	var pending_count: int = _pending.size()
-	for key in _tile_queue.keys():
-		if pending_count >= MAX_PENDING:
+	# 2. RECEIVED → 尝试构建（材质就绪即建，失败保持 RECEIVED 下帧重试）
+	for key in _chunk_states:
+		if _chunk_states[key] == ChunkState.RECEIVED:
+			_try_build_received_chunk(key)
+
+	# 3. 字段已到（数据 Dictionary）且未请求完整 → 限流发完整请求
+	var inflight: int = 0
+	for key in _chunk_states:
+		if _chunk_states[key] == ChunkState.TILE_REQUESTED:
+			inflight += 1
+	for key in _chunk_states:
+		if inflight >= MAX_PENDING:
 			break
-		if _pending.has(key):
-			continue
-		_pending[key] = true
-		_tile_queue.erase(key)
-		_send_chunk_request([[key.x, key.y]], true)
-		pending_count += 1
+		if _chunk_states[key] == ChunkState.FIELD_REQUESTED \
+				and _chunks[key] is Dictionary:
+			_chunk_states[key] = ChunkState.TILE_REQUESTED
+			_send_chunk_request([[key.x, key.y]], true)
+			inflight += 1
 
 	_stream_us = Time.get_ticks_usec() - t0
+
+
+## 尝试构建 RECEIVED chunk：数据完整且材质就绪才构建；任一不满足保持 RECEIVED。
+func _try_build_received_chunk(key: Vector2i) -> void:
+	var chunk = _chunks.get(key)
+	if not (chunk is Dictionary):
+		return
+	var terr: PackedInt32Array = chunk.get("terrain", PackedInt32Array())
+	var elev: PackedFloat32Array = chunk.get("elevation", PackedFloat32Array())
+	if terr.size() < CHUNK_SIZE * CHUNK_SIZE or elev.size() < CHUNK_SIZE * CHUNK_SIZE:
+		# 数据不全（异常响应）：重新入队完整请求而非死等
+		_chunk_states[key] = ChunkState.FIELD_REQUESTED
+		return
+	_build_terrain_chunk(key.x, key.y, terr, elev)
 
 
 ## 计算流式加载半径（chunk 格数）：可视半径 ×1.5 向上取整，下限为 STREAM_MARGIN。
@@ -1109,22 +1220,25 @@ func _send_chunk_request(coords: Array[Array], include_tiles: bool) -> void:
 	})
 
 
-## 卸载远离玩家的已加载 chunk（距中心超出流半径 + UNLOAD_MARGIN）：
-## 释放地形节点并清空 chunk 缓存、已加载与在途请求标记（_tile_queue 保留）。
+## 卸载远离玩家的 chunk（距中心超出流半径 + UNLOAD_MARGIN）：
+## 释放地形节点并清空状态与数据（BUILT/RECEIVED → UNKNOWN，在途请求作废）。
 func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> void:
 	var unload_r := stream_r + UNLOAD_MARGIN
-	for key in _loaded.keys():
+	for key in _chunk_states.keys():
 		var cx: int = key.x
 		var cy: int = key.y
 		if abs(cx - center_cx) > unload_r or abs(cy - center_cy) > unload_r:
-			var node_name := "Chunk_%d_%d" % [cx, cy]
-			if _terrain_parent.has_node(NodePath(node_name)):
-				_terrain_parent.get_node(NodePath(node_name)).queue_free()
-			_loaded.erase(key)
-			_chunks.erase(key)
-			_pending.erase(key)
-			_batch_pending.erase(key)
+			_forget_chunk(key)
 			print("MainWorld3D: unloaded chunk (%d,%d)" % [cx, cy])
+
+
+## 彻底遗忘一个 chunk：释放地形节点、清状态与数据（→ UNKNOWN）。
+func _forget_chunk(key: Vector2i) -> void:
+	var node_name := "Chunk_%d_%d" % [key.x, key.y]
+	if _terrain_parent and _terrain_parent.has_node(NodePath(node_name)):
+		_terrain_parent.get_node(NodePath(node_name)).queue_free()
+	_chunk_states.erase(key)
+	_chunks.erase(key)
 
 
 ## 服务端错误处理：打印错误信息；快照请求失败时清空回查文件并在暂停菜单显示失败原因。

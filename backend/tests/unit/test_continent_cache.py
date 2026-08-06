@@ -81,8 +81,8 @@ class TestContinentSerialize:
         raw = serialize_continent(original)
         assert deserialize_continent(raw[: len(raw) // 2]) is None
 
-    def test_legacy_pickle_format_rejected(self):
-        """旧版 pickle 缓存（可执行任意代码）拒绝加载（安全回归）。"""
+    def test_pickle_format_rejected(self):
+        """pickle 格式（可执行任意代码）拒绝加载（反序列化安全边界）。"""
         import pickle
         import zlib
         payload = pickle.dumps({

@@ -38,6 +38,38 @@ func _make_world_instance() -> Node3D:
 	return instance as Node3D
 
 
+## 读取并清空 Connection 发送队列中的 get_chunks 请求，返回 include_tiles 序列。
+## 白盒：_hello_acked=true 后 send() 才入队（见 connection.gd send），
+## 不 stub 网络层（GUT 的 stub 只接受 double 实例，autoload 无法 stub）。
+func _drain_chunk_requests() -> Array:
+	Connection._hello_acked = true
+	var out: Array = []
+	for framed in Connection._send_queue:
+		var msg: Dictionary = Connection._codec.frame_decode(framed, Connection.MAX_MESSAGE_SIZE)
+		if msg.get("request_type", "") == "get_chunks":
+			out.append(bool(msg["payload"]["include_tiles"]))
+	Connection._send_queue.clear()
+	return out
+
+
+## 构造与后端 BLOB 布局一致的 tiles_b64（4B header + uint16 LE terrain + float32 LE elevation + slope）。
+func _make_tiles_b64(terr: PackedInt32Array, elev: PackedFloat32Array) -> String:
+	var raw := PackedByteArray()
+	raw.resize(4)
+	for t in terr:
+		raw.append(t & 0xFF)
+		raw.append((t >> 8) & 0xFF)
+	for e in elev:
+		var bits: int = e.to_bits()
+		for shift in [0, 8, 16, 24]:
+			raw.append((bits >> shift) & 0xFF)
+	for e in elev:
+		var bits2: int = e.to_bits()
+		for shift in [0, 8, 16, 24]:
+			raw.append((bits2 >> shift) & 0xFF)
+	return Marshalls.raw_to_base64(raw)
+
+
 func test_ground_elevation_at_no_chunk_returns_nan() -> void:
 	var main: Node3D = _make_world_instance()
 	var result: float = main._get_ground_elevation_at(Vector3(100, 0, 100))
@@ -133,15 +165,14 @@ func test_world_initialized_resets_previous_world_state() -> void:
 	var main: Node3D = _make_world_instance()
 	main._set_birth_chunk(2, 2)
 	main._chunks[Vector2i(0, 0)] = {"elevation": []}
-	main._loaded[Vector2i(0, 0)] = true
-	main._pending[Vector2i(1, 1)] = true
+	main._chunk_states[Vector2i(0, 0)] = main.ChunkState.BUILT
+	main._chunk_states[Vector2i(1, 1)] = main.ChunkState.TILE_REQUESTED
 
 	main._on_world_initialized({"birth_chunk": [8, 8]})
 
 	assert_eq(main._birth_chunk, Vector2i(8, 8), "应切到新世界的出生点")
 	assert_true(main._chunks.is_empty(), "旧世界 chunk 数据应清空")
-	assert_true(main._loaded.is_empty(), "旧世界地形标记应清空")
-	assert_true(main._pending.is_empty(), "旧世界在途请求应清空")
+	assert_true(main._chunk_states.is_empty(), "旧世界 chunk 状态应清空")
 
 
 func test_terrain_ready_shows_world_after_neighborhood_loaded() -> void:
@@ -153,14 +184,14 @@ func test_terrain_ready_shows_world_after_neighborhood_loaded() -> void:
 	assert_true(main._loading_label.visible, "地形加载中应显示加载提示")
 
 	# 只加载部分邻域 → 仍不可见
-	main._loaded[Vector2i(3, 3)] = true
+	main._chunk_states[Vector2i(3, 3)] = main.ChunkState.BUILT
 	main._check_terrain_ready()
 	assert_false(main._world_visible, "邻域未全加载前不可见")
 
 	# 补全 3×3 邻域 → 就绪
 	for dx in range(-1, 2):
 		for dy in range(-1, 2):
-			main._loaded[Vector2i(4 + dx, 4 + dy)] = true
+			main._chunk_states[Vector2i(4 + dx, 4 + dy)] = main.ChunkState.BUILT
 	main._check_terrain_ready()
 
 	assert_true(main._world_visible, "邻域加载完成后世界可见")
@@ -186,12 +217,13 @@ func test_world_reloading_resets_state_and_shows_label() -> void:
 	var main: Node3D = _make_world_instance()
 	main._set_birth_chunk(2, 2)
 	main._chunks[Vector2i(0, 0)] = {"elevation": []}
-	main._loaded[Vector2i(0, 0)] = true
+	main._chunk_states[Vector2i(0, 0)] = main.ChunkState.BUILT
 
 	main._on_world_reloading({"world_id": "next"})
 
 	assert_false(main._has_birth, "重建开始后出生点应复位")
 	assert_true(main._chunks.is_empty(), "旧世界数据应清空")
+	assert_true(main._chunk_states.is_empty(), "旧世界状态应清空")
 	assert_true(main._loading_label.visible, "重建期间应显示加载提示")
 
 
@@ -391,46 +423,42 @@ func test_unload_distant_chunks_removes_distant() -> void:
 	var main: Node3D = _make_world_instance()
 
 	var far_key := Vector2i(100, 100)
-	main._loaded[far_key] = true
+	main._chunk_states[far_key] = main.ChunkState.BUILT
 	main._chunks[far_key] = {"terrain": [], "elevation": []}
-	main._pending[far_key] = true
+	main._chunk_states[Vector2i(101, 101)] = main.ChunkState.TILE_REQUESTED
 
 	main._unload_distant_chunks(0, 0, 1)
 
-	assert_false(main._loaded.has(far_key), "远处区块应卸载")
+	assert_false(main._chunk_states.has(far_key), "远处区块应卸载")
 	assert_false(main._chunks.has(far_key), "远处区块数据应清除")
-	assert_false(main._pending.has(far_key), "远处区块请求应取消")
+	assert_false(main._chunk_states.has(Vector2i(101, 101)), "远处区块在途请求应作废")
 
 
 func test_unload_preserves_nearby_chunks() -> void:
 	var main: Node3D = _make_world_instance()
 
 	var near_key := Vector2i(0, 0)
-	main._loaded[near_key] = true
+	main._chunk_states[near_key] = main.ChunkState.BUILT
 	main._chunks[near_key] = {"terrain": [], "elevation": []}
 
 	main._unload_distant_chunks(0, 0, 2)
 
-	assert_true(main._loaded.has(near_key), "近距离区块不应卸载")
+	assert_true(main._chunk_states.has(near_key), "近距离区块不应卸载")
 	assert_true(main._chunks.has(near_key), "近距离区块数据应保留")
 
 
-# ── 请求状态管理（_pending / _batch_pending 分离） ─────────
+# ── 请求状态机（UNKNOWN → FIELD_REQUESTED → TILE_REQUESTED → RECEIVED → BUILT） ──
 
-func test_field_only_response_keeps_tile_pending() -> void:
-	"""字段响应（无 terrain）不应清除 tile 请求的 _pending 标记。
+func test_field_only_response_stores_data_keeps_field_requested() -> void:
+	"""字段响应：缓存数据，状态保持 FIELD_REQUESTED（等待流循环发完整请求）。
 
-	回归：旧实现无条件 _pending.erase(key)，导致 tile 请求标记被抹掉、
-	每帧重发 include_tiles=true 请求，直到 tile 响应到达。
-
-	注：须先设置出生点（world_initialized 事件驱动语义），
-	使响应走正常流式路径而非"世界未就绪"分支。
+	回归：旧实现字段响应无条件清 _pending 标记，导致完整请求标记被抹掉、
+	每帧重发 include_tiles=true 请求直到响应到达（双请求竞态）。
 	"""
 	var main: Node3D = _make_world_instance()
 	var key := Vector2i(0, 0)
 	main._set_birth_chunk(0, 0)
-	main._pending[key] = true
-	main._batch_pending[key] = true
+	main._chunk_states[key] = main.ChunkState.FIELD_REQUESTED
 
 	main._handle_response({
 		"type": "response",
@@ -441,22 +469,23 @@ func test_field_only_response_keeps_tile_pending() -> void:
 		},
 	})
 
-	assert_true(main._pending.has(key), "tile 请求标记应保留")
-	assert_false(main._batch_pending.has(key), "字段请求标记应清除")
+	assert_eq(main._chunk_states[key], main.ChunkState.FIELD_REQUESTED,
+		"字段响应后应保持 FIELD_REQUESTED，由流循环限流发完整请求")
+	assert_true(main._chunks[key] is Dictionary, "字段数据应已缓存")
+	assert_eq(float(main._chunks[key]["temperature"]), 20.0)
 
 
-func test_tile_response_clears_tile_pending() -> void:
-	"""含 terrain 的响应清除 tile 请求标记。"""
+func test_tile_response_marks_received() -> void:
+	"""完整响应：解码并构建（→ BUILT）。"""
 	var main: Node3D = _make_world_instance()
 	var key := Vector2i(0, 0)
 	main._set_birth_chunk(0, 0)
-	main._pending[key] = true
-	main._loaded[key] = true  # 预标记已加载，跳过网格构建，只验证状态
+	main._chunk_states[key] = main.ChunkState.TILE_REQUESTED
 
-	var elev: Array = []
+	var elev := PackedFloat32Array()
 	elev.resize(CS * CS)
 	elev.fill(10.0)
-	var terr: Array = []
+	var terr := PackedInt32Array()
 	terr.resize(CS * CS)
 	terr.fill(2)
 
@@ -464,31 +493,149 @@ func test_tile_response_clears_tile_pending() -> void:
 		"type": "response",
 		"request_type": "get_chunks",
 		"payload": {
-			"chunks": [{"cx": 0, "cy": 0, "terrain": terr, "elevation": elev}],
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev)}],
 			"include_tiles": true,
 		},
 	})
 
-	assert_false(main._pending.has(key), "tile 请求标记应清除")
+	assert_eq(main._chunk_states[key], main.ChunkState.BUILT,
+		"完整数据到达且材质就绪应立即构建（BUILT）")
 
 
-func test_disconnect_clears_pending_state() -> void:
-	"""断线后应清空在途请求状态，重连后地形块才能重新请求。
+func test_stale_response_after_unload_ignored() -> void:
+	"""卸载后到达的陈旧响应应被忽略（不复活 chunk）。"""
+	var main: Node3D = _make_world_instance()
+	var key := Vector2i(9, 9)
+	main._set_birth_chunk(0, 0)
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": 9, "cy": 9, "temperature": 1.0}],
+			"include_tiles": false,
+		},
+	})
+
+	assert_false(main._chunk_states.has(key), "UNKNOWN（已卸载）的陈旧响应应忽略")
+	assert_false(main._chunks.has(key), "陈旧响应不应写入缓存")
+
+
+func test_disconnect_demotes_inflight_states() -> void:
+	"""断线后：在途请求作废（无数据 → UNKNOWN），有数据降级重发完整请求。
 
 	回归：旧实现断线不清 _pending，重连后这些 chunk 永远被跳过，
 	玩家周围地形永久缺失。
 	"""
 	var main: Node3D = _make_world_instance()
-	var key := Vector2i(3, 2)
-	main._pending[key] = true
-	main._batch_pending[key] = true
-	main._tile_queue[key] = true
+
+	# 字段在途（无数据）→ UNKNOWN
+	var inflight_key := Vector2i(3, 2)
+	main._chunk_states[inflight_key] = main.ChunkState.FIELD_REQUESTED
+	main._chunks[inflight_key] = null
+	# 完整请求在途（已有字段数据）→ 保留数据降级 FIELD_REQUESTED
+	var tile_key := Vector2i(4, 2)
+	main._chunk_states[tile_key] = main.ChunkState.TILE_REQUESTED
+	main._chunks[tile_key] = {"temperature": 25.0}
+	# 已接收/已构建 → 保留
+	var received_key := Vector2i(5, 2)
+	main._chunk_states[received_key] = main.ChunkState.RECEIVED
+	main._chunks[received_key] = {"temperature": 26.0}
+	var built_key := Vector2i(6, 2)
+	main._chunk_states[built_key] = main.ChunkState.BUILT
 
 	main._on_disconnected()
 
-	assert_true(main._pending.is_empty(), "断线后 tile 请求应清空")
-	assert_true(main._batch_pending.is_empty(), "断线后字段请求应清空")
-	assert_true(main._tile_queue.is_empty(), "断线后 tile 队列应清空")
+	assert_false(main._chunk_states.has(inflight_key), "字段在途应作废为 UNKNOWN")
+	assert_false(main._chunks.has(inflight_key), "字段在途数据应清除")
+	assert_eq(main._chunk_states[tile_key], main.ChunkState.FIELD_REQUESTED,
+		"完整请求在途应降级为 FIELD_REQUESTED（重连后重发完整请求）")
+	assert_true(main._chunks[tile_key] is Dictionary, "已有字段数据应保留")
+	assert_eq(main._chunk_states[received_key], main.ChunkState.RECEIVED,
+		"已接收数据应保留（重连后恢复构建）")
+	assert_eq(main._chunk_states[built_key], main.ChunkState.BUILT,
+		"已构建 chunk 应保留")
+
+
+func test_single_chunk_two_requests_from_enter_to_built() -> void:
+	"""集成场景：chunk 从进入视野到构建完成恰好 2 次请求（字段 + 完整）。
+
+	回归：旧实现字段请求在途时 tile 队列分支同样命中（_chunks 以 null
+	占位已存在），同一 chunk 并发发出 字段+完整 双请求。
+	"""
+	var main: Node3D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+
+	var key := Vector2i(0, 0)
+	main._player_pos = Vector3(0, 0, 0)
+
+	# 帧 1：UNKNOWN → 字段请求（1 次，false）
+	main._stream_chunks()
+	var requests: Array = _drain_chunk_requests()
+	assert_eq(requests.size(), 1, "首帧应恰好发 1 次字段请求")
+	assert_false(requests[0], "首帧应为字段版请求")
+	assert_eq(main._chunk_states[key], main.ChunkState.FIELD_REQUESTED)
+
+	# 字段响应到达（此后流循环不得重复发字段请求）
+	main._handle_response({
+		"type": "response", "request_type": "get_chunks",
+		"payload": {"chunks": [{"cx": 0, "cy": 0, "temperature": 20.0}], "include_tiles": false},
+	})
+	main._stream_chunks()
+	main._stream_chunks()
+	requests = _drain_chunk_requests()
+	assert_eq(requests.size(), 1, "字段响应后仅发 1 次完整请求，不重发字段请求")
+	assert_true(requests[0], "第二帧应为完整版请求")
+	assert_eq(main._chunk_states[key], main.ChunkState.TILE_REQUESTED)
+
+	# 完整响应到达 → RECEIVED → 构建 → BUILT（不再有请求）
+	var elev := PackedFloat32Array()
+	elev.resize(CS * CS)
+	elev.fill(10.0)
+	var terr := PackedInt32Array()
+	terr.resize(CS * CS)
+	terr.fill(2)
+	main._handle_response({
+		"type": "response", "request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev)}],
+			"include_tiles": true,
+		},
+	})
+	main._stream_chunks()
+	requests = _drain_chunk_requests()
+	assert_eq(requests.size(), 0, "构建完成后不应再有请求")
+	assert_eq(main._chunk_states[key], main.ChunkState.BUILT)
+
+
+func test_received_chunk_builds_after_materials_ready() -> void:
+	"""RECEIVED 且材质未就绪：保持状态且零网络请求，材质就绪后构建。"""
+	var main: Node3D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+	var key := Vector2i(0, 0)
+	# 材质表置空模拟未就绪
+	main._terrain_materials = {}
+	# 直接注入已解码数据（模拟完整响应路径到达 RECEIVED）
+	var elev := PackedFloat32Array()
+	elev.resize(CS * CS)
+	elev.fill(10.0)
+	var terr := PackedInt32Array()
+	terr.resize(CS * CS)
+	terr.fill(2)
+	main._chunks[key] = {"terrain": terr, "elevation": elev}
+	main._chunk_states[key] = main.ChunkState.RECEIVED
+
+	main._stream_chunks()
+	assert_eq(main._chunk_states[key], main.ChunkState.RECEIVED,
+		"材质未就绪时应保持 RECEIVED（等待下帧重试）")
+	assert_true(_drain_chunk_requests().is_empty(), "材质未就绪不应重发网络请求（消除无限重试循环）")
+
+	# 材质恢复后构建成功
+	main._terrain_materials = {}
+	main._lazy_load_materials()
+	main._stream_chunks()
+	assert_eq(main._chunk_states[key], main.ChunkState.BUILT, "材质就绪后应构建成功")
+	assert_true(_drain_chunk_requests().is_empty(), "构建后不应再发请求")
 
 
 # ── 权威位置（player_state / player_move / entity_snapshot） ──

@@ -14,7 +14,8 @@ func test_frame_encode_roundtrip_for_dict() -> void:
 	var codec: FrameCodec = FrameCodec.new()
 	var msg: Dictionary = {"type": "request", "payload": {"x": 10.0}}
 	var framed: PackedByteArray = codec.frame_encode(msg)
-	assert_gt(framed.size(), 4, "帧至少 4 字节头 + 内容")
+	assert_gt(framed.size(), 5, "帧至少 5 字节头 + 内容")
+	assert_eq(framed[0], FrameCodec.PROTOCOL_VERSION, "首字节应为协议版本")
 
 	var decoded: Dictionary = codec.frame_decode(framed, MAX_SIZE)
 	assert_eq(decoded["bodies"].size(), 1)
@@ -72,7 +73,7 @@ func test_frame_decode_empty_buffer() -> void:
 
 func test_frame_decode_zero_length_header() -> void:
 	var codec: FrameCodec = FrameCodec.new()
-	var zero_header: PackedByteArray = PackedByteArray([0x00, 0x00, 0x00, 0x00])
+	var zero_header: PackedByteArray = PackedByteArray([0x01, 0x00, 0x00, 0x00, 0x00])
 	var decoded: Dictionary = codec.frame_decode(zero_header, MAX_SIZE)
 	assert_eq(decoded["remaining"].size(), 0,
 		"长度 0 的帧应清空缓冲区（视为无效）")
@@ -80,9 +81,21 @@ func test_frame_decode_zero_length_header() -> void:
 		err.handled = true
 
 
+func test_frame_decode_unsupported_version_clears_buffer() -> void:
+	var codec: FrameCodec = FrameCodec.new()
+	var bad_version: PackedByteArray = PackedByteArray([0x02, 0x00, 0x00, 0x00, 0x02])
+	bad_version.append_array("{}".to_utf8_buffer())
+	var decoded: Dictionary = codec.frame_decode(bad_version, MAX_SIZE)
+	assert_eq(decoded["bodies"].size(), 0)
+	assert_eq(decoded["remaining"].size(), 0,
+		"未知协议版本应清空缓冲区（防止死循环）")
+	for err in get_errors():
+		err.handled = true
+
+
 func test_frame_decode_exceeds_max_size() -> void:
 	var codec: FrameCodec = FrameCodec.new()
-	var too_large: PackedByteArray = PackedByteArray([0x00, 0x00, 0x00, 0x05])
+	var too_large: PackedByteArray = PackedByteArray([0x01, 0x00, 0x00, 0x00, 0x05])
 	too_large.append_array("hello".to_utf8_buffer())
 	var decoded: Dictionary = codec.frame_decode(too_large, 3)
 	assert_eq(decoded["remaining"].size(), 0, "超大小消息应清空缓冲区")

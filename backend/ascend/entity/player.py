@@ -215,7 +215,9 @@ class PlayerService:
             entity.set_data("fy", clamped[1])
             if (entity.chunk_x, entity.chunk_y, entity.tile_x, entity.tile_y) \
                     != (cx, cy, tx, ty):
-                self._manager.move(entity.id, cx, cy, tx, ty)
+                # 静默移动：读档是重建内存状态，发布事件会以 game_time=0
+                # 写入伪造的移动历史
+                self._manager.move(entity.id, cx, cy, tx, ty, publish=False)
         self._entity = entity
         logger.info(
             "玩家实体已恢复: %s at (%.1f, %.1f)", entity.id, clamped[0], clamped[1],

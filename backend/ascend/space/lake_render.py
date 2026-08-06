@@ -51,9 +51,8 @@ def render_lake_chunk(
         return
 
     size = TILE_MAP_SIZE
-    cell_size = continent.cell_size
 
-    # chunk 边界（世界坐标）
+    # chunk 边界（tile 坐标，1 tile = 1 格点）
     chunk_x1 = world_x0 + size
     chunk_y1 = world_y0 + size
 
@@ -64,10 +63,10 @@ def render_lake_chunk(
         # 检查盆地是否有任何像素在此 chunk 内
         overlaps = False
         for ci in basin.cells:
-            cx = (ci % continent.grid_width) * cell_size + cell_size / 2
-            cy = (ci // continent.grid_width) * cell_size + cell_size / 2
-            if world_x0 - cell_size <= cx < chunk_x1 + cell_size and \
-               world_y0 - cell_size <= cy < chunk_y1 + cell_size:
+            cx = ci % continent.grid_width + 0.5
+            cy = ci // continent.grid_width + 0.5
+            if world_x0 - 1 <= cx < chunk_x1 + 1 and \
+               world_y0 - 1 <= cy < chunk_y1 + 1:
                 overlaps = True
                 break
 
@@ -76,9 +75,29 @@ def render_lake_chunk(
 
         # 在 chunk 内渲染此湖泊
         _flatten_lake_surface(tile_grid, world_x0, world_y0, surface,
-                              basin.area_km2, continent, macro_elev_grid)
+                              basin.area_km2, basin.cells, continent,
+                              macro_elev_grid)
         _generate_wetland_fringe(tile_grid, world_x0, world_y0, surface,
-                                 continent, macro_elev_grid)
+                                 basin.cells, continent, macro_elev_grid)
+
+
+def _basin_tiles(
+    cells: list[int], gw: int, world_x0: int, world_y0: int, size: int,
+) -> set[tuple[int, int]]:
+    """湖盆地格点 cells → chunk 内局部 tile 坐标集合。
+
+    cells 是格点索引（1 tile = 1 格点），映射到 chunk 内 (tx, ty)。
+    只保留落在本 chunk 范围内的 tile。
+    """
+    tiles: set[tuple[int, int]] = set()
+    for ci in cells:
+        gx = ci % gw
+        gy = ci // gw
+        tx = gx - world_x0
+        ty = gy - world_y0
+        if 0 <= tx < size and 0 <= ty < size:
+            tiles.add((tx, ty))
+    return tiles
 
 
 def _flatten_lake_surface(
@@ -86,54 +105,60 @@ def _flatten_lake_surface(
     world_x0: int, world_y0: int,
     surface_elev: float,
     area_km2: float,
+    cells: list[int],
     continent,
     macro_elev_grid: list[float] | None = None,
 ) -> None:
-    """将湖面以下的 tile 标记为水体。
+    """将湖面以下的 tile 标记为水体（仅限湖盆地 cells 覆盖范围）。
 
     深度判定：
       - 大湖（>1km²）中央 → DEEP_WATER
       - 小湖 / 边缘 → SHALLOW_WATER
 
+    只处理湖盆地格点覆盖的 tile——湖面只淹没湖盆地所在区域，
+    不受周边更高湖面影响（如高山湖不会淹没整片低地 chunk）。
+
     Args:
         tile_grid: 地形网格。
-        world_x0, world_y0: chunk 世界坐标。
+        world_x0, world_y0: chunk 左上角世界 tile 坐标。
         surface_elev: 湖面海拔 (m)。
         area_km2: 湖面面积 (km²)。
+        cells: 湖盆地格点索引列表。
         continent: ContinentData（macro_elev_grid 提供时可省略）。
         macro_elev_grid: 预计算宏观海拔网格（行优先，200×200）。
     """
     size = tile_grid.size
     has_deep_zone = area_km2 > LAKE_DEEP_AREA_KM2
+    gw = continent.grid_width
 
-    for ty in range(size):
-        for tx in range(size):
-            # 获取宏观海拔（优先使用预计算网格）
-            if macro_elev_grid is not None:
-                macro_elev = macro_elev_grid[ty * size + tx]
-            else:
-                wx = world_x0 + tx
-                wy = world_y0 + ty
-                macro_elev = continent.sample_altitude_bilinear(wx, wy)
+    for tx, ty in _basin_tiles(cells, gw, world_x0, world_y0, size):
+        # 获取宏观海拔（优先使用预计算网格）
+        if macro_elev_grid is not None:
+            macro_elev = macro_elev_grid[ty * size + tx]
+        else:
+            wx = world_x0 + tx
+            wy = world_y0 + ty
+            macro_elev = continent.sample_altitude_bilinear(wx, wy)
 
-            if macro_elev >= surface_elev:
-                continue  # 高于湖面，不处理
+        if macro_elev >= surface_elev:
+            continue  # 高于湖面，不处理
 
-            # 水面以下 → 水体
-            depth = surface_elev - macro_elev
+        # 水面以下 → 水体
+        depth = surface_elev - macro_elev
 
-            if depth > LAKE_DEEP_DEPTH_M and has_deep_zone:
-                tile_grid.set(tx, ty, TerrainType.DEEP_WATER)
-            else:
-                current = tile_grid.get(tx, ty)
-                if current != TerrainType.DEEP_WATER:
-                    tile_grid.set(tx, ty, TerrainType.SHALLOW_WATER)
+        if depth > LAKE_DEEP_DEPTH_M and has_deep_zone:
+            tile_grid.set(tx, ty, TerrainType.DEEP_WATER)
+        else:
+            current = tile_grid.get(tx, ty)
+            if current != TerrainType.DEEP_WATER:
+                tile_grid.set(tx, ty, TerrainType.SHALLOW_WATER)
 
 
 def _generate_wetland_fringe(
     tile_grid: TileGrid,
     world_x0: int, world_y0: int,
     surface_elev: float,
+    cells: list[int],
     continent,
     macro_elev_grid: list[float] | None = None,
 ) -> None:
@@ -141,18 +166,28 @@ def _generate_wetland_fringe(
 
     湖面以上 0-2m 的平坦区域 → 沼泽湿地。
     模拟自然湖泊周围的季节性淹没区。
+    只处理湖盆地 cells 及其 1 格邻域——岸线湿地只在湖周出现。
 
     Args:
         tile_grid: 地形网格。
-        world_x0, world_y0: chunk 世界坐标。
+        world_x0, world_y0: chunk 左上角世界 tile 坐标。
         surface_elev: 湖面海拔 (m)。
+        cells: 湖盆地格点索引列表。
         continent: ContinentData（macro_elev_grid 提供时可省略）。
         macro_elev_grid: 预计算宏观海拔网格（行优先，200×200）。
     """
     size = tile_grid.size
+    gw = continent.grid_width
 
-    for ty in range(size):
-        for tx in range(size):
+    basin = _basin_tiles(cells, gw, world_x0, world_y0, size)
+    fringe: set[tuple[int, int]] = set(basin)
+    for tx, ty in basin:
+        for nx in (tx - 1, tx, tx + 1):
+            for ny in (ty - 1, ty, ty + 1):
+                if 0 <= nx < size and 0 <= ny < size:
+                    fringe.add((nx, ny))
+
+    for tx, ty in fringe:
             if macro_elev_grid is not None:
                 macro_elev = macro_elev_grid[ty * size + tx]
             else:

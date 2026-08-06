@@ -108,6 +108,36 @@ class TestApplyState:
         with pytest.raises(ValueError):
             apply_state(state, clock, player)
 
+    def test_nan_clock_time_rejected(self, clock, player):
+        """NaN 时钟时间被熔断（NaN 比较恒 False，< 0 校验形同虚设）。"""
+        state = {
+            "clock": {"time": float("nan"), "speed": 1.0, "paused": False},
+            "player": {"entity_id": None, "x": 0.0, "y": 0.0},
+            "archive_max_timestamp": 0,
+        }
+        with pytest.raises(ValueError):
+            apply_state(state, clock, player)
+
+    def test_inf_clock_speed_rejected(self, clock, player):
+        """Inf 时钟速度被熔断。"""
+        state = {
+            "clock": {"time": 100, "speed": float("inf"), "paused": False},
+            "player": {"entity_id": None, "x": 0.0, "y": 0.0},
+            "archive_max_timestamp": 0,
+        }
+        with pytest.raises(ValueError):
+            apply_state(state, clock, player)
+
+    def test_nan_player_position_rejected(self, clock, player):
+        """NaN 玩家坐标被熔断。"""
+        state = {
+            "clock": {"time": 100, "speed": 1.0, "paused": False},
+            "player": {"entity_id": "e1", "x": float("nan"), "y": 5.0},
+            "archive_max_timestamp": 0,
+        }
+        with pytest.raises(ValueError):
+            apply_state(state, clock, player)
+
 
 class TestApplyClock:
     """时钟恢复（拆分的 apply_clock）。"""

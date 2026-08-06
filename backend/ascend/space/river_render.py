@@ -50,20 +50,18 @@ def _render_streamlines(
 ) -> None:
     """沿流线点集渲染河道。
 
-    流线坐标是网格单位(100m/格),需转世界坐标再转 chunk 内 tile 坐标。
-    网格坐标 (gx, gy) → 世界坐标 (gx * cell_size, gy * cell_size) →
-    tile 坐标 (wx - world_x0, wy - world_y0)。
+    流线坐标、世界坐标、chunk 内 tile 坐标三者 1:1（1 tile = 100m = 1 格点），
+    无需单位换算。
     """
     from .streamlines import rivers_in_region
 
     size = TILE_MAP_SIZE
-    cell_size = continent.cell_size
 
-    # chunk 边界(网格坐标)
-    gx0 = world_x0 / cell_size
-    gy0 = world_y0 / cell_size
-    gx1 = (world_x0 + size) / cell_size
-    gy1 = (world_y0 + size) / cell_size
+    # chunk 边界（tile 坐标）
+    gx0 = world_x0
+    gy0 = world_y0
+    gx1 = world_x0 + size
+    gy1 = world_y0 + size
     margin = 2.0  # 网格单位余量
 
     # 获取区域内河流段
@@ -82,32 +80,32 @@ def _render_streamlines(
             # 单点:画圆
             if points:
                 p = points[0]
-                wx = p.x * cell_size
-                wy = p.y * cell_size
+                wx = p.x
+                wy = p.y
                 tx = int(wx - world_x0)
                 ty = int(wy - world_y0)
                 width = _river_width(continent, wx, wy, p.flow, max_acc)
-                _fill_circle(tile_grid, tx, ty, int(width / 2) + 1, width, size)
+                _fill_circle(tile_grid, tx, ty, _river_radius(width), size)
             continue
 
         # 沿流线点集画河道(流线已弯曲,无需额外蜿蜒)
         for p in points:
-            wx = p.x * cell_size
-            wy = p.y * cell_size
+            wx = p.x
+            wy = p.y
             tx = int(wx - world_x0)
             ty = int(wy - world_y0)
             width = _river_width(continent, wx, wy, p.flow, max_acc)
-            radius = int(width / 2) + 1
+            radius = _river_radius(width)
 
             if 0 <= tx < size and 0 <= ty < size:
-                _fill_circle(tile_grid, tx, ty, radius, width, size)
+                _fill_circle(tile_grid, tx, ty, radius, size)
 
             # 连接相邻点(填充间隙)
             # points 是连续的,但步长可能 >1 tile,需插值填充
 
         # 插值填充点间间隙
         _fill_gaps(tile_grid, points, world_x0, world_y0,
-                    continent, cell_size, max_acc, size)
+                    continent, max_acc, size)
 
 
 def _fill_gaps(
@@ -115,7 +113,6 @@ def _fill_gaps(
     points: list,
     world_x0: int, world_y0: int,
     continent,
-    cell_size: float,
     max_acc: float,
     size: int,
 ) -> None:
@@ -124,11 +121,11 @@ def _fill_gaps(
         p0 = points[i - 1]
         p1 = points[i]
 
-        # 世界坐标
-        wx0 = p0.x * cell_size
-        wy0 = p0.y * cell_size
-        wx1 = p1.x * cell_size
-        wy1 = p1.y * cell_size
+        # tile 坐标（流线点已是 tile/格点坐标）
+        wx0 = p0.x
+        wy0 = p0.y
+        wx1 = p1.x
+        wy1 = p1.y
 
         # tile 坐标
         tx0 = wx0 - world_x0
@@ -143,14 +140,14 @@ def _fill_gaps(
             continent, (wx0 + wx1) * 0.5, (wy0 + wy1) * 0.5,
             (p0.flow + p1.flow) * 0.5, max_acc,
         )
-        radius = int(width / 2) + 1
+        radius = _river_radius(width)
 
         for s in range(steps + 1):
             t = s / steps
             tx = int(tx0 + (tx1 - tx0) * t)
             ty = int(ty0 + (ty1 - ty0) * t)
             if 0 <= tx < size and 0 <= ty < size:
-                _fill_circle(tile_grid, tx, ty, radius, width, size)
+                _fill_circle(tile_grid, tx, ty, radius, size)
 
 
 # ── 河道宽度 ──────────────────────────────────────────────
@@ -175,18 +172,25 @@ def _river_width(continent, wx: float, wy: float,
     return RIVER_WIDTH_MIN + (RIVER_WIDTH_MAX - RIVER_WIDTH_MIN) * river_width_log(ratio)
 
 
+def _river_radius(width: float) -> int:
+    """河道宽度 (m) → 渲染半径 (tile，1 tile = 100m)。
+
+    宽 40m 河 → 1 tile 浅水；80m 河 → 2 tile（中心深水 + 边缘浅水）。
+    """
+    return max(1, int(width / 50 + 0.5))
+
+
 def _fill_circle(
     tile_grid: TileGrid,
     cx: int, cy: int,
     radius: int,
-    width: float,
     size: int,
 ) -> None:
     """以 (cx, cy) 为中心填充河道圆。
 
     深水(中心)→浅水(边缘)→沃土(岸边)自然过渡。
     """
-    deep_radius = int(width / 4) if width >= 10.0 else 0
+    deep_radius = radius // 2
 
     for dy in range(-radius, radius + 1):
         for dx in range(-radius, radius + 1):

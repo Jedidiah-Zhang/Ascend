@@ -50,7 +50,7 @@ def make_save_handlers(save_manager, game_engine=None):
           parent    创建时活目录来源（回滚目标快照文件名，"" = 世界初始）
           game_time 创建时刻的世界时间（tick）
           seq       世界内单调递增的权威排序键（创建顺序，时间线/
-                    编号/串链排序的单一事实来源；旧档由后端迁移合成）
+                    编号/串链排序的单一事实来源）
         世界摘要附 live_origin（当前活目录来源，即"当前时间点"的父节点）；
         顶层 current_world_id = 引擎当前加载的世界（"最后进入"标注）。
         """

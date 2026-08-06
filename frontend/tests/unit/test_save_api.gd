@@ -117,6 +117,27 @@ func test_parse_worlds_type_coercion() -> void:
 	assert_eq(w["snapshot_count"], 3)
 
 
+func test_parse_worlds_null_fields_use_defaults() -> void:
+	"""字段值为 JSON null 时按默认值兜底（不崩溃）。"""
+	var worlds: Array = SaveApi.parse_worlds({
+		"worlds": [{
+			"world_id": "x",
+			"name": null,
+			"game_time": null,
+			"snapshot_count": null,
+			"play_duration_sec": null,
+			"live_origin": null,
+		}],
+	})
+	var w: Dictionary = worlds[0]
+	assert_eq(w["world_id"], "x", "world_id 非 null 应保留")
+	assert_eq(w["name"], "未命名存档", "null 名称兜底为默认")
+	assert_eq(w["game_time"], 0, "null 游戏时间兜底为 0")
+	assert_eq(w["snapshot_count"], 0, "null 快照数兜底为 0")
+	assert_eq(w["play_duration_sec"], 0.0, "null 时长兜底为 0")
+	assert_eq(w["live_origin"], "", "null 血缘兜底为空串")
+
+
 func test_parse_worlds_live_origin() -> void:
 	"""live_origin 应透传（回滚后非空）并兜底为空串。"""
 	var worlds: Array = SaveApi.parse_worlds({

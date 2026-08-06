@@ -4,6 +4,7 @@
 验证 make_map_handlers 创建的 get_chunks 处理函数行为。
 """
 
+import base64
 import pytest
 from ascend.space import WorldGenerator, BiomeType, ClimateZone
 from ascend.net.handlers.map_handler import make_map_handlers
@@ -238,3 +239,54 @@ class TestMapHandlers:
         chunks = response["payload"]["chunks"]
 
         assert len(chunks) == MAX_CHUNK_QUERY
+
+    # ── include_tiles：完整版（tiles_b64 BLOB） ──────────────────────
+
+    def test_get_chunks_include_tiles_returns_tiles_b64(self, gen):
+        """include_tiles=true 时返回 tiles_b64 BLOB（与 TileGrid.to_bytes 一致）。"""
+        from ascend.space import TileGenerator
+        from ascend.space.continent import ContinentGenerator
+
+        continent = ContinentGenerator(seed=42).generate()
+        tile_gen = TileGenerator(seed=42, continent=continent)
+        handlers = make_map_handlers(gen, tile_gen=tile_gen)
+        handle = handlers["get_chunks"]
+
+        msg = {
+            "type": "request",
+            "request_type": "get_chunks",
+            "seq": 8,
+            "payload": {"chunks": [[2, -1]], "include_tiles": True},
+        }
+
+        response = handle(msg)
+        chunks = response["payload"]["chunks"]
+        assert len(chunks) == 1
+        entry = chunks[0]
+        assert "tiles_b64" in entry and entry["tiles_b64"]
+
+        raw = base64.b64decode(entry["tiles_b64"])
+        grid = tile_gen.generate_chunk_for(gen.generate_chunk(2, -1))
+        assert raw == grid.to_bytes(), "BLOB 应与 TileGrid.to_bytes 逐字节一致"
+
+    def test_get_chunks_include_tiles_second_request_served_from_tiles(self, gen):
+        """同一 chunk 二次请求：已有 tiles 直接复用（不重新生成，无竞态）。"""
+        from ascend.space import TileGenerator
+        from ascend.space.continent import ContinentGenerator
+
+        continent = ContinentGenerator(seed=42).generate()
+        tile_gen = TileGenerator(seed=42, continent=continent)
+        handlers = make_map_handlers(gen, tile_gen=tile_gen)
+        handle = handlers["get_chunks"]
+        msg = {
+            "type": "request",
+            "request_type": "get_chunks",
+            "seq": 9,
+            "payload": {"chunks": [[1, 1]], "include_tiles": True},
+        }
+
+        r1 = handle(msg)
+        r2 = handle(msg)
+
+        assert r1["payload"]["chunks"][0]["tiles_b64"] == \
+            r2["payload"]["chunks"][0]["tiles_b64"], "重复请求应返回一致数据"

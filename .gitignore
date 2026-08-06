@@ -15,6 +15,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 logs/
+.ascend_token
 
 # 覆盖率数据（生成在 backend/tests/ 下）
 .coverage

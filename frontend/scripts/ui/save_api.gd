@@ -104,7 +104,6 @@ const _WORLD_DEFAULTS: Dictionary = {
 	"last_played_at": 0.0,
 	"play_duration_sec": 0.0,
 	"game_time": 0,
-	"format_version": 1,
 	"snapshot_count": 0,
 	"latest_snapshot_at": null,
 	"live_origin": "",
@@ -114,7 +113,7 @@ const _WORLD_DEFAULTS: Dictionary = {
 static func parse_worlds(payload: Dictionary) -> Array:
 	"""解析 save_list 响应的 worlds 数组为规范化摘要列表。
 
-	字段缺失时以默认值兜底（弱后端容错），保证 UI 层可直接读取。
+	字段缺失或为 null 时以默认值兜底（弱后端容错），保证 UI 层可直接读取。
 	"""
 	var raw: Array = payload.get("worlds", [])
 	var result: Array = []
@@ -123,8 +122,9 @@ static func parse_worlds(payload: Dictionary) -> Array:
 			continue
 		var w: Dictionary = _WORLD_DEFAULTS.duplicate(true)
 		for key in w.keys():
-			if item.has(key):
-				w[key] = item[key]
+			var v: Variant = item.get(key)
+			if v != null:
+				w[key] = v
 		w["world_id"] = str(w["world_id"])
 		w["name"] = str(w["name"])
 		w["game_time"] = int(w["game_time"])

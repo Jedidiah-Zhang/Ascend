@@ -12,8 +12,10 @@ import subprocess
 from pathlib import Path
 
 _GCC = "gcc"
-_CFLAGS = ["-O3", "-march=native", "-ffast-math", "-funroll-loops",
-           "-shared", "-fPIC"]
+# 无 -ffast-math（破坏 IEEE-754 语义，令同 seed 世界跨机器不确定）；
+# 无 -march=native（产物绑定本机指令集，跨机器不可移植）——gcc 默认
+# 基线即可：x86 链 → x86-64，aarch64 链 → armv8-a，跨架构均可编译。
+_CFLAGS = ["-O3", "-funroll-loops", "-shared", "-fPIC"]
 
 
 def load_c_extension(c_source: str, so_path: str, link_flags: list[str] | None = None) -> ctypes.CDLL:

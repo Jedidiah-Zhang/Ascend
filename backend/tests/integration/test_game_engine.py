@@ -144,9 +144,9 @@ class TestGameEngine:
     # ── 辅助测试：start 后引擎接受连接 ─────────────────────────────────
 
     def test_engine_accepts_connection(self):
-        """引擎启动后，可通过 TCP 连接。"""
+        """引擎启动后，可通过 TCP 连接（握手后收发消息）。"""
         import socket
-        from tests.integration.test_net import send_frame, recv_frame
+        from tests.integration.test_net import send_frame, recv_frame, handshake
 
         engine = GameEngine(seed=42)
 
@@ -166,6 +166,10 @@ class TestGameEngine:
                         break
                     time.sleep(0.1)
                 assert engine.server.client_count >= 1
+
+                # 握手：token 由引擎服务器持有
+                ack = handshake(sock, engine.server)
+                assert ack is not None and ack["type"] == "hello_ack"
 
                 # 发送一条请求，应得到 error（因为没有该 handler）
                 msg = {

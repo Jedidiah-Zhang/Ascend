@@ -75,35 +75,13 @@ class EventArchive:
     # ── Schema ────────────────────────────────────────
 
     def _create_schema(self) -> None:
-        """创建表和索引（幂等），迁移旧 schema。
+        """全新建库：执行 schema.sqlite.sql（全部 IF NOT EXISTS，幂等）。
 
-        DDL 定义在 schema.sqlite.sql 中（全部 IF NOT EXISTS，一次跑完
-        不中断）；此处仅保留旧库缺列/缺表的 ALTER 历史迁移。
+        失败直接抛出（无旧库兼容路径）。
         """
         with open(_SCHEMA_PATH, encoding="utf-8") as f:
             ddl = f.read()
-        try:
-            self._db.executescript(ddl)
-        except sqlite3.OperationalError as e:
-            msg = str(e).lower()
-            if "already exists" in msg or "duplicate column" in msg:
-                pass  # 幂等建表，安全忽略
-            else:
-                raise
-
-        # 历史迁移：旧 schema（早于 DDL 收录）可能缺少 weight/layer_id 列。
-        # DDL 的 CREATE TABLE IF NOT EXISTS 不会给已存在的旧表补列，
-        # 此处的 ALTER 仅对旧库生效，新库直接跳过（列已存在）。
-        try:
-            self._db.execute("ALTER TABLE events ADD COLUMN weight INTEGER DEFAULT 1")
-        except sqlite3.OperationalError:
-            pass  # 列已存在
-        try:
-            self._db.execute(
-                "ALTER TABLE events ADD COLUMN layer_id INTEGER NOT NULL DEFAULT 0"
-            )
-        except sqlite3.OperationalError:
-            pass  # 列已存在
+        self._db.executescript(ddl)
 
     # ── 写入 ──────────────────────────────────────────
 

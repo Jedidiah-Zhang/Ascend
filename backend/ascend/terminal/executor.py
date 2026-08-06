@@ -25,7 +25,8 @@ from ascend.weather.weather_engine import (
     classify_sunshine, classify_sunlight_intensity, precip_type_for,
 )
 from ascend.weather.weather_modifier import WEATHER_MODIFIERS
-from ascend.time import WorldClock, GameCalendar, GAME_DAY, GAME_HOUR, GAME_MINUTE, GAME_YEAR
+from ascend.time import WorldClock, GameCalendar, GAME_DAY, GAME_HOUR, GAME_YEAR
+from ascend.time.calendar import tick_to_hms
 
 logger = get_logger(__name__)
 
@@ -799,10 +800,7 @@ class CommandExecutor:
         Returns:
             格式化后的当日时间字符串。
         """
-        tod = self._calendar.time_of_day(self._clock.time)
-        hour = int(tod / GAME_HOUR)
-        minute = int((tod % GAME_HOUR) / GAME_MINUTE)
-        second = int((tod % GAME_MINUTE) * 60 / GAME_MINUTE)
+        hour, minute, second = tick_to_hms(self._clock.time)
         return f"{hour:02d}:{minute:02d}:{second:02d}"
 
     @staticmethod
