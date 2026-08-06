@@ -4,7 +4,6 @@
 """
 
 import base64
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ascend.config import MAX_CHUNK_QUERY, TILE_WORKERS
@@ -13,11 +12,6 @@ from ascend.net.protocol import make_response
 from ascend.net.handlers import parse_coord
 
 logger = get_logger(__name__)
-
-# 生成锁：当前 dispatcher 单线程顺序处理请求，同 chunk 不会并发生成；
-# 锁为未来并行 dispatcher 预留——同 chunk 的重复请求应串行生成并命中缓存，
-# 双线程同时生成/写 tile_grid 会产生非确定性数据
-_GENERATION_LOCK = threading.RLock()
 
 
 def make_map_handlers(gen, tile_gen=None, chunk_store=None,
@@ -85,40 +79,39 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
         coord_to_chunk: dict[tuple[int, int], object] = {}
         missing: list[tuple[int, int]] = []
 
-        with _GENERATION_LOCK:
-            for coord in coord_tuples:
-                if chunk_store is not None:
-                    chunk = chunk_store.get(*coord)
-                    if chunk is not None:
-                        coord_to_chunk[coord] = chunk
-                        continue
+        for coord in coord_tuples:
+            if chunk_store is not None:
+                chunk = chunk_store.get(*coord)
+                if chunk is not None:
+                    coord_to_chunk[coord] = chunk
+                    continue
 
-                    saved_grid = chunk_store.load_tiles(*coord)
-                    if saved_grid is not None:
-                        chunk = gen.generate_chunk(*coord)
-                        chunk.generate_tiles(saved_grid)
-                        coord_to_chunk[coord] = chunk
-                        chunk_store.put(chunk)
-                        if weather_engine is not None:
-                            weather_engine.register_chunk(
-                                chunk.cx, chunk.cy, chunk.annual_baseline,
-                                chunk.climate_zone, chunk.sea_level_temp,
-                            )
-                        continue
-
-                missing.append(coord)
-
-            if missing:
-                new_chunks = gen.generate_parallel(missing, max_workers=8)
-                for c in new_chunks:
-                    coord_to_chunk[(c.cx, c.cy)] = c
-                    if chunk_store is not None:
-                        chunk_store.put(c)
+                saved_grid = chunk_store.load_tiles(*coord)
+                if saved_grid is not None:
+                    chunk = gen.generate_chunk(*coord)
+                    chunk.generate_tiles(saved_grid)
+                    coord_to_chunk[coord] = chunk
+                    chunk_store.put(chunk)
                     if weather_engine is not None:
                         weather_engine.register_chunk(
-                            c.cx, c.cy, c.annual_baseline,
-                            c.climate_zone, c.sea_level_temp,
+                            chunk.cx, chunk.cy, chunk.annual_baseline,
+                            chunk.climate_zone, chunk.sea_level_temp,
                         )
+                    continue
+
+            missing.append(coord)
+
+        if missing:
+            new_chunks = gen.generate_parallel(missing, max_workers=8)
+            for c in new_chunks:
+                coord_to_chunk[(c.cx, c.cy)] = c
+                if chunk_store is not None:
+                    chunk_store.put(c)
+                if weather_engine is not None:
+                    weather_engine.register_chunk(
+                        c.cx, c.cy, c.annual_baseline,
+                        c.climate_zone, c.sea_level_temp,
+                    )
 
         ordered = [coord_to_chunk[c] for c in coord_tuples]
 
@@ -126,13 +119,12 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
             tiles_needed = [c for c in ordered if not c.has_tiles]
             if tiles_needed:
                 n_workers = min(TILE_WORKERS, len(tiles_needed))
-                with _GENERATION_LOCK:
-                    with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                        futures = [
-                            pool.submit(_generate_tiles, c) for c in tiles_needed
-                        ]
-                        for future in as_completed(futures):
-                            future.result()
+                with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                    futures = [
+                        pool.submit(_generate_tiles, c) for c in tiles_needed
+                    ]
+                    for future in as_completed(futures):
+                        future.result()
 
         result_chunks = []
         for c in ordered:

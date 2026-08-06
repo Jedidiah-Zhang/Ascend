@@ -1021,6 +1021,10 @@ func _handle_response(message: Dictionary) -> void:
 		"player_move":
 			# 权威裁决结果：后端可能钳制越界坐标，本地据此纠正
 			_apply_authoritative_position(payload)
+		"player_interact":
+			# 显式"未实现"标记（后端占位 handler）：功能缺口可见
+			if not payload.get("implemented", true) and _event_log:
+				_event_log.push_event("交互功能尚未实现")
 		"terminal_cmd":
 			if _terminal:
 				_terminal.write(payload.get("output", ""))

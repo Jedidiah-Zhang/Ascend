@@ -675,12 +675,13 @@ class GameEngine:
         handlers.update(make_player_handler(self.player_service))
         handlers.update(make_entity_handlers(self.entity_manager))
         handlers.update(make_terminal_handler(self._executor))
-        # 占位 handler：尚未实现的功能返回空成功响应
-        # （需携带 request_type，与真实 handler 的响应约定一致）
-        def _placeholder_ok(msg: dict) -> dict:
-            return make_response(msg.get("request_type", ""), {})
-        handlers["open_menu"] = _placeholder_ok
-        handlers["player_interact"] = _placeholder_ok
+        # 占位 handler：尚未实现的功能返回显式"未实现"标记而非空成功
+        # 响应——前端可感知功能缺口并提示，不让缺口被系统性掩盖。
+        def _not_implemented(msg: dict) -> dict:
+            return make_response(
+                msg.get("request_type", ""), {"implemented": False},
+            )
+        handlers["player_interact"] = _not_implemented
         self._world_request_types = set(handlers)
         for req_type, handler in handlers.items():
             self.dispatcher.replace(req_type, handler)
