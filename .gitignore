@@ -17,8 +17,9 @@ logs/
 backend/tests/.coverage
 backend/tests/.coverage.*
 
-# 编译产物（从 .c 自动生成）
+# 编译产物（从 .c 自动生成；.dll 为 Windows 交叉编译产物）
 *.so
+*.dll
 
 # 控制台历史
 .ascend_history
@@ -38,3 +39,9 @@ frontend/assets/
 
 # GUT 测试报告（生成文件）
 frontend/test_report.xml
+
+# 构建产物（build/ 下的脚本与配置正常提交）
+#   work/  = 中间产物（导出、编译缓存、舞台目录，构建时清空）
+#   dist/  = 最终交付物（固定名，每次覆盖）
+build/work/
+build/dist/

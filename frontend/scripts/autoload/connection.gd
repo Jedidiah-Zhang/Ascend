@@ -308,12 +308,22 @@ func restart_backend(args: PackedStringArray = PackedStringArray()) -> void:
 	_restart_timeout_ms = Time.get_ticks_msec() + BACKEND_STOP_TIMEOUT_MS
 	status = Status.DISCONNECTED
 	# 旧连接随进程终止自然失效；不再主动断开（避免误发 connection_lost）
+	# 清理统一走「按名杀 + 等端口释放」：Nuitka onefile 会 fork 出
+	# 真实服务子进程，仅按 PID 杀 bootstrap 会留下占端口的孤儿服务，
+	# 新模式进程绑定冲突崩溃、前端无限等待。
+	_kill_untracked_backends()
 	if _backend_pid > 0:
-		print("Connection: switching backend mode (pid=%d)..." % _backend_pid)
 		OS.execute("kill", ["-TERM", str(_backend_pid)])
-		_poll_restart()  # 立即推进：进程可能已退出
-	else:
-		_finish_restart_spawn()
+	var deadline: int = Time.get_ticks_msec() + BACKEND_STOP_TIMEOUT_MS
+	while _port_in_use() and Time.get_ticks_msec() < deadline:
+		OS.delay_msec(100)
+	if _port_in_use():
+		push_warning("Connection: backend not stopped in time, force killing")
+		OS.execute("pkill", ["-9", "-f", "server/server"])
+		deadline = Time.get_ticks_msec() + 3000
+		while _port_in_use() and Time.get_ticks_msec() < deadline:
+			OS.delay_msec(100)
+	_finish_restart_spawn()
 
 
 func _backend_args_equal(args: PackedStringArray) -> bool:
@@ -377,25 +387,60 @@ func _start_backend() -> void:
 	_begin_probe()
 
 
+func _project_root() -> String:
+	"""项目根（后端/令牌所在目录）绝对路径。
+
+	编辑器（开发）：res:// 即 frontend/，项目根为其上级；
+	导出包（发行）：可执行文件与后端目录位于同一根目录
+	（约定布局: <根>/ascend.x86_64 + <根>/server/），
+	根 = 可执行文件所在目录。
+	"""
+	if OS.has_feature("editor"):
+		return ProjectSettings.globalize_path("res://..")
+	return OS.get_executable_path().get_base_dir()
+
+
 func _spawn_backend_process(args: PackedStringArray = PackedStringArray()) -> void:
-	"""拉起 Python 后端进程并进入等待端口就绪状态。"""
-	var project_root: String = ProjectSettings.globalize_path("res://..")
-	var python_path: String = project_root.path_join(VENV_PYTHON_REL)
-	var backend_dir: String = project_root.path_join("backend")
-	var script_path: String = backend_dir.path_join("run_server.py")
+	"""拉起后端进程并进入等待端口就绪状态。
 
-	if not FileAccess.file_exists(python_path):
-		push_error("Connection: Python not found at %s" % python_path)
-		_enter_failed_state("Python not found at %s" % python_path)
-		return
-	if not FileAccess.file_exists(script_path):
-		push_error("Connection: backend script not found at %s" % script_path)
-		_enter_failed_state("backend script not found at %s" % script_path)
-		return
+	打包模式（发行版）：直接执行随包分发的 server/ 目录内
+	的二进制（standalone 形态，含依赖库），以 --project-root 指向
+	包根目录（token/日志落点）；
+	开发模式：回退 .venv python + backend/run_server.py。
+	"""
+	var project_root: String = _project_root()
+	var backend_binary: String = ""
+	for candidate in [
+		project_root.path_join("server").path_join("server"),
+		project_root.path_join("server").path_join("server.exe"),
+	]:
+		if FileAccess.file_exists(candidate):
+			backend_binary = candidate
+			break
 
-	var full_args: PackedStringArray = [script_path]
-	full_args.append_array(args)
-	var pid: int = process_creator.call(python_path, full_args)
+	var exec_path: String = ""
+	var full_args: PackedStringArray = []
+	if backend_binary != "":
+		exec_path = backend_binary
+		full_args = ["--project-root", project_root]
+		full_args.append_array(args)
+	else:
+		var python_path: String = project_root.path_join(VENV_PYTHON_REL)
+		var backend_dir: String = project_root.path_join("backend")
+		var script_path: String = backend_dir.path_join("run_server.py")
+		if not FileAccess.file_exists(python_path):
+			push_error("Connection: Python not found at %s" % python_path)
+			_enter_failed_state("Python not found at %s" % python_path)
+			return
+		if not FileAccess.file_exists(script_path):
+			push_error("Connection: backend script not found at %s" % script_path)
+			_enter_failed_state("backend script not found at %s" % script_path)
+			return
+		exec_path = python_path
+		full_args = [script_path]
+		full_args.append_array(args)
+
+	var pid: int = process_creator.call(exec_path, full_args)
 	if pid == -1:
 		push_error("Connection: failed to start backend process")
 		_enter_failed_state("failed to start backend process")
@@ -416,28 +461,59 @@ func _enter_failed_state(reason: String) -> void:
 
 
 func _kill_backend() -> void:
-	"""终止后端进程：先 SIGTERM 优雅停止，超时未退再强杀兜底。
+	"""终止后端进程：SIGTERM 优雅停止（按名 + 按 PID），超时强杀，等端口释放。
 
-	回归：旧实现直接 OS.kill 强杀，绕过后端优雅关闭路径
-	（run_server.py 的 SIGTERM handler → engine.stop() 最终落盘），
-	退出时丢失最近一次周期保存后的状态。
+	Nuitka onefile 启动时会 fork 出真实服务子进程（bootstrap 为监督
+	进程），游戏拿到的 PID 仅是 bootstrap——只杀 PID 会留下持有端口
+	的孤儿服务，导致下次进入世界绑定冲突。故按名（server）清理兜底，
+	覆盖 bootstrap 与真实服务两者。
 
-	注：本 Godot 构建的 OS.kill() 仅接受 pid（强杀语义），
-	SIGTERM 经 OS.execute("kill") 发送。
+	优雅路径保留：SIGTERM → run_server 落盘后退出 → 端口释放。
 	"""
-	if _backend_pid <= 0:
-		return
-	OS.execute("kill", ["-TERM", str(_backend_pid)])
-	print("Connection: backend stopping gracefully (PID: %d)" % _backend_pid)
+	if _backend_pid > 0:
+		OS.execute("kill", ["-TERM", str(_backend_pid)])
+	_kill_untracked_backends()
 	var deadline: int = Time.get_ticks_msec() + BACKEND_STOP_TIMEOUT_MS
-	while OS.is_process_running(_backend_pid) and Time.get_ticks_msec() < deadline:
-		OS.delay_msec(50)
-	if OS.is_process_running(_backend_pid):
-		push_warning("Connection: backend not stopped in time, force killing (PID: %d)" % _backend_pid)
-		OS.kill(_backend_pid)
-	print("Connection: backend stopped (PID: %d)" % _backend_pid)
+	while _port_in_use() and Time.get_ticks_msec() < deadline:
+		OS.delay_msec(100)
+	if _port_in_use():
+		push_warning("Connection: backend not stopped in time, force killing")
+		OS.execute("pkill", ["-9", "-f", "server/server"])
+		deadline = Time.get_ticks_msec() + 3000
+		while _port_in_use() and Time.get_ticks_msec() < deadline:
+			OS.delay_msec(100)
+	print("Connection: backend stopped")
 	_backend_pid = -1
 	_awaiting_backend = false
+
+
+func _kill_untracked_backends() -> void:
+	"""终止未跟踪的后端进程（端口探测接管场景，PID 未知）。
+
+	按后端二进制路径模式匹配（<任意根>/server/server[.exe]）：
+	开发模式后端进程名是 python，不受影响；导出版内核对自家产物。
+	"""
+	if OS.get_name() == "Windows":
+		OS.execute("taskkill", ["/IM", "server.exe", "/F"])
+	else:
+		OS.execute("pkill", ["-TERM", "-f", "server/server"])
+
+
+func _port_in_use() -> bool:
+	"""同步探测端口是否被占用（后端退出等待用）。"""
+	var probe := StreamPeerTCP.new()
+	if probe.connect_to_host(_host, _port) != OK:
+		return false
+	for i in 10:
+		probe.poll()
+		match probe.get_status():
+			StreamPeerTCP.STATUS_CONNECTED:
+				probe.disconnect_from_host()
+				return true
+			StreamPeerTCP.STATUS_ERROR:
+				return false
+		OS.delay_msec(50)
+	return false
 
 
 func _begin_probe() -> void:
@@ -577,7 +653,7 @@ func _load_token() -> void:
 	每次连接都重读：进程切换后 token 变化（世界/菜单进程各生成一次），
 	缓存旧 token 会导致握手死循环失败。
 	"""
-	var project_root: String = ProjectSettings.globalize_path("res://..")
+	var project_root: String = _project_root()
 	var token_path: String = project_root.path_join(TOKEN_FILE_REL)
 	var f: FileAccess = FileAccess.open(token_path, FileAccess.READ)
 	if f == null:

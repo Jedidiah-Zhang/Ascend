@@ -8,6 +8,7 @@ from typing import Any
 import uuid
 
 from ascend.config import TILE_MAP_SIZE
+from ascend.world_tree.affected import AffectedParty
 
 # 子格尺寸：将每个 chunk 内细分为 sub-cell 以支持更精细的空间索引
 # 每个 sub-cell = SUB_CELL_SIZE × SUB_CELL_SIZE tiles（16×16 = 256 tiles）

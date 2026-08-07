@@ -68,6 +68,7 @@ The system consists of three parts:
 ```
 backend/   Python backend (core logic)
 frontend/  Godot frontend
+build/     Build & packaging
 docs/             Design documents
 lang/             Localization resources
 requirements.txt  Python dependencies
@@ -79,10 +80,10 @@ requirements.txt  Python dependencies
 
 Full design documents in `docs/`, organized by module (in Chinese):
 
-- [Game Overview & Worldview](docs/游戏综述与世界观.md)
-- [Research Proposal & Theory](docs/研究方案与理论.md) — SCM, causal validation, sample complexity
+- [Game Overview &amp; Worldview](docs/游戏综述与世界观.md)
+- [Research Proposal &amp; Theory](docs/研究方案与理论.md) — SCM, causal validation, sample complexity
 - [World Framework](docs/世界框架/) — physics, time, ecology, event system
-- [Life & Individual](docs/生命个体/) — personality, physiology, body
+- [Life &amp; Individual](docs/生命个体/) — personality, physiology, body
 - [Mind System](docs/心智系统/) — AI-native NPCs, goals, skills
 - [Gene System](docs/基因系统/) — gene operations, dietary compatibility
 - [Group Society](docs/群体社会/) — relationship graph, world simulation, governance
@@ -102,6 +103,20 @@ python run_server.py
 ```
 
 The Godot frontend is in `frontend/`, open with Godot 4.x.
+
+---
+
+## Build & Release
+
+```bash
+bash build/build_release.sh all     # One-shot: export → compile backend → smoke test → archive
+git tag v0.0.1-alpha
+bash build/ci/publish_release.sh    # Upload to GitHub Releases
+```
+
+Artifacts: `ascend-linux.tar.gz` and `ascend-windows.zip` under `build/dist/release/`
+(the Windows backend is cross-compiled via wine + mingw-w64).
+See [build/README.md](build/README.md) for details.
 
 ---
 

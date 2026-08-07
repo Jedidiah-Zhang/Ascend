@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Ascend 舞台目录组装脚本
+#
+# 用法: bash build/package/assemble_release.sh [linux|windows]
+#   默认取当前平台。消费 build/work/ 下的导出产物与后端编译产物，
+#   组装为固定名舞台目录（无版本号，用完即删）：
+#
+#   build/work/staging/Ascend-<平台>/
+#   ├── ascend[.exe|x86_64]        # 游戏可执行（根目录）
+#   ├── ascend.pck                 # 游戏资源包
+#   ├── server/                    # 后端（standalone 目录，含依赖库）
+#   │   └── server[.exe]
+#   ├── .ascend_token              # （运行时由后端生成）
+#   └── README.txt                 # 运行说明
+#
+# 前置: 前端已导出（build/work/exports/<平台>/）、后端已编译
+#   （build/work/nuitka/ 或 nuitka-win/）。
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+VERSION="$(cat "$ROOT/build/nuitka/version.txt")"
+
+PLATFORM="${1:-}"
+if [ -z "$PLATFORM" ]; then
+  case "$(uname -s)" in
+    Linux*) PLATFORM="linux" ;;
+    MINGW*|MSYS*|CYGWIN*) PLATFORM="windows" ;;
+    *) echo "无法识别平台，请显式指定: $0 [linux|windows]" >&2; exit 1 ;;
+  esac
+fi
+
+case "$PLATFORM" in
+  linux)
+    GAME_EXE="ascend.x86_64"
+    SUBDIR="linux"
+    BACKEND_DIR="$ROOT/build/work/nuitka"
+    ;;
+  windows)
+    GAME_EXE="ascend.exe"
+    SUBDIR="windows"
+    BACKEND_DIR="$ROOT/build/work/nuitka-win"
+    ;;
+  *)
+    echo "未知平台: $PLATFORM（仅支持 linux|windows）" >&2
+    exit 1
+    ;;
+esac
+
+EXPORTS_DIR="$ROOT/build/work/exports/$SUBDIR"
+STAGE="$ROOT/build/work/staging/Ascend-$PLATFORM"
+SERVER_SRC="$BACKEND_DIR/server"
+
+# 前置检查
+MISSING=""
+for f in "$EXPORTS_DIR/$GAME_EXE" "$EXPORTS_DIR/ascend.pck"; do
+  [ -f "$f" ] || MISSING="$MISSING $f"
+done
+[ -d "$SERVER_SRC" ] || MISSING="$MISSING $SERVER_SRC/"
+if [ -n "$MISSING" ]; then
+  echo "缺少构建产物，请先导出前端并编译后端:"
+  echo "$MISSING" | sed 's/^/  - /'
+  echo "  前端: godot --headless --path frontend --export-release \"$PLATFORM\""
+  echo "  后端: bash build/nuitka/build_backend.sh（Linux）或 build_backend_windows.sh（Windows）"
+  [ "$PLATFORM" = "windows" ] && \
+    echo "  （Windows 版后端须执行 build/nuitka/build_backend_windows.sh，在 Linux 上用 wine 交叉编译）"
+  exit 1
+fi
+
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+
+cp "$EXPORTS_DIR/$GAME_EXE" "$STAGE/"
+cp "$EXPORTS_DIR/ascend.pck" "$STAGE/"
+cp -r "$SERVER_SRC" "$STAGE/"
+
+cat > "$STAGE/README.txt" <<EOF
+Ascend $VERSION ($PLATFORM)
+
+运行: 执行 ./$GAME_EXE（Linux 需 chmod +x）。
+游戏会自动拉起同目录 server/ 中的后端进程。
+首次运行会生成 .ascend_token 与存档目录（默认 ~/.ascend/saves）。
+EOF
+
+echo "舞台目录已组装: $STAGE"
+du -sh "$STAGE"

@@ -40,7 +40,7 @@ class ClientHandler:
         self,
         sock: socket.socket,
         addr: tuple[str, int],
-        on_message: Callable[[ClientHandler, dict], None],
+        on_message: Callable[["ClientHandler", dict], None],
         on_disconnect: Callable[["ClientHandler"], None],
         token: str,
     ) -> None:
