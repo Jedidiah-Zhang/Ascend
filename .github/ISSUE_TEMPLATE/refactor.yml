@@ -1,0 +1,60 @@
+name: 重构
+description: 调整既有模块的结构或实现，不改变对外行为
+title: 'refactor: '
+labels: [refactor]
+body:
+  - type: textarea
+    id: current
+    attributes:
+      label: 现状与问题
+      description: 当前实现有什么问题？（耦合、重复、性能、可读性、可测试性等）
+    validations:
+      required: true
+  - type: textarea
+    id: target
+    attributes:
+      label: 重构目标
+      description: 期望达到的结构或设计（可引用设计模式、参考模块）
+    validations:
+      required: true
+  - type: dropdown
+    id: module
+    attributes:
+      label: 涉及模块
+      description: 主涉及模块
+      options:
+        - world_tree (世界树/演化)
+        - entity (实体系统)
+        - net (网络层)
+        - save (存档)
+        - space (地形/区块)
+        - time (时间/日历)
+        - weather (天气系统)
+        - terminal (终端)
+        - i18n (本地化)
+        - game (核心基础设施)
+        - frontend (Godot 前端)
+        - 跨模块
+    validations:
+      required: true
+  - type: textarea
+    id: plan
+    attributes:
+      label: 实施计划
+      description: 拆解步骤，便于分步提交
+      value: |
+        - [ ] 梳理现有接口与调用方
+        - [ ] 编写/调整测试覆盖行为
+        - [ ] 逐步迁移（保持中间态可运行）
+        - [ ] 清理旧代码与冗余
+        - [ ] 相关测试全部通过
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 行为变更说明
+      description: 重构后对外行为/协议/存档格式是否有变化？如有需注明迁移方案
+  - type: textarea
+    id: references
+    attributes:
+      label: 关联
+      description: 关联的 Issue 编号或设计文档

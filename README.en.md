@@ -106,19 +106,6 @@ The Godot frontend is in `frontend/`, open with Godot 4.x.
 
 ---
 
-## Build & Release
-
-```bash
-bash build/build_release.sh all     # One-shot: export → compile backend → smoke test → archive
-git tag v0.0.1-alpha
-bash build/ci/publish_release.sh    # Upload to GitHub Releases
-```
-
-Artifacts: `ascend-linux.tar.gz` and `ascend-windows.zip` under `build/dist/release/`
-(the Windows backend is cross-compiled via wine + mingw-w64).
-See [build/README.md](build/README.md) for details.
-
----
 
 ## License
 

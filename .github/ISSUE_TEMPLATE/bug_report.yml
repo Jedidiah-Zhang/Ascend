@@ -1,0 +1,64 @@
+name: Bug 报告
+description: 报告游戏或后端遇到的问题
+title: 'fix: '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 提交前确认
+        - 已在本地最新分支复现
+        - 已搜索过是否已有相同 Issue
+  - type: textarea
+    id: symptom
+    attributes:
+      label: 现象
+      description: 发生了什么？报错信息、日志或截图。
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 尽量给出可复现的操作路径，如涉及模拟时钟可注明步数/天数。
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: dropdown
+    id: side
+    attributes:
+      label: 涉及端
+      options:
+        - 后端 (backend/)
+        - 前端 (frontend/)
+        - 通信 (net 协议层)
+        - 存档 (save/)
+        - 不确定
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 严重程度
+      options:
+        - 阻塞（无法运行/存档损坏）
+        - 高（核心逻辑错误）
+        - 中（功能异常但可绕过）
+        - 低（表现/文案问题）
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: 操作系统 / Godot 版本 / Python 版本
+      value: |
+        - 操作系统:
+        - Godot 版本:
+        - Python 版本:
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 修复后应如何表现

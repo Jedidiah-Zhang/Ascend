@@ -92,33 +92,6 @@ requirements.txt  Python 依赖
 
 ---
 
-## 快速开始
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cd backend
-python run_server.py
-```
-
-Godot 前端位于 `frontend/`，需 Godot 4.x 打开。
-
----
-
-## 打包与发布
-
-```bash
-bash build/build_release.sh all     # 一键：导出前端 → 编译后端 → 冒烟 → 归档
-git tag v0.0.1-alpha
-bash build/ci/publish_release.sh    # 上传 GitHub Releases
-```
-
-产物：`build/dist/release/` 下 `ascend-linux.tar.gz` 与 `ascend-windows.zip`
-（Windows 后端经 wine + mingw-w64 交叉编译）。详见 [build/README.md](build/README.md)。
-
----
-
 ## License
 
 待定（TBD）。

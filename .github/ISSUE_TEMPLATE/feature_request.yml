@@ -1,0 +1,72 @@
+name: 功能/模块计划
+description: 规划新模块或新功能（开发计划）
+title: 'feat: '
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 开发计划模板
+        本项目以 Issue 作为开发计划，先明确需求 → 定义接口 → 写测试 → 再写代码。
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标
+      description: 这个模块/功能要解决什么？提供什么能力？
+    validations:
+      required: true
+  - type: dropdown
+    id: module
+    attributes:
+      label: 所属模块
+      description: 主涉及模块（可在下方补充说明跨模块影响）
+      options:
+        - world_tree (世界树/演化)
+        - entity (实体系统)
+        - net (网络层)
+        - save (存档)
+        - space (地形/区块)
+        - time (时间/日历)
+        - weather (天气系统)
+        - terminal (终端)
+        - i18n (本地化)
+        - game (核心基础设施)
+        - frontend (Godot 前端)
+        - 新增模块
+    validations:
+      required: true
+  - type: textarea
+    id: interface
+    attributes:
+      label: 接口设计
+      description: 对外接口/数据结构/通信消息格式（含与 frontend 的 JSON over TCP 交互）
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 完成条件，建议拆为清单
+      value: |
+        - [ ] 需求明确
+        - [ ] 接口定义完成
+        - [ ] 测试编写完成
+        - [ ] 实现代码完成
+        - [ ] 相关测试通过
+  - type: dropdown
+    id: test_scope
+    attributes:
+      label: 测试范围
+      options:
+        - 后端 pytest
+        - 前端 GUT
+        - 两者
+        - 无需测试
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影响范围
+      description: 涉及哪些其他模块？是否需要同步改协议或存档格式？
+  - type: textarea
+    id: references
+    attributes:
+      label: 关联
+      description: 依赖的 Issue 编号、设计文档或参考资料
