@@ -400,6 +400,18 @@ func _project_root() -> String:
 	return OS.get_executable_path().get_base_dir()
 
 
+func _data_root() -> String:
+	"""数据根（token/日志落点）绝对路径。
+
+	编辑器（开发）：与项目根一致；
+	导出包（发行）：user://（用户可写目录）——AppImage 挂载点只读、
+	Windows Program Files 受限，token/日志不能落在程序目录。
+	"""
+	if OS.has_feature("editor"):
+		return _project_root()
+	return ProjectSettings.globalize_path("user://")
+
+
 func _spawn_backend_process(args: PackedStringArray = PackedStringArray()) -> void:
 	"""拉起后端进程并进入等待端口就绪状态。
 
@@ -422,7 +434,7 @@ func _spawn_backend_process(args: PackedStringArray = PackedStringArray()) -> vo
 	var full_args: PackedStringArray = []
 	if backend_binary != "":
 		exec_path = backend_binary
-		full_args = ["--project-root", project_root]
+		full_args = ["--project-root", project_root, "--data-root", _data_root()]
 		full_args.append_array(args)
 	else:
 		var python_path: String = project_root.path_join(VENV_PYTHON_REL)
@@ -648,13 +660,12 @@ func _reset_for_reconnect(s: StreamPeerTCP.Status) -> void:
 
 
 func _load_token() -> void:
-	"""从项目根 .ascend_token 读取认证令牌（后端启动时写入）。
+	"""从数据根 .ascend_token 读取认证令牌（后端启动时写入）。
 
 	每次连接都重读：进程切换后 token 变化（世界/菜单进程各生成一次），
 	缓存旧 token 会导致握手死循环失败。
 	"""
-	var project_root: String = _project_root()
-	var token_path: String = project_root.path_join(TOKEN_FILE_REL)
+	var token_path: String = _data_root().path_join(TOKEN_FILE_REL)
 	var f: FileAccess = FileAccess.open(token_path, FileAccess.READ)
 	if f == null:
 		push_error("Connection: token file missing at %s" % token_path)

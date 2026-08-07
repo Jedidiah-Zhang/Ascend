@@ -13,17 +13,39 @@ build/ci/publish_release.sh           → GitHub Releases（版本化命名，�
 | 脚本 | 产物 | 说明 |
 |---|---|---|
 | `assemble_release.sh` | 舞台目录 | 游戏 exe+pck 到根目录、`server/` 后端目录整体复制 |
-| `linux/make_tar_gz.sh` | `dist/release/ascend-linux.tar.gz` | 通用分发，打包后删舞台目录 |
-| `windows/make_zip.sh` | `dist/release/ascend-windows.zip` | 绿色版，打包后删舞台目录 |
+| `linux/make_tar_gz.sh` | `ascend-linux.tar.gz` | 通用分发 |
+| `linux/make_deb.sh` | `ascend-linux.deb` | Debian/Ubuntu（/opt/ascend + 桌面注册） |
+| `linux/make_rpm.sh` | `ascend-linux.rpm` | Fedora/OpenSUSE（结构同 deb） |
+| `linux/make_appimage.sh` | `ascend-linux.AppImage` | 单文件免安装（AppRun 启动游戏） |
+| `windows/make_zip.sh` | `ascend-windows.zip` | 绿色版 |
+| `windows/make_installer.sh` | `ascend-windows-setup.exe` | Inno Setup 安装器 |
+
+舞台目录生命周期 = 组装 → 各格式消费（共享同一舞台目录）→ 统一删除。
+
+## 格式特性
+
+- **deb/rpm**：安装到 `/opt/ascend`，`/usr/bin/ascend` 软链，桌面菜单 + 图标注册
+- **AppImage**：squashfs 只读挂载——token/日志经 `--data-root` 落到
+  `user://`（用户可写目录），不依赖程序目录可写性
+- **Windows 安装器**：Program Files 安装 + 开始菜单/桌面快捷方式（同上，
+  token/日志在 `user://`，避免权限问题）
+
+## 工具依赖与跳过策略
+
+| 格式 | 工具 | 本地缺失时 |
+|---|---|---|
+| deb | `dpkg-deb` | 跳过并提示 |
+| rpm | `rpmbuild` | 跳过并提示 |
+| AppImage | `magick` + FUSE | 跳过并提示 |
+| 安装器 | `ISCC.exe` + `magick` | 跳过并提示 |
+
+（CI runner 均完整安装；本地缺工具时自动跳过不阻断其余格式。）
 
 ## 规划中
 
 | 平台 | 产物 | 工具 |
 |---|---|---|
-| Windows | 安装器 `.exe` | Inno Setup |
-| Linux | `.deb` / `.rpm` | dpkg-deb / fpm（安装到 /opt、桌面图标） |
-| Linux | `.AppImage` | appimagetool |
-| macOS | `.dmg` | hdiutil |
+| macOS | `.dmg` | hdiutil（需 macOS runner + 签名） |
 
 ## 约定
 

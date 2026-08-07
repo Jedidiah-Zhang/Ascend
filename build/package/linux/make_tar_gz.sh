@@ -21,7 +21,6 @@ rm -f "$ARCHIVE"
 
 cd "$ROOT/build/work/staging"
 tar -czf "$ARCHIVE" "Ascend-linux"
-rm -rf "$STAGE"
 
 echo "已生成: $ARCHIVE"
 du -sh "$ARCHIVE"

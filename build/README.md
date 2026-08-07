@@ -56,6 +56,22 @@ bash build/package/assemble_release.sh linux && bash build/package/linux/make_ta
 bash build/package/assemble_release.sh windows && bash build/package/windows/make_zip.sh
 ```
 
+## GitHub Actions（CI）
+
+工作流：`.github/workflows/release.yml`（触发：推 `v*` 标签或手动运行）。
+
+```
+push tag v* ──► [ubuntu-latest]  Linux 构建 ──┐
+                 [windows-latest] Windows 构建 ─┴─► [release] 上传 GitHub Releases
+```
+
+- **Windows 构建用原生 runner**（`build_backend_windows_native.sh`），
+  非 wine——真 Windows 上 Nuitka/pefile 依赖扫描均正常，无需 wine 那些规避参数
+- runner 工具由 `build/ci/setup_godot.sh`（Godot 4.7.1 + 模板）与
+  `build/ci/setup_mingw.sh`（winlibs gcc，供 C 加速模块 .dll）安装，均已缓存
+- 手动运行（workflow_dispatch）只构建不上传 Release（产物在 Actions 页下载）
+- 发布 job 复用 `build/ci/publish_release.sh`（GITHUB_TOKEN 自动认证）
+
 ## 约定
 
 - 版本号单一来源：`build/nuitka/version.txt`（当前 0.0.1-alpha），

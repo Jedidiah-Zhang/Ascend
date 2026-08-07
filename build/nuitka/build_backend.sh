@@ -14,9 +14,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VENV_PY="$ROOT/.venv/bin/python"
 VERSION="$(cat "$ROOT/build/nuitka/version.txt")"
 PRODUCT_VERSION="${VERSION%%-*}"  # 版本资源仅取数字段（0.0.1-alpha → 0.0.1）
+
+# Python 解释器：本地开发用 .venv；CI 无 venv 时回退系统 python
+if [ -x "$ROOT/.venv/bin/python" ]; then
+  VENV_PY="$ROOT/.venv/bin/python"
+else
+  VENV_PY="$(command -v python3 || command -v python)"
+fi
 
 OUT_DIR="$ROOT/build/work/nuitka"
 DIST_NAME="server"

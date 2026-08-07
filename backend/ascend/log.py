@@ -22,7 +22,7 @@ _setup_done: bool = False
 _log_path: str | None = None
 
 
-def setup_logging(level: int = logging.DEBUG) -> str:
+def setup_logging(level: int = logging.DEBUG, log_dir: Path | None = None) -> str:
     """初始化日志系统，创建带时间戳的日志文件。
 
     日志同时输出到文件和控制台。
@@ -30,6 +30,8 @@ def setup_logging(level: int = logging.DEBUG) -> str:
 
     Args:
         level: 日志级别，默认 DEBUG。
+        log_dir: 日志目录覆盖（打包环境：--data-root 指定的可写目录；
+            默认取模块路径推算）。
 
     Returns:
         日志文件的绝对路径。
@@ -39,10 +41,11 @@ def setup_logging(level: int = logging.DEBUG) -> str:
         if _setup_done:
             return _log_path or ""
 
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        target_dir = log_dir if log_dir is not None else LOG_DIR
+        target_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = LOG_DIR / f"ascend_{timestamp}.log"
+        log_path = target_dir / f"ascend_{timestamp}.log"
 
         root_logger = logging.getLogger("ascend")
         root_logger.setLevel(level)

@@ -28,10 +28,11 @@ if ! git -C "$ROOT" rev-parse "$TAG" >/dev/null 2>&1; then
 fi
 
 ASSETS=()
-[ -f "$RELEASE_DIR/ascend-linux.tar.gz" ]   && ASSETS+=("$RELEASE_DIR/ascend-linux.tar.gz")
-[ -f "$RELEASE_DIR/ascend-windows.zip" ]    && ASSETS+=("$RELEASE_DIR/ascend-windows.zip")
+for f in "$RELEASE_DIR"/*; do
+  [ -f "$f" ] && ASSETS+=("$f")
+done
 if [ "${#ASSETS[@]}" -eq 0 ]; then
-  echo "build/dist/release/ 下没有产物，先运行 make_tar_gz.sh / make_zip.sh" >&2
+  echo "build/dist/release/ 下没有产物，先运行各格式 make_* 脚本" >&2
   exit 1
 fi
 

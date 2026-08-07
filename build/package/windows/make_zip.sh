@@ -36,7 +36,6 @@ with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
 EOF
 fi
 
-rm -rf "$STAGE"
 
 echo "已生成: $ARCHIVE"
 du -sh "$ARCHIVE"

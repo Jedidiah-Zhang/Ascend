@@ -1,0 +1,135 @@
+name: Release
+
+# 触发：
+#   - 推送 v* 标签（正式发布：构建 + 自动发版）
+#   - 手动运行（仅构建，产物作为 artifact 供下载，不发版）
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 发布 job 需要创建 Release
+
+jobs:
+  build-linux:
+    name: 构建 Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: 安装构建依赖
+        run: |
+          python -m pip install -q -r build/nuitka/requirements-build.txt
+          python -m pip install -q -r requirements.txt
+          sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
+
+      - name: 缓存 Godot
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/godot
+            ~/godot
+          key: godot-${{ vars.GODOT_VERSION || '4.7.1' }}-linux
+
+      - name: 安装 Godot 与导出模板
+        run: bash build/ci/setup_godot.sh linux
+
+      - name: 一键打包（导出→编译→冒烟→归档）
+        run: bash build/build_release.sh linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: |
+            build/dist/release/ascend-linux.tar.gz
+            build/dist/release/ascend-linux.deb
+            build/dist/release/ascend-linux.rpm
+            build/dist/release/ascend-linux.AppImage
+          if-no-files-found: error
+
+  build-windows:
+    name: 构建 Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # Nuitka --mingw64 不支持 3.13+
+
+      - name: 安装构建依赖
+        shell: bash
+        run: |
+          python -m pip install -q -r build/nuitka/requirements-build.txt
+          python -m pip install -q -r requirements.txt
+
+      - name: 缓存 mingw-w64
+        uses: actions/cache@v4
+        with:
+          path: ~/mingw64
+          key: mingw-16.1.0-msvcrt
+
+      - name: 安装 mingw-w64
+        shell: bash
+        run: bash build/ci/setup_mingw.sh
+
+      - name: 安装 Inno Setup 与 ImageMagick（安装器/图标）
+        shell: bash
+        run: choco install innosetup imagemagick -y --no-progress
+
+      - name: 缓存 Godot
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Roaming/Godot
+            ~/godot
+          key: godot-${{ vars.GODOT_VERSION || '4.7.1' }}-windows
+
+      - name: 安装 Godot 与导出模板
+        shell: bash
+        run: bash build/ci/setup_godot.sh windows
+
+      - name: 一键打包（原生后端编译）
+        shell: bash
+        env:
+          BACKEND_WIN_SCRIPT: build/nuitka/build_backend_windows_native.sh
+        run: bash build/build_release.sh windows
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            build/dist/release/ascend-windows.zip
+            build/dist/release/ascend-windows-setup.exe
+          if-no-files-found: error
+
+  release:
+    name: 发布 GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')   # 仅 tag 触发时发版
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 完整历史，publish_release.sh 需校验 tag
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-linux
+          path: build/dist/release
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows
+          path: build/dist/release
+
+      - name: 发布（版本化命名 + 上传 Release）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash build/ci/publish_release.sh

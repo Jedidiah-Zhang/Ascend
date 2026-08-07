@@ -41,17 +41,24 @@ LOG_RETENTION_DAYS: int = 7
 TOKEN_FILE: str = ".ascend_token"  # 认证令牌文件（项目根，前端启动时读取）
 
 # 项目根：默认取脚本上级目录（开发模式）；打包后由前端以
-# --project-root 显式传入（Nuitka onefile 下 __file__ 位于临时解压目录）。
+# --project-root 显式传入（Nuitka 下 __file__ 为构建路径）。
 _PROJECT_ROOT: Path = Path(__file__).parent.parent
+# 数据根（token/日志落点）：打包环境（AppImage 只读挂载、Program Files
+# 受限）由前端以 --data-root 显式传入；默认与项目根一致。
+_DATA_ROOT: Path | None = None
+
+
+def _data_root() -> Path:
+    return _DATA_ROOT if _DATA_ROOT is not None else _PROJECT_ROOT
 
 
 def _write_token_file(token: str) -> None:
     """写入认证令牌文件（本地握手用，非机密传输通道）。
 
-    前端拉起的后端经此文件获取 token 完成握手；文件为项目根相对路径，
-    已加入 .gitignore。
+    前端拉起的后端经此文件获取 token 完成握手；文件为数据根相对路径
+    （--data-root 覆盖，默认项目根），已加入 .gitignore。
     """
-    path = _PROJECT_ROOT / TOKEN_FILE
+    path = _data_root() / TOKEN_FILE
     try:
         path.write_text(token, encoding="utf-8")
     except OSError:
@@ -61,7 +68,7 @@ def _write_token_file(token: str) -> None:
 
 def _cleanup_old_logs() -> None:
     """删除超过 LOG_RETENTION_DAYS 天的旧日志文件。"""
-    log_dir = _PROJECT_ROOT / "logs"
+    log_dir = _data_root() / "logs"
     if not log_dir.is_dir():
         return
     cutoff = _real_time.time() - LOG_RETENTION_DAYS * 86400
@@ -70,11 +77,13 @@ def _cleanup_old_logs() -> None:
             Path(log_file).unlink()
 
 
-def _parse_args(argv: list[str]) -> tuple[str | None, str | None, str | None]:
-    """解析 --world-id / --snapshot / --project-root 参数（无第三方依赖的手写解析）。"""
+def _parse_args(argv: list[str]) -> tuple[str | None, str | None, str | None, str | None]:
+    """解析 --world-id / --snapshot / --project-root / --data-root
+    （无第三方依赖的手写解析）。"""
     world_id: str | None = None
     snapshot: str | None = None
     project_root: str | None = None
+    data_root: str | None = None
     i = 0
     while i < len(argv):
         if argv[i] == "--world-id" and i + 1 < len(argv):
@@ -86,22 +95,44 @@ def _parse_args(argv: list[str]) -> tuple[str | None, str | None, str | None]:
         elif argv[i] == "--project-root" and i + 1 < len(argv):
             project_root = argv[i + 1]
             i += 2
+        elif argv[i] == "--data-root" and i + 1 < len(argv):
+            data_root = argv[i + 1]
+            i += 2
         else:
             print(f"未知参数: {argv[i]}", file=sys.stderr)
             sys.exit(2)
-    return world_id, snapshot, project_root
+    return world_id, snapshot, project_root, data_root
+
+
+def _force_utf8_stdio() -> None:
+    """Windows 控制台/管道默认 ANSI 代码页（如 cp1252），中文日志
+    UnicodeEncodeError 直接崩溃（英文 Windows 真实运行同样触发）。
+    统一重配置为 UTF-8 + errors=replace：任何环境不崩，文件/管道
+    输出保持可读，控制台至多显示替换符。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
 
 
 def main() -> None:
     """按参数启动菜单进程或世界进程。"""
-    global _PROJECT_ROOT
+    global _PROJECT_ROOT, _DATA_ROOT
 
-    world_id, snapshot, project_root = _parse_args(sys.argv[1:])
+    _force_utf8_stdio()
+
+    world_id, snapshot, project_root, data_root = _parse_args(sys.argv[1:])
     if project_root is not None:
         _PROJECT_ROOT = Path(project_root)
+    if data_root is not None:
+        _DATA_ROOT = Path(data_root)
 
     _cleanup_old_logs()
-    setup_logging()
+    setup_logging(log_dir=_data_root() / "logs")
 
     # 测试隔离：ASCEND_SERVER_PORT 覆盖监听端口（直接传给引擎构造参数）
     listen_port = SERVER_PORT
