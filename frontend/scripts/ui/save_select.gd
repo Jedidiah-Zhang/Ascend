@@ -9,6 +9,10 @@
     「最后进入」的世界带标注
   - 返回主菜单
 
+进程模型（一进程一模式）：进入世界 / 回滚 = 停菜单进程 → 以
+--world-id/--snapshot 拉起世界进程（Connection.restart_backend），
+连接就绪（connection_established）后切入世界场景。
+
 全部内容 _draw() 绘制 + 自绘命中检测；文本输入使用 LineEdit
 （仅重命名/新建时显示），风格与调试终端一致。
 """
@@ -118,6 +122,17 @@ var _name_input: LineEdit = null
 var _snapshots: Array = []
 ## 引擎当前加载的世界（"最后进入"标注）
 var _current_world_id: String = ""
+## 进入世界流程中（restart_backend 已发起，连接就绪后切场景）
+var _entering_world: bool = false
+
+## 后端进程启动器（测试可注入；默认走 Connection 进程切换）。
+## 参数 = 世界进程 CLI 参数（["--world-id", id] 或 + ["--snapshot", file]）。
+var backend_launcher: Callable = _launch_backend_default
+
+
+func _launch_backend_default(args: PackedStringArray) -> void:
+	"""默认进程切换：Connection.restart_backend（停菜单进程 → 拉起世界进程）。"""
+	Connection.restart_backend(args)
 
 # ── 时间线视图状态（行内展开） ────────────────────────────
 
@@ -196,10 +211,15 @@ func _exit_tree() -> void:
 		Connection.connection_established.disconnect(_on_connected)
 
 
-## 连接就绪回调（握手完成）：拉取存档列表。
+## 连接就绪回调（握手完成）：进入世界流程中则切场景，否则拉取存档列表。
 ## 进入场景时若连接尚在握手窗口，_ready 的首次请求会被 send() 丢弃——
 ## 统一由本信号驱动，保证每次连接就绪都刷新。
 func _on_connected(_host: String, _port: int) -> void:
+	if _entering_world:
+		# 世界进程已就绪（握手完成）：切换主世界场景
+		_entering_world = false
+		_enter_world()
+		return
 	_refresh_list()
 
 
@@ -248,6 +268,7 @@ func _on_connection_lost() -> void:
 	if _busy:
 		_busy = false
 		_confirm_delete_row = -1
+		_entering_world = false
 		_set_error("连接中断，操作未完成 — 请重试")
 	queue_redraw()
 
@@ -256,6 +277,7 @@ func _on_backend_failed(reason: String) -> void:
 	"""后端启动失败：同样复位忙状态。"""
 	_busy = false
 	_confirm_delete_row = -1
+	_entering_world = false
 	_set_error("后端不可用：%s" % reason)
 	queue_redraw()
 
@@ -856,7 +878,7 @@ func _hit_legend_row(pos: Vector2) -> String:
 	return ""
 
 
-## 点击时间线节点：当前时间点（LIVE）直接进入世界；快照首次点击进入待确认态，再次点击同一节点发起回滚（load_request 带 snapshot）。
+## 点击时间线节点：当前时间点（LIVE）直接进入世界；快照首次点击进入待确认态，再次点击同一节点发起回滚（重启世界进程 + snapshot 参数）。
 ##
 ## Args:
 ##     id: 节点 id（TimelineLayout.LIVE_ID 或快照 file）。
@@ -867,12 +889,13 @@ func _activate_timeline_node(id: String) -> void:
 		_load_world(world_id)
 		return
 	if _tl_confirm_id == id:
-		# 两次点击确认 → 回滚到该快照
+		# 两次点击确认 → 回滚到该快照（世界进程带 --snapshot 启动）
 		_tl_confirm_id = ""
 		_busy = true
 		_status_text = "正在回滚到 %s ..." % id
 		_status_color = STATUS_WAIT_COLOR
-		Connection.send(SaveApi.load_request(world_id, id))
+		_entering_world = true
+		backend_launcher.call(PackedStringArray(["--world-id", world_id, "--snapshot", id]))
 		queue_redraw()
 		return
 	_tl_confirm_id = id
@@ -980,7 +1003,8 @@ func _on_name_submitted(text: String) -> void:
 
 # ── 流程 ──────────────────────────────────────────────────
 
-## 发起读档请求（加载活目录）并置忙状态，成功后由 save_load 响应切场景进入世界。
+## 发起进入世界（进程切换）：停菜单进程 → 以 --world-id 拉起世界进程，
+## 连接就绪后由 _on_connected 切场景进入世界。
 ##
 ## Args:
 ##     world_id: 目标世界 id。
@@ -988,12 +1012,13 @@ func _load_world(world_id: String) -> void:
 	_busy = true
 	_status_text = "正在进入世界..."
 	_status_color = STATUS_WAIT_COLOR
-	Connection.send(SaveApi.load_request(world_id))
+	_entering_world = true
+	backend_launcher.call(PackedStringArray(["--world-id", world_id]))
 	queue_redraw()
 
 
 func _enter_world() -> void:
-	"""切换到主世界场景（save_load 已置位，后端将重建并重启服务）。"""
+	"""切换到主世界场景（世界进程已就绪，world_initialized 事件为就绪信号）。"""
 	get_tree().change_scene_to_file(MAIN_WORLD_SCENE)
 
 
@@ -1023,8 +1048,6 @@ func _on_message(message: Dictionary) -> void:
 					_set_error("创建存档失败")
 				else:
 					_load_world(world_id)
-			SaveApi.LOAD:
-				_enter_world()
 			SaveApi.RENAME, SaveApi.EXPORT:
 				_refresh_list()
 			SaveApi.DELETE:

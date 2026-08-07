@@ -33,19 +33,6 @@ func test_snapshot_request() -> void:
 	assert_eq(req["payload"]["world_id"], "w1")
 
 
-func test_load_request_world() -> void:
-	var req: Dictionary = SaveApi.load_request("w1")
-	assert_eq(req["request_type"], SaveApi.LOAD)
-	assert_eq(req["payload"]["world_id"], "w1")
-	assert_eq(req["payload"]["snapshot"], "")
-
-
-func test_load_request_snapshot() -> void:
-	var req: Dictionary = SaveApi.load_request("", "snap.ascendsave")
-	assert_eq(req["payload"]["world_id"], "")
-	assert_eq(req["payload"]["snapshot"], "snap.ascendsave")
-
-
 func test_rename_request() -> void:
 	var req: Dictionary = SaveApi.rename_request("w1", "新名")
 	assert_eq(req["payload"], {"world_id": "w1", "name": "新名"})

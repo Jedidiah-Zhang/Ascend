@@ -3,18 +3,17 @@
 语义（Issue #13）：存档是状态通道（request-response）——世界外的
 元操作，不产生历史、不进因果图。
 
-协议（docs/世界框架/存档系统/设计.md）:
+进程模型（一进程一模式）:
     save_list       → {payload: {worlds: [摘要...], snapshots: [...],
                                   current_world_id: 当前加载世界}}
     save_create     {payload: {name, seed?}} → {payload: {world_id}}
     save_snapshot   {payload: {world_id}} → {payload: {file}}
-    save_load       {payload: {world_id?|snapshot?}} → {payload: {world_id}}
     save_rename     {payload: {world_id, name}} → {payload: {name}}
     save_delete     {payload: {world_id}} → {payload: {}}
     save_export     {payload: {world_id}} → {payload: {world_id: 新ID}}
 
-save_load 为异步：置位引擎读档请求后立即返回，重建在 tick 线程
-内完成；重建完成后前端经 world_initialized 事件 + 重连感知。
+进入世界 / 回滚不再走 save_load 请求：由前端停菜单进程、以
+run_server --world-id/--snapshot 拉起世界进程完成（进程模型重构）。
 """
 
 from ascend.log import get_logger
@@ -36,8 +35,8 @@ def make_save_handlers(save_manager, game_engine=None):
 
     Args:
         save_manager: SaveManager 实例。
-        game_engine: GameEngine 实例（save_load 需要）；None 时
-            读档请求返回错误（纯磁盘模式下不可用）。
+        game_engine: GameEngine 实例（save_snapshot/save_list 需要）；
+            None 时走纯磁盘路径（菜单进程与引擎路径等效）。
 
     Returns:
         {request_type: handler} 映射。
@@ -79,7 +78,7 @@ def make_save_handlers(save_manager, game_engine=None):
             )
 
     def handle_save_create(msg: dict) -> dict:
-        """创建新存档位（新游戏第一步，随后 save_load 进入世界）。"""
+        """创建新存档位（新游戏第一步，随后前端拉起世界进程进入）。"""
         payload = _payload(msg)
         name = str(payload.get("name", "")).strip()
         if not name:
@@ -113,31 +112,6 @@ def make_save_handlers(save_manager, game_engine=None):
         return make_response(
                 "save_snapshot",
                 {"file": filename},
-            )
-
-    def handle_save_load(msg: dict) -> dict:
-        """读档（活目录或快照回滚），异步重建。
-
-        回滚语义（设计文档）：快照展开为活目录前，引擎重建流程会
-        先自动快照当前状态（保护回滚前分支）。
-
-        world_id 与 snapshot 同时给出 = 把快照作为该世界回滚
-        （复制存档（save_export）后快照仍指向原世界，必须指定目标）。
-        """
-        payload = _payload(msg)
-        world_id = str(payload.get("world_id", "")).strip() or None
-        snapshot = str(payload.get("snapshot", "")).strip() or None
-        if not world_id and not snapshot:
-            raise ValueError("缺少 world_id 或 snapshot")
-        if world_id:
-            save_manager.get_manifest(world_id)  # 校验目标存在性
-        if game_engine is None:
-            raise ValueError("引擎不可用，无法读档")
-        game_engine.request_load(world_id, snapshot)
-        target = world_id if world_id else snapshot
-        return make_response(
-                "save_load",
-                {"world_id": target},
             )
 
     def handle_save_rename(msg: dict) -> dict:
@@ -181,7 +155,6 @@ def make_save_handlers(save_manager, game_engine=None):
         "save_list": handle_save_list,
         "save_create": handle_save_create,
         "save_snapshot": handle_save_snapshot,
-        "save_load": handle_save_load,
         "save_rename": handle_save_rename,
         "save_delete": handle_save_delete,
         "save_export": handle_save_export,

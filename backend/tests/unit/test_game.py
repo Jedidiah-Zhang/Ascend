@@ -63,61 +63,6 @@ class TestTickCircuitBreaker:
         assert not engine._running.is_set()
 
 
-class TestReloadLoop:
-    """读档重建：常驻 tick 线程内执行 _reload 后循环继续。"""
-
-    def test_pending_load_runs_reload_and_continues(self):
-        """_pending_load 置位时在循环内执行 _reload，完成后循环不退出。"""
-        engine = GameEngine(seed=1)
-        engine._tick = lambda: None
-        received: list[tuple] = []
-
-        def _fake_reload(*args):
-            received.append(args)
-            engine._running.clear()  # 模拟重建完成后的正常退出
-
-        engine._reload = _fake_reload
-        engine._pending_load = ("world-x", None)
-        engine._running.set()
-
-        engine._run_loop()
-
-        assert received == [("world-x", None)]
-        assert engine._pending_load is None
-        assert not engine._running.is_set()
-
-    def test_stop_during_reload_exits_loop_without_resurrection(self):
-        """stop() 在读档期间调用：_reload 不再执行，循环立即退出。"""
-        engine = GameEngine(seed=1)
-        ticks: list = []
-        engine._tick = lambda: ticks.append(1)
-        engine._reload = lambda *a: ticks.append("reload")
-        engine._pending_load = ("world-x", None)
-        engine._running.set()
-        engine._stop_requested.set()  # 模拟 stop() 在读档期被调用
-
-        engine._run_loop()
-
-        assert ticks == [], "取消标志置位后循环不应执行任何 tick/读档"
-        assert engine._pending_load is not None, "读档请求不应被消费"
-
-    def test_stop_requested_mid_loop_exits_next_iteration(self):
-        """循环运行中 stop() 到达：本轮 tick 正常执行，下一轮退出。"""
-        engine = GameEngine(seed=1)
-        ticks: list = []
-
-        def _tick_once() -> None:
-            ticks.append(1)
-            engine._stop_requested.set()  # 模拟外部 stop()
-
-        engine._tick = _tick_once
-        engine._running.set()
-
-        engine._run_loop()
-
-        assert ticks == [1], "恰好执行一轮后退出"
-
-
 class TestSelectBirthPoint:
     """_select_birth_point 出生点选取。"""
 

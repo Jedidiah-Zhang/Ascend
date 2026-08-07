@@ -191,3 +191,88 @@ func test_kill_backend_noop_without_pid() -> void:
 	Connection._backend_pid = -1
 	Connection._kill_backend()
 	assert_eq(Connection._backend_pid, -1, "无进程时不应改动 pid")
+
+
+# ── 进程切换（restart_backend） ────────────────────────────
+
+func test_restart_backend_idempotent_when_same_mode() -> void:
+	"""目标参数与当前一致且进程存活：幂等跳过（不杀进程不重拉）。"""
+	Connection._backend_pid = 12345
+	Connection.backend_args = PackedStringArray()
+	Connection._restarting = false
+	var before: int = Connection._backend_pid
+	Connection.restart_backend(PackedStringArray())
+	assert_eq(Connection._backend_pid, before, "同模式不应动进程")
+	assert_false(Connection._restarting, "同模式不应进入切换状态")
+
+
+func test_restart_backend_same_world_args_idempotent() -> void:
+	"""世界进程参数一致时同样幂等。"""
+	Connection._backend_pid = 12345
+	Connection.backend_args = PackedStringArray(["--world-id", "abc"])
+	Connection._restarting = false
+	Connection.restart_backend(PackedStringArray(["--world-id", "abc"]))
+	assert_eq(Connection._backend_pid, 12345, "同世界参数不应重启")
+
+
+func test_restart_backend_different_args_enters_restarting() -> void:
+	"""不同参数：切换状态机生效——旧进程被 SIGTERM，新进程以目标参数拉起。
+
+	用真实 sleep 子进程替代（Godot 对不存在的 pid 做 is_process_running
+	会报 ECHILD 引擎错误）；进程创建器注入返回第二个真实子进程——
+	验证切换流程与拉起参数，不拉起真后端。
+
+	时序说明：restart_backend 内同步推进一轮 _poll_restart，若旧进程
+	恰好未退出则切换留在 _restarting 状态待下帧推进——测试主动驱动
+	_poll_restart 直至切换完成，避免对 sleep 退出时机的脆弱依赖。
+	"""
+	var saved_pid: int = Connection._backend_pid
+	var old_proc: int = OS.create_process("sleep", ["30"])
+	var new_proc: int = OS.create_process("sleep", ["30"])
+	Connection._backend_pid = old_proc
+	Connection.backend_args = PackedStringArray()
+	Connection._restarting = false
+	var spawned: Array = []
+	Connection.process_creator = func(_path, args):
+		spawned.append(args)
+		return new_proc
+	Connection.restart_backend(PackedStringArray(["--world-id", "w1"]))
+	# 驱动状态机直至旧进程退出、新进程拉起（与 _process 每帧推进等价）
+	for i in 50:
+		if Connection._restarting:
+			Connection._poll_restart()
+			await get_tree().process_frame
+		else:
+			break
+	assert_false(Connection._restarting, "切换应已完成")
+	assert_eq(Connection.backend_args, PackedStringArray(["--world-id", "w1"]),
+		"目标参数应立即生效（UI 据此感知模式）")
+	assert_eq(spawned.size(), 1, "旧进程退出后应拉起新进程")
+	if spawned.size() == 1:
+		var tail: PackedStringArray = PackedStringArray(spawned[0])
+		tail.remove_at(0)  # 去掉 script_path
+		assert_eq(tail, PackedStringArray(["--world-id", "w1"]),
+			"拉起参数应为世界进程 CLI 参数")
+	# 复位：清理注入的 sleep 进程，恢复真实后端 pid（防 GUT 退出时孤儿）
+	Connection._kill_backend()
+	Connection.backend_args = PackedStringArray()
+	Connection.process_creator = Connection._create_process_default
+	Connection._backend_pid = saved_pid
+
+
+func test_restart_duplicate_call_ignored() -> void:
+	"""切换进行中重复调用被忽略（防重入）。"""
+	Connection._backend_pid = 999999
+	Connection._restarting = true
+	var spawned: Array = []
+	Connection.process_creator = func(_path, args):
+		spawned.append(args)
+		return -1
+	Connection.restart_backend(PackedStringArray(["--world-id", "w2"]))
+	assert_true(Connection._restarting, "切换中应保持进行状态")
+	assert_eq(spawned, [], "重复调用不应触发拉起")
+	assert_eq(Connection.backend_args, PackedStringArray(),
+		"重复调用不应覆盖目标参数")
+	Connection._restarting = false
+	Connection._backend_pid = -1
+	Connection.process_creator = Connection._create_process_default

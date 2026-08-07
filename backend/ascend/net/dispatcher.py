@@ -2,6 +2,10 @@
 
 线程安全。从游戏线程调用 process()（不是从服务器接收线程）。
 响应定向发送给请求方客户端（非广播），事件流仍走广播通道。
+
+进程模型（服务器与世界观解耦）：菜单进程只注册存档处理程序；
+世界进程在 start() 时一次注册全部处理程序（save + 世界观）。
+进程内不换世界，故无需 replace/unregister。
 """
 
 from collections.abc import Callable
@@ -58,29 +62,6 @@ class MessageDispatcher:
             )
         self._handlers[request_type] = handler
         logger.debug("注册处理程序: request_type=%s", request_type)
-
-    def replace(self, request_type: str, handler: Callable[[dict], dict | None]) -> None:
-        """注册或覆盖一个请求处理程序（读档重建时复用同一分发器）。
-
-        与 register 的区别：已注册时静默覆盖而非报错——世界观切换
-        时旧闭包指向已销毁的子系统，须以新世界的闭包替换。
-        """
-        existed = request_type in self._handlers
-        self._handlers[request_type] = handler
-        logger.debug(
-            "%s处理程序: request_type=%s",
-            "覆盖" if existed else "注册", request_type,
-        )
-
-    def unregister(self, request_type: str) -> None:
-        """注销一个请求处理程序（服务模式下世界观请求不应被受理）。
-
-        Args:
-            request_type: 要注销的请求类型字符串。
-        """
-        if request_type in self._handlers:
-            del self._handlers[request_type]
-            logger.debug("注销处理程序: request_type=%s", request_type)
 
     def process(self) -> None:
         """处理所有排队消息（每个游戏 tick 调用一次）。"""

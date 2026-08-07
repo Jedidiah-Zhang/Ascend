@@ -282,6 +282,7 @@ func _hit_button(pos: Vector2) -> String:
 
 ## 执行按钮动作：继续游戏 / 发起存档 / 设置占位提示 / 返回主菜单
 ## / 退出游戏；切换场景或退出前先恢复游戏（解除暂停）。
+## 返回主菜单 = 进程切换回菜单模式（世界进程优雅退出落盘）。
 ##
 ## Args:
 ##     key: 按钮 key（见 BUTTONS 定义）。
@@ -299,6 +300,8 @@ func _activate(key: String) -> void:
 			queue_redraw()
 		"menu":
 			close()
+			# 世界进程 → 菜单进程（优雅退出：最终落盘；切换期间不闪错）
+			Connection.restart_backend(PackedStringArray())
 			get_tree().change_scene_to_file(MAIN_MENU_SCENE)
 		"quit":
 			close()

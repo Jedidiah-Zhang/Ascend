@@ -2,22 +2,21 @@
 
 在后台线程中运行 tick 循环，以固定频率处理传入的客户端消息。
 
-架构（服务器与世界观解耦）:
-  - 网络层（GameServer / MessageDispatcher / EventBridge）常驻：
-    引擎启动即就绪（服务模式），跨读档重建存活，客户端全程不断线；
-  - 世界观（生成器 / ChunkStore / 实体 / 天气 / 日历 / 事件归档）随
-    读档重建整体替换，由 start() 构建、_cleanup_world() 释放；
-  - 世界就绪信号 = world_initialized 事件（含出生点），前端据此接入；
-    world_reloading 事件在重建开始时广播（前端显示加载提示）。
+进程模型（一个进程 = 一种模式，进程内不换世界）:
+  - 菜单进程（run_server 无参 → start_service）: 仅网络层 + 存档管理，
+    主菜单无需等待大陆生成（5-30s+）；
+  - 世界进程（run_server --world-id <id> → start）: 直接构建世界观并
+    运行游戏；回滚（--snapshot）由进程启动时先保护活目录分支再展开。
+  进入世界 = 前端停菜单进程、以世界参数拉起新进程（网络层跨进程重建，
+  前端经握手 + world_initialized 事件感知就绪）。
 
-启动流程:
-  1. 网络层就绪（服务模式：仅存档管理，不生成世界）
-  2. save_load 请求 → tick 线程内读档重建：随机 seed（读档取 manifest.seed）
-  3. 主动生成大陆宏观场（侵蚀+水文，约 30s；缓存命中秒级）
-  4. 随机选取出生点（海岸低地，避开河流/湖泊，海陆地形多样）
-  5. 预生成出生点周边 radius 个 chunk 的详细 tile 层
-  6. 创建实体管理器接入事件管线
-  7. 配置世界树归档 + 启动 tick 循环（时钟+日历随之运转）
+启动流程（世界进程）:
+  1. 网络层先就绪（端口立即开放，大陆生成期间前端可连接并收进度）
+  2. 主动生成大陆宏观场（侵蚀+水文，约 30s；缓存命中秒级）
+  3. 随机选取出生点（海岸低地，避开河流/湖泊，海陆地形多样）
+  4. 预生成出生点周边 radius 个 chunk 的详细 tile 层
+  5. 创建实体管理器接入事件管线
+  6. 配置世界树归档 + 启动 tick 循环（时钟+日历随之运转）
 """
 
 import os
@@ -118,21 +117,12 @@ class GameEngine:
         self.world_id: str | None = None      # 当前存档位（None=无存档模式）
         self._manifest = None                 # 内存中的 Manifest（touch 用）
         self._load_state: dict | None = None  # 读档恢复的状态
-        self._pending_load: tuple | None = None  # 待执行读档请求 (world_id, snapshot)
         self._last_state_save: float = 0.0    # 上次 state 落盘时刻（monotonic）
         self._last_chunk_flush: float = 0.0   # 上次 dirty chunk flush 时刻
         self._world_start_monotonic: float = 0.0
-        self._reloading: bool = False         # 读档重建中（run_server 据此抑制自动停止）
         self._service_mode: bool = False      # 服务模式：仅网络+存档，无世界
-        self._world_request_types: set[str] = set()  # 世界观处理程序清单（读档时重注册）
         self._running: threading.Event = threading.Event()
-        self._stop_requested: threading.Event = threading.Event()  # stop() 读档期取消标志
         self._thread: threading.Thread | None = None
-
-    @property
-    def is_reloading(self) -> bool:
-        """读档重建中（网络层常驻，世界生成期间抑制外部自动停止）。"""
-        return self._reloading
 
     def __repr__(self) -> str:
         """返回引擎状态摘要。
@@ -173,7 +163,7 @@ class GameEngine:
         """服务模式启动：只开 TCP 服务 + 存档管理，不生成世界。
 
         主菜单只需 save_list / save_create / save_rename / save_delete /
-        save_export；世界在 save_load 请求时才生成（读档重建流程），
+        save_export；世界由前端以 --world-id 拉起世界进程时生成，
         避免后端启动即等待大陆生成（5-30s+）。
 
         时钟不推进（无日历事件、不进归档）；tick 循环仅处理网络消息。
@@ -192,16 +182,24 @@ class GameEngine:
         self._running.set()
         self._ensure_tick_thread()
         logger.info(
-            "服务模式已启动: %s:%d（世界将在读档时生成）",
+            "服务模式已启动: %s:%d（世界进程由前端以 --world-id 拉起）",
             SERVER_HOST, SERVER_PORT,
         )
+
+    def ensure_network(self) -> None:
+        """确保网络层就绪（幂等；run_server 入口用）。
+
+        世界进程在 load_world（大陆生成 5-30s）前调用：端口与 token
+        文件立即就绪，前端可马上连接完成握手。
+        """
+        self._ensure_network()
 
     def _ensure_network(self) -> None:
         """确保网络层就绪（服务器/分发器/事件桥/存档处理程序），幂等。
 
-        服务器与世界观解耦：跨读档重建常驻，客户端不断线。
-        存档处理程序与世界观无关，只注册一次；世界观处理程序由
-        _register_world_handlers 在读档时以 replace 覆盖。
+        菜单进程与世界进程共用：存档处理程序只注册一次；世界进程的
+        世界观处理程序由 start() 经 _register_world_handlers 追加注册
+        （request_type 无交集，进程内不换世界）。
         """
         if self.server is not None:
             return
@@ -218,7 +216,7 @@ class GameEngine:
         logger.info("网络层已就绪: %s:%d", SERVER_HOST, SERVER_PORT)
 
     def _ensure_tick_thread(self) -> None:
-        """确保 tick 循环线程存活（常驻线程，跨读档重建不重建）。"""
+        """确保 tick 循环线程存活（常驻线程）。"""
         if self._thread is not None and self._thread.is_alive():
             return
         self._thread = threading.Thread(
@@ -238,10 +236,11 @@ class GameEngine:
           - world_id: 从存档位读档（seed/时钟/玩家/DB 路径全部恢复）
 
         读档流程:
-          1. 恢复时钟（对齐归档时间，防时间倒流）
-          2. 按 manifest.seed 重建大陆宏观场
-          3. 以存档目录路径打开 ChunkStore / 事件归档
-          4. 静默恢复玩家实体（不发布 entity_born，Issue #20/#25 语义）
+          1. 网络层先就绪（端口立即开放，大陆生成期间前端可连接收进度）
+          2. 恢复时钟（对齐归档时间，防时间倒流）
+          3. 按 manifest.seed 重建大陆宏观场
+          4. 以存档目录路径打开 ChunkStore / 事件归档
+          5. 静默恢复玩家实体（不发布 entity_born，Issue #20/#25 语义）
 
         幂等：已在运行时调用无效果。
         """
@@ -249,7 +248,12 @@ class GameEngine:
             return
         self._service_mode = False
 
-        # 0. 存档准备
+        # 0. 网络层先就绪（幂等）：世界生成 5-30s 期间端口已开放，
+        #    前端可连接并收 world_progress 进度（进程模型下每次进入
+        #    世界都是新进程，必须先开端口再生成）。
+        self._ensure_network()
+
+        # 0a. 存档准备
         self._load_state = None
         self._manifest = None
         if world_id is not None:
@@ -359,9 +363,6 @@ class GameEngine:
             )
         logger.info("天气引擎已接入 %d 个 chunk", len(self.chunk_store))
 
-        # 5c. 网络层（幂等：服务模式已就绪则保持，客户端不断线）
-        self._ensure_network()
-
         # 8. 终端指令执行器
         self._executor = CommandExecutor(
             clock=self.clock,
@@ -373,7 +374,8 @@ class GameEngine:
             entity_manager=self.entity_manager,
         )
 
-        # 8b. 世界观处理程序（replace 语义：读档重建时覆盖旧闭包）
+        # 8b. 世界观处理程序（进程内只注册一次；save 处理程序已在
+        # _ensure_network 注册，request_type 无交集）
         self._register_world_handlers()
 
         # 9. 世界树：归档 + 内存限制 + 图预热
@@ -405,7 +407,6 @@ class GameEngine:
         self._persist_manifest()
 
         # 11. 启动 tick 循环——clock.tick() 推进时间，calendar 自动收事件。
-        # 常驻线程：服务模式已启动时复用，跨读档重建不重建。
         self._last_state_save = _real_time.monotonic()
         self._last_chunk_flush = self._last_state_save
         self._world_start_monotonic = self._last_state_save
@@ -413,25 +414,46 @@ class GameEngine:
         self._ensure_tick_thread()
         logger.info("游戏引擎在后台运行 (tick=%.1f Hz)", TICK_RATE)
 
-    def request_load(
+    def load_world(
         self, world_id: str | None = None, snapshot: str | None = None,
     ) -> None:
-        """请求读档重建（异步，tick 线程内执行）。
+        """世界进程启动入口：回滚保护 → 展开快照 → 构建世界。
 
-        网络层入口：校验并置位读档请求；已有请求在处理时抛 ValueError。
-        重建失败时引擎广播 world_reloading_failed 事件（前端可感知并
-        结束加载状态），不在此处同步抛异常——调用方已先行返回"已受理"。
+        由 run_server --world-id/--snapshot 调用（取代旧 save_load
+        同进程换世界）。回滚时活目录即目标世界的当前状态（上一进程
+        退出时已最终保存），先打 auto 保护快照再展开——与旧
+        _reload 的回滚保护语义等价（保护分支可找回）。
+
+        若引擎已在运行（测试中模拟进程切换），先 stop() 清旧状态：
+        语义 = "以该世界重启引擎"，与进程模型一致。
 
         Args:
             world_id: 目标存档位。
             snapshot: 快照文件（回滚）；None 时加载活目录。
 
         Raises:
-            ValueError: 已有读档请求在处理中。
+            ValueError: 回滚未指定 world_id 或存档不存在。
         """
-        if self._pending_load is not None:
-            raise ValueError("已有读档请求在处理中")
-        self._pending_load = (world_id, snapshot)
+        if self._running.is_set():
+            self.stop()
+        self._ensure_network()
+        try:
+            if snapshot is not None:
+                if not world_id:
+                    raise ValueError("回滚必须指定 world_id")
+                self.save_manager.get_manifest(world_id)  # 校验目标存在性
+                # 回滚保护：当前活目录（已最终保存）→ auto 快照。
+                # DB 尚未打开，直接打包活目录即一致快照。
+                self.save_manager.create_snapshot(world_id, suffix="auto")
+                world_id = self.save_manager.extract_snapshot(
+                    snapshot, world_id=world_id,
+                )
+            self.start(world_id=world_id)
+        except Exception:
+            # 构建失败：清理已创建的网络层（否则 _running 未置位，
+            # stop() 幂等短路，server socket 泄漏阻塞端口重 bind）
+            self._cleanup()
+            raise
 
     def stop(self) -> None:
         """停止引擎并清理所有子系统。
@@ -440,20 +462,8 @@ class GameEngine:
         等价 MC 关服保存——实时存档保证此步幂等、开销小。
 
         幂等：已停止时调用无效果。
-
-        读档取消：stop() 在读档重建（_pending_load 已置位、tick 线程
-        正在 _reload）期间被调用时，置 _stop_requested 取消标志——
-        _run_loop 在重建收尾后据此退出，_reload 的恢复路径也不得将
-        运行标志复活（否则引擎在 stop() 后继续运行）。
         """
-        self._stop_requested.set()
         if not self._running.is_set():
-            # 读档重建中（_reload 已清运行标志）：join 等待重建收尾，
-            # 循环检测到取消标志后自行退出
-            if self._thread and self._thread.is_alive():
-                self._thread.join(timeout=13.0)
-                self._thread = None
-                self._cleanup()
             return
         self._running.clear()
         if self._thread and threading.current_thread() is not self._thread:
@@ -471,18 +481,16 @@ class GameEngine:
         self._cleanup()
 
     def _cleanup_world(self) -> None:
-        """释放世界观子系统（读档重建与退出共用）；网络层保留。
+        """释放世界观子系统（退出共用）。
 
         停服是世界外操作：不发 entity_died（那会向因果历史写入虚假
         死亡），直接释放内存；实体状态持久化是存档系统的职责。
 
-        网络层（服务器/分发器/事件桥）不在此释放：读档重建时客户端
-        保持连接，世界就绪后经 world_initialized 事件恢复。
+        网络层（服务器/分发器/事件桥）在此保留，由 _cleanup 统一
+        释放（读档重建时 stop() 的清理顺序复用本方法）。
         """
         world_tree.await_async()
-        world_tree.reset()  # 读档重建：清旧世界事件/索引/因果图，保留订阅
         self._save_state_now()
-        self._unregister_world_handlers()
         if self.calendar:
             self.calendar.shutdown()
             self.calendar = None
@@ -660,10 +668,10 @@ class GameEngine:
     # ── 存档（实时保存 / 读档重建） ──────────────────────
 
     def _register_world_handlers(self) -> None:
-        """注册绑定世界观子系统的处理程序（replace：读档重建时覆盖旧闭包）。
+        """注册绑定世界观子系统的处理程序（进程内仅一次）。
 
-        世界观处理程序闭包引用本次 start() 构建的子系统实例；
-        世界重建后必须整体替换，否则旧闭包会访问已销毁的对象。
+        闭包引用本次 start() 构建的子系统实例；进程模型下每个世界
+        进程只 start 一次，无需覆盖语义（区别于旧同进程换世界）。
         """
         handlers: dict = {}
         handlers.update(make_map_handlers(
@@ -682,49 +690,9 @@ class GameEngine:
                 msg.get("request_type", ""), {"implemented": False},
             )
         handlers["player_interact"] = _not_implemented
-        self._world_request_types = set(handlers)
         for req_type, handler in handlers.items():
-            self.dispatcher.replace(req_type, handler)
+            self.dispatcher.register(req_type, handler)
         logger.info("世界观处理程序已注册: %s", sorted(handlers))
-
-    def _unregister_world_handlers(self) -> None:
-        """注销世界观处理程序（世界卸载后旧闭包指向已销毁子系统）。"""
-        if not self.dispatcher:
-            return
-        for req_type in self._world_request_types:
-            self.dispatcher.unregister(req_type)
-        self._world_request_types.clear()
-
-    def _broadcast_world_reloading(self, world_id, snapshot) -> None:
-        """广播世界重建提示（前端显示加载提示）。
-
-        直接经服务器广播而非 world_tree 事件：世界重建是世界外元操作，
-        不产生历史、不进因果图、不入归档。
-        """
-        if self.server:
-            self.server.broadcast({
-                "type": "event",
-                "event_type": "world_reloading",
-                "payload": {"data": {
-                    "world_id": world_id,
-                    "snapshot": snapshot,
-                }},
-            })
-
-    def _broadcast_world_reloading_failed(self, world_id, snapshot) -> None:
-        """广播读档重建失败（前端结束加载提示并展示错误）。
-
-        与 _broadcast_world_reloading 同为世界外元操作，直接经服务器广播。
-        """
-        if self.server:
-            self.server.broadcast({
-                "type": "event",
-                "event_type": "world_reloading_failed",
-                "payload": {"data": {
-                    "world_id": world_id,
-                    "snapshot": snapshot,
-                }},
-            })
 
     def _broadcast_world_progress(self, stage: str) -> None:
         """广播世界生成阶段进度（前端进度条文案）。
@@ -835,82 +803,19 @@ class GameEngine:
             world_id, suffix=suffix, game_time=game_time,
         )
 
-    def _reload(self, world_id: str | None = None, snapshot: str | None = None) -> None:
-        """读档重建：清理旧世界并按目标重建（网络层常驻，客户端不断线）。
-
-        运行在 tick 线程内部（由 save_load 请求触发）：
-          1. 广播 world_reloading（前端复位世界状态并显示加载提示）
-          2. 回滚时先最终保存 + 一致性快照保护当前分支（DB 仍打开，
-             snapshot_current 负责 flush + checkpoint）
-          3. 清理世界观（服务器/分发器/事件桥保留）
-          4. 快照展开为活目录（目标 world_id 覆盖由调用方传入）
-          5. 按目标重建世界（world_initialized 事件 = 就绪信号）
-
-        Args:
-            world_id: 目标存档位（快照回滚时可指定覆盖目标）；
-                      None 时从快照决定。
-            snapshot: 快照文件路径（回滚）；None 时加载活目录。
-        """
-        logger.info("读档重建: world=%s snapshot=%s", world_id, snapshot)
-        self._reloading = True
-        self._running.clear()
-        previous_world = self.world_id
-        cleaned = False
-        try:
-            self._broadcast_world_reloading(world_id, snapshot)
-            if snapshot is not None and self.world_id:
-                # 回滚保护：先把当前（已最终保存的）活目录快照起来，
-                # 回滚后仍可从该自动快照找回回滚前的分支
-                self._save_state_now()
-                self.snapshot_current(suffix="auto")
-            self._cleanup_world()
-            cleaned = True
-            if snapshot is not None:
-                world_id = self.save_manager.extract_snapshot(
-                    snapshot, world_id=world_id,
-                )
-            self.start(world_id=world_id)
-        except Exception:
-            logger.exception("读档重建失败")
-            if not cleaned:
-                self._cleanup_world()
-            recovered = False
-            try:
-                if previous_world is not None:
-                    self.start(world_id=previous_world)
-                    recovered = True
-            except Exception:
-                logger.exception("恢复旧世界失败，转入服务模式")
-            if not recovered:
-                # 兜底：回到服务模式（无世界）——网络层仍在线，
-                # 存档管理可用，前端可重新发起读档
-                self._cleanup_world()
-                self.world_id = None
-                self._manifest = None
-                self._service_mode = True
-                if not self._stop_requested.is_set():
-                    # stop() 期间不复活运行标志：循环随后退出
-                    self._running.set()
-            raise
-        finally:
-            self._reloading = False
-
     # ── 内部 ──────────────────────────────────────────
 
     def _run_loop(self) -> None:
-        """Tick 循环（常驻后台线程，跨世界重建存活）。
+        """Tick 循环（后台线程，进程生命周期内常驻）。
 
         异常防护：
           - 单次 _tick 异常不中断循环，但异常路径也会 sleep，
             避免紧循环占满 CPU 刷日志；
           - 连续异常达到 _MAX_CONSECUTIVE_ERRORS 次触发熔断，
             自动清除运行标志退出循环（资源清理仍由 stop() 负责）。
-
-        读档：_pending_load 置位时在本线程内执行 _reload（世界重建
-        期间网络层常驻、客户端不断线），完成后循环继续。
         """
         consecutive_errors = 0
-        while self._running.is_set() and not self._stop_requested.is_set():
+        while self._running.is_set():
             tick_start = _real_time.monotonic()
             try:
                 self._tick()
@@ -932,15 +837,6 @@ class GameEngine:
             sleep_time = TICK_DT - elapsed
             if sleep_time > 0:
                 _real_time.sleep(sleep_time)
-            if self._pending_load:
-                pending = self._pending_load
-                self._pending_load = None
-                try:
-                    self._reload(*pending)
-                except Exception:
-                    # 日志已在 _reload 内单点记录（含恢复路径上下文）；
-                    # 此处只广播失败事件，避免双份重复日志
-                    self._broadcast_world_reloading_failed(*pending)
 
     def _tick(self) -> None:
         """单个 tick：推进时钟 + 处理所有排队消息。

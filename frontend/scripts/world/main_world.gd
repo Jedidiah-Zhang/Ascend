@@ -419,24 +419,7 @@ func _check_terrain_ready(force: bool = false) -> void:
 	print("MainWorld3D: 出生点地形就绪，世界可见")
 
 
-# ── 世界就绪事件（服务器与世界观解耦后的就绪信号） ────────
-
-func _on_world_reloading(_data: Dictionary) -> void:
-	"""后端开始读档重建（连接保持，旧世界数据即将失效）：复位并提示。"""
-	_world_id = str(_data.get("world_id", ""))
-	_reset_world_state()
-	if _loading_label:
-		_loading_label.text = "正在生成世界..."
-		_loading_label.visible = true
-
-
-func _on_world_reloading_failed(_data: Dictionary) -> void:
-	"""读档重建失败（后端已自动恢复/转入服务模式）：结束加载提示。"""
-	_reset_world_state()
-	if _loading_label:
-		_loading_label.text = "读档失败"
-		_loading_label.visible = false
-
+# ── 世界就绪事件（世界进程的就绪信号） ────────────────────
 
 ## 世界生成阶段 → 加载提示文案（与后端 ContinentGenerator.STAGE_* 对齐）
 const WORLD_STAGE_LABELS: Dictionary = {
@@ -458,10 +441,11 @@ func _on_world_progress(data: Dictionary) -> void:
 
 
 func _on_world_initialized(data: Dictionary) -> void:
-	"""新世界就绪（后端每完成一次读档/新建发布）：接入并拉取权威状态。
+	"""新世界就绪（世界进程构建完成）：接入并拉取权威状态。
 
-	连接全程不断线：必须主动重新请求玩家实体/状态
-	（entity_snapshot / player_state 原由 _on_connected 触发）。
+	进程模型下每次进入世界都是新连接：_on_connected 已主动请求
+	玩家实体/状态；此处再请求一次保证 world_initialized 之后拿到
+	（覆盖世界生成期间连接建立、事件先到的情况）。
 	"""
 	_reset_world_state()
 	_world_id = str(data.get("world_id", _world_id))
@@ -889,7 +873,7 @@ func _on_message(message: Dictionary) -> void:
 			push_warning("MainWorld3D: unknown message type: %s" % msg_type)
 
 
-## 事件分发：世界重建四类事件（reloading/failed/progress/initialized）直接处理不记日志；
+## 事件分发：world_progress/initialized 世界就绪信号直接处理不记日志；
 ## minute_change 更新时间（落入通用广播）、player_teleported 同步位置并记日志（提前返回）；
 ## 其余事件（含 minute_change）广播给调试覆盖层与事件日志。
 func _handle_event(message: Dictionary) -> void:
@@ -897,13 +881,7 @@ func _handle_event(message: Dictionary) -> void:
 	var payload: Dictionary = message.get("payload", {})
 	var data: Dictionary = payload.get("data", {})
 
-	# 世界重建信号：世界外元操作，不进事件日志
-	if event_type == "world_reloading":
-		_on_world_reloading(data)
-		return
-	if event_type == "world_reloading_failed":
-		_on_world_reloading_failed(data)
-		return
+	# 世界就绪信号：世界外元操作，不进事件日志
 	if event_type == "world_progress":
 		_on_world_progress(data)
 		return

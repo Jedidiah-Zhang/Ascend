@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """Ascend 后端服务器启动脚本。
 
-以服务模式启动（GameEngine.start_service）：TCP 端口立即就绪，
-仅提供存档管理请求；世界在大陆生成（5-30s+）只在 save_load
-读档/新建进入时执行——主菜单不再等待地图生成。
-
-网络层常驻：读档重建只替换世界观，客户端全程不断线。
+进程模型（一个进程 = 一种模式，进程内不换世界）:
+  - 菜单进程（无参）: 服务模式启动（GameEngine.start_service），
+    TCP 端口立即就绪，仅提供存档管理请求——主菜单不再等待地图生成；
+  - 世界进程（--world-id <id>）: 直接构建世界观（GameEngine.start），
+    世界就绪信号 = world_initialized 事件；大陆生成 5-30s 期间端口
+    已开放（网络层先行），前端可连接并收 world_progress 进度；
+  - 回滚（--world-id + --snapshot <file>）: 进程启动时先保护活目录
+    分支（auto 快照）再展开快照（GameEngine.load_world）。
+  进入世界 / 回滚 = 前端停旧进程、以目标参数拉起新进程。
 
 用法:
     cd backend && PYTHONPATH=. python run_server.py
-    或从项目根:
-    cd backend && PYTHONPATH=. ../.venv/bin/python run_server.py
+    cd backend && PYTHONPATH=. python run_server.py --world-id <id>
+    cd backend && PYTHONPATH=. python run_server.py --world-id <id> --snapshot <file>
 
 按 Ctrl+C 停止；前端退出时会发送 SIGTERM 优雅停止（先落盘再退出）。
 
 环境变量:
     ASCEND_SERVER_PORT: 覆盖监听端口（测试隔离用，默认 ascend/config.py）。
+    ASCEND_SAVE_ROOT:   覆盖存档根目录（测试隔离用，默认 ~/.ascend/saves）。
 """
 
 import os
@@ -63,10 +68,30 @@ def _cleanup_old_logs() -> None:
             Path(log_file).unlink()
 
 
+def _parse_args(argv: list[str]) -> tuple[str | None, str | None]:
+    """解析 --world-id / --snapshot 参数（无第三方依赖的手写解析）。"""
+    world_id: str | None = None
+    snapshot: str | None = None
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--world-id" and i + 1 < len(argv):
+            world_id = argv[i + 1]
+            i += 2
+        elif argv[i] == "--snapshot" and i + 1 < len(argv):
+            snapshot = argv[i + 1]
+            i += 2
+        else:
+            print(f"未知参数: {argv[i]}", file=sys.stderr)
+            sys.exit(2)
+    return world_id, snapshot
+
+
 def main() -> None:
-    """服务模式启动，等待 Ctrl+C 或客户端全部断开后自动退出。"""
+    """按参数启动菜单进程或世界进程。"""
     _cleanup_old_logs()
     setup_logging()
+
+    world_id, snapshot = _parse_args(sys.argv[1:])
 
     # 测试隔离：ASCEND_SERVER_PORT 覆盖监听端口（直接传给引擎构造参数）
     listen_port = SERVER_PORT
@@ -86,12 +111,31 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     engine = GameEngine(seed=42, port=listen_port)
-    engine.start_service()
+    # 网络层先行（幂等）：端口 + token 文件立即就绪。世界进程的
+    # load_world 会阻塞 5-30s（大陆生成），token 若延迟写入，
+    # 前端立即连接时读到旧 token 握手失败（且前端缓存 token 不重读）。
+    engine.ensure_network()
     if engine.server is not None:
         _write_token_file(engine.server.token)
+    if world_id is not None or snapshot is not None:
+        # 世界进程：世界加载失败（存档不存在/损坏/回滚目标无效）时
+        # 打印错误并以非零码退出——前端端口探测超时后按启动失败处理
+        try:
+            engine.load_world(world_id=world_id, snapshot=snapshot)
+        except Exception as exc:
+            logger = get_logger("run_server")
+            logger.error("世界启动失败: world=%s snapshot=%s: %s", world_id, snapshot, exc)
+            print(f"世界启动失败: {exc}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        engine.start_service()
 
-    print(f"Ascend 服务器运行在 {SERVER_HOST}:{listen_port}")
-    print("按 Ctrl+C 停止，或关闭所有前端后自动退出")
+    if world_id is not None:
+        print(f"Ascend 世界进程运行在 {SERVER_HOST}:{listen_port} (world={world_id})")
+        print("按 Ctrl+C 停止，或关闭所有前端后自动退出")
+    else:
+        print(f"Ascend 服务器运行在 {SERVER_HOST}:{listen_port}")
+        print("按 Ctrl+C 停止，或关闭所有前端后自动退出")
 
     had_client: bool = False
     empty_since: float | None = None
@@ -106,10 +150,6 @@ def main() -> None:
 
             if client_count > 0:
                 had_client = True
-                empty_since = None
-            elif engine.is_reloading:
-                # 读档重建中：tick 线程忙于世界生成，客户端数可能短暂
-                # 变化，抑制自动停止（网络层常驻，重建后恢复）
                 empty_since = None
             elif had_client and empty_since is None:
                 empty_since = _real_time.monotonic()

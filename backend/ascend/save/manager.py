@@ -674,7 +674,7 @@ class SaveManager:
 
     def _resolve_snapshot_path(self, snapshot_path: str, world_id: str | None) -> str:
         """快照路径解析：绝对/带目录路径原样使用；裸文件名从目标世界的
-        快照目录解析（协议 save_load 下发的是文件名）。
+        快照目录解析（前端以裸文件名经 --snapshot 下发）。
 
         Returns:
             可打开的快照路径（解析失败时返回原路径，由调用方报错）。

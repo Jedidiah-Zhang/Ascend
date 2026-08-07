@@ -228,101 +228,79 @@ class TestGameEngine:
         sock2.close()
 
 
-class TestServerWorldDecoupling:
-    """服务器与世界观解耦：读档重建不重启服务器，客户端不断线。"""
+class TestWorldProcessEntry:
+    """世界进程入口（run_server --world-id 对应 load_world）。
 
-    def test_service_mode_then_reload_keeps_server(self, monkeypatch):
-        """服务模式 → 读档：服务器实例不变、世界请求注册、世界观可换。"""
+    进程模型：一进程一模式，进入世界/回滚 = 新进程调用 load_world。
+    测试以 stop() 模拟进程切换（真实流程由前端进程切换完成）。
+    """
+
+    def test_load_world_restores_world(self, monkeypatch):
+        """菜单模式 → load_world：世界构建、处理程序注册、存档恢复。"""
         _patch_fast_worldgen(monkeypatch)
         engine = GameEngine(seed=42)
         try:
             engine.start_service()
-            old_server = engine.server
-            assert old_server is not None and old_server.is_running
             assert "get_chunks" not in engine.dispatcher._handlers
             assert "save_list" in engine.dispatcher._handlers
 
             world_id = engine.save_manager.create_world("测试世界", seed=7).world_id
-            engine._reload(world_id=world_id)
+            engine.load_world(world_id=world_id)
 
-            # 服务器保持同一实例且运行中（客户端未断线）
-            assert engine.server is old_server
-            assert engine.server.is_running
             assert engine.world_id == world_id
-            assert engine._service_mode is False
+            assert engine.seed == 7, "存档 seed 应恢复"
             assert engine.birth_chunk is not None
             assert "get_chunks" in engine.dispatcher._handlers
             assert "player_move" in engine.dispatcher._handlers
             assert "save_list" in engine.dispatcher._handlers
-
-            # 清理世界观：网络层保留，世界请求被注销
-            engine._cleanup_world()
-            assert engine.server is old_server
-            assert engine.server.is_running
-            assert "get_chunks" not in engine.dispatcher._handlers
-            assert "save_list" in engine.dispatcher._handlers
-            assert engine.chunk_store is None
-            assert engine.player_service is None
         finally:
             engine.stop()
 
-    def test_reload_failure_falls_back_to_service_mode(self, monkeypatch):
-        """读档失败（目标不存在）：回到服务模式，服务器保持在线。"""
+    def test_load_world_without_snapshot_does_not_protect(self, monkeypatch):
+        """普通进入（无快照）不产生保护快照。"""
         _patch_fast_worldgen(monkeypatch)
         engine = GameEngine(seed=42)
         try:
             engine.start_service()
-            old_server = engine.server
+            world_id = engine.save_manager.create_world("普通进入", seed=7).world_id
+            engine.load_world(world_id=world_id)
+            assert engine.save_manager.list_snapshots(world_id) == []
+        finally:
+            engine.stop()
 
+    def test_load_world_invalid_target_raises(self, monkeypatch):
+        """存档不存在：load_world 抛错（run_server 以非零码退出）。"""
+        _patch_fast_worldgen(monkeypatch)
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
             with pytest.raises(Exception):
-                engine._reload(world_id="no-such-world")
-
-            # 兜底：服务模式（无世界），网络层与存档管理仍可用
-            assert engine.server is old_server
-            assert engine.server.is_running
-            assert engine._service_mode is True
-            assert engine.world_id is None
-            assert engine._running.is_set()
-            assert "get_chunks" not in engine.dispatcher._handlers
-            assert "save_list" in engine.dispatcher._handlers
+                engine.load_world(world_id="no-such-world")
         finally:
             engine.stop()
 
-    def test_world_swap_switches_handlers(self, monkeypatch):
-        """世界 A → 世界 B 连续重建：新世界闭包覆盖旧闭包。"""
+    def test_load_world_rollback_requires_world_id(self, monkeypatch):
+        """回滚必须指定 world_id（保护快照需落点）。"""
         _patch_fast_worldgen(monkeypatch)
         engine = GameEngine(seed=42)
         try:
             engine.start_service()
-            old_server = engine.server
-            mgr = engine.save_manager
-            world_a = mgr.create_world("世界A", seed=7).world_id
-            world_b = mgr.create_world("世界B", seed=8).world_id
-
-            engine._reload(world_id=world_a)
-            assert engine.world_id == world_a
-
-            engine._reload(world_id=world_b)
-            assert engine.world_id == world_b
-            assert engine.seed == 8
-            assert engine.server is old_server
-            assert engine.server.is_running
-            assert "get_chunks" in engine.dispatcher._handlers
-            # 旧世界的存档/快照处理仍可用
-            assert "save_list" in engine.dispatcher._handlers
+            world_id = engine.save_manager.create_world("回滚", seed=7).world_id
+            with pytest.raises(ValueError, match="world_id"):
+                engine.load_world(snapshot="whatever.ascendsave")
+            assert engine.save_manager.get_manifest(world_id).world_id == world_id
         finally:
             engine.stop()
 
-    def test_rollback_with_bare_filename_rebuilds_and_forks(
+    def test_rollback_with_bare_filename_protects_and_forks(
         self, monkeypatch,
     ):
-        """回滚（save_load 下发裸文件名）→ 重建 → 血缘分叉。
+        """回滚（裸文件名）→ 保护当前分支 → 展开 → 血缘分叉。
 
-        回归：extract_snapshot 按裸文件名直接 open 失败，
-        _reload 整体回退服务模式——前端看到的「点节点不退回」。
-
-        验证链：快照 A/B（同线）→ 回滚到 A（live_origin=A）
-        → 继续玩再快照 C（parent=A，分叉形成）。
+        回归（旧同进程 _reload 时代）：extract_snapshot 按裸文件名
+        直接 open 失败会整体回退——进程模型下由 load_world 统一入口。
+        验证链：快照 A/B（同线）→ 回滚到 A（live_origin=A，自动保护
+        B 分支）→ 继续玩再快照 C（parent=A，分叉形成）。
         """
         _patch_fast_worldgen(monkeypatch)
         engine = GameEngine(seed=42)
@@ -330,7 +308,7 @@ class TestServerWorldDecoupling:
             engine.start_service()
             mgr = engine.save_manager
             world_id = mgr.create_world("回滚世界", seed=7).world_id
-            engine._reload(world_id=world_id)
+            engine.load_world(world_id=world_id)
             assert engine.world_id == world_id
 
             mgr.write_state(world_id, _state_at(100))
@@ -341,8 +319,8 @@ class TestServerWorldDecoupling:
             assert lineage["live_origin"] == snap_b, "活目录来源 = 最新快照"
             assert lineage["snapshots"][snap_b]["parent"] == snap_a, "连续保存应串链"
 
-            # 回滚：裸文件名（协议下发形式）
-            engine._reload(world_id=world_id, snapshot=snap_a)
+            # 进程切换语义由 load_world 自带（stop 旧状态 → 回滚入口）
+            engine.load_world(world_id=world_id, snapshot=snap_a)
             assert engine.world_id == world_id, "回滚后世界应保持加载"
             lineage = mgr.snapshot_lineage(world_id)
             assert lineage["live_origin"] == snap_a, "活目录来源应为回滚目标"
@@ -374,7 +352,7 @@ class TestServerWorldDecoupling:
             engine.start_service()
             mgr = engine.save_manager
             world_id = mgr.create_world("多跳世界", seed=7).world_id
-            engine._reload(world_id=world_id)
+            engine.load_world(world_id=world_id)
 
             # S1 → S2 手动链
             mgr.write_state(world_id, _state_at(100))
@@ -383,13 +361,13 @@ class TestServerWorldDecoupling:
             snap_s2 = mgr.create_snapshot(world_id, suffix="manual", game_time=200)
 
             # 跳转到 S1（S2 分支被自动保护 A1）
-            engine._reload(world_id=world_id, snapshot=snap_s1)
+            engine.load_world(world_id=world_id, snapshot=snap_s1)
             # S1 分支玩到 150，手动 S3
             mgr.write_state(world_id, _state_at(150))
             snap_s3 = mgr.create_snapshot(world_id, suffix="manual", game_time=150)
 
             # 跳转到 S2（S3 分支被自动保护 A2）
-            engine._reload(world_id=world_id, snapshot=snap_s2)
+            engine.load_world(world_id=world_id, snapshot=snap_s2)
 
             lineage = mgr.snapshot_lineage(world_id)
             entries = lineage["snapshots"]

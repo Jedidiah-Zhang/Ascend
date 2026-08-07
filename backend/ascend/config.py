@@ -296,8 +296,12 @@ SQLITE_SYNCHRONOUS: str = "NORMAL"
 SQLITE_MMAP_SIZE: int = 268435456       # 256MB 内存映射
 SQLITE_CACHE_SIZE: int = -8000          # 8MB 页缓存（负数 = KB）
 
-# 存档根目录（用户主目录 .ascend/saves，可在设置中调整）
-SAVE_ROOT: str = _os.path.join(_os.path.expanduser("~"), ".ascend", "saves")
+# 存档根目录（用户主目录 .ascend/saves；ASCEND_SAVE_ROOT 环境变量
+# 覆盖——测试隔离用，进程级测试写入临时目录）
+SAVE_ROOT: str = _os.environ.get(
+    "ASCEND_SAVE_ROOT",
+    _os.path.join(_os.path.expanduser("~"), ".ascend", "saves"),
+)
 
 # ═══════════════════════════════════════════════════════════════
 # UI — 终端与调试

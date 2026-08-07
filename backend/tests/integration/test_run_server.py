@@ -8,6 +8,10 @@
 本测试锁定「SIGTERM → handler → engine.stop() → 正常退出」契约
 （若 handler 缺失，SIGTERM 默认终止进程，returncode 为负信号值）。
 engine.stop() 内部的最终落盘由 test_game_engine 覆盖。
+
+进程模型（--world-id）：世界进程有效加载路径由
+test_game_engine.TestWorldProcessEntry 覆盖（快路径 patch）；
+此处仅验证 CLI 错误路径（无效存档快速失败退出）。
 """
 
 import os
@@ -19,6 +23,8 @@ import time
 from pathlib import Path
 
 import pytest
+
+from ascend.save.manager import SaveManager
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 RUN_SERVER = BACKEND_DIR / "run_server.py"
@@ -107,6 +113,98 @@ def test_sigterm_before_any_client_exits_cleanly() -> None:
             f"无客户端时 SIGTERM 也应正常退出，实际 returncode={returncode}"
         )
     finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_world_mode_invalid_world_id_exits_nonzero(tmp_path) -> None:
+    """--world-id 指向不存在的存档：进程快速失败（exit 1）。
+
+    前端以端口超时感知启动失败；run_server 的世界启动异常路径
+    必须显式非零退出（而非挂死等待客户端）。
+    """
+    port = _free_port()
+    env = dict(os.environ)
+    env["ASCEND_SERVER_PORT"] = str(port)
+    env["ASCEND_SAVE_ROOT"] = str(tmp_path / "saves")
+
+    proc = subprocess.Popen(
+        [sys.executable, str(RUN_SERVER), "--world-id", "0" * 32],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        returncode = proc.wait(timeout=START_TIMEOUT)
+        assert returncode == 1, (
+            f"无效存档应非零退出，实际 returncode={returncode}"
+        )
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_world_mode_rollback_missing_world_id_exits_nonzero(tmp_path) -> None:
+    """--snapshot 未带 --world-id：参数校验失败非零退出。"""
+    port = _free_port()
+    env = dict(os.environ)
+    env["ASCEND_SERVER_PORT"] = str(port)
+    env["ASCEND_SAVE_ROOT"] = str(tmp_path / "saves")
+
+    proc = subprocess.Popen(
+        [sys.executable, str(RUN_SERVER), "--snapshot", "x.ascendsave"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        returncode = proc.wait(timeout=START_TIMEOUT)
+        assert returncode == 1, "回滚缺 world_id 应非零退出"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_world_mode_valid_world_opens_port_then_graceful_stop(tmp_path) -> None:
+    """世界进程：端口先行开放（生成期间可连）→ SIGTERM 优雅退出 0。
+
+    有效世界加载的完整断言（birth_chunk/处理程序）由引擎级测试
+    TestWorldProcessEntry 覆盖；此处验证进程级契约：网络层先行
+    + 优雅退出。
+    """
+    port = _free_port()
+    save_root = tmp_path / "saves"
+    world_id = SaveManager(root=str(save_root)).create_world(
+        "世界进程", seed=7,
+    ).world_id
+    env = dict(os.environ)
+    env["ASCEND_SERVER_PORT"] = str(port)
+    env["ASCEND_SAVE_ROOT"] = str(save_root)
+
+    proc = subprocess.Popen(
+        [sys.executable, str(RUN_SERVER), "--world-id", world_id],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    hold: socket.socket | None = None
+    try:
+        # 大陆生成 5-30s：端口须在网络层先行阶段开放（前端据此连接收进度）
+        hold = _connect(port, timeout=90.0)
+        proc.send_signal(signal.SIGTERM)
+        returncode = proc.wait(timeout=120.0)
+        assert returncode == 0, (
+            f"世界进程 SIGTERM 应优雅退出 0，实际 returncode={returncode}"
+        )
+    finally:
+        if hold is not None:
+            hold.close()
         if proc.poll() is None:
             proc.kill()
             proc.wait()

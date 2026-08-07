@@ -10,10 +10,12 @@
     save_list   → {worlds: [...], snapshots: [...], current_world_id}
     save_create {name, seed?} → {world_id}
     save_snapshot {world_id} → {file}
-    save_load   {world_id?|snapshot?} → {world_id}
     save_rename {world_id, name} → {world_id, name}
     save_delete {world_id} → {}
     save_export {world_id} → {world_id}
+
+进入世界 / 回滚不再走 save_load 请求：由 Connection.restart_backend
+以 --world-id/--snapshot 参数拉起世界进程完成（进程模型重构）。
 
 快照条目附带血缘字段（时间线分叉视图数据源）:
 	parent    创建时活目录来源（回滚目标快照 file，"" = 世界初始）
@@ -31,7 +33,6 @@ extends RefCounted
 const LIST: String = "save_list"
 const CREATE: String = "save_create"
 const SNAPSHOT: String = "save_snapshot"
-const LOAD: String = "save_load"
 const RENAME: String = "save_rename"
 const DELETE: String = "save_delete"
 const EXPORT: String = "save_export"
@@ -57,14 +58,6 @@ static func snapshot_request(world_id: String) -> Dictionary:
 	return {
 		"type": "request", "request_type": SNAPSHOT,
 		"payload": {"world_id": world_id},
-	}
-
-
-static func load_request(world_id: String = "", snapshot: String = "") -> Dictionary:
-	"""读档请求：world_id 加载活目录，snapshot 回滚快照。"""
-	return {
-		"type": "request", "request_type": LOAD,
-		"payload": {"world_id": world_id, "snapshot": snapshot},
 	}
 
 

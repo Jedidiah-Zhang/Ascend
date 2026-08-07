@@ -224,21 +224,6 @@ func test_terrain_ready_force_timeout_shows_world() -> void:
 	assert_true(main._player.visible)
 
 
-func test_world_reloading_resets_state_and_shows_label() -> void:
-	"""world_reloading 事件：复位世界状态并显示加载提示。"""
-	var main: Node3D = _make_world_instance()
-	main._set_birth_chunk(2, 2)
-	main._chunks[Vector2i(0, 0)] = {"elevation": []}
-	main._stream_machine.mark_built(Vector2i(0, 0))
-
-	main._on_world_reloading({"world_id": "next"})
-
-	assert_false(main._has_birth, "重建开始后出生点应复位")
-	assert_true(main._chunks.is_empty(), "旧世界数据应清空")
-	assert_eq(main._stream_machine.size(), 0, "旧世界状态应清空")
-	assert_true(main._loading_label.visible, "重建期间应显示加载提示")
-
-
 func test_reset_world_state_is_idempotent() -> void:
 	"""连续复位（reloading → initialized）不应报错。"""
 	var main: Node3D = _make_world_instance()
@@ -698,16 +683,6 @@ func test_world_initialized_keeps_world_id_when_missing() -> void:
 	main._on_world_initialized({"birth_chunk": [1, 1]})
 
 	assert_eq(main._world_id, "w-keep", "缺字段时应保持原值（弱后端容错）")
-
-
-func test_world_reloading_records_world_id() -> void:
-	"""world_reloading 事件应更新目标存档位 ID（切档场景）。"""
-	var main: Node3D = _make_world_instance()
-	main._world_id = "w-old"
-
-	main._on_world_reloading({"world_id": "w-next"})
-
-	assert_eq(main._world_id, "w-next")
 
 
 # ── 手动存档（暂停菜单） ────────────────────────────────────

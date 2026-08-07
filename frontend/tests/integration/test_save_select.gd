@@ -9,6 +9,10 @@ func _make_select() -> Control:
 	sel.size = Vector2(1280, 720)
 	autoqfree(sel)
 	add_child(sel)
+	# 测试隔离：断开真实后端消息订阅——后端就绪握手会触发 _on_connected
+	# 刷新，真实 save_list 空响应会覆盖测试注入的世界数据（时间线测试失败）
+	if Connection.message_received.is_connected(sel._on_message):
+		Connection.message_received.disconnect(sel._on_message)
 	return sel
 
 
@@ -92,11 +96,14 @@ func test_timeline_includes_auto_protection_nodes() -> void:
 	assert_eq(auto_ids, ["a1"])
 
 	# 自动节点同样可回滚（两次点击确认）
+	var launched: Array = []
+	sel.backend_launcher = func(args): launched.append(Array(args))
 	sel._activate_timeline_node("a1")
 	assert_eq(sel._tl_confirm_id, "a1")
 	sel._activate_timeline_node("a1")
 	assert_true(sel._busy, "自动节点应可回滚")
 	assert_string_contains(sel._status_text, "回滚")
+	assert_eq(launched, [["--world-id", "w1", "--snapshot", "a1"]])
 
 
 func test_draw_timeline_does_not_crash() -> void:
@@ -122,8 +129,10 @@ func test_draw_timeline_does_not_crash() -> void:
 # ── 回滚交互 ──────────────────────────────────────────────
 
 func test_snapshot_click_needs_confirmation_twice() -> void:
-	"""回滚须两次点击确认（防误触），第二次发出 load_request。"""
+	"""回滚须两次点击确认（防误触），第二次发起世界进程切换（带 --snapshot）。"""
 	var sel: Control = _make_select()
+	var launched: Array = []
+	sel.backend_launcher = func(args): launched.append(Array(args))
 	sel._apply_worlds(_payload([
 		{"world_id": "w1", "name": "世界A", "game_time": 300, "live_origin": ""},
 	], [
@@ -137,19 +146,24 @@ func test_snapshot_click_needs_confirmation_twice() -> void:
 
 	sel._activate_timeline_node("s1")
 	assert_true(sel._busy, "第二次点击应发出回滚请求")
+	assert_true(sel._entering_world, "应进入世界切换流程")
 	assert_string_contains(sel._status_text, "回滚")
+	assert_eq(launched, [["--world-id", "w1", "--snapshot", "s1"]],
+		"回滚 = 以快照参数拉起世界进程")
 
 
 func test_live_node_click_loads_world() -> void:
-	"""点击当前时间点 = 加载活目录（同「进入游戏」）。"""
+	"""点击当前时间点 = 以 --world-id 拉起世界进程（同「进入游戏」）。"""
 	var sel: Control = _make_select()
+	var launched: Array = []
+	sel.backend_launcher = func(args): launched.append(Array(args))
 	sel._apply_worlds(_payload([
 		{"world_id": "w1", "name": "世界A", "game_time": 100},
 	]))
 	sel._toggle_timeline(0)
-	watch_signals(sel)
 	sel._activate_timeline_node(TimelineLayout.LIVE_ID)
-	assert_true(sel._busy, "点击当前点应进入读档流程")
+	assert_true(sel._busy, "点击当前点应进入世界切换流程")
+	assert_eq(launched, [["--world-id", "w1"]], "应拉起世界进程")
 
 
 # ── 行内展开/收起 ──────────────────────────────────────────
@@ -246,6 +260,7 @@ func test_legend_rows_built_and_clickable() -> void:
 	assert_eq(sel._tl_legend_rects.size(), 3, "图例 = 当前点 + 2 快照")
 
 	# 点击图例行 s2 → 进入确认（同节点点击）
+	sel.backend_launcher = func(_args): pass
 	sel._handle_click(sel._tl_legend_rects["s2"].get_center())
 	assert_eq(sel._tl_confirm_id, "s2", "图例点击应选中节点")
 	sel._handle_click(sel._tl_legend_rects["s2"].get_center())

@@ -1,4 +1,10 @@
-"""Connection 单例 — 管理与 Python 后端的 TCP 连接。
+"""Connection 单例 — 管理与 Python 后端的 TCP 连接与进程切换。
+
+进程模型（一进程一模式）:
+  - 菜单进程（无参）: 服务模式，仅存档管理（主菜单/存档选择页）
+  - 世界进程（--world-id <id> [--snapshot <file>]）: 直接构建世界观
+  进入世界 / 回滚 / 返回菜单 = restart_backend()：优雅停旧进程 →
+  以目标参数拉起新进程（非阻塞状态机，_process 轮询推进）。
 
 协议:
   每条消息 = 1 字节协议版本 + 4 字节大端长度前缀 + JSON 体
@@ -18,6 +24,7 @@ Usage:
   Connection.send({"type": "request", "request_type": "ping", "seq": 0, "payload": {}})
   Connection.connection_established.connect(_on_connected)
   Connection.message_received.connect(_on_message)
+  Connection.restart_backend(["--world-id", world_id])  # 进入世界
 """
 
 extends Node
@@ -84,12 +91,31 @@ var _port: int = DEFAULT_PORT
 
 ## 后端进程 PID（-1 表示未启动）
 var _backend_pid: int = -1
+## 后端启动参数（当前进程模式：[] = 菜单，["--world-id", id, ...] = 世界）
+var backend_args: PackedStringArray = PackedStringArray()
 ## 后端启动计时器
 var _backend_startup_timer: float = 0.0
 ## 后端端口检查间隔计时器
 var _backend_check_timer: float = 0.0
 ## 是否正在等待后端启动
 var _awaiting_backend: bool = false
+
+## 主动进程切换（restart_backend）状态：等待旧进程退出的剩余超时（毫秒）
+var _restart_timeout_ms: int = -1
+## 主动进程切换中：断线不广播 connection_lost（UI 不闪错），
+## 旧进程退出后自动以新参数拉起
+var _restarting: bool = false
+## 进程切换期间的目标参数（旧进程退出后 spawn 用）
+var _restart_args: PackedStringArray = PackedStringArray()
+
+## 底层进程创建器（测试可注入；默认 OS.create_process 真拉起）。
+## 签名: (python_path, full_args) -> pid；返回 -1 = 拉起失败。
+var process_creator: Callable = _create_process_default
+
+
+func _create_process_default(python_path: String, args: PackedStringArray) -> int:
+	"""默认进程创建：OS.create_process（非阻塞）。"""
+	return OS.create_process(python_path, args, false)
 
 ## 端口探测流（非阻塞，null 表示无探测进行中）
 var _probe: StreamPeerTCP = null
@@ -148,8 +174,15 @@ func _notification(what: int) -> void:
 
 
 func _process(delta: float) -> void:
-	"""每帧轮询：检查连接、读数据、发数据。"""
+	"""每帧轮询：进程切换推进、检查连接、读数据、发数据。"""
 	var t0: int = Time.get_ticks_usec()
+
+	# 主动进程切换：先等旧进程退出（SIGTERM 优雅停止，超时强杀兜底），
+	# 退出后以新参数拉起。此期间不处理连接状态（旧连接已失效）。
+	if _restarting:
+		_poll_restart()
+		last_process_us = Time.get_ticks_usec() - t0
+		return
 
 	if _awaiting_backend:
 		_backend_startup_timer += delta
@@ -254,13 +287,88 @@ func send(message: Dictionary) -> void:
 
 # ── 后端进程管理 ──────────────────────────────────────────
 
+## 主动切换后端进程模式（进程模型：菜单 ⇄ 世界）。
+##
+## 流程（非阻塞状态机，_process 轮询推进）:
+##   1. 与目标参数相同且进程存活 → 幂等跳过
+##   2. 置 _restarting：优雅停旧进程（SIGTERM，最终落盘），
+##      期间断线不广播 connection_lost（主动行为，UI 不闪错）
+##   3. 旧进程退出（或超时强杀）→ 以新参数拉起 → 端口探测 → 重连
+##
+## Args:
+##     args: 后端进程参数（[] = 菜单模式；["--world-id", id] 等 = 世界）。
+func restart_backend(args: PackedStringArray = PackedStringArray()) -> void:
+	if _restarting:
+		return
+	if _backend_args_equal(args) and _backend_pid > 0:
+		return  # 已是目标模式
+	_restarting = true
+	_restart_args = args
+	backend_args = args
+	_restart_timeout_ms = Time.get_ticks_msec() + BACKEND_STOP_TIMEOUT_MS
+	status = Status.DISCONNECTED
+	# 旧连接随进程终止自然失效；不再主动断开（避免误发 connection_lost）
+	if _backend_pid > 0:
+		print("Connection: switching backend mode (pid=%d)..." % _backend_pid)
+		OS.execute("kill", ["-TERM", str(_backend_pid)])
+		_poll_restart()  # 立即推进：进程可能已退出
+	else:
+		_finish_restart_spawn()
+
+
+func _backend_args_equal(args: PackedStringArray) -> bool:
+	"""目标参数与当前参数比较（含空数组语义）。"""
+	if backend_args.size() != args.size():
+		return false
+	for i in backend_args.size():
+		if backend_args[i] != args[i]:
+			return false
+	return true
+
+
+func _poll_restart() -> void:
+	"""推进进程切换：等旧进程退出 → 超时强杀 → 拉起新进程。"""
+	if _backend_pid > 0:
+		if OS.is_process_running(_backend_pid):
+			if Time.get_ticks_msec() >= _restart_timeout_ms:
+				push_warning("Connection: backend not stopped in time, force killing (PID: %d)" % _backend_pid)
+				OS.kill(_backend_pid)
+			return  # 仍存活：等待下帧
+		_backend_pid = -1
+		print("Connection: old backend exited, spawning new mode")
+	_finish_restart_spawn()
+
+
+func _finish_restart_spawn() -> void:
+	"""旧进程已退出：清理残留连接状态并以新参数拉起。
+
+	与 _reset_for_reconnect 对齐的完整清理：切换瞬间旧连接可能留有
+	半帧数据/待发消息/后台解码线程——残留不清理会让新连接的字节流
+	拼接进旧缓冲导致帧错位丢消息。
+	"""
+	_restarting = false
+	_restart_timeout_ms = -1
+	_backend_pid = -1
+	_awaiting_backend = false
+	if _stream != null:
+		_stream.disconnect_from_host()
+		_stream = null
+	_hello_sent = false
+	_hello_acked = false
+	_outage_emitted = false
+	_recv_buf.clear()
+	_send_queue.clear()
+	_stop_decode_thread()
+	_spawn_backend_process(_restart_args)
+
+
 func _start_backend() -> void:
 	"""启动后端：先非阻塞探测端口，已开放则直接使用，否则拉起 Python 进程。"""
 	_probe_before_spawn = true
 	_begin_probe()
 
 
-func _spawn_backend_process() -> void:
+func _spawn_backend_process(args: PackedStringArray = PackedStringArray()) -> void:
 	"""拉起 Python 后端进程并进入等待端口就绪状态。"""
 	var project_root: String = ProjectSettings.globalize_path("res://..")
 	var python_path: String = project_root.path_join(VENV_PYTHON_REL)
@@ -276,7 +384,9 @@ func _spawn_backend_process() -> void:
 		_enter_failed_state("backend script not found at %s" % script_path)
 		return
 
-	var pid: int = OS.create_process(python_path, [script_path], false)
+	var full_args: PackedStringArray = [script_path]
+	full_args.append_array(args)
+	var pid: int = process_creator.call(python_path, full_args)
 	if pid == -1:
 		push_error("Connection: failed to start backend process")
 		_enter_failed_state("failed to start backend process")
@@ -287,7 +397,7 @@ func _spawn_backend_process() -> void:
 	_backend_startup_timer = 0.0
 	_backend_check_timer = BACKEND_CHECK_INTERVAL
 	set_process(true)
-	print("Connection: backend started (PID: %d), waiting for port..." % pid)
+	print("Connection: backend started (PID: %d, args: %s), waiting for port..." % [pid, str(args)])
 
 
 func _enter_failed_state(reason: String) -> void:
@@ -453,9 +563,11 @@ func _reset_for_reconnect(s: StreamPeerTCP.Status) -> void:
 
 
 func _load_token() -> void:
-	"""从项目根 .ascend_token 读取认证令牌（后端启动时写入）。"""
-	if not _token.is_empty():
-		return
+	"""从项目根 .ascend_token 读取认证令牌（后端启动时写入）。
+
+	每次连接都重读：进程切换后 token 变化（世界/菜单进程各生成一次），
+	缓存旧 token 会导致握手死循环失败。
+	"""
 	var project_root: String = ProjectSettings.globalize_path("res://..")
 	var token_path: String = project_root.path_join(TOKEN_FILE_REL)
 	var f: FileAccess = FileAccess.open(token_path, FileAccess.READ)
@@ -608,7 +720,9 @@ func _handle_handshake(msg: Dictionary) -> bool:
 		return true
 	if mtype == "error" and msg.get("request_type", "") == "hello":
 		var reason: String = msg.get("error", "unknown")
-		push_error("Connection: handshake rejected: %s" % reason)
-		_enter_failed_state("handshake rejected: %s" % reason)
+		push_warning("Connection: handshake rejected: %s, retrying" % reason)
+		# 进程切换竞态：token 文件由新进程写入，可能读到旧 token。
+		# 不进入 FAILED 终态——重连后重读 token（_load_token 每次重读）。
+		_reset_for_reconnect(_stream.get_status() if _stream else StreamPeerTCP.STATUS_ERROR)
 		return true
 	return false

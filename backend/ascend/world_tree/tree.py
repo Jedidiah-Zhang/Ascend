@@ -823,10 +823,10 @@ class WorldTree:
         """等待所有正在执行的异步回调完成。
 
         阻塞直到线程池中所有已提交的 subscribe_async 回调执行完毕。
-        应在游戏退出/读档重建前调用，避免异步任务被强制中断。
+        应在游戏退出/世界重建前调用，避免异步任务被强制中断。
 
-        注意：读档重建（_reload）会复用同一 WorldTree 实例，此处
-        等待后重建线程池，保证后续 subscribe_async 仍可用。
+        注意：进程模型下世界进程内 WorldTree 实例常驻，此处等待后
+        重建线程池，保证后续 subscribe_async 仍可用。
         """
         self._async_executor.shutdown(wait=True)
         self._async_executor = ThreadPoolExecutor(
