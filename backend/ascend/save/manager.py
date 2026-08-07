@@ -39,7 +39,7 @@ from ascend.log import get_logger
 
 from .crypto import SaveKeys, SaveCryptoError
 from .io import atomic_write
-from .manifest import Manifest, SaveFormatError, MANIFEST_NAME
+from .manifest import Manifest, SaveFormatError, MANIFEST_NAME, SEED_MAX
 
 logger = get_logger(__name__)
 
@@ -159,17 +159,28 @@ class SaveManager:
 
     # ── 世界管理 ──────────────────────────────────────────
 
-    def create_world(self, name: str, seed: int, *, world_id: str | None = None) -> Manifest:
+    def create_world(
+        self,
+        name: str,
+        seed: int,
+        *,
+        world_id: str | None = None,
+        gen_params: dict | None = None,
+    ) -> Manifest:
         """创建新的存档位（活目录 + 密钥 + 初版 manifest）。
 
         种子在创建时定案：seed=0（前端"随机"占位）在此随机化并写入
         manifest——存档身份（world_id+seed）出生即一致，密钥混淆层
         （secrets_blob 绑定 world_id+seed）不会与 manifest 失配。
 
+        gen_params 为创建世界流程的调参产出（Issue #8），随档定案：
+        目前含 land_ratio；非法值抛 ValueError（与 Manifest 校验一致）。
+
         Args:
             name: 存档名称（存档选择页展示；全集合唯一，重名拒绝）。
             seed: 世界种子；0 = 创建时随机。
             world_id: 可选，指定 ID（测试用）；缺省自动生成。
+            gen_params: 可选，世界生成参数（land_ratio 等）。
 
         Returns:
             新建的 Manifest。
@@ -183,9 +194,10 @@ class SaveManager:
         self._ensure_name_unique(name)
         seed = int(seed)
         if seed == 0:
-            seed = random.randint(1, 2**31 - 1)
+            seed = random.randint(1, SEED_MAX)
         world_id = world_id or uuid.uuid4().hex
         self._validate_world_id(world_id)
+        gen_params = Manifest._validate_gen_params(gen_params or {}) or None
         wdir = self.world_dir(world_id)
         os.makedirs(wdir, exist_ok=False)
         os.makedirs(self.snapshot_dir(world_id), exist_ok=True)
@@ -193,6 +205,7 @@ class SaveManager:
         manifest = Manifest(
             name=name, seed=seed, world_id=world_id,
             created_at=now, last_played_at=now,
+            gen_params=gen_params,
         )
         # 密钥不落盘明文：加密后藏入 manifest.secrets_blob 随档分发
         manifest.secrets_blob = SaveKeys.generate().protect(world_id, seed)

@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://sv8jxfsryu0y"]
+
+[ext_resource type="Script" uid="uid://cl5wyhvl87kuk" path="res://scripts/ui/world_loading.gd" id="1_p3lfu"]
+
+[node name="WorldLoading" type="Control" unique_id=373584467]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("1_p3lfu")

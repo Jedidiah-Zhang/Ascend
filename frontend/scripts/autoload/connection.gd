@@ -326,6 +326,15 @@ func _backend_args_equal(args: PackedStringArray) -> bool:
 	return true
 
 
+## 当前后端进程的世界 ID（--world-id 参数值；菜单模式返回空）。
+## 参数语义只在此处解析，调用方不依赖参数布局。
+func backend_world_id() -> String:
+	for i in backend_args.size() - 1:
+		if backend_args[i] == "--world-id":
+			return backend_args[i + 1]
+	return ""
+
+
 func _poll_restart() -> void:
 	"""推进进程切换：等旧进程退出 → 超时强杀 → 拉起新进程。"""
 	if _backend_pid > 0:

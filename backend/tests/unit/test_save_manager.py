@@ -144,6 +144,79 @@ class TestNameUniqueness:
         assert len(manager.list_worlds()) == 3
 
 
+class TestGenParams:
+    """创建世界调参产出（Issue #8）随档定案。"""
+
+    def test_create_persists_gen_params(self, manager):
+        """gen_params 写入 manifest 并可经文件往返恢复。"""
+        manifest = manager.create_world(
+            "调参世界", seed=42, gen_params={"land_ratio": 0.35},
+        )
+        assert manifest.gen_params == {"land_ratio": 0.35}
+        reloaded = Manifest.read(manager.manifest_path(manifest.world_id))
+        assert reloaded.gen_params == {"land_ratio": 0.35}
+
+    def test_create_without_gen_params(self, manager):
+        """无调参时 gen_params 为 None（旧档兼容）。"""
+        manifest = manager.create_world("默认世界", seed=1)
+        assert manifest.gen_params is None
+        reloaded = Manifest.read(manager.manifest_path(manifest.world_id))
+        assert reloaded.gen_params is None
+
+    def test_legacy_manifest_without_gen_params(self, manager):
+        """旧版 manifest（无 gen_params 字段）仍可读（向前兼容）。"""
+        manifest = manager.create_world("旧档", seed=1)
+        path = manager.manifest_path(manifest.world_id)
+        data = json.loads(open(path, encoding="utf-8").read())
+        del data["gen_params"]
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        reloaded = Manifest.read(path)
+        assert reloaded.gen_params is None
+
+    def test_invalid_land_ratio_rejected(self, manager):
+        """land_ratio 越界/非法值拒绝创建（SaveFormatError）。"""
+        for ratio in (0.0, 1.5, -0.1, "abc"):
+            with pytest.raises(SaveFormatError):
+                manager.create_world(
+                    "非法调参", seed=1, gen_params={"land_ratio": ratio},
+                )
+
+    def test_size_params_persisted(self, manager):
+        """地图尺寸随档定案并可往返恢复。"""
+        manifest = manager.create_world(
+            "尺寸世界", seed=42,
+            gen_params={"width_km": 150.0, "height_km": 90.0},
+        )
+        assert manifest.gen_params == {"width_km": 150.0, "height_km": 90.0}
+        reloaded = Manifest.read(manager.manifest_path(manifest.world_id))
+        assert reloaded.gen_params == {"width_km": 150.0, "height_km": 90.0}
+
+    def test_invalid_size_rejected(self, manager):
+        """地图尺寸越界/非法值拒绝创建（SaveFormatError）。"""
+        for gen in (
+            {"width_km": 0.0}, {"width_km": 500.0},
+            {"height_km": -5.0}, {"height_km": "x"},
+        ):
+            with pytest.raises(SaveFormatError):
+                manager.create_world("非法尺寸", seed=1, gen_params=gen)
+
+    def test_partial_size_params_allowed(self, manager):
+        """只调一项尺寸也合法（缺省项用默认）。"""
+        manifest = manager.create_world(
+            "半调参", seed=1, gen_params={"width_km": 60.0},
+        )
+        assert manifest.gen_params == {"width_km": 60.0}
+
+    def test_unknown_gen_param_keys_kept(self, manager):
+        """未知键保留（向前兼容未来步骤的调参）。"""
+        manifest = manager.create_world(
+            "未来调参", seed=1,
+            gen_params={"land_ratio": 0.5, "colony_seed": 7},
+        )
+        assert manifest.gen_params == {"land_ratio": 0.5, "colony_seed": 7}
+
+
 class TestSeedZero:
     """种子创建时定案（P0 回归：seed=0 密钥身份失配）。"""
 

@@ -113,6 +113,31 @@ class TestSaveCreate:
         manager.write_state(manifest.world_id, {"clock": {"time": 3}})
         assert manager.read_state(manifest.world_id)["clock"]["time"] == 3
 
+    def test_create_with_gen_params(self, manager, handlers):
+        """gen_params（大陆占比）随档定案写入 manifest（Issue #8）。"""
+        resp = handlers["save_create"](_req("save_create", {
+            "name": "调参世界", "seed": 42,
+            "gen_params": {"land_ratio": 0.35},
+        }))
+        manifest = manager.get_manifest(resp["payload"]["world_id"])
+        assert manifest.gen_params == {"land_ratio": 0.35}
+
+    def test_create_invalid_gen_params_rejected(self, handlers):
+        """gen_params 非对象拒绝。"""
+        with pytest.raises(ValueError):
+            handlers["save_create"](_req("save_create", {
+                "name": "x", "gen_params": "bad",
+            }))
+
+    def test_create_land_ratio_out_of_range_rejected(self, handlers):
+        """land_ratio 越界经协议层拒绝（SaveFormatError）。"""
+        from ascend.save.manifest import SaveFormatError
+        for ratio in (0.0, 1.5, -0.1):
+            with pytest.raises(SaveFormatError):
+                handlers["save_create"](_req("save_create", {
+                    "name": "x", "gen_params": {"land_ratio": ratio},
+                }))
+
     def test_duplicate_name_rejected(self, manager, handlers):
         """重名创建经协议层拒绝（错误信息含名称）。"""
         handlers["save_create"](_req("save_create", {"name": "重名档", "seed": 1}))

@@ -80,7 +80,7 @@ logger = get_logger(__name__)
 # 大陆缓存格式版本：生成算法变更（侵蚀/水文/气候）或序列化格式
 # 变更（如 v1 pickle → v2 显式二进制）时递增，旧缓存自动失效重新生成
 # （同一 seed 的结果必须完全一致才能缓存）
-CONTINENT_CACHE_VERSION: int = 2
+CONTINENT_CACHE_VERSION: int = 3
 
 # Knuth 乘法哈希：seed → 确定性角度 [0, 2π)（温度梯度/盛行风向共用）
 def _seed_angle(seed: int) -> float:
@@ -100,6 +100,7 @@ def _seed_angle(seed: int) -> float:
 # 布局（小端）:
 #   magic "ASCNT" + version u8
 #   seed i64, grid_width i32, grid_height i32, cell_size f64
+#   land_ratio f64
 #   land_mask      u32 n + n×u8        （布尔掩码按 0/1 字节）
 #   elevation      u32 n + n×f64
 #   river_width    u32 n + n×f64
@@ -231,6 +232,7 @@ def serialize_continent(data: "ContinentData") -> bytes:
     _w_i32(buf, data.grid_width)
     _w_i32(buf, data.grid_height)
     _w_f64(buf, float(data.cell_size))
+    _w_f64(buf, float(data.land_ratio))
     _w_land_mask(buf, data.land_mask)
     _w_f64_array(buf, data.elevation_field)
     _w_f64_array(buf, data.river_width)
@@ -304,6 +306,7 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
         width = r.i32()
         height = r.i32()
         cell_size = r.f64()
+        land_ratio = r.f64()
         n = width * height
         if n <= 0:
             return None
@@ -393,6 +396,7 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
         return ContinentData(
             seed=int(seed),
             grid_width=width, grid_height=height, cell_size=cell_size,
+            land_ratio=land_ratio,
             land_mask=land_mask, elevation_field=elevation,
             river_width=river_width, hydrology=hydrology,
             subdiv_ranges=subdiv_ranges, _chunk_climate=chunk_climate,
@@ -450,6 +454,9 @@ class ContinentData:
     grid_height: int
     cell_size: float
     seed: int
+    # 生成参数快照（land_ratio）：缓存校验用——大陆是 (seed, land_ratio)
+    # 的确定性函数，同 seed 不同 land_ratio 必须重新生成。
+    land_ratio: float = 0.55
 
     land_mask: list[bool] = field(default_factory=list)
     elevation_field: Union[list[float], "array[float]"] = field(
@@ -756,6 +763,7 @@ class ContinentGenerator:
             grid_width=w, grid_height=h,
             cell_size=self._params.sample_resolution,
             seed=self._seed,
+            land_ratio=self._params.land_ratio,
             land_mask=land_mask,
             elevation_field=array('d', elevation),
             river_width=array('d', river_width),
@@ -763,6 +771,55 @@ class ContinentGenerator:
             subdiv_ranges=subdiv_ranges,
             _chunk_climate=chunk_climate,
         )
+
+    # ── 快速预览 ──────────────────────────────────────────
+
+    # 预览采样分辨率 (m/格)：1000m 低分辨率缩略图（默认 100×60 网格，
+    # 6000 格，秒级出图）。地形噪声场与分辨率无关（频率随采样分辨率
+    # 缩放），低分辨率采样 = 同一地形的粗采样。
+    PREVIEW_RESOLUTION_M: float = 1000.0
+
+    def generate_preview(
+        self, land_ratio: float,
+        width_km: float | None = None, height_km: float | None = None,
+    ) -> dict:
+        """只生成海拔 + 陆地掩码的轻量预览（跳过气候/侵蚀/水文）。
+
+        分位数校准保证预览陆地占比贴合 land_ratio（与真实生成同一
+        校准逻辑）；海拔另做与真实生成相同的高海拔拉伸，山顶着色
+        接近最终世界。未经侵蚀，预览海拔与最终世界略有偏差——
+        仅作形状与占比参考的缩略图。
+
+        低分辨率缩略图（1000m/格）：网格随尺寸缩放（60×36 → 60×36 格，
+        150×90 → 150×90 格），地形变化率一致——尺寸只影响生成范围。
+
+        Args:
+            land_ratio: 目标陆地比例 [0-1]。
+            width_km: 大陆东西宽度 (km)；None 用生成器参数（默认 100）。
+            height_km: 大陆南北高度 (km)；None 用生成器参数（默认 60）。
+
+        Returns:
+            预览数据字典:
+                {width, height, land_percent, elevation: [int 米] 行优先}
+        """
+        preview_params = ContinentParams(
+            width_km=width_km if width_km is not None else self._params.width_km,
+            height_km=height_km if height_km is not None else self._params.height_km,
+            sample_resolution=self.PREVIEW_RESOLUTION_M,
+            land_ratio=float(land_ratio),
+        )
+        gen = ContinentGenerator(seed=self._seed, params=preview_params)
+        w = int(preview_params.width_km * 1000.0 / preview_params.sample_resolution)
+        h = int(preview_params.height_km * 1000.0 / preview_params.sample_resolution)
+        land_mask, elevation = gen._generate_elevation(w, h)
+        self._ensure_elevation_range(elevation, land_mask)
+        land_count = sum(1 for v in land_mask if v)
+        return {
+            "width": w,
+            "height": h,
+            "land_percent": round(land_count / max(1, w * h), 4),
+            "elevation": [int(round(v)) for v in elevation],
+        }
 
     # ── 气候覆盖校准 ──────────────────────────────────────
 
@@ -1080,7 +1137,10 @@ class ContinentGenerator:
             0.5, 0.5, w, h, frequency=terrain_freq, octaves=5,
         )
 
-        continent_freq = 1.5 / w
+        # 大陆轮廓层：绝对频率（1.5 周期 / 100km），与网格宽解耦。
+        # 尺寸只改变生成范围——大尺寸下大陆轮廓自然延伸，
+        # 而非把同一形状按比例缩放。
+        continent_freq = self._params.sample_resolution / 100_000.0 * 1.5
         continent_field = noise_continent.octave_grid(
             0.5, 0.5, w, h, frequency=continent_freq, octaves=2,
         )

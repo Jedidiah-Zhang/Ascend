@@ -6,7 +6,7 @@
 进程模型（一进程一模式）:
     save_list       → {payload: {worlds: [摘要...], snapshots: [...],
                                   current_world_id: 当前加载世界}}
-    save_create     {payload: {name, seed?}} → {payload: {world_id}}
+    save_create     {payload: {name, seed?, gen_params?}} → {payload: {world_id}}
     save_snapshot   {payload: {world_id}} → {payload: {file}}
     save_snapshot_delete {payload: {world_id, snapshot, recursive}}
                     → {payload: {deleted: [file]}}   # 单点 / 分支裁剪
@@ -80,13 +80,20 @@ def make_save_handlers(save_manager, game_engine=None):
             )
 
     def handle_save_create(msg: dict) -> dict:
-        """创建新存档位（新游戏第一步，随后前端拉起世界进程进入）。"""
+        """创建新存档位（新游戏第一步，随后前端拉起世界进程进入）。
+
+        gen_params 为创建世界流程的调参产出（Issue #8）：目前含
+        land_ratio（目标陆地比例），随档定案写入 manifest。
+        """
         payload = _payload(msg)
         name = str(payload.get("name", "")).strip()
         if not name:
             raise ValueError("存档名称不能为空")
         seed = int(payload.get("seed", 0) or 0)
-        manifest = save_manager.create_world(name, seed)
+        gen_params = payload.get("gen_params")
+        if gen_params is not None and not isinstance(gen_params, dict):
+            raise ValueError("gen_params 必须为对象")
+        manifest = save_manager.create_world(name, seed, gen_params=gen_params)
         return make_response(
                 "save_create",
                 {"world_id": manifest.world_id},

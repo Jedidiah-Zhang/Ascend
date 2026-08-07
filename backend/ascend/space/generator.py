@@ -17,7 +17,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from ascend.log import get_logger
 from .noise import PerlinNoise
 from .tile_grid import TILE_MAP_SIZE
-from .continent import ContinentGenerator, serialize_continent, deserialize_continent
+from .continent import (
+    ContinentGenerator,
+    ContinentParams,
+    serialize_continent,
+    deserialize_continent,
+)
 from .climate import (
     ClimateZone,
     annual_baseline,
@@ -53,6 +58,9 @@ class WorldGenerator:
         *,
         executor: ThreadPoolExecutor | None = None,
         continent_cache_path: str | None = None,
+        land_ratio: float | None = None,
+        width_km: float | None = None,
+        height_km: float | None = None,
     ) -> None:
         """初始化世界生成器。
 
@@ -62,13 +70,35 @@ class WorldGenerator:
             seed: 世界种子。相同种子生成相同世界。
             executor: 外部线程池，None 时每次并行创建临时线程池。
             continent_cache_path: 大陆宏观场缓存文件路径（None 不落盘）。
-                由 GameEngine 传入存档内的 continent.bin——大陆是 seed 的
-                确定性函数，缓存随档分发，保证换机后首次加载也秒开。
+                由 GameEngine 传入存档内的 continent.bin——大陆是
+                (seed, land_ratio, 尺寸) 的确定性函数，缓存随档分发，
+                保证换机后首次加载也秒开。
+            land_ratio: 目标陆地比例 [0-1]；None 用默认 0.55
+                （创建世界调参时由存档 gen_params 传入）。
+            width_km: 大陆东西宽度 (km)；None 用默认 100
+                （创建世界调参的地图尺寸，随档 gen_params 定案）。
+            height_km: 大陆南北高度 (km)；None 用默认 60。
+
+        参数归一化：None 一律落为 ContinentParams() 默认值，大陆是
+        (seed, land_ratio, 尺寸) 的确定性函数，缓存校验与生成统一
+        使用归一化后的参数。
         """
         self._seed = seed
         self._executor = executor
         self._continent = None  # ContinentGenerator 惰性创建
         self._continent_cache_path = continent_cache_path
+        default_params = ContinentParams()
+        self._land_ratio = (
+            land_ratio if land_ratio is not None else default_params.land_ratio)
+        self._width_km = (
+            width_km if width_km is not None else default_params.width_km)
+        self._height_km = (
+            height_km if height_km is not None else default_params.height_km)
+        self._params = ContinentParams(
+            land_ratio=self._land_ratio,
+            width_km=self._width_km,
+            height_km=self._height_km,
+        )
 
         # 种子衍生相位偏移 — 确保不同 seed 的 (0,0) 采样到不同噪声值。
         # 偏移量 ~数百 chunk，相当于"种子在无限噪声空间中选择不同起点"。
@@ -119,23 +149,47 @@ class WorldGenerator:
             ContinentData 宏观场（缓存于 self._continent）。
         """
         if self._continent is None:
+            # 尺寸由网格数 × cell_size 反推（序列化不存尺寸字段）：
+            # 缓存必须与期望尺寸一致，避免同 seed 不同尺寸的调参结果混入
             cache_path = self._continent_cache_path
             if cache_path:
                 self._continent = self._load_continent_cache(cache_path)
                 if (
                     self._continent is not None
-                    and self._continent.seed != self._seed
+                    and (
+                        self._continent.seed != self._seed
+                        or self._continent.land_ratio != self._land_ratio
+                        or abs(
+                            self._continent.grid_width
+                            * self._continent.cell_size / 1000.0
+                            - self._width_km
+                        ) > 1e-6
+                        or abs(
+                            self._continent.grid_height
+                            * self._continent.cell_size / 1000.0
+                            - self._height_km
+                        ) > 1e-6
+                    )
                 ):
-                    # 缓存属于其它种子（如手动拷贝错档、缓存损坏）：
+                    # 缓存属于其它种子/参数（如手动拷贝错档、缓存损坏、
+                    # 同 seed 不同 land_ratio/尺寸的调参结果混入）：
                     # 视为未命中，重新生成并覆盖
                     logger.warning(
-                        "大陆缓存 seed 不符（缓存=%d 期望=%d），重新生成: %s",
-                        self._continent.seed, self._seed, cache_path,
+                        "大陆缓存参数不符（缓存=seed %d land %.3f "
+                        "%.1fx%.1fkm，期望=seed %d land %.3f %.1fx%.1fkm），"
+                        "重新生成: %s",
+                        self._continent.seed, self._continent.land_ratio,
+                        self._continent.grid_width
+                        * self._continent.cell_size / 1000.0,
+                        self._continent.grid_height
+                        * self._continent.cell_size / 1000.0,
+                        self._seed, self._land_ratio,
+                        self._width_km, self._height_km, cache_path,
                     )
                     self._continent = None
             if self._continent is None:
                 self._continent = ContinentGenerator(
-                    seed=self._seed,
+                    seed=self._seed, params=self._params,
                 ).generate(progress_cb=progress_cb)
                 self._supplement_moisture_range()
                 if cache_path:
@@ -215,7 +269,9 @@ class WorldGenerator:
             海拔 (m)。
         """
         if self._continent is None:
-            self._continent = ContinentGenerator(seed=self._seed).generate()
+            self._continent = ContinentGenerator(
+                seed=self._seed, params=self._params,
+            ).generate()
         return self._continent.sample_altitude(world_x, world_y)
 
     def _sample_altitude_at_chunk(self, cx: int, cy: int) -> float:

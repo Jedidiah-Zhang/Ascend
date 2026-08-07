@@ -26,6 +26,7 @@ class_name SaveSelect
 
 const MAIN_MENU_SCENE: String = "res://scenes/main_menu.tscn"
 const MAIN_WORLD_SCENE: String = "res://scenes/main.tscn"
+const WORLD_SETUP_SCENE: String = "res://scenes/world_setup.tscn"
 
 # ── 视觉常量 ──────────────────────────────────────────────
 
@@ -1186,22 +1187,14 @@ func _activate_action(row: int, action: int) -> void:
 # ── 输入对话框 ────────────────────────────────────────────
 
 func _create_new_world() -> void:
-	"""新建游戏：默认名 = 当前日期时间，直接创建进入（无需弹窗输入）。
+	"""新建游戏：进入创建世界调参流程（Issue #8）。
 
-	想改名的玩家创建后经「重命名」修改。
+	多步调参（地图生成等）完成后由 world_setup 以 save_create
+	创建并进入世界；不再直接默认参数创建。
 	"""
 	if _busy:
 		return
-	_busy = true
-	_status_text = "正在创建世界..."
-	_status_color = STATUS_WAIT_COLOR
-	Connection.send(SaveApi.create_request(_default_save_name(), 0))
-	queue_redraw()
-
-
-static func _default_save_name() -> String:
-	"""新建存档的默认名称（当前日期时间，分钟精度，格式与存档列表一致）。"""
-	return SaveInfoFormatter.datetime_string(float(Time.get_unix_time_from_system()))
+	get_tree().change_scene_to_file(WORLD_SETUP_SCENE)
 
 
 # ── 输入对话框（仅重命名） ────────────────────────────────

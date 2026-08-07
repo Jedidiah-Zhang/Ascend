@@ -27,6 +27,36 @@ func test_create_request_default_random_seed() -> void:
 	assert_eq(req["payload"]["seed"], 0)
 
 
+func test_create_request_carries_gen_params() -> void:
+	"""调参产出（大陆占比）随创建请求下发（Issue #8）。"""
+	var req: Dictionary = SaveApi.create_request(
+		"调参世界", 42, {"land_ratio": 0.35})
+	assert_eq(req["payload"]["gen_params"], {"land_ratio": 0.35})
+
+
+func test_create_request_default_gen_params_empty() -> void:
+	var req: Dictionary = SaveApi.create_request("x")
+	assert_eq(req["payload"]["gen_params"], {})
+
+
+func test_preview_request_shape() -> void:
+	"""地形预览请求（创建世界调参），默认 100×60 km。"""
+	var req: Dictionary = SaveApi.preview_request(42, 0.55)
+	assert_eq(req["type"], "request")
+	assert_eq(req["request_type"], SaveApi.MAP_PREVIEW)
+	assert_eq(req["payload"], {
+		"seed": 42, "land_ratio": 0.55,
+		"width_km": 100.0, "height_km": 60.0,
+	})
+
+
+func test_preview_request_custom_size() -> void:
+	"""预览请求携带尺寸：采样分辨率固定，网格随尺寸。"""
+	var req: Dictionary = SaveApi.preview_request(42, 0.55, 150.0, 90.0)
+	assert_eq(req["payload"]["width_km"], 150.0)
+	assert_eq(req["payload"]["height_km"], 90.0)
+
+
 func test_snapshot_request() -> void:
 	var req: Dictionary = SaveApi.snapshot_request("w1")
 	assert_eq(req["request_type"], SaveApi.SNAPSHOT)

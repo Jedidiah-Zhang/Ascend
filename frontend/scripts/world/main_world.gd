@@ -421,23 +421,15 @@ func _check_terrain_ready(force: bool = false) -> void:
 
 # ── 世界就绪事件（世界进程的就绪信号） ────────────────────
 
-## 世界生成阶段 → 加载提示文案（与后端 ContinentGenerator.STAGE_* 对齐）
-const WORLD_STAGE_LABELS: Dictionary = {
-	"elevation": "正在生成地形...",
-	"climate": "正在生成气候...",
-	"erosion": "正在侵蚀塑形...",
-	"water": "正在汇聚湖泊河流...",
-	"width": "正在雕刻河道...",
-	"chunks": "正在准备出生区域...",
-	"done": "正在进入世界...",
-}
-
-
 func _on_world_progress(data: Dictionary) -> void:
-	"""世界生成阶段进度（大陆生成 5-30s 期间逐阶段更新提示）。"""
+	"""世界生成阶段进度（大陆生成 5-30s 期间逐阶段更新提示）。
+
+	阶段文案单源：WorldStageLabels（与 world_loading 共用，
+	对应后端 ContinentGenerator.STAGE_*）。
+	"""
 	if not _has_birth and _loading_label:
 		var stage: String = str(data.get("stage", ""))
-		_loading_label.text = str(WORLD_STAGE_LABELS.get(stage, "正在生成世界..."))
+		_loading_label.text = WorldStageLabels.label_for(stage)
 
 
 func _on_world_initialized(data: Dictionary) -> void:

@@ -38,6 +38,7 @@ const SNAPSHOT_DELETE: String = "save_snapshot_delete"
 const RENAME: String = "save_rename"
 const DELETE: String = "save_delete"
 const EXPORT: String = "save_export"
+const MAP_PREVIEW: String = "map_preview"
 
 
 # ── 请求构造 ──────────────────────────────────────────────
@@ -47,11 +48,37 @@ static func list_request() -> Dictionary:
 	return {"type": "request", "request_type": LIST, "payload": {}}
 
 
-static func create_request(save_name: String, world_seed: int = 0) -> Dictionary:
-	"""新建存档位请求（seed=0 后端随机）。"""
+static func create_request(
+	save_name: String, world_seed: int = 0, gen_params: Dictionary = {},
+) -> Dictionary:
+	"""新建存档位请求（seed=0 后端随机）。
+
+	gen_params 为创建世界流程的调参产出（Issue #8）：目前含
+	land_ratio（目标陆地比例），随档定案写入 manifest。
+	"""
 	return {
 		"type": "request", "request_type": CREATE,
-		"payload": {"name": save_name, "seed": world_seed},
+		"payload": {
+			"name": save_name, "seed": world_seed,
+			"gen_params": gen_params,
+		},
+	}
+
+
+static func preview_request(
+	world_seed: int, land_ratio: float,
+	width_km: float = 100.0, height_km: float = 60.0) -> Dictionary:
+	"""地图地形预览请求（创建世界调参，Issue #8）。
+
+	采样分辨率固定 1000m：网格随尺寸缩放，地形变化率一致，
+	尺寸只影响生成范围。缺省 100×60。
+	"""
+	return {
+		"type": "request", "request_type": MAP_PREVIEW,
+		"payload": {
+			"seed": world_seed, "land_ratio": land_ratio,
+			"width_km": width_km, "height_km": height_km,
+		},
 	}
 
 

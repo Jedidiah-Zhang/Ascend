@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://cgon8lpqdg3jr"]
+
+[ext_resource type="Script" uid="uid://best1jknk38li" path="res://scripts/ui/world_setup.gd" id="1_x2by4"]
+
+[node name="WorldSetup" type="Control" unique_id=15797717]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("1_x2by4")

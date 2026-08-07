@@ -250,6 +250,129 @@ class TestContinentOutline:
 # ════════════════════════════════════════════════════════════════
 
 
+class TestGeneratePreview:
+    """快速地形预览（Issue #8 创建世界调参）。"""
+
+    @staticmethod
+    def _preview(seed: int = CANONICAL_SEED, land_ratio: float = 0.55,
+                 width_km: float | None = None,
+                 height_km: float | None = None) -> dict:
+        from ascend.space.continent import ContinentGenerator
+        return ContinentGenerator(seed=seed).generate_preview(
+            land_ratio, width_km, height_km)
+
+    def test_preview_shape(self):
+        """预览网格为低分辨率缩略图（1000m）：默认 100×60km → 100×60 格，
+        海拔场行优先。"""
+        p = self._preview()
+        assert p["width"] == 100
+        assert p["height"] == 60
+        assert len(p["elevation"]) == 100 * 60
+
+    def test_preview_size_scales_grid_keeps_rate(self):
+        """尺寸只影响生成范围：网格随尺寸，采样分辨率（变化率）不变。"""
+        small = self._preview(width_km=60.0, height_km=36.0)
+        large = self._preview(width_km=150.0, height_km=90.0)
+        assert (small["width"], small["height"]) == (60, 36)
+        assert (large["width"], large["height"]) == (150, 90)
+
+    def test_preview_size_extends_not_scales(self):
+        """大陆形状延伸而非缩放：大尺寸预览的左上角区域
+        （同 seed 同 land_ratio）与整块小尺寸预览大体一致。
+
+        轮廓层为绝对频率（1.5 周期/100km），重叠区域共享同一
+        地理空间；中心倾向/校准的局部修正允许边缘小幅差异。
+        """
+        small = self._preview(width_km=60.0, height_km=36.0)
+        large = self._preview(width_km=150.0, height_km=90.0)
+        sw, sh = small["width"], small["height"]
+        agree = 0.0
+        for y in range(sh):
+            for x in range(sw):
+                s_land = small["elevation"][y * sw + x] > 0
+                l_land = large["elevation"][y * large["width"] + x] > 0
+                if s_land == l_land:
+                    agree += 1.0
+        assert agree / (sw * sh) > 0.85, (
+            f"重叠区域海陆一致率 {agree / (sw * sh):.2f} 过低"
+        )
+
+    def test_preview_size_land_percent_tracks_ratio(self):
+        """不同尺寸下陆地占比仍贴合目标 land_ratio。"""
+        for size in ((60.0, 36.0), (150.0, 90.0)):
+            p = self._preview(land_ratio=0.55, width_km=size[0],
+                              height_km=size[1])
+            assert abs(p["land_percent"] - 0.55) < 0.10, (
+                f"size={size} 实测 {p['land_percent']}"
+            )
+
+    def test_preview_elevation_ints(self):
+        """海拔为整型米（JSON 友好），陆地海拔 > 0。"""
+        p = self._preview()
+        assert all(isinstance(v, int) for v in p["elevation"])
+        assert any(v > 0 for v in p["elevation"]), "预览必须存在陆地"
+        assert any(v < 0 for v in p["elevation"]), "预览必须存在海洋"
+
+    def test_preview_land_percent_tracks_ratio(self):
+        """陆地占比贴合目标 land_ratio（分位数校准，允许采样偏差）。"""
+        for ratio in (0.30, 0.55, 0.75):
+            p = self._preview(land_ratio=ratio)
+            assert abs(p["land_percent"] - ratio) < 0.10, (
+                f"land_ratio={ratio} 实测 {p['land_percent']}"
+            )
+
+    def test_preview_deterministic(self):
+        """同 (seed, land_ratio) → 完全相同的预览。"""
+        p1 = self._preview()
+        p2 = self._preview()
+        assert p1 == p2
+
+    def test_preview_seed_sensitive(self):
+        """不同 seed → 不同地形。"""
+        p1 = self._preview(seed=1)
+        p2 = self._preview(seed=2)
+        assert p1["elevation"] != p2["elevation"]
+
+    def test_preview_matches_full_pipeline_land_shape(self):
+        """预览海陆轮廓与完整生成管线一致（同一噪声场的粗采样）。"""
+        from ascend.space.continent import ContinentGenerator, ContinentParams
+        preview = self._preview()
+        w, h = preview["width"], preview["height"]
+        full = ContinentGenerator(
+            seed=CANONICAL_SEED,
+            params=ContinentParams(
+                width_km=100.0, height_km=60.0, sample_resolution=100.0,
+            ),
+        ).generate()
+        # 粗采样网格 → 全分辨率场对应区域逐点比对（比例采样）
+        step_x = full.grid_width // w
+        step_y = full.grid_height // h
+        same = 0
+        total = 0
+        for py in range(h):
+            for px in range(w):
+                fy = py * step_y + step_y // 2
+                fx = px * step_x + step_x // 2
+                preview_land = preview["elevation"][py * w + px] > 0
+                full_land = full.land_mask[fy * full.grid_width + fx]
+                total += 1
+                same += 1 if preview_land == full_land else 0
+        assert same / total >= 0.80, (
+            f"预览与完整管线海陆一致率 {same / total:.1%} 过低"
+        )
+
+    def test_land_ratio_field_snapshotted(self):
+        """ContinentData 记录 land_ratio（缓存校验数据源）。"""
+        from ascend.space.continent import ContinentGenerator, ContinentParams
+        data = ContinentGenerator(
+            seed=CANONICAL_SEED,
+            params=ContinentParams(land_ratio=0.35),
+        ).generate()
+        assert data.land_ratio == 0.35
+        land_count = sum(1 for v in data.land_mask if v)
+        assert abs(land_count / len(data.land_mask) - 0.35) < 0.05
+
+
 class TestContinentalityClimate:
     """大陆度气候修正 + 万向风验证。"""
 

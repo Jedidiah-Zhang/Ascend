@@ -50,6 +50,7 @@ from ascend.net.handlers.weather_handler import make_weather_handler
 from ascend.net.handlers.player_handler import make_player_handler
 from ascend.net.handlers.entity_handler import make_entity_handlers
 from ascend.net.handlers.save_handler import make_save_handlers
+from ascend.net.handlers.preview_handler import make_preview_handlers
 from ascend.space import WorldGenerator, TileGenerator
 from ascend.space.chunk_store import ChunkStore
 from ascend.entity import EntityManager, PlayerService
@@ -211,6 +212,8 @@ class GameEngine:
         save_handlers = make_save_handlers(self.save_manager, self)
         for req_type, handler in save_handlers.items():
             self.dispatcher.register(req_type, handler)
+        for req_type, handler in make_preview_handlers().items():
+            self.dispatcher.register(req_type, handler)
         self.event_bridge = EventBridge(world_tree, self.server)
         self.event_bridge.install()
         logger.info("网络层已就绪: %s:%d", SERVER_HOST, SERVER_PORT)
@@ -289,8 +292,16 @@ class GameEngine:
             self.save_manager.continent_path(self.world_id)
             if self.world_id else None
         )
+        land_ratio = None
+        width_km = None
+        height_km = None
+        if self._manifest is not None and self._manifest.gen_params:
+            land_ratio = self._manifest.gen_params.get("land_ratio")
+            width_km = self._manifest.gen_params.get("width_km")
+            height_km = self._manifest.gen_params.get("height_km")
         self.world_gen = WorldGenerator(
             seed=self.seed, continent_cache_path=continent_cache_path,
+            land_ratio=land_ratio, width_km=width_km, height_km=height_km,
         )
         continent = self.world_gen.ensure_continent(
             progress_cb=self._broadcast_world_progress,

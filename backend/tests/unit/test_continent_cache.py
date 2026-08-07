@@ -19,12 +19,16 @@ from ascend.space.continent import (
 from ascend.space.generator import WorldGenerator
 
 
-def _small_continent(seed: int = 42) -> ContinentData:
+def _small_continent(
+    seed: int = 42, land_ratio: float = 0.55,
+    width_km: float = 6.0, height_km: float = 4.0,
+) -> ContinentData:
     """快速生成小规模大陆（单元测试用，秒级）。"""
     return ContinentGenerator(
         seed=seed,
         params=ContinentParams(
-            width_km=6, height_km=4, sample_resolution=200,
+            width_km=width_km, height_km=height_km, sample_resolution=200,
+            land_ratio=land_ratio,
         ),
     ).generate()
 
@@ -160,7 +164,10 @@ class TestWorldGeneratorCache:
             "ascend.space.continent.ContinentGenerator.generate",
             _fake_generate,
         )
-        wg = WorldGenerator(seed=99, continent_cache_path=cache_path)
+        wg = WorldGenerator(
+            seed=99, width_km=6.0, height_km=4.0,
+            continent_cache_path=cache_path,
+        )
         cont = wg.ensure_continent()
         assert calls["n"] == 0
         assert cont.seed == 99
@@ -221,10 +228,131 @@ class TestWorldGeneratorCache:
             "ascend.space.continent.ContinentGenerator.generate",
             _fake_generate,
         )
-        wg = WorldGenerator(seed=222, continent_cache_path=cache_path)
+        wg = WorldGenerator(
+            seed=222, width_km=6.0, height_km=4.0,
+            continent_cache_path=cache_path,
+        )
         cont = wg.ensure_continent()
         assert calls["n"] == 1, "seed 不符应触发重新生成"
         assert cont.seed == 222
         # 覆盖后的缓存恢复为正确种子
         with open(cache_path, "rb") as f:
             assert deserialize_continent(f.read()).seed == 222
+
+    def test_cache_land_ratio_mismatch_regenerates(self, tmp_path, monkeypatch):
+        """缓存 land_ratio 与生成器不符（同 seed 调参结果混入）：重新生成。
+
+        Issue #8：大陆是 (seed, land_ratio) 的确定性函数——同 seed
+        不同占比的缓存必须视为未命中，否则调参无效。
+        """
+        other = _small_continent(seed=333, land_ratio=0.30)
+        fake = _small_continent(seed=333, land_ratio=0.70)
+        cache_path = self._cache_path(tmp_path, 333)
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "wb") as f:
+            f.write(serialize_continent(other))
+
+        calls = {"n": 0}
+
+        def _fake_generate(self, *a, **k):
+            calls["n"] += 1
+            return fake
+
+        monkeypatch.setattr(
+            "ascend.space.continent.ContinentGenerator.generate",
+            _fake_generate,
+        )
+        wg = WorldGenerator(
+            seed=333, land_ratio=0.70, width_km=6.0, height_km=4.0,
+            continent_cache_path=cache_path,
+        )
+        cont = wg.ensure_continent()
+        assert calls["n"] == 1, "land_ratio 不符应触发重新生成"
+        assert cont.land_ratio == 0.70
+        # 覆盖后的缓存恢复为正确参数
+        with open(cache_path, "rb") as f:
+            assert deserialize_continent(f.read()).land_ratio == 0.70
+
+    def test_cache_size_mismatch_regenerates(self, tmp_path, monkeypatch):
+        """缓存尺寸与生成器不符（同 seed 不同地图尺寸调参结果混入）：重新生成。
+
+        Issue #8：大陆是 (seed, land_ratio, 尺寸) 的确定性函数——同 seed
+        不同尺寸的缓存必须视为未命中，否则地图尺寸调参无效。
+        """
+        other = _small_continent(seed=555)  # 6×4km 缓存
+        fake = _small_continent(seed=555, width_km=12.0, height_km=8.0)
+        cache_path = self._cache_path(tmp_path, 555)
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "wb") as f:
+            f.write(serialize_continent(other))
+
+        calls = {"n": 0}
+
+        def _fake_generate(self, *a, **k):
+            calls["n"] += 1
+            return fake
+
+        monkeypatch.setattr(
+            "ascend.space.continent.ContinentGenerator.generate",
+            _fake_generate,
+        )
+        wg = WorldGenerator(
+            seed=555, width_km=12.0, height_km=8.0,
+            continent_cache_path=cache_path,
+        )
+        cont = wg.ensure_continent()
+        assert calls["n"] == 1, "尺寸不符应触发重新生成"
+        assert cont is fake
+        # 覆盖后的缓存为期望尺寸
+        with open(cache_path, "rb") as f:
+            restored = deserialize_continent(f.read())
+        assert restored.grid_width == fake.grid_width
+
+    def test_cache_default_size_hits(self, tmp_path, monkeypatch):
+        """width_km/height_km=None（未调参）等价默认 100×60：缓存可命中。"""
+        fake = _small_continent(seed=777, width_km=100.0, height_km=60.0)
+        cache_path = self._cache_path(tmp_path, 777)
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "wb") as f:
+            f.write(serialize_continent(fake))
+
+        calls = {"n": 0}
+
+        def _fake_generate(self, *a, **k):
+            calls["n"] += 1
+            raise AssertionError("参数匹配的缓存不应重新生成")
+
+        monkeypatch.setattr(
+            "ascend.space.continent.ContinentGenerator.generate",
+            _fake_generate,
+        )
+        wg = WorldGenerator(seed=777, continent_cache_path=cache_path)
+        cont = wg.ensure_continent()
+        assert calls["n"] == 0
+        assert cont.grid_width == fake.grid_width
+
+    def test_cache_default_land_ratio_hits(self, tmp_path, monkeypatch):
+        """land_ratio=None（未调参）等价默认 0.55：缓存可命中。"""
+        fake = _small_continent(seed=444)  # 默认 land_ratio=0.55
+        cache_path = self._cache_path(tmp_path, 444)
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "wb") as f:
+            f.write(serialize_continent(fake))
+
+        calls = {"n": 0}
+
+        def _fake_generate(self, *a, **k):
+            calls["n"] += 1
+            raise AssertionError("参数匹配的缓存不应重新生成")
+
+        monkeypatch.setattr(
+            "ascend.space.continent.ContinentGenerator.generate",
+            _fake_generate,
+        )
+        wg = WorldGenerator(
+            seed=444, width_km=6.0, height_km=4.0,
+            continent_cache_path=cache_path,
+        )
+        cont = wg.ensure_continent()
+        assert calls["n"] == 0
+        assert cont.seed == 444

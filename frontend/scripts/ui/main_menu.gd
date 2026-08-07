@@ -4,7 +4,9 @@ Issue #14/#7 的最小主界面：存档选择页的入口。
 设置与模组为占位（未实现，点击提示）。
 全部内容 _draw() 绘制，等宽字体，与调试终端风格一致。
 
-流程: 开始游戏 → save_select.tscn（存档选择页）
+流程（Issue #8 存档分流）: 开始游戏 → 查询存档列表
+  - 有存档 → save_select.tscn（存档选择页）
+  - 无存档 → world_setup.tscn（创建世界调参流程，直达）
 
 进程模型：进入主菜单 = 菜单模式（世界进程已由暂停菜单切换回菜单，
 此处仅兜底——Connection.restart_backend 幂等跳过已一致的模式）。
@@ -17,6 +19,7 @@ class_name MainMenu
 # FontUtils 为全局类（font_utils.gd class_name），无需 preload 常量
 
 const SAVE_SELECT_SCENE: String = "res://scenes/save_select.tscn"
+const WORLD_SETUP_SCENE: String = "res://scenes/world_setup.tscn"
 
 # ── 视觉常量 ──────────────────────────────────────────────
 
@@ -55,6 +58,8 @@ var _hover_index: int = -1
 var _font: Font = null
 var _status_text: String = "正在启动后端..."
 var _status_color: Color = STATUS_WAITING_COLOR
+## 开始游戏已请求存档列表、等待分流响应中
+var _checking_saves: bool = false
 
 
 ## 初始化主菜单：全屏锚点、等宽字体，并订阅 Connection 的连接状态
@@ -75,6 +80,8 @@ func _ready() -> void:
 		Connection.connection_lost.connect(_on_disconnected)
 	if not Connection.backend_failed.is_connected(_on_backend_failed):
 		Connection.backend_failed.connect(_on_backend_failed)
+	if not Connection.message_received.is_connected(_on_message):
+		Connection.message_received.connect(_on_message)
 
 
 ## 离开场景树时断开 Connection 信号订阅，避免悬挂引用。
@@ -85,6 +92,8 @@ func _exit_tree() -> void:
 		Connection.connection_lost.disconnect(_on_disconnected)
 	if Connection.backend_failed.is_connected(_on_backend_failed):
 		Connection.backend_failed.disconnect(_on_backend_failed)
+	if Connection.message_received.is_connected(_on_message):
+		Connection.message_received.disconnect(_on_message)
 
 
 # ── 绘制 ──────────────────────────────────────────────────
@@ -197,8 +206,36 @@ func _activate(index: int) -> void:
 				_status_text = "正在重试连接后端..."
 				_status_color = STATUS_WAITING_COLOR
 				return
-			_status_text = "正在进入存档选择..."
-			get_tree().change_scene_to_file(SAVE_SELECT_SCENE)
+			if Connection.status != Connection.Status.CONNECTED:
+				_status_text = "正在连接后端..."
+				_status_color = STATUS_WAITING_COLOR
+				return
+			if _checking_saves:
+				return
+			_checking_saves = true
+			_status_text = "正在检查存档..."
+			_status_color = STATUS_WAITING_COLOR
+			Connection.send(SaveApi.list_request())
+
+
+# ── 消息 ──────────────────────────────────────────────────
+
+## save_list 响应：无存档 → 直达创建世界流程（Issue #8）；
+## 有存档 → 存档选择页。
+func _on_message(message: Dictionary) -> void:
+	if not _checking_saves:
+		return
+	if message.get("type", "") != "response" \
+			or message.get("request_type", "") != SaveApi.LIST:
+		return
+	_checking_saves = false
+	var worlds: Array = SaveApi.parse_worlds(message.get("payload", {}))
+	if worlds.is_empty():
+		_status_text = "暂无存档 — 正在进入创建世界..."
+		get_tree().change_scene_to_file(WORLD_SETUP_SCENE)
+	else:
+		_status_text = "正在进入存档选择..."
+		get_tree().change_scene_to_file(SAVE_SELECT_SCENE)
 
 
 # ── 连接状态 ──────────────────────────────────────────────
@@ -228,8 +265,9 @@ func _on_connected(_host: String, _port: int) -> void:
 	_update_status()
 
 
-## 后端连接断开回调：刷新状态文本。
+## 后端连接断开回调：刷新状态文本并复位存档检查（响应可能不再回来）。
 func _on_disconnected() -> void:
+	_checking_saves = false
 	_update_status()
 
 
