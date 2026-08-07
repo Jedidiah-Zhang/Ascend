@@ -4,9 +4,9 @@
   - 列出已有存档：名称、游戏内时间、运行时长、快照数、最后游玩
   - 进入（读档）、重命名、复制、删除
   - 新建游戏（默认参数直接创建并进入世界，调参流程留待 Issue #8）
-  - 点击存档行展开行内「时间线分叉」：快照节点 + 当前时间点（特别标注），
-    节点可直接点击——当前时间点进入世界、快照双击确认回滚；
-    「最后进入」的世界带标注
+   - 点击存档行展开行内「时间线分叉」：快照节点 + 当前时间点（特别标注），
+     节点可直接点击——当前时间点进入世界、快照选中后弹出操作面板
+     （进入存档点 / 删除存档点 / 删除分支）；「最后进入」的世界带标注
   - 返回主菜单
 
 进程模型（一进程一模式）：进入世界 / 回滚 = 停菜单进程 → 以
@@ -81,7 +81,8 @@ const TL_NODE_COLOR: Color = Color(0.32, 0.55, 0.85)
 const TL_NODE_HOVER_COLOR: Color = Color(0.45, 0.70, 0.95)
 const TL_AUTO_COLOR: Color = Color(0.38, 0.48, 0.60)
 const TL_AUTO_HOVER_COLOR: Color = Color(0.52, 0.64, 0.78)
-const TL_CONFIRM_COLOR: Color = Color(0.85, 0.35, 0.30)
+## 选中节点亮环色（选中后出现操作面板）
+const TL_SELECT_COLOR: Color = Color(1.0, 1.0, 1.0, 0.9)
 const TL_EDGE_COLOR: Color = Color(0.55, 0.60, 0.72, 0.85)
 const TL_HINT_COLOR: Color = Color(0.55, 0.62, 0.75)
 const TL_BG_COLOR: Color = Color(0.07, 0.09, 0.14, 0.95)
@@ -106,8 +107,6 @@ var _scroll: float = 0.0
 var _hover_row: int = -1
 ## 悬停操作按钮 {row, action_index}
 var _hover_action: Dictionary = {}
-## 待确认删除的行（两次点击确认）
-var _confirm_delete_row: int = -1
 ## 请求已发出等待响应中
 var _busy: bool = false
 
@@ -144,8 +143,20 @@ var _tl_nodes: Array = []
 var _tl_edges: Array = []
 ## 悬停节点 id
 var _tl_hover_id: String = ""
-## 待确认回滚的快照 id（两次点击确认）
-var _tl_confirm_id: String = ""
+## 选中节点 id（点击节点后出现操作面板）
+var _panel_node_id: String = ""
+## 操作面板按钮命中矩形: action → Rect2
+var _panel_rects: Dictionary = {}
+## 面板按钮悬停 action
+var _panel_hover: String = ""
+## 删除确认弹窗: {} 关闭; {node_id, action} 打开（action: "delete"/"prune"）
+var _dlg_confirm: Dictionary = {}
+## 弹窗按钮命中矩形: {"ok": Rect2, "cancel": Rect2}
+var _dlg_rects: Dictionary = {}
+## 弹窗面板矩形（点外部关闭判定）
+var _dlg_rect: Rect2 = Rect2()
+## 弹窗按钮悬停 key
+var _dlg_hover: String = ""
 ## 节点命中矩形: id → Rect2
 var _tl_rects: Dictionary = {}
 ## 树左上角（绘制原点）
@@ -233,13 +244,19 @@ func _refresh_list() -> void:
 
 
 func _apply_worlds(payload: Dictionary) -> void:
-	"""应用 save_list 响应。"""
+	"""应用 save_list 响应。
+
+	若此前有展开的时间线，数据刷新后重建保持展开（删除节点后
+	不收起时间轴）；展开的世界行若已不存在（世界被删除）则收起。
+	"""
 	_worlds = SaveApi.parse_worlds(payload)
 	_snapshots = SaveApi.parse_snapshots(payload)
 	_current_world_id = SaveApi.parse_current_world_id(payload)
-	_confirm_delete_row = -1
 	_scroll = 0.0
+	var keep_expanded: int = _expanded_row
 	_close_timeline()
+	if keep_expanded >= 0 and keep_expanded < _worlds.size():
+		_toggle_timeline(keep_expanded)
 	if _worlds.is_empty():
 		_status_text = "暂无存档 — 点击「新建游戏」开始"
 		_status_color = STATUS_OK_COLOR
@@ -267,7 +284,7 @@ func _on_connection_lost() -> void:
 	"""连接断开时复位忙状态（响应可能永远不来，避免 UI 卡死）。"""
 	if _busy:
 		_busy = false
-		_confirm_delete_row = -1
+		_close_confirm_dialog()
 		_entering_world = false
 		_set_error("连接中断，操作未完成 — 请重试")
 	queue_redraw()
@@ -276,7 +293,7 @@ func _on_connection_lost() -> void:
 func _on_backend_failed(reason: String) -> void:
 	"""后端启动失败：同样复位忙状态。"""
 	_busy = false
-	_confirm_delete_row = -1
+	_close_confirm_dialog()
 	_entering_world = false
 	_set_error("后端不可用：%s" % reason)
 	queue_redraw()
@@ -340,6 +357,14 @@ func _draw() -> void:
 	if _input_mode != "":
 		_draw_input_dialog()
 
+	# 节点操作面板（最上层）
+	if _panel_node_id != "":
+		_draw_action_panel()
+
+	# 删除确认弹窗（模态，最最上层）
+	if not _dlg_confirm.is_empty():
+		_draw_confirm_dialog()
+
 
 func _row_display_y(index: int, list_top: float) -> float:
 	"""行显示纵坐标：展开行下方行整体下移 TL_INLINE_H + TL_GAP。"""
@@ -385,8 +410,6 @@ func _draw_row(index: int, rect: Rect2) -> void:
 		var hover: bool = _hover_row == index and _hover_action.get("action") == a
 		var danger: bool = action["danger"]
 		var label: String = action["label"]
-		if danger and _confirm_delete_row == index:
-			label = "确认?"
 		_draw_button(btn_rect, label, hover, danger)
 		# 记录按钮矩形供命中检测
 		_action_rects.append({"rect": btn_rect, "row": index, "action": a})
@@ -450,7 +473,7 @@ var _action_rects: Array = []
 var _max_scroll: float = 0.0
 
 
-## 处理全部输入：鼠标移动（拖拽平移/悬停更新）、滚轮（列表滚动或树区缩放/图例滚动）、左键点击分发、Esc 逐层关闭（时间线 → 输入框 → 返回）。
+## 处理全部输入：鼠标移动（拖拽平移/悬停更新）、滚轮（列表滚动或树区缩放/图例滚动）、左键点击分发、Esc 逐层关闭（操作面板 → 时间线 → 输入框 → 返回）。
 ##
 ## Args:
 ##     event: 输入事件。
@@ -487,7 +510,11 @@ func _input(event: InputEvent) -> void:
 			if vp:
 				vp.set_input_as_handled()
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
-		if _expanded_row >= 0:
+		if not _dlg_confirm.is_empty():
+			_close_confirm_dialog()
+		elif _panel_node_id != "":
+			_close_action_panel()
+		elif _expanded_row >= 0:
 			_close_timeline()
 		elif _input_mode != "":
 			_close_input()
@@ -512,7 +539,7 @@ func _handle_tree_wheel(dir: float, pos: Vector2) -> void:
 		_tl_pan = rel - (rel - _tl_pan) * (_tl_zoom / old_zoom)
 
 
-## 根据光标位置更新悬停状态（_hover_row / _hover_action / _tl_hover_id），按优先级：输入弹层按钮 → 返回/新建 → 时间线节点与图例行 → 行操作按钮 → 行主体。
+## 根据光标位置更新悬停状态（_hover_row / _hover_action / _tl_hover_id），按优先级：输入弹层按钮 → 操作面板按钮 → 返回/新建 → 时间线节点与图例行 → 行操作按钮 → 行主体。
 ##
 ## Args:
 ##     pos: 光标位置。
@@ -525,6 +552,24 @@ func _update_hover(pos: Vector2) -> void:
 		elif _cancel_rect.has_point(pos):
 			_hover_action = {"key": "cancel"}
 		return
+	# 删除确认弹窗优先：弹窗按钮悬停（模态，其余元素不参与）
+	if not _dlg_confirm.is_empty():
+		_dlg_hover = ""
+		for key in _dlg_rects:
+			if _dlg_rects[key].has_point(pos):
+				_dlg_hover = key
+				return
+		_panel_hover = ""
+		_tl_hover_id = ""
+		return
+	# 操作面板优先：面板按钮悬停（节点悬停联动保留给面板外的树区）
+	if _panel_node_id != "":
+		_panel_hover = ""
+		for action in _panel_rects:
+			if _panel_rects[action].has_point(pos):
+				_panel_hover = action
+				_tl_hover_id = ""
+				return
 	if _back_rect.has_point(pos):
 		_hover_action = {"key": "back"}
 		return
@@ -557,7 +602,7 @@ func _update_hover(pos: Vector2) -> void:
 			return
 
 
-## 左键点击分发：输入弹层按钮、返回/新建、时间线节点（激活/回滚确认）、树区空白开始拖拽、行操作按钮、行主体展开时间线；请求进行中忽略。
+## 左键点击分发：输入弹层按钮、操作面板按钮、返回/新建、时间线节点（选中/切换面板）、树区空白开始拖拽、行操作按钮、行主体展开时间线；请求进行中忽略。
 ##
 ## Args:
 ##     pos: 点击位置。
@@ -570,6 +615,25 @@ func _handle_click(pos: Vector2) -> void:
 		elif _cancel_rect.has_point(pos):
 			_close_input()
 		return
+	# 删除确认弹窗优先：确定 → 执行；取消或点弹窗外 → 关闭
+	if not _dlg_confirm.is_empty():
+		if _dlg_rects.get("ok", Rect2()).has_point(pos):
+			if str(_dlg_confirm.get("action", "")) == "delete_world":
+				_confirm_delete_world()
+			else:
+				var node_id: String = str(_dlg_confirm.get("node_id", ""))
+				var world_id: String = str(_worlds[_expanded_row].get("world_id", ""))
+				_confirm_snapshot_delete(world_id, node_id)
+		elif _dlg_rects.get("cancel", Rect2()).has_point(pos) \
+				or not _dlg_rect.has_point(pos):
+			_close_confirm_dialog()
+		return
+	# 操作面板按钮优先（点在按钮上执行，点面板外不拦截其余判定）
+	if _panel_node_id != "":
+		for action in _panel_rects:
+			if _panel_rects[action].has_point(pos):
+				_handle_panel_action(action)
+				return
 	if _back_rect.has_point(pos):
 		_go_back()
 		return
@@ -584,8 +648,9 @@ func _handle_click(pos: Vector2) -> void:
 		if not node_id.is_empty():
 			_activate_timeline_node(node_id)
 			return
-		# 树区空白按下 → 开始拖拽平移
+		# 树区空白按下 → 关闭面板并开始拖拽平移
 		if _tl_body_rect.has_point(pos):
+			_panel_node_id = ""
 			_tl_dragging = true
 			_tl_drag_last = pos
 			return
@@ -623,7 +688,7 @@ func _toggle_timeline(row: int) -> void:
 		return
 	_expanded_row = row
 	_tl_hover_id = ""
-	_tl_confirm_id = ""
+	_panel_node_id = ""
 	_tl_legend_scroll = 0.0
 	_tl_dragging = false
 	_tl_pan = Vector2.ZERO
@@ -682,7 +747,8 @@ func _close_timeline() -> void:
 	_tl_numbers = {}
 	_tl_sorted_ids = []
 	_tl_hover_id = ""
-	_tl_confirm_id = ""
+	_panel_node_id = ""
+	_panel_rects = {}
 	_tl_dragging = false
 	_tl_pan = Vector2.ZERO
 	_tl_zoom = 1.0
@@ -788,18 +854,18 @@ func _draw_inline_timeline(row_rect: Rect2) -> void:
 		if not visible_rect.has_point(pos):
 			continue
 		var hovered: bool = n["id"] == _tl_hover_id
-		var confirming: bool = n["id"] == _tl_confirm_id
+		var selected: bool = n["id"] == _panel_node_id
 		var fill: Color
 		if n["is_live"]:
 			fill = TL_LIVE_HOVER_COLOR if hovered else TL_LIVE_COLOR
 		elif str(n.get("suffix", "")) != "manual":
-			fill = TL_CONFIRM_COLOR if confirming \
-				else (TL_AUTO_HOVER_COLOR if hovered else TL_AUTO_COLOR)
+			fill = TL_AUTO_HOVER_COLOR if hovered else TL_AUTO_COLOR
 		else:
-			fill = TL_CONFIRM_COLOR if confirming \
-				else (TL_NODE_HOVER_COLOR if hovered else TL_NODE_COLOR)
+			fill = TL_NODE_HOVER_COLOR if hovered else TL_NODE_COLOR
 		draw_circle(pos, TL_NODE_R, fill)
 		draw_arc(pos, TL_NODE_R, 0.0, TAU, 32, Color(1, 1, 1, 0.35), 1.0)
+		if selected:
+			draw_arc(pos, TL_NODE_R + 3.0, 0.0, TAU, 32, TL_SELECT_COLOR, 2.0)
 		var glyph: String = "★" if n["is_live"] else str(_tl_numbers.get(n["id"], ""))
 		draw_string(_font, pos + Vector2(-12, 5), glyph,
 			HORIZONTAL_ALIGNMENT_CENTER, 24, 11, Color(0.05, 0.06, 0.10, 0.95))
@@ -878,7 +944,9 @@ func _hit_legend_row(pos: Vector2) -> String:
 	return ""
 
 
-## 点击时间线节点：当前时间点（LIVE）直接进入世界；快照首次点击进入待确认态，再次点击同一节点发起回滚（重启世界进程 + snapshot 参数）。
+## 点击时间线节点：当前时间点（LIVE）直接进入世界；快照节点选中
+## 并弹出操作面板（进入存档点 / 删除存档点 / 删除分支）；再次点击
+## 同一节点切换面板开闭。
 ##
 ## Args:
 ##     id: 节点 id（TimelineLayout.LIVE_ID 或快照 file）。
@@ -888,21 +956,210 @@ func _activate_timeline_node(id: String) -> void:
 		# 当前时间点：直接进入世界（加载活目录）
 		_load_world(world_id)
 		return
-	if _tl_confirm_id == id:
-		# 两次点击确认 → 回滚到该快照（世界进程带 --snapshot 启动）
-		_tl_confirm_id = ""
-		_busy = true
-		_status_text = "正在回滚到 %s ..." % id
-		_status_color = STATUS_WAIT_COLOR
-		_entering_world = true
-		backend_launcher.call(PackedStringArray(["--world-id", world_id, "--snapshot", id]))
-		queue_redraw()
+	if _panel_node_id == id:
+		# 点击已选中节点 = 切换面板开闭
+		_close_action_panel()
 		return
-	_tl_confirm_id = id
+	_panel_node_id = id
 	queue_redraw()
 
 
-## 行操作按钮分发：进入（读档）、重命名（打开输入框）、复制（导出请求）、删除（两次点击确认后发请求）。
+func _confirm_rollback(world_id: String, id: String) -> void:
+	"""面板「进入存档点」：世界进程带 --snapshot 重启。"""
+	_close_action_panel()
+	_busy = true
+	_status_text = "正在回滚到 %s ..." % id
+	_status_color = STATUS_WAIT_COLOR
+	_entering_world = true
+	backend_launcher.call(PackedStringArray(["--world-id", world_id, "--snapshot", id]))
+	queue_redraw()
+
+
+func _confirm_snapshot_delete(world_id: String, id: String) -> void:
+	"""删除确认弹窗确定后：发送删除请求，范围由弹窗动作决定。
+
+	delete = 单点删除（后代重接）；prune = 分支裁剪（节点 + 后代）。
+	"""
+	var recursive: bool = str(_dlg_confirm.get("action", "")) == "prune"
+	_close_confirm_dialog()
+	_close_action_panel()
+	_busy = true
+	_status_text = "正在删除快照..." if recursive else "正在删除节点..."
+	_status_color = STATUS_WAIT_COLOR
+	Connection.send(SaveApi.snapshot_delete_request(world_id, id, recursive))
+	queue_redraw()
+
+
+func _confirm_delete_world() -> void:
+	"""存档删除弹窗确定后：发送世界删除请求（连带快照）。"""
+	var row: int = int(_dlg_confirm.get("row", -1))
+	_close_confirm_dialog()
+	if row < 0 or row >= _worlds.size():
+		return
+	var world_id: String = str(_worlds[row].get("world_id", ""))
+	_busy = true
+	_status_text = "正在删除..."
+	_status_color = STATUS_WAIT_COLOR
+	Connection.send(SaveApi.delete_request(world_id))
+	queue_redraw()
+
+
+# ── 节点操作面板（进入存档点 / 删除存档点 / 删除分支） ──────
+
+## 面板动作列表：进入存档点恒有；删除分支仅当节点有后代时显示。
+func _panel_actions() -> Array:
+	var items: Array = [
+		{"action": "enter", "label": "进入存档点", "danger": false},
+		{"action": "delete", "label": "删除存档点", "danger": true},
+	]
+	var node_id: String = _panel_node_id
+	for n in _tl_nodes:
+		if n["id"] == node_id and not (n["children"] as Array).is_empty():
+			items.append({"action": "prune", "label": "删除分支", "danger": true})
+			break
+	return items
+
+
+func _draw_action_panel() -> void:
+	"""自绘节点操作面板：标题（节点标签）+ 动作按钮（命中矩形记入 _panel_rects）。
+
+	面板贴在选中节点右上方，钳制在时间线面板可见区内。
+	"""
+	var node_pos: Vector2 = _tl_rects.get(_panel_node_id, Vector2.ZERO).get_center()
+	var node_label: String = ""
+	for n in _tl_nodes:
+		if n["id"] == _panel_node_id:
+			node_label = _tl_node_label(n)
+			break
+	var btn_w: float = 160.0
+	var btn_h: float = 26.0
+	var pad: float = 8.0
+	var title_h: float = 20.0
+	var items: Array = _panel_actions()
+	var panel_rect := Rect2(
+		node_pos + Vector2(26, -title_h - btn_h - pad * 2),
+		Vector2(btn_w + pad * 2, title_h + items.size() * btn_h + pad * 3),
+	)
+	if panel_rect.end.x > _tl_tree_rect.end.x - 4:
+		panel_rect.position.x = _tl_tree_rect.end.x - 4 - panel_rect.size.x
+	if panel_rect.end.y > _tl_tree_rect.end.y - 4:
+		panel_rect.position.y = _tl_tree_rect.end.y - 4 - panel_rect.size.y
+	draw_rect(panel_rect, PANEL_COLOR)
+	draw_rect(panel_rect, Color(1, 1, 1, 0.15), false, 1.0)
+	draw_string(_font, panel_rect.position + Vector2(pad, pad + 13), node_label,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, TL_HINT_COLOR)
+	_panel_rects.clear()
+	for i in items.size():
+		var item: Dictionary = items[i]
+		var btn_rect := Rect2(
+			panel_rect.position + Vector2(pad, pad + title_h + i * btn_h),
+			Vector2(btn_w, btn_h),
+		)
+		_panel_rects[item["action"]] = btn_rect
+		_draw_button(btn_rect, str(item["label"]),
+			_panel_hover == item["action"], item["danger"])
+
+
+func _handle_panel_action(action: String) -> void:
+	"""面板按钮分发：进入存档点直接执行；删除类打开确认弹窗。"""
+	var node_id: String = _panel_node_id
+	var world_id: String = str(_worlds[_expanded_row].get("world_id", ""))
+	if action == "enter":
+		_confirm_rollback(world_id, node_id)
+		return
+	if action == "delete" or action == "prune":
+		_open_confirm_dialog(node_id, action)
+
+
+# ── 删除确认弹窗 ──────────────────────────────────────────
+
+## 打开删除确认弹窗（模态）：确定后发送删除请求，取消/点外部/Esc 关闭。
+##
+## Args:
+##     node_id: 目标快照节点 id。
+##     action: "delete" 单点删除 / "prune" 分支裁剪。
+func _open_confirm_dialog(node_id: String, action: String) -> void:
+	var label: String = ""
+	for n in _tl_nodes:
+		if n["id"] == node_id:
+			label = _tl_node_label(n)
+			break
+	_dlg_confirm = {"node_id": node_id, "action": action, "node_label": label}
+	_dlg_hover = ""
+	queue_redraw()
+
+
+## 打开存档（世界）删除确认弹窗。
+##
+## Args:
+##     row: 目标世界行索引。
+func _open_delete_world_dialog(row: int) -> void:
+	if row < 0 or row >= _worlds.size():
+		return
+	_dlg_confirm = {"action": "delete_world", "row": row,
+		"world_name": str(_worlds[row].get("name", ""))}
+	_dlg_hover = ""
+	queue_redraw()
+
+
+func _close_confirm_dialog() -> void:
+	"""关闭删除确认弹窗（面板保持）。"""
+	_dlg_confirm = {}
+	_dlg_rects = {}
+	_dlg_rect = Rect2()
+	_dlg_hover = ""
+	queue_redraw()
+
+
+func _draw_confirm_dialog() -> void:
+	"""自绘删除确认弹窗：遮罩 + 面板 + 标题/说明 + 删除（危险）/取消按钮。"""
+	var view_size: Vector2 = size
+	var dlg_w: float = 440.0
+	var dlg_h: float = 150.0
+	var dlg_rect := Rect2((view_size.x - dlg_w) * 0.5, (view_size.y - dlg_h) * 0.5,
+		dlg_w, dlg_h)
+	_dlg_rect = dlg_rect
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.45))
+	draw_rect(dlg_rect, PANEL_COLOR)
+	draw_rect(dlg_rect, Color(1, 1, 1, 0.15), false, 1.0)
+
+	var is_prune: bool = str(_dlg_confirm.get("action", "")) == "prune"
+	var is_world: bool = str(_dlg_confirm.get("action", "")) == "delete_world"
+	var title: String
+	var desc: String
+	if is_world:
+		title = "删除存档"
+		desc = "将删除存档「%s」及其全部快照，无法撤销。" \
+			% str(_dlg_confirm.get("world_name", ""))
+	elif is_prune:
+		title = "删除分支"
+		var node_label: String = str(_dlg_confirm.get("node_label", ""))
+		desc = "将删除「%s」及其全部后代（含自动保护点），无法撤销。" % node_label
+	else:
+		title = "删除存档点"
+		var node_label2: String = str(_dlg_confirm.get("node_label", ""))
+		desc = "将删除存档点「%s」，其子节点将重接到父级，无法撤销。" % node_label2
+	draw_string(_font, dlg_rect.position + Vector2(16, 26), title,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 16, TITLE_COLOR)
+	draw_string(_font, dlg_rect.position + Vector2(16, 56), desc,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, DIM_TEXT_COLOR)
+
+	var ok_rect := Rect2(dlg_rect.position.x + dlg_w - 170, dlg_rect.position.y + dlg_h - 42, 70, 28)
+	var cancel_rect := Rect2(dlg_rect.position.x + dlg_w - 90, dlg_rect.position.y + dlg_h - 42, 70, 28)
+	_draw_button(ok_rect, "删除", _dlg_hover == "ok", true)
+	_draw_button(cancel_rect, "取消", _dlg_hover == "cancel")
+	_dlg_rects = {"ok": ok_rect, "cancel": cancel_rect}
+
+
+func _close_action_panel() -> void:
+	"""关闭节点操作面板。"""
+	_panel_node_id = ""
+	_panel_rects = {}
+	_panel_hover = ""
+	queue_redraw()
+
+
+## 行操作按钮分发：进入（读档）、重命名（打开输入框）、复制（导出请求）、删除（打开确认弹窗后发请求）。
 ##
 ## Args:
 ##     row: 世界行索引。
@@ -923,14 +1180,7 @@ func _activate_action(row: int, action: int) -> void:
 			_status_text = "正在复制存档..."
 			Connection.send(SaveApi.export_request(world_id))
 		"delete":
-			if _confirm_delete_row == row:
-				_confirm_delete_row = -1
-				_busy = true
-				_status_text = "正在删除..."
-				Connection.send(SaveApi.delete_request(world_id))
-			else:
-				_confirm_delete_row = row
-				queue_redraw()
+			_open_delete_world_dialog(row)
 
 
 # ── 输入对话框 ────────────────────────────────────────────
@@ -1050,10 +1300,10 @@ func _on_message(message: Dictionary) -> void:
 					_load_world(world_id)
 			SaveApi.RENAME, SaveApi.EXPORT:
 				_refresh_list()
-			SaveApi.DELETE:
+			SaveApi.DELETE, SaveApi.SNAPSHOT_DELETE:
 				_refresh_list()
 	elif msg_type == "error":
 		_busy = false
-		_confirm_delete_row = -1
+		_close_confirm_dialog()
 		_set_error("请求失败：%s" % SaveApi.parse_error(message))
 		queue_redraw()

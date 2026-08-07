@@ -682,6 +682,162 @@ class TestSnapshotPrune:
         assert len(quits) == 2, "live_origin（最后一个 quit）额外保护"
 
 
+class TestSnapshotRemove:
+    """快照删除原语 remove_snapshots — 血缘森林节点集合移除。
+
+    三种删除（单点 / 分支裁剪 / 保留策略）共用同一原语：
+    删除集由调用方计算，原语负责血缘重接、live_origin 回退与文件删除。
+    """
+
+    def test_remove_single_reparents_children(self, manager, world):
+        """单点删除：直接子节点上溯重接到最近存活祖先。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        s3 = manager.create_snapshot(world, suffix="manual")
+        assert manager.remove_snapshots(world, [s2]) == [s2]
+        lineage = manager.snapshot_lineage(world)
+        assert s2 not in lineage["snapshots"], "血缘条目随删除移除"
+        assert lineage["snapshots"][s3]["parent"] == s1, "子节点重接到祖父"
+        assert not os.path.isfile(
+            os.path.join(manager.snapshot_dir(world), s2)), "快照文件被删除"
+
+    def test_remove_batch_reattaches_to_nearest_survivor(self, manager, world):
+        """批量删除中间层级：子节点跨级上溯到最近存活祖先（结构性重接）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        s3 = manager.create_snapshot(world, suffix="manual")
+        s4 = manager.create_snapshot(world, suffix="manual")
+        manager.remove_snapshots(world, [s2, s3])
+        lineage = manager.snapshot_lineage(world)
+        assert s2 not in lineage["snapshots"]
+        assert s3 not in lineage["snapshots"]
+        assert lineage["snapshots"][s4]["parent"] == s1, "跨两级重接到最近存活祖先"
+
+    def test_remove_chain_head_reattaches_to_initial(self, manager, world):
+        """删除链头及其后代：剩余节点重接到世界初始（""）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        s3 = manager.create_snapshot(world, suffix="manual")
+        manager.remove_snapshots(world, [s1, s2])
+        lineage = manager.snapshot_lineage(world)
+        assert lineage["snapshots"][s3]["parent"] == ""
+
+    def test_remove_keeps_lineage_invariant(self, manager, world):
+        """删除后血缘恒满足 parent ∈ 存活集 or ''（结构性保证，非防御路径）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        manager.set_live_origin(world, s1)  # 回滚分叉
+        s3 = manager.create_snapshot(world, suffix="manual")  # 挂在 s1 下
+        s4 = manager.create_snapshot(world, suffix="manual")  # 挂在 s3 下
+        manager.remove_snapshots(world, [s1, s2, s3])
+        lineage = manager.snapshot_lineage(world)
+        for name, entry in lineage["snapshots"].items():
+            assert entry["parent"] in lineage["snapshots"] or entry["parent"] == "", \
+                f"血缘自洽被破坏: {name} → {entry['parent']}"
+        assert lineage["snapshots"][s4]["parent"] == "", "唯一幸存者重接到世界初始"
+
+    def test_remove_live_origin_walks_up_to_survivor(self, manager, world):
+        """live_origin 被删：沿 parent 链上溯到最近存活祖先。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        s3 = manager.create_snapshot(world, suffix="manual")  # live_origin = s3
+        manager.remove_snapshots(world, [s2, s3])
+        lineage = manager.snapshot_lineage(world)
+        assert lineage["live_origin"] == s1, "上溯跨过已删层级"
+
+    def test_remove_live_origin_whole_chain(self, manager, world):
+        """live_origin 所在整链删除：回退到世界初始（""）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        s3 = manager.create_snapshot(world, suffix="manual")  # live_origin = s3
+        manager.remove_snapshots(world, [s1, s2, s3])
+        lineage = manager.snapshot_lineage(world)
+        assert lineage["live_origin"] == ""
+
+    def test_remove_keeps_seq_holes(self, manager, world):
+        """seq 保留空洞：seq 是创建序号（出生序），删除不重编号。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        s3 = manager.create_snapshot(world, suffix="manual")
+        manager.remove_snapshots(world, [s2])
+        lineage = manager.snapshot_lineage(world)
+        assert lineage["snapshots"][s1]["seq"] == 0
+        assert lineage["snapshots"][s3]["seq"] == 2, "空洞保留，不重编号"
+
+    def test_remove_unknown_tolerated(self, manager, world):
+        """删除不在血缘中的快照无操作（容忍外部删文件后的清理）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        manager.create_snapshot(world, suffix="manual")
+        assert manager.remove_snapshots(
+            world, ["@2020-01-01-000000-000000-manual.ascendsave"],
+        ) == []
+        assert len(manager.snapshot_lineage(world)["snapshots"]) == 1
+
+    def test_remove_missing_file_still_cleans_lineage(self, manager, world):
+        """文件已缺失的条目仍被清理（孤儿清理并入原语）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        s2 = manager.create_snapshot(world, suffix="manual")
+        os.remove(os.path.join(manager.snapshot_dir(world), s1))
+        manager.remove_snapshots(world, [s1])
+        lineage = manager.snapshot_lineage(world)
+        assert s1 not in lineage["snapshots"], "孤儿血缘条目被清理"
+        assert lineage["snapshots"][s2]["parent"] == "", "子节点重接到祖父"
+
+
+class TestSnapshotBranchPrune:
+    """分支裁剪 — remove_snapshot_branch（节点 + 全部后代）。"""
+
+    def _build_fork(self, manager, world) -> dict:
+        """构造分叉血缘: A → B → C1 → C1a, B → C2（Issue #32 场景）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        a = manager.create_snapshot(world, suffix="manual")
+        b = manager.create_snapshot(world, suffix="manual")
+        c1 = manager.create_snapshot(world, suffix="manual")
+        c1a = manager.create_snapshot(world, suffix="manual")
+        manager.set_live_origin(world, b)
+        c2 = manager.create_snapshot(world, suffix="manual")
+        return {"a": a, "b": b, "c1": c1, "c1a": c1a, "c2": c2}
+
+    def test_prune_branch_deletes_subtree_only(self, manager, world):
+        """子树（节点 + 后代）全部删除，兄弟分支不受影响。
+
+        注：Issue #32 例子「裁剪 C1 → 删 C1、C1a、C2」有误——C2 挂 B 下
+        是 C1 的兄弟，不是后代；子树定义 = 节点 + 后代。
+        """
+        s = self._build_fork(manager, world)
+        assert manager.remove_snapshot_branch(world, s["c1"]) == [s["c1"], s["c1a"]], "C1 + C1a"
+        lineage = manager.snapshot_lineage(world)
+        assert s["c1"] not in lineage["snapshots"]
+        assert s["c1a"] not in lineage["snapshots"]
+        for name in (s["a"], s["b"], s["c2"]):
+            assert name in lineage["snapshots"], f"无关节点 {name} 保留"
+        assert lineage["snapshots"][s["c2"]]["parent"] == s["b"], "兄弟分支不受影响"
+        assert not os.path.isfile(
+            os.path.join(manager.snapshot_dir(world), s["c1"]))
+
+    def test_prune_branch_live_origin_falls_back(self, manager, world):
+        """live_origin 位于被裁子树内：回退到子树根的 parent。"""
+        s = self._build_fork(manager, world)
+        manager.set_live_origin(world, s["c1a"])
+        manager.remove_snapshot_branch(world, s["c1"])
+        lineage = manager.snapshot_lineage(world)
+        assert lineage["live_origin"] == s["b"], "回退到子树根的父节点"
+
+    def test_prune_branch_unknown_tolerated(self, manager, world):
+        """裁剪不在血缘中的节点无操作。"""
+        assert manager.remove_snapshot_branch(
+            world, "@2020-01-01-000000-000000-manual.ascendsave",
+        ) == []
+
+
 class TestWorldIdValidation:
     """world_id 格式校验：路径穿越与非法 ID 全部拒绝。"""
 

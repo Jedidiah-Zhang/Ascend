@@ -3,6 +3,8 @@
 覆盖 ascend/net/handlers/save_handler.py。
 """
 
+import os
+
 import pytest
 
 from ascend.save.manager import SaveManager
@@ -188,6 +190,91 @@ class TestSaveSnapshot:
         # 快照落在目标世界目录（而非当前世界）
         assert len(manager.list_snapshots(idle_id)) == 1
         assert len(manager.list_snapshots(loaded_id)) == 0
+
+
+class TestSaveSnapshotDelete:
+    """快照删除协议（单点 / 分支裁剪，Issue #32）。
+
+    与 save_delete（删世界）/ save_snapshot（建快照）对称的命名：
+    save_snapshot_delete = 删除快照；recursive 区分删除范围。
+    """
+
+    def _build_fork(self, manager):
+        """构造分叉血缘: A → B → C1 → C1a, B → C2。"""
+        world_id = manager.create_world("世界", seed=1).world_id
+        manager.write_state(world_id, {"clock": {"time": 100}})
+        a = manager.create_snapshot(world_id, suffix="manual")
+        b = manager.create_snapshot(world_id, suffix="manual")
+        c1 = manager.create_snapshot(world_id, suffix="manual")
+        c1a = manager.create_snapshot(world_id, suffix="manual")
+        manager.set_live_origin(world_id, b)
+        c2 = manager.create_snapshot(world_id, suffix="manual")
+        return world_id, {"a": a, "b": b, "c1": c1, "c1a": c1a, "c2": c2}
+
+    def test_delete_single(self, manager, handlers):
+        """单点删除：血缘条目与文件消失，子节点重接，返回 deleted 列表。"""
+        world_id, snaps = self._build_fork(manager)
+        resp = handlers["save_snapshot_delete"](_req("save_snapshot_delete", {
+            "world_id": world_id, "snapshot": snaps["b"], "recursive": False,
+        }))
+        assert resp["payload"]["deleted"] == [snaps["b"]]
+        lineage = manager.snapshot_lineage(world_id)
+        assert snaps["b"] not in lineage["snapshots"]
+        assert lineage["snapshots"][snaps["c1"]]["parent"] == snaps["a"], "子节点重接"
+        assert not os.path.isfile(
+            os.path.join(manager.snapshot_dir(world_id), snaps["b"]))
+
+    def test_delete_recursive_prunes_branch(self, manager, handlers):
+        """递归删除：整棵子树（节点 + 后代），兄弟分支保留。"""
+        world_id, snaps = self._build_fork(manager)
+        resp = handlers["save_snapshot_delete"](_req("save_snapshot_delete", {
+            "world_id": world_id, "snapshot": snaps["c1"], "recursive": True,
+        }))
+        assert set(resp["payload"]["deleted"]) == {snaps["c1"], snaps["c1a"]}
+        lineage = manager.snapshot_lineage(world_id)
+        assert snaps["c1"] not in lineage["snapshots"]
+        assert snaps["c1a"] not in lineage["snapshots"]
+        assert lineage["snapshots"][snaps["c2"]]["parent"] == snaps["b"]
+
+    def test_delete_recursive_false_keeps_descendants(self, manager, handlers):
+        """非递归删除：后代保留并重接到被删节点的父。"""
+        world_id, snaps = self._build_fork(manager)
+        handlers["save_snapshot_delete"](_req("save_snapshot_delete", {
+            "world_id": world_id, "snapshot": snaps["c1"], "recursive": False,
+        }))
+        lineage = manager.snapshot_lineage(world_id)
+        assert snaps["c1"] not in lineage["snapshots"]
+        assert lineage["snapshots"][snaps["c1a"]]["parent"] == snaps["b"]
+
+    def test_missing_world_id_rejected(self, handlers):
+        """缺 world_id 拒绝。"""
+        with pytest.raises(ValueError):
+            handlers["save_snapshot_delete"](_req("save_snapshot_delete", {}))
+
+    def test_unknown_world_rejected(self, handlers):
+        """目标存档不存在拒绝。"""
+        with pytest.raises(Exception):
+            handlers["save_snapshot_delete"](_req("save_snapshot_delete", {
+                "world_id": "f" * 32, "snapshot": "x.ascendsave",
+            }))
+
+    def test_unknown_snapshot_rejected(self, manager, handlers):
+        """目标快照不在血缘中拒绝（用户显式操作严格校验，非容忍清理）。"""
+        world_id = manager.create_world("世界", seed=1).world_id
+        with pytest.raises(ValueError, match="快照不存在"):
+            handlers["save_snapshot_delete"](_req("save_snapshot_delete", {
+                "world_id": world_id,
+                "snapshot": "@2020-01-01-000000-000000-manual.ascendsave",
+            }))
+
+    def test_delete_live_origin_returns_fallback(self, manager, handlers):
+        """删除 live_origin：来源回退到其父（协议层语义透传）。"""
+        world_id, snaps = self._build_fork(manager)  # live_origin = C2
+        handlers["save_snapshot_delete"](_req("save_snapshot_delete", {
+            "world_id": world_id, "snapshot": snaps["c2"], "recursive": False,
+        }))
+        lineage = manager.snapshot_lineage(world_id)
+        assert lineage["live_origin"] == snaps["b"]
 
 
 class TestManageOps:

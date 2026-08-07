@@ -45,7 +45,7 @@ func _move(sel: Control, pos: Vector2) -> void:
 
 
 func test_real_click_flow_sends_rollback_request() -> void:
-	"""真实合成点击：点节点两次 → 以快照参数发起世界进程切换。"""
+	"""真实合成点击：点节点选中 → 点面板「进入存档点」→ 以快照参数发起世界进程切换。"""
 	var sel: Control = _setup_timeline()
 	var launched: Array = []
 	sel.backend_launcher = func(args): launched.append(Array(args))
@@ -57,11 +57,15 @@ func test_real_click_flow_sends_rollback_request() -> void:
 	var node_pos: Vector2 = sel._tl_rects["snap-a"].get_center()
 	_move(sel, node_pos)
 	_click(sel, node_pos)
-	assert_eq(sel._tl_confirm_id, "snap-a", "第一次点击进入待确认")
+	assert_eq(sel._panel_node_id, "snap-a", "点击节点应选中弹出面板")
+	assert_false(sel._busy, "选中不应发请求")
 
-	_click(sel, node_pos)
-	assert_eq(sel._tl_confirm_id, "", "确认后应复位")
-	assert_true(sel._busy, "回滚请求已发出")
+	# 绘制一帧拿到面板按钮矩形
+	sel.queue_redraw()
+	await wait_frames(2)
+	assert_true(sel._panel_rects.has("enter"), "面板按钮矩形应已建立")
+	_click(sel, sel._panel_rects["enter"].get_center())
+	assert_true(sel._busy, "「进入存档点」已发出")
 	assert_eq(launched, [["--world-id", "w1", "--snapshot", "snap-a"]],
 		"回滚 = 以 world_id+snapshot 拉起世界进程")
 

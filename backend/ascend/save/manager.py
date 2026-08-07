@@ -516,44 +516,114 @@ class SaveManager:
             logger.warning("快照保留策略执行失败: %s (%s)", world_id, exc)
         return filename
 
+    def remove_snapshots(self, world_id: str, files: list[str]) -> list[str]:
+        """从血缘森林移除节点集合（快照删除的唯一原语）。
+
+        三种删除（单点 / 分支裁剪 / 保留策略）共用本方法：删除集由
+        调用方计算，本方法负责统一的结构变换：
+
+          1. 血缘重接：存活节点的 parent 在删除集时，沿 parent 链
+             上溯挂到**最近存活祖先**——结构性保证「parent ∈ 存活集
+             or ''」。区别于单级提升：批量删除中间层（如分支裁剪）
+             后不会产生指向已删节点的悬空引用。
+          2. live_origin 在删除集：同样上溯回退到最近存活祖先
+             （"" = 世界初始）。
+          3. seq 保留空洞：seq 是创建序号（出生序），删除不重编号；
+             排序与前端编号（位置序号 i+1）对空洞免疫。
+          4. 文件删除容忍缺失：血缘条目在而文件不在的孤儿清理并入
+             原语（文件跳过，条目照删）。
+
+        Args:
+            world_id: 世界 ID。
+            files: 待删快照文件名集合（不在血缘中的条目无操作）。
+
+        Returns:
+            实际删除的血缘条目文件名（排序，空列表 = 无操作）。
+        """
+        self._validate_world_id(world_id)
+        lineage = self.snapshot_lineage(world_id)
+        snaps = lineage.get("snapshots", {})
+        removed = {os.path.basename(str(f)) for f in files} & set(snaps)
+        if not removed:
+            return []
+        surviving = set(snaps) - removed
+
+        def nearest_survivor(name: str) -> str:
+            """沿 parent 链上溯到最近存活祖先（防环；悬空父链视为初始）。"""
+            seen: set[str] = set()
+            cur = str(snaps[name].get("parent", ""))
+            while cur in snaps and cur not in surviving:
+                if cur in seen:
+                    return ""
+                seen.add(cur)
+                cur = str(snaps[cur].get("parent", ""))
+            return cur if cur in surviving else ""
+
+        for name, entry in snaps.items():
+            if name not in removed and entry.get("parent") in removed:
+                entry["parent"] = nearest_survivor(name)
+        if lineage.get("live_origin", "") in removed:
+            lineage["live_origin"] = nearest_survivor(lineage["live_origin"])
+
+        sdir = self.snapshot_dir(world_id)
+        for name in removed:
+            path = os.path.join(sdir, name)
+            if os.path.isfile(path):
+                os.remove(path)
+            snaps.pop(name, None)
+        self._write_lineage(world_id, lineage)
+        deleted = sorted(removed)
+        logger.info("删除快照 %d 个: %s", len(deleted), world_id)
+        return deleted
+
+    def remove_snapshot_branch(self, world_id: str, filename: str) -> list[str]:
+        """裁剪分支：删除节点及其全部后代（子树），无关分支不受影响。
+
+        子树定义 = 节点 + 后代（血缘森林中沿 parent 链可到达该节点的
+        全体节点）；兄弟分支（parent 相同但非该节点后代）不在删除集内。
+        删除集算完统一走 remove_snapshots 原语，与保留策略（
+        prune_snapshots）无耦合。
+
+        Args:
+            world_id: 世界 ID。
+            filename: 裁剪起点快照文件名。
+
+        Returns:
+            删除的血缘条目文件名（起点不在血缘中返回空列表）。
+        """
+        self._validate_world_id(world_id)
+        lineage = self.snapshot_lineage(world_id)
+        snaps = lineage.get("snapshots", {})
+        filename = os.path.basename(str(filename))
+        if filename not in snaps:
+            return []
+        children: dict[str, list[str]] = {}
+        for name, entry in snaps.items():
+            parent = str(entry.get("parent", ""))
+            if parent in snaps:
+                children.setdefault(parent, []).append(name)
+        removed: list[str] = []
+        visited: set[str] = set()
+        stack = [filename]
+        while stack:
+            cur = stack.pop()
+            if cur in visited:
+                continue
+            visited.add(cur)
+            removed.append(cur)
+            stack.extend(children.get(cur, []))
+        return self.remove_snapshots(world_id, removed)
+
     def delete_snapshot(self, world_id: str, filename: str) -> None:
-        """删除快照并重接血缘父链（子树提升），保持血缘自洽。
+        """删除单个快照并重接血缘父链（子树提升）— 单点便捷入口。
 
-        被删节点的直接子节点 parent 提升为被删节点的 parent；
-        live_origin 指向被删节点时同步回退到其 parent（"" = 世界初始）。
-        血缘重接后持久化血缘恒满足「parent ∈ 存活集 or ''」，
-        时间线的串链回退降级为纯防御路径（suffix 过滤/外部删文件）。
-
-        文件与血缘条目均可缺失（容忍外部删文件后的清理），
-        两者皆不存在时仅记录警告。
+        实现 = remove_snapshots(world_id, [filename])：删除集为单点，
+        血缘重接、live_origin 回退与文件容忍语义由原语统一保证。
 
         Raises:
             OSError: 快照文件删除失败（血缘已先行自洽重接）。
         """
-        self._validate_world_id(world_id)
-        filename = os.path.basename(str(filename))
-        if not filename.endswith(SNAPSHOT_SUFFIX):
-            filename += SNAPSHOT_SUFFIX
-        lineage = self.snapshot_lineage(world_id)
-        snaps = lineage.get("snapshots", {})
-        entry = snaps.get(filename)
-        if isinstance(entry, dict):
-            parent = str(entry.get("parent", ""))
-            snaps.pop(filename, None)
-            # 子树提升：直接子节点改挂到被删节点的父节点
-            for child in snaps.values():
-                if isinstance(child, dict) and child.get("parent") == filename:
-                    child["parent"] = parent
-            if lineage.get("live_origin") == filename:
-                lineage["live_origin"] = parent
-            self._write_lineage(world_id, lineage)
-        path = os.path.join(self.snapshot_dir(world_id), filename)
-        if os.path.isfile(path):
-            os.remove(path)
-            logger.info("删除快照: %s → %s", world_id, filename)
-        elif not isinstance(entry, dict):
-            logger.warning("快照不存在（文件与血缘条目均缺失）: %s/%s",
-                           world_id, filename)
+        self.remove_snapshots(world_id, [filename])
 
     def prune_snapshots(
         self, world_id: str, *,
@@ -568,7 +638,8 @@ class SaveManager:
           - live_origin 指向的快照永不淘汰（当前时间点的来源，
             淘汰会让时间线的「当前点」悬空）；
           - 血缘条目存在但文件已缺失的孤儿条目一并清理（重接父链）。
-        淘汰经 delete_snapshot 逐个重接血缘父链，血缘保持自洽。
+        淘汰列表算齐后统一经 remove_snapshots 原语删除（血缘重接、
+        live_origin 回退、文件容忍由原语结构性保证）。
 
         Returns:
             淘汰数量。
@@ -610,9 +681,8 @@ class SaveManager:
                 names.remove(live_origin)
             to_delete.extend(names[:max(0, len(names) - keep)])
 
-        for filename in to_delete:
-            self.delete_snapshot(world_id, filename)
         if to_delete:
+            self.remove_snapshots(world_id, to_delete)
             logger.info("快照保留策略淘汰 %d 个: %s", len(to_delete), world_id)
         return len(to_delete)
 

@@ -10,6 +10,7 @@
     save_list   → {worlds: [...], snapshots: [...], current_world_id}
     save_create {name, seed?} → {world_id}
     save_snapshot {world_id} → {file}
+    save_snapshot_delete {world_id, snapshot, recursive} → {deleted: [file]}
     save_rename {world_id, name} → {world_id, name}
     save_delete {world_id} → {}
     save_export {world_id} → {world_id}
@@ -33,6 +34,7 @@ extends RefCounted
 const LIST: String = "save_list"
 const CREATE: String = "save_create"
 const SNAPSHOT: String = "save_snapshot"
+const SNAPSHOT_DELETE: String = "save_snapshot_delete"
 const RENAME: String = "save_rename"
 const DELETE: String = "save_delete"
 const EXPORT: String = "save_export"
@@ -59,6 +61,28 @@ static func snapshot_request(world_id: String) -> Dictionary:
 		"type": "request", "request_type": SNAPSHOT,
 		"payload": {"world_id": world_id},
 	}
+
+
+static func snapshot_delete_request(world_id: String, snapshot: String, recursive: bool = false) -> Dictionary:
+	"""删除快照请求（单点删除或分支裁剪，Issue #32）。
+
+	recursive=false 单点删除（后代重接到被删节点的父）；
+	recursive=true 分支裁剪（节点 + 全部后代一并删除）。
+	"""
+	return {
+		"type": "request", "request_type": SNAPSHOT_DELETE,
+		"payload": {"world_id": world_id, "snapshot": snapshot, "recursive": recursive},
+	}
+
+
+static func parse_deleted(payload: Dictionary) -> Array:
+	"""解析 save_snapshot_delete 响应的 deleted 列表（已删快照文件名）。"""
+	var raw: Array = payload.get("deleted", [])
+	var result: Array = []
+	for item in raw:
+		if item is String and not item.is_empty():
+			result.append(item)
+	return result
 
 
 static func rename_request(world_id: String, name: String) -> Dictionary:

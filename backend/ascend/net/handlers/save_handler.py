@@ -8,6 +8,8 @@
                                   current_world_id: 当前加载世界}}
     save_create     {payload: {name, seed?}} → {payload: {world_id}}
     save_snapshot   {payload: {world_id}} → {payload: {file}}
+    save_snapshot_delete {payload: {world_id, snapshot, recursive}}
+                    → {payload: {deleted: [file]}}   # 单点 / 分支裁剪
     save_rename     {payload: {world_id, name}} → {payload: {name}}
     save_delete     {payload: {world_id}} → {payload: {}}
     save_export     {payload: {world_id}} → {payload: {world_id: 新ID}}
@@ -151,10 +153,43 @@ def make_save_handlers(save_manager, game_engine=None):
                 {"world_id": new_id},
             )
 
+    def handle_save_snapshot_delete(msg: dict) -> dict:
+        """删除快照：单点（recursive=False，后代重接）或分支裁剪
+        （recursive=True，节点 + 全部后代）。
+
+        语义（Issue #32）：血缘森林节点集合移除——删除集由本处
+        计算（单点或子树），血缘重接 / live_origin 回退 / seq 空洞
+        由 SaveManager.remove_snapshots 原语统一保证。
+
+        与内部清理（保留策略）不同，用户显式操作严格校验：
+        目标快照不在血缘中即报错（而非静默容忍）。
+        """
+        payload = _payload(msg)
+        world_id = str(payload.get("world_id", "")).strip()
+        snapshot = str(payload.get("snapshot", "")).strip()
+        recursive = bool(payload.get("recursive", False))
+        if not world_id:
+            raise ValueError("缺少 world_id")
+        if not snapshot:
+            raise ValueError("缺少 snapshot")
+        save_manager.get_manifest(world_id)  # 校验目标存在性
+        lineage = save_manager.snapshot_lineage(world_id)
+        if snapshot not in lineage.get("snapshots", {}):
+            raise ValueError(f"快照不存在: {snapshot}")
+        if recursive:
+            deleted = save_manager.remove_snapshot_branch(world_id, snapshot)
+        else:
+            deleted = save_manager.remove_snapshots(world_id, [snapshot])
+        return make_response(
+            "save_snapshot_delete",
+            {"deleted": deleted},
+        )
+
     return {
         "save_list": handle_save_list,
         "save_create": handle_save_create,
         "save_snapshot": handle_save_snapshot,
+        "save_snapshot_delete": handle_save_snapshot_delete,
         "save_rename": handle_save_rename,
         "save_delete": handle_save_delete,
         "save_export": handle_save_export,

@@ -95,19 +95,19 @@ func test_timeline_includes_auto_protection_nodes() -> void:
 	assert_true(ids.has("a1"), "自动保护点应参与时间线（分支延续）")
 	assert_eq(auto_ids, ["a1"])
 
-	# 自动节点同样可回滚（两次点击确认）
+	# 自动节点同样可进入（选中 → 面板「进入存档点」）
 	var launched: Array = []
 	sel.backend_launcher = func(args): launched.append(Array(args))
 	sel._activate_timeline_node("a1")
-	assert_eq(sel._tl_confirm_id, "a1")
-	sel._activate_timeline_node("a1")
+	assert_eq(sel._panel_node_id, "a1")
+	sel._handle_panel_action("enter")
 	assert_true(sel._busy, "自动节点应可回滚")
 	assert_string_contains(sel._status_text, "回滚")
 	assert_eq(launched, [["--world-id", "w1", "--snapshot", "a1"]])
 
 
 func test_draw_timeline_does_not_crash() -> void:
-	"""分叉/回滚确认态/悬停态下绘制不应报错（渲染冒烟）。"""
+	"""分叉/选中态/悬停态下绘制不应报错（渲染冒烟）。"""
 	var sel: Control = _make_select()
 	sel._apply_worlds(_payload([
 		{"world_id": "w1", "name": "世界A", "game_time": 500, "live_origin": "s1"},
@@ -117,7 +117,7 @@ func test_draw_timeline_does_not_crash() -> void:
 	]))
 	sel._toggle_timeline(0)
 	sel._tl_hover_id = "s2"
-	sel._tl_confirm_id = "s1"
+	sel._panel_node_id = "s1"
 	sel.queue_redraw()
 	await wait_frames(2)
 	sel._close_timeline()
@@ -126,10 +126,10 @@ func test_draw_timeline_does_not_crash() -> void:
 	pass_test("时间线各状态绘制无崩溃")
 
 
-# ── 回滚交互 ──────────────────────────────────────────────
+# ── 进入存档点（操作面板） ────────────────────────────────
 
-func test_snapshot_click_needs_confirmation_twice() -> void:
-	"""回滚须两次点击确认（防误触），第二次发起世界进程切换（带 --snapshot）。"""
+func test_snapshot_enter_via_action_panel() -> void:
+	"""点击快照 = 选中弹出操作面板（不发请求）；点「进入存档点」发起回滚（带 --snapshot）。"""
 	var sel: Control = _make_select()
 	var launched: Array = []
 	sel.backend_launcher = func(args): launched.append(Array(args))
@@ -141,11 +141,11 @@ func test_snapshot_click_needs_confirmation_twice() -> void:
 	sel._toggle_timeline(0)
 
 	sel._activate_timeline_node("s1")
-	assert_eq(sel._tl_confirm_id, "s1", "第一次点击进入待确认")
-	assert_false(sel._busy, "第一次点击不应发请求")
+	assert_eq(sel._panel_node_id, "s1", "点击节点应选中并弹出面板")
+	assert_false(sel._busy, "选中不应发请求")
 
-	sel._activate_timeline_node("s1")
-	assert_true(sel._busy, "第二次点击应发出回滚请求")
+	sel._handle_panel_action("enter")
+	assert_true(sel._busy, "「进入存档点」应发出回滚请求")
 	assert_true(sel._entering_world, "应进入世界切换流程")
 	assert_string_contains(sel._status_text, "回滚")
 	assert_eq(launched, [["--world-id", "w1", "--snapshot", "s1"]],
@@ -259,12 +259,12 @@ func test_legend_rows_built_and_clickable() -> void:
 	await wait_frames(2)
 	assert_eq(sel._tl_legend_rects.size(), 3, "图例 = 当前点 + 2 快照")
 
-	# 点击图例行 s2 → 进入确认（同节点点击）
+	# 点击图例行 s2 → 选中弹出操作面板（同节点点击）
 	sel.backend_launcher = func(_args): pass
 	sel._handle_click(sel._tl_legend_rects["s2"].get_center())
-	assert_eq(sel._tl_confirm_id, "s2", "图例点击应选中节点")
-	sel._handle_click(sel._tl_legend_rects["s2"].get_center())
-	assert_true(sel._busy, "图例再次点击应发出回滚")
+	assert_eq(sel._panel_node_id, "s2", "图例点击应选中节点")
+	sel._handle_panel_action("enter")
+	assert_true(sel._busy, "面板「进入存档点」应发出回滚")
 
 
 # ── 拖拽平移 + 滚轮缩放（长树） ───────────────────────────

@@ -33,6 +33,32 @@ func test_snapshot_request() -> void:
 	assert_eq(req["payload"]["world_id"], "w1")
 
 
+func test_snapshot_delete_request_single() -> void:
+	var req: Dictionary = SaveApi.snapshot_delete_request("w1", "snap1.ascendsave")
+	assert_eq(req["request_type"], SaveApi.SNAPSHOT_DELETE)
+	assert_eq(req["payload"], {
+		"world_id": "w1",
+		"snapshot": "snap1.ascendsave",
+		"recursive": false,
+	})
+
+
+func test_snapshot_delete_request_recursive() -> void:
+	var req: Dictionary = SaveApi.snapshot_delete_request("w1", "snap1.ascendsave", true)
+	assert_eq(req["payload"]["recursive"], true)
+
+
+func test_parse_deleted() -> void:
+	assert_eq(SaveApi.parse_deleted({"deleted": ["a.ascendsave", "b.ascendsave"]}),
+		["a.ascendsave", "b.ascendsave"])
+
+
+func test_parse_deleted_empty_and_junk() -> void:
+	assert_eq(SaveApi.parse_deleted({}), [])
+	assert_eq(SaveApi.parse_deleted({"deleted": ["ok.ascendsave", 42, "", null]}),
+		["ok.ascendsave"])
+
+
 func test_rename_request() -> void:
 	var req: Dictionary = SaveApi.rename_request("w1", "新名")
 	assert_eq(req["payload"], {"world_id": "w1", "name": "新名"})
