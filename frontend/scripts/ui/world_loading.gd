@@ -37,13 +37,6 @@ const ERROR_COLOR: Color = Color(0.95, 0.50, 0.45)
 const PROGRESS_FILL_COLOR: Color = Color(0.24, 0.48, 0.80, 0.9)
 const PROGRESS_TRACK_COLOR: Color = Color(1, 1, 1, 0.10)
 
-## 阶段切换后的快速补间窗口（秒）：该窗口内进度快速增长到新刻度
-const PROGRESS_CATCHUP_SEC: float = 0.6
-## 快速补间速率（每秒比例）：一格约 0.57s 到位，视觉"快速增长"
-const PROGRESS_CATCHUP_PER_SEC: float = 0.25
-## 阶段内缓慢爬升速率（每秒比例）：视觉活性，不匀速、不越格
-const PROGRESS_DRIFT_PER_SEC: float = 0.01
-
 const TITLE_FONT_SIZE: int = 40
 const STAGE_FONT_SIZE: int = 20
 const BUTTON_FONT_SIZE: int = 18
@@ -83,10 +76,8 @@ var _error_reason: String = ""
 var _elapsed: float = 0.0
 ## 已见生成阶段的最大索引（-1 = 未收到阶段）；进度目标刻度按此推进
 var _stage_index: int = -1
-## 当前显示的进度比例（平滑补间后的值，见 _advance_display_progress）
-var _display_ratio: float = 0.0
-## 快速补间剩余时间（秒）；阶段切换时重置
-var _catchup_left: float = 0.0
+## 平滑补间推进器（与 world_loading_overlay 同款，见 progress_lerp.gd）
+var _lerp: ProgressLerp = ProgressLerp.new()
 var _handed_off: bool = false
 
 ## 重试按钮矩形（_draw 时更新，_input 时命中）
@@ -146,8 +137,7 @@ func _retry() -> void:
 	_stage_text = "正在启动世界进程..."
 	_elapsed = 0.0
 	_stage_index = -1
-	_display_ratio = 0.0
-	_catchup_left = 0.0
+	_lerp.reset()
 	queue_redraw()
 	backend_launcher.call(Connection.backend_args)
 
@@ -176,7 +166,7 @@ func _on_message(message: Dictionary) -> void:
 			var idx: int = WorldStageLabels.index_of(stage)
 			if idx > _stage_index:
 				_stage_index = idx
-				_catchup_left = PROGRESS_CATCHUP_SEC
+				_lerp.start_catchup()
 			queue_redraw()
 		"world_initialized":
 			_handed_off = true
@@ -233,19 +223,17 @@ func _progress_target() -> float:
 
 ## 当前显示的进度比例（平滑补间值，非目标刻度）。
 func _progress_ratio() -> float:
-	return _display_ratio
+	return _lerp.display_ratio
 
 
-## 显示进度推进：阶段切换后的快速窗口内以高速补间增长（视觉"快速
-## 增长"），平时缓慢爬升（视觉活性）；单方向逼近目标刻度，不越格。
+## 显示进度推进：目标刻度取阶段进度与超时兜底（阶段事件缺失时按已等待
+## 时间缓慢填充）的较大者；阶段切换后的快速窗口内以高速补间增长，平时
+## 缓慢爬升（视觉活性）；单方向逼近目标刻度，不越格。
 func _advance_display_progress(delta: float) -> void:
-	var fast: bool = _catchup_left > 0.0
-	_catchup_left = maxf(0.0, _catchup_left - delta)
-	var rate: float = (
-		PROGRESS_CATCHUP_PER_SEC if fast else PROGRESS_DRIFT_PER_SEC) * delta
-	var next: float = clampf(_display_ratio + rate, 0.0, _progress_target())
-	if not is_equal_approx(next, _display_ratio):
-		_display_ratio = next
+	_lerp.target_ratio = _progress_target()
+	var prev: float = _lerp.display_ratio
+	_lerp.advance(delta)
+	if not is_equal_approx(_lerp.display_ratio, prev):
 		queue_redraw()
 
 

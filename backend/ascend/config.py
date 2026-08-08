@@ -23,7 +23,7 @@ SERVER_PORT: int = 9081
 MAX_MESSAGE_SIZE: int = 16 * 1024 * 1024  # 16 MiB
 
 # 地图瓦片生成线程池大小
-TILE_WORKERS: int = 4
+TILE_WORKERS: int = 8
 
 # ═══════════════════════════════════════════════════════════════
 # Time — 时间常量（本模块为 TICK_RATE 唯一定义源）

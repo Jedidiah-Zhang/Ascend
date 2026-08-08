@@ -31,8 +31,7 @@ func _make_page() -> Array:
 	page._stage_text = "正在启动世界进程..."
 	page._elapsed = 0.0
 	page._stage_index = -1
-	page._display_ratio = 0.0
-	page._catchup_left = 0.0
+	page._lerp.reset()
 	page._handed_off = false
 
 	var routed: Array = []

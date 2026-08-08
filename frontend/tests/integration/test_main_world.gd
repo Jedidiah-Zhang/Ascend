@@ -173,7 +173,7 @@ func test_world_initialized_sets_birth_and_requests_state() -> void:
 	assert_eq(main._birth_chunk, Vector2i(5, 3))
 	assert_eq(main._player_pos.x, 5.0 * CS)
 	assert_false(main._world_visible, "地形未就绪前世界不可见")
-	assert_true(main._loading_label.visible, "地形就绪前应保持加载提示")
+	assert_true(main._loading_overlay.visible, "地形就绪前应保持加载提示")
 
 
 func test_world_initialized_resets_previous_world_state() -> void:
@@ -198,34 +198,71 @@ func test_terrain_ready_shows_world_after_neighborhood_loaded() -> void:
 	main._set_birth_chunk(4, 4)
 
 	assert_false(main._world_visible)
-	assert_true(main._loading_label.visible, "地形加载中应显示加载提示")
+	assert_true(main._loading_overlay.visible, "地形加载中应显示加载提示")
 
 	# 只加载部分邻域 → 仍不可见
 	main._stream_machine.mark_built(Vector2i(3, 3))
 	main._check_terrain_ready()
 	assert_false(main._world_visible, "邻域未全加载前不可见")
 
-	# 补全 3×3 邻域 → 就绪
+	# 补全 3×3 邻域 → 就绪：进度条进入补满动画，补满前世界不可见
 	for dx in range(-1, 2):
 		for dy in range(-1, 2):
 			main._stream_machine.mark_built(Vector2i(4 + dx, 4 + dy))
 	main._check_terrain_ready()
 
-	assert_true(main._world_visible, "邻域加载完成后世界可见")
-	assert_false(main._loading_label.visible, "就绪后应隐藏加载提示")
+	assert_false(main._world_visible, "进度条未补满前世界不可见（等待补满动画）")
+	assert_true(main._loading_overlay.visible, "补满动画期间加载层保持显示")
+
+	# 推进补满动画到 100% → completed 信号 → 显示世界与玩家
+	main._loading_overlay._process(10.0)
+
+	assert_true(main._world_visible, "进度条补满后世界可见")
+	assert_false(main._loading_overlay.visible, "就绪后应隐藏加载提示")
 	assert_true(main._player != null, "就绪后应创建玩家节点")
 	assert_true(main._player.visible, "就绪后玩家应可见")
 
 
 func test_terrain_ready_force_timeout_shows_world() -> void:
-	"""超时兜底：区块永不就绪时强制显示世界。"""
+	"""超时兜底：区块永不就绪时强制显示世界（同样先补满进度条）。"""
 	var main: Node3D = _make_world_instance()
 	main._set_birth_chunk(1, 1)
 
 	main._check_terrain_ready(true)
 
-	assert_true(main._world_visible, "超时兜底应强制就绪")
-	assert_false(main._loading_label.visible)
+	assert_false(main._world_visible, "超时兜底也应先补满进度条收尾")
+	assert_true(main._loading_overlay.visible, "补满收尾期间加载层保持显示")
+
+	# 推进补满动画到 100% → completed 信号 → 显示世界与玩家
+	main._loading_overlay._process(10.0)
+
+	assert_true(main._world_visible, "补满后超时兜底应强制就绪")
+	assert_false(main._loading_overlay.visible)
+	assert_true(main._player != null)
+	assert_true(main._player.visible)
+
+
+func test_completion_fallback_forces_world_visible() -> void:
+	"""completed 信号异常（覆盖层隐藏/销毁）时兜底计时器强制收尾。
+
+	正常路径：覆盖层补满 → completed → _finish_world_visible。若覆盖层
+	异常导致信号永不发出，COMPLETION_FALLBACK_SEC 兜底计时器随
+	main._process 倒计时归零后强制收尾，防玩家永久卡在加载层。
+	"""
+	var main: Node3D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+
+	# 就绪并进入补满收尾；模拟覆盖层异常：隐藏 → _process 停走 → 信号不发
+	main._check_terrain_ready(true)
+	assert_false(main._world_visible, "补满收尾未完成前世界不可见")
+	main._loading_overlay.visible = false
+
+	# 兜底计时器接近归零，main._process 推进后强制收尾
+	main._completion_fallback_sec = 0.01
+	main._process(0.05)
+
+	assert_true(main._world_visible, "兜底计时器归零应强制收尾")
+	assert_true(main._player != null, "强制收尾也应创建玩家")
 	assert_true(main._player.visible)
 
 
@@ -1192,18 +1229,18 @@ func test_inflight_limit_keeps_received() -> void:
 	"""在飞构建达到上限：其余 RECEIVED chunk 保持等待，不超限提交。"""
 	var main: Node3D = _make_async_world_instance()
 	main._set_birth_chunk(0, 0)
-	# 两个 chunk 先提交构建（占满 MAX_BUILD_INFLIGHT=2）
-	for cx in [0, 1]:
+	# 前 MAX_BUILD_INFLIGHT 个 chunk 先提交构建（占满在飞上限）
+	for cx in range(main.MAX_BUILD_INFLIGHT):
 		main._stream_machine.collect_field_requests(Vector2i(cx, 0), 0)
 		main._stream_machine.select_full_requests(func(k): return k == Vector2i(cx, 0), 10)
 		_inject_full_chunk_response(main, cx, 0)
-	assert_eq(main._building.size(), 2, "两个构建应在飞")
+	assert_eq(main._building.size(), main.MAX_BUILD_INFLIGHT, "在飞上限个构建应在飞")
 
-	# 第三个 chunk 到达 RECEIVED：在飞已满 → 保持 RECEIVED 不提交
-	var key3 := Vector2i(2, 0)
+	# 下一个 chunk 到达 RECEIVED：在飞已满 → 保持 RECEIVED 不提交
+	var key3 := Vector2i(main.MAX_BUILD_INFLIGHT, 0)
 	main._stream_machine.collect_field_requests(key3, 0)
 	main._stream_machine.select_full_requests(func(k): return k == key3, 10)
-	_inject_full_chunk_response(main, 2, 0)
+	_inject_full_chunk_response(main, key3.x, 0)
 
 	assert_eq(main._stream_machine.get_state(key3), main.ChunkState.RECEIVED,
 		"在飞上限未满前不应提交第三个构建")

@@ -178,7 +178,7 @@ var _build_mutex: Mutex = Mutex.new()
 ## 网格构建器（测试可注入同步实现；_ready 默认 WorkerThreadPool 异步）
 var mesh_builder: Callable = Callable()
 ## 在飞构建上限（超出保持 RECEIVED 下帧重试，防传送后瞬间提交几十个任务）
-const MAX_BUILD_INFLIGHT: int = 2
+const MAX_BUILD_INFLIGHT: int = 4
 
 ## 性能计时（微秒）
 var _stream_us: int = 0
@@ -199,17 +199,24 @@ var _save_file: String = ""
 ## 移动上报计时器（节流）
 var _move_report_timer: float = 0.0
 
-## 世界生成中提示（地形就绪前显示，_world_visible 后隐藏）
-var _loading_label: Label
+## 世界生成中全屏加载动画层（地形就绪前显示，_world_visible 后隐藏）：
+## 不透明背景盖住 3D 世界，玩家看不到地形加载过程
+var _loading_overlay: WorldLoadingOverlay
 
 ## 出生点附近地形是否已加载完成（就绪后才显示玩家/隐藏加载提示）
 var _world_visible: bool = false
+## 就绪后是否已请求进度条补满（防重复触发 completed 收尾）
+var _loading_completed: bool = false
 ## 地形就绪等待计时（超时强制显示，防后端异常时玩家永久卡住）
 var _terrain_ready_timer: float = 0.0
+## 补满收尾兜底计时（>0 时倒计时，归零强制收尾防玩家卡在加载层）
+var _completion_fallback_sec: float = 0.0
 ## 就绪判定半径：出生 chunk 周围 radius×radius 圈全部加载视为就绪
 const TERRAIN_READY_RADIUS: int = 1
 ## 地形就绪等待超时（秒）
 const TERRAIN_READY_TIMEOUT: float = 8.0
+## 补满收尾兜底（秒）：进度条补满动画异常（completed 信号未触发）时强制收尾
+const COMPLETION_FALLBACK_SEC: float = 3.0
 
 ## 当前游戏时间
 var _game_hour: float = 6.0
@@ -249,7 +256,7 @@ func _ready() -> void:
 
 	# 玩家节点不在 _ready 创建：须等后端世界就绪（出生点到达）后才创建，
 	# 与后端语义一致（服务模式/读档重建期间不存在世界与玩家）
-	_create_loading_label()
+	_create_loading_overlay()
 
 	_setup_debug_overlay()
 	_configure_camera()
@@ -350,23 +357,24 @@ func _create_player() -> void:
 	print("MainWorld3D: player created")
 
 
-func _create_loading_label() -> void:
-	"""世界生成中的居中提示（出生点到达后隐藏）。"""
+func _create_loading_overlay() -> void:
+	"""世界生成/地形加载中的全屏加载动画层（地形就绪后隐藏）。
+
+	不透明背景完全盖住 3D 世界：进入存档后玩家看不到地形 chunk
+	流式加载的过程，出生点就绪、玩家归位后直接看到加载完成的世界。
+	"""
 	var layer := CanvasLayer.new()
 	layer.name = "LoadingLayer"
-	layer.layer = 50
-	var label := Label.new()
-	label.name = "WorldLoadingLabel"
-	label.text = "正在生成世界..."
-	label.add_theme_font_override("font", FontUtils.get_mono_font())
-	label.add_theme_font_size_override("font_size", 18)
-	label.add_theme_color_override("font_color", Color(0.9, 0.9, 0.95))
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	layer.add_child(label)
+	layer.layer = 400
+	var overlay := WorldLoadingOverlay.new()
+	overlay.name = "WorldLoadingOverlay"
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.completed.connect(_finish_world_visible)
+	layer.add_child(overlay)
 	add_child(layer)
-	_loading_label = label
+	_loading_overlay = overlay
+	overlay.set_text("正在生成世界...")
 
 
 ## 查询世界坐标处的地面海拔（来自已缓存 chunk 的高程数组）。
@@ -409,9 +417,10 @@ func _set_birth_chunk(cx: int, cy: int) -> void:
 	_camera_focus = _player_pos
 	_apply_camera_transform()
 	# 地形就绪前保持加载提示（玩家节点在 _check_terrain_ready 就绪后创建）
-	if _loading_label:
-		_loading_label.text = "正在加载地形..."
-		_loading_label.visible = true
+	if _loading_overlay:
+		_loading_overlay.set_text("正在加载地形...")
+		_loading_overlay.set_stage("chunks")
+		_loading_overlay.visible = true
 	print("MainWorld3D: birth chunk (%d,%d), player at (%.0f, %.0f)" % [cx, cy, _player_pos.x, _player_pos.z])
 
 
@@ -420,22 +429,56 @@ func _check_terrain_ready(force: bool = false) -> void:
 
 	判定：出生 chunk 的 TERRAIN_READY_RADIUS 邻域全部 BUILT；
 	force=true（超时兜底）跳过判定直接就绪，防后端异常时玩家永久卡住。
+	两条路径都先补满进度条到 100%（completed 信号）后才显示世界与玩家
+	——加载画面始终以满格收尾，不会半截消失。
 	"""
 	if _world_visible or not _has_birth:
 		return
 	if not force:
 		if not _stream_machine.all_built(_birth_chunk, TERRAIN_READY_RADIUS):
+			_update_loading_progress()
 			return
+	_begin_completion()
+
+
+## 进度条补满收尾（幂等）：补满 100% 并停留片刻后显示世界。
+## 超时兜底与正常就绪共用：若 completed 信号异常未触发（覆盖层隐藏/销毁等），
+## COMPLETION_FALLBACK_SEC 兜底计时器强制收尾，防玩家永久卡在加载层。
+func _begin_completion() -> void:
+	if _loading_completed:
+		return
+	_loading_completed = true
+	_completion_fallback_sec = COMPLETION_FALLBACK_SEC
+	if _loading_overlay:
+		_loading_overlay.complete()
+	else:
+		_finish_world_visible()
+
+
+## 世界可见收尾（幂等）：正常路径由进度条补满信号触发，超时兜底直接调用。
+func _finish_world_visible() -> void:
+	if _world_visible:
+		return
 	_world_visible = true
-	if _loading_label:
-		_loading_label.visible = false
+	if _loading_overlay:
+		_loading_overlay.visible = false
 	_ensure_player()
-	_player.position = _player_pos
 	_player.visible = true
 	_update_player_ground()
 	_camera_focus = _player_pos
 	_apply_camera_transform()
 	print("MainWorld3D: 出生点地形就绪，世界可见")
+
+
+## 按出生点邻域已构建 chunk 数推进加载进度条（90% → 100% 区间）：
+## 每挂载一个 chunk 即更新一次，地形加载接近完成时进度条逐渐补满。
+func _update_loading_progress() -> void:
+	if _loading_overlay == null or not _has_birth:
+		return
+	var side: int = TERRAIN_READY_RADIUS * 2 + 1
+	var total: int = side * side
+	var built: int = _stream_machine.built_count(_birth_chunk, TERRAIN_READY_RADIUS)
+	_loading_overlay.set_terrain_progress(float(built) / float(total))
 
 
 # ── 世界就绪事件（世界进程的就绪信号） ────────────────────
@@ -446,9 +489,10 @@ func _on_world_progress(data: Dictionary) -> void:
 	阶段文案单源：WorldStageLabels（与 world_loading 共用，
 	对应后端 ContinentGenerator.STAGE_*）。
 	"""
-	if not _has_birth and _loading_label:
+	if not _has_birth and _loading_overlay:
 		var stage: String = str(data.get("stage", ""))
-		_loading_label.text = WorldStageLabels.label_for(stage)
+		_loading_overlay.set_text(WorldStageLabels.label_for(stage))
+		_loading_overlay.set_stage(stage)
 
 
 func _on_world_initialized(data: Dictionary) -> void:
@@ -479,7 +523,9 @@ func _reset_world_state() -> void:
 	"""清空旧世界的 chunk 状态/数据与地形节点（世界重建后旧数据失效）。"""
 	_has_birth = false
 	_world_visible = false
+	_loading_completed = false
 	_terrain_ready_timer = 0.0
+	_completion_fallback_sec = 0.0
 	_birth_chunk = Vector2i.ZERO
 	_reset_authority_state()
 	_stream_machine.reset()
@@ -489,6 +535,10 @@ func _reset_world_state() -> void:
 	if _terrain_parent:
 		for child in _terrain_parent.get_children():
 			child.queue_free()
+	if _loading_overlay:
+		_loading_overlay.reset()
+		_loading_overlay.set_text("正在加载世界...")
+		_loading_overlay.visible = true
 
 
 # ── 调试数据 getter（供 DebugSection 自行拉取）────────────
@@ -693,6 +743,11 @@ func _process(delta: float) -> void:
 		_terrain_ready_timer += delta
 		if _terrain_ready_timer >= TERRAIN_READY_TIMEOUT:
 			_check_terrain_ready(true)
+		# 补满收尾兜底：completed 信号异常未触发时强制收尾，防卡在加载层
+		if _completion_fallback_sec > 0.0:
+			_completion_fallback_sec -= delta
+			if _completion_fallback_sec <= 0.0:
+				_finish_world_visible()
 
 	_stream_chunks()
 	_process_snap(delta)

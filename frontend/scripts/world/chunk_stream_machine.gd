@@ -155,11 +155,17 @@ func forget(key: Vector2i) -> void:
 
 ## 就绪判定：center 的 radius 邻域全部 BUILT。
 func all_built(center: Vector2i, radius: int) -> bool:
+	return built_count(center, radius) == (radius * 2 + 1) * (radius * 2 + 1)
+
+
+## center 的 radius 邻域内 BUILT 数量（0 ~ 边长²）。
+func built_count(center: Vector2i, radius: int) -> int:
+	var n: int = 0
 	for dx in range(-radius, radius + 1):
 		for dy in range(-radius, radius + 1):
-			if get_state(center + Vector2i(dx, dy)) != ChunkState.BUILT:
-				return false
-	return true
+			if get_state(center + Vector2i(dx, dy)) == ChunkState.BUILT:
+				n += 1
+	return n
 
 
 ## 调试统计：{loaded: BUILT 数, cached: RECEIVED/CONSTRUCTING 数, pending: 请求中数}。
