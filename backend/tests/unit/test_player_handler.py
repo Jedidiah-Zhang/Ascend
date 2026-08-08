@@ -77,11 +77,21 @@ class TestPlayerMove:
         Assert:
             响应回显该位置，service 状态更新。
         """
-        msg = {"payload": {"x": 10.5, "y": 20.25}}
+        msg = {"payload": {"x": 10.5, "y": 20.25, "seq": 7}}
         resp = handlers["player_move"](msg)
         assert resp["request_type"] == "player_move"
-        assert resp["payload"] == {"x": 10.5, "y": 20.25}
+        assert resp["payload"] == {"x": 10.5, "y": 20.25, "seq": 7}
         assert service.position == (10.5, 20.25)
+
+    def test_move_echoes_seq(self, handlers, service):
+        """上报携带 seq → 原样回传（前端按序对账回声 vs 钳制）。"""
+        resp = handlers["player_move"]({"payload": {"x": 1.0, "y": 2.0, "seq": 42}})
+        assert resp["payload"]["seq"] == 42
+
+    def test_move_without_seq_omits_seq(self, handlers, service):
+        """无 seq 的上报 → 响应不回传 seq 字段（player_state 兼容）。"""
+        resp = handlers["player_move"]({"payload": {"x": 1.0, "y": 2.0}})
+        assert "seq" not in resp["payload"]
 
     @pytest.mark.parametrize("payload", [
         {},                                  # 缺字段
@@ -93,10 +103,14 @@ class TestPlayerMove:
         "not-a-dict",                        # payload 非字典
     ])
     def test_move_invalid_ignored(self, handlers, service, payload):
-        """非法上报被忽略，回传当前权威位置（前端据此纠正）。"""
+        """非法上报被忽略，回传当前权威位置（前端据此纠正）。
+
+        携带的 seq 仍原样回传，前端可清除对账记录并按权威位置纠正。
+        """
         before = service.position
         resp = handlers["player_move"]({"payload": payload})
-        assert resp["payload"] == {"x": before[0], "y": before[1]}
+        assert resp["payload"]["x"] == before[0]
+        assert resp["payload"]["y"] == before[1]
         assert service.position == before
 
     def test_move_int_coords_ok(self, handlers, service):

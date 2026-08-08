@@ -167,6 +167,19 @@ var _chunks: Dictionary = {}
 ## 缓存从 MeshLibrary 提取的材质: item_id → Material
 var _terrain_materials: Dictionary = {}
 
+## ── 异步网格构建 ──────────────────────────────────────────
+## 后台构建在飞表: {Vector2i(cx, cy): 提交序号}。序号自增：重连重建的
+## 新任务序号覆盖旧任务，陈旧结果（状态不符/序号失配）一律丢弃。
+var _building: Dictionary = {}
+var _build_seq: int = 0
+## 后台任务完成结果队列 [key, mesh, seq]（Mutex 保护，主线程 poll 挂载）
+var _build_results: Array = []
+var _build_mutex: Mutex = Mutex.new()
+## 网格构建器（测试可注入同步实现；_ready 默认 WorkerThreadPool 异步）
+var mesh_builder: Callable = Callable()
+## 在飞构建上限（超出保持 RECEIVED 下帧重试，防传送后瞬间提交几十个任务）
+const MAX_BUILD_INFLIGHT: int = 2
+
 ## 性能计时（微秒）
 var _stream_us: int = 0
 
@@ -221,6 +234,7 @@ const LIGHTING_UPDATE_INTERVAL: float = 0.5
 ## 节点就绪：连接终端命令/连接状态/消息信号，挂载暂停菜单保存回调，
 ## 创建加载提示与地形容器引用，并初始化相机与环境。
 func _ready() -> void:
+	mesh_builder = _default_mesh_builder
 	_terminal.remote_command_submitted.connect(_on_terminal_command)
 
 	Connection.connection_established.connect(_on_connected)
@@ -242,7 +256,8 @@ func _ready() -> void:
 	_configure_environment()
 
 
-## 节点退出：断开 Connection 与暂停菜单信号，防止悬挂回调。
+## 节点退出：断开 Connection 与暂停菜单信号，防止悬挂回调；清空后台构建
+## 结果队列（工作线程仍在跑的任务结果直接丢弃，防止实例释放后挂载悬垂）。
 func _exit_tree() -> void:
 	if Connection.connection_established.is_connected(_on_connected):
 		Connection.connection_established.disconnect(_on_connected)
@@ -252,6 +267,9 @@ func _exit_tree() -> void:
 		Connection.message_received.disconnect(_on_message)
 	if _pause_menu and _pause_menu.save_requested.is_connected(_on_pause_save_requested):
 		_pause_menu.save_requested.disconnect(_on_pause_save_requested)
+	_build_mutex.lock()
+	_build_results.clear()
+	_build_mutex.unlock()
 
 
 ## 配置正交相机：size 控制可视范围，near/far 紧贴地形 slab（阴影范围 = 相机视锥），
@@ -382,6 +400,7 @@ func _set_birth_chunk(cx: int, cy: int) -> void:
 		return
 	_has_birth = true
 	_birth_chunk = Vector2i(cx, cy)
+	_reset_authority_state()
 	# 与后端权威出生点约定一致：出生 chunk 原点（PlayerService.birth_position）
 	_player_pos.x = float(cx * CHUNK_SIZE)
 	_player_pos.z = float(cy * CHUNK_SIZE)
@@ -462,6 +481,7 @@ func _reset_world_state() -> void:
 	_world_visible = false
 	_terrain_ready_timer = 0.0
 	_birth_chunk = Vector2i.ZERO
+	_reset_authority_state()
 	_stream_machine.reset()
 	_chunks.clear()
 	if _player:
@@ -578,26 +598,18 @@ func _update_player_ground() -> void:
 		_player.position = _player_pos
 
 
-## 构建并挂载单个地形 chunk 网格（已 BUILT 或节点存在时跳过；材质未就绪保持
-## RECEIVED 由流循环重试——不触发任何网络请求，消除旧版无限重发循环）。
-## 网格无 surface 时仅标记 BUILT；首块覆盖玩家的 chunk 记录地面高度；结束后触发就绪检查。
+## 挂载已构建完成的 chunk 网格（主线程）：创建节点、标记 BUILT、记录首块
+## 地面高度并触发就绪检查。网格由后台任务构建完成，此处只做场景树操作（几毫秒）。
+## 状态非 CONSTRUCTING（卸载/断线降级后）或节点已存在时不挂载。
 ##
 ## Args:
-##     cx/cy: chunk 坐标（决定节点名与挂载偏移）。
-##     terrain: chunk 的 terrain_id 数组（长度 CHUNK_SIZE²）。
-##     elevation: chunk 的高程数组（长度 CHUNK_SIZE²）。
-func _build_terrain_chunk(cx: int, cy: int, terrain: PackedInt32Array, elevation: PackedFloat32Array) -> void:
-	const CS: int = CHUNK_SIZE
-	var key := Vector2i(cx, cy)
-	if _stream_machine.get_state(key) == ChunkState.BUILT \
-			or _terrain_parent.has_node(NodePath("Chunk_%d_%d" % [cx, cy])):
+##     key: chunk 坐标（决定节点名与挂载偏移）。
+##     mesh: 主线程组装的 ArrayMesh（无 surface 时仅标记 BUILT）。
+func _mount_built_chunk(key: Vector2i, mesh: ArrayMesh) -> void:
+	if _stream_machine.get_state(key) != ChunkState.CONSTRUCTING:
 		return
-
-	var materials := _lazy_load_materials()
-	if materials.is_empty():
+	if _terrain_parent.has_node(NodePath("Chunk_%d_%d" % [key.x, key.y])):
 		return
-
-	var mesh: ArrayMesh = TerrainMeshBuilder.build(terrain, elevation, materials)
 
 	if mesh.get_surface_count() == 0:
 		_stream_machine.mark_built(key)
@@ -605,18 +617,18 @@ func _build_terrain_chunk(cx: int, cy: int, terrain: PackedInt32Array, elevation
 		return
 
 	var mi := MeshInstance3D.new()
-	mi.name = "Chunk_%d_%d" % [cx, cy]
+	mi.name = "Chunk_%d_%d" % [key.x, key.y]
 	mi.mesh = mesh
-	mi.position = Vector3(float(cx * CS), 0.0, float(cy * CS))
+	mi.position = Vector3(float(key.x * CHUNK_SIZE), 0.0, float(key.y * CHUNK_SIZE))
 
 	_terrain_parent.add_child(mi)
 	_stream_machine.mark_built(key)
-	print("MainWorld3D: chunk (%d,%d) — %d surfaces" % [cx, cy, mesh.get_surface_count()])
+	print("MainWorld3D: chunk (%d,%d) — %d surfaces" % [key.x, key.y, mesh.get_surface_count()])
 
 	# 首次 chunk 覆盖玩家时，记录地面高度（玩家节点统一由
 	# _check_terrain_ready 在出生点地形就绪后创建显示）
 	if not _camera_grounded:
-		if _world_to_chunk(_player_pos.x, _player_pos.z) == Vector2i(cx, cy):
+		if _world_to_chunk(_player_pos.x, _player_pos.z) == key:
 			_camera_grounded = true
 			var ground_y := _get_ground_elevation_at(_player_pos)
 			if not is_nan(ground_y):
@@ -683,6 +695,7 @@ func _process(delta: float) -> void:
 			_check_terrain_ready(true)
 
 	_stream_chunks()
+	_process_snap(delta)
 	_process_input(delta)
 
 	_weather_query_timer += delta
@@ -739,6 +752,27 @@ func _apply_camera_transform() -> void:
 	if _sun_light:
 		_sun_light.directional_shadow_max_distance = _compute_shadow_coverage(_last_sun_altitude)
 		_sun_light.position = _camera_focus + Vector3(0, 200, 0)
+
+
+## 推进平滑吸附过渡：每帧按本帧完成比例从"当前实际位置"（含 _process_input
+## 已叠加的输入位移）向目标推进，输入不丢失；结束后清除过渡状态。
+func _process_snap(delta: float) -> void:
+	if _snap_time < 0.0:
+		return
+	_snap_time += delta
+	if _snap_time >= SNAP_DURATION:
+		# 结束帧：精确落在目标（权威位置），输入位移由过渡起点保留
+		_player_pos.x = _snap_target.x
+		_player_pos.z = _snap_target.z
+		_snap_time = -1.0
+		return
+	# 中间帧：剩余差距 × 本帧完成比例（t 线性推进 → 每帧推进比例递增，
+	# 指数逼近曲线，平滑单调）
+	var prev_t := clampf((_snap_time - delta) / SNAP_DURATION, 0.0, 1.0)
+	var t := clampf(_snap_time / SNAP_DURATION, 0.0, 1.0)
+	var weight := (t - prev_t) / maxf(1.0 - prev_t, 0.0001)
+	var remaining := _snap_target - _player_pos
+	_player_pos += remaining * weight
 
 
 ## 处理移动与交互输入：相机朝向投影到水平面得前进/右向，位移玩家（Shift 加速），
@@ -802,13 +836,20 @@ func _on_terminal_command(command: String) -> void:
 
 
 ## 上报玩家当前位置为 player_move 请求（世界未就绪时跳过；后端裁决并可能钳制越界）。
+## 携带递增 seq 并记录上报位置：响应按序回传 seq，供回声判定精确对齐（见
+## _apply_authoritative_position）；记录超限丢最旧。
 func _send_player_move() -> void:
 	if not _has_birth:
 		return
+	_move_report_seq += 1
+	var seq: int = _move_report_seq
+	_report_seq_pos[seq] = Vector2(_player_pos.x, _player_pos.z)
+	while _report_seq_pos.size() > REPORT_SEQ_MAX:
+		_report_seq_pos.erase(_report_seq_pos.keys()[0])
 	Connection.send({
 		"type": "request",
 		"request_type": "player_move",
-		"payload": {"x": _player_pos.x, "y": _player_pos.z},
+		"payload": {"x": _player_pos.x, "y": _player_pos.z, "seq": seq},
 	})
 
 
@@ -886,6 +927,7 @@ func _handle_event(message: Dictionary) -> void:
 		_game_minute = int(payload.get("game_minute", _game_minute))
 
 	if event_type == "player_teleported":
+		_reset_authority_state()
 		var tx: float = float(data.get("x", _player_pos.x))
 		var tz: float = float(data.get("y", _player_pos.z))
 		_player_pos.x = tx
@@ -960,7 +1002,9 @@ func _handle_response(message: Dictionary) -> void:
 				chunk["terrain"] = terr
 				chunk["elevation"] = elev
 				chunk["slope"] = slope
-				_build_terrain_chunk(cx, cy, terr, elev)
+				# 提交后台构建；随后立即轮询结果（同步注入的构建器此时已完成）
+				_try_build_received_chunk(key)
+				_poll_build_results()
 		"get_weather":
 			var weathers: Array = payload.get("weathers", [])
 			if weathers.size() > 0:
@@ -1028,20 +1072,86 @@ func _resolve_save_number(payload: Dictionary) -> void:
 		_pause_menu.show_save_complete(number)
 
 
+## 权威纠正容差（tiles）：裁决偏离时，权威与本地差距小于该值视为微小偏差，
+## 认可本地位置不纠正。
+const SNAP_TOLERANCE: float = 2.0
+## 硬吸阈值：差距 ≥ SNAP_HARD_THRESHOLD → 立即硬吸（传送/读档复位/初始定位）；
+## 差距在 [SNAP_TOLERANCE, SNAP_HARD_THRESHOLD) 间 → 平滑过渡（无瞬跳）。
+const SNAP_HARD_THRESHOLD: float = 8.0
+## 平滑过渡时长（秒）
+const SNAP_DURATION: float = 0.15
+## 回声容差（tiles）：权威位置与该次上报位置的逐分量差 ≤ 该值视为后端原样
+## 回显（认可），而非裁决偏离——浮点往返无损，理论误差为 0，仅防御性放宽。
+const SNAP_ECHO_TOLERANCE: float = 0.01
+## 上报 seq 记录上限：超出丢弃最旧（响应滞后超过该数量时回声判定失效，
+## 回退距离判定，仍能正确钳制纠正，只是丢失一次零纠正机会）
+const REPORT_SEQ_MAX: int = 32
+
+## 平滑吸附过渡：from → target（XZ 平面），_snap_time < 0 表示无过渡
+var _snap_from: Vector3 = Vector3.ZERO
+var _snap_target: Vector3 = Vector3.ZERO
+var _snap_time: float = -1.0
+
+## 上报 seq 记录（seq → 上报位置）：响应与上报一一对应（TCP 有序），
+## 响应携带的 seq 精确对齐到那次上报，据此区分"回声认可"（零纠正）
+## 与"钳制偏离"（距离三档纠正）——变速/掉头期间权威位置仍是某次上报
+## 位置，位移窗口错位不再误判；历史超限丢最旧，滞后恢复后回退距离判定。
+var _report_seq_pos: Dictionary = {}
+var _move_report_seq: int = 0
+
+
+## 重置对账基准与吸附过渡：传送/出生/世界重建后，在途过渡与未回应的
+## 上报记录均已失效，必须清空，否则会被插值"撤销"或被误判偏离。
+func _reset_authority_state() -> void:
+	_snap_time = -1.0
+	_report_seq_pos.clear()
+
+
 func _apply_authoritative_position(payload: Dictionary) -> void:
-	"""按后端权威位置吸附玩家（player_state / player_move 响应 / 快照）。"""
+	"""按后端权威位置纠正玩家（player_state / player_move 响应 / 快照）。
+
+	客户端预测 + 服务器对账：player_move 响应携带上报 seq（TCP 有序，
+	响应与上报一一对应），先按 seq 对齐判定后端是否认可了那次上报：
+	  - 认可（回声）：权威位置 ≈ 该次上报位置 → 零纠正——正常滞后
+	    （变速/掉头期间位移窗口错位也成立），消除每 0.2s 一次的回跳；
+	  - 未认可（钳制/复位，或 player_state/快照等无 seq 响应）：
+	    真实裁决偏离 → 按距离三档纠正：
+	      < SNAP_TOLERANCE      微小偏差，认可本地；
+	      ≥ SNAP_HARD_THRESHOLD 硬吸（传送/读档复位/初始定位）；
+	      中间                  启动 SNAP_DURATION 平滑过渡，由 _process 推进。
+	"""
 	var ax: float = float(payload.get("x", _player_pos.x))
 	var az: float = float(payload.get("y", _player_pos.z))
-	if ax == _player_pos.x and az == _player_pos.z:
+
+	# 回声判定：权威位置 ≈ 该 seq 的上报位置 → 后端认可，零纠正
+	var seq: int = int(payload.get("seq", -1))
+	if seq >= 0 and _report_seq_pos.has(seq):
+		var reported: Vector2 = _report_seq_pos[seq]
+		_report_seq_pos.erase(seq)
+		if absf(ax - reported.x) <= SNAP_ECHO_TOLERANCE \
+				and absf(az - reported.y) <= SNAP_ECHO_TOLERANCE:
+			return
+
+	var dx := ax - _player_pos.x
+	var dz := az - _player_pos.z
+	var dist_sq := dx * dx + dz * dz
+	if dist_sq < SNAP_TOLERANCE * SNAP_TOLERANCE:
 		return
-	_player_pos.x = ax
-	_player_pos.z = az
-	_update_player_ground()
-	_camera_focus = _player_pos
-	_apply_camera_transform()
-	_ensure_player()
-	# 地形就绪前不显示玩家（出生点加载完成后由 _check_terrain_ready 统一显示）
-	_player.visible = _world_visible
+	if dist_sq >= SNAP_HARD_THRESHOLD * SNAP_HARD_THRESHOLD:
+		_snap_time = -1.0
+		_player_pos.x = ax
+		_player_pos.z = az
+		_update_player_ground()
+		_camera_focus = _player_pos
+		_apply_camera_transform()
+		_ensure_player()
+		# 地形就绪前不显示玩家（出生点加载完成后由 _check_terrain_ready 统一显示）
+		_player.visible = _world_visible
+		return
+	# 中等差距：平滑过渡（期间输入照常叠加，只做位置补偿）
+	_snap_from = _player_pos
+	_snap_target = Vector3(ax, _player_pos.y, az)
+	_snap_time = 0.0
 
 
 ## ── 流式 chunk 管理 ──────────────────────────────────────
@@ -1072,7 +1182,7 @@ func _stream_chunks() -> void:
 	if not coords.is_empty():
 		_send_chunk_request(coords, false)
 
-	# 2. RECEIVED → 尝试构建（材质就绪即建，失败保持 RECEIVED 下帧重试）
+	# 2. RECEIVED → 提交后台构建（CONSTRUCTING；材质就绪即提交，失败保持 RECEIVED 下帧重试）
 	for key in _stream_machine.collect_build_candidates():
 		_try_build_received_chunk(key)
 
@@ -1081,10 +1191,15 @@ func _stream_chunks() -> void:
 			func(k): return _chunks.get(k) is Dictionary, MAX_PENDING):
 		_send_chunk_request([[key.x, key.y]], true)
 
+	# 4. 挂载后台构建完成的结果（陈旧结果在此丢弃）
+	_poll_build_results()
+
 	_stream_us = Time.get_ticks_usec() - t0
 
 
-## 尝试构建 RECEIVED chunk：数据完整且材质就绪才构建；任一不满足保持 RECEIVED。
+## 提交 RECEIVED chunk 的后台构建：数据完整且材质就绪才提交（→ CONSTRUCTING）；
+## 任一不满足保持 RECEIVED（材质未就绪由流循环下帧重试，数据不全重新入队）。
+## 在飞上限（MAX_BUILD_INFLIGHT）内才提交，超出保持 RECEIVED 下帧重试。
 func _try_build_received_chunk(key: Vector2i) -> void:
 	var chunk = _chunks.get(key)
 	if not (chunk is Dictionary):
@@ -1095,7 +1210,57 @@ func _try_build_received_chunk(key: Vector2i) -> void:
 		# 数据不全（异常响应）：重新入队完整请求而非死等
 		_stream_machine.on_full_response(key, false)
 		return
-	_build_terrain_chunk(key.x, key.y, terr, elev)
+	if _building.has(key):
+		return
+	if _building.size() >= MAX_BUILD_INFLIGHT:
+		return
+	var materials := _lazy_load_materials()
+	if materials.is_empty():
+		return
+	_build_seq += 1
+	_building[key] = _build_seq
+	_stream_machine.mark_constructing(key)
+	mesh_builder.call(key, terr, elev, _build_seq)
+
+
+## 默认网格构建器：WorkerThreadPool 后台构建（纯数据计算，不碰场景树、
+## RenderingServer 与材质），完成后结果入队（Mutex 保护），
+## 由主线程 _poll_build_results 组 mesh 并挂载。材质就绪检查在提交处完成
+## （_try_build_received_chunk），builder 不接收材质——材质永不跨线程。
+func _default_mesh_builder(key: Vector2i, terr: PackedInt32Array, elev: PackedFloat32Array,
+		seq: int) -> void:
+	WorkerThreadPool.add_task(_mesh_build_task.bind(key, terr, elev, seq))
+
+
+## 后台构建任务：只生成几何数据（TerrainMeshBuilder.build_data，纯数组运算），
+## 不创建 ArrayMesh、不接触材质——材质与 RenderingServer 仅在主线程
+## _poll_build_results 中使用，规避退出时工作线程访问已销毁的 RenderingServer。
+## 契约：terr/elev 的引用主线程绝不原地修改（只整体替换/清除 chunk 条目），
+## PackedArray 写时复制保证工作线程读取期间数据不被破坏。
+func _mesh_build_task(key: Vector2i, terr: PackedInt32Array, elev: PackedFloat32Array,
+		seq: int) -> void:
+	var data: Dictionary = TerrainMeshBuilder.build_data(terr, elev)
+	_build_mutex.lock()
+	_build_results.append([key, data, seq])
+	_build_mutex.unlock()
+
+
+## 主线程轮询后台构建结果并挂载：序号失配（重连后新任务取代）或状态已非
+## CONSTRUCTING（卸载/断线降级）的陈旧结果丢弃；有效结果主线程组装
+## ArrayMesh（make_mesh + 材质）后交 _mount_built_chunk。
+func _poll_build_results() -> void:
+	_build_mutex.lock()
+	var results := _build_results.duplicate()
+	_build_results.clear()
+	_build_mutex.unlock()
+	for r in results:
+		var key: Vector2i = r[0]
+		var data: Dictionary = r[1]
+		var seq: int = r[2]
+		if _building.get(key) != seq:
+			continue  # 陈旧任务（重建后新任务已取代）
+		_building.erase(key)
+		_mount_built_chunk(key, TerrainMeshBuilder.make_mesh(data, _lazy_load_materials()))
 
 
 ## 计算流式加载半径（chunk 格数）：可视半径 ×1.5 向上取整，下限为 STREAM_MARGIN。
@@ -1162,13 +1327,15 @@ func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> vo
 			print("MainWorld3D: unloaded chunk (%d,%d)" % [cx, cy])
 
 
-## 彻底遗忘一个 chunk：释放地形节点、清状态与数据（→ UNKNOWN）。
+## 彻底遗忘一个 chunk：释放地形节点、清状态与数据（→ UNKNOWN）；
+## 在飞构建登记一并清除（其结果到达时按序号失配丢弃）。
 func _forget_chunk(key: Vector2i) -> void:
 	var node_name := "Chunk_%d_%d" % [key.x, key.y]
 	if _terrain_parent and _terrain_parent.has_node(NodePath(node_name)):
 		_terrain_parent.get_node(NodePath(node_name)).queue_free()
 	_stream_machine.forget(key)
 	_chunks.erase(key)
+	_building.erase(key)
 
 
 ## 服务端错误处理：打印错误信息；快照请求失败时清空回查文件并在暂停菜单显示失败原因。

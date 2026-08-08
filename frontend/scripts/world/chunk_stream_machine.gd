@@ -21,7 +21,7 @@ extends RefCounted
 
 
 ## chunk 生命周期状态（单一状态机）
-enum ChunkState { UNKNOWN, FIELD_REQUESTED, TILE_REQUESTED, RECEIVED, BUILT }
+enum ChunkState { UNKNOWN, FIELD_REQUESTED, TILE_REQUESTED, RECEIVED, CONSTRUCTING, BUILT }
 
 
 ## 状态映射: {Vector2i(cx, cy): ChunkState}
@@ -114,6 +114,7 @@ func should_drop_response(key: Vector2i) -> bool:
 ## 断线降级（连接恢复后状态可续）：
 ##   - FIELD_REQUESTED 且无字段数据（字段在途）→ 移除（UNKNOWN，重连后重新请求）
 ##   - FIELD_REQUESTED 有数据 / TILE_REQUESTED → 降级 FIELD_REQUESTED（重连后重发完整请求）
+##   - CONSTRUCTING → 降级 RECEIVED（数据仍在，重连后重新提交构建）
 ##
 ## Args:
 ##     has_field_data: Callable(key) -> bool，判定字段数据是否已缓存。
@@ -130,9 +131,16 @@ func on_disconnect(has_field_data: Callable) -> Array:
 					dropped.append(key)
 			ChunkState.TILE_REQUESTED:
 				_states[key] = ChunkState.FIELD_REQUESTED
+			ChunkState.CONSTRUCTING:
+				_states[key] = ChunkState.RECEIVED
 			_:
 				pass
 	return dropped
+
+
+## 标记构建中（网格任务已提交后台线程，等待挂载）。
+func mark_constructing(key: Vector2i) -> void:
+	_states[key] = ChunkState.CONSTRUCTING
 
 
 ## 标记构建完成（网格已挂载）。
@@ -154,7 +162,7 @@ func all_built(center: Vector2i, radius: int) -> bool:
 	return true
 
 
-## 调试统计：{loaded: BUILT 数, cached: RECEIVED 数, pending: 请求中数}。
+## 调试统计：{loaded: BUILT 数, cached: RECEIVED/CONSTRUCTING 数, pending: 请求中数}。
 func counts() -> Dictionary:
 	var loaded: int = 0
 	var cached: int = 0
@@ -163,7 +171,7 @@ func counts() -> Dictionary:
 		match _states[key]:
 			ChunkState.BUILT:
 				loaded += 1
-			ChunkState.RECEIVED:
+			ChunkState.RECEIVED, ChunkState.CONSTRUCTING:
 				cached += 1
 			ChunkState.FIELD_REQUESTED, ChunkState.TILE_REQUESTED:
 				pending += 1

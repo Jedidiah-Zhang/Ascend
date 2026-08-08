@@ -139,6 +139,31 @@ func test_build_candidates_and_mark_built() -> void:
 	assert_eq(m.collect_build_candidates().size(), 0, "BUILT 不再待构建")
 
 
+func test_mark_constructing_excludes_from_candidates() -> void:
+	"""CONSTRUCTING（构建任务在飞）不应再被收集提交（防重复提交）。"""
+	var m := _make()
+	var key := Vector2i(0, 0)
+	m.collect_field_requests(key, 0)
+	m.on_full_response(key, true)
+	m.mark_constructing(key)
+	assert_eq(m.get_state(key), ChunkStreamMachine.ChunkState.CONSTRUCTING)
+	assert_eq(m.collect_build_candidates().size(), 0, "CONSTRUCTING 不重复提交")
+	assert_eq(m.counts(), {"loaded": 0, "cached": 1, "pending": 0},
+		"CONSTRUCTING 计入 cached（数据已到，等待挂载）")
+
+
+func test_disconnect_demotes_constructing_to_received() -> void:
+	"""断线：构建在途降级 RECEIVED（数据保留，重连后重新提交构建）。"""
+	var m := _make()
+	var key := Vector2i(0, 0)
+	m.collect_field_requests(key, 0)
+	m.on_full_response(key, true)
+	m.mark_constructing(key)
+	m.on_disconnect(func(k): return false)
+	assert_eq(m.get_state(key), ChunkStreamMachine.ChunkState.RECEIVED,
+		"构建在途断线后应回 RECEIVED 等待重建")
+
+
 # ── 断线降级 ──────────────────────────────────────────────
 
 func test_disconnect_demotes_states() -> void:

@@ -41,22 +41,20 @@ const AO_TOP_MIN: float = 0.55
 const AO_SIDE_FACTOR: float = 0.68
 
 
-## 构建 chunk 合并 ArrayMesh：逐 tile 生成顶面（带 AO）与可见侧壁，按 item_id 分组 surface。
+## 构建 chunk 网格几何数据（后台线程安全）：逐 tile 生成顶面（带 AO）与可见侧壁，
+## 按 item_id 分组纯数据缓冲。不创建 ArrayMesh、不接触 RenderingServer/材质。
 ##
 ## Args:
 ##     terrain: 长度 CHUNK_SIZE² 的 terrain_id 数组（行优先，越界补 0）。
 ##     elevation: 长度 CHUNK_SIZE² 的海拔数组（行优先）。
-##     materials: item_id → Material 材质表（key 决定 surface 分组与材质）。
 ##
 ## Returns:
-##     合并后的 ArrayMesh（无可见面时 surface 数为 0）。
-static func build(terrain: PackedInt32Array, elevation: PackedFloat32Array, materials: Dictionary) -> ArrayMesh:
-	var mesh := ArrayMesh.new()
-	var CS: int = CHUNK_SIZE
-
+##     item_id → 完整 arrays 缓冲 的字典（供主线程 make_mesh 组装）。
+static func build_data(terrain: PackedInt32Array, elevation: PackedFloat32Array) -> Dictionary:
 	var data: Dictionary = {}
-	for item_id in materials:
+	for item_id in TERRAIN_TO_MESH:
 		data[item_id] = _Collector.new()
+	var CS: int = CHUNK_SIZE
 
 	for z in CS:
 		for x in CS:
@@ -76,7 +74,7 @@ static func build(terrain: PackedInt32Array, elevation: PackedFloat32Array, mate
 			var wy := roundi(elev)
 			var c: _Collector = data.get(item_id)
 			if c == null:
-				continue  # 该 item_id 无材质/收集器（调用方表缺失）：跳过而非崩溃
+				continue  # 该 item_id 无收集器（表缺失）：跳过而非崩溃
 			var b := Vector3(float(x), float(wy), float(z))
 
 			var ao_top: Color = _compute_top_ao(x, z, wy, elevation, CS)
@@ -88,12 +86,11 @@ static func build(terrain: PackedInt32Array, elevation: PackedFloat32Array, mate
 			if _side_visible(x, z,  1,  0, wy, terrain, elevation, CS): c.add_quad(b, FACE.east, ao_side)
 			if _side_visible(x, z, -1,  0, wy, terrain, elevation, CS): c.add_quad(b, FACE.west, ao_side)
 
-	var surf := 0
+	var packed: Dictionary = {}
 	for item_id in data:
 		var c: _Collector = data[item_id]
 		if c.is_empty():
 			continue
-
 		var arrays: Array = []
 		arrays.resize(Mesh.ARRAY_MAX)
 		arrays[Mesh.ARRAY_VERTEX] = c.v
@@ -101,12 +98,33 @@ static func build(terrain: PackedInt32Array, elevation: PackedFloat32Array, mate
 		arrays[Mesh.ARRAY_TEX_UV] = c.u
 		arrays[Mesh.ARRAY_COLOR] = c.c
 		arrays[Mesh.ARRAY_INDEX] = c.i
+		packed[item_id] = arrays
+	return packed
 
-		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-		mesh.surface_set_material(surf, materials[item_id])
+
+## 主线程组装 chunk 合并 ArrayMesh：按 item_id 分组建 surface 并挂材质。
+## 必须主线程调用（内部创建 ArrayMesh、调用 RenderingServer）。
+##
+## Args:
+##     data: build_data 的返回（item_id → arrays）。
+##     materials: item_id → Material 材质表（key 决定 surface 分组与材质）。
+##
+## Returns:
+##     合并后的 ArrayMesh（无可见面时 surface 数为 0）。
+static func make_mesh(data: Dictionary, materials: Dictionary) -> ArrayMesh:
+	var mesh := ArrayMesh.new()
+	var surf := 0
+	for item_id in data:
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, data[item_id])
+		if materials.has(item_id):
+			mesh.surface_set_material(surf, materials[item_id])
 		surf += 1
-
 	return mesh
+
+
+## 便捷组合（同步路径/测试）：build_data + make_mesh。
+static func build(terrain: PackedInt32Array, elevation: PackedFloat32Array, materials: Dictionary) -> ArrayMesh:
+	return make_mesh(build_data(terrain, elevation), materials)
 
 
 ## 计算顶面 AO：四邻海拔高于本格时按高度差（上限 3 级）逐级削弱亮度。

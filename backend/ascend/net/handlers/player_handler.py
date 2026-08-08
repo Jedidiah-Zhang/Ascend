@@ -7,8 +7,9 @@
     player_state 请求 → {payload: {entity_id, x, y}}
         查询"玩家控制的实体"——核心职责是告知前端本地控制的 entity_id
         （实体全量位置由 entity_snapshot 统一提供），x/y 为便捷冗余
-    player_move  请求 {payload: {x, y}} → {payload: {x, y}}
-        上报本地位置，返回裁决后的权威位置（壳子阶段原样接受）
+    player_move  请求 {payload: {x, y, seq}} → {payload: {x, y, seq}}
+        上报本地位置，返回裁决后的权威位置（壳子阶段原样接受）；
+        seq 为前端上报序号，原样回传，供前端按序对账（回声 vs 钳制）
 """
 
 from ascend.log import get_logger
@@ -68,12 +69,14 @@ def make_player_handler(player_service):
         """处理 player_move 请求：上报位置 → 权威裁决 → 回传。
 
         非法坐标忽略上报，返回当前权威位置（前端据此纠正）。
+        seq（若携带）原样回传——TCP 有序且响应与上报一一对应，
+        前端据此精确识别"回声认可"与"钳制偏离"，避免位移窗口错位误判。
 
         Args:
-            msg: 请求消息，payload 含 "x"、"y"。
+            msg: 请求消息，payload 含 "x"、"y"（可选 "seq"）。
 
         Returns:
-            {type, request_type, payload: {x, y}}，为裁决后权威位置。
+            {type, request_type, payload: {x, y, seq?}}，为裁决后权威位置。
         """
         payload = msg.get("payload", {})
         if not isinstance(payload, dict):
@@ -85,9 +88,13 @@ def make_player_handler(player_service):
             ax, ay = player_service.position
         else:
             ax, ay = player_service.move_to(x, y)
+        resp = {"x": ax, "y": ay}
+        seq = payload.get("seq")
+        if isinstance(seq, int) and not isinstance(seq, bool):
+            resp["seq"] = seq
         return make_response(
                 "player_move",
-                {"x": ax, "y": ay},
+                resp,
             )
 
     return {

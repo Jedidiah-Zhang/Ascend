@@ -42,6 +42,11 @@ func _make_world_instance() -> Node3D:
 	# 帧间继续发请求，污染共享 Connection._send_queue（回归：队列里
 	# 出现前一个测试实例发出的完整请求）。
 	instance.process_mode = Node.PROCESS_MODE_DISABLED
+	# 注入同步网格构建器：构建结果立即入队（_poll_build_results 挂载），
+	# 测试无需等待后台线程，断言与旧同步语义一致。契约与异步任务相同：
+	# 入队纯数据（build_data），由 _poll_build_results 在主线程组 mesh。
+	instance.mesh_builder = func(key, terr, elev, seq):
+		instance._build_results.append([key, TerrainMeshBuilder.build_data(terr, elev), seq])
 	return instance as Node3D
 
 
@@ -835,3 +840,377 @@ func test_entity_snapshot_consumes_player_entity() -> void:
 	assert_eq(main._player_entity_id, "plr1", "应识别 controller=PLAYER 的实体")
 	assert_eq(main._player_pos.x, 30.0)
 	assert_eq(main._player_pos.z, 40.0)
+
+
+# ── 权威位置容差（SNAP_TOLERANCE） ─────────────────────────
+
+func test_player_move_small_delta_keeps_local_position() -> void:
+	"""权威位置与本地差距小于容差（RTT 内继续移动的距离）→ 不吸附。
+
+	回归：旧实现无条件吸附导致每 0.2s 一次回跳（橡皮筋）。
+	"""
+	var main: Node3D = _make_world_instance()
+	main._player_pos = Vector3(10.0, 0.0, 20.0)
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "player_move",
+		"payload": {"x": 10.5, "y": 20.0},
+	})
+
+	assert_eq(main._player_pos.x, 10.0, "0.5 tile 预测误差不应吸附")
+	assert_eq(main._player_pos.z, 20.0)
+
+
+func test_player_move_clamped_position_snapped() -> void:
+	"""权威差距超阈值（真钳制/传送）→ 平滑过渡到权威位置，后端权威保留。
+
+	回归：旧实现直接瞬跳吸附导致每 0.2s 一次回跳（橡皮筋）；中等差距
+	改为 SNAP_DURATION 平滑过渡，不再瞬跳。
+	"""
+	var main: Node3D = _make_world_instance()
+	main._player_pos = Vector3(10.0, 0.0, 20.0)
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "player_move",
+		"payload": {"x": 5.0, "y": 20.0},
+	})
+
+	assert_true(main._snap_time >= 0.0, "中等差距（5 tiles）应启动平滑过渡")
+	assert_eq(main._snap_target.x, 5.0, "过渡目标应为权威位置")
+	assert_eq(main._player_pos.x, 10.0, "过渡启动瞬间不应瞬跳")
+
+	# 推进过渡：半程应位于起点与目标之间
+	main._process_snap(0.075)
+	assert_almost_eq(main._player_pos.x, 7.5, 0.5, "半程应接近中点")
+	# 推进到完成：应到达权威位置并清除过渡
+	main._process_snap(0.075)
+	assert_eq(main._player_pos.x, 5.0, "过渡完成后应到达权威位置")
+	assert_true(main._snap_time < 0.0, "过渡完成后应清除状态")
+
+
+func test_player_move_large_delta_snaps_immediately() -> void:
+	"""差距 ≥ SNAP_HARD_THRESHOLD（传送/读档复位）→ 立即硬吸。"""
+	var main: Node3D = _make_world_instance()
+	main._player_pos = Vector3(10.0, 0.0, 20.0)
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "player_move",
+		"payload": {"x": 1.0, "y": 2.0},
+	})
+
+	assert_eq(main._player_pos.x, 1.0, "大差距（>8 tiles）应直接吸附")
+	assert_eq(main._player_pos.z, 2.0)
+	assert_true(main._snap_time < 0.0, "硬吸不应进入过渡状态")
+
+
+func test_snap_transition_restarts_on_new_authority() -> void:
+	"""过渡期间新权威响应到达 → 从当前位置重新过渡（平滑连续纠正）。"""
+	var main: Node3D = _make_world_instance()
+	main._player_pos = Vector3(10.0, 0.0, 20.0)
+	main._handle_response({
+		"type": "response", "request_type": "player_move",
+		"payload": {"x": 5.0, "y": 20.0},
+	})
+	main._process_snap(0.05)  # 过渡进行中（当前位置 ≈ 8.3）
+
+	main._handle_response({
+		"type": "response", "request_type": "player_move",
+		"payload": {"x": 4.0, "y": 20.0},
+	})
+
+	assert_almost_eq(main._snap_from.x, main._player_pos.x, 0.01,
+		"新过渡应从当前插值位置开始（无跳变）")
+	assert_eq(main._snap_target.x, 4.0, "新过渡目标应为最新权威位置")
+
+
+func test_snap_transition_then_input_applies() -> void:
+	"""过渡期间输入照常叠加：位置 = 插值 + 输入位移（不吃移动速度）。"""
+	var main: Node3D = _make_world_instance()
+	main._player_pos = Vector3(10.0, 0.0, 20.0)
+	main._handle_response({
+		"type": "response", "request_type": "player_move",
+		"payload": {"x": 5.0, "y": 20.0},
+	})
+	main._snap_time = 0.0
+	main._snap_from = main._player_pos
+	main._snap_target = Vector3(5.0, 0.0, 20.0)
+
+	main._process_snap(0.075)
+	var mid: float = main._player_pos.x
+	Input.action_press("move_right")
+	main._process_input(1.0 / 60.0)
+	Input.action_release("move_right")
+
+	assert_gt(main._player_pos.x, mid, "输入位移应叠加在插值之上")
+
+
+# ── 服务器对账（权威位移 vs 上报位移） ─────────────────────
+
+func test_player_move_follows_reported_keeps_local() -> void:
+	"""后端原样回显上报（回声，seq 对齐）→ 零纠正。
+
+	回归：旧实现按差距吸附，把"滞后"误当"偏离"，每 0.2s 拉回一次。
+	差距 3 tiles（> SNAP_TOLERANCE）时同样不应纠正。
+	"""
+	var main: Node3D = _make_world_instance()
+	main._player_pos = Vector3(109.0, 0.0, 100.0)
+	main._report_seq_pos = {5: Vector2(106.0, 100.0)}
+
+	main._handle_response({
+		"type": "response", "request_type": "player_move",
+		"payload": {"x": 106.0, "y": 100.0, "seq": 5},
+	})
+
+	assert_eq(main._player_pos.x, 109.0, "后端跟随上报（滞后）时不应拉回")
+	assert_true(main._snap_time < 0.0, "不应进入过渡")
+	assert_false(main._report_seq_pos.has(5), "已响应的 seq 记录应被消费")
+
+
+func test_player_move_reverse_follows_reported_keeps_local() -> void:
+	"""掉头移动后端同样原样回显（方向无关）→ 零纠正。"""
+	var main: Node3D = _make_world_instance()
+	main._player_pos = Vector3(103.0, 0.0, 100.0)
+	main._report_seq_pos = {6: Vector2(100.0, 100.0)}
+
+	main._handle_response({
+		"type": "response", "request_type": "player_move",
+		"payload": {"x": 100.0, "y": 100.0, "seq": 6},
+	})
+
+	assert_eq(main._player_pos.x, 103.0, "掉头跟随也不应拉回")
+	assert_true(main._snap_time < 0.0)
+
+
+func test_player_move_speed_change_echoes_keeps_local() -> void:
+	"""上报窗口内变速 → 权威位置仍是旧上报回声，零纠正。
+
+	回归：旧实现比较"权威位移 vs 最新上报窗口位移"，变速使两窗口位移
+	错位（δ_权威 = 6 ≠ δ_上报 = 12）→ 误判偏离触发拉回；seq 对齐后
+	权威位置 ≈ 该次上报位置即可判定认可，变速不再误伤。
+	"""
+	var main: Node3D = _make_world_instance()
+	main._player_pos = Vector3(118.0, 0.0, 100.0)
+	main._report_seq_pos = {7: Vector2(106.0, 100.0)}
+
+	main._handle_response({
+		"type": "response", "request_type": "player_move",
+		"payload": {"x": 106.0, "y": 100.0, "seq": 7},
+	})
+
+	assert_eq(main._player_pos.x, 118.0, "变速滞后同样不应拉回")
+	assert_true(main._snap_time < 0.0)
+
+
+func test_player_move_clamped_delta_snaps_back() -> void:
+	"""后端钳制（δ_权威 = 0 ≠ δ_上报 = 6，权威位置 ≠ 上报位置）→ 真偏离，平滑拉回。"""
+	var main: Node3D = _make_world_instance()
+	main._player_pos = Vector3(105.0, 0.0, 100.0)
+	main._report_seq_pos = {8: Vector2(106.0, 100.0)}
+
+	main._handle_response({
+		"type": "response", "request_type": "player_move",
+		"payload": {"x": 100.0, "y": 100.0, "seq": 8},
+	})
+
+	assert_true(main._snap_time >= 0.0, "钳制偏离应启动平滑过渡")
+	assert_eq(main._snap_target.x, 100.0, "过渡目标应为钳制后的权威位置")
+	assert_eq(main._player_pos.x, 105.0, "过渡启动瞬间不应瞬跳")
+	main._process_snap(0.15)
+	assert_almost_eq(main._player_pos.x, 100.0, 0.01, "过渡完成后应拉回权威位置")
+
+
+func test_snap_input_accumulates_across_frames() -> void:
+	"""过渡期间连续多帧输入不丢失（回归：旧实现每帧从固定起点插值，
+	覆盖上一帧输入位移，0.15s 内玩家只前进约一帧）。"""
+	var main: Node3D = _make_world_instance()
+	main._player_pos = Vector3(10.0, 0.0, 20.0)
+	main._handle_response({
+		"type": "response", "request_type": "player_move",
+		"payload": {"x": 5.0, "y": 20.0},
+	})
+	main._snap_time = 0.0
+	main._snap_from = main._player_pos
+	main._snap_target = Vector3(5.0, 0.0, 20.0)
+	# 固定相机朝向：move_right 沿世界 +X，输入位移 = PLAYER_SPEED × delta（0.5）
+	main._camera.global_transform = Transform3D.IDENTITY
+
+	# 第二帧：先插值推进（无输入），再叠加输入——输入位移应完整保留
+	main._process_snap(1.0 / 60.0)
+	main._process_snap(1.0 / 60.0)
+	var after_snap_only: float = main._player_pos.x
+	Input.action_press("move_right")
+	main._process_input(1.0 / 60.0)
+	Input.action_release("move_right")
+
+	assert_almost_eq(main._player_pos.x, after_snap_only + 30.0 / 60.0, 0.01,
+		"第二帧输入位移应完整保留（不被插值覆盖）")
+
+
+func test_teleport_resets_authority_state() -> void:
+	"""传送事件应重置吸附过渡与对账基准：在途过渡不会把位置插值"撤销"回旧目标。"""
+	var main: Node3D = _make_world_instance()
+	main._player_pos = Vector3(10.0, 0.0, 20.0)
+	main._handle_response({
+		"type": "response", "request_type": "player_move",
+		"payload": {"x": 5.0, "y": 20.0},
+	})
+	assert_true(main._snap_time >= 0.0, "前置：过渡进行中")
+
+	main._handle_event({
+		"type": "event", "event_type": "player_teleported",
+		"payload": {"data": {"x": 500.0, "y": 600.0}},
+	})
+
+	assert_eq(main._player_pos.x, 500.0, "传送应立即生效")
+	assert_eq(main._player_pos.z, 600.0)
+	assert_true(main._snap_time < 0.0, "过渡应被取消（不会被拉回旧目标）")
+	assert_true(main._report_seq_pos.is_empty(), "对账记录应清零")
+	main._process_snap(0.05)
+	assert_eq(main._player_pos.x, 500.0, "过渡推进不应改变传送后的位置")
+
+
+# ── 异步网格构建 ──────────────────────────────────────────
+
+func _make_async_world_instance() -> Node3D:
+	"""实例化并恢复默认（WorkerThreadPool）构建器，走真实异步路径。"""
+	var main: Node3D = _make_world_instance()
+	main.mesh_builder = main._default_mesh_builder
+	return main
+
+
+func _inject_full_chunk_response(main: Node3D, cx: int, cy: int) -> void:
+	var elev := PackedFloat32Array()
+	elev.resize(CS * CS)
+	elev.fill(10.0)
+	var terr := PackedInt32Array()
+	terr.resize(CS * CS)
+	terr.fill(2)
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": cx, "cy": cy, "tiles_b64": _make_tiles_b64(terr, elev)}],
+			"include_tiles": true,
+		},
+	})
+
+
+func test_full_response_submits_async_build() -> void:
+	"""默认构建器：完整响应只提交后台任务（CONSTRUCTING），不阻塞主线程挂载。"""
+	var main: Node3D = _make_async_world_instance()
+	main._set_birth_chunk(0, 0)
+	var key := Vector2i(0, 0)
+	main._stream_machine.collect_field_requests(key, 0)
+	main._stream_machine.select_full_requests(func(k): return true, 10)
+
+	_inject_full_chunk_response(main, 0, 0)
+
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.CONSTRUCTING,
+		"完整数据到达应提交后台构建（异步）")
+	assert_true(main._building.has(key), "在飞表应登记该 chunk")
+	assert_false(main._terrain_parent.has_node(NodePath("Chunk_0_0")),
+		"任务完成前不应挂载节点")
+
+	# 等待后台任务完成并挂载（墙钟超时兜底；循环内轮询结果队列）
+	var t0 := Time.get_ticks_msec()
+	while main._building.has(key) and Time.get_ticks_msec() - t0 < 5000:
+		await get_tree().process_frame
+		main._poll_build_results()
+	main._poll_build_results()
+
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.BUILT,
+		"后台任务完成后应挂载并标记 BUILT")
+	assert_true(main._terrain_parent.has_node(NodePath("Chunk_0_0")),
+		"挂载后节点应存在")
+
+
+func test_unload_discards_inflight_result() -> void:
+	"""卸载后的陈旧构建结果应丢弃（不复活 chunk）。"""
+	var main: Node3D = _make_async_world_instance()
+	main._set_birth_chunk(0, 0)
+	var key := Vector2i(0, 0)
+	main._stream_machine.collect_field_requests(key, 0)
+	main._stream_machine.select_full_requests(func(k): return true, 10)
+
+	_inject_full_chunk_response(main, 0, 0)
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.CONSTRUCTING)
+
+	main._forget_chunk(key)
+	# 等待在飞任务结束并消费结果（丢弃路径），避免任务在实例释放后仍在运行
+	var t0 := Time.get_ticks_msec()
+	while main._building.has(key) and Time.get_ticks_msec() - t0 < 5000:
+		await get_tree().process_frame
+		main._poll_build_results()
+	main._poll_build_results()
+
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.UNKNOWN,
+		"卸载后不应被陈旧结果复活")
+	assert_false(main._terrain_parent.has_node(NodePath("Chunk_0_0")),
+		"陈旧结果不应挂载节点")
+
+
+func test_disconnect_discards_inflight_result_then_rebuild() -> void:
+	"""断线：构建在途降级 RECEIVED，陈旧结果丢弃；重连后重新构建挂载。"""
+	var main: Node3D = _make_async_world_instance()
+	main._set_birth_chunk(0, 0)
+	var key := Vector2i(0, 0)
+	main._stream_machine.collect_field_requests(key, 0)
+	main._stream_machine.select_full_requests(func(k): return true, 10)
+
+	_inject_full_chunk_response(main, 0, 0)
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.CONSTRUCTING)
+
+	main._on_disconnected()
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.RECEIVED,
+		"断线后构建在途应降级 RECEIVED（数据保留）")
+
+	# 等待旧任务结束并消费结果（应被丢弃）
+	var t0 := Time.get_ticks_msec()
+	while main._building.has(key) and Time.get_ticks_msec() - t0 < 5000:
+		await get_tree().process_frame
+		main._poll_build_results()
+	main._poll_build_results()
+	assert_false(main._terrain_parent.has_node(NodePath("Chunk_0_0")),
+		"断线期间的陈旧结果应丢弃")
+
+	# 重连后流循环重新提交（新 seq）→ 挂载
+	main._stream_chunks()
+	t0 = Time.get_ticks_msec()
+	while main._building.has(key) and Time.get_ticks_msec() - t0 < 5000:
+		await get_tree().process_frame
+		main._poll_build_results()
+	main._poll_build_results()
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.BUILT,
+		"重连后应重建并挂载")
+	assert_true(main._terrain_parent.has_node(NodePath("Chunk_0_0")))
+
+
+func test_inflight_limit_keeps_received() -> void:
+	"""在飞构建达到上限：其余 RECEIVED chunk 保持等待，不超限提交。"""
+	var main: Node3D = _make_async_world_instance()
+	main._set_birth_chunk(0, 0)
+	# 两个 chunk 先提交构建（占满 MAX_BUILD_INFLIGHT=2）
+	for cx in [0, 1]:
+		main._stream_machine.collect_field_requests(Vector2i(cx, 0), 0)
+		main._stream_machine.select_full_requests(func(k): return k == Vector2i(cx, 0), 10)
+		_inject_full_chunk_response(main, cx, 0)
+	assert_eq(main._building.size(), 2, "两个构建应在飞")
+
+	# 第三个 chunk 到达 RECEIVED：在飞已满 → 保持 RECEIVED 不提交
+	var key3 := Vector2i(2, 0)
+	main._stream_machine.collect_field_requests(key3, 0)
+	main._stream_machine.select_full_requests(func(k): return k == key3, 10)
+	_inject_full_chunk_response(main, 2, 0)
+
+	assert_eq(main._stream_machine.get_state(key3), main.ChunkState.RECEIVED,
+		"在飞上限未满前不应提交第三个构建")
+
+	# 等待全部在飞任务结束（避免任务在实例释放后仍在运行）
+	var t0 := Time.get_ticks_msec()
+	while not main._building.is_empty() and Time.get_ticks_msec() - t0 < 5000:
+		await get_tree().process_frame
+		main._poll_build_results()
+	main._poll_build_results()
