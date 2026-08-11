@@ -270,7 +270,7 @@ def render_biome_membership_band(seed: int = 42) -> None:
                 wx = ccx * _CHUNK_TILE + tx
                 wy = ccy * _CHUNK_TILE + ty
                 macro = cont.sample_altitude_bilinear(wx, wy)
-                sea_temp = cc_temp + macro * 9.0 / 1000.0
+                sea_temp = cc_temp + max(0.0, macro) * 9.0 / 1000.0
                 moisture = tg._moisture_noise.octave(
                     wx + 0.5, wy + 0.5, octaves=2, frequency=0.005,
                 )

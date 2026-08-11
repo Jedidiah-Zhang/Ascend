@@ -155,8 +155,9 @@ class TileGenerator:
                 detail = noise_field[idx] * _TERRAIN_NOISE_AMP
                 elev = macro_elev + detail
 
-                # 海平面温度 = chunk 中心基线 + tile 海拔递减
-                sea_temp = cc_temp + macro_elev * LAPSE_RATE / 1000.0
+                # 海平面温度 = chunk 中心基线 + tile 海拔递减（直减率仅
+                # 作用于陆地；海域 tile 直接取 chunk 中心海面温度）
+                sea_temp = cc_temp + max(0.0, macro_elev) * LAPSE_RATE / 1000.0
                 moisture = moisture_field[idx]
 
                 # 群系隶属度 → 混合 TerrainBias（温度降雨用 chunk 中心值）

@@ -25,7 +25,8 @@ GOLDEN_SEED = 20260806
 # 2026-08-06 首次固化；同日坐标单位统一（tile=格点 1:1）后重新固化一次
 # 2026-08-07 缓存格式 v3（序列化新增 land_ratio 字段）后重新固化一次
 # 2026-08-07 大陆轮廓层改为绝对频率（尺寸延伸而非缩放）后重新固化一次
-GOLDEN_HASH = "1ee619de02c4f9896f71076037fff560f690abd9373e8be47f503f2c2d7a8d0d"
+# 2026-08-11 温度语义统一（海域=海面温度、直减率仅陆地、开阔海洋无雨影）后重新固化一次
+GOLDEN_HASH = "c944dfdd8fbf8c77a269235c871e1dbdd71ecc15462e32c0c76e7542774d45ad"
 
 
 def _pipeline_digest(seed: int) -> str:

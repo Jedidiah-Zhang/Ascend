@@ -1,4 +1,4 @@
-"""主菜单 — 标题 + 开始游戏 / 设置 / 模组。
+"""主菜单 — 标题 + 开始游戏 / 设置 / 模组 / 退出游戏。
 
 Issue #14/#7 的最小主界面：存档选择页的入口。
 设置与模组为占位（未实现，点击提示）。
@@ -51,6 +51,7 @@ var _buttons: Array = [
 	{"label": "开始游戏", "enabled": true, "note": ""},
 	{"label": "设置", "enabled": false, "note": "未实现"},
 	{"label": "模组", "enabled": false, "note": "未实现"},
+	{"label": "退出游戏", "enabled": true, "note": ""},
 ]
 ## 各按钮矩形（_draw 时更新，_input 时命中）
 var _button_rects: Array = []
@@ -216,6 +217,8 @@ func _activate(index: int) -> void:
 			_status_text = "正在检查存档..."
 			_status_color = STATUS_WAITING_COLOR
 			Connection.send(SaveApi.list_request())
+		"退出游戏":
+			get_tree().quit()
 
 
 # ── 消息 ──────────────────────────────────────────────────

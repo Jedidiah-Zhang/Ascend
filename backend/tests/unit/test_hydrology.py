@@ -515,3 +515,119 @@ class TestRainShadowOmni:
             assert lo - 1e-10 <= f_blend[i] <= hi + 1e-10, (
                 f"混合 {f_blend[i]:.3f} 不在 [{lo:.3f}, {hi:.3f}] 内"
             )
+
+    def test_open_ocean_no_shadow(self):
+        """开阔海洋（上风亦为海）因子为 1.0，无任何雨影。"""
+        from array import array
+        from ascend.space.hydrology import _rain_shadow_omnidirectional_c
+        w, h = 40, 5
+        elev = array('d', [-1500.0]) * (w * h)
+        factors = _rain_shadow_omnidirectional_c(elev, w, h, primary_angle=0.0)
+        for i in range(w * h):
+            assert factors[i] == 1.0, f"开阔海洋因子 {factors[i]:.3f} 应为 1.0"
+
+    def test_flat_land_coast_no_depth_artifact(self):
+        """平坦陆地→深海的向海风不产生伪影（海深不是地形起伏）。
+
+        旧实现把「陆高 + 海深」当成伪抬升，近岸海格因子直达
+        min_factor；修复后海域无自身抬升项，平坦陆地无抬升 →
+        近岸海域因子为 1.0。
+        """
+        from array import array
+        from ascend.space.hydrology import _rain_shadow_omnidirectional_c
+        w, h = 90, 5
+        elev = array('d', [0.0]) * (w * h)
+        for y in range(h):
+            for x in range(w):
+                elev[y * w + x] = 100.0 if x < 30 else -2000.0
+        factors = _rain_shadow_omnidirectional_c(
+            elev, w, h, primary_angle=0.0, min_factor=0.15,
+        )
+        for y in range(h):
+            for x in range(30, w):
+                assert factors[y * w + x] >= 0.95, (
+                    f"近岸海格 ({x},{y}) 因子 {factors[y*w+x]:.3f} 不应受海深影响"
+                )
+
+    def test_mountain_leeward_sea_offshore_dry_band(self):
+        """山脉背风侧海域保留干燥气团出海的残余雨影。
+
+        海域无自身抬升，但继承上风陆地的抬升衰减——紧邻海岸的海格
+        因子 < 1.0（真实干带），远离海岸恢复 1.0；海深不产生
+        伪抬升（因子不触底 min_factor）。
+        """
+        from array import array
+        from ascend.space.hydrology import _rain_shadow_omnidirectional_c
+        w, h = 90, 5
+        elev = array('d', [0.0]) * (w * h)
+        for y in range(h):
+            for x in range(w):
+                if x < 6:
+                    e = x * 200.0               # 迎风坡
+                elif x < 20:
+                    e = 1000.0 - (x - 6) * 71.0  # 背风坡降至海平面
+                else:
+                    e = -2000.0                  # 深海
+                elev[y * w + x] = e
+        factors = _rain_shadow_omnidirectional_c(
+            elev, w, h, primary_angle=0.0, min_factor=0.15,
+        )
+        # 紧邻海岸的海格：残余雨影（< 1.0），但远高于 min_factor
+        coast_factor = factors[2 * w + 21]
+        assert 0.3 < coast_factor < 0.99, (
+            f"近岸海域因子 {coast_factor:.3f} 应为干燥气团残余"
+        )
+        # 远离海岸的开阔海域恢复 1.0
+        far_factor = factors[2 * w + 60]
+        assert far_factor >= 0.995, (
+            f"开阔海域因子 {far_factor:.3f} 应恢复 1.0"
+        )
+
+
+class TestComputeClimateC:
+    """C 端气候计算 — 温度统一语义（地表温度）测试。
+
+    统一语义：温度场 = 地表温度——海域 = 海面温度（纬度梯度 clamp
+    [-20, 38]，无直减率），陆地 = 海面温度 - 海拔×直减率
+    （clamp [-20, 36]）。测试取 w=2、x=1（px=0）使各格纬度带
+    相同（sea_temp = 10°C），仅对比海拔效应。
+    """
+
+    def _compute(
+        self, elevation, w=2, h=1, gx=1.0, gy=0.0, continentality_k=0.0,
+    ):
+        from array import array
+        from ascend.space.hydrology import _compute_climate_c
+        n = w * h
+        lat_wiggle = array('d', [0.0]) * n
+        rain_raw = array('d', [0.0]) * n
+        shadow = array('d', [1.0]) * n
+        temp, _, _ = _compute_climate_c(
+            array('d', elevation), lat_wiggle, rain_raw, shadow,
+            dist_to_ocean=None, w=w, h=h, gx=gx, gy=gy,
+            continentality_k=continentality_k,
+        )
+        return temp
+
+    def test_sea_temp_is_surface_no_depth_effect(self):
+        """海域温度为海面温度：与水深无关，不含直减率。
+
+        同一纬度下深水格与浅水格温度一致（旧实现深海被误算为更高温）。
+        """
+        temp = self._compute([0.0, -2000.0, 0.0, -10.0], h=2)
+        assert temp[1] == 10.0, f"深海温度 {temp[1]} 应为海面温度 10"
+        assert temp[3] == 10.0, f"浅海温度 {temp[3]} 应为海面温度 10"
+
+    def test_land_lapse_applies_only_positive_elevation(self):
+        """直减率仅作用于陆地：陆地 = 海面温度 - 海拔×直减率。"""
+        from ascend.config import LAPSE_RATE
+        temp = self._compute([0.0, 1000.0])
+        assert temp[1] == pytest.approx(10.0 - 1000.0 * LAPSE_RATE / 1000.0)
+        temp = self._compute([0.0, 500.0])
+        assert temp[1] == pytest.approx(10.0 - 500.0 * LAPSE_RATE / 1000.0)
+
+    def test_high_land_clamp_does_not_touch_sea(self):
+        """陆地低温钳制不作用于海域：同纬度下深海不受钳制污染。"""
+        temp = self._compute([5000.0, -3000.0])
+        assert temp[0] == -20.0, f"5000m 陆地温度应钳制到 -20，实际 {temp[0]}"
+        assert temp[1] == 10.0, f"深海温度 {temp[1]} 应保持海面温度 10"

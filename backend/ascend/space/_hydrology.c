@@ -650,10 +650,16 @@ static void _rain_shadow_single_dir(
 
         double cur_elev = elevation[idx];
 
-        /* 上坡量（仅正高程差） */
-        double uplift = (cur_elev < src_elev) ? (src_elev - cur_elev) : 0.0;
+        /* 上坡量（仅正高程差，且仅陆地——海洋无地形抬升，
+           负海拔不得产生伪抬升） */
+        double uplift = 0.0;
+        if (cur_elev > 0.0 && cur_elev < src_elev) {
+            uplift = src_elev - cur_elev;
+        }
 
-        /* 有效抬升 = 上风抬升衰减 + 当前步抬升 */
+        /* 有效抬升 = 上风抬升衰减 + 当前步抬升。
+           海洋格仅继承上风陆地的衰减抬升（干燥气团出海效应），
+           开阔海洋（上风亦为海）因子恢复 1.0。 */
         uplift_eff[idx] = src_uplift * decay + uplift;
 
         /* 映射到雨影因子 */
@@ -792,12 +798,39 @@ static int classify_climate(double temp, double rainfall, double altitude) {
     return 6;                                      /* POLAR_TUNDRA */
 }
 
-static double rainfall_from_noise_c(double n) {
-    /* noise [-1,1] -> rainfall mm/yr, matches climate.py */
-    double r = RAINFALL_MIN + (n + 1.0) * 0.5 * (RAINFALL_MAX - RAINFALL_MIN);
+/* ── 标量物理函数导出 ──────────────────────────────────────── */
+
+/* 纯函数导出：供 ctypes 直接调用，Python 侧 climate.py 的对应
+   纯函数一律绑定此处（单源 C，杜绝 Python 侧双实现漂移）。
+   场计算路径（compute_climate）亦调用此处——同一文件内单源。 */
+
+double hydrology_sea_level_temperature(double latitude_noise) {
+    /* 纬度噪声 → 海平面温度（clamp [-20, 38]） */
+    double t = latitude_noise * 25.0 + 10.0;
+    if (t < -20.0) t = -20.0;
+    if (t > 38.0) t = 38.0;
+    return t;
+}
+
+double hydrology_rainfall_from_noise(double rain_noise) {
+    /* 降雨噪声 → 年降雨量（clamp [0, 5000]） */
+    double r = RAINFALL_MIN + (rain_noise + 1.0) * 0.5 * (RAINFALL_MAX - RAINFALL_MIN);
     if (r < 0.0) r = 0.0;
     if (r > 5000.0) r = 5000.0;
     return r;
+}
+
+double hydrology_apply_lapse_rate(double sea_level_temp, double altitude) {
+    /* 气温直减率：海拔每升高 1000m 温度下降 LAPSE_RATE °C。
+       与 compute_climate 统一语义：直减率仅作用于陆地（altitude>0），
+       海域返回海面温度本身（无深度伪影）；陆地 clamp [-20, 36]。 */
+    double t = sea_level_temp;
+    if (altitude > 0.0) {
+        t -= altitude * LAPSE_RATE / 1000.0;
+        if (t < -20.0) t = -20.0;
+        if (t > 36.0) t = 36.0;
+    }
+    return t;
 }
 
 void hydrology_compute_climate(
@@ -817,7 +850,12 @@ void hydrology_compute_climate(
        降雨 = 噪声值映射到 mm/yr × 雨影因子
        气候 = 8 区分类决策树
 
-       大陆度修正：距海越远 → 年均温越低，饱和指数曲线。
+       统一语义：温度场为地表温度——海域 = 海面温度（纬度梯度 + 微量
+       摆动，clamp [-20, 38]，不含直减率），陆地 = 海面温度 - 海拔×直减率
+       （直减率仅作用于陆地，负海拔不产生海底温度伪影）。
+
+       大陆度修正：距海越远 → 年均温越低，饱和指数曲线
+       （海洋格距海距离为 0，修正因子为 0，不生效）。
        dist_to_ocean == NULL 时跳过大陆度修正。
     */
     double inv_w = 1.0 / (double)w;
@@ -832,25 +870,26 @@ void hydrology_compute_climate(
         double py = ((double)y * inv_h - 0.5) * 2.0;
         double lat_n = (px * gx + py * gy) * 0.6 + lat_wiggle[i] * 0.15;
 
-        double sea_temp = lat_n * 25.0 + 10.0;
-        if (sea_temp < -20.0) sea_temp = -20.0;
-        if (sea_temp > 38.0) sea_temp = 38.0;
+        double sea_temp = hydrology_sea_level_temperature(lat_n);
 
         double elev = elevation[i];
-        double temp = sea_temp - elev * lapse;
+        double temp = sea_temp;
+        if (elev > 0.0) {
+            temp -= elev * lapse;
 
-        /* 大陆度修正：距海距离 → 饱和指数衰减 */
-        if (dist_to_ocean != NULL && continentality_k > 0.0) {
-            double d_km = dist_to_ocean[i] * cell_size_km;
-            double cont_factor = 1.0 - exp(-d_km / continentality_d0);
-            temp -= continentality_k * cont_factor;
+            /* 大陆度修正：距海距离 → 饱和指数衰减 */
+            if (dist_to_ocean != NULL && continentality_k > 0.0) {
+                double d_km = dist_to_ocean[i] * cell_size_km;
+                double cont_factor = 1.0 - exp(-d_km / continentality_d0);
+                temp -= continentality_k * cont_factor;
+            }
+
+            if (temp < -20.0) temp = -20.0;
+            if (temp > 36.0) temp = 36.0;
         }
 
-        if (temp < -20.0) temp = -20.0;
-        if (temp > 36.0) temp = 36.0;
-
         double rain_n = rain_raw[i];
-        double rainfall = rainfall_from_noise_c(rain_n) * rain_shadow[i];
+        double rainfall = hydrology_rainfall_from_noise(rain_n) * rain_shadow[i];
 
         temp_out[i] = temp;
         rain_out[i] = rainfall;

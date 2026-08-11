@@ -67,17 +67,23 @@ static func create_request(
 
 static func preview_request(
 	world_seed: int, land_ratio: float,
-	width_km: float = 100.0, height_km: float = 60.0) -> Dictionary:
+	width_km: float = 100.0, height_km: float = 60.0,
+	layers: Array = ["temp", "rain", "climate"]) -> Dictionary:
 	"""地图地形预览请求（创建世界调参，Issue #8）。
 
 	采样分辨率固定 1000m：网格随尺寸缩放，地形变化率一致，
 	尺寸只影响生成范围。缺省 100×60。
+
+	layers 请求气候图层（temp/rain/climate，与后端 PREVIEW_LAYERS
+	一致）：后端一次计算全部携带，前端切换视图零往返。缺省全请求；
+	旧后端忽略该字段（仅返回海拔），前端按响应缺字段自动降级。
 	"""
 	return {
 		"type": "request", "request_type": MAP_PREVIEW,
 		"payload": {
 			"seed": world_seed, "land_ratio": land_ratio,
 			"width_km": width_km, "height_km": height_km,
+			"layers": layers,
 		},
 	}
 

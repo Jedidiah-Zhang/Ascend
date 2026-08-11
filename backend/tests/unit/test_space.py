@@ -179,10 +179,11 @@ class TestClimateZone:
         assert classify(30.0, 3000.0, 2500.0) == ClimateZone.ALPINE
 
     def test_c_ext_classify_consistent_with_python(self):
-        """C 端 classify_climate 与 Python classify 全范围一致性。
+        """C 端 classify 绑定全范围冒烟（单源 C 后的一致性回归锁）。
 
-        _hydrology.c 的 #define 阈值与 ascend.config 双源，此测试以
-        扫描方式锁定两实现等价，防止单侧改阈值导致漂移。
+        climate.classify 现为 _hydrology.c（hydrology_classify）的
+        ctypes 绑定，无 Python 侧双实现；本测试以全范围扫描锁定
+        绑定返回值在 8 档枚举内且与 IntEnum 自洽。
         """
         from ascend.space.hydrology import classify_climate_c
         temps = [-30.0, -12.0, -5.0, -4.9, 0.0, 4.9, 5.0, 8.0, 19.9,
@@ -193,10 +194,11 @@ class TestClimateZone:
         for temp in temps:
             for rain in rains:
                 for alt in alts:
-                    expected = int(classify(temp, rain, alt))
-                    assert classify_climate_c(temp, rain, alt) == expected, (
-                        f"C/Python 分类不一致: temp={temp} rain={rain} alt={alt}"
+                    c = classify_climate_c(temp, rain, alt)
+                    assert int(classify(temp, rain, alt)) == c, (
+                        f"绑定不一致: temp={temp} rain={rain} alt={alt}"
                     )
+                    assert 0 <= c <= 7, f"分类越界: {c}"
 
     def test_polar_overrides_desert(self):
         """极地严寒优先于沙漠干旱判定。"""
@@ -218,6 +220,15 @@ class TestClimateZone:
         t0 = apply_lapse_rate(20.0, 0.0)
         t1 = apply_lapse_rate(20.0, 1000.0)
         assert t0 - t1 == pytest.approx(9.0)
+
+    def test_lapse_rate_sea_returns_surface_temp(self):
+        """直减率仅作用于陆地：海域（负海拔）返回海面温度本身。
+
+        与场计算统一语义——负海拔不产生深度伪影（旧实现 +18°C）。
+        """
+        from ascend.space.climate import apply_lapse_rate
+        assert apply_lapse_rate(10.0, -2000.0) == 10.0
+        assert apply_lapse_rate(10.0, 0.0) == 10.0
 
     def test_high_altitude_alpine(self):
         """高海拔 → 即使赤道纬度也判高山而非热带。"""
@@ -1094,7 +1105,7 @@ class TestTileGenerator:
                     detail = noise_field[idx] * 50.0
                     elev = macro_elev + detail
                     moisture = moisture_field[idx]
-                    sea_temp = cc_temp + macro_elev * 0.009
+                    sea_temp = cc_temp + max(0.0, macro_elev) * 0.009
 
                     # 同 chunk 不同 tile 应产生不同地形（由海拔和 moisture 驱动）
                     bias = gen._compute_bias(

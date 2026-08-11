@@ -129,7 +129,17 @@ _HYDRO.hydrology_compute_climate.argtypes = [
 ]
 _HYDRO.hydrology_compute_climate.restype = None
 
-# classify_climate（与 climate.classify 的一致性测试入口）
+# 标量物理函数（climate.py 纯函数绑定 C 的入口，单源 C）
+_HYDRO.hydrology_sea_level_temperature.argtypes = [ctypes.c_double]
+_HYDRO.hydrology_sea_level_temperature.restype = ctypes.c_double
+
+_HYDRO.hydrology_rainfall_from_noise.argtypes = [ctypes.c_double]
+_HYDRO.hydrology_rainfall_from_noise.restype = ctypes.c_double
+
+_HYDRO.hydrology_apply_lapse_rate.argtypes = [ctypes.c_double, ctypes.c_double]
+_HYDRO.hydrology_apply_lapse_rate.restype = ctypes.c_double
+
+# classify_climate（climate.classify 绑定 C 的入口）
 _HYDRO.hydrology_classify.argtypes = [
     ctypes.c_double, ctypes.c_double, ctypes.c_double,  # temp, rainfall, altitude
 ]
@@ -137,10 +147,11 @@ _HYDRO.hydrology_classify.restype = ctypes.c_int
 
 
 def classify_climate_c(temp: float, rainfall: float, altitude: float) -> int:
-    """C 端气候分类（与 climate.classify 保持一致的镜像实现）。
+    """C 端气候分类（climate.classify 的实现本体）。
 
-    阈值硬编码于 _hydrology.c（#define），测试 test_climate_consistency
-    以扫描方式锁定 C/Python 两实现的一致性，防止单侧修改漂移。
+    阈值硬编码于 _hydrology.c（#define，镜像 ascend.config），
+    由 test_space.test_c_ext_classify_consistent_with_python 锁定
+    Python 绑定与 C 判定的一致性，防止单侧修改漂移。
 
     Args:
         temp: 年均温度 (°C)。
@@ -151,6 +162,24 @@ def classify_climate_c(temp: float, rainfall: float, altitude: float) -> int:
         int(ClimateZone) 枚举值。
     """
     return int(_HYDRO.hydrology_classify(temp, rainfall, altitude))
+
+
+def sea_level_temperature_c(latitude_noise: float) -> float:
+    """C 端纬度噪声 → 海平面温度（climate.sea_level_temperature 实现本体）。"""
+    return float(_HYDRO.hydrology_sea_level_temperature(latitude_noise))
+
+
+def rainfall_from_noise_c(rain_noise: float) -> float:
+    """C 端降雨噪声 → 年降雨量（climate.rainfall_from_noise 实现本体）。"""
+    return float(_HYDRO.hydrology_rainfall_from_noise(rain_noise))
+
+
+def apply_lapse_rate_c(sea_level_temp: float, altitude: float) -> float:
+    """C 端气温直减率（climate.apply_lapse_rate 实现本体）。
+
+    统一语义：直减率仅作用于陆地（altitude>0），海域返回海面温度。
+    """
+    return float(_HYDRO.hydrology_apply_lapse_rate(sea_level_temp, altitude))
 
 
 def _compute_d8_c(dem: array, w: int, h: int) -> array:
@@ -208,6 +237,9 @@ def _rain_shadow_omnidirectional_c(
 
     沿风向累积地形抬升量，指数衰减映射到平滑分段线性雨影因子。
     支持主次双风向加权混合。
+    海洋格无地形抬升（负海拔不产生伪抬升），仅继承上风陆地的
+    衰减抬升——近岸海域保留干燥气团出海的残余雨影，开阔海洋
+    因子为 1.0。
 
     Args:
         elevation: 海拔数组（行优先）。
@@ -249,6 +281,9 @@ def _compute_climate_c(
 ) -> tuple[array, array, array]:
     """气候计算 — 温度、降雨、气候分类（单次遍历）。
 
+    温度场为地表温度：海域 = 海面温度（纬度梯度 + 微量摆动，clamp
+    [-20, 38]，不含海拔直减率）；陆地 = 海面温度 - 海拔×直减率。
+
     Args:
         elevation: 海拔数组。
         lat_wiggle: 纬度噪声数组。
@@ -260,6 +295,9 @@ def _compute_climate_c(
         continentality_k: 大陆度振幅 (°C)。
         continentality_d0: 特征距离 (km)。
         cell_size_km: 每格公里数。
+
+    Returns:
+        (temp, rain, climate) 三个行优先数组。
     """
     n = w * h
     elev_ptr = (ctypes.c_double * n).from_buffer(elevation)

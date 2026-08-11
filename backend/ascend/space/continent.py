@@ -23,7 +23,7 @@ from array import array
 import io
 import struct
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Union
 
@@ -755,7 +755,9 @@ class ContinentGenerator:
                 temp = temp_field[idx]
                 rain = rain_field[idx]
                 zone = climate_field[idx]
-                sea_temp = temp + alt * LAPSE_RATE / 1000.0
+                # 海平面温度 = 地表温度 + 海拔×直减率（直减率仅作用于
+                # 陆地；海域 alt<0，sea_temp = 地表温度 = 海面温度）
+                sea_temp = temp + max(0.0, alt) * LAPSE_RATE / 1000.0
                 chunk_climate[(cx, cy)] = (temp, rain, sea_temp, zone)
 
         _report(self.STAGE_DONE)
@@ -782,13 +784,20 @@ class ContinentGenerator:
     def generate_preview(
         self, land_ratio: float,
         width_km: float | None = None, height_km: float | None = None,
+        layers: Iterable[str] = (),
     ) -> dict:
-        """只生成海拔 + 陆地掩码的轻量预览（跳过气候/侵蚀/水文）。
+        """只生成海拔 + 陆地掩码的轻量预览（跳过侵蚀/水文）。
 
         分位数校准保证预览陆地占比贴合 land_ratio（与真实生成同一
         校准逻辑）；海拔另做与真实生成相同的高海拔拉伸，山顶着色
         接近最终世界。未经侵蚀，预览海拔与最终世界略有偏差——
         仅作形状与占比参考的缩略图。
+
+        layers 请求气候图层（"temp" / "rain" / "climate"）时，在
+        海拔后补跑与完整管线一致的气候计算（_compute_climate +
+        校准 + 缺失档位注入），预览的气候值与最终世界一致。气候
+        计算仅 4 个噪声八度 + 数次 O(N) 校准遍历，相对海拔计算
+        增量极小，仍保持秒级返回；侵蚀/水文（昂贵部分）依旧跳过。
 
         低分辨率缩略图（1000m/格）：网格随尺寸缩放（60×36 → 60×36 格，
         150×90 → 150×90 格），地形变化率一致——尺寸只影响生成范围。
@@ -797,10 +806,19 @@ class ContinentGenerator:
             land_ratio: 目标陆地比例 [0-1]。
             width_km: 大陆东西宽度 (km)；None 用生成器参数（默认 100）。
             height_km: 大陆南北高度 (km)；None 用生成器参数（默认 60）。
+            layers: 附加请求的气候图层名集合（"temp" / "rain" / "climate"）；
+                缺省仅海拔（向后兼容旧客户端）。
 
         Returns:
             预览数据字典:
                 {width, height, land_percent, elevation: [int 米] 行优先}
+                layers 含 "temp" 时附 temperature: [int °C]（海陆全域
+                地表温度：陆地 = 校准后地表温度；海域 = 海面温度——
+                纬度梯度场 clamp [-20, 38]，不含海拔直减率；
+                与生产管线 sea_temp 同源一致）；
+                layers 含 "rain" 时附 rainfall: [int mm/年]（海陆全域）；
+                layers 含 "climate" 时附 climate: [int 0-7 气候档]（海域
+                未校准，仅陆地有意义，前端忽略海域）。
         """
         preview_params = ContinentParams(
             width_km=width_km if width_km is not None else self._params.width_km,
@@ -814,12 +832,35 @@ class ContinentGenerator:
         land_mask, elevation = gen._generate_elevation(w, h)
         self._ensure_elevation_range(elevation, land_mask)
         land_count = sum(1 for v in land_mask if v)
-        return {
+        preview: dict = {
             "width": w,
             "height": h,
             "land_percent": round(land_count / max(1, w * h), 4),
-            "elevation": [int(round(v)) for v in elevation],
         }
+        layers = set(layers)
+        if layers:
+            # 与完整管线同序：气候 → 校准（含重分类）→ 缺失档位兜底注入，
+            # 保证预览气候值与最终世界一致（注入亦会抬升个别高山像素海拔，
+            # 使预览山顶着色接近最终世界）。
+            temp_field, rain_field, climate_field = (
+                gen._compute_climate(elevation, land_mask, w, h))
+            gen._calibrate_climate_merged(
+                elevation, temp_field, rain_field, land_mask, climate_field, w, h,
+            )
+            gen._inject_missing_climates(
+                elevation, temp_field, rain_field, land_mask, climate_field, w, h,
+            )
+            if "temp" in layers:
+                # 温度场统一为地表温度（海域 = 海面温度，无海底伪影）
+                preview["temperature"] = [int(round(v)) for v in temp_field]
+            if "rain" in layers:
+                preview["rainfall"] = [int(round(v)) for v in rain_field]
+            if "climate" in layers:
+                preview["climate"] = [int(v) for v in climate_field]
+        # 海拔在气候层之后快照：注入兜底会抬升个别高山像素，
+        # 与完整管线同序，海拔视图与气候层自洽
+        preview["elevation"] = [int(round(v)) for v in elevation]
+        return preview
 
     # ── 气候覆盖校准 ──────────────────────────────────────
 
@@ -1184,11 +1225,16 @@ class ContinentGenerator:
         """计算温度、降雨、气候带。
 
         温度 = 海平面纬度温度 - 海拔 × 9.0°C/km - 大陆度修正
-        降雨 = 噪声 × 雨影因子（水分预算追踪）
+        （直减率仅作用于陆地；海域 = 海面温度，clamp [-20, 38]）
+        降雨 = 噪声 × 雨影因子（水分预算追踪，海域仅继承陆地抬升衰减）
 
         温度基线由 seed 决定的方向梯度给出，往某方向走持续变暖、反方向变冷。
         大陆度修正：距海越远年均温越低（海洋调节缺失，冬季降温主导年均值）。
         叠加微量噪声使气候带边界自然蜿蜒。
+
+        Returns:
+            (temp_field, rain_field, climate_field) 三个行优先数组；
+            气候档已转 int。
         """
         import math
 
@@ -1242,6 +1288,8 @@ class ContinentGenerator:
         seed 决定连续风向角 [0, 2π)，主风向（80%）+ 次风向偏移 45°（20%）混合。
         使用水分预算模型：风携带水汽从海岸向内陆移动，
         地形抬升消耗水汽 → 背风面干燥。
+        海洋格无地形抬升（负海拔不产生伪抬升），仅继承上风陆地的
+        衰减抬升——近岸海域保留干燥气团出海的残余雨影。
         因子范围 [MIN_FACTOR, 1.0]，保证基础降水。
         """
         import math

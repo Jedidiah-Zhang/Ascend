@@ -40,13 +40,14 @@ func test_create_request_default_gen_params_empty() -> void:
 
 
 func test_preview_request_shape() -> void:
-	"""地形预览请求（创建世界调参），默认 100×60 km。"""
+	"""地形预览请求（创建世界调参），默认 100×60 km，携带全部气候图层。"""
 	var req: Dictionary = SaveApi.preview_request(42, 0.55)
 	assert_eq(req["type"], "request")
 	assert_eq(req["request_type"], SaveApi.MAP_PREVIEW)
 	assert_eq(req["payload"], {
 		"seed": 42, "land_ratio": 0.55,
 		"width_km": 100.0, "height_km": 60.0,
+		"layers": ["temp", "rain", "climate"],
 	})
 
 
@@ -55,6 +56,12 @@ func test_preview_request_custom_size() -> void:
 	var req: Dictionary = SaveApi.preview_request(42, 0.55, 150.0, 90.0)
 	assert_eq(req["payload"]["width_km"], 150.0)
 	assert_eq(req["payload"]["height_km"], 90.0)
+
+
+func test_preview_request_layers_override() -> void:
+	"""可显式指定图层子集（旧后端兼容 / 按需裁剪）。"""
+	var req: Dictionary = SaveApi.preview_request(42, 0.55, 100.0, 60.0, ["temp"])
+	assert_eq(req["payload"]["layers"], ["temp"])
 
 
 func test_snapshot_request() -> void:

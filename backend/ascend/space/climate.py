@@ -70,8 +70,6 @@ class SeasonalityMode(IntEnum):
 # ── 物理常量（单一事实来源 ascend.config，此处按原名引用） ──────
 from ascend.config import (
     LAPSE_RATE,
-    RAINFALL_MIN as _RAINFALL_MIN,
-    RAINFALL_MAX as _RAINFALL_MAX,
     PARAM_BOUNDS as _PARAM_BOUNDS,
 )
 
@@ -207,18 +205,11 @@ class WeatherParams:
 # ── 物理推导（纯函数）────────────────────────────────────
 
 def sea_level_temperature(latitude_noise: float) -> float:
-    """纬度噪声 → 海平面年均温度（与 _hydrology.c 生产公式一致）。
+    """纬度噪声 → 海平面年均温度（绑定 C 端公式）。
 
-    纬度噪声 [-1, +1]:
-      -1 → 极地 (~ -15°C)
-        0 → 中纬度 (~ 10°C)
-       +1 → 赤道 (~ 35°C)
-
-    注：生产链路（continent._compute_climate）在 C 端（_hydrology.c
-    compute_climate）计算同一映射：lat_n*25+10，clamp [-20, 38]。
-    此纯函数仅供调试可视化（tests/web/server.py），必须与 C 保持同步，
-    由 test_space.test_c_ext_classify_consistent_with_python 及
-    test_sea_level_temperature_range 双重锁定。
+    实现本体在 _hydrology.c（hydrology_sea_level_temperature）：
+    与生产链路（_hydrology.c compute_climate）同一公式、同一 clamp，
+    此处仅为 ctypes 绑定——单源 C，无 Python 侧双实现。
 
     Args:
         latitude_noise: 纬度噪声值 [-1, 1]。
@@ -226,12 +217,16 @@ def sea_level_temperature(latitude_noise: float) -> float:
     Returns:
         海平面年均温度 (°C)。
     """
-    t = latitude_noise * 25.0 + 10.0
-    return clamp(t, -20.0, 38.0)
+    from .hydrology import sea_level_temperature_c
+    return sea_level_temperature_c(latitude_noise)
 
 
 def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
-    """气温直减率：海拔每升高 1000m 温度下降 LAPSE_RATE °C。
+    """气温直减率：海拔每升高 1000m 温度下降 LAPSE_RATE °C（绑定 C）。
+
+    实现本体在 _hydrology.c（hydrology_apply_lapse_rate），与场计算
+    统一语义：直减率仅作用于陆地（altitude>0），海域返回海面温度
+    本身——负海拔不再产生深度伪影；陆地 clamp [-20, 36]。
 
     Args:
         sea_level_temp: 海平面温度 (°C)。
@@ -240,12 +235,15 @@ def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
     Returns:
         实际温度 (°C)。
     """
-    t = sea_level_temp - altitude * LAPSE_RATE / 1000.0
-    return clamp(t, _PARAM_BOUNDS["temperature"][0], _PARAM_BOUNDS["temperature"][1])
+    from .hydrology import apply_lapse_rate_c
+    return apply_lapse_rate_c(sea_level_temp, altitude)
 
 
 def rainfall_from_noise(rainfall_noise: float) -> float:
-    """降雨噪声 → 年降雨量 (mm/年)。
+    """降雨噪声 → 年降雨量 (mm/年)（绑定 C 端公式）。
+
+    实现本体在 _hydrology.c（hydrology_rainfall_from_noise）：
+    与生产链路同一公式、同一 clamp，此处仅为 ctypes 绑定。
 
     Args:
         rainfall_noise: 降雨噪声 [-1, 1]，-1=极干，+1=极湿。
@@ -253,24 +251,8 @@ def rainfall_from_noise(rainfall_noise: float) -> float:
     Returns:
         年降雨量 (mm)。
     """
-    r = _RAINFALL_MIN + (rainfall_noise + 1.0) * 0.5 * (_RAINFALL_MAX - _RAINFALL_MIN)
-    return clamp(r, _PARAM_BOUNDS["rainfall"][0], _PARAM_BOUNDS["rainfall"][1])
-
-
-# ── 气候档位判定阈值（游戏设计常量，非物理精确值）──────────────
-# 单一事实来源 ascend.config；_hydrology.c 端为镜像 #define，
-# 一致性由 test_space.test_c_ext_classify_consistent_with_python 锁定
-from ascend.config import (
-    ALPINE_ALTITUDE as _ALPINE_ALTITUDE,
-    POLAR_TEMP as _POLAR_TEMP,
-    DESERT_RAINFALL as _DESERT_RAINFALL,
-    STEPPE_RAINFALL as _STEPPE_RAINFALL,
-    STEPPE_MIN_TEMP as _STEPPE_MIN_TEMP,
-    TROPICAL_TEMP as _TROPICAL_TEMP,
-    TEMPERATE_TEMP as _TEMPERATE_TEMP,
-    RAINFOREST_RAINFALL as _RAINFOREST_RAINFALL,
-    TAIGA_RAINFALL as _TAIGA_RAINFALL,
-)
+    from .hydrology import rainfall_from_noise_c
+    return rainfall_from_noise_c(rainfall_noise)
 
 
 def classify(
@@ -278,7 +260,7 @@ def classify(
     annual_rainfall: float,
     altitude: float,
 ) -> ClimateZone:
-    """由年均温、年降雨量、海拔纯静态判定气候档位。
+    """由年均温、年降雨量、海拔纯静态判定气候档位（绑定 C）。
 
     判定顺序（前者优先）：
       1. 海拔 ≥ 2000m → ALPINE（覆盖纬度气候，高山独立）
@@ -289,7 +271,9 @@ def classify(
       6. 温度 ≥ 5°C → TEMPERATE_FOREST
       7. -5≤T<5°C → SUBARCTIC_TAIGA（R≥400）/ POLAR_TUNDRA（冷干合并）
 
-    纯函数，线程安全。
+    实现本体在 _hydrology.c（hydrology_classify，阈值 #define 镜像
+    ascend.config），此处仅为 ctypes 绑定——单源 C，无 Python 侧
+    双实现。纯函数，线程安全。
 
     Args:
         mean_temp: 年均温度 (°C)。
@@ -299,36 +283,8 @@ def classify(
     Returns:
         对应的 ClimateZone。
     """
-    # 1. 高山（海拔优先，覆盖纬度气候）
-    if altitude >= _ALPINE_ALTITUDE:
-        return ClimateZone.ALPINE
-
-    # 2. 极地（严寒优先于干旱判定）
-    if mean_temp < _POLAR_TEMP:
-        return ClimateZone.POLAR_TUNDRA
-
-    # 3. 沙漠（极端干旱）
-    if annual_rainfall < _DESERT_RAINFALL:
-        return ClimateZone.DESERT
-
-    # 4. 草原（半干旱 + 温暖）
-    if annual_rainfall < _STEPPE_RAINFALL and mean_temp > _STEPPE_MIN_TEMP:
-        return ClimateZone.STEPPE
-
-    # 5. 热带（高温）— 到此处 R ≥ 600
-    if mean_temp >= _TROPICAL_TEMP:
-        if annual_rainfall >= _RAINFOREST_RAINFALL:
-            return ClimateZone.EQUATORIAL_RAINFOREST
-        return ClimateZone.TROPICAL_SAVANNA
-
-    # 6. 温带
-    if mean_temp >= _TEMPERATE_TEMP:
-        return ClimateZone.TEMPERATE_FOREST
-
-    # 7. 亚寒带 / 极地苔原（-5 ≤ T < 5）
-    if annual_rainfall >= _TAIGA_RAINFALL:
-        return ClimateZone.SUBARCTIC_TAIGA
-    return ClimateZone.POLAR_TUNDRA
+    from .hydrology import classify_climate_c
+    return ClimateZone(classify_climate_c(mean_temp, annual_rainfall, altitude))
 
 
 def annual_baseline(

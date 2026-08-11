@@ -361,6 +361,142 @@ class TestGeneratePreview:
             f"预览与完整管线海陆一致率 {same / total:.1%} 过低"
         )
 
+    # ── 预览气候图层 ───────────────────────────────────────
+
+    def _preview_climate(self, seed: int = CANONICAL_SEED,
+                         land_ratio: float = 0.55,
+                         width_km: float | None = None,
+                         height_km: float | None = None) -> dict:
+        from ascend.space.continent import ContinentGenerator
+        return ContinentGenerator(seed=seed).generate_preview(
+            land_ratio, width_km, height_km,
+            layers=("temp", "rain", "climate"),
+        )
+
+    def test_preview_climate_layers_shape(self):
+        """气候图层与海拔同网格（行优先 int 数组）。"""
+        p = self._preview_climate()
+        n = p["width"] * p["height"]
+        assert len(p["temperature"]) == n
+        assert len(p["rainfall"]) == n
+        assert len(p["climate"]) == n
+        assert all(isinstance(v, int) for v in p["temperature"])
+        assert all(isinstance(v, int) for v in p["rainfall"])
+        assert all(isinstance(v, int) for v in p["climate"])
+
+    def test_preview_climate_omitted_by_default(self):
+        """缺省 layers 不计算气候（向后兼容）。"""
+        from ascend.space.continent import ContinentGenerator
+        p = ContinentGenerator(seed=CANONICAL_SEED).generate_preview(0.55)
+        assert "temperature" not in p
+        assert "rainfall" not in p
+        assert "climate" not in p
+
+    def test_preview_climate_plausible_ranges(self):
+        """温度/降雨量级合理（温度 -20..38 附近，降雨 ≥0）。"""
+        p = self._preview_climate()
+        assert min(p["temperature"]) >= -25, "温度不低于物理下限"
+        assert max(p["temperature"]) <= 40, "温度不高于物理上限"
+        assert min(p["rainfall"]) >= 0, "降雨非负"
+
+    def test_preview_climate_deterministic(self):
+        """同 (seed, land_ratio) → 完全相同的气候预览。"""
+        p1 = self._preview_climate()
+        p2 = self._preview_climate()
+        assert p1["temperature"] == p2["temperature"]
+        assert p1["rainfall"] == p2["rainfall"]
+        assert p1["climate"] == p2["climate"]
+
+    def test_preview_climate_seed_sensitive(self):
+        """不同 seed → 不同气候（温度梯度/风向由 seed 决定）。"""
+        p1 = self._preview_climate(seed=1)
+        p2 = self._preview_climate(seed=2)
+        assert p1["temperature"] != p2["temperature"]
+        assert p1["rainfall"] != p2["rainfall"]
+
+    def test_preview_climate_matches_full_pipeline(self):
+        """预览气候与完整管线一致（同一气候计算链路，未经侵蚀）。
+
+        侵蚀只改海拔（影响高山判定），不重算温雨场；对 100×60 网格
+        逐点比对温度与降雨，允许被注入兜底（≤ 9 格/档）和侵蚀后
+        海拔改动的少量偏差。海陆全域严格比对：温度场统一为地表温度
+        （海域 = 海面温度），预览海域温度与生产 sea_temp 同源一致。
+        """
+        from ascend.space.continent import ContinentGenerator, ContinentParams
+        preview = self._preview_climate()
+        w, h = preview["width"], preview["height"]
+        full = ContinentGenerator(
+            seed=CANONICAL_SEED,
+            params=ContinentParams(
+                width_km=100.0, height_km=60.0, sample_resolution=100.0,
+            ),
+        ).generate()
+        full_climate = full._chunk_climate  # {(cx, cy): (temp, rain, sea_temp, zone)}
+        step_x = full.grid_width // w
+        step_y = full.grid_height // h
+        temp_diff = 0.0
+        temp_n = 0
+        sea_diff = 0.0
+        sea_n = 0
+        rain_diff = 0.0
+        rain_n = 0
+        for py in range(h):
+            for px in range(w):
+                is_sea = preview["elevation"][py * w + px] <= 0
+                fx = px * step_x + step_x // 2
+                fy = py * step_y + step_y // 2
+                cx, cy = fx // 2, fy // 2
+                if (cx, cy) not in full_climate:
+                    continue
+                f_temp, f_rain, f_sea, _zone = full_climate[(cx, cy)]
+                temp_diff += abs(preview["temperature"][py * w + px] - f_temp)
+                temp_n += 1
+                if is_sea:
+                    # 海域：预览温度 == 生产 sea_temp == 生产 temp（同源海面温度）
+                    sea_diff += abs(preview["temperature"][py * w + px] - f_sea)
+                    sea_n += 1
+                rain_diff += abs(preview["rainfall"][py * w + px] - f_rain)
+                rain_n += 1
+        assert temp_n > 100, "陆地采样点不足"
+        assert sea_n > 50, "海域采样点不足"
+        assert temp_diff / temp_n < 3.0, (
+            f"预览与完整管线平均温度偏差 {temp_diff / temp_n:.2f}°C 过大"
+        )
+        assert sea_diff / sea_n < 3.0, (
+            f"预览海域与生产 sea_temp 平均偏差 {sea_diff / sea_n:.2f}°C 过大"
+        )
+        assert rain_diff / rain_n < 400.0, (
+            f"预览与完整管线平均降雨偏差 {rain_diff / rain_n:.0f}mm 过大"
+        )
+
+    def test_preview_climate_sea_is_surface_temp(self):
+        """海域温度为海面温度（纬度梯度，clamp [-20, 38]）。
+
+        直减率仅作用于陆地，海域温度与水深无关——深水/浅水同量级，
+        并存在纬度方向的渐变（非恒定值）。
+        """
+        p = self._preview_climate()
+        sea_temps = [
+            p["temperature"][i]
+            for i, e in enumerate(p["elevation"]) if e <= 0.0
+        ]
+        assert sea_temps, "预览必须存在海域"
+        assert min(sea_temps) >= -20, "海面温度不低于纬度梯度下限"
+        assert max(sea_temps) <= 38, "海面温度不高于纬度梯度上限"
+        # 海面温度存在渐变（冷极 → 暖赤道方向），非恒定值
+        assert max(sea_temps) - min(sea_temps) >= 5.0, "海面温度应有纬度渐变"
+        # 深海与浅海同量级：海面温度与水深无关
+        deep = [
+            p["temperature"][i]
+            for i, e in enumerate(p["elevation"]) if e <= -1500.0
+        ]
+        shallow = [
+            p["temperature"][i]
+            for i, e in enumerate(p["elevation"]) if -500.0 < e <= 0.0
+        ]
+        if deep and shallow:
+            assert abs(min(deep) - min(shallow)) < 30, "深海/浅海温度量级应接近"
+
     def test_land_ratio_field_snapshotted(self):
         """ContinentData 记录 land_ratio（缓存校验数据源）。"""
         from ascend.space.continent import ContinentGenerator, ContinentParams

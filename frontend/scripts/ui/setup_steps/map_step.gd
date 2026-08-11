@@ -12,6 +12,14 @@
   变化则补发最新参数，无需防抖定时器/seq 丢弃）；预览为当前
   尺寸的海拔缩略图按高度着色，叠加实测陆地占比。
 
+气候图层视图：
+  请求固定携带 layers（temp/rain/climate，后端一次算全）；
+  预览面板顶部可切换 地形 / 温度 / 降雨 / 气候 视图——切换
+  仅换着色函数，零往返零重算。响应缺图层字段（旧后端）时
+  自动降级为仅地形视图。温度/降雨为海陆全域场（海域温度 =
+  海面温度，无深海伪影）；气候带仅陆地有意义，气候视图海域
+  保持深蓝。
+
 依赖：无（流程首步）。产出：
 {seed, gen_params: {land_ratio, width_km, height_km}}。
 
@@ -57,6 +65,41 @@ const SMALL_FONT_SIZE: int = 12
 ## 预览渲染单元格（px）；网格尺寸来自响应 payload（随地图尺寸档位变化）
 const PREVIEW_CELL: float = 4.0
 
+# ── 气候图层视图 ──────────────────────────────────────────
+
+## 预览视图定义: {key, label, field}——field 为预览 payload 字段名，
+## 缺该字段（旧后端）时视图不可用（自动降级地形）。
+const VIEWS: Array = [
+	{"key": "elevation", "label": "地形", "field": "elevation"},
+	{"key": "temp", "label": "温度", "field": "temperature"},
+	{"key": "rain", "label": "降雨", "field": "rainfall"},
+	{"key": "climate", "label": "气候", "field": "climate"},
+]
+const VIEW_BUTTON_W: float = 64.0
+const VIEW_BUTTON_H: float = 26.0
+const VIEW_BUTTON_GAP: float = 8.0
+
+## 海洋色（仅气候视图海域用：气候带只有陆地有意义；
+## 温度/降雨视图海域显示后端数据，地形视图保留深度渐变）
+const SEA_COLOR: Color = Color(0.08, 0.12, 0.32)
+const SELECTED_COLOR: Color = Color(0.32, 0.55, 0.85)
+
+## 气候档位 0-7 着色（与后端 climate.ClimateTemplate.display_color 一致）
+const CLIMATE_ZONE_COLORS: Array = [
+	Color("1a6b3a"),  # 0 热带雨林
+	Color("c4a43e"),  # 1 热带草原
+	Color("e6c878"),  # 2 沙漠
+	Color("b8a060"),  # 3 草原
+	Color("4a7c3f"),  # 4 温带森林
+	Color("3a6a8a"),  # 5 亚寒带针叶林
+	Color("d8d8e8"),  # 6 极地苔原
+	Color("b0b0c0"),  # 7 高山
+]
+
+## 气候档位中文名（与 CLIMATE_ZONE_COLORS 下标一一对应，同后端 ClimateZone）
+const CLIMATE_NAMES: Array = ["热带雨林", "热带草原", "沙漠", "草原",
+	"温带森林", "亚寒带针叶林", "极地苔原", "高山"]
+
 # ── 状态 ──────────────────────────────────────────────────
 
 ## 当前种子（0 = 未定案；setup 时随机定案，保证预览有据可依）
@@ -86,6 +129,17 @@ var _seed_input: LineEdit = null
 var _hover: String = ""
 ## 滑块拖拽中
 var _slider_dragging: bool = false
+
+## 当前预览视图 key（VIEWS 数组项；缺图层时自动降级 "elevation"）
+var _view_mode: String = "elevation"
+
+## 鼠标悬停的地图格子（(-1,-1) = 不在地图上），信息行取值用
+var _hover_cell: Vector2i = Vector2i(-1, -1)
+## 最近一次绘制的地图几何（_map_cell_at 输入命中用）
+var _map_origin: Vector2 = Vector2.ZERO
+var _map_cell: float = 0.0
+var _map_w: int = 0
+var _map_h: int = 0
 
 ## 步骤内容区矩形（draw_page 时记录，输入命中用）
 var _page_rect: Rect2 = Rect2()
@@ -253,6 +307,19 @@ func _draw_preview(canvas: Control, rect: Rect2, font: Font) -> void:
 	canvas.draw_rect(rect, Color(1, 1, 1, 0.12), false, 1.0)
 	draw_label(canvas, font, rect.position + Vector2(14, 24), "地形预览", LABEL_FONT_SIZE)
 
+	# 视图切换按钮（地形 / 温度 / 降雨 / 气候）——与标题同行，右对齐
+	var view_y: float = rect.position.y + 8.0
+	_view_rects.clear()
+	var view_x: float = rect.position.x + rect.size.x - 14.0 \
+			- VIEWS.size() * VIEW_BUTTON_W \
+			- (VIEWS.size() - 1) * VIEW_BUTTON_GAP
+	for i in VIEWS.size():
+		var v_rect := Rect2(
+			Vector2(view_x + i * (VIEW_BUTTON_W + VIEW_BUTTON_GAP), view_y),
+			Vector2(VIEW_BUTTON_W, VIEW_BUTTON_H))
+		_view_rects.append(v_rect)
+		_draw_view_button(canvas, v_rect, font, i)
+
 	if _preview.is_empty():
 		var waiting: String = "生成中..." if _preview_pending else "等待参数..."
 		draw_label(canvas, font,
@@ -267,26 +334,142 @@ func _draw_preview(canvas: Control, rect: Rect2, font: Font) -> void:
 			"预览数据异常", SMALL_FONT_SIZE, Color(0.95, 0.50, 0.45))
 		return
 
-	# 地图（按比例缩放居中）
+	# 当前视图数据（缺图层 → 降级地形）
+	var view: Dictionary = _current_view()
+	var field: Array = _preview.get(view["field"], [])
+
+	# 地图（按比例缩放居中，位于标题行下方）
+	var map_top: float = view_y + VIEW_BUTTON_H + 10.0
 	var cell: float = minf(
 		PREVIEW_CELL,
-		minf((rect.size.x - 28.0) / w, (rect.size.y - 70.0) / h),
+		minf((rect.size.x - 28.0) / w, (rect.size.y - (map_top - rect.position.y) - 30.0) / h),
 	)
 	var map_size := Vector2(w * cell, h * cell)
 	var map_origin: Vector2 = rect.position + Vector2(
-		(rect.size.x - map_size.x) * 0.5, 56.0)
+		(rect.size.x - map_size.x) * 0.5, map_top - rect.position.y)
+	_map_origin = map_origin
+	_map_cell = cell
+	_map_w = w
+	_map_h = h
 	for y in h:
 		for x in w:
-			var e: float = float(elev[y * w + x])
+			var i: int = y * w + x
+			var e: float = float(elev[i])
 			canvas.draw_rect(Rect2(
 				map_origin + Vector2(x * cell, y * cell), Vector2(cell, cell)),
-				_elevation_color(e))
+				_cell_color(view, e, field[i]))
 
-	# 信息行
-	var land_pct: float = float(_preview.get("land_percent", 0.0))
-	var info: String = "陆地占比 %.0f%%    种子 %d" % [land_pct * 100.0, int(_preview.get("seed", 0))]
+	# 信息行：当前视图数值范围 + 鼠标位置值（气候视图为鼠标处分类）
+	var info: String = _info_line(view, field)
 	draw_label(canvas, font, rect.position + Vector2(14, rect.size.y - 22),
 		info, SMALL_FONT_SIZE, DIM_COLOR)
+
+
+func _current_view() -> Dictionary:
+	"""当前视图定义；所请求的图层在响应中缺失（旧后端）时降级地形。"""
+	var view: Dictionary = {}
+	for v in VIEWS:
+		if v["key"] == _view_mode:
+			view = v
+			break
+	if view.is_empty() or not _preview.has(view["field"]):
+		return VIEWS[0]
+	return view
+
+
+func _info_line(view: Dictionary, field: Array) -> String:
+	"""信息行：当前视图数值范围（气候视图为悬停提示）+ 鼠标位置值。"""
+	var parts: PackedStringArray = []
+	match view["key"]:
+		"elevation", "temp", "rain":
+			var r: Array = _field_range(field)
+			parts.append(_range_text(view, r))
+		"climate":
+			parts.append("移入地图查看气候")
+	var hover: String = _hover_value_text(view, field)
+	if hover != "":
+		if view["key"] == "climate":
+			parts[0] = hover
+		else:
+			parts.append(hover)
+	return "    ".join(parts)
+
+
+## 视图数值范围文本（r = [lo, hi] 已取整）。
+func _range_text(view: Dictionary, r: Array) -> String:
+	match view["key"]:
+		"elevation":
+			return "海拔 %d~%dm" % [r[0], r[1]]
+		"temp":
+			return "温度 %d~%d°C" % [r[0], r[1]]
+		"rain":
+			return "降雨 %d~%dmm" % [r[0], r[1]]
+	return ""
+
+
+## 字段数值范围 [lo, hi]（取整）；空字段返回 [0, 0]。
+func _field_range(field: Array) -> Array:
+	if field.is_empty():
+		return [0, 0]
+	var lo: float = float(field[0])
+	var hi: float = lo
+	for v in field:
+		var fv: float = float(v)
+		if fv < lo:
+			lo = fv
+		elif fv > hi:
+			hi = fv
+	return [int(round(lo)), int(round(hi))]
+
+
+## 鼠标悬停格的值文本；不在地图上返回 ""。
+## 气候视图：海域显示海洋，陆地显示档位名；其余视图显示数值。
+func _hover_value_text(view: Dictionary, field: Array) -> String:
+	if _hover_cell.x < 0 or _hover_cell.y < 0:
+		return ""
+	var idx: int = _hover_cell.y * _map_w + _hover_cell.x
+	if idx < 0 or idx >= field.size():
+		return ""
+	var v: float = float(field[idx])
+	if view["key"] == "climate":
+		var elev: Array = _preview.get("elevation", [])
+		if idx < elev.size() and float(elev[idx]) <= 0.0:
+			return "当前位置 海洋"
+		return "当前位置 %s" % CLIMATE_NAMES[int(v) % CLIMATE_NAMES.size()]
+	match view["key"]:
+		"elevation":
+			return "当前位置 %dm" % int(round(v))
+		"temp":
+			return "当前位置 %d°C" % int(round(v))
+		"rain":
+			return "当前位置 %dmm" % int(round(v))
+	return ""
+
+
+func _cell_color(view: Dictionary, e: float, value: Variant) -> Color:
+	"""单格着色：海域在地形视图保留深度渐变、气候视图统一深蓝
+	（气候带仅陆地有意义），温度/降雨视图显示海域数据
+	（后端 temperature 海域 = 海面温度，rainfall 为全域场）。"""
+	if e <= 0.0:
+		if view["key"] == "elevation":
+			return _elevation_color(e)
+		if view["key"] == "climate":
+			return SEA_COLOR
+	return _layer_color(view, e, value)
+
+
+func _layer_color(view: Dictionary, _elevation: float, value: Variant) -> Color:
+	"""图层着色：地形按海拔；温度冷蓝→暖红；降雨干黄→湿蓝；气候 8 档固定色。"""
+	match view["key"]:
+		"elevation":
+			return _elevation_color(_elevation)
+		"temp":
+			return _temp_color(float(value))
+		"rain":
+			return _rain_color(float(value))
+		"climate":
+			return CLIMATE_ZONE_COLORS[int(value) % CLIMATE_ZONE_COLORS.size()]
+	return SEA_COLOR
 
 
 func _elevation_color(e: float) -> Color:
@@ -304,12 +487,74 @@ func _elevation_color(e: float) -> Color:
 	return Color(0.92, 0.92, 0.94)
 
 
+## 温度着色（年均温 °C）：冷蓝 → 绿 → 黄 → 红（分段线性渐变）。
+func _temp_color(t: float) -> Color:
+	var stops: Array = [
+		[-15.0, Color(0.45, 0.55, 0.90)],
+		[-5.0, Color(0.55, 0.72, 0.95)],
+		[5.0, Color(0.40, 0.75, 0.65)],
+		[15.0, Color(0.75, 0.80, 0.40)],
+		[25.0, Color(0.90, 0.60, 0.30)],
+		[35.0, Color(0.85, 0.30, 0.25)],
+	]
+	return _gradient_color(stops, t)
+
+
+## 降雨着色（年降雨 mm）：干黄沙 → 浅绿 → 绿 → 深蓝（湿）。
+func _rain_color(r: float) -> Color:
+	var stops: Array = [
+		[0.0, Color(0.80, 0.72, 0.45)],
+		[200.0, Color(0.75, 0.78, 0.45)],
+		[500.0, Color(0.55, 0.75, 0.45)],
+		[1000.0, Color(0.35, 0.68, 0.55)],
+		[1600.0, Color(0.25, 0.55, 0.72)],
+		[2400.0, Color(0.20, 0.35, 0.65)],
+	]
+	return _gradient_color(stops, r)
+
+
+## 分段线性渐变：stops = [[值, Color], ...]，值域外钳制到两端。
+func _gradient_color(stops: Array, value: float) -> Color:
+	if value <= float(stops[0][0]):
+		return stops[0][1]
+	if value >= float(stops[stops.size() - 1][0]):
+		return stops[stops.size() - 1][1]
+	for i in stops.size() - 1:
+		var lo_v: float = float(stops[i][0])
+		var hi_v: float = float(stops[i + 1][0])
+		if value >= lo_v and value <= hi_v:
+			var t: float = (value - lo_v) / maxf(0.0001, hi_v - lo_v)
+			return stops[i][1].lerp(stops[i + 1][1], t)
+	return stops[0][1]
+
+
 # ── 自绘控件 ──────────────────────────────────────────────
 
 var _seed_rect: Rect2 = Rect2()
 var _random_rect: Rect2 = Rect2()
 var _slider_rect: Rect2 = Rect2()
 var _size_rects: Array = []
+var _view_rects: Array = []
+
+
+func _draw_view_button(canvas: Control, rect: Rect2, font: Font, index: int) -> void:
+	var view: Dictionary = VIEWS[index]
+	var selected: bool = view["key"] == _current_view()["key"]
+	var hovered: bool = _hover == "view%d" % index
+	var fill: Color
+	if selected:
+		fill = SELECTED_COLOR
+	elif hovered:
+		fill = BUTTON_HOVER_COLOR
+	else:
+		fill = BUTTON_COLOR
+	canvas.draw_rect(rect, fill)
+	canvas.draw_rect(rect, Color(1, 1, 1, 0.12), false, 1.0)
+	var w: float = font.get_string_size(view["label"], HORIZONTAL_ALIGNMENT_LEFT,
+		-1, SMALL_FONT_SIZE).x
+	draw_label(canvas, font,
+		rect.position + Vector2((rect.size.x - w) * 0.5, rect.size.y * 0.5 + 5),
+		view["label"], SMALL_FONT_SIZE, TEXT_COLOR)
 
 
 func _draw_value_box(canvas: Control, rect: Rect2, font: Font, text: String, hovered: bool) -> void:
@@ -376,8 +621,10 @@ func handle_input(event: InputEvent, _rect: Rect2) -> bool:
 		if _slider_dragging:
 			_set_ratio_from_x(event.position.x)
 			return true
-		if new_hover != _hover:
+		var new_cell: Vector2i = _map_cell_at(event.position)
+		if new_hover != _hover or new_cell != _hover_cell:
 			_hover = new_hover
+			_hover_cell = new_cell
 			return true
 		return false
 	if event is InputEventMouseButton and event.pressed \
@@ -396,6 +643,9 @@ func handle_input(event: InputEvent, _rect: Rect2) -> bool:
 			_:
 				if hit.begins_with("size"):
 					_set_size(int(hit.trim_prefix("size")))
+					return true
+				if hit.begins_with("view"):
+					_set_view_mode(int(hit.trim_prefix("view")))
 					return true
 	return false
 
@@ -427,7 +677,21 @@ func _hover_at(pos: Vector2) -> String:
 	for i in _size_rects.size():
 		if _size_rects[i].has_point(pos):
 			return "size%d" % i
+	for i in _view_rects.size():
+		if _view_rects[i].has_point(pos):
+			return "view%d" % i
 	return ""
+
+
+## 鼠标位置 → 地图格子；不在地图内返回 (-1, -1)。
+func _map_cell_at(pos: Vector2) -> Vector2i:
+	if _map_cell <= 0.0:
+		return Vector2i(-1, -1)
+	var rel: Vector2 = pos - _map_origin
+	if rel.x < 0.0 or rel.y < 0.0 \
+			or rel.x >= _map_w * _map_cell or rel.y >= _map_h * _map_cell:
+		return Vector2i(-1, -1)
+	return Vector2i(int(rel.x / _map_cell), int(rel.y / _map_cell))
 
 
 ## 切换地图尺寸档位（尺寸改变生成范围 → 重新请求预览）。
@@ -436,6 +700,19 @@ func _set_size(index: int) -> void:
 		return
 	_size_index = index
 	_request_preview()
+
+
+## 切换预览视图（地形/温度/降雨/气候）：仅换着色，不重请求。
+## 响应缺该图层字段（旧后端）时忽略并保留当前视图。
+func _set_view_mode(index: int) -> void:
+	if index < 0 or index >= VIEWS.size():
+		return
+	var view: Dictionary = VIEWS[index]
+	if view["key"] == _view_mode:
+		return
+	if not _preview.has(view["field"]):
+		return
+	_view_mode = view["key"]
 
 
 func _set_ratio_from_x(x: float) -> void:

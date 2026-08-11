@@ -113,3 +113,105 @@ class TestMapPreview:
         """缺少 seed 拒绝。"""
         with pytest.raises(ValueError):
             handlers["map_preview"](_req("map_preview", {}))
+
+    # ── 气候图层（温度/降雨/气候带）────────────────────────
+
+    def test_layers_omitted_by_default(self, handlers):
+        """缺省不计算气候图层（向后兼容：旧客户端仅海拔）。"""
+        payload = handlers["map_preview"](
+            _req("map_preview", {"seed": 12345, "land_ratio": 0.55})
+        )["payload"]
+        for key in ("temperature", "rainfall", "climate"):
+            assert key not in payload
+
+    def test_layers_return_extra_fields(self, handlers):
+        """请求 layers 时响应携带对应气候图层（与海拔同网格）。"""
+        payload = handlers["map_preview"](_req(
+            "map_preview",
+            {"seed": 12345, "land_ratio": 0.55,
+             "layers": ["temp", "rain", "climate"]},
+        ))["payload"]
+        n = payload["width"] * payload["height"]
+        assert len(payload["temperature"]) == n
+        assert len(payload["rainfall"]) == n
+        assert len(payload["climate"]) == n
+        assert all(isinstance(v, int) for v in payload["temperature"])
+        assert all(isinstance(v, int) for v in payload["rainfall"])
+        assert all(isinstance(v, int) for v in payload["climate"])
+
+    def test_layers_partial_selection(self, handlers):
+        """只请求部分图层：仅返回被请求的字段。"""
+        payload = handlers["map_preview"](_req(
+            "map_preview",
+            {"seed": 12345, "land_ratio": 0.55, "layers": ["climate"]},
+        ))["payload"]
+        assert "climate" in payload
+        assert "temperature" not in payload
+        assert "rainfall" not in payload
+
+    def test_layers_climate_zone_ints(self, handlers):
+        """气候带为 0-7 档位（与 ClimateZone 定义一致），陆地覆盖全部 8 档。"""
+        payload = handlers["map_preview"](_req(
+            "map_preview",
+            {"seed": 12345, "land_ratio": 0.55, "layers": ["climate"]},
+        ))["payload"]
+        zones = set(payload["climate"])
+        assert zones <= set(range(8))
+        assert zones == set(range(8)), "校准+注入应保证 8 档气候覆盖"
+
+    def test_layers_deterministic(self, handlers):
+        """同参数两次请求的气候图层一致。"""
+        req = _req("map_preview",
+                   {"seed": 7, "land_ratio": 0.4,
+                    "layers": ["temp", "rain", "climate"]})
+        r1 = handlers["map_preview"](req)["payload"]
+        r2 = handlers["map_preview"](req)["payload"]
+        assert r1["temperature"] == r2["temperature"]
+        assert r1["rainfall"] == r2["rainfall"]
+        assert r1["climate"] == r2["climate"]
+
+    def test_layers_seed_sensitive(self, handlers):
+        """不同种子气候图层不同（温度梯度方向由 seed 决定）。"""
+        def _climate_of(seed: int) -> list:
+            return handlers["map_preview"](_req(
+                "map_preview",
+                {"seed": seed, "land_ratio": 0.55,
+                 "layers": ["temp", "rain", "climate"]},
+            ))["payload"]["climate"]
+
+        assert _climate_of(1) != _climate_of(2)
+
+    def test_layers_size_scales_grid(self, handlers):
+        """尺寸档位下气候图层随网格缩放（与海拔同尺寸）。"""
+        payload = handlers["map_preview"](_req(
+            "map_preview",
+            {"seed": 42, "land_ratio": 0.5,
+             "width_km": 150.0, "height_km": 90.0,
+             "layers": ["temp", "rain", "climate"]},
+        ))["payload"]
+        assert len(payload["temperature"]) == 150 * 90
+
+    def test_layers_invalid_rejected(self, handlers):
+        """非法图层名拒绝。"""
+        with pytest.raises(ValueError):
+            handlers["map_preview"](_req(
+                "map_preview",
+                {"seed": 1, "land_ratio": 0.5, "layers": ["humidity"]},
+            ))
+
+    def test_layers_non_list_rejected(self, handlers):
+        """layers 非数组（null/字符串）拒绝为参数错误而非内部异常。"""
+        for bad in (None, "temp", 3):
+            with pytest.raises(ValueError):
+                handlers["map_preview"](_req(
+                    "map_preview",
+                    {"seed": 1, "land_ratio": 0.5, "layers": bad},
+                ))
+
+    def test_layers_empty_list_is_elevation_only(self, handlers):
+        """空 layers 列表 = 仅海拔（合法、向后兼容）。"""
+        payload = handlers["map_preview"](_req(
+            "map_preview",
+            {"seed": 12345, "land_ratio": 0.55, "layers": []},
+        ))["payload"]
+        assert "temperature" not in payload
