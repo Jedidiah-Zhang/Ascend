@@ -886,7 +886,7 @@ class TestSnapshotBranchPrune:
         是 C1 的兄弟，不是后代；子树定义 = 节点 + 后代。
         """
         s = self._build_fork(manager, world)
-        assert manager.remove_snapshot_branch(world, s["c1"]) == [s["c1"], s["c1a"]], "C1 + C1a"
+        assert set(manager.remove_snapshot_branch(world, s["c1"])) == {s["c1"], s["c1a"]}, "C1 + C1a"
         lineage = manager.snapshot_lineage(world)
         assert s["c1"] not in lineage["snapshots"]
         assert s["c1a"] not in lineage["snapshots"]

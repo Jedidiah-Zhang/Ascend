@@ -10,20 +10,31 @@ from ascend.space import WorldGenerator, BiomeType, ClimateZone
 from ascend.net.handlers.map_handler import make_map_handlers
 
 
+# ── 固件（模块级共享：大陆生成昂贵，整个模块只做一次）──────────────
+
+@pytest.fixture(scope="module")
+def continent():
+    """seed=42 的共享大陆宏观场。"""
+    from ascend.space.continent import ContinentGenerator
+    return ContinentGenerator(seed=42).generate()
+
+
+@pytest.fixture(scope="module")
+def gen(continent):
+    """seed=42 的 WorldGenerator 固件（注入共享大陆，避免重复生成）。"""
+    world = WorldGenerator(seed=42)
+    world._continent = continent
+    return world
+
+
+@pytest.fixture(scope="module")
+def handlers(gen):
+    """由 make_map_handlers 创建的处理器字典。"""
+    return make_map_handlers(gen)
+
+
 class TestMapHandlers:
     """地图处理程序测试。"""
-
-    # ── 固件 ───────────────────────────────────────────────────────────
-
-    @pytest.fixture
-    def gen(self):
-        """seed=42 的 WorldGenerator 固件。"""
-        return WorldGenerator(seed=42)
-
-    @pytest.fixture
-    def handlers(self, gen):
-        """由 make_map_handlers 创建的处理器字典。"""
-        return make_map_handlers(gen)
 
     # ── T5: get_chunks 返回正确的块数据 ────────────────────────────────
 
@@ -242,12 +253,10 @@ class TestMapHandlers:
 
     # ── include_tiles：完整版（tiles_b64 BLOB） ──────────────────────
 
-    def test_get_chunks_include_tiles_returns_tiles_b64(self, gen):
+    def test_get_chunks_include_tiles_returns_tiles_b64(self, gen, continent):
         """include_tiles=true 时返回 tiles_b64 BLOB（与 TileGrid.to_bytes 一致）。"""
         from ascend.space import TileGenerator
-        from ascend.space.continent import ContinentGenerator
 
-        continent = ContinentGenerator(seed=42).generate()
         tile_gen = TileGenerator(seed=42, continent=continent)
         handlers = make_map_handlers(gen, tile_gen=tile_gen)
         handle = handlers["get_chunks"]
@@ -269,12 +278,10 @@ class TestMapHandlers:
         grid = tile_gen.generate_chunk_for(gen.generate_chunk(2, -1))
         assert raw == grid.to_bytes(), "BLOB 应与 TileGrid.to_bytes 逐字节一致"
 
-    def test_get_chunks_include_tiles_second_request_served_from_tiles(self, gen):
+    def test_get_chunks_include_tiles_second_request_served_from_tiles(self, gen, continent):
         """同一 chunk 二次请求：已有 tiles 直接复用（不重新生成，无竞态）。"""
         from ascend.space import TileGenerator
-        from ascend.space.continent import ContinentGenerator
 
-        continent = ContinentGenerator(seed=42).generate()
         tile_gen = TileGenerator(seed=42, continent=continent)
         handlers = make_map_handlers(gen, tile_gen=tile_gen)
         handle = handlers["get_chunks"]

@@ -17,6 +17,10 @@ logs/
 backend/tests/.coverage
 backend/tests/.coverage.*
 
+# testmon 依赖库（本地生成，每台机器独立）
+.testmondata
+.testmondata-*
+
 # 编译产物（从 .c 自动生成；.dll 为 Windows 交叉编译产物）
 *.so
 *.dll
@@ -31,7 +35,7 @@ backend/tests/.coverage.*
 # 可视化输出（测试生成的 PNG，不提交）
 backend/tests/visual/output/
 
-# Godot 编辑器插件（开发工具，非游戏代码）
+# Godot 编辑器插件（开发工具，非游戏代码；GUT 本地手动安装后前端测试本地运行）
 frontend/addons/
 
 # 前端资源文件（不开源：美术素材、音频等）
