@@ -1,5 +1,5 @@
-name: 重构
-description: 调整既有模块的结构或实现，不改变对外行为
+name: 优化/重构
+description: 性能/结构优化或调整既有模块的实现，不改变对外行为
 title: 'refactor: '
 labels: [refactor]
 body:
