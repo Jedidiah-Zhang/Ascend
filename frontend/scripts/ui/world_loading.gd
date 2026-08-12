@@ -71,7 +71,7 @@ class Relay:
 
 var _font: Font = null
 var _state: State = State.LAUNCHING
-var _stage_text: String = "正在启动世界进程..."
+var _stage_text: String = ""
 var _error_reason: String = ""
 var _elapsed: float = 0.0
 ## 已见生成阶段的最大索引（-1 = 未收到阶段）；进度目标刻度按此推进
@@ -106,7 +106,7 @@ func _ready() -> void:
 	if not Connection.backend_failed.is_connected(_on_backend_failed):
 		Connection.backend_failed.connect(_on_backend_failed)
 	if Connection.status == Connection.Status.CONNECTED:
-		_enter_loading("正在加载世界...")
+		_enter_loading(tr("ui.loading.loading_world"))
 
 
 func _exit_tree() -> void:
@@ -134,7 +134,7 @@ func _enter_error(reason: String) -> void:
 
 func _retry() -> void:
 	_state = State.LAUNCHING
-	_stage_text = "正在启动世界进程..."
+	_stage_text = tr("ui.loading.starting_process")
 	_elapsed = 0.0
 	_stage_index = -1
 	_lerp.reset()
@@ -158,7 +158,7 @@ func _on_message(message: Dictionary) -> void:
 	match event_type:
 		"world_progress":
 			if _state == State.LAUNCHING:
-				_enter_loading("正在加载世界...")
+				_enter_loading(tr("ui.loading.loading_world"))
 			# 协议：payload.data.stage（与 main_world.gd 解析一致）
 			var payload: Dictionary = message.get("payload", {})
 			var stage: String = str(payload.get("data", {}).get("stage", ""))
@@ -170,7 +170,7 @@ func _on_message(message: Dictionary) -> void:
 			queue_redraw()
 		"world_initialized":
 			_handed_off = true
-			_stage_text = "正在进入世界..."
+			_stage_text = tr("ui.common.entering_world")
 			queue_redraw()
 			_handoff(message)
 
@@ -191,12 +191,12 @@ func _route_to_main_default() -> void:
 
 func _on_connection_lost() -> void:
 	if not _handed_off:
-		_enter_error("连接中断，世界加载失败")
+		_enter_error(tr("ui.loading.connection_lost"))
 
 
 func _on_backend_failed(reason: String) -> void:
 	if not _handed_off:
-		_enter_error("后端启动失败：%s" % reason)
+		_enter_error(tr("ui.loading.backend_failed").format({"reason": reason}))
 
 
 # ── 每帧超时 ──────────────────────────────────────────────
@@ -206,7 +206,7 @@ func _process(delta: float) -> void:
 		return
 	_elapsed += delta
 	if _elapsed > LOAD_TIMEOUT_SEC:
-		_enter_error("加载超时（%.0f 秒内未完成），请重试" % LOAD_TIMEOUT_SEC)
+		_enter_error(tr("ui.loading.timeout").format({"seconds": int(LOAD_TIMEOUT_SEC)}))
 		return
 	_advance_display_progress(delta)
 
@@ -248,7 +248,7 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), BG_COLOR)
 
 	# 标题
-	var title: String = "世界加载"
+	var title: String = tr("ui.loading.title")
 	var title_w: float = _font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_FONT_SIZE).x
 	draw_string(_font, Vector2((view_size.x - title_w) * 0.5, view_size.y * 0.32), title,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_FONT_SIZE, TITLE_COLOR)
@@ -277,7 +277,9 @@ func _draw_stage(center_y: float) -> void:
 
 	# 世界 ID 提示
 	var world_id: String = Connection.backend_world_id()
-	var hint: String = "世界 ID: %s" % (world_id if not world_id.is_empty() else "-")
+	var hint: String = tr("ui.loading.world_id").format({
+		"id": world_id if not world_id.is_empty() else "-",
+	})
 	var hint_w: float = _font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, HINT_FONT_SIZE).x
 	draw_string(_font, Vector2((size.x - hint_w) * 0.5, center_y + 64), hint,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, HINT_FONT_SIZE, SUBTITLE_COLOR)
@@ -294,8 +296,8 @@ func _draw_error(center_y: float) -> void:
 	var y: float = center_y + 36
 	_retry_rect = Rect2(start_x, y, BUTTON_W, BUTTON_H)
 	_menu_rect = Rect2(start_x + BUTTON_W + BUTTON_GAP, y, BUTTON_W, BUTTON_H)
-	_draw_button(_retry_rect, "重试", _retry_hover)
-	_draw_button(_menu_rect, "返回主菜单", _menu_hover)
+	_draw_button(_retry_rect, tr("ui.loading.retry"), _retry_hover)
+	_draw_button(_menu_rect, tr("ui.common.back_to_menu"), _menu_hover)
 
 
 func _draw_button(rect: Rect2, label: String, hovered: bool) -> void:

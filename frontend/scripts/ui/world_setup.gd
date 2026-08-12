@@ -63,7 +63,7 @@ var _hover_nav: String = ""
 var _nav_rects: Dictionary = {}
 
 ## 状态文本（底部）
-var _status_text: String = "正在准备..."
+var _status_text: String = ""
 var _status_color: Color = STATUS_WAIT_COLOR
 
 ## 创建流程中（save_create 已响应，等待世界进程）
@@ -110,13 +110,15 @@ func _ready() -> void:
 	add_child(_seed_input)
 	_current = 0
 	_steps[0].setup(_params)
-	_status_text = "步骤 %d/%d · 完成后创建世界" % [1, _steps.size()]
+	_status_text = tr("ui.setup.step_progress").format({"current": 1, "total": _steps.size()})
 	_status_color = SUBTITLE_COLOR
 
 	Connection.message_received.connect(_on_message)
 	Connection.connection_lost.connect(_on_connection_lost)
 	Connection.backend_failed.connect(_on_backend_failed)
 	Connection.connection_established.connect(_on_connected)
+	if not Settings.locale_changed.is_connected(_on_locale_changed):
+		Settings.locale_changed.connect(_on_locale_changed)
 
 
 func _exit_tree() -> void:
@@ -128,6 +130,8 @@ func _exit_tree() -> void:
 		Connection.backend_failed.disconnect(_on_backend_failed)
 	if Connection.connection_established.is_connected(_on_connected):
 		Connection.connection_established.disconnect(_on_connected)
+	if Settings.locale_changed.is_connected(_on_locale_changed):
+		Settings.locale_changed.disconnect(_on_locale_changed)
 
 
 # ── 绘制 ──────────────────────────────────────────────────
@@ -138,17 +142,19 @@ func _draw() -> void:
 	var view_size: Vector2 = size
 
 	draw_rect(Rect2(Vector2.ZERO, size), BG_COLOR)
-	draw_string(_font, Vector2(MARGIN, HEADER_H * 0.5 + 6), "创建世界",
+	draw_string(_font, Vector2(MARGIN, HEADER_H * 0.5 + 6), tr("ui.setup.title"),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_FONT_SIZE, TITLE_COLOR)
 
 	# 返回按钮
 	var back_rect := Rect2(view_size.x - MARGIN - 90, HEADER_H * 0.5 - 15, 90, 30)
-	_draw_nav_button(back_rect, "返回", _hover_nav == "back")
+	_draw_nav_button(back_rect, tr("ui.back"), _hover_nav == "back")
 	_nav_rects["back"] = back_rect
 
 	# 步骤标题
 	var step: SetupStep = _steps[_current]
-	var header: String = "第 %d/%d 步 · %s" % [_current + 1, _steps.size(), step.title()]
+	var header: String = tr("ui.setup.step_header").format({
+		"current": _current + 1, "total": _steps.size(), "title": step.title(),
+	})
 	draw_string(_font, Vector2(MARGIN, HEADER_H + 26), header,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, STEP_FONT_SIZE, SUBTITLE_COLOR)
 
@@ -162,8 +168,8 @@ func _draw() -> void:
 		HORIZONTAL_ALIGNMENT_LEFT, -1, STATUS_FONT_SIZE, _status_color)
 
 	var is_last: bool = _current == _steps.size() - 1
-	var next_label: String = "创建世界" if is_last else "下一步"
-	var prev_label: String = "上一步" if not is_last else ""
+	var next_label: String = tr("ui.setup.title") if is_last else tr("ui.setup.next")
+	var prev_label: String = tr("ui.setup.prev") if not is_last else ""
 	var next_rect := Rect2(
 		view_size.x - MARGIN - BUTTON_W, view_size.y - FOOTER_H + 12,
 		BUTTON_W, BUTTON_H)
@@ -272,7 +278,9 @@ func _next_step() -> void:
 		return
 	_current += 1
 	_current_step().setup(_params)
-	_status_text = "步骤 %d/%d · 完成后创建世界" % [_current + 1, _steps.size()]
+	_status_text = tr("ui.setup.step_progress").format({
+		"current": _current + 1, "total": _steps.size(),
+	})
 	_status_color = SUBTITLE_COLOR
 	queue_redraw()
 
@@ -282,7 +290,9 @@ func _prev_step() -> void:
 		return
 	_current -= 1
 	_current_step().setup(_params)
-	_status_text = "步骤 %d/%d · 完成后创建世界" % [_current + 1, _steps.size()]
+	_status_text = tr("ui.setup.step_progress").format({
+		"current": _current + 1, "total": _steps.size(),
+	})
 	_status_color = SUBTITLE_COLOR
 	queue_redraw()
 
@@ -291,7 +301,7 @@ func _prev_step() -> void:
 
 func _start_create() -> void:
 	_busy = true
-	_set_status("正在创建世界...", STATUS_WAIT_COLOR)
+	_set_status(tr("ui.setup.creating_world"), STATUS_WAIT_COLOR)
 	var gen_params: Dictionary = _params.get("gen_params", {})
 	sender.call(SaveApi.create_request(
 		_default_save_name(), int(_params.get("seed", 0)), gen_params))
@@ -311,10 +321,10 @@ func _on_message(message: Dictionary) -> void:
 				_busy = false
 				var world_id: String = str(message.get("payload", {}).get("world_id", ""))
 				if world_id.is_empty():
-					_set_status("创建存档失败", STATUS_ERR_COLOR)
+					_set_status(tr("ui.saves.create_failed"), STATUS_ERR_COLOR)
 					return
 				_entering_world = true
-				_set_status("正在进入世界...", STATUS_WAIT_COLOR)
+				_set_status(tr("ui.common.entering_world"), STATUS_WAIT_COLOR)
 				backend_launcher.call(PackedStringArray(["--world-id", world_id]))
 				# 不等连接就绪：切进度页，由其等待后端启动与生成
 				scene_router.call()
@@ -327,7 +337,9 @@ func _on_message(message: Dictionary) -> void:
 			queue_redraw()
 			return
 		_busy = false
-		_set_status("请求失败：%s" % SaveApi.parse_error(message), STATUS_ERR_COLOR)
+		_set_status(tr("ui.common.request_failed").format({
+			"reason": SaveApi.parse_error(message),
+		}), STATUS_ERR_COLOR)
 
 
 ## 创建成功后已切 world_loading 进度页，本页不再处理连接就绪；
@@ -340,20 +352,25 @@ func _on_connection_lost() -> void:
 	if _busy or _entering_world:
 		_busy = false
 		_entering_world = false
-		_set_status("连接中断，操作未完成 — 请重试", STATUS_ERR_COLOR)
+		_set_status(tr("ui.common.connection_lost_retry"), STATUS_ERR_COLOR)
 		queue_redraw()
 
 
 func _on_backend_failed(reason: String) -> void:
 	_busy = false
 	_entering_world = false
-	_set_status("后端不可用：%s" % reason, STATUS_ERR_COLOR)
+	_set_status(tr("ui.common.backend_unavailable").format({"reason": reason}), STATUS_ERR_COLOR)
 	queue_redraw()
 
 
 func _set_status(text: String, color: Color) -> void:
 	_status_text = text
 	_status_color = color
+	queue_redraw()
+
+
+## 语言切换回调（设置界面改动后重绘文案）。
+func _on_locale_changed(_locale: String) -> void:
 	queue_redraw()
 
 

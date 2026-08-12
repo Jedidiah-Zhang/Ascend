@@ -69,6 +69,11 @@ func _make_setup() -> Array:
 
 # ── 步骤构建 ──────────────────────────────────────────────
 
+func before_each() -> void:
+	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
+	TranslationServer.set_locale("zh_CN")
+
+
 func test_ready_builds_map_step() -> void:
 	var pair: Array = _make_setup()
 	var setup: Control = pair[0]

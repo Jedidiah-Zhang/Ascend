@@ -10,6 +10,10 @@ extends GutTest
 var _prev_locale: String = ""
 
 
+func before_each() -> void:
+	_prev_locale = TranslationServer.get_locale()
+
+
 func after_each() -> void:
 	TranslationServer.set_locale(_prev_locale)
 	# 恢复 InputMap 到项目默认，避免污染其他测试

@@ -9,14 +9,15 @@ class_name WorldStageLabels
 extends RefCounted
 
 
-const LABELS: Dictionary = {
-	"elevation": "正在生成地形...",
-	"climate": "正在生成气候...",
-	"erosion": "正在侵蚀塑形...",
-	"water": "正在汇聚湖泊河流...",
-	"width": "正在雕刻河道...",
-	"chunks": "正在准备出生区域...",
-	"done": "正在进入世界...",
+## 阶段 → 翻译键（文案见 lang/*.json 的 ui.stage.*）
+const LABEL_KEYS: Dictionary = {
+	"elevation": "ui.stage.elevation",
+	"climate": "ui.stage.climate",
+	"erosion": "ui.stage.erosion",
+	"water": "ui.stage.water",
+	"width": "ui.stage.width",
+	"chunks": "ui.stage.chunks",
+	"done": "ui.stage.done",
 }
 
 ## 阶段顺序（与后端广播顺序一致：ContinentGenerator.generate 的
@@ -29,7 +30,7 @@ const ORDER: Array = [
 
 ## 阶段名 → 文案；未知阶段用兜底文案。
 static func label_for(stage: String) -> String:
-	return str(LABELS.get(stage, "正在生成世界..."))
+	return TranslationServer.tr(str(LABEL_KEYS.get(stage, "ui.stage.fallback")))
 
 
 ## 阶段在 ORDER 中的索引；未知阶段返回 -1（不推进进度刻度）。

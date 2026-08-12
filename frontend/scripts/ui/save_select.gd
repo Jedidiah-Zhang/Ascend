@@ -60,12 +60,12 @@ const ACTION_W: float = 72.0
 const ACTION_H: float = 26.0
 const ACTION_GAP: float = 6.0
 
-## 操作按钮定义: {key, label, danger}
+## 操作按钮定义: {key, label_key, danger}
 const ACTIONS: Array = [
-	{"key": "play", "label": "进入", "danger": false},
-	{"key": "rename", "label": "重命名", "danger": false},
-	{"key": "export", "label": "复制", "danger": false},
-	{"key": "delete", "label": "删除", "danger": true},
+	{"key": "play", "label_key": "ui.saves.enter", "danger": false},
+	{"key": "rename", "label_key": "ui.saves.rename", "danger": false},
+	{"key": "export", "label_key": "ui.saves.copy", "danger": false},
+	{"key": "delete", "label_key": "ui.saves.delete", "danger": true},
 ]
 
 # ── 时间线视图常量 ─────────────────────────────────────────
@@ -98,7 +98,7 @@ const TL_ZOOM_MAX: float = 2.5
 ## 解析后的世界摘要列表
 var _worlds: Array = []
 ## 状态文本（底部）
-var _status_text: String = "正在读取存档..."
+var _status_text: String = ""
 var _status_color: Color = STATUS_WAIT_COLOR
 var _font: Font = null
 
@@ -197,7 +197,7 @@ func _ready() -> void:
 
 	_name_input = LineEdit.new()
 	_name_input.visible = false
-	_name_input.placeholder_text = "存档名称"
+	_name_input.placeholder_text = tr("ui.saves.name_placeholder")
 	_name_input.max_length = 40
 	_name_input.text_submitted.connect(_on_name_submitted)
 	add_child(_name_input)
@@ -206,6 +206,8 @@ func _ready() -> void:
 	Connection.connection_lost.connect(_on_connection_lost)
 	Connection.backend_failed.connect(_on_backend_failed)
 	Connection.connection_established.connect(_on_connected)
+	if not Settings.locale_changed.is_connected(_on_locale_changed):
+		Settings.locale_changed.connect(_on_locale_changed)
 	# 握手完成前 send() 会被丢弃：已连接才立即请求，否则等 connection_established
 	if Connection.status == Connection.Status.CONNECTED:
 		_refresh_list()
@@ -221,6 +223,8 @@ func _exit_tree() -> void:
 		Connection.backend_failed.disconnect(_on_backend_failed)
 	if Connection.connection_established.is_connected(_on_connected):
 		Connection.connection_established.disconnect(_on_connected)
+	if Settings.locale_changed.is_connected(_on_locale_changed):
+		Settings.locale_changed.disconnect(_on_locale_changed)
 
 
 ## 连接就绪回调（握手完成）：进入世界流程中则切场景，否则拉取存档列表。
@@ -239,7 +243,7 @@ func _on_connected(_host: String, _port: int) -> void:
 
 func _refresh_list() -> void:
 	"""请求存档列表。"""
-	_status_text = "正在读取存档..."
+	_status_text = tr("ui.saves.loading")
 	_status_color = STATUS_WAIT_COLOR
 	Connection.send(SaveApi.list_request())
 
@@ -259,12 +263,12 @@ func _apply_worlds(payload: Dictionary) -> void:
 	if keep_expanded >= 0 and keep_expanded < _worlds.size():
 		_toggle_timeline(keep_expanded)
 	if _worlds.is_empty():
-		_status_text = "暂无存档 — 点击「新建游戏」开始"
+		_status_text = tr("ui.saves.empty_hint")
 		_status_color = STATUS_OK_COLOR
 	else:
-		_status_text = "共 %d 个存档（快照 %d 个）" % [
-			_worlds.size(), _snapshots.size(),
-		]
+		_status_text = tr("ui.saves.count").format({
+			"worlds": _worlds.size(), "snapshots": _snapshots.size(),
+		})
 		_status_color = STATUS_OK_COLOR
 	queue_redraw()
 
@@ -287,7 +291,7 @@ func _on_connection_lost() -> void:
 		_busy = false
 		_close_confirm_dialog()
 		_entering_world = false
-		_set_error("连接中断，操作未完成 — 请重试")
+		_set_error(tr("ui.common.connection_lost_retry"))
 	queue_redraw()
 
 
@@ -296,7 +300,7 @@ func _on_backend_failed(reason: String) -> void:
 	_busy = false
 	_close_confirm_dialog()
 	_entering_world = false
-	_set_error("后端不可用：%s" % reason)
+	_set_error(tr("ui.common.backend_unavailable").format({"reason": reason}))
 	queue_redraw()
 
 
@@ -312,12 +316,12 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), BG_COLOR)
 
 	# 标题
-	draw_string(_font, Vector2(MARGIN, HEADER_H * 0.5 + 6), "存档选择",
+	draw_string(_font, Vector2(MARGIN, HEADER_H * 0.5 + 6), tr("ui.saves.title"),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_FONT_SIZE, TITLE_COLOR)
 
 	# 返回按钮
 	var back_rect := Rect2(view_size.x - MARGIN - 90, HEADER_H * 0.5 - 15, 90, 30)
-	_draw_button(back_rect, "返回", _hover_action.get("key") == "back")
+	_draw_button(back_rect, tr("ui.back"), _hover_action.get("key") == "back")
 	_back_rect = back_rect
 
 	# 列表区
@@ -331,7 +335,7 @@ func _draw() -> void:
 
 	_action_rects.clear()
 	if _worlds.is_empty():
-		var empty: String = "暂无存档"
+		var empty: String = tr("ui.saves.empty")
 		var w: float = _font.get_string_size(empty, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x
 		draw_string(_font, list_rect.position + Vector2((list_rect.size.x - w) * 0.5, list_rect.size.y * 0.4),
 			empty, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, DIM_TEXT_COLOR)
@@ -351,7 +355,7 @@ func _draw() -> void:
 	draw_string(_font, Vector2(MARGIN, view_size.y - 22), _status_text,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, SMALL_FONT_SIZE, _status_color)
 	var create_rect := Rect2(view_size.x - MARGIN - 130, view_size.y - FOOTER_H + 12, 130, 32)
-	_draw_button(create_rect, "新建游戏", _hover_action.get("key") == "create")
+	_draw_button(create_rect, tr("ui.saves.new_game"), _hover_action.get("key") == "create")
 	_create_rect = create_rect
 
 	# 名称输入弹层
@@ -391,13 +395,13 @@ func _draw_row(index: int, rect: Rect2) -> void:
 	# 信息区
 	draw_string(_font, rect.position + Vector2(14, 24), str(w["name"]),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, ROW_TITLE_FONT_SIZE, TEXT_COLOR)
-	var info: String = "%s   时长 %s    快照 %d   最后游玩 %s    种子 %s" % [
-		SaveInfoFormatter.game_time_string(w["game_time"]),
-		SaveInfoFormatter.duration_string(w["play_duration_sec"]),
-		w["snapshot_count"],
-		SaveInfoFormatter.datetime_string(w["last_played_at"]),
-		SaveInfoFormatter.seed_string(w["seed"]),
-	]
+	var info: String = tr("ui.saves.info").format({
+		"name": SaveInfoFormatter.game_time_string(w["game_time"]),
+		"duration": SaveInfoFormatter.duration_string(w["play_duration_sec"]),
+		"snapshots": w["snapshot_count"],
+		"last_played": SaveInfoFormatter.datetime_string(w["last_played_at"]),
+		"seed": SaveInfoFormatter.seed_string(w["seed"]),
+	})
 	draw_string(_font, rect.position + Vector2(14, 48), info,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, ROW_INFO_FONT_SIZE, DIM_TEXT_COLOR)
 
@@ -410,7 +414,7 @@ func _draw_row(index: int, rect: Rect2) -> void:
 		var action: Dictionary = ACTIONS[a]
 		var hover: bool = _hover_row == index and _hover_action.get("action") == a
 		var danger: bool = action["danger"]
-		var label: String = action["label"]
+		var label: String = tr(action["label_key"])
 		_draw_button(btn_rect, label, hover, danger)
 		# 记录按钮矩形供命中检测
 		_action_rects.append({"rect": btn_rect, "row": index, "action": a})
@@ -446,7 +450,7 @@ func _draw_input_dialog() -> void:
 	draw_rect(dlg_rect, PANEL_COLOR)
 	draw_rect(dlg_rect, Color(1, 1, 1, 0.15), false, 1.0)
 
-	var prompt: String = "重命名为"
+	var prompt: String = tr("ui.saves.rename_prompt")
 	draw_string(_font, dlg_rect.position + Vector2(16, 26), prompt,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 14, TITLE_COLOR)
 
@@ -457,8 +461,8 @@ func _draw_input_dialog() -> void:
 	# 确认/取消按钮（自绘命中）
 	var ok_rect := Rect2(dlg_rect.position.x + dlg_w - 170, dlg_rect.position.y + 86, 70, 28)
 	var cancel_rect := Rect2(dlg_rect.position.x + dlg_w - 90, dlg_rect.position.y + 86, 70, 28)
-	_draw_button(ok_rect, "确定", _hover_action.get("key") == "ok")
-	_draw_button(cancel_rect, "取消", _hover_action.get("key") == "cancel")
+	_draw_button(ok_rect, tr("ui.confirm"), _hover_action.get("key") == "ok")
+	_draw_button(cancel_rect, tr("ui.cancel"), _hover_action.get("key") == "cancel")
 	_ok_rect = ok_rect
 	_cancel_rect = cancel_rect
 
@@ -788,9 +792,9 @@ func _draw_inline_timeline(row_rect: Rect2) -> void:
 	draw_rect(tree_rect, Color(1, 1, 1, 0.10), false, 1.0)
 
 	var w: Dictionary = _worlds[_expanded_row]
-	var title: String = "时间线"
+	var title: String = tr("ui.saves.timeline")
 	if str(w.get("world_id", "")) == _current_world_id:
-		title += "（最后进入）"
+		title += tr("ui.saves.last_entered")
 	draw_string(_font, tree_rect.position + Vector2(14, 18), title,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 14, TITLE_COLOR)
 
@@ -798,7 +802,7 @@ func _draw_inline_timeline(row_rect: Rect2) -> void:
 	_tl_legend_rect = Rect2(tree_rect.end.x - TL_LEGEND_W, tree_rect.position.y,
 		TL_LEGEND_W, tree_rect.size.y)
 	draw_rect(_tl_legend_rect, Color(0, 0, 0, 0.25))
-	draw_string(_font, _tl_legend_rect.position + Vector2(10, 18), "快照列表",
+	draw_string(_font, _tl_legend_rect.position + Vector2(10, 18), tr("ui.saves.snapshot_list"),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, TITLE_COLOR)
 	var legend_body := Rect2(
 		_tl_legend_rect.position + Vector2(8, TL_HEADER_H),
@@ -871,7 +875,7 @@ func _draw_inline_timeline(row_rect: Rect2) -> void:
 		draw_string(_font, pos + Vector2(-12, 5), glyph,
 			HORIZONTAL_ALIGNMENT_CENTER, 24, 11, Color(0.05, 0.06, 0.10, 0.95))
 		if n["is_live"]:
-			draw_string(_font, pos + Vector2(-34, TL_NODE_R + 15), "当前时间点",
+			draw_string(_font, pos + Vector2(-34, TL_NODE_R + 15), tr("ui.saves.current_point"),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, TL_LIVE_COLOR)
 			var gt: String = SaveInfoFormatter.game_time_string(
 				int(w.get("game_time", 0)))
@@ -910,9 +914,11 @@ func _tl_legend_text(id: String) -> String:
 		if n["id"] != id:
 			continue
 		if n["is_live"]:
-			return "当前时间点 · " + SaveInfoFormatter.game_time_string(
-				int(_worlds[_expanded_row].get("game_time", 0)))
-		var prefix: String = "自动 · " if str(n.get("suffix", "")) != "manual" else ""
+			return tr("ui.saves.current_point_line").format({				"time": SaveInfoFormatter.game_time_string(
+					int(_worlds[_expanded_row].get("game_time", 0))),
+			})
+		var prefix: String = tr("ui.saves.auto_prefix") \
+			if str(n.get("suffix", "")) != "manual" else ""
 		return prefix + _tl_node_label(n)
 	return ""
 
@@ -969,7 +975,7 @@ func _confirm_rollback(world_id: String, id: String) -> void:
 	"""面板「进入存档点」：世界进程带 --snapshot 重启。"""
 	_close_action_panel()
 	_busy = true
-	_status_text = "正在回滚到 %s ..." % id
+	_status_text = tr("ui.saves.rolling_back").format({"id": id})
 	_status_color = STATUS_WAIT_COLOR
 	_entering_world = true
 	backend_launcher.call(PackedStringArray(["--world-id", world_id, "--snapshot", id]))
@@ -985,7 +991,7 @@ func _confirm_snapshot_delete(world_id: String, id: String) -> void:
 	_close_confirm_dialog()
 	_close_action_panel()
 	_busy = true
-	_status_text = "正在删除快照..." if recursive else "正在删除节点..."
+	_status_text = tr("ui.saves.deleting_snapshot") if recursive else tr("ui.saves.deleting_node")
 	_status_color = STATUS_WAIT_COLOR
 	Connection.send(SaveApi.snapshot_delete_request(world_id, id, recursive))
 	queue_redraw()
@@ -999,7 +1005,7 @@ func _confirm_delete_world() -> void:
 		return
 	var world_id: String = str(_worlds[row].get("world_id", ""))
 	_busy = true
-	_status_text = "正在删除..."
+	_status_text = tr("ui.saves.deleting")
 	_status_color = STATUS_WAIT_COLOR
 	Connection.send(SaveApi.delete_request(world_id))
 	queue_redraw()
@@ -1010,13 +1016,13 @@ func _confirm_delete_world() -> void:
 ## 面板动作列表：进入存档点恒有；删除分支仅当节点有后代时显示。
 func _panel_actions() -> Array:
 	var items: Array = [
-		{"action": "enter", "label": "进入存档点", "danger": false},
-		{"action": "delete", "label": "删除存档点", "danger": true},
+		{"action": "enter", "label_key": "ui.saves.enter_snapshot", "danger": false},
+		{"action": "delete", "label_key": "ui.saves.delete_snapshot", "danger": true},
 	]
 	var node_id: String = _panel_node_id
 	for n in _tl_nodes:
 		if n["id"] == node_id and not (n["children"] as Array).is_empty():
-			items.append({"action": "prune", "label": "删除分支", "danger": true})
+			items.append({"action": "prune", "label_key": "ui.saves.prune_branch", "danger": true})
 			break
 	return items
 
@@ -1057,7 +1063,7 @@ func _draw_action_panel() -> void:
 			Vector2(btn_w, btn_h),
 		)
 		_panel_rects[item["action"]] = btn_rect
-		_draw_button(btn_rect, str(item["label"]),
+		_draw_button(btn_rect, tr(str(item["label_key"])),
 			_panel_hover == item["action"], item["danger"])
 
 
@@ -1129,17 +1135,20 @@ func _draw_confirm_dialog() -> void:
 	var title: String
 	var desc: String
 	if is_world:
-		title = "删除存档"
-		desc = "将删除存档「%s」及其全部快照，无法撤销。" \
-			% str(_dlg_confirm.get("world_name", ""))
+		title = tr("ui.saves.dlg_delete_world_title")
+		desc = tr("ui.saves.dlg_delete_world_desc").format({
+			"name": str(_dlg_confirm.get("world_name", "")),
+		})
 	elif is_prune:
-		title = "删除分支"
-		var node_label: String = str(_dlg_confirm.get("node_label", ""))
-		desc = "将删除「%s」及其全部后代（含自动保护点），无法撤销。" % node_label
+		title = tr("ui.saves.dlg_delete_branch_title")
+		desc = tr("ui.saves.dlg_delete_branch_desc").format({
+			"name": str(_dlg_confirm.get("node_label", "")),
+		})
 	else:
-		title = "删除存档点"
-		var node_label2: String = str(_dlg_confirm.get("node_label", ""))
-		desc = "将删除存档点「%s」，其子节点将重接到父级，无法撤销。" % node_label2
+		title = tr("ui.saves.dlg_delete_node_title")
+		desc = tr("ui.saves.dlg_delete_node_desc").format({
+			"name": str(_dlg_confirm.get("node_label", "")),
+		})
 	draw_string(_font, dlg_rect.position + Vector2(16, 26), title,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 16, TITLE_COLOR)
 	draw_string(_font, dlg_rect.position + Vector2(16, 56), desc,
@@ -1147,8 +1156,8 @@ func _draw_confirm_dialog() -> void:
 
 	var ok_rect := Rect2(dlg_rect.position.x + dlg_w - 170, dlg_rect.position.y + dlg_h - 42, 70, 28)
 	var cancel_rect := Rect2(dlg_rect.position.x + dlg_w - 90, dlg_rect.position.y + dlg_h - 42, 70, 28)
-	_draw_button(ok_rect, "删除", _dlg_hover == "ok", true)
-	_draw_button(cancel_rect, "取消", _dlg_hover == "cancel")
+	_draw_button(ok_rect, tr("ui.saves.delete"), _dlg_hover == "ok", true)
+	_draw_button(cancel_rect, tr("ui.cancel"), _dlg_hover == "cancel")
 	_dlg_rects = {"ok": ok_rect, "cancel": cancel_rect}
 
 
@@ -1178,7 +1187,7 @@ func _activate_action(row: int, action: int) -> void:
 			_open_input("rename", row)
 		"export":
 			_busy = true
-			_status_text = "正在复制存档..."
+			_status_text = tr("ui.saves.copying")
 			Connection.send(SaveApi.export_request(world_id))
 		"delete":
 			_open_delete_world_dialog(row)
@@ -1232,14 +1241,14 @@ func _close_input() -> void:
 func _on_name_submitted(text: String) -> void:
 	var save_name: String = text.strip_edges()
 	if save_name.is_empty():
-		_set_error("名称不能为空")
+		_set_error(tr("ui.saves.name_empty"))
 		return
 	if _input_row < 0 or _input_row >= _worlds.size():
 		_close_input()
 		return
 	var world_id: String = str(_worlds[_input_row]["world_id"])
 	_busy = true
-	_status_text = "正在重命名..."
+	_status_text = tr("ui.saves.renaming")
 	Connection.send(SaveApi.rename_request(world_id, save_name))
 	_close_input()
 
@@ -1253,7 +1262,7 @@ func _on_name_submitted(text: String) -> void:
 ##     world_id: 目标世界 id。
 func _load_world(world_id: String) -> void:
 	_busy = true
-	_status_text = "正在进入世界..."
+	_status_text = tr("ui.common.entering_world")
 	_status_color = STATUS_WAIT_COLOR
 	_entering_world = true
 	backend_launcher.call(PackedStringArray(["--world-id", world_id]))
@@ -1288,7 +1297,7 @@ func _on_message(message: Dictionary) -> void:
 			SaveApi.CREATE:
 				var world_id: String = str(message.get("payload", {}).get("world_id", ""))
 				if world_id.is_empty():
-					_set_error("创建存档失败")
+					_set_error(tr("ui.saves.create_failed"))
 				else:
 					_load_world(world_id)
 			SaveApi.RENAME, SaveApi.EXPORT:
@@ -1298,5 +1307,12 @@ func _on_message(message: Dictionary) -> void:
 	elif msg_type == "error":
 		_busy = false
 		_close_confirm_dialog()
-		_set_error("请求失败：%s" % SaveApi.parse_error(message))
+		_set_error(tr("ui.common.request_failed").format({
+			"reason": SaveApi.parse_error(message),
+		}))
 		queue_redraw()
+
+
+## 语言切换回调（设置界面改动后重绘文案）。
+func _on_locale_changed(_locale: String) -> void:
+	queue_redraw()

@@ -41,9 +41,9 @@ const LAND_RATIO_STEP: float = 0.01
 
 ## 地图尺寸档位（与后端 ContinentParams 5:3 比例一致）。
 const SIZE_OPTIONS: Array = [
-	{"label": "小", "width_km": 60.0, "height_km": 36.0},
-	{"label": "中", "width_km": 100.0, "height_km": 60.0},
-	{"label": "大", "width_km": 150.0, "height_km": 90.0},
+	{"label_key": "ui.map.size_small", "width_km": 60.0, "height_km": 36.0},
+	{"label_key": "ui.map.size_medium", "width_km": 100.0, "height_km": 60.0},
+	{"label_key": "ui.map.size_large", "width_km": 150.0, "height_km": 90.0},
 ]
 
 # ── 视觉常量（自绘） ─────────────────────────────────────
@@ -67,13 +67,13 @@ const PREVIEW_CELL: float = 4.0
 
 # ── 气候图层视图 ──────────────────────────────────────────
 
-## 预览视图定义: {key, label, field}——field 为预览 payload 字段名，
+## 预览视图定义: {key, label_key, field}——field 为预览 payload 字段名，
 ## 缺该字段（旧后端）时视图不可用（自动降级地形）。
 const VIEWS: Array = [
-	{"key": "elevation", "label": "地形", "field": "elevation"},
-	{"key": "temp", "label": "温度", "field": "temperature"},
-	{"key": "rain", "label": "降雨", "field": "rainfall"},
-	{"key": "climate", "label": "气候", "field": "climate"},
+	{"key": "elevation", "label_key": "ui.map.view_elevation", "field": "elevation"},
+	{"key": "temp", "label_key": "ui.map.view_temp", "field": "temperature"},
+	{"key": "rain", "label_key": "ui.map.view_rain", "field": "rainfall"},
+	{"key": "climate", "label_key": "ui.map.view_climate", "field": "climate"},
 ]
 const VIEW_BUTTON_W: float = 64.0
 const VIEW_BUTTON_H: float = 26.0
@@ -96,9 +96,12 @@ const CLIMATE_ZONE_COLORS: Array = [
 	Color("b0b0c0"),  # 7 高山
 ]
 
-## 气候档位中文名（与 CLIMATE_ZONE_COLORS 下标一一对应，同后端 ClimateZone）
-const CLIMATE_NAMES: Array = ["热带雨林", "热带草原", "沙漠", "草原",
-	"温带森林", "亚寒带针叶林", "极地苔原", "高山"]
+## 气候档位名键（与 CLIMATE_ZONE_COLORS 下标一一对应，同后端 ClimateZone）
+const CLIMATE_NAME_KEYS: Array = [
+	"ui.map.climate_rainforest", "ui.map.climate_savanna", "ui.map.climate_desert",
+	"ui.map.climate_grassland", "ui.map.climate_temperate_forest", "ui.map.climate_taiga",
+	"ui.map.climate_tundra", "ui.map.climate_alpine",
+]
 
 # ── 状态 ──────────────────────────────────────────────────
 
@@ -156,7 +159,7 @@ func step_id() -> String:
 
 
 func title() -> String:
-	return "地图生成"
+	return TranslationServer.tr("ui.map.title")
 
 
 func setup(params: Dictionary) -> void:
@@ -265,18 +268,18 @@ func draw_page(canvas: Control, rect: Rect2, font: Font) -> void:
 
 func _draw_params(canvas: Control, rect: Rect2, font: Font) -> void:
 	# 种子行
-	draw_label(canvas, font, rect.position + Vector2(0, 26), "世界种子", LABEL_FONT_SIZE)
+	draw_label(canvas, font, rect.position + Vector2(0, 26), TranslationServer.tr("ui.map.seed"), LABEL_FONT_SIZE)
 	var seed_rect := Rect2(rect.position + Vector2(0, 40), Vector2(rect.size.x - 130.0, 34))
 	_draw_value_box(canvas, seed_rect, font, str(_seed), _hover == "seed")
 	var random_rect := Rect2(
 		rect.position + Vector2(rect.size.x - 118.0, 40), Vector2(112.0, 34))
-	_draw_button(canvas, random_rect, font, "随机", _hover == "random")
+	_draw_button(canvas, random_rect, font, TranslationServer.tr("ui.common.random"), _hover == "random")
 	_random_rect = random_rect
 
 	# 大陆占比行
 	var ratio_y: float = 40.0 + 34.0 + 34.0
 	draw_label(canvas, font, rect.position + Vector2(0, ratio_y + 16),
-		"大陆占比  %d%%" % int(round(_land_ratio * 100.0)), LABEL_FONT_SIZE)
+		TranslationServer.tr("ui.map.land_ratio").format({"percent": int(round(_land_ratio * 100.0))}), LABEL_FONT_SIZE)
 	var slider_rect := Rect2(rect.position + Vector2(0, ratio_y + 30),
 		Vector2(rect.size.x - 160.0, 24))
 	_draw_slider(canvas, slider_rect, font)
@@ -285,8 +288,10 @@ func _draw_params(canvas: Control, rect: Rect2, font: Font) -> void:
 	# 地图尺寸行（三档选择，切换不刷新预览）
 	var size_y: float = ratio_y + 30.0 + 24.0 + 26.0
 	draw_label(canvas, font, rect.position + Vector2(0, size_y + 16),
-		"地图尺寸  %dx%d km" % [SIZE_OPTIONS[_size_index]["width_km"],
-			SIZE_OPTIONS[_size_index]["height_km"]], LABEL_FONT_SIZE)
+		TranslationServer.tr("ui.map.map_size").format({
+			"width": SIZE_OPTIONS[_size_index]["width_km"],
+			"height": SIZE_OPTIONS[_size_index]["height_km"],
+		}), LABEL_FONT_SIZE)
 	var btn_w: float = (rect.size.x - 26.0) / 3.0
 	_size_rects.clear()
 	for i in SIZE_OPTIONS.size():
@@ -298,14 +303,14 @@ func _draw_params(canvas: Control, rect: Rect2, font: Font) -> void:
 
 	# 说明
 	draw_label(canvas, font, rect.position + Vector2(0, rect.size.y - 20),
-		"种子决定整个世界的确定性生成；占比影响海陆面积，尺寸影响世界规模。",
+		TranslationServer.tr("ui.map.description"),
 		SMALL_FONT_SIZE, DIM_COLOR)
 
 
 func _draw_preview(canvas: Control, rect: Rect2, font: Font) -> void:
 	canvas.draw_rect(rect, PREVIEW_BG_COLOR)
 	canvas.draw_rect(rect, Color(1, 1, 1, 0.12), false, 1.0)
-	draw_label(canvas, font, rect.position + Vector2(14, 24), "地形预览", LABEL_FONT_SIZE)
+	draw_label(canvas, font, rect.position + Vector2(14, 24), TranslationServer.tr("ui.map.preview_title"), LABEL_FONT_SIZE)
 
 	# 视图切换按钮（地形 / 温度 / 降雨 / 气候）——与标题同行，右对齐
 	var view_y: float = rect.position.y + 8.0
@@ -321,7 +326,7 @@ func _draw_preview(canvas: Control, rect: Rect2, font: Font) -> void:
 		_draw_view_button(canvas, v_rect, font, i)
 
 	if _preview.is_empty():
-		var waiting: String = "生成中..." if _preview_pending else "等待参数..."
+		var waiting: String = TranslationServer.tr("ui.map.generating") if _preview_pending else TranslationServer.tr("ui.map.waiting")
 		draw_label(canvas, font,
 			rect.position + Vector2(14, rect.size.y * 0.5), waiting, VALUE_FONT_SIZE)
 		return
@@ -331,7 +336,7 @@ func _draw_preview(canvas: Control, rect: Rect2, font: Font) -> void:
 	var h: int = int(_preview.get("height", 0))
 	if elev.size() < w * h or w <= 0 or h <= 0:
 		draw_label(canvas, font, rect.position + Vector2(14, rect.size.y * 0.5),
-			"预览数据异常", SMALL_FONT_SIZE, Color(0.95, 0.50, 0.45))
+			TranslationServer.tr("ui.map.preview_error"), SMALL_FONT_SIZE, Color(0.95, 0.50, 0.45))
 		return
 
 	# 当前视图数据（缺图层 → 降级地形）
@@ -385,7 +390,7 @@ func _info_line(view: Dictionary, field: Array) -> String:
 			var r: Array = _field_range(field)
 			parts.append(_range_text(view, r))
 		"climate":
-			parts.append("移入地图查看气候")
+			parts.append(TranslationServer.tr("ui.map.hover_climate_hint"))
 	var hover: String = _hover_value_text(view, field)
 	if hover != "":
 		if view["key"] == "climate":
@@ -399,11 +404,11 @@ func _info_line(view: Dictionary, field: Array) -> String:
 func _range_text(view: Dictionary, r: Array) -> String:
 	match view["key"]:
 		"elevation":
-			return "海拔 %d~%dm" % [r[0], r[1]]
+			return TranslationServer.tr("ui.map.range_elevation").format({"min": r[0], "max": r[1]})
 		"temp":
-			return "温度 %d~%d°C" % [r[0], r[1]]
+			return TranslationServer.tr("ui.map.range_temp").format({"min": r[0], "max": r[1]})
 		"rain":
-			return "降雨 %d~%dmm" % [r[0], r[1]]
+			return TranslationServer.tr("ui.map.range_rain").format({"min": r[0], "max": r[1]})
 	return ""
 
 
@@ -434,15 +439,18 @@ func _hover_value_text(view: Dictionary, field: Array) -> String:
 	if view["key"] == "climate":
 		var elev: Array = _preview.get("elevation", [])
 		if idx < elev.size() and float(elev[idx]) <= 0.0:
-			return "当前位置 海洋"
-		return "当前位置 %s" % CLIMATE_NAMES[int(v) % CLIMATE_NAMES.size()]
+			return TranslationServer.tr("ui.map.pos_ocean")
+		return TranslationServer.tr("ui.map.pos_climate").format({
+			"name": TranslationServer.tr(
+				CLIMATE_NAME_KEYS[int(v) % CLIMATE_NAME_KEYS.size()]),
+		})
 	match view["key"]:
 		"elevation":
-			return "当前位置 %dm" % int(round(v))
+			return TranslationServer.tr("ui.map.pos_elevation").format({"value": int(round(v))})
 		"temp":
-			return "当前位置 %d°C" % int(round(v))
+			return TranslationServer.tr("ui.map.pos_temp").format({"value": int(round(v))})
 		"rain":
-			return "当前位置 %dmm" % int(round(v))
+			return TranslationServer.tr("ui.map.pos_rain").format({"value": int(round(v))})
 	return ""
 
 
@@ -550,11 +558,11 @@ func _draw_view_button(canvas: Control, rect: Rect2, font: Font, index: int) -> 
 		fill = BUTTON_COLOR
 	canvas.draw_rect(rect, fill)
 	canvas.draw_rect(rect, Color(1, 1, 1, 0.12), false, 1.0)
-	var w: float = font.get_string_size(view["label"], HORIZONTAL_ALIGNMENT_LEFT,
+	var w: float = font.get_string_size(TranslationServer.tr(view["label_key"]), HORIZONTAL_ALIGNMENT_LEFT,
 		-1, SMALL_FONT_SIZE).x
 	draw_label(canvas, font,
 		rect.position + Vector2((rect.size.x - w) * 0.5, rect.size.y * 0.5 + 5),
-		view["label"], SMALL_FONT_SIZE, TEXT_COLOR)
+		TranslationServer.tr(view["label_key"]), SMALL_FONT_SIZE, TEXT_COLOR)
 
 
 func _draw_value_box(canvas: Control, rect: Rect2, font: Font, text: String, hovered: bool) -> void:
@@ -598,7 +606,7 @@ func _draw_size_button(canvas: Control, rect: Rect2, font: Font, index: int) -> 
 		fill = BUTTON_COLOR
 	canvas.draw_rect(rect, fill)
 	canvas.draw_rect(rect, Color(1, 1, 1, 0.12), false, 1.0)
-	var label: String = "%s\n%dx%d" % [SIZE_OPTIONS[index]["label"],
+	var label: String = "%s\n%dx%d" % [TranslationServer.tr(SIZE_OPTIONS[index]["label_key"]),
 		SIZE_OPTIONS[index]["width_km"], SIZE_OPTIONS[index]["height_km"]]
 	var w: float = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, SMALL_FONT_SIZE).x
 	draw_label(canvas, font,

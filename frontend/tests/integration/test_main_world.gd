@@ -15,6 +15,8 @@ var _real_worker: Object
 ## 流到运行中的后端（旧代码靠 disconnect 测试的 set_process(false) 冻结
 ## 真实处理链，注入了假层后由 _process 继续无副作用驱动）。
 func before_each() -> void:
+	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
+	TranslationServer.set_locale("zh_CN")
 	if _real_process == null:
 		_real_process = Connection._process_layer
 		_real_transport = Connection._transport

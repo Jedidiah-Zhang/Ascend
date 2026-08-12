@@ -26,6 +26,11 @@ func _make_esc_event() -> InputEventKey:
 
 # ── 打开/关闭与暂停 ────────────────────────────────────────
 
+func before_each() -> void:
+	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
+	TranslationServer.set_locale("zh_CN")
+
+
 func test_open_pauses_and_close_resumes() -> void:
 	var menu: Control = _make_pause_menu()
 	menu.open()

@@ -31,7 +31,9 @@ static func game_time_string(ticks: int) -> String:
 	var day_ticks: int = ticks % Config.GAME_DAY
 	var hour: int = floori(day_ticks / float(Config.GAME_HOUR))
 	var minute: int = floori((day_ticks % Config.GAME_HOUR) / float(Config.GAME_MINUTE))
-	return "第 %d 天 %02d:%02d" % [day, hour, minute]
+	return TranslationServer.tr("ui.format.game_time").format({
+		"day": day, "clock": hhmm_string(hour, minute),
+	})
 
 
 static func duration_string(total_sec: float) -> String:
@@ -40,15 +42,17 @@ static func duration_string(total_sec: float) -> String:
 		total_sec = 0.0
 	var sec: int = int(total_sec)
 	if sec < 60:
-		return "%d 秒" % sec
+		return TranslationServer.tr("ui.format.seconds").format({"n": sec})
 	var minutes: int = floori(sec / 60.0)
 	if minutes < 60:
-		return "%d 分钟" % minutes
+		return TranslationServer.tr("ui.format.minutes").format({"n": minutes})
 	var hours: int = floori(minutes / 60.0)
 	var mins: int = minutes % 60
 	if mins == 0:
-		return "%d 小时" % hours
-	return "%d 小时 %d 分" % [hours, mins]
+		return TranslationServer.tr("ui.format.hours").format({"n": hours})
+	return TranslationServer.tr("ui.format.hours_minutes").format({
+		"n": hours, "m": mins,
+	})
 
 
 static func datetime_string(unix_sec: float) -> String:
@@ -64,5 +68,5 @@ static func datetime_string(unix_sec: float) -> String:
 static func seed_string(world_seed: int) -> String:
 	"""种子展示（0 = 随机）。"""
 	if world_seed == 0:
-		return "随机"
+		return TranslationServer.tr("ui.common.random")
 	return str(world_seed)

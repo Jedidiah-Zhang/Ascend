@@ -44,6 +44,11 @@ func _move(sel: Control, pos: Vector2) -> void:
 	sel._input(ev)
 
 
+func before_each() -> void:
+	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
+	TranslationServer.set_locale("zh_CN")
+
+
 func test_real_click_flow_sends_rollback_request() -> void:
 	"""真实合成点击：点节点选中 → 点面板「进入存档点」→ 以快照参数发起世界进程切换。"""
 	var sel: Control = _setup_timeline()

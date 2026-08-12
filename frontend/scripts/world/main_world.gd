@@ -377,7 +377,7 @@ func _create_loading_overlay() -> void:
 	layer.add_child(overlay)
 	add_child(layer)
 	_loading_overlay = overlay
-	overlay.set_text("正在生成世界...")
+	overlay.set_text(tr("ui.loading.generating_world"))
 
 
 ## 查询世界坐标处的地面海拔（来自已缓存 chunk 的高程数组）。
@@ -421,7 +421,7 @@ func _set_birth_chunk(cx: int, cy: int) -> void:
 	_apply_camera_transform()
 	# 地形就绪前保持加载提示（玩家节点在 _check_terrain_ready 就绪后创建）
 	if _loading_overlay:
-		_loading_overlay.set_text("正在加载地形...")
+		_loading_overlay.set_text(tr("ui.loading.loading_terrain"))
 		_loading_overlay.set_stage("chunks")
 		_loading_overlay.visible = true
 	print("MainWorld3D: birth chunk (%d,%d), player at (%.0f, %.0f)" % [cx, cy, _player_pos.x, _player_pos.z])
@@ -541,7 +541,7 @@ func _reset_world_state() -> void:
 			child.queue_free()
 	if _loading_overlay:
 		_loading_overlay.reset()
-		_loading_overlay.set_text("正在加载世界...")
+		_loading_overlay.set_text(tr("ui.loading.loading_world"))
 		_loading_overlay.visible = true
 
 
@@ -880,7 +880,7 @@ func _on_pause_save_requested() -> void:
 	"""
 	if _world_id.is_empty():
 		if _pause_menu:
-			_pause_menu.show_status("当前世界未就绪，无法手动存档", true)
+			_pause_menu.show_status(tr("ui.pause.world_not_ready"), true)
 		return
 	Connection.send(SaveApi.snapshot_request(_world_id))
 
@@ -1416,7 +1416,7 @@ func _handle_error(message: Dictionary) -> void:
 	push_error("MainWorld3D: server error: %s" % error_msg)
 	if message.get("request_type", "") == SaveApi.SNAPSHOT and _pause_menu:
 		_save_file = ""
-		_pause_menu.show_status("存档失败：%s" % error_msg, true)
+		_pause_menu.show_status(tr("ui.pause.save_failed").format({"reason": error_msg}), true)
 
 
 ## 请求玩家所在 chunk 的天气数据（连接未建立时跳过）。

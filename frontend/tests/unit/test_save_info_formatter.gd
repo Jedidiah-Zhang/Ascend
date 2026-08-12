@@ -10,6 +10,11 @@ const Config = preload("res://scripts/config.gd")
 
 # ── 游戏内时间 ────────────────────────────────────────────
 
+func before_each() -> void:
+	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
+	TranslationServer.set_locale("zh_CN")
+
+
 func test_game_time_zero() -> void:
 	assert_eq(SaveInfoFormatter.game_time_string(0), "第 1 天 00:00")
 

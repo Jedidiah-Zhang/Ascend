@@ -50,6 +50,11 @@ func _event(event_type: String, data: Dictionary = {}) -> Dictionary:
 
 # ── 生成阶段进度 ──────────────────────────────────────────
 
+func before_each() -> void:
+	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
+	TranslationServer.set_locale("zh_CN")
+
+
 func test_progress_updates_stage_text() -> void:
 	var pair: Array = _make_page()
 	var page: Control = pair[0]

@@ -26,6 +26,11 @@ func _make_sender() -> Array:
 
 # ── 种子定案 ──────────────────────────────────────────────
 
+func before_each() -> void:
+	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
+	TranslationServer.set_locale("zh_CN")
+
+
 func test_setup_randomizes_seed_when_zero() -> void:
 	"""seed=0（未定案）在进入步骤时随机定案（预览必须有种子）。"""
 	var step: MapSetupStep = _make_step()

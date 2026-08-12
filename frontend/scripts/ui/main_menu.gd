@@ -47,18 +47,18 @@ const BUTTON_GAP: float = 14.0
 
 # ── 属性 ──────────────────────────────────────────────────
 
-## 按钮定义: {label, enabled, note}
+## 按钮定义: {key, label_key, enabled, note_key}
 var _buttons: Array = [
-	{"label": "开始游戏", "enabled": true, "note": ""},
-	{"label": "设置", "enabled": true, "note": ""},
-	{"label": "模组", "enabled": false, "note": "未实现"},
-	{"label": "退出游戏", "enabled": true, "note": ""},
+	{"key": "start", "label_key": "ui.menu.start", "enabled": true, "note_key": ""},
+	{"key": "settings", "label_key": "ui.settings", "enabled": true, "note_key": ""},
+	{"key": "mods", "label_key": "ui.menu.mods", "enabled": false, "note_key": "ui.menu.not_implemented"},
+	{"key": "quit", "label_key": "ui.menu.quit", "enabled": true, "note_key": ""},
 ]
 ## 各按钮矩形（_draw 时更新，_input 时命中）
 var _button_rects: Array = []
 var _hover_index: int = -1
 var _font: Font = null
-var _status_text: String = "正在启动后端..."
+var _status_text: String = ""
 var _status_color: Color = STATUS_WAITING_COLOR
 ## 开始游戏已请求存档列表、等待分流响应中
 var _checking_saves: bool = false
@@ -86,6 +86,8 @@ func _ready() -> void:
 		Connection.backend_failed.connect(_on_backend_failed)
 	if not Connection.message_received.is_connected(_on_message):
 		Connection.message_received.connect(_on_message)
+	if not Settings.locale_changed.is_connected(_on_locale_changed):
+		Settings.locale_changed.connect(_on_locale_changed)
 
 
 ## 离开场景树时断开 Connection 信号订阅，避免悬挂引用。
@@ -98,6 +100,8 @@ func _exit_tree() -> void:
 		Connection.backend_failed.disconnect(_on_backend_failed)
 	if Connection.message_received.is_connected(_on_message):
 		Connection.message_received.disconnect(_on_message)
+	if Settings.locale_changed.is_connected(_on_locale_changed):
+		Settings.locale_changed.disconnect(_on_locale_changed)
 
 
 # ── 绘制 ──────────────────────────────────────────────────
@@ -118,7 +122,7 @@ func _draw() -> void:
 	draw_string(_font, Vector2((view_size.x - title_w) * 0.5, view_size.y * 0.30), title,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_FONT_SIZE, TITLE_COLOR)
 
-	var sub: String = "基因改造驱动的群体演化"
+	var sub: String = tr("ui.menu.subtitle")
 	var sub_w: float = _font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, SUBTITLE_FONT_SIZE).x
 	draw_string(_font, Vector2((view_size.x - sub_w) * 0.5, view_size.y * 0.30 + 34), sub,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, SUBTITLE_FONT_SIZE, SUBTITLE_COLOR)
@@ -136,14 +140,14 @@ func _draw() -> void:
 			else (BUTTON_HOVER_COLOR if i == _hover_index else BUTTON_COLOR)
 		draw_rect(rect, fill)
 		draw_rect(rect, Color(1, 1, 1, 0.12), false, 1.0)
-		var label: String = b["label"]
+		var label: String = tr(b["label_key"])
 		var label_w: float = _font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, BUTTON_FONT_SIZE).x
 		draw_string(_font, rect.position + Vector2((BUTTON_W - label_w) * 0.5, BUTTON_H * 0.5 + 7),
 			label, HORIZONTAL_ALIGNMENT_LEFT, -1, BUTTON_FONT_SIZE,
 			BUTTON_TEXT_COLOR if b["enabled"] else Color(0.55, 0.55, 0.60))
-		if b["note"] != "":
+		if b["note_key"] != "":
 			draw_string(_font, rect.position + Vector2(BUTTON_W + 12, BUTTON_H * 0.5 + 6),
-				"( %s )" % b["note"], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, SUBTITLE_COLOR)
+				"( %s )" % tr(b["note_key"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, SUBTITLE_COLOR)
 
 	# 状态
 	draw_string(_font, Vector2(16, view_size.y - 20), _status_text,
@@ -203,30 +207,30 @@ func _activate(index: int) -> void:
 		return
 	var b: Dictionary = _buttons[index]
 	if not b["enabled"]:
-		_status_text = "%s：%s" % [b["label"], b["note"]]
+		_status_text = "%s：%s" % [tr(b["label_key"]), tr(b["note_key"])]
 		_status_color = STATUS_WAITING_COLOR
 		return
-	match b["label"]:
-		"开始游戏":
+	match b["key"]:
+		"start":
 			# FAILED 终态可经 connect_to_server 重置（如后端启动超时）
 			if Connection.status == Connection.Status.FAILED:
 				Connection.connect_to_server()
-				_status_text = "正在重试连接后端..."
+				_status_text = tr("ui.menu.retrying_backend")
 				_status_color = STATUS_WAITING_COLOR
 				return
 			if Connection.status != Connection.Status.CONNECTED:
-				_status_text = "正在连接后端..."
+				_status_text = tr("ui.menu.connecting_backend")
 				_status_color = STATUS_WAITING_COLOR
 				return
 			if _checking_saves:
 				return
 			_checking_saves = true
-			_status_text = "正在检查存档..."
+			_status_text = tr("ui.menu.checking_saves")
 			_status_color = STATUS_WAITING_COLOR
 			Connection.send(SaveApi.list_request())
-		"设置":
+		"settings":
 			_open_settings()
-		"退出游戏":
+		"quit":
 			get_tree().quit()
 
 
@@ -251,10 +255,10 @@ func _on_message(message: Dictionary) -> void:
 	_checking_saves = false
 	var worlds: Array = SaveApi.parse_worlds(message.get("payload", {}))
 	if worlds.is_empty():
-		_status_text = "暂无存档 — 正在进入创建世界..."
+		_status_text = tr("ui.menu.no_saves_enter_create")
 		get_tree().change_scene_to_file(WORLD_SETUP_SCENE)
 	else:
-		_status_text = "正在进入存档选择..."
+		_status_text = tr("ui.menu.enter_save_select")
 		get_tree().change_scene_to_file(SAVE_SELECT_SCENE)
 
 
@@ -266,16 +270,16 @@ func _on_message(message: Dictionary) -> void:
 func _update_status() -> void:
 	match Connection.status:
 		Connection.Status.CONNECTED:
-			_status_text = "后端已连接"
+			_status_text = tr("ui.menu.backend_connected")
 			_status_color = STATUS_CONNECTED_COLOR
 		Connection.Status.CONNECTING:
-			_status_text = "正在连接后端..."
+			_status_text = tr("ui.menu.connecting_backend")
 			_status_color = STATUS_WAITING_COLOR
 		Connection.Status.DISCONNECTED:
-			_status_text = "正在重连后端..."
+			_status_text = tr("ui.menu.reconnecting_backend")
 			_status_color = STATUS_WAITING_COLOR
 		Connection.Status.FAILED:
-			_status_text = "后端连接失败（详见输出）"
+			_status_text = tr("ui.menu.backend_failed")
 			_status_color = STATUS_ERROR_COLOR
 	queue_redraw()
 
@@ -293,5 +297,10 @@ func _on_disconnected() -> void:
 
 ## 后端启动失败回调：显示失败原因并置错误色。
 func _on_backend_failed(reason: String) -> void:
-	_status_text = "后端启动失败：%s" % reason
+	_status_text = tr("ui.menu.backend_failed_reason").format({"reason": reason})
 	_status_color = STATUS_ERROR_COLOR
+
+
+## 语言切换回调（设置界面改动后重绘文案）。
+func _on_locale_changed(_locale: String) -> void:
+	queue_redraw()

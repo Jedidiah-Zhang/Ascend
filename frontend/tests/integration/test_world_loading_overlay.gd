@@ -23,6 +23,11 @@ func _simulate(overlay: WorldLoadingOverlay, seconds: float) -> void:
 		overlay._process(1.0 / 60.0)
 
 
+func before_each() -> void:
+	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
+	TranslationServer.set_locale("zh_CN")
+
+
 func test_default_text() -> void:
 	var overlay: WorldLoadingOverlay = _make_overlay()
 	assert_eq(overlay.get_text(), "正在生成世界...", "初始文案应为生成阶段")

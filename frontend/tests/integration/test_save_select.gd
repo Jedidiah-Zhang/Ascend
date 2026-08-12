@@ -23,6 +23,11 @@ func _payload(worlds: Array, snaps: Array = [], current: String = "") -> Diction
 
 # ── 时间线打开/关闭 ───────────────────────────────────────
 
+func before_each() -> void:
+	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
+	TranslationServer.set_locale("zh_CN")
+
+
 func test_apply_worlds_stores_lineage_data() -> void:
 	var sel: Control = _make_select()
 	sel._apply_worlds(_payload([

@@ -43,6 +43,11 @@ func _click(sel: Control, pos: Vector2) -> void:
 
 # ── 选中与面板 ────────────────────────────────────────────
 
+func before_each() -> void:
+	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
+	TranslationServer.set_locale("zh_CN")
+
+
 func test_click_snapshot_opens_action_panel() -> void:
 	"""点击快照节点应选中并弹出操作面板（进入存档点 / 删除存档点 / 删除分支）。"""
 	var sel: Control = _setup()
@@ -66,12 +71,12 @@ func test_panel_actions_prune_only_with_children() -> void:
 	var items: Array = sel._panel_actions()
 	assert_eq(items.size(), 3, "有后代的节点：进入 + 删除 + 分支")
 	assert_eq(items[2]["action"], "prune")
-	assert_eq(items[2]["label"], "删除分支")
+	assert_eq(items[2]["label_key"], "ui.saves.prune_branch")
 
 	sel._panel_node_id = "s2"
 	items = sel._panel_actions()
 	assert_eq(items.size(), 2, "无后代的节点：进入 + 删除")
-	assert_false(items.has({"action": "prune", "label": "删除分支", "danger": true}))
+	assert_false(items.has({"action": "prune", "label_key": "ui.saves.prune_branch", "danger": true}))
 
 
 func test_click_other_node_switches_panel() -> void:

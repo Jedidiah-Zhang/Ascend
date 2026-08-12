@@ -48,13 +48,13 @@ const TITLE_FONT_SIZE: int = 24
 const BUTTON_FONT_SIZE: int = 17
 const NOTE_FONT_SIZE: int = 13
 
-## 按钮定义: {key, label, danger}
+## 按钮定义: {key, label_key, danger}
 const BUTTONS: Array = [
-	{"key": "resume", "label": "继续游戏", "danger": false},
-	{"key": "save", "label": "手动存档", "danger": false},
-	{"key": "settings", "label": "设置", "danger": false},
-	{"key": "menu", "label": "返回主菜单", "danger": false},
-	{"key": "quit", "label": "退出游戏", "danger": true},
+	{"key": "resume", "label_key": "ui.pause.resume", "danger": false},
+	{"key": "save", "label_key": "ui.pause.save", "danger": false},
+	{"key": "settings", "label_key": "ui.settings", "danger": false},
+	{"key": "menu", "label_key": "ui.common.back_to_menu", "danger": false},
+	{"key": "quit", "label_key": "ui.pause.quit", "danger": true},
 ]
 
 ## 保存完成提示的自动消失时长（秒）
@@ -95,6 +95,8 @@ func _ready() -> void:
 	# 受 process_mode 门控），ESC 将永远无法打开菜单
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_font = FontUtils.get_mono_font()
+	if not Settings.locale_changed.is_connected(_on_locale_changed):
+		Settings.locale_changed.connect(_on_locale_changed)
 	hide()
 
 
@@ -157,9 +159,9 @@ func show_save_complete(number: int) -> void:
 	_saving = false
 	_status_hide_timer = SAVE_STATUS_HIDE_SECONDS
 	if number > 0:
-		_status_text = "保存完成（节点 %d）" % number
+		_status_text = tr("ui.pause.save_complete_node").format({"number": number})
 	else:
-		_status_text = "保存完成"
+		_status_text = tr("ui.pause.save_complete")
 	_status_color = STATUS_OK_COLOR
 	queue_redraw()
 
@@ -231,7 +233,7 @@ func _draw() -> void:
 	draw_rect(panel_rect, Color(1, 1, 1, 0.15), false, 1.0)
 
 	draw_string(_font, panel_rect.position + Vector2(PANEL_PADDING, PANEL_TITLE_H * 0.5 + 9),
-		"游戏暂停", HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_FONT_SIZE, TITLE_COLOR)
+		tr("ui.pause.title"), HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_FONT_SIZE, TITLE_COLOR)
 
 	var y: float = panel_rect.position.y + PANEL_TITLE_H + PANEL_PADDING * 0.5
 	_button_rects.clear()
@@ -240,7 +242,7 @@ func _draw() -> void:
 		var rect := Rect2(panel_rect.position.x + (PANEL_W - BUTTON_W) * 0.5,
 			y, BUTTON_W, BUTTON_H)
 		_button_rects[key] = rect
-		_draw_button(rect, b["label"], key == _hover_key, b["danger"])
+		_draw_button(rect, tr(b["label_key"]), key == _hover_key, b["danger"])
 		y += BUTTON_H + BUTTON_GAP
 
 	if not _status_text.is_empty():
@@ -319,7 +321,12 @@ func _start_save() -> void:
 		return
 	_saving = true
 	_status_hide_timer = 0.0
-	_status_text = "正在保存..."
+	_status_text = tr("ui.pause.saving")
 	_status_color = STATUS_WAIT_COLOR
 	queue_redraw()
 	save_requested.emit()
+
+
+## 语言切换回调（设置界面改动后重绘文案）。
+func _on_locale_changed(_locale: String) -> void:
+	queue_redraw()
