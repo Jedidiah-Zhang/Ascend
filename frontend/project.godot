@@ -19,6 +19,7 @@ config/features=PackedStringArray("4.7")
 [autoload]
 
 Connection="*res://scripts/autoload/connection.gd"
+Settings="*res://scripts/autoload/settings.gd"
 
 [display]
 

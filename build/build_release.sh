@@ -22,6 +22,11 @@ if [ "$TARGET" = "all" ] || [ "$TARGET" = "windows" ]; then NEED_WIN=true; fi
 
 # ── 前端导出 ──────────────────────────────────────────────
 # 目标目录必须存在（Godot 导出不自动建目录；CI 全新检出无 build/work）
+# 语言文件（与后端共用 repo/lang/）先拷入前端项目使其进入导出资源（PCK）
+echo "==> [0/3] 同步语言文件到前端项目 ..."
+rm -rf "$ROOT/frontend/lang"
+mkdir -p "$ROOT/frontend/lang"
+cp "$ROOT/lang/"*.json "$ROOT/frontend/lang/"
 if $NEED_LINUX; then
   echo "==> [1/3] 导出前端 Linux ..."
   mkdir -p "$ROOT/build/work/exports/linux"

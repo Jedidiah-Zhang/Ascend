@@ -247,6 +247,7 @@ func _ready() -> void:
 	Connection.connection_established.connect(_on_connected)
 	Connection.connection_lost.connect(_on_disconnected)
 	Connection.message_received.connect(_on_message)
+	Settings.locale_changed.connect(_on_settings_locale_changed)
 
 	if _pause_menu:
 		_pause_menu.save_requested.connect(_on_pause_save_requested)
@@ -272,6 +273,8 @@ func _exit_tree() -> void:
 		Connection.connection_lost.disconnect(_on_disconnected)
 	if Connection.message_received.is_connected(_on_message):
 		Connection.message_received.disconnect(_on_message)
+	if Settings.locale_changed.is_connected(_on_settings_locale_changed):
+		Settings.locale_changed.disconnect(_on_settings_locale_changed)
 	if _pause_menu and _pause_menu.save_requested.is_connected(_on_pause_save_requested):
 		_pause_menu.save_requested.disconnect(_on_pause_save_requested)
 	_build_mutex.lock()
@@ -517,6 +520,7 @@ func _on_world_initialized(data: Dictionary) -> void:
 		"request_type": "player_state",
 		"payload": {},
 	})
+	_sync_locale_to_backend()
 
 
 func _reset_world_state() -> void:
@@ -888,6 +892,19 @@ func _on_terminal_command(command: String) -> void:
 		"request_type": "terminal_cmd",
 		"payload": {"command": command},
 	})
+
+
+## 语言设置同步后端（幂等）：进入世界后调一次；游戏内改语言立即调。
+## 世界未就绪时跳过——下次 world_initialized 会补上。
+func _sync_locale_to_backend() -> void:
+	if _world_id.is_empty():
+		return
+	_on_terminal_command("lang %s" % Settings.get_locale())
+
+
+## 设置界面语言变更回调（Settings 自动加载广播）。
+func _on_settings_locale_changed(_locale: String) -> void:
+	_sync_locale_to_backend()
 
 
 ## 上报玩家当前位置为 player_move 请求（世界未就绪时跳过；后端裁决并可能钳制越界）。

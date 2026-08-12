@@ -38,6 +38,9 @@ backend/tests/visual/output/
 # Godot 编辑器插件（开发工具，非游戏代码；GUT 本地手动安装后前端测试本地运行）
 frontend/addons/
 
+# 打包时从 repo/lang/ 同步的语言副本（开发期前端直读 res://../lang）
+frontend/lang/
+
 # 前端资源文件（不开源：美术素材、音频等）
 frontend/assets/
 

@@ -127,11 +127,27 @@ func test_save_button_busy_guard() -> void:
 	assert_signal_emit_count(menu, "save_requested", 1, "请求在途时不应重复触发")
 
 
-func test_settings_button_shows_placeholder() -> void:
+func test_settings_button_opens_settings_screen() -> void:
 	var menu: Control = _make_pause_menu()
 	menu.open()
 	menu._activate("settings")
-	assert_string_contains(menu._status_text, "未实现", "设置未实现时应显示占位提示")
+	assert_not_null(menu._settings_screen, "设置应实例化覆盖层")
+	assert_true(menu._settings_screen.is_open(), "设置界面应打开")
+	menu._settings_screen.close()
+
+
+func test_input_ignored_while_settings_open() -> void:
+	"""设置打开期间暂停菜单不响应自身输入（ESC/点击归设置界面）。"""
+	var menu: Control = _make_pause_menu()
+	menu.open()
+	menu._activate("settings")
+	menu._input(_make_esc_event())
+	assert_true(menu.visible, "设置打开期间 ESC 不应关闭暂停菜单")
+	assert_true(menu._settings_screen.is_open(), "ESC 应只关闭设置界面…")
+	# 设置界面自身的 _input 未挂场景树主循环时不触发（独立测试直调），
+	# 此处仅验证暂停菜单侧已放行；设置侧 ESC 由 test_settings_screen 覆盖。
+	menu._settings_screen.close()
+	menu.close()
 
 
 func test_show_status_resets_saving() -> void:

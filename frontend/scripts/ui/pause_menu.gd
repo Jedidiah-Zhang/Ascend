@@ -6,9 +6,10 @@
 全部内容 _draw() 绘制 + 自绘命中检测，等宽字体，风格与主菜单 /
 存档选择页一致。
 
-设置尚未实现（占位提示，与主菜单一致）；手动存档信号由 main_world
-转发（当前世界 ID 由后端 world_initialized 事件提供，结果经
-show_status() 回填）。
+设置为覆盖层（settings_screen.tscn，与主菜单共用），打开期间本
+菜单输入全部放行给设置界面；手动存档信号由 main_world 转发（当前
+世界 ID 由后端 world_initialized 事件提供，结果经 show_status()
+回填）。
 """
 
 extends Control
@@ -18,6 +19,7 @@ class_name PauseMenu
 signal save_requested
 
 const MAIN_MENU_SCENE: String = "res://scenes/main_menu.tscn"
+const SETTINGS_SCREEN_SCENE: String = "res://scenes/settings_screen.tscn"
 
 # ── 视觉常量 ──────────────────────────────────────────────
 
@@ -55,8 +57,6 @@ const BUTTONS: Array = [
 	{"key": "quit", "label": "退出游戏", "danger": true},
 ]
 
-## 未实现功能的占位说明（与主菜单一致）
-const SETTINGS_NOTE: String = "未实现"
 ## 保存完成提示的自动消失时长（秒）
 const SAVE_STATUS_HIDE_SECONDS: float = 2.0
 
@@ -66,6 +66,8 @@ const SAVE_STATUS_HIDE_SECONDS: float = 2.0
 var _font: Font = null
 ## 调试终端引用（打开时 ESC 归终端：关闭控制台而非弹出菜单）
 var _terminal: TerminalWidget = null
+## 设置覆盖层引用（打开时本菜单输入全部放行）
+var _settings_screen: SettingsScreen = null
 ## 悬停按钮 key
 var _hover_key: String = ""
 ## 按钮矩形: key → Rect2（_draw 时更新）
@@ -133,6 +135,14 @@ func set_terminal(term: TerminalWidget) -> void:
 	_terminal = term
 
 
+## 打开设置覆盖层（惰性实例化，与主菜单共用同一场景）。
+func _open_settings() -> void:
+	if _settings_screen == null or not is_instance_valid(_settings_screen):
+		_settings_screen = load(SETTINGS_SCREEN_SCENE).instantiate()
+		add_child(_settings_screen)
+	_settings_screen.open()
+
+
 func show_status(text: String, is_error: bool = false) -> void:
 	"""显示存档结果等状态文本（main_world 回填），常驻不自动消失。"""
 	_saving = false
@@ -172,16 +182,20 @@ func _process(delta: float) -> void:
 ## Args:
 ##     event: 待处理的输入事件。
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_ESCAPE:
-			# 终端打开时 ESC 归终端（关闭控制台）；仅地图界面弹暂停菜单
-			if _terminal != null and _terminal.is_open():
-				return
-			toggle()
-			var vp := get_viewport()
-			if vp:
-				vp.set_input_as_handled()
+	# 设置界面打开期间输入全部归设置界面（含 ESC）
+	if _settings_screen != null and is_instance_valid(_settings_screen) \
+			and _settings_screen.is_open():
+		return
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.is_action_pressed("menu"):
+		# 终端打开时 ESC 归终端（关闭控制台）；仅地图界面弹暂停菜单
+		if _terminal != null and _terminal.is_open():
 			return
+		toggle()
+		var vp := get_viewport()
+		if vp:
+			vp.set_input_as_handled()
+		return
 	if not visible:
 		return
 	if event is InputEventMouseMotion:
@@ -226,13 +240,7 @@ func _draw() -> void:
 		var rect := Rect2(panel_rect.position.x + (PANEL_W - BUTTON_W) * 0.5,
 			y, BUTTON_W, BUTTON_H)
 		_button_rects[key] = rect
-		var hovered: bool = key == _hover_key
-		_draw_button(rect, b["label"], hovered, b["danger"])
-		if key == "settings" and not hovered:
-			draw_string(_font,
-				rect.position + Vector2(BUTTON_W + 12, BUTTON_H * 0.5 + 6),
-				"( %s )" % SETTINGS_NOTE, HORIZONTAL_ALIGNMENT_LEFT, -1,
-				NOTE_FONT_SIZE, SUBTITLE_COLOR)
+		_draw_button(rect, b["label"], key == _hover_key, b["danger"])
 		y += BUTTON_H + BUTTON_GAP
 
 	if not _status_text.is_empty():
@@ -293,11 +301,7 @@ func _activate(key: String) -> void:
 		"save":
 			_start_save()
 		"settings":
-			_saving = false
-			_status_hide_timer = 0.0
-			_status_text = "设置：%s" % SETTINGS_NOTE
-			_status_color = STATUS_WAIT_COLOR
-			queue_redraw()
+			_open_settings()
 		"menu":
 			close()
 			# 世界进程 → 菜单进程（优雅退出：最终落盘；切换期间不闪错）

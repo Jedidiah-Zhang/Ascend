@@ -1,7 +1,7 @@
 """主菜单 — 标题 + 开始游戏 / 设置 / 模组 / 退出游戏。
 
 Issue #14/#7 的最小主界面：存档选择页的入口。
-设置与模组为占位（未实现，点击提示）。
+设置为覆盖层（settings_screen.tscn，与暂停菜单共用）；模组为占位。
 全部内容 _draw() 绘制，等宽字体，与调试终端风格一致。
 
 流程（Issue #8 存档分流）: 开始游戏 → 查询存档列表
@@ -20,6 +20,7 @@ class_name MainMenu
 
 const SAVE_SELECT_SCENE: String = "res://scenes/save_select.tscn"
 const WORLD_SETUP_SCENE: String = "res://scenes/world_setup.tscn"
+const SETTINGS_SCREEN_SCENE: String = "res://scenes/settings_screen.tscn"
 
 # ── 视觉常量 ──────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ const BUTTON_GAP: float = 14.0
 ## 按钮定义: {label, enabled, note}
 var _buttons: Array = [
 	{"label": "开始游戏", "enabled": true, "note": ""},
-	{"label": "设置", "enabled": false, "note": "未实现"},
+	{"label": "设置", "enabled": true, "note": ""},
 	{"label": "模组", "enabled": false, "note": "未实现"},
 	{"label": "退出游戏", "enabled": true, "note": ""},
 ]
@@ -61,6 +62,8 @@ var _status_text: String = "正在启动后端..."
 var _status_color: Color = STATUS_WAITING_COLOR
 ## 开始游戏已请求存档列表、等待分流响应中
 var _checking_saves: bool = false
+## 设置覆盖层（首次打开时惰性实例化）
+var _settings_screen: SettingsScreen = null
 
 
 ## 初始化主菜单：全屏锚点、等宽字体，并订阅 Connection 的连接状态
@@ -156,6 +159,10 @@ func _draw() -> void:
 ## Args:
 ##     event: 待处理的输入事件。
 func _input(event: InputEvent) -> void:
+	# 设置界面打开期间输入全部归设置界面
+	if _settings_screen != null and is_instance_valid(_settings_screen) \
+			and _settings_screen.is_open():
+		return
 	if event is InputEventMouseMotion:
 		var index: int = _hit_button(event.position)
 		if index != _hover_index:
@@ -217,8 +224,18 @@ func _activate(index: int) -> void:
 			_status_text = "正在检查存档..."
 			_status_color = STATUS_WAITING_COLOR
 			Connection.send(SaveApi.list_request())
+		"设置":
+			_open_settings()
 		"退出游戏":
 			get_tree().quit()
+
+
+## 打开设置覆盖层（惰性实例化，与暂停菜单共用同一场景）。
+func _open_settings() -> void:
+	if _settings_screen == null or not is_instance_valid(_settings_screen):
+		_settings_screen = load(SETTINGS_SCREEN_SCENE).instantiate()
+		add_child(_settings_screen)
+	_settings_screen.open()
 
 
 # ── 消息 ──────────────────────────────────────────────────

@@ -17,7 +17,8 @@ bash build/build_release.sh all       # linux + windows
 bash build/build_release.sh linux     # 或单平台
 ```
 
-流程：导出前端 → 编译后端 → 组装舞台目录 → 冒烟测试（端口就绪）→ 打归档。
+流程：同步语言文件（repo 根 `lang/*.json` → `frontend/lang/`，进 PCK）→
+导出前端 → 编译后端 → 组装舞台目录 → 冒烟测试（端口就绪）→ 打归档。
 产物：`build/dist/release/ascend-linux.tar.gz`、`ascend-windows.zip`。
 
 发布：`git tag v<版本> && bash build/ci/publish_release.sh`（版本化命名上传
@@ -43,6 +44,9 @@ Ascend-<平台>/
 ## 手动分步流程（调试用）
 
 ```bash
+# 0. 同步语言文件（开发期前端直读仓库根 lang/，仅打包需要这一步）
+rm -rf frontend/lang && mkdir -p frontend/lang && cp lang/*.json frontend/lang/
+
 # 1. 导出前端（输出 build/work/exports/）
 godot --headless --path frontend --export-release "Windows Desktop"
 godot --headless --path frontend --export-release "Linux X11"
