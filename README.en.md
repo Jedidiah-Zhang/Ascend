@@ -109,4 +109,8 @@ The Godot frontend is in `frontend/`, open with Godot 4.x.
 
 ## License
 
-TBD.
+This repository uses a **dual-license** structure:
+
+- **Repository root** (`backend/`, `lang/`, `docs/`, `build/`): [MIT](LICENSE)
+- **`frontend/`**: [PolyForm Noncommercial 1.0.0](frontend/LICENSE)
+- **`frontend/assets/`**: proprietary, not distributed with this repository
