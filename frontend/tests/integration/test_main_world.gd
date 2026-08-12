@@ -3,6 +3,31 @@ extends GutTest
 const Config = preload("res://scripts/config.gd")
 const TerrainMeshBuilder = preload("res://scripts/world/terrain_mesh_builder.gd")
 const CS: int = Config.TILE_MAP_SIZE
+const Fakes = preload("res://tests/fakes/connection_layers.gd")
+
+var _real_process: Object
+var _real_transport: Object
+var _real_handshake: Object
+var _real_worker: Object
+
+
+## 注入假层：本文件只驱动 send 队列（白盒 readback），不能有真实流量
+## 流到运行中的后端（旧代码靠 disconnect 测试的 set_process(false) 冻结
+## 真实处理链，注入了假层后由 _process 继续无副作用驱动）。
+func before_each() -> void:
+	if _real_process == null:
+		_real_process = Connection._process_layer
+		_real_transport = Connection._transport
+		_real_handshake = Connection._handshake
+		_real_worker = Connection._worker
+	Connection._set_layers(
+		Fakes.FakeProcess.new(), Fakes.FakeTransport.new(),
+		Fakes.FakeHandshake.new(), Fakes.FakeWorker.new())
+
+
+func after_each() -> void:
+	if _real_process != null:
+		Connection._set_layers(_real_process, _real_transport, _real_handshake, _real_worker)
 
 
 # ── 场景加载 ────────────────────────────────────────────────
@@ -37,9 +62,9 @@ func _make_world_instance() -> Node3D:
 	add_child(instance)
 	# 白盒：模拟已连接（_stream_chunks 的 gate 判定），不 stub 网络层
 	Connection.status = Connection.Status.CONNECTED
-	Connection._hello_acked = true
+	Connection._force_handshake_acked()
 	# 禁用帧处理：测试全部显式调用方法；否则残留实例的 _process 会在
-	# 帧间继续发请求，污染共享 Connection._send_queue（回归：队列里
+	# 帧间继续发请求，污染共享 Connection 发送队列（回归：队列里
 	# 出现前一个测试实例发出的完整请求）。
 	instance.process_mode = Node.PROCESS_MODE_DISABLED
 	# 注入同步网格构建器：构建结果立即入队（_poll_build_results 挂载），
@@ -51,18 +76,17 @@ func _make_world_instance() -> Node3D:
 
 
 ## 读取并清空 Connection 发送队列中的 get_chunks 请求，返回 include_tiles 序列。
-## 白盒：_hello_acked=true 后 send() 才入队（见 connection.gd send），
+## 白盒：握手置位后 send() 才入队（见 connection.gd send），
 ## 不 stub 网络层（GUT 的 stub 只接受 double 实例，autoload 无法 stub）。
 func _drain_chunk_requests() -> Array:
-	Connection._hello_acked = true
+	Connection._force_handshake_acked()
 	var out: Array = []
-	for framed in Connection._send_queue:
-		var decoded: Dictionary = Connection._codec.frame_decode(framed, Connection.MAX_MESSAGE_SIZE)
+	for framed in Connection._drain_pending_frames():
+		var decoded: Dictionary = Connection._codec.frame_decode(framed, Config.MAX_MESSAGE_SIZE)
 		for body in decoded["bodies"]:
 			var msg: Dictionary = JsonCodec.decode(body)
 			if msg.get("request_type", "") == "get_chunks":
 				out.append(bool(msg["payload"]["include_tiles"]))
-	Connection._send_queue.clear()
 	return out
 
 

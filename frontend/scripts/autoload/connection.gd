@@ -1,39 +1,35 @@
-"""Connection 单例 — 管理与 Python 后端的 TCP 连接与进程切换。
+"""Connection 门面 — 组合四个子层的连接编排（进程/传输/握手/解码）。
 
-进程模型（一进程一模式）:
-  - 菜单进程（无参）: 服务模式，仅存档管理（主菜单/存档选择页）
-  - 世界进程（--world-id <id> [--snapshot <file>]）: 直接构建世界观
-  进入世界 / 回滚 / 返回菜单 = restart_backend()：优雅停旧进程 →
-  以目标参数拉起新进程（非阻塞状态机，_process 轮询推进）。
+进程模型（一进程一模式）: 菜单进程（无参，服务模式）/ 世界进程
+（--world-id 等）。进入世界/回滚/返回菜单 = restart_backend()：优雅停
+旧进程 → 以目标参数拉起（异步 tick 状态机，_process 轮询推进）。
 
-协议:
-  每条消息 = 1 字节协议版本 + 4 字节大端长度前缀 + JSON 体
-  消息格式: {type, seq, payload, ...}
+组合接线:
+  process.ready  → transport.reset + handshake.reset + connect_to_host
+  transport.connected → worker.start + handshake.start（发 hello）
+  handshake.acked → connection_established + 放行 send
+  handshake.rejected/timeout → transport.reset_for_reconnect（重连重握手）
+  transport.disconnected → worker.stop + handshake.reset + 去重 connection_lost
+  worker.drain 逐帧 → 未 ack 走 handshake.on_message；已 ack 广播
 
-握手:
-  TCP 建立后客户端先发 hello{token, protocol_version}，收到 hello_ack
-  才视为已连接（connection_established 信号），此后才允许发送普通消息；
-  后端在握手前收到非 hello 帧会直接断开。
+Status 为门面枚举（0-3，FAILED=3 测试锁定），在事件边界由子层状态
+派生（传输层优先，其次进程 FAILED，否则 DISCONNECTED），非每帧派生。
 
-信号:
-  connection_established(host: String, port: int)
-  connection_lost()
-  message_received(message: Dictionary)
-
-Usage:
-  Connection.send({"type": "request", "request_type": "ping", "seq": 0, "payload": {}})
-  Connection.connection_established.connect(_on_connected)
-  Connection.message_received.connect(_on_message)
-  Connection.restart_backend(["--world-id", world_id])  # 进入世界
+restart_backend 为异步状态机（WAIT_STOP → RESET → SPAWN），不阻塞
+主线程（旧实现 OS.delay_msec 忙等已移除）。
 """
 
 extends Node
 
 const Config = preload("res://scripts/config.gd")
 const FrameCodecClass = preload("res://scripts/utils/frame_codec.gd")
+const BackendProcessClass = preload("res://scripts/net/backend_process.gd")
+const TcpTransportClass = preload("res://scripts/net/tcp_transport.gd")
+const HandshakeClass = preload("res://scripts/net/handshake.gd")
+const DecodeWorkerClass = preload("res://scripts/net/decode_worker.gd")
 
 
-# ── 信号 ──────────────────────────────────────────────────
+# ── 信号（对外契约不变） ──────────────────────────────────
 
 signal connection_established(host: String, port: int)
 signal connection_lost()
@@ -47,234 +43,151 @@ enum Status { DISCONNECTED, CONNECTING, CONNECTED, FAILED }
 var status: Status = Status.DISCONNECTED
 
 
-# ── 常量 ──────────────────────────────────────────────────
+# ── 常量（唯一事实源 = config.gd；仅门面自用，协议/进程参数归各子层） ─
 
 const DEFAULT_HOST: String = Config.DEFAULT_HOST
 const DEFAULT_PORT: int = Config.DEFAULT_PORT
-const RECONNECT_INTERVAL: float = Config.RECONNECT_INTERVAL
-const MAX_MESSAGE_SIZE: int = Config.MAX_MESSAGE_SIZE
-const PROTOCOL_VERSION: int = Config.PROTOCOL_VERSION
 const TOKEN_FILE_REL: String = Config.TOKEN_FILE_REL
-const CONNECTING_TIMEOUT: float = Config.CONNECTING_TIMEOUT
-const HELLO_TIMEOUT: float = Config.HELLO_TIMEOUT
-const RECEIVE_TIMEOUT: float = Config.RECEIVE_TIMEOUT
-
-## Python 虚拟环境相对路径（相对于项目根目录）
-const VENV_PYTHON_REL: String = Config.VENV_PYTHON_REL
-## 后端脚本相对于项目根目录的路径
-const BACKEND_SCRIPT_REL: String = Config.BACKEND_SCRIPT_REL
-## 后端启动后等待端口就绪的超时时间（秒）
-const BACKEND_STARTUP_TIMEOUT: float = Config.BACKEND_STARTUP_TIMEOUT
-## 等待后端启动期间的端口探测间隔（秒）
-const BACKEND_CHECK_INTERVAL: float = 0.5
-## 单次端口探测的连接超时（秒）
-const PROBE_TIMEOUT: float = 0.2
-## 等待后端优雅退出（最终落盘）的超时（毫秒），超时后强杀兜底
-const BACKEND_STOP_TIMEOUT_MS: int = 3000
 
 
 # ── 属性 ──────────────────────────────────────────────────
 
-## 接收缓冲区
-var _recv_buf: PackedByteArray = PackedByteArray()
-## 待发送消息队列
-var _send_queue: Array[PackedByteArray] = []
-## 帧编解码器
+## 帧编解码器（send 与测试白盒共用）
 var _codec: FrameCodec = FrameCodecClass.new()
-## TCP 流
-var _stream: StreamPeerTCP = null
-## 重连计时器
-var _reconnect_timer: float = 0.0
-## 目标主机/端口
-var _host: String = DEFAULT_HOST
-var _port: int = DEFAULT_PORT
 
-## 后端进程 PID（-1 表示未启动）
-var _backend_pid: int = -1
-## 后端启动参数（当前进程模式：[] = 菜单，["--world-id", id, ...] = 世界）
+## 当前进程模式参数（[] = 菜单，["--world-id", id, ...] = 世界）
 var backend_args: PackedStringArray = PackedStringArray()
-## 后端启动计时器
-var _backend_startup_timer: float = 0.0
-## 后端端口检查间隔计时器
-var _backend_check_timer: float = 0.0
-## 是否正在等待后端启动
-var _awaiting_backend: bool = false
-
-## 主动进程切换（restart_backend）状态：等待旧进程退出的剩余超时（毫秒）
-var _restart_timeout_ms: int = -1
-## 主动进程切换中：断线不广播 connection_lost（UI 不闪错），
-## 旧进程退出后自动以新参数拉起
-var _restarting: bool = false
-## 进程切换期间的目标参数（旧进程退出后 spawn 用）
-var _restart_args: PackedStringArray = PackedStringArray()
-
-## 底层进程创建器（测试可注入；默认 OS.create_process 真拉起）。
-## 签名: (python_path, full_args) -> pid；返回 -1 = 拉起失败。
-var process_creator: Callable = _create_process_default
-
-
-func _create_process_default(python_path: String, args: PackedStringArray) -> int:
-	"""默认进程创建：OS.create_process（非阻塞）。"""
-	return OS.create_process(python_path, args, false)
-
-## 端口探测流（非阻塞，null 表示无探测进行中）
-var _probe: StreamPeerTCP = null
-## 当前探测已等待时长（秒）
-var _probe_elapsed: float = 0.0
-## 当前探测是否为"启动前检查"（成功=后端已在运行，失败=需拉起后端进程）
-var _probe_before_spawn: bool = false
-
-## 后台解码线程 — 将 JSON 解析移出主线程，避免阻塞渲染
-var _decode_thread: Thread = null
-var _decode_mutex: Mutex = null
-var _decode_sem: Semaphore = null
-var _decode_input: Array[PackedByteArray] = []
-var _decode_output: Array[Dictionary] = []
-var _decode_running: bool = false
-
-## 当前断线事件是否已广播（服务器与世界观解耦后读档重建不再断连；
-## 此处仅防后端进程死亡后反复失败重连的刷屏——每次断线期只广播一次）
-var _outage_emitted: bool = false
-
-## 握手状态：hello 是否已发出 / 是否已收到 hello_ack（未 ack 前视为未连接）
-var _hello_sent: bool = false
-var _hello_acked: bool = false
-var _hello_elapsed: float = 0.0
-## 认证令牌（项目根 .ascend_token，后端启动时写入）
-var _token: String = ""
-
-## 连接建立耗时计时（超过 CONNECTING_TIMEOUT 断开重连）
-var _connect_elapsed: float = 0.0
-## 最后收到数据的时刻（Time.get_ticks_msec，超过 RECEIVE_TIMEOUT 视为后端挂死）
-var _last_receive_msec: int = 0
 
 ## 上帧 _process 耗时（微秒），供调试面板读取
 var last_process_us: int = 0
+
+## 主动进程切换（restart_backend）状态机相位
+enum RestartPhase { NONE, WAIT_STOP, RESET, SPAWN }
+var _restart_phase: RestartPhase = RestartPhase.NONE
+var _restart_args: PackedStringArray = PackedStringArray()
+
+## 当前断线事件是否已广播（断线期只广播一次，防失败重连刷屏）
+var _outage_emitted: bool = false
+
+
+# ── 子层（组合对象，测试可经 _set_layers 注入） ───────────
+
+var _process_layer: BackendProcess
+var _transport: TcpTransport
+var _handshake: Handshake
+var _worker: DecodeWorker
 
 
 # ── 生命周期 ──────────────────────────────────────────────
 
 func _ready() -> void:
-	"""自动加载初始化。编辑器模式下跳过，游戏运行时自动启动后端。"""
-	# 网络层必须免疫暂停：暂停菜单（get_tree().paused）打开期间
-	# 仍需收发消息——否则存档请求发不出去、响应收不回来，
-	# 「正在保存...」永久卡住（回归：暂停菜单引入后暴露）。
+	"""自动加载初始化（编辑器跳过；运行时自动启动后端）。"""
+	# 网络层必须免疫暂停：暂停菜单打开期间仍需收发消息（否则「正在保存...」卡死）
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	if Engine.is_editor_hint():
 		set_process(false)
 		return
-	_start_backend()
+	_process_layer = BackendProcessClass.new(DEFAULT_HOST, DEFAULT_PORT, _project_root(), _data_root())
+	_transport = TcpTransportClass.new(DEFAULT_HOST, DEFAULT_PORT)
+	_handshake = HandshakeClass.new(_codec,
+		func(body: PackedByteArray) -> void: _transport.send_frame_front(body),
+		_data_root().path_join(TOKEN_FILE_REL))
+	_worker = DecodeWorkerClass.new()
+	_wire_layers()
+	_process_layer.start([])  # 预探测已运行端口 → ready；否则拉起后端
 
 
 func _notification(what: int) -> void:
-	"""场景树通知：进程退出前关闭后端。"""
+	"""场景树通知：进程退出前同步停掉后端（阻塞版仅退出使用）。"""
 	if what == NOTIFICATION_PREDELETE:
-		_stop_decode_thread()
-		_kill_backend()
+		if _worker != null:
+			_worker.stop()
+		if _process_layer != null:
+			_process_layer.stop_sync()
 
 
 func _process(delta: float) -> void:
-	"""每帧轮询：进程切换推进、检查连接、读数据、发数据。"""
+	"""每帧推进：进程切换状态机 + 三个子层 tick + 解码消息收集。"""
 	var t0: int = Time.get_ticks_usec()
-
-	# 主动进程切换：先等旧进程退出（SIGTERM 优雅停止，超时强杀兜底），
-	# 退出后以新参数拉起。此期间不处理连接状态（旧连接已失效）。
-	if _restarting:
-		_poll_restart()
-		last_process_us = Time.get_ticks_usec() - t0
-		return
-
-	if _awaiting_backend:
-		_backend_startup_timer += delta
-		if _backend_startup_timer > BACKEND_STARTUP_TIMEOUT:
-			# 启动超时 → 终态 FAILED：停止无休止重连，等待用户手动重试
-			# （错误通道 = backend_failed 信号 + FAILED 状态，此处仅提示）
-			push_warning("Connection: backend startup timed out after %.0fs" % BACKEND_STARTUP_TIMEOUT)
-			_awaiting_backend = false
-			_close_probe()
-			_kill_backend()
-			status = Status.FAILED
-			backend_failed.emit("backend startup timed out (%.0fs)" % BACKEND_STARTUP_TIMEOUT)
-			last_process_us = Time.get_ticks_usec() - t0
-			return
-
-	if _probe != null:
-		_poll_probe(delta)
-		last_process_us = Time.get_ticks_usec() - t0
-		return
-
-	if _awaiting_backend:
-		_backend_check_timer -= delta
-		if _backend_check_timer <= 0.0:
-			_backend_check_timer = BACKEND_CHECK_INTERVAL
-			_begin_probe()
-		last_process_us = Time.get_ticks_usec() - t0
-		return
-
-	match status:
-		Status.DISCONNECTED:
-			_reconnect_timer -= delta
-			if _reconnect_timer <= 0.0:
-				_connect()
-		Status.CONNECTING:
-			_connect_elapsed += delta
-			_poll_connection(delta)
-			if status == Status.CONNECTING and _connect_elapsed > CONNECTING_TIMEOUT:
-				push_warning("Connection: connect timeout (%.1fs), reconnecting" % CONNECTING_TIMEOUT)
-				_reset_for_reconnect(_stream.get_status() if _stream else StreamPeerTCP.STATUS_ERROR)
-		Status.CONNECTED:
-			_poll_connection(delta)
-			if status == Status.CONNECTED:
-				_read_messages()
-				_collect_decoded()
-				_flush_send_queue()
-				# 最后收包超时：后端挂死/网络黑洞时断开重连
-				if _last_receive_msec > 0 \
-						and Time.get_ticks_msec() - _last_receive_msec > int(RECEIVE_TIMEOUT * 1000.0):
-					push_warning("Connection: receive timeout (%.0fs), reconnecting" % RECEIVE_TIMEOUT)
-					_reset_for_reconnect(_stream.get_status() if _stream else StreamPeerTCP.STATUS_ERROR)
-		Status.FAILED:
-			pass  # 终态：不自动重试，等待 connect_to_server() 手动重置
-
+	_advance_restart()
+	_process_layer.tick(delta)
+	_transport.tick(delta)
+	_handshake.tick(delta)
+	_collect_decoded()
 	last_process_us = Time.get_ticks_usec() - t0
+
+
+# ── 子层接线 ──────────────────────────────────────────────
+
+func _signal_connect(p_signal: Signal, p_callable: Callable) -> void:
+	if not p_signal.is_connected(p_callable):
+		p_signal.connect(p_callable)
+
+
+func _signal_disconnect(p_signal: Signal, p_callable: Callable) -> void:
+	if p_signal.is_connected(p_callable):
+		p_signal.disconnect(p_callable)
+
+
+func _wire_layers() -> void:
+	_signal_connect(_process_layer.ready, _on_process_ready)
+	_signal_connect(_process_layer.failed, _on_process_failed)
+	_signal_connect(_process_layer.stopped, _on_process_stopped)
+	_signal_connect(_process_layer.started, _on_process_started)
+	_signal_connect(_transport.connected, _on_transport_connected)
+	_signal_connect(_transport.disconnected, _on_transport_disconnected)
+	_signal_connect(_transport.frame_received, _on_frame_received)
+	_signal_connect(_handshake.acked, _on_handshake_acked)
+	_signal_connect(_handshake.rejected, _on_handshake_rejected)
+	_signal_connect(_handshake.timeout, _on_handshake_timeout)
+
+
+## 解绑当前子层（注入前清理旧连接，防替换后旧层事件误触门面）。
+## 层未初始化（null）时跳过——测试钩子需支持在 _ready 前注入。
+func _unwire_layers() -> void:
+	if _process_layer == null or _transport == null or _handshake == null:
+		return
+	_signal_disconnect(_process_layer.ready, _on_process_ready)
+	_signal_disconnect(_process_layer.failed, _on_process_failed)
+	_signal_disconnect(_process_layer.stopped, _on_process_stopped)
+	_signal_disconnect(_process_layer.started, _on_process_started)
+	_signal_disconnect(_transport.connected, _on_transport_connected)
+	_signal_disconnect(_transport.disconnected, _on_transport_disconnected)
+	_signal_disconnect(_transport.frame_received, _on_frame_received)
+	_signal_disconnect(_handshake.acked, _on_handshake_acked)
+	_signal_disconnect(_handshake.rejected, _on_handshake_rejected)
+	_signal_disconnect(_handshake.timeout, _on_handshake_timeout)
 
 
 # ── 公共接口 ──────────────────────────────────────────────
 
 func connect_to_server(host: String = DEFAULT_HOST, port: int = DEFAULT_PORT) -> void:
-	"""连接到指定服务器。
-
-	FAILED 终态（后端启动超时）可经此重置并重新尝试。
-	"""
-	_host = host
-	_port = port
-	if status == Status.CONNECTED:
-		disconnect_from_server()
-	status = Status.DISCONNECTED
-	_connect()
+	"""重连（FAILED 终态可经此重置并重新尝试）。"""
+	_transport.host = host
+	_transport.port = port
+	if _process_layer.state == BackendProcessClass.State.FAILED:
+		# 终态重置：重新走完整启动流程
+		_restart_args = backend_args
+		_restart_phase = RestartPhase.RESET
+		return
+	_transport.reset()
+	_handshake.reset()
+	_transport.connect_to_host()
+	_sync_status()
 
 
 func disconnect_from_server() -> void:
-	"""断开连接。"""
-	if _stream:
-		_stream.disconnect_from_host()
-		_stream = null
-	status = Status.DISCONNECTED
+	"""断开连接（静默，不广播 connection_lost；由调用方决定语义）。"""
+	_transport.disconnect_from_host()
+	_worker.stop()
+	_handshake.reset()
 	_outage_emitted = true
-	_recv_buf.clear()
-	_send_queue.clear()
-	_stop_decode_thread()
-	set_process(false)
-	connection_lost.emit()
+	_sync_status()
 
 
 func send(message: Dictionary) -> void:
-	"""发送一条消息。
-
-	握手（hello_ack）完成前调用会被丢弃：后端在认证前收到普通帧
-	会直接断开连接（见 backend/ascend/net/client_handler.py）。
-	"""
-	if not _hello_acked:
+	"""发送一条消息（握手完成前后端未认证，普通帧会被直接断开）。"""
+	if not _handshake.is_acked():
 		push_warning("Connection: send before handshake ack ignored")
 		return
 	if not message.has("seq"):
@@ -282,61 +195,30 @@ func send(message: Dictionary) -> void:
 	var framed: PackedByteArray = _codec.frame_encode(message)
 	if framed.is_empty():
 		return
-	_send_queue.append(framed)
+	_transport.send_frame(framed)
 
 
-# ── 后端进程管理 ──────────────────────────────────────────
-
-## 主动切换后端进程模式（进程模型：菜单 ⇄ 世界）。
-##
-## 流程（非阻塞状态机，_process 轮询推进）:
-##   1. 与目标参数相同且进程存活 → 幂等跳过
-##   2. 置 _restarting：优雅停旧进程（SIGTERM，最终落盘），
-##      期间断线不广播 connection_lost（主动行为，UI 不闪错）
-##   3. 旧进程退出（或超时强杀）→ 以新参数拉起 → 端口探测 → 重连
-##
-## Args:
-##     args: 后端进程参数（[] = 菜单模式；["--world-id", id] 等 = 世界）。
+## 主动切换后端进程模式（进程模型：菜单 ⇄ 世界）。异步状态机：
+##   WAIT_STOP: 优雅停旧进程（等端口释放，层内超时强杀兜底）
+##   RESET:     清理旧连接残留
+##   SPAWN:     以新参数拉起 → 预探测 → 重连 → 握手
 func restart_backend(args: PackedStringArray = PackedStringArray()) -> void:
-	if _restarting:
-		return
-	if _backend_args_equal(args) and _backend_pid > 0:
+	if _restart_phase != RestartPhase.NONE:
+		return  # 切换进行中忽略（防重入）
+	if _process_layer.args_equal(args) and _process_layer.is_alive():
 		return  # 已是目标模式
-	_restarting = true
+	backend_args = args  # 目标参数立即生效（UI 据此感知模式）
 	_restart_args = args
-	backend_args = args
-	_restart_timeout_ms = Time.get_ticks_msec() + BACKEND_STOP_TIMEOUT_MS
-	status = Status.DISCONNECTED
-	# 旧连接随进程终止自然失效；不再主动断开（避免误发 connection_lost）
-	# 清理统一走「按名杀 + 等端口释放」：Nuitka onefile 会 fork 出
-	# 真实服务子进程，仅按 PID 杀 bootstrap 会留下占端口的孤儿服务，
-	# 新模式进程绑定冲突崩溃、前端无限等待。
-	_kill_untracked_backends()
-	if _backend_pid > 0:
-		OS.execute("kill", ["-TERM", str(_backend_pid)])
-	var deadline: int = Time.get_ticks_msec() + BACKEND_STOP_TIMEOUT_MS
-	while _port_in_use() and Time.get_ticks_msec() < deadline:
-		OS.delay_msec(100)
-	if _port_in_use():
-		push_warning("Connection: backend not stopped in time, force killing")
-		OS.execute("pkill", ["-9", "-f", "server/server"])
-		deadline = Time.get_ticks_msec() + 3000
-		while _port_in_use() and Time.get_ticks_msec() < deadline:
-			OS.delay_msec(100)
-	_finish_restart_spawn()
+	_transport.reset()
+	_handshake.reset()
+	_worker.stop()
+	_outage_emitted = true
+	_restart_phase = RestartPhase.WAIT_STOP
+	_process_layer.stop()  # IDLE/FAILED 时同步发射 stopped → 相位推进
+	_sync_status()
 
 
-func _backend_args_equal(args: PackedStringArray) -> bool:
-	"""目标参数与当前参数比较（含空数组语义）。"""
-	if backend_args.size() != args.size():
-		return false
-	for i in backend_args.size():
-		if backend_args[i] != args[i]:
-			return false
-	return true
-
-
-## 当前后端进程的世界 ID（--world-id 参数值；菜单模式返回空）。
+## 当前后端进程模式的世界 ID（--world-id 参数值；菜单模式返回空）。
 ## 参数语义只在此处解析，调用方不依赖参数布局。
 func backend_world_id() -> String:
 	for i in backend_args.size() - 1:
@@ -345,480 +227,179 @@ func backend_world_id() -> String:
 	return ""
 
 
-func _poll_restart() -> void:
-	"""推进进程切换：等旧进程退出 → 超时强杀 → 拉起新进程。"""
-	if _backend_pid > 0:
-		if OS.is_process_running(_backend_pid):
-			if Time.get_ticks_msec() >= _restart_timeout_ms:
-				push_warning("Connection: backend not stopped in time, force killing (PID: %d)" % _backend_pid)
-				OS.kill(_backend_pid)
-			return  # 仍存活：等待下帧
-		_backend_pid = -1
-		print("Connection: old backend exited, spawning new mode")
-	_finish_restart_spawn()
+## 底层进程创建器转发（测试可注入；默认 OS.create_process 真拉起）。
+## 签名: (python_path, full_args) -> pid；返回 -1 = 拉起失败。
+var process_creator: Callable:
+	set(v):
+		if _process_layer != null:
+			_process_layer.process_creator = v
+	get:
+		return _process_layer.process_creator if _process_layer != null else Callable()
 
 
-func _finish_restart_spawn() -> void:
-	"""旧进程已退出：清理残留连接状态并以新参数拉起。
+# ── 进程切换推进 ──────────────────────────────────────────
 
-	与 _reset_for_reconnect 对齐的完整清理：切换瞬间旧连接可能留有
-	半帧数据/待发消息/后台解码线程——残留不清理会让新连接的字节流
-	拼接进旧缓冲导致帧错位丢消息。
-	"""
-	_restarting = false
-	_restart_timeout_ms = -1
-	_backend_pid = -1
-	_awaiting_backend = false
-	if _stream != null:
-		_stream.disconnect_from_host()
-		_stream = null
-	_hello_sent = false
-	_hello_acked = false
-	_outage_emitted = false
-	_recv_buf.clear()
-	_send_queue.clear()
-	_stop_decode_thread()
-	_spawn_backend_process(_restart_args)
+func _advance_restart() -> void:
+	match _restart_phase:
+		RestartPhase.RESET:
+			_restart_phase = RestartPhase.SPAWN
+			_transport.reset()
+			_handshake.reset()
+			_worker.stop()
+		RestartPhase.SPAWN:
+			_restart_phase = RestartPhase.NONE
+			_process_layer.start(_restart_args)
+		_:
+			pass
 
 
-func _start_backend() -> void:
-	"""启动后端：先非阻塞探测端口，已开放则直接使用，否则拉起 Python 进程。"""
-	_probe_before_spawn = true
-	_begin_probe()
+# ── 子层事件处理 ──────────────────────────────────────────
+
+func _on_process_ready() -> void:
+	"""端口就绪（后端可连）：重置并发起连接。"""
+	print("Connection: backend ready on %s:%d" % [_transport.host, _transport.port])
+	_transport.reset()
+	_handshake.reset()
+	_transport.connect_to_host()
+	_sync_status()
 
 
-func _project_root() -> String:
-	"""项目根（后端/令牌所在目录）绝对路径。
-
-	编辑器（开发）：res:// 即 frontend/，项目根为其上级；
-	导出包（发行）：可执行文件与后端目录位于同一根目录
-	（约定布局: <根>/ascend.x86_64 + <根>/server/），
-	根 = 可执行文件所在目录。
-	"""
-	if OS.has_feature("editor"):
-		return ProjectSettings.globalize_path("res://..")
-	return OS.get_executable_path().get_base_dir()
-
-
-func _data_root() -> String:
-	"""数据根（token/日志落点）绝对路径。
-
-	编辑器（开发）：与项目根一致；
-	导出包（发行）：user://（用户可写目录）——AppImage 挂载点只读、
-	Windows Program Files 受限，token/日志不能落在程序目录。
-	"""
-	if OS.has_feature("editor"):
-		return _project_root()
-	return ProjectSettings.globalize_path("user://")
-
-
-func _spawn_backend_process(args: PackedStringArray = PackedStringArray()) -> void:
-	"""拉起后端进程并进入等待端口就绪状态。
-
-	打包模式（发行版）：直接执行随包分发的 server/ 目录内
-	的二进制（standalone 形态，含依赖库），以 --project-root 指向
-	包根目录（token/日志落点）；
-	开发模式：回退 .venv python + backend/run_server.py。
-	"""
-	var project_root: String = _project_root()
-	var backend_binary: String = ""
-	for candidate in [
-		project_root.path_join("server").path_join("server"),
-		project_root.path_join("server").path_join("server.exe"),
-	]:
-		if FileAccess.file_exists(candidate):
-			backend_binary = candidate
-			break
-
-	var exec_path: String = ""
-	var full_args: PackedStringArray = []
-	if backend_binary != "":
-		exec_path = backend_binary
-		full_args = ["--project-root", project_root, "--data-root", _data_root()]
-		full_args.append_array(args)
-	else:
-		var python_path: String = project_root.path_join(VENV_PYTHON_REL)
-		var backend_dir: String = project_root.path_join("backend")
-		var script_path: String = backend_dir.path_join("run_server.py")
-		if not FileAccess.file_exists(python_path):
-			push_error("Connection: Python not found at %s" % python_path)
-			_enter_failed_state("Python not found at %s" % python_path)
-			return
-		if not FileAccess.file_exists(script_path):
-			push_error("Connection: backend script not found at %s" % script_path)
-			_enter_failed_state("backend script not found at %s" % script_path)
-			return
-		exec_path = python_path
-		full_args = [script_path]
-		full_args.append_array(args)
-
-	var pid: int = process_creator.call(exec_path, full_args)
-	if pid == -1:
-		push_error("Connection: failed to start backend process")
-		_enter_failed_state("failed to start backend process")
-		return
-
-	_backend_pid = pid
-	_awaiting_backend = true
-	_backend_startup_timer = 0.0
-	_backend_check_timer = BACKEND_CHECK_INTERVAL
-	set_process(true)
-	print("Connection: backend started (PID: %d, args: %s), waiting for port..." % [pid, str(args)])
-
-
-func _enter_failed_state(reason: String) -> void:
-	"""进入终态 FAILED：停止自动重连，通知 UI 显示错误。"""
-	status = Status.FAILED
+func _on_process_failed(reason: String) -> void:
+	"""启动失败（终态）：通知 UI，不再自动重试。"""
+	_sync_status()
 	backend_failed.emit(reason)
 
 
-func _kill_backend() -> void:
-	"""终止后端进程：SIGTERM 优雅停止（按名 + 按 PID），超时强杀，等端口释放。
-
-	Nuitka onefile 启动时会 fork 出真实服务子进程（bootstrap 为监督
-	进程），游戏拿到的 PID 仅是 bootstrap——只杀 PID 会留下持有端口
-	的孤儿服务，导致下次进入世界绑定冲突。故按名（server）清理兜底，
-	覆盖 bootstrap 与真实服务两者。
-
-	优雅路径保留：SIGTERM → run_server 落盘后退出 → 端口释放。
-	"""
-	if _backend_pid > 0:
-		OS.execute("kill", ["-TERM", str(_backend_pid)])
-	_kill_untracked_backends()
-	var deadline: int = Time.get_ticks_msec() + BACKEND_STOP_TIMEOUT_MS
-	while _port_in_use() and Time.get_ticks_msec() < deadline:
-		OS.delay_msec(100)
-	if _port_in_use():
-		push_warning("Connection: backend not stopped in time, force killing")
-		OS.execute("pkill", ["-9", "-f", "server/server"])
-		deadline = Time.get_ticks_msec() + 3000
-		while _port_in_use() and Time.get_ticks_msec() < deadline:
-			OS.delay_msec(100)
-	print("Connection: backend stopped")
-	_backend_pid = -1
-	_awaiting_backend = false
+func _on_process_stopped() -> void:
+	"""旧进程已退出：推进切换状态机（RESET → 下一帧 SPAWN）。"""
+	if _restart_phase == RestartPhase.WAIT_STOP:
+		_restart_phase = RestartPhase.RESET
+	_sync_status()
 
 
-func _kill_untracked_backends() -> void:
-	"""终止未跟踪的后端进程（端口探测接管场景，PID 未知）。
-
-	按后端二进制路径模式匹配（<任意根>/server/server[.exe]）：
-	开发模式后端进程名是 python，不受影响；导出版内核对自家产物。
-	"""
-	if OS.get_name() == "Windows":
-		OS.execute("taskkill", ["/IM", "server.exe", "/F"])
-	else:
-		OS.execute("pkill", ["-TERM", "-f", "server/server"])
+func _on_process_started(pid: int, args: PackedStringArray) -> void:
+	"""后端进程已拉起：等待端口就绪（READY 信号推进）。"""
+	print("Connection: backend started (PID: %d, args: %s), waiting for port..." % [pid, str(args)])
 
 
-func _port_in_use() -> bool:
-	"""同步探测端口是否被占用（后端退出等待用）。"""
-	var probe := StreamPeerTCP.new()
-	if probe.connect_to_host(_host, _port) != OK:
-		return false
-	for i in 10:
-		probe.poll()
-		match probe.get_status():
-			StreamPeerTCP.STATUS_CONNECTED:
-				probe.disconnect_from_host()
-				return true
-			StreamPeerTCP.STATUS_ERROR:
-				return false
-		OS.delay_msec(50)
-	return false
+func _on_transport_connected() -> void:
+	"""TCP 建立：启动解码线程并发起握手。"""
+	_outage_emitted = false
+	_worker.start()
+	_handshake.start()
+	_sync_status()
 
 
-func _begin_probe() -> void:
-	"""发起一次非阻塞端口探测。结果由 _poll_probe 在后续帧中判定。"""
-	_close_probe()
-	var probe := StreamPeerTCP.new()
-	_probe_elapsed = 0.0
-	if probe.connect_to_host(_host, _port) != OK:
-		_on_probe_failed()
+func _on_transport_disconnected() -> void:
+	"""连接失效：停解码线程、重置握手；主动切换中不广播断线。"""
+	_worker.stop()
+	_handshake.reset()
+	if _restart_phase != RestartPhase.NONE:
+		_sync_status()
 		return
-	_probe = probe
-
-
-func _poll_probe(delta: float) -> void:
-	"""每帧轮询探测流状态：连接成功=端口开放，出错或超时=端口未就绪。"""
-	_probe_elapsed += delta
-	_probe.poll()
-	match _probe.get_status():
-		StreamPeerTCP.STATUS_CONNECTED:
-			_close_probe()
-			_on_probe_succeeded()
-		StreamPeerTCP.STATUS_CONNECTING:
-			if _probe_elapsed >= PROBE_TIMEOUT:
-				_close_probe()
-				_on_probe_failed()
-		_:
-			_close_probe()
-			_on_probe_failed()
-
-
-func _close_probe() -> void:
-	"""关闭并清理探测流。"""
-	if _probe != null:
-		_probe.disconnect_from_host()
-		_probe = null
-
-
-func _on_probe_succeeded() -> void:
-	"""端口开放：后端已就绪。"""
-	if _awaiting_backend:
-		print("Connection: backend ready on %s:%d (waited %.1fs)" % [_host, _port, _backend_startup_timer])
-		_awaiting_backend = false
-		_probe_before_spawn = false
-		if _stream != null:
-			_stream.disconnect_from_host()
-			_stream = null
-		_connect()
-	elif _probe_before_spawn:
-		print("Connection: backend already running on %s:%d" % [_host, _port])
-		_probe_before_spawn = false
-		_connect()
-
-
-func _on_probe_failed() -> void:
-	"""端口未开放：启动前检查则拉起后端进程，等待期间则稍后重试。"""
-	if _probe_before_spawn:
-		_probe_before_spawn = false
-		_spawn_backend_process()
-
-
-# ── TCP 连接 ──────────────────────────────────────────────
-
-func _connect() -> void:
-	"""发起 TCP 连接。"""
-	_hello_sent = false
-	_hello_acked = false
-	_hello_elapsed = 0.0
-	_connect_elapsed = 0.0
-	_last_receive_msec = 0
-	_stream = StreamPeerTCP.new()
-	var err: Error = _stream.connect_to_host(_host, _port)
-	if err != OK:
-		push_warning("Connection: connect error: %d, retrying in %.1fs" % [err, RECONNECT_INTERVAL])
-		_stream = null
-		_reconnect_timer = RECONNECT_INTERVAL
-		return
-	status = Status.CONNECTING
-	set_process(true)
-
-
-func _poll_connection(delta: float) -> void:
-	"""轮询连接状态。
-
-	TCP 建立后先发 hello 握手；握手未完成前不计为已连接，
-	握手超时（HELLO_TIMEOUT）则断开重连。
-	"""
-	if _stream == null:
-		return
-	_stream.poll()
-	var s: StreamPeerTCP.Status = _stream.get_status()
-	match s:
-		StreamPeerTCP.STATUS_CONNECTED:
-			if not _hello_sent:
-				status = Status.CONNECTED
-				_outage_emitted = false
-				_start_decode_thread()
-				_load_token()
-				_send_hello()
-			else:
-				if not _hello_acked:
-					# 超时只对「等待 ack」有意义：握手成功后不再累计，
-					# 否则连接必然在 10s 后误触发重连
-					_hello_elapsed += delta
-					if _hello_elapsed > HELLO_TIMEOUT:
-						push_warning("Connection: hello timeout (%.1fs), reconnecting" % HELLO_TIMEOUT)
-						_reset_for_reconnect(s)
-		StreamPeerTCP.STATUS_CONNECTING:
-			pass
-		_:
-			_reset_for_reconnect(s)
-
-
-func _reset_for_reconnect(s: StreamPeerTCP.Status) -> void:
-	"""连接失效：清理流与握手状态，进入重连等待（断线事件只广播一次）。"""
-	if _stream != null:
-		_stream.disconnect_from_host()
-		_stream = null
-	_hello_sent = false
-	_hello_acked = false
-	_hello_elapsed = 0.0
-	_connect_elapsed = 0.0
-	_last_receive_msec = 0
-	status = Status.DISCONNECTED
-	_reconnect_timer = RECONNECT_INTERVAL
-	# 断线事件只广播一次：读档重建期间反复失败的重连尝试
-	# 不应让 UI 每次断连都闪错误（连接由重建后的新服务恢复）
 	if not _outage_emitted:
 		_outage_emitted = true
-		push_warning("Connection: lost, status=%d" % s)
-		_stop_decode_thread()
+		push_warning("Connection: connection lost")
 		connection_lost.emit()
+	_sync_status()
 
 
-func _load_token() -> void:
-	"""从数据根 .ascend_token 读取认证令牌（后端启动时写入）。
-
-	每次连接都重读：进程切换后 token 变化（世界/菜单进程各生成一次），
-	缓存旧 token 会导致握手死循环失败。
-	"""
-	var token_path: String = _data_root().path_join(TOKEN_FILE_REL)
-	var f: FileAccess = FileAccess.open(token_path, FileAccess.READ)
-	if f == null:
-		push_error("Connection: token file missing at %s" % token_path)
-		_token = ""
-		return
-	_token = f.get_line().strip_edges()
-	f.close()
+func _on_handshake_acked() -> void:
+	"""握手完成：广播已连接，此后 send 放行。"""
+	print("Connection: handshake ok")
+	_outage_emitted = false
+	connection_established.emit(_transport.host, _transport.port)
+	_sync_status()
 
 
-func _send_hello() -> void:
-	"""发送握手帧：认证令牌 + 协议版本（置于发送队列队首，最先发出）。"""
-	_hello_sent = true
-	_hello_elapsed = 0.0
-	var hello: Dictionary = {
-		"type": "hello",
-		"seq": _codec.next_seq(),
-		"payload": {"token": _token, "protocol_version": PROTOCOL_VERSION},
-	}
-	_send_queue.push_front(_codec.frame_encode(hello))
+func _on_handshake_rejected(reason: String) -> void:
+	"""认证/版本被拒：重连重握手（token 每次 start 重读）。"""
+	push_warning("Connection: handshake rejected: %s, retrying" % reason)
+	_transport.reset_for_reconnect()
+	_sync_status()
 
 
-func _read_messages() -> void:
-	"""读取所有可用数据，提取帧体，推入后台解码队列。"""
-	if _stream == null:
-		return
-
-	var available: int = _stream.get_available_bytes()
-	if available <= 0:
-		return
-
-	var chunk: Array = _stream.get_partial_data(available)
-	if chunk[0] != OK:
-		return
-	var data: PackedByteArray = chunk[1]
-	_recv_buf.append_array(data)
-	_last_receive_msec = Time.get_ticks_msec()
-
-	var result: Dictionary = _codec.frame_decode(_recv_buf, MAX_MESSAGE_SIZE)
-	_recv_buf = result["remaining"]
-
-	for body: PackedByteArray in result["bodies"]:
-		_decode_mutex.lock()
-		_decode_input.append(body)
-		_decode_mutex.unlock()
-		_decode_sem.post()
+func _on_handshake_timeout() -> void:
+	"""等待 ack 超时：断开重连。"""
+	push_warning("Connection: hello timeout (%.1fs), reconnecting" % Config.HELLO_TIMEOUT)
+	_transport.reset_for_reconnect()
+	_sync_status()
 
 
-func _flush_send_queue() -> void:
-	"""发送队列中的消息。失败时仅保留未发送部分，避免重发已成功的数据。"""
-	if _stream == null or _send_queue.is_empty():
-		return
-	var sent: int = 0
-	for frame in _send_queue:
-		var err: Error = _stream.put_data(frame)
-		if err != OK:
-			push_error("Connection: send error: %d" % err)
-			_send_queue = _send_queue.slice(sent)
-			return
-		sent += 1
-	_send_queue.clear()
+func _on_frame_received(body: PackedByteArray) -> void:
+	"""传输层切出的完整帧体 → 后台解码线程。"""
+	_worker.push(body)
 
 
-# ── 后台解码线程 ──────────────────────────────────────────
-
-func _start_decode_thread() -> void:
-	"""启动后台 JSON 解码线程。"""
-	if _decode_thread != null:
-		return
-	_decode_mutex = Mutex.new()
-	_decode_sem = Semaphore.new()
-	_decode_running = true
-	_decode_thread = Thread.new()
-	_decode_thread.start(_decode_worker)
-
-
-func _stop_decode_thread() -> void:
-	"""停止后台解码线程并清理。"""
-	_decode_running = false
-	if _decode_sem:
-		_decode_sem.post()
-	if _decode_thread:
-		_decode_thread.wait_to_finish()
-		_decode_thread = null
-	_decode_mutex = null
-	_decode_sem = null
-	_decode_input.clear()
-	_decode_output.clear()
-
-
-func _decode_worker() -> void:
-	"""后台线程：从输入队列取帧体 → JSON 解析 → 放入输出队列。"""
-	while _decode_running:
-		_decode_sem.wait()
-		if not _decode_running:
-			break
-
-		_decode_mutex.lock()
-		var body: PackedByteArray
-		if _decode_input.size() > 0:
-			body = _decode_input.pop_front()
-		_decode_mutex.unlock()
-
-		if body.is_empty():
-			continue
-
-		var message: Variant = JsonCodec.decode(body)
-		if message == null or not message is Dictionary:
-			push_error("Connection: decode failed in worker thread")
-			continue
-
-		_decode_mutex.lock()
-		_decode_output.append(message)
-		_decode_mutex.unlock()
-
+# ── 解码消息收集 ──────────────────────────────────────────
 
 func _collect_decoded() -> void:
-	"""主线程收集后台已解码的消息并发射信号。
-
-	握手完成前只消费握手消息（hello_ack / 认证或版本错误），
-	其余消息不广播（后端在认证前不会发送普通消息）。
-	"""
-	if _decode_mutex == null:
-		return
-	var messages: Array[Dictionary] = []
-	_decode_mutex.lock()
-	for msg in _decode_output:
-		messages.append(msg)
-	_decode_output.clear()
-	_decode_mutex.unlock()
-
-	for msg in messages:
-		if not _hello_acked:
-			if _handle_handshake(msg):
+	"""主线程收集已解码消息：握手完成前走握手消费，否则广播。"""
+	for msg: Dictionary in _worker.drain():
+		if not _handshake.is_acked():
+			if _handshake.on_message(msg):
 				continue
 			push_warning("Connection: message before handshake ack dropped")
 			continue
 		message_received.emit(msg)
 
 
-func _handle_handshake(msg: Dictionary) -> bool:
-	"""处理握手完成前的服务器消息。返回 True 表示已消费（不广播）。"""
-	var mtype: String = msg.get("type", "")
-	if mtype == "hello_ack":
-		_hello_acked = true
-		_hello_elapsed = 0.0  # 握手完成：停止 ack 等待计时（防 10s 后误超时）
-		print("Connection: handshake ok")
-		connection_established.emit(_host, _port)
-		return true
-	if mtype == "error" and msg.get("request_type", "") == "hello":
-		var reason: String = msg.get("error", "unknown")
-		push_warning("Connection: handshake rejected: %s, retrying" % reason)
-		# 进程切换竞态：token 文件由新进程写入，可能读到旧 token。
-		# 不进入 FAILED 终态——重连后重读 token（_load_token 每次重读）。
-		_reset_for_reconnect(_stream.get_status() if _stream else StreamPeerTCP.STATUS_ERROR)
-		return true
-	return false
+# ── 状态派生（事件边界） ──────────────────────────────────
+
+func _sync_status() -> void:
+	"""由子层状态派生门面 Status（事件边界调用，非每帧）。
+
+	注意：主世界测试手动覆写 status（白盒 gate），事件边界派生不会碾平。
+	"""
+	match _transport.state:
+		TcpTransportClass.State.CONNECTING:
+			status = Status.CONNECTING
+		TcpTransportClass.State.CONNECTED:
+			status = Status.CONNECTED
+		_:
+			if _process_layer.state == BackendProcessClass.State.FAILED:
+				status = Status.FAILED
+			else:
+				status = Status.DISCONNECTED
+
+
+# ── 路径解析 ──────────────────────────────────────────────
+
+func _project_root() -> String:
+	"""项目根（后端/令牌所在目录）。编辑器 = res:// 上级；发行 = 可执行文件目录。"""
+	if OS.has_feature("editor"):
+		return ProjectSettings.globalize_path("res://..")
+	return OS.get_executable_path().get_base_dir()
+
+
+func _data_root() -> String:
+	"""数据根（token/日志落点）。编辑器 = 项目根；发行 = user://（可写）。"""
+	if OS.has_feature("editor"):
+		return _project_root()
+	return ProjectSettings.globalize_path("user://")
+
+
+# ── 测试钩子 ──────────────────────────────────────────────
+
+## 注入子层实例（单元/集成测试替身）；重接线，防重复连接同一组。
+func _set_layers(p_process: BackendProcess, p_transport: TcpTransport,
+		p_handshake: Handshake, p_worker: DecodeWorker) -> void:
+	_unwire_layers()
+	_process_layer = p_process
+	_transport = p_transport
+	_handshake = p_handshake
+	_worker = p_worker
+	_wire_layers()
+
+
+## 强制握手完成（等价旧测试白盒 _hello_acked = true）
+func _force_handshake_acked() -> void:
+	if _handshake != null:
+		_handshake.state = HandshakeClass.State.ACKED
+
+
+## 取走并清空传输层未发送帧（等价旧测试对 _send_queue 的读取）
+func _drain_pending_frames() -> Array[PackedByteArray]:
+	if _transport == null:
+		return []
+	return _transport.drain_pending_frames()
