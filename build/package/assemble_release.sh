@@ -72,6 +72,8 @@ mkdir -p "$STAGE"
 cp "$EXPORTS_DIR/$GAME_EXE" "$STAGE/"
 cp "$EXPORTS_DIR/ascend.pck" "$STAGE/"
 cp -r "$SERVER_SRC" "$STAGE/"
+# 后端 i18n 按模块相对路径解析（ascend/i18n.py 上三级 → server/lang）
+cp -r "$ROOT/lang" "$STAGE/server/lang"
 
 cat > "$STAGE/README.txt" <<EOF
 Ascend $VERSION ($PLATFORM)

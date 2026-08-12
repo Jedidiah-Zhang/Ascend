@@ -27,30 +27,15 @@ jobs:
         run: |
           python -m pip install -q -r build/nuitka/requirements-build.txt
           python -m pip install -q -r requirements.txt
-          sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
 
-      - name: 缓存 Godot
-        uses: actions/cache@v5.1.0
-        with:
-          path: |
-            ~/.local/share/godot
-            ~/godot
-          key: godot-${{ vars.GODOT_VERSION || '4.7.1' }}-linux
-
-      - name: 安装 Godot 与导出模板
-        run: bash build/ci/setup_godot.sh linux
-
-      - name: 一键打包（导出→编译→冒烟→归档）
-        run: bash build/build_release.sh linux
+      - name: 一键打包后端（研究平台发行）
+        run: bash build/build_backend_release.sh linux
 
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: release-linux
           path: |
-            build/dist/release/ascend-linux.tar.gz
-            build/dist/release/ascend-linux.deb
-            build/dist/release/ascend-linux.rpm
-            build/dist/release/ascend-linux.AppImage
+            build/dist/release/ascend-server-linux.tar.gz
           if-no-files-found: error
 
   build-windows:
@@ -79,34 +64,17 @@ jobs:
         shell: bash
         run: bash build/ci/setup_mingw.sh
 
-      - name: 安装 Inno Setup 与 ImageMagick（安装器/图标）
-        shell: bash
-        run: choco install innosetup imagemagick -y --no-progress
-
-      - name: 缓存 Godot
-        uses: actions/cache@v5.1.0
-        with:
-          path: |
-            ~/AppData/Roaming/Godot
-            ~/godot
-          key: godot-${{ vars.GODOT_VERSION || '4.7.1' }}-windows
-
-      - name: 安装 Godot 与导出模板
-        shell: bash
-        run: bash build/ci/setup_godot.sh windows
-
-      - name: 一键打包（原生后端编译）
+      - name: 一键打包后端（原生编译，研究平台发行）
         shell: bash
         env:
           BACKEND_WIN_SCRIPT: build/nuitka/build_backend_windows_native.sh
-        run: bash build/build_release.sh windows
+        run: bash build/build_backend_release.sh windows
 
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: release-windows
           path: |
-            build/dist/release/ascend-windows.zip
-            build/dist/release/ascend-windows-setup.exe
+            build/dist/release/ascend-server-windows.zip
           if-no-files-found: error
 
   test:

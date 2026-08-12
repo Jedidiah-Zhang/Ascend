@@ -13,7 +13,7 @@
 ## 一键打包（推荐）
 
 ```bash
-bash build/build_release.sh all       # linux + windows
+bash build/build_release.sh all       # 本地全量：前端 + 后端（linux + windows）
 bash build/build_release.sh linux     # 或单平台
 ```
 
@@ -23,6 +23,20 @@ bash build/build_release.sh linux     # 或单平台
 
 发布：`git tag v<版本> && bash build/ci/publish_release.sh`（版本化命名上传
 GitHub Releases，本地不留历史产物）。
+
+## CI 打包后端（研究平台发行）
+
+前端为闭源商业资产（`frontend/assets/` 不入库），CI 不参与前端构建；
+CI 仅打包后端供研究平台使用：
+
+```bash
+bash build/build_backend_release.sh linux     # 后端 server 包
+bash build/build_backend_release.sh windows   # 或 windows
+```
+
+流程：编译后端（Nuitka）→ 组装 server-only 舞台目录（含 `server/lang/`，
+后端 i18n 按模块相对路径解析）→ 冒烟 → 归档。
+产物：`build/dist/release/ascend-server-linux.tar.gz`、`ascend-server-windows.zip`。
 
 ## 发行布局
 
@@ -63,16 +77,16 @@ bash build/package/assemble_release.sh windows && bash build/package/windows/mak
 ## GitHub Actions（CI）
 
 工作流：`.github/workflows/release.yml`（触发：推 `v*` 标签或手动运行）。
+**CI 仅打包后端**（研究平台发行；前端为闭源商业资产，不走 CI）：
 
 ```
-push tag v* ──► [ubuntu-latest]  Linux 构建 ──┐
-                 [windows-latest] Windows 构建 ─┴─► [release] 上传 GitHub Releases
+push tag v* ──► [ubuntu-latest]  Linux 后端 ──┐
+                 [windows-latest] Windows 后端 ─┴─► [release] 上传 GitHub Releases
 ```
 
 - **Windows 构建用原生 runner**（`build_backend_windows_native.sh`），
   非 wine——真 Windows 上 Nuitka/pefile 依赖扫描均正常，无需 wine 那些规避参数
-- runner 工具由 `build/ci/setup_godot.sh`（Godot 4.7.1 + 模板）与
-  `build/ci/setup_mingw.sh`（winlibs gcc，供 C 加速模块 .dll）安装，均已缓存
+- runner 工具由 `build/ci/setup_mingw.sh`（winlibs gcc，供 C 加速模块 .dll）安装并缓存
 - 手动运行（workflow_dispatch）只构建不上传 Release（产物在 Actions 页下载）
 - 发布 job 复用 `build/ci/publish_release.sh`（GITHUB_TOKEN 自动认证）
 

@@ -12,7 +12,7 @@ config_version=5
 
 config/name="Ascend"
 config/description="AI 原生 2D 俯视生存经营模拟游戏"
-config/version="0.0.1-alpha"
+config/version="0.0.2-alpha"
 run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.7")
 
