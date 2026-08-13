@@ -4,9 +4,11 @@
 游戏线程从队列取消息处理，send() 仅入队（不阻塞游戏线程）。
 """
 
+import errno
 import secrets
 import socket
 import threading
+import time
 from ascend.log import get_logger
 from ascend.net.client_handler import ClientHandler
 from ascend.net.protocol import encode_message
@@ -14,6 +16,22 @@ from ascend.net.protocol import encode_message
 logger = get_logger(__name__)
 
 RECEIVE_QUEUE_LIMIT: int = 1024  # 接收队列上限（消息），超限断开灌消息的客户端
+
+# accept() 的瞬时错误：重试而非退出循环。其余 OSError（EBADF 等，
+# 多为 socket 已关闭）视为致命，退出等 stop() 接管。
+# ENFILE 在部分平台不存在，getattr 兜底。
+_TRANSIENT_ACCEPT_ERRORS: frozenset[int] = frozenset(
+    e for e in (
+        errno.ECONNABORTED,   # 客户端在 accept 前中止连接
+        getattr(errno, "EMFILE", None),  # 文件描述符耗尽（瞬时，等释放）
+        getattr(errno, "ENFILE", None),
+        getattr(errno, "ENOBUFS", None),
+        errno.ENOMEM,
+        errno.ENETDOWN,
+        errno.ENETUNREACH,
+        errno.EHOSTUNREACH,
+    ) if e is not None
+)
 
 
 class GameServer:
@@ -179,9 +197,23 @@ class GameServer:
                 handler.start()
             except socket.timeout:
                 continue
-            except OSError:
-                if self.is_running:
-                    logger.exception("accept 错误")
+            except OSError as exc:
+                if not self.is_running:
+                    break  # 正常停止路径（stop() 已关闭 socket → EBADF）
+                if exc.errno in _TRANSIENT_ACCEPT_ERRORS:
+                    # 瞬时错误：重试而非永久退出。否则监听 socket 仍在，
+                    # 新连接照常完成 TCP 握手却无人 accept——服务器看似
+                    # 运行实则瘫痪（前端连得上但永远等不到 hello_ack）。
+                    if exc.errno == errno.ECONNABORTED:
+                        # 连接中止是正常瞬时事件：立即重试（退避会把
+                        # accept 吞吐压到 1 conn/s，连接洪泛下反而拒客）
+                        continue
+                    logger.warning(
+                        "accept 资源类瞬时错误（errno=%d），1s 后重试", exc.errno,
+                    )
+                    time.sleep(1.0)
+                    continue
+                logger.exception("accept 致命错误（errno=%d）", exc.errno)
                 break
 
     def _on_message(self, handler: "ClientHandler", message: dict) -> None:

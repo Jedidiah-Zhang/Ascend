@@ -93,9 +93,10 @@ func _drain_chunk_requests() -> Array:
 
 
 ## 构造与后端 BLOB 布局一致的 tiles_b64（4B header + uint16 LE terrain + float32 LE elevation + slope）。
-func _make_tiles_b64(terr: PackedInt32Array, elev: PackedFloat32Array) -> String:
+func _make_tiles_b64(terr: PackedInt32Array, elev: PackedFloat32Array, version: int = 1) -> String:
 	var raw := PackedByteArray()
 	raw.resize(4)
+	raw.encode_u32(0, version)  # 版本头（与后端 tile_grid._TILEGRID_VERSION 契约）
 	for t in terr:
 		raw.append(t & 0xFF)
 		raw.append((t >> 8) & 0xFF)
@@ -567,6 +568,57 @@ func test_tile_response_marks_received() -> void:
 
 	assert_eq(main._stream_machine.get_state(key), main.ChunkState.BUILT,
 		"完整数据到达且材质就绪应立即构建（BUILT）")
+
+
+func test_tile_response_rejects_version_mismatch() -> void:
+	"""版本头不匹配的 BLOB 应被拒绝并标记失败，而非静默解码或无限重试。
+
+	回归：后端 tile_grid.from_bytes 校验版本，前端此前只校验长度——
+	前后端 BLOB 布局漂移且长度恰好不变时，会静默解码出错误地形；
+	且版本漂移是永久性契约错误，重排队会每帧无限重发完整请求。
+	"""
+	var main: Node3D = _make_world_instance()
+	var key := Vector2i(0, 0)
+	main._set_birth_chunk(0, 0)
+	main._stream_machine.collect_field_requests(key, 0)
+	main._stream_machine.select_full_requests(func(k): return true, 10)  # → TILE_REQUESTED
+
+	var elev := PackedFloat32Array()
+	elev.resize(CS * CS)
+	elev.fill(10.0)
+	var terr := PackedInt32Array()
+	terr.resize(CS * CS)
+	terr.fill(2)
+
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, 2)}],
+			"include_tiles": true,
+		},
+	})
+
+	assert_push_error_text("BLOB 版本",
+		"版本漂移应报错（契约错误须可见，而非静默跳过）")
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.FIELD_REQUESTED,
+		"版本不匹配应降级 FIELD_REQUESTED")
+	assert_false(main._chunks[key].has("terrain"), "版本不匹配不应解码地形数据")
+	assert_true(main._chunks[key].get("_blob_version_failed", false),
+		"版本漂移应标记失败（重试不可能自愈）")
+
+	# 防重试循环：标记失败后流循环不得再发该 chunk 的完整请求
+	main._stream_chunks()
+	var tiles_requests: Array = []
+	for framed in Connection._drain_pending_frames():
+		var decoded: Dictionary = Connection._codec.frame_decode(framed, Config.MAX_MESSAGE_SIZE)
+		for body in decoded["bodies"]:
+			var msg: Dictionary = JsonCodec.decode(body)
+			if msg.get("request_type", "") == "get_chunks":
+				if bool(msg["payload"]["include_tiles"]):
+					tiles_requests.append(msg["payload"]["chunks"])
+	assert_true(tiles_requests.is_empty(),
+		"版本漂移 chunk 不应被再次选择发送完整请求")
 
 
 func test_stale_response_after_unload_ignored() -> void:

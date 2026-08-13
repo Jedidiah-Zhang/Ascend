@@ -1,16 +1,19 @@
 """主世界 3D 场景 — 正交等轴视角 + 流式 chunk 地形。
+
+职责划分（2026-08 拆分）:
+  - 本脚本（MainWorld3D）：世界编排——连接/消息路由/就绪流程/流式
+    chunk/玩家输入。相机几何与缩放 → CameraRig；光照阴影调制 →
+    LightingController；位置对账判定 → PlayerSync（纯逻辑）。
 """
 extends Node3D
 
 const Config = preload("res://scripts/config.gd")
 
-# ── 相机常量 ──────────────────────────────────────────────
+# ── 相机常量（CameraRig 同源；测试引用，保留在此） ────────
 
 const CAMERA_FOV: float = Config.CAMERA_3D_FOV
 const CAMERA_DISTANCE_DEFAULT: float = Config.CAMERA_3D_DISTANCE_DEFAULT
-const CAMERA_ZOOM_DISTANCE_STEP: float = Config.CAMERA_3D_DISTANCE_STEP
 const CAMERA_DISTANCE_MIN: float = Config.CAMERA_3D_DISTANCE_MIN
-const CAMERA_DISTANCE_MAX: float = Config.CAMERA_3D_DISTANCE_MAX
 const PLAYER_SPEED: float = Config.PLAYER_3D_SPEED
 const PLAYER_FAST_MULT: float = Config.PLAYER_3D_FAST_MULT
 
@@ -27,52 +30,13 @@ const MAX_PENDING: int = 3
 
 ## tile 二进制 BLOB 布局（与后端 ascend/space/tile_grid.py to_bytes 契约同步）：
 ## 4B 版本头 + uint16 LE 地形 + float32 LE 高程 + float32 LE 坡度
+const _TILE_BLOB_VERSION: int = 1
 const _TILE_BLOB_HEADER: int = 4
 const _TILE_BLOB_TERRAIN: int = CHUNK_SIZE * CHUNK_SIZE * 2
 const _TILE_BLOB_ELEV: int = CHUNK_SIZE * CHUNK_SIZE * 4
 
 ## 玩家移动上报节流间隔（秒）
 const MOVE_REPORT_INTERVAL: float = 0.2
-
-# ── 阴影常量 ──────────────────────────────────────────────
-
-## 阴影覆盖范围 = 可视半径 × 该余量（max_distance 是半径语义，阴影相机覆盖可视区 + 边缘外遮挡物余量）
-const SHADOW_COVERAGE_MARGIN: float = 1.35
-## 太阳高度角低于该值时关闭阴影
-const SHADOW_CUTOFF: float = 0.1
-## 低角度区间上限：低于该值开始放大覆盖范围、压扁 pancake
-const SHADOW_LOW_ANGLE_CEIL: float = 0.25
-## 低角度时覆盖范围的最大放大倍率（低角度阴影被拉长）
-const SHADOW_LOW_ANGLE_EXPAND: float = 3.0
-## 低角度时 pancake 尺寸（压缩阴影相机深度视锥）
-const SHADOW_LOW_ANGLE_PANCAKE: float = 80.0
-const SHADOW_BASE_PANCAKE: float = 20.0
-const SHADOW_BIAS_BASE: float = 0.07
-const SHADOW_NORMAL_BIAS: float = 0.2
-## 相机近/远平面紧贴地形 slab 时的余量：最高物体高度 + 安全边距
-## （正交投影下阴影范围 = 相机视锥，slab 越薄阴影精度越高）
-const SHADOW_TALL_ALLOWANCE: float = 60.0
-const SHADOW_SLAB_MARGIN: float = 20.0
-
-# ── 光照调参常量（日出日落平滑曲线共用） ────────────────────
-
-## 太阳高度角渐入上界：0→0.35 间平滑过渡，消除亮度跳变
-const SUN_RAMP_CEIL: float = 0.35
-## 阴影透明度渐变带宽（围绕 SHADOW_CUTOFF）
-const SHADOW_FADE_BAND: float = 0.05
-## 低角度时 shadow_bias 放大保护的分母下限（防除零/过小偏置）
-const SHADOW_BIAS_MIN_ALT: float = 0.1
-## 直射光强度倍率（后端日照 0~1 → 场景光强）
-const SUN_ENERGY_SCALE: float = 1.2
-## 天气调制中环境光的基量/天气占比（env_t = sun_ramp × (BASE + WEATHER×intensity)）
-const ENV_BASE_WEIGHT: float = 0.4
-const ENV_WEATHER_WEIGHT: float = 0.6
-
-## 日间环境光/背景色（_configure_environment 与 _update_lighting 共用）
-const DAY_AMBIENT: Color = Color(0.55, 0.55, 0.6, 1.0)
-const NIGHT_AMBIENT: Color = Color(0.14, 0.15, 0.32, 1.0)
-const DAY_BG: Color = Color(0.15, 0.15, 0.5, 1.0)
-const NIGHT_BG: Color = Color(0.02, 0.02, 0.08, 1.0)
 
 ## 与 terrain_mesh_builder.gd 的 TERRAIN_TO_MESH 对齐的材质表
 ## （item_id → 纹理路径）；死纹理（top_shallow_water/top_snow）已移除
@@ -144,6 +108,11 @@ static func _decode_f32_array(raw: PackedByteArray) -> PackedFloat32Array:
 @onready var _world_env: WorldEnvironment = $World/WorldEnvironment
 ## 方向光（太阳）
 @onready var _sun_light: DirectionalLight3D = $World/SunLight
+
+## 相机几何/缩放协作者（绑定 _camera）
+var _camera_rig: CameraRig = CameraRig.new()
+## 光照阴影调制协作者（绑定 _sun_light/_world_env/_camera_rig）
+var _lighting: LightingController = LightingController.new()
 
 ## 相机焦点（世界空间中的观察目标点）
 var _camera_focus: Vector3 = Vector3(0, 0, 0)
@@ -228,8 +197,6 @@ var _sunset: float = 18.0
 var _sun_azimuth: float = 45.0
 ## 日照强度（0-1，来自后端）
 var _sunshine_intensity: float = 0.5
-## 最近一次计算的太阳高度角（供阴影覆盖计算缓存）
-var _last_sun_altitude: float = 0.5
 ## 天气轮询计时器
 var _weather_query_timer: float = 0.0
 const WEATHER_QUERY_INTERVAL: float = 1.0
@@ -239,7 +206,7 @@ const LIGHTING_UPDATE_INTERVAL: float = 0.5
 
 
 ## 节点就绪：连接终端命令/连接状态/消息信号，挂载暂停菜单保存回调，
-## 创建加载提示与地形容器引用，并初始化相机与环境。
+## 创建加载提示与地形容器引用，并初始化相机、环境与光照协作者。
 func _ready() -> void:
 	mesh_builder = _default_mesh_builder
 	_terminal.remote_command_submitted.connect(_on_terminal_command)
@@ -254,6 +221,9 @@ func _ready() -> void:
 		_pause_menu.set_terminal(_terminal)
 
 	_terrain_parent = $World/Terrain/ChunkPool
+
+	_camera_rig.bind(_camera)
+	_lighting.bind(_sun_light, _world_env, _camera_rig)
 
 	# 玩家节点不在 _ready 创建：须等后端世界就绪（出生点到达）后才创建，
 	# 与后端语义一致（服务模式/读档重建期间不存在世界与玩家）
@@ -282,49 +252,21 @@ func _exit_tree() -> void:
 	_build_mutex.unlock()
 
 
-## 配置正交相机：size 控制可视范围，near/far 紧贴地形 slab（阴影范围 = 相机视锥），
-## 重置默认距离与焦点后应用变换。
+## 配置正交相机（转发 CameraRig）：重置默认距离与焦点后应用变换。
 func _configure_camera() -> void:
 	if _camera == null:
 		push_error("MainWorld3D: Camera3D not found!")
 		return
-	# 真正交投影：size 控制可视范围，near/far 紧贴地形 slab。
-	# 正交相机下阴影范围 = 相机视锥 → 阴影精度全图一致，缩放自然控制精度。
-	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	_camera_distance = CAMERA_DISTANCE_DEFAULT
 	_camera_focus = _player_pos
-	_apply_camera_transform()
+	_camera_rig.configure(_camera_focus, _camera_distance)
 
-## 配置 WorldEnvironment（纯色背景 + 环境光 + 线性色调映射）与太阳阴影参数。
+## 配置 WorldEnvironment 与太阳阴影参数（转发 LightingController）。
 func _configure_environment() -> void:
 	if _world_env == null:
 		push_error("MainWorld3D: WorldEnvironment not found!")
 		return
-
-	var env := _world_env.environment
-	if env == null:
-		env = Environment.new()
-		_world_env.environment = env
-
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = DAY_BG
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = DAY_AMBIENT
-	env.ambient_light_energy = 1.0
-	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
-
-	# ── 阴影配置 ──
-	if _sun_light:
-		_sun_light.shadow_enabled = true
-		_sun_light.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-		_sun_light.shadow_bias = SHADOW_BIAS_BASE
-		_sun_light.shadow_normal_bias = SHADOW_NORMAL_BIAS
-		_sun_light.shadow_blur = 0.4
-		_sun_light.directional_shadow_pancake_size = SHADOW_BASE_PANCAKE
-		_sun_light.directional_shadow_fade_start = 0.85
-		_sun_light.directional_shadow_max_distance = _compute_shadow_coverage(0.5)
-
-	print("MainWorld3D: Environment configured — ambient=%.1f, bg=%s" % [env.ambient_light_energy, env.background_color])
+	_lighting.configure_environment(CAMERA_DISTANCE_DEFAULT)
 
 
 func _ensure_player() -> void:
@@ -772,66 +714,27 @@ func _process(delta: float) -> void:
 		_debug_overlay.process_sections(delta)
 
 
-## 处理滚轮缩放输入：相机距离按步长增减并钳制在最小/最大范围内。
+## 处理滚轮缩放输入（转发 CameraRig）：相机距离按步长增减并钳制，应用变换。
 func _process_camera(_delta: float) -> void:
-	if _camera == null:
-		return
-
-	var zoom_delta: float = 0.0
-	if Input.is_action_just_pressed("zoom_in"):
-		zoom_delta = -CAMERA_ZOOM_DISTANCE_STEP
-	elif Input.is_action_just_pressed("zoom_out"):
-		zoom_delta = CAMERA_ZOOM_DISTANCE_STEP
-
-	if zoom_delta != 0.0:
-		_camera_distance = clampf(
-			_camera_distance + zoom_delta,
-			CAMERA_DISTANCE_MIN,
-			CAMERA_DISTANCE_MAX)
+	var new_distance := _camera_rig.process_zoom(_camera_distance)
+	if new_distance != _camera_distance:
+		_camera_distance = new_distance
 		_apply_camera_transform()
 
 
-## 按焦点与距离摆位相机（沿 (1,1,1) 方向俯视焦点）并换算正交投影参数：
-## size = 距离×tan(FOV/2)，near/far 紧贴可视地形 slab；同步太阳位置与阴影覆盖距离。
+## 按焦点与距离摆位相机（转发 CameraRig）：size/near/far 换算 + 太阳阴影覆盖距离。
 func _apply_camera_transform() -> void:
-	var dir := Vector3(1, 1, 1).normalized()
-	_camera.position = _camera_focus + dir * _camera_distance
-	_camera.look_at(_camera_focus, Vector3.UP)
-
-	# 正交投影 size = 距离 × tan(FOV/2)，保持原缩放手感；
-	# near/far 紧贴可视地形 slab（含最高物体余量），阴影范围随之精确覆盖屏幕。
-	var half_perp: float = _camera_distance * tan(deg_to_rad(CAMERA_FOV * 0.5))
-	_camera.size = half_perp
-	var elevation: float = asin(1.0 / sqrt(3.0))
-	var ground_half: float = half_perp / sin(elevation)
-	_camera.near = maxf(
-		_camera_distance - ground_half - SHADOW_TALL_ALLOWANCE - SHADOW_SLAB_MARGIN, 1.0)
-	_camera.far = _camera_distance + ground_half + SHADOW_SLAB_MARGIN
-
-	if _sun_light:
-		_sun_light.directional_shadow_max_distance = _compute_shadow_coverage(_last_sun_altitude)
-		_sun_light.position = _camera_focus + Vector3(0, 200, 0)
+	_camera_rig.apply(
+		_camera_focus, _camera_distance, _sun_light, _lighting.last_sun_altitude())
 
 
-## 推进平滑吸附过渡：每帧按本帧完成比例从"当前实际位置"（含 _process_input
-## 已叠加的输入位移）向目标推进，输入不丢失；结束后清除过渡状态。
+## 推进平滑吸附过渡（判定在 PlayerSync）：每帧按本帧完成比例从"当前实际
+## 位置"（含 _process_input 已叠加的输入位移）向目标推进，输入不丢失。
 func _process_snap(delta: float) -> void:
-	if _snap_time < 0.0:
-		return
-	_snap_time += delta
-	if _snap_time >= SNAP_DURATION:
-		# 结束帧：精确落在目标（权威位置），输入位移由过渡起点保留
-		_player_pos.x = _snap_target.x
-		_player_pos.z = _snap_target.z
-		_snap_time = -1.0
-		return
-	# 中间帧：剩余差距 × 本帧完成比例（t 线性推进 → 每帧推进比例递增，
-	# 指数逼近曲线，平滑单调）
-	var prev_t := clampf((_snap_time - delta) / SNAP_DURATION, 0.0, 1.0)
-	var t := clampf(_snap_time / SNAP_DURATION, 0.0, 1.0)
-	var weight := (t - prev_t) / maxf(1.0 - prev_t, 0.0001)
-	var remaining := _snap_target - _player_pos
-	_player_pos += remaining * weight
+	var result: Array = PlayerSync.advance_snap(
+		delta, _snap_time, _snap_target, _player_pos)
+	_player_pos = result[0]
+	_snap_time = result[1]
 
 
 ## 处理移动与交互输入：相机朝向投影到水平面得前进/右向，位移玩家（Shift 加速），
@@ -908,16 +811,14 @@ func _on_settings_locale_changed(_locale: String) -> void:
 
 
 ## 上报玩家当前位置为 player_move 请求（世界未就绪时跳过；后端裁决并可能钳制越界）。
-## 携带递增 seq 并记录上报位置：响应按序回传 seq，供回声判定精确对齐（见
-## _apply_authoritative_position）；记录超限丢最旧。
+## 携带递增 seq 并记录上报位置（PlayerSync.record_report，响应按序回传 seq，
+## 供回声判定精确对齐）；记录超限丢最旧。
 func _send_player_move() -> void:
 	if not _has_birth:
 		return
 	_move_report_seq += 1
 	var seq: int = _move_report_seq
-	_report_seq_pos[seq] = Vector2(_player_pos.x, _player_pos.z)
-	while _report_seq_pos.size() > REPORT_SEQ_MAX:
-		_report_seq_pos.erase(_report_seq_pos.keys()[0])
+	PlayerSync.record_report(_report_seq_pos, seq, _player_pos)
 	Connection.send({
 		"type": "request",
 		"request_type": "player_move",
@@ -1063,6 +964,15 @@ func _handle_response(message: Dictionary) -> void:
 					# 数据损坏：重新入队完整请求
 					_stream_machine.on_full_response(key, false)
 					continue
+				if tiles_raw.decode_u32(0) != _TILE_BLOB_VERSION:
+					# 版本漂移（前后端 BLOB 契约不一致，协议版本握手未覆盖的
+					# 流程失误）：重试不可能自愈——报错并标记失败，防止每帧
+					# 无限重发完整请求（协议版本应随 BLOB 格式变更同步 bump）
+					push_error("MainWorld3D: chunk BLOB 版本 %d 不匹配（期望 %d），契约漂移" % [
+						tiles_raw.decode_u32(0), _TILE_BLOB_VERSION])
+					chunk["_blob_version_failed"] = true
+					_stream_machine.on_full_response(key, false)
+					continue
 				_stream_machine.on_full_response(key, true)
 				var terr: PackedInt32Array = _decode_u16_array(
 					tiles_raw.slice(_TILE_BLOB_HEADER, _TILE_BLOB_HEADER + _TILE_BLOB_TERRAIN))
@@ -1144,22 +1054,8 @@ func _resolve_save_number(payload: Dictionary) -> void:
 		_pause_menu.show_save_complete(number)
 
 
-## 权威纠正容差（tiles）：裁决偏离时，权威与本地差距小于该值视为微小偏差，
-## 认可本地位置不纠正。
-const SNAP_TOLERANCE: float = 2.0
-## 硬吸阈值：差距 ≥ SNAP_HARD_THRESHOLD → 立即硬吸（传送/读档复位/初始定位）；
-## 差距在 [SNAP_TOLERANCE, SNAP_HARD_THRESHOLD) 间 → 平滑过渡（无瞬跳）。
-const SNAP_HARD_THRESHOLD: float = 8.0
-## 平滑过渡时长（秒）
-const SNAP_DURATION: float = 0.15
-## 回声容差（tiles）：权威位置与该次上报位置的逐分量差 ≤ 该值视为后端原样
-## 回显（认可），而非裁决偏离——浮点往返无损，理论误差为 0，仅防御性放宽。
-const SNAP_ECHO_TOLERANCE: float = 0.01
-## 上报 seq 记录上限：超出丢弃最旧（响应滞后超过该数量时回声判定失效，
-## 回退距离判定，仍能正确钳制纠正，只是丢失一次零纠正机会）
-const REPORT_SEQ_MAX: int = 32
-
 ## 平滑吸附过渡：from → target（XZ 平面），_snap_time < 0 表示无过渡
+## （判定与推进计算在 PlayerSync，状态与本帧副作用留在本脚本）。
 var _snap_from: Vector3 = Vector3.ZERO
 var _snap_target: Vector3 = Vector3.ZERO
 var _snap_time: float = -1.0
@@ -1180,17 +1076,17 @@ func _reset_authority_state() -> void:
 
 
 func _apply_authoritative_position(payload: Dictionary) -> void:
-	"""按后端权威位置纠正玩家（player_state / player_move 响应 / 快照）。
+	"""按后端权威位置纠正玩家（判定在 PlayerSync，副作用在本脚本）。
 
 	客户端预测 + 服务器对账：player_move 响应携带上报 seq（TCP 有序，
 	响应与上报一一对应），先按 seq 对齐判定后端是否认可了那次上报：
 	  - 认可（回声）：权威位置 ≈ 该次上报位置 → 零纠正——正常滞后
 	    （变速/掉头期间位移窗口错位也成立），消除每 0.2s 一次的回跳；
 	  - 未认可（钳制/复位，或 player_state/快照等无 seq 响应）：
-	    真实裁决偏离 → 按距离三档纠正：
-	      < SNAP_TOLERANCE      微小偏差，认可本地；
-	      ≥ SNAP_HARD_THRESHOLD 硬吸（传送/读档复位/初始定位）；
-	      中间                  启动 SNAP_DURATION 平滑过渡，由 _process 推进。
+	    真实裁决偏离 → 按距离三档纠正（PlayerSync.classify_correction）：
+	      IGNORE       微小偏差，认可本地；
+	      HARD_SNAP    硬吸（传送/读档复位/初始定位）；
+	      SMOOTH_START 启动平滑过渡，由 _process 推进。
 	"""
 	var ax: float = float(payload.get("x", _player_pos.x))
 	var az: float = float(payload.get("y", _player_pos.z))
@@ -1198,32 +1094,30 @@ func _apply_authoritative_position(payload: Dictionary) -> void:
 	# 回声判定：权威位置 ≈ 该 seq 的上报位置 → 后端认可，零纠正
 	var seq: int = int(payload.get("seq", -1))
 	if seq >= 0 and _report_seq_pos.has(seq):
-		var reported: Vector2 = _report_seq_pos[seq]
-		_report_seq_pos.erase(seq)
-		if absf(ax - reported.x) <= SNAP_ECHO_TOLERANCE \
-				and absf(az - reported.y) <= SNAP_ECHO_TOLERANCE:
+		if PlayerSync.is_echo(ax, az, seq, _report_seq_pos):
+			_report_seq_pos.erase(seq)
 			return
+		_report_seq_pos.erase(seq)
 
-	var dx := ax - _player_pos.x
-	var dz := az - _player_pos.z
-	var dist_sq := dx * dx + dz * dz
-	if dist_sq < SNAP_TOLERANCE * SNAP_TOLERANCE:
-		return
-	if dist_sq >= SNAP_HARD_THRESHOLD * SNAP_HARD_THRESHOLD:
-		_snap_time = -1.0
-		_player_pos.x = ax
-		_player_pos.z = az
-		_update_player_ground()
-		_camera_focus = _player_pos
-		_apply_camera_transform()
-		_ensure_player()
-		# 地形就绪前不显示玩家（出生点加载完成后由 _check_terrain_ready 统一显示）
-		_player.visible = _world_visible
-		return
-	# 中等差距：平滑过渡（期间输入照常叠加，只做位置补偿）
-	_snap_from = _player_pos
-	_snap_target = Vector3(ax, _player_pos.y, az)
-	_snap_time = 0.0
+	match PlayerSync.classify_correction(ax, az, _player_pos):
+		PlayerSync.Correction.IGNORE:
+			return
+		PlayerSync.Correction.HARD_SNAP:
+			_snap_time = -1.0
+			_player_pos.x = ax
+			_player_pos.z = az
+			_update_player_ground()
+			_camera_focus = _player_pos
+			_apply_camera_transform()
+			_ensure_player()
+			# 地形就绪前不显示玩家（出生点加载完成后由 _check_terrain_ready 统一显示）
+			_player.visible = _world_visible
+			return
+		PlayerSync.Correction.SMOOTH_START:
+			# 中等差距：平滑过渡（期间输入照常叠加，只做位置补偿）
+			_snap_from = _player_pos
+			_snap_target = Vector3(ax, _player_pos.y, az)
+			_snap_time = 0.0
 
 
 ## ── 流式 chunk 管理 ──────────────────────────────────────
@@ -1258,9 +1152,11 @@ func _stream_chunks() -> void:
 	for key in _stream_machine.collect_build_candidates():
 		_try_build_received_chunk(key)
 
-	# 3. 字段已到（数据 Dictionary）且未请求完整 → 限流发完整请求
+	# 3. 字段已到（数据 Dictionary）且未请求完整 → 限流发完整请求。
+	#    排除 BLOB 版本漂移已标记失败的 chunk（永久性错误，重试不自愈）
 	for key in _stream_machine.select_full_requests(
-			func(k): return _chunks.get(k) is Dictionary, MAX_PENDING):
+			func(k): return _chunks.get(k) is Dictionary and not _chunks[k].get("_blob_version_failed", false),
+			MAX_PENDING):
 		_send_chunk_request([[key.x, key.y]], true)
 
 	# 4. 挂载后台构建完成的结果（陈旧结果在此丢弃）
@@ -1346,26 +1242,13 @@ func _stream_radius() -> int:
 
 
 func _compute_visible_radius() -> float:
-	"""相机在 (1,1,1) 方向、FOV 5° 下可视地面的对角线半径。"""
-	var half_perp: float = _camera_distance * tan(deg_to_rad(CAMERA_FOV * 0.5))
-	var elevation: float = asin(1.0 / sqrt(3.0))
-	var ground_depth: float = half_perp / sin(elevation)
-	return sqrt(half_perp * half_perp + ground_depth * ground_depth)
+	"""相机在 (1,1,1) 方向、FOV 5° 下可视地面的对角线半径（转发 CameraRig）。"""
+	return _camera_rig.visible_radius(_camera_distance)
 
 
 func _compute_shadow_coverage(sun_altitude: float) -> float:
-	"""阴影覆盖半径 = 可视半径 × 余量（含边缘遮挡物投射余量）；低角度太阳时按比例放大。
-
-	注意 directional_shadow_max_distance 是"距相机半径"语义：过大的余量会白白稀释
-	8192 texel 阴影分辨率，因此正午仅保留 1.35 倍，低角度拉长阴影由 3 倍放大兜底。
-	"""
-	var coverage: float = _compute_visible_radius() * SHADOW_COVERAGE_MARGIN
-	if sun_altitude < SHADOW_LOW_ANGLE_CEIL:
-		var t: float = clampf(
-			(sun_altitude - SHADOW_CUTOFF) / (SHADOW_LOW_ANGLE_CEIL - SHADOW_CUTOFF),
-			0.0, 1.0)
-		coverage *= lerpf(SHADOW_LOW_ANGLE_EXPAND, 1.0, t)
-	return coverage
+	"""阴影覆盖半径（转发 CameraRig）：可视半径 × 余量，低角度按比例放大。"""
+	return _camera_rig.shadow_coverage(_camera_distance, sun_altitude)
 
 
 ## 发送 get_chunks 请求（批量字段版或单块完整版，恒开 force_fields）。
@@ -1431,55 +1314,11 @@ func _query_weather() -> void:
 	})
 
 
-## 按游戏时间与天气调制光照：太阳高度角驱动阴影开关/透明度/覆盖距离/pancake/偏置，
-## 平滑 ramp 渐变环境光与背景色，直射光能量 = 后端日照 × 高度角渐入。
+## 按游戏时间与天气调制光照（转发 LightingController）：太阳高度角驱动阴影
+## 开关/透明度/覆盖距离/pancake/偏置，平滑 ramp 渐变环境光与背景色。
 func _update_lighting() -> void:
 	if _sun_light == null or _world_env == null:
 		return
-
-	var hour_float: float = _game_hour + _game_minute / 60.0
-	var daylight: float = _sunset - _sunrise
-	if daylight <= 0.0:
-		return
-
-	var is_day: bool = hour_float >= _sunrise and hour_float < _sunset
-	var day_progress: float = clampf((hour_float - _sunrise) / daylight, 0.0, 1.0)
-	var sun_altitude: float = sin(day_progress * PI) if is_day else 0.0
-	_last_sun_altitude = sun_altitude
-
-	# 日出日落平滑 ramp：高度角 0→SUN_RAMP_CEIL 间渐入渐出，所有亮度量共用，消除跳变
-	var sun_ramp: float = smoothstep(0.0, SUN_RAMP_CEIL, sun_altitude)
-
-	# 阴影：低角度时 opacity 渐变淡出，避免阴影瞬间出现/消失
-	var shadow_t: float = clampf((sun_altitude - SHADOW_CUTOFF) / SHADOW_FADE_BAND, 0.0, 1.0)
-	_sun_light.shadow_opacity = shadow_t
-	if sun_altitude < SHADOW_CUTOFF - SHADOW_FADE_BAND:
-		_sun_light.shadow_enabled = false
-	else:
-		_sun_light.shadow_enabled = true
-		var low_angle_t: float = clampf(
-			(sun_altitude - SHADOW_CUTOFF) / (SHADOW_LOW_ANGLE_CEIL - SHADOW_CUTOFF),
-			0.0, 1.0)
-		_sun_light.directional_shadow_pancake_size = lerpf(
-			SHADOW_LOW_ANGLE_PANCAKE, SHADOW_BASE_PANCAKE, low_angle_t)
-		_sun_light.shadow_bias = SHADOW_BIAS_BASE / maxf(sun_altitude, SHADOW_BIAS_MIN_ALT)
-	_sun_light.directional_shadow_max_distance = _compute_shadow_coverage(sun_altitude)
-
-	# 太阳方向：全天连续曲线，夜间延续地平线角度（此时能量为 0，方向无关）
-	_sun_light.rotation_degrees.x = lerpf(0.0, -90.0, sun_altitude)
-	_sun_light.rotation_degrees.y = _sun_azimuth + day_progress * 180.0
-
-	var intensity: float = _sunshine_intensity
-	var warmth: float = 1.0 - sun_altitude
-	_sun_light.light_color = Color(1.0, 1.0 - warmth * 0.3, 1.0 - warmth * 0.7, 1.0)
-	# 直射光 = 后端日照（含降雨衰减）× 高度角平滑渐入
-	_sun_light.light_energy = intensity * SUN_ENERGY_SCALE * sun_ramp
-
-	var env: Environment = _world_env.environment
-	if env:
-		# 环境光/背景由高度角 ramp 驱动（时间平滑），再乘天气调制（雨天天光略暗）
-		var env_t: float = sun_ramp * (ENV_BASE_WEIGHT + ENV_WEATHER_WEIGHT * intensity)
-		env.ambient_light_color = NIGHT_AMBIENT.lerp(DAY_AMBIENT, env_t)
-		env.ambient_light_energy = lerpf(0.5, 1.0, env_t)
-
-		env.background_color = NIGHT_BG.lerp(DAY_BG, env_t)
+	_lighting.update(
+		_game_hour, _game_minute, _sunrise, _sunset, _sun_azimuth,
+		_sunshine_intensity, _camera_distance)

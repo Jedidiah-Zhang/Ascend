@@ -571,7 +571,7 @@ class TestSnapshot:
         def broken(world_id, lineage):
             return False  # 生产契约：写失败返回 False（内部已记 warning）
 
-        monkeypatch.setattr(manager, "_write_lineage", broken)
+        monkeypatch.setattr(manager._lineage, "write", broken)
         snap = manager.create_snapshot(world, suffix="manual", game_time=150)
 
         files = {s["file"] for s in manager.list_snapshots(world)}
@@ -1157,7 +1157,7 @@ class TestSnapshotIncremental:
         manager.write_state(world, {"clock": {"time": 200}})
         m2 = manager.create_snapshot(world, suffix="manual", game_time=200)
         m2_path = os.path.join(manager.snapshot_dir(world), m2)
-        header, zf = manager._open_snapshot(m2_path)
+        header, zf = manager._snap.open_snapshot(m2_path)
         assert header.get("base") == base
         names = zf.namelist()
         zf.close()
@@ -1212,7 +1212,7 @@ class TestSnapshotIncremental:
         manager.write_state(world, {"clock": {"time": 300}})
         m3 = manager.create_snapshot(world, suffix="manual", game_time=300)
         m3_path = os.path.join(manager.snapshot_dir(world), m3)
-        header, _ = manager._open_snapshot(m3_path)
+        header, _ = manager._snap.open_snapshot(m3_path)
         assert header.get("base") is None, "锚点损坏 → 回退全量基座"
         assert manager.extract_snapshot(m3, world_id=world) == world
         assert manager.read_state(world)["clock"]["time"] == 300
@@ -1362,7 +1362,7 @@ class TestSnapshotIncremental:
             conn.close()
         root = manager.create_snapshot(world, suffix="manual", game_time=100)
         root_path = os.path.join(manager.snapshot_dir(world), root)
-        header, _ = manager._open_snapshot(root_path)
+        header, _ = manager._snap.open_snapshot(root_path)
         assert header.get("base") is None, "根手动档 = 全量基座"
         root_size = os.path.getsize(root_path)
 
@@ -1370,7 +1370,7 @@ class TestSnapshotIncremental:
         manager.write_state(world, {"clock": {"time": 200}})
         m2 = manager.create_snapshot(world, suffix="manual", game_time=200)
         m2_path = os.path.join(manager.snapshot_dir(world), m2)
-        header, _ = manager._open_snapshot(m2_path)
+        header, _ = manager._snap.open_snapshot(m2_path)
         assert header.get("base") == root, "晋升节点锚定根手动档"
         assert os.path.getsize(m2_path) < root_size // 2, \
             "未变化的 DB 页不入增量"
@@ -1388,7 +1388,7 @@ class TestSnapshotIncremental:
         manager.write_state(world, {"clock": {"time": 300}})
         m3 = manager.create_snapshot(world, suffix="manual", game_time=300)
         m3_path = os.path.join(manager.snapshot_dir(world), m3)
-        header, zf = manager._open_snapshot(m3_path)
+        header, zf = manager._snap.open_snapshot(m3_path)
         assert header.get("base") == m2, "连续保存串链锚定"
         names = zf.namelist()
         zf.close()
@@ -1400,7 +1400,7 @@ class TestSnapshotIncremental:
         # 目标节点（enter_snapshot 流程在展开后才建新当前记录）
         rec = manager.snapshot_lineage(world)["live_origin"]
         rec_path = os.path.join(manager.snapshot_dir(world), rec)
-        header, zf = manager._open_snapshot(rec_path)
+        header, zf = manager._snap.open_snapshot(rec_path)
         assert header.get("base") == m3, "fresh record 锚定保存节点"
         assert zf.namelist() == ["manifest.json"], "空增量仅含 manifest"
         zf.close()
@@ -1427,13 +1427,13 @@ class TestSnapshotIncremental:
         m2 = manager.create_snapshot(world, suffix="manual", game_time=200)
         rec = manager.snapshot_lineage(world)["live_origin"]
         rec_path = os.path.join(manager.snapshot_dir(world), rec)
-        header, _ = manager._open_snapshot(rec_path)
+        header, _ = manager._snap.open_snapshot(rec_path)
         anchor_before = header.get("base")
         assert anchor_before == m2
 
         manager.write_state(world, {"clock": {"time": 250}})
         manager.refresh_snapshot(world, rec)
-        header, _ = manager._open_snapshot(rec_path)
+        header, _ = manager._snap.open_snapshot(rec_path)
         assert header.get("base") == anchor_before, "冻结不改变锚点"
 
         assert manager.extract_snapshot(rec, world_id=world) == world
@@ -1456,14 +1456,14 @@ class TestSnapshotIncremental:
         assert lineage["snapshots"][m3]["parent"] == m1, "血缘重接到 m1"
 
         m3_path = os.path.join(manager.snapshot_dir(world), m3)
-        header, _ = manager._open_snapshot(m3_path)
+        header, _ = manager._snap.open_snapshot(m3_path)
         assert header.get("base") == m1, "m3 重基座到 m1"
         # 内容不变（重基座只改基座引用）
         assert manager.extract_snapshot(m3, world_id=world) == world
         assert manager.read_state(world)["clock"]["time"] == 300
 
         rec_path = os.path.join(manager.snapshot_dir(world), rec)
-        header, _ = manager._open_snapshot(rec_path)
+        header, _ = manager._snap.open_snapshot(rec_path)
         assert header.get("base") == m3, "rec 锚点（m3）未删，不重基座"
         assert manager.extract_snapshot(rec, world_id=world) == world
         assert manager.read_state(world)["clock"]["time"] == 300
@@ -1477,7 +1477,7 @@ class TestSnapshotIncremental:
 
         manager.delete_snapshot(world, m1)
         m2_path = os.path.join(manager.snapshot_dir(world), m2)
-        header, _ = manager._open_snapshot(m2_path)
+        header, _ = manager._snap.open_snapshot(m2_path)
         assert header.get("base") is None, "无存活手动祖先 → 全量基座"
         assert manager.extract_snapshot(m2, world_id=world) == world
         assert manager.read_state(world)["clock"]["time"] == 200

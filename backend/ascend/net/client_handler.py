@@ -99,11 +99,7 @@ class ClientHandler:
         self._running = False
         with self._send_cond:
             self._send_cond.notify_all()
-        try:
-            self.sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        self.sock.close()
+        self._close_socket()
         if self._recv_thread:
             self._recv_thread.join(timeout=2.0)
         if self._send_thread:
@@ -132,15 +128,27 @@ class ClientHandler:
 
     # ── 内部 ──────────────────────────────────────────────
 
+    def _close_socket(self) -> None:
+        """关闭底层 socket（幂等，可从任意线程调用，不 join 线程）。
+
+        断开路径（recv/send 线程自退出）必须用它而非 close()——
+        close() 会 join 自身线程，从线程内调用抛 RuntimeError 死锁。
+        """
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
     def _request_close(self) -> None:
         """请求断开：置停止标志并关闭 socket 使各线程退出。"""
         self._running = False
         with self._send_cond:
             self._send_cond.notify_all()
-        try:
-            self.sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
+        self._close_socket()
 
     def _send_loop(self) -> None:
         """发送循环（运行在发送线程）：取帧 sendall，失败主动断开。"""
@@ -158,6 +166,7 @@ class ClientHandler:
                 except OSError as exc:
                     logger.error("发送失败 %s:%d: %s", self.addr[0], self.addr[1], exc)
                     self._running = False
+                    self._close_socket()
                     self._on_disconnect(self)
                     return
 
@@ -191,6 +200,7 @@ class ClientHandler:
                     logger.error("接收错误 %s:%d: %s", self.addr[0], self.addr[1], exc)
                 break
         self._running = False
+        self._close_socket()
         self._on_disconnect(self)
 
     def _handle_incoming(self, message: dict) -> bool:

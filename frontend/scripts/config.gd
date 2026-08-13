@@ -53,6 +53,12 @@ const CAMERA_3D_DISTANCE_STEP: float = 40.0
 const CAMERA_3D_DISTANCE_MIN: float = 60.0
 const CAMERA_3D_DISTANCE_MAX: float = 1200.0
 
+## 太阳高度角低于该值时关闭阴影（CameraRig 覆盖区间与 LightingController
+## 淡出带共用，必须同源——只改一侧会造成覆盖放大与阴影淡出区间错位）
+const SHADOW_CUTOFF: float = 0.1
+## 低角度区间上限：低于该值开始放大阴影覆盖范围、压扁 pancake
+const SHADOW_LOW_ANGLE_CEIL: float = 0.25
+
 ## 3D 玩家移动速度（每秒世界单位）
 const PLAYER_3D_SPEED: float = 30.0
 const PLAYER_3D_FAST_MULT: float = 3.0
