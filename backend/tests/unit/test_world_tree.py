@@ -939,8 +939,8 @@ class TestEventArchive:
     def test_archive_merge_same_timestamp_boundary(self):
         """同时间戳事件跨归档/内存边界时不丢失（权重分层 trim）。
 
-        回归：旧实现用 earliest_ts 截断归档查询，同一 tick 内低权重事件
-        （已归档）和高权重事件（留在内存）并存时，已归档事件被静默排除。
+        防护：归档查询不得按 earliest_ts 截断——同一 tick 内低权重事件
+        （已归档）和高权重事件（留在内存）并存时，已归档事件不得被排除。
         """
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)

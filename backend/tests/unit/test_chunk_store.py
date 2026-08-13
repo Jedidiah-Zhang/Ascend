@@ -1,6 +1,6 @@
 """ChunkStore 单元测试。
 
-覆盖：LRU 命中/淘汰/访问顺序、淘汰写库（write-back）、
+覆盖：LRU 命中/淘汰/访问顺序、淘汰写库（write-back，仅 dirty 落盘）、
 on_evict 回调、脏标记、flush/close 持久化、SQLite roundtrip。
 
 数据库使用 tmp_path，测试间完全隔离。
@@ -110,13 +110,14 @@ class TestChunkStoreCache:
 
 
 class TestChunkStorePersistence:
-    """SQLite write-back 持久化。"""
+    """SQLite write-back 持久化（仅玩家改动落盘）。"""
 
-    def test_T7_eviction_persists_tiles(self, db_path):
-        """带 tile 的 chunk 被淘汰时写入 SQLite，可 load 回来。"""
+    def test_T7_dirty_eviction_persists_tiles(self, db_path):
+        """带 tile 的 dirty chunk 被淘汰时写入 SQLite，可 load 回来。"""
         store = ChunkStore(db_path, max_size=1)
         try:
             store.put(_make_chunk(0, 0, with_tiles=True))
+            store.mark_dirty(0, 0)
             store.put(_make_chunk(1, 0))  # 淘汰 (0,0)
 
             assert store.contains_tiles(0, 0)
@@ -125,11 +126,28 @@ class TestChunkStorePersistence:
         finally:
             store.close()
 
+    def test_T7b_clean_eviction_not_persisted(self, db_path):
+        """clean（确定性生成）chunk 淘汰即弃，不写库（无落盘价值）。
+
+        回归：v2 策略——clean tile 是 seed 的纯函数，可再生，
+        淘汰后重访重新生成，不占磁盘与存档体积。
+        """
+        store = ChunkStore(db_path, max_size=1)
+        try:
+            store.put(_make_chunk(0, 0, with_tiles=True))
+            store.put(_make_chunk(1, 0))  # 淘汰 (0,0)，clean → 不写库
+
+            assert not store.contains_tiles(0, 0)
+            assert store.load_tiles(0, 0) is None
+        finally:
+            store.close()
+
     def test_T8_eviction_without_tiles_not_persisted(self, db_path):
         """无 tile 的 chunk 淘汰时不写库。"""
         store = ChunkStore(db_path, max_size=1)
         try:
             store.put(_make_chunk(0, 0, with_tiles=False))
+            store.mark_dirty(0, 0)
             store.put(_make_chunk(1, 0))
             assert not store.contains_tiles(0, 0)
             assert store.load_tiles(0, 0) is None
@@ -148,26 +166,28 @@ class TestChunkStorePersistence:
         finally:
             store.close()
 
-    def test_T10_flush_persists_cached_chunks(self, db_path):
-        """flush 将缓存中带 tile 的 chunk 全部写库。"""
+    def test_T10_flush_persists_dirty_only(self, db_path):
+        """flush 只写 dirty chunk；clean 缓存不落盘。"""
         store = ChunkStore(db_path, max_size=4)
         try:
             store.put(_make_chunk(0, 0, with_tiles=True))
             store.put(_make_chunk(1, 0, with_tiles=True))
+            store.mark_dirty(1, 0)
             store.flush()
-            assert store.contains_tiles(0, 0)
-            assert store.contains_tiles(1, 0)
+            assert not store.contains_tiles(0, 0), "clean 不落盘"
+            assert store.contains_tiles(1, 0), "dirty 落盘"
         finally:
             store.close()
 
-    def test_T11_tiles_roundtrip_across_reopen(self, db_path):
-        """close 后重新打开 store，tile 数据可恢复且内容一致。"""
+    def test_T11_dirty_tiles_roundtrip_across_reopen(self, db_path):
+        """close 后重新打开 store，dirty tile 数据可恢复且内容一致。"""
         chunk = _make_chunk(3, 4, with_tiles=True)
         original = chunk.tile_grid.to_bytes()
 
         store = ChunkStore(db_path, max_size=4)
         store.put(chunk)
-        store.close()  # close 内部 flush
+        store.mark_dirty(3, 4)
+        store.close()  # close 内部 flush（仅 dirty）
 
         store2 = ChunkStore(db_path, max_size=4)
         try:
@@ -176,6 +196,34 @@ class TestChunkStorePersistence:
             assert grid.to_bytes() == original
         finally:
             store2.close()
+
+    def test_T11b_loaded_row_keeps_dirty_mark(self, db_path):
+        """从库中加载的行视为玩家改动，继续保留 dirty 标记。
+
+        回归：库中行 = 修改（确定性 tile 不落盘），加载后若失去
+        dirty 标记，后续淘汰/退出会把修改当 clean 丢弃。
+        """
+        store = ChunkStore(db_path, max_size=4)
+        store.put(_make_chunk(0, 0, with_tiles=True))
+        store.mark_dirty(0, 0)
+        store.close()
+
+        store2 = ChunkStore(db_path, max_size=4)
+        try:
+            grid = store2.load_tiles(0, 0)
+            assert grid is not None
+            assert (0, 0) in store2._dirty, "加载的行应保留 dirty 标记"
+            store2.put(_make_chunk(0, 0, with_tiles=True))
+            store2.close()  # dirty 标记保留 → 再次落盘
+        except Exception:
+            store2.close()
+            raise
+
+        store3 = ChunkStore(db_path, max_size=4)
+        try:
+            assert store3.contains_tiles(0, 0), "改动跨重启持续保留"
+        finally:
+            store3.close()
 
     def test_T12_mark_dirty_idempotent(self, db_path):
         """mark_dirty 重复调用无副作用，淘汰后脏标记被清除。"""
@@ -190,8 +238,8 @@ class TestChunkStorePersistence:
         finally:
             store.close()
 
-    def test_T13_eviction_write_committed_immediately(self, db_path):
-        """淘汰写入立即 commit：第二个独立连接可见（崩溃安全）。
+    def test_T13_dirty_eviction_write_committed_immediately(self, db_path):
+        """dirty 淘汰写入立即 commit：第二个独立连接可见（崩溃安全）。
 
         未提交的写入仅同连接可见，进程崩溃即丢失。
         此测试用第二个 ChunkStore（独立 SQLite 连接）验证已提交。
@@ -200,6 +248,7 @@ class TestChunkStorePersistence:
         store2 = None
         try:
             store.put(_make_chunk(0, 0, with_tiles=True))
+            store.mark_dirty(0, 0)
             store.put(_make_chunk(1, 0))  # 淘汰 (0,0) → 写库 + commit
 
             store2 = ChunkStore(db_path, max_size=4)

@@ -45,19 +45,21 @@ class TestSaveList:
         assert len(payload["worlds"]) == 1
         assert payload["worlds"][0]["world_id"] == world_id
         assert payload["worlds"][0]["name"] == "世界"
-        assert payload["worlds"][0]["snapshot_count"] == 1
-        assert payload["snapshots"][0]["world_id"] == world_id
+        assert payload["worlds"][0]["snapshot_count"] == 2, \
+            "保存节点 + auto 当前记录"
+        assert all(s["world_id"] == world_id for s in payload["snapshots"])
 
     def test_list_carries_lineage_fields(self, manager, handlers):
         """快照条目含血缘字段，世界摘要含 live_origin（时间线分叉数据）。"""
         world_id = manager.create_world("世界", seed=1).world_id
         manager.write_state(world_id, {"clock": {"time": 300}})
         snap = manager.create_snapshot(world_id, suffix="manual")
+        rec = manager.snapshot_lineage(world_id)["live_origin"]
         resp = handlers["save_list"](_req("save_list"))
         payload = resp["payload"]
-        assert payload["worlds"][0]["live_origin"] == snap, "活目录来源 = 最新快照"
-        s = payload["snapshots"][0]
-        assert s["file"] == snap
+        assert payload["worlds"][0]["live_origin"] == rec, \
+            "活目录来源 = 当前 auto 记录"
+        s = next(x for x in payload["snapshots"] if x["file"] == snap)
         assert s["parent"] == ""
         assert s["game_time"] == 300
         assert s["seq"] == 0, "血缘权威排序键随条目下发"
@@ -102,9 +104,9 @@ class TestSaveCreate:
             handlers["save_create"](_req("save_create", {"name": "  "}))
 
     def test_default_random_seed(self, manager, handlers):
-        """seed 缺省为 0 → 创建时随机化并写入 manifest（P0 回归）。
+        """seed 缺省为 0 → 创建时随机化并写入 manifest（P0 防护）。
 
-        旧行为：seed=0 保留到首次进入才随机化，导致 secrets_blob
+        防护：seed 不得保留 0 到首次进入才随机化——否则 secrets_blob
         身份与 manifest 失配、state 加解密失败。
         """
         resp = handlers["save_create"](_req("save_create", {"name": "x"}))
@@ -202,8 +204,8 @@ class TestSaveSnapshot:
     def test_routes_idle_world_to_plain_snapshot(self, manager):
         """目标非当前加载世界（服务模式）：直接打包，不误用当前世界。
 
-        回归：旧实现忽略 payload 的 world_id，engine 可用时总是
-        快照当前加载世界（服务模式下报"当前无存档位"）。
+        防护：必须按 payload 的 world_id 快照目标世界——engine 可用
+        时误快照当前加载世界会让服务模式保存失败（报"当前无存档位"）。
         """
         idle_id = manager.create_world("闲置档", seed=1).world_id
         loaded_id = manager.create_world("当前档", seed=2).world_id
@@ -213,7 +215,7 @@ class TestSaveSnapshot:
         # 引擎路径收到目标 world_id（snapshot_current 内部处理非当前世界）
         assert engine.calls == [{"world_id": idle_id, "suffix": "manual"}]
         # 快照落在目标世界目录（而非当前世界）
-        assert len(manager.list_snapshots(idle_id)) == 1
+        assert len(manager.list_snapshots(idle_id)) == 2, "保存节点 + 当前记录"
         assert len(manager.list_snapshots(loaded_id)) == 0
 
 
@@ -250,12 +252,16 @@ class TestSaveSnapshotDelete:
             os.path.join(manager.snapshot_dir(world_id), snaps["b"]))
 
     def test_delete_recursive_prunes_branch(self, manager, handlers):
-        """递归删除：整棵子树（节点 + 后代），兄弟分支保留。"""
+        """递归删除：整棵子树（节点 + 后代 + auto 记录），兄弟分支保留。"""
         world_id, snaps = self._build_fork(manager)
+        entries = manager.snapshot_lineage(world_id)["snapshots"]
+        rec_c1a = [f for f, e in entries.items() if e["parent"] == snaps["c1a"]][0]
         resp = handlers["save_snapshot_delete"](_req("save_snapshot_delete", {
             "world_id": world_id, "snapshot": snaps["c1"], "recursive": True,
         }))
-        assert set(resp["payload"]["deleted"]) == {snaps["c1"], snaps["c1a"]}
+        assert set(resp["payload"]["deleted"]) == {
+            snaps["c1"], snaps["c1a"], rec_c1a,
+        }
         lineage = manager.snapshot_lineage(world_id)
         assert snaps["c1"] not in lineage["snapshots"]
         assert snaps["c1a"] not in lineage["snapshots"]
@@ -293,13 +299,14 @@ class TestSaveSnapshotDelete:
             }))
 
     def test_delete_live_origin_returns_fallback(self, manager, handlers):
-        """删除 live_origin：来源回退到其父（协议层语义透传）。"""
-        world_id, snaps = self._build_fork(manager)  # live_origin = C2
+        """删除 live_origin（当前记录）：来源回退到其父（协议层语义透传）。"""
+        world_id, snaps = self._build_fork(manager)
+        rec = manager.snapshot_lineage(world_id)["live_origin"]  # C2 下游记录
         handlers["save_snapshot_delete"](_req("save_snapshot_delete", {
-            "world_id": world_id, "snapshot": snaps["c2"], "recursive": False,
+            "world_id": world_id, "snapshot": rec, "recursive": False,
         }))
         lineage = manager.snapshot_lineage(world_id)
-        assert lineage["live_origin"] == snaps["b"]
+        assert lineage["live_origin"] == snaps["c2"], "回退到当前记录的父"
 
 
 class TestManageOps:

@@ -224,7 +224,7 @@ class TestClimateZone:
     def test_lapse_rate_sea_returns_surface_temp(self):
         """直减率仅作用于陆地：海域（负海拔）返回海面温度本身。
 
-        与场计算统一语义——负海拔不产生深度伪影（旧实现 +18°C）。
+        与场计算统一语义——负海拔不产生深度伪影（不得 +18°C）。
         """
         from ascend.space.climate import apply_lapse_rate
         assert apply_lapse_rate(10.0, -2000.0) == 10.0

@@ -777,8 +777,8 @@ func _draw_inline_timeline(row_rect: Rect2) -> void:
 
 	面板高度 = min(TL_INLINE_H, 列表视口剩余空间)：展开行靠近底部时
 	面板裁剪到 list_bottom，节点/边/图例逐元素剔除出界部分——
-	内容永远不溢出列表区压到页脚（历史 bug：面板背景与内容
-	延伸至窗口底边，覆盖状态栏/「新建游戏」按钮）。
+	内容永远不溢出列表区压到页脚（防护：面板背景与内容延伸至
+	窗口底边会覆盖状态栏/「新建游戏」按钮）。
 	"""
 	var avail_h: float = (size.y - FOOTER_H) - (row_rect.end.y + TL_GAP)
 	var panel_h: float = minf(TL_INLINE_H, avail_h)
@@ -883,8 +883,13 @@ func _draw_inline_timeline(row_rect: Rect2) -> void:
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, TL_HINT_COLOR)
 		_tl_rects[n["id"]] = Rect2(pos - Vector2(30, 30), Vector2(60, 60))
 
-	# 图例（可滚动，全部节点可达；顺序 = 保存顺序编号）
-	var legend_rows: Array = [TimelineLayout.LIVE_ID]
+	# 图例（可滚动，全部节点可达；顺序 = 保存顺序编号）。
+	# LIVE 行仅当树中确实存在独立当前点（auto 来源时省略）
+	var legend_rows: Array = []
+	for n in _tl_nodes:
+		if n["id"] == TimelineLayout.LIVE_ID:
+			legend_rows.append(TimelineLayout.LIVE_ID)
+			break
 	legend_rows.append_array(_tl_sorted_ids)
 	var visible_rows: int = maxi(0, int(legend_body.size.y / TL_LEGEND_ROW_H))
 	_tl_legend_scroll = clampf(_tl_legend_scroll, 0.0,
@@ -901,7 +906,13 @@ func _draw_inline_timeline(row_rect: Rect2) -> void:
 		_tl_legend_rects[id] = row_rc
 		if id == _tl_hover_id:
 			draw_rect(row_rc, Color(1, 1, 1, 0.12))
-		var num: String = "★" if id == TimelineLayout.LIVE_ID \
+		# 当前时间点（LIVE 或当前 auto 记录）行显示 ★
+		var is_current: bool = false
+		for n in _tl_nodes:
+			if n["id"] == id and n["is_live"]:
+				is_current = true
+				break
+		var num: String = "★" if is_current \
 			else str(_tl_numbers.get(id, ""))
 		var text: String = "%s  %s" % [num, _tl_legend_text(id)]
 		draw_string(_font, row_rc.position + Vector2(4, 13), text,
@@ -951,9 +962,9 @@ func _hit_legend_row(pos: Vector2) -> String:
 	return ""
 
 
-## 点击时间线节点：当前时间点（LIVE）直接进入世界；快照节点选中
-## 并弹出操作面板（进入存档点 / 删除存档点 / 删除分支）；再次点击
-## 同一节点切换面板开闭。
+## 点击时间线节点：当前时间点（LIVE 或当前 auto 记录）直接进入世界；
+## 快照节点选中并弹出操作面板（进入存档点 / 删除存档点 / 删除分支）；
+## 再次点击同一节点切换面板开闭。
 ##
 ## Args:
 ##     id: 节点 id（TimelineLayout.LIVE_ID 或快照 file）。
@@ -963,6 +974,11 @@ func _activate_timeline_node(id: String) -> void:
 		# 当前时间点：直接进入世界（加载活目录）
 		_load_world(world_id)
 		return
+	# 当前位置 = 当前 auto 记录（is_live）：直接进入世界
+	for n in _tl_nodes:
+		if n["id"] == id and n["is_live"]:
+			_load_world(world_id)
+			return
 	if _panel_node_id == id:
 		# 点击已选中节点 = 切换面板开闭
 		_close_action_panel()

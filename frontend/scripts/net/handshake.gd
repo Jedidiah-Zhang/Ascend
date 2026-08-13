@@ -87,7 +87,7 @@ func tick(delta: float) -> void:
 	if state != State.HELLO_SENT:
 		return
 	_elapsed += delta
-	if _elapsed > HELLO_TIMEOUT:  # 严格大于，与旧实现一致
+	if _elapsed > HELLO_TIMEOUT:  # 严格大于（等于时继续累计，防边界抖动）
 		state = State.IDLE
 		_elapsed = 0.0
 		timeout.emit()

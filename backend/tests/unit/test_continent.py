@@ -49,7 +49,7 @@ class TestCenterDistance:
     """center_distance 四象限对称性（Chebyshev 距离）。"""
 
     def test_third_quadrant_negative_y_axis(self):
-        """回归：dx=0, dy=-2 旧实现误算为 0，现应为 2。"""
+        """防护：dx=0, dy=-2 应算得 2（不得误算为 0）。"""
         from ascend.space.continent import center_distance
         assert center_distance(0.0, -2.0) == 2.0
         assert center_distance(0.0, -1.5) == 1.5

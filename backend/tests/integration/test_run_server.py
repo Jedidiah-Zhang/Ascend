@@ -4,9 +4,9 @@
 保持一个客户端连接（抑制自动停止），发 SIGTERM，断言进程正常
 退出（exit 0）。
 
-回归背景：前端退出时旧实现直接 SIGKILL 后端，绕过了优雅关闭；
-本测试锁定「SIGTERM → handler → engine.stop() → 正常退出」契约
-（若 handler 缺失，SIGTERM 默认终止进程，returncode 为负信号值）。
+防护：前端退出必须走优雅关闭——锁定「SIGTERM → handler →
+engine.stop() → 正常退出」契约（若 handler 缺失，SIGTERM 默认
+终止进程，returncode 为负信号值）。
 engine.stop() 内部的最终落盘由 test_game_engine 覆盖。
 
 进程模型（--world-id）：世界进程有效加载路径由

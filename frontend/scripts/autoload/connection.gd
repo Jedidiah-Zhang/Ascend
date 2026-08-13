@@ -16,7 +16,7 @@ Status 为门面枚举（0-3，FAILED=3 测试锁定），在事件边界由子�
 派生（传输层优先，其次进程 FAILED，否则 DISCONNECTED），非每帧派生。
 
 restart_backend 为异步状态机（WAIT_STOP → RESET → SPAWN），不阻塞
-主线程（旧实现 OS.delay_msec 忙等已移除）。
+主线程（不得用 OS.delay_msec 忙等）。
 """
 
 extends Node

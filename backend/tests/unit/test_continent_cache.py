@@ -207,9 +207,8 @@ class TestWorldGeneratorCache:
     def test_cache_seed_mismatch_regenerates(self, tmp_path, monkeypatch):
         """缓存 seed 与生成器不符（错档/旧随机化窗口残留）：重新生成并覆盖。
 
-        回归：旧实现只校验缓存自身一致性，不校验与 self._seed 的匹配——
-        崩溃窗口（manifest seed 未落盘）或拷贝错档会加载错误大陆，
-        世界静默不一致。
+        防护：缓存必须校验与 self._seed 的匹配——崩溃窗口（manifest
+        seed 未落盘）或拷贝错档若加载错误大陆，世界会静默不一致。
         """
         other = _small_continent(seed=111)  # 其它种子的缓存
         fake = _small_continent(seed=222)  # 期望种子的生成结果（预计算，避免 mock 自递归）

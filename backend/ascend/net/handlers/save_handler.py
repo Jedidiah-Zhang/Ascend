@@ -100,12 +100,12 @@ def make_save_handlers(save_manager, game_engine=None):
             )
 
     def handle_save_snapshot(msg: dict) -> dict:
-        """手动保存：为世界创建回退点快照。
+        """手动保存：当前 auto 记录晋升为 manual 并开启新当前记录。
 
         引擎可用时走 snapshot_current（目标即当前世界时 flush +
         WAL checkpoint + 打包，保证快照内 chunk/事件数据完整；
         目标为未加载世界/服务模式时其 DB 未打开，直接打包一致快照）；
-        纯磁盘模式直接打包。
+        纯磁盘模式直接打包。返回晋升后的保存节点文件名。
         """
         payload = _payload(msg)
         world_id = str(payload.get("world_id", "")).strip()

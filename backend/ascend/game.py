@@ -428,12 +428,13 @@ class GameEngine:
     def load_world(
         self, world_id: str | None = None, snapshot: str | None = None,
     ) -> None:
-        """世界进程启动入口：回滚保护 → 展开快照 → 构建世界。
+        """世界进程启动入口：进入语义 → 展开快照 → 构建世界。
 
         由 run_server --world-id/--snapshot 调用（取代旧 save_load
         同进程换世界）。回滚时活目录即目标世界的当前状态（上一进程
-        退出时已最终保存），先打 auto 保护快照再展开——与旧
-        _reload 的回滚保护语义等价（保护分支可找回）。
+        退出时已最终保存）；进入语义（冻结离开记录 → 展开 → 手动档
+        开启新当前记录）由 SaveManager.enter_snapshot 统一保证——
+        auto 节点是当前线的滚动记录，永无下游、永不重复新建。
 
         若引擎已在运行（测试中模拟进程切换），先 stop() 清旧状态：
         语义 = "以该世界重启引擎"，与进程模型一致。
@@ -453,10 +454,9 @@ class GameEngine:
                 if not world_id:
                     raise ValueError("回滚必须指定 world_id")
                 self.save_manager.get_manifest(world_id)  # 校验目标存在性
-                # 回滚保护：当前活目录（已最终保存）→ auto 快照。
-                # DB 尚未打开，直接打包活目录即一致快照。
-                self.save_manager.create_snapshot(world_id, suffix="auto")
-                world_id = self.save_manager.extract_snapshot(
+                # 进入语义（冻结离开记录/展开/手动档开新当前记录）
+                # 由 SaveManager.enter_snapshot 统一处理
+                world_id = self.save_manager.enter_snapshot(
                     snapshot, world_id=world_id,
                 )
             self.start(world_id=world_id)
@@ -791,7 +791,7 @@ class GameEngine:
 
         Raises:
             ValueError: 当前无存档位。
-            SaveFormatError: 目标存档不存在。
+            SaveFormatError: 目标存档不存在（save 模块异常）。
         """
         if world_id is None:
             world_id = self.world_id

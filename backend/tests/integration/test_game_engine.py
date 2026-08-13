@@ -256,8 +256,8 @@ class TestWorldProcessEntry:
         finally:
             engine.stop()
 
-    def test_load_world_without_snapshot_does_not_protect(self, monkeypatch):
-        """普通进入（无快照）不产生保护快照。"""
+    def test_load_world_without_snapshot_creates_no_nodes(self, monkeypatch):
+        """普通进入（无快照）不产生任何快照节点。"""
         _patch_fast_worldgen(monkeypatch)
         engine = GameEngine(seed=42)
         try:
@@ -280,7 +280,7 @@ class TestWorldProcessEntry:
             engine.stop()
 
     def test_load_world_rollback_requires_world_id(self, monkeypatch):
-        """回滚必须指定 world_id（保护快照需落点）。"""
+        """回滚必须指定 world_id（进入语义需要目标世界定位血缘）。"""
         _patch_fast_worldgen(monkeypatch)
         engine = GameEngine(seed=42)
         try:
@@ -292,15 +292,13 @@ class TestWorldProcessEntry:
         finally:
             engine.stop()
 
-    def test_rollback_with_bare_filename_protects_and_forks(
-        self, monkeypatch,
-    ):
-        """回滚（裸文件名）→ 保护当前分支 → 展开 → 血缘分叉。
+    def test_enter_manual_snapshot_forks_at_manual_node(self, monkeypatch):
+        """进入手动档：冻结离开记录，在手动节点下游开启新当前记录。
 
-        回归（旧同进程 _reload 时代）：extract_snapshot 按裸文件名
-        直接 open 失败会整体回退——进程模型下由 load_world 统一入口。
-        验证链：快照 A/B（同线）→ 回滚到 A（live_origin=A，自动保护
-        B 分支）→ 继续玩再快照 C（parent=A，分叉形成）。
+        语义：进入手动档 = 分叉点——离开的当前记录原地冻结，
+        新 auto 当前记录开在目标手动档下游，分叉发生在手动节点处。
+        验证链：M1→M2（保存产生 M2→rec 当前记录）→ 进入 M1（rec 冻结、
+        M1 下游新开记录，M1 分叉）→ 继续玩保存 M3（parent=M1）。
         """
         _patch_fast_worldgen(monkeypatch)
         engine = GameEngine(seed=42)
@@ -312,39 +310,46 @@ class TestWorldProcessEntry:
             assert engine.world_id == world_id
 
             mgr.write_state(world_id, _state_at(100))
-            snap_a = mgr.create_snapshot(world_id, suffix="manual", game_time=100)
+            snap_m1 = mgr.create_snapshot(world_id, suffix="manual", game_time=100)
             mgr.write_state(world_id, _state_at(200))
-            snap_b = mgr.create_snapshot(world_id, suffix="manual", game_time=200)
+            snap_m2 = mgr.create_snapshot(world_id, suffix="manual", game_time=200)
             lineage = mgr.snapshot_lineage(world_id)
-            assert lineage["live_origin"] == snap_b, "活目录来源 = 最新快照"
-            assert lineage["snapshots"][snap_b]["parent"] == snap_a, "连续保存应串链"
+            assert lineage["snapshots"][snap_m2]["parent"] == snap_m1, "连续保存应串链"
+            rec_2 = lineage["live_origin"]
+            assert rec_2.endswith("-auto.ascendsave"), "保存后当前记录为 auto"
+            assert lineage["snapshots"][rec_2]["parent"] == snap_m2, \
+                "当前记录开在最新手动档下游"
 
-            # 进程切换语义由 load_world 自带（stop 旧状态 → 回滚入口）
-            engine.load_world(world_id=world_id, snapshot=snap_a)
-            assert engine.world_id == world_id, "回滚后世界应保持加载"
+            # 进入手动 M1：冻结 rec_2（M2 线记录保留），M1 下游开新记录
+            engine.load_world(world_id=world_id, snapshot=snap_m1)
             lineage = mgr.snapshot_lineage(world_id)
-            assert lineage["live_origin"] == snap_a, "活目录来源应为回滚目标"
-            # 回滚保护自动快照应从最近的手动存档派生（保护其所在分支）
-            auto = [f for f in lineage["snapshots"]
-                    if lineage["snapshots"][f]["saved_at"] > lineage["snapshots"][snap_b]["saved_at"]
-                    and f != snap_a]
-            assert auto, "回滚保护应产生自动快照"
-            assert lineage["snapshots"][auto[0]]["parent"] == snap_b, \
-                "自动快照应从最近手动存档派生"
+            assert rec_2 in lineage["snapshots"], "离开的记录原地保留"
+            assert lineage["snapshots"][rec_2]["parent"] == snap_m2, \
+                "冻结不改变血缘位置"
+            rec_3 = lineage["live_origin"]
+            assert rec_3 != rec_2 and rec_3.endswith("-auto.ascendsave")
+            assert lineage["snapshots"][rec_3]["parent"] == snap_m1, \
+                "新当前记录开在目标手动档下游"
+            children = {f for f, e in lineage["snapshots"].items()
+                        if e["parent"] == snap_m1}
+            assert children == {snap_m2, rec_3}, "分叉发生在手动节点 M1 处"
 
-            # 回滚后继续玩 → 新快照挂在 A 下（分叉）
+            # 继续玩并保存 → rec_3 晋升为 M3（parent=M1），新开 rec_4
             mgr.write_state(world_id, _state_at(150))
-            snap_c = mgr.create_snapshot(world_id, suffix="manual", game_time=150)
+            snap_m3 = mgr.create_snapshot(world_id, suffix="manual", game_time=150)
             lineage = mgr.snapshot_lineage(world_id)
-            assert lineage["snapshots"][snap_c]["parent"] == snap_a, "应形成分叉"
+            assert rec_3 not in lineage["snapshots"], "auto 应晋升为手动而非残留"
+            assert lineage["snapshots"][snap_m3]["parent"] == snap_m1, \
+                "晋升保留原 parent（M1 下分叉）"
+            assert lineage["live_origin"].endswith("-auto.ascendsave")
         finally:
             engine.stop()
 
     def test_multi_jump_preserves_all_branches(self, monkeypatch):
-        """多次跨分支跳转：所有分支（含自动保护点）血缘完整保留。
+        """多次跨分支跳转：所有分支（auto 记录 + 手动链）血缘完整保留。
 
-        回归：跳转后旧分支仅剩自动保护快照，若血缘丢失或前端不可见，
-        旧分支即"消失"。验证自动保护点在血缘中持续存在且父链正确。
+        防护：离开线仅剩冻结的 auto 记录——若血缘丢失或前端不可见，
+        分支即"消失"。验证 auto 记录持续存在、恒为叶子且父链正确。
         """
         _patch_fast_worldgen(monkeypatch)
         engine = GameEngine(seed=42)
@@ -354,31 +359,138 @@ class TestWorldProcessEntry:
             world_id = mgr.create_world("多跳世界", seed=7).world_id
             engine.load_world(world_id=world_id)
 
-            # S1 → S2 手动链
+            # M1 → M2 手动链（当前记录 rec_2 在 M2 下游）
             mgr.write_state(world_id, _state_at(100))
-            snap_s1 = mgr.create_snapshot(world_id, suffix="manual", game_time=100)
+            snap_m1 = mgr.create_snapshot(world_id, suffix="manual", game_time=100)
             mgr.write_state(world_id, _state_at(200))
-            snap_s2 = mgr.create_snapshot(world_id, suffix="manual", game_time=200)
+            snap_m2 = mgr.create_snapshot(world_id, suffix="manual", game_time=200)
 
-            # 跳转到 S1（S2 分支被自动保护 A1）
-            engine.load_world(world_id=world_id, snapshot=snap_s1)
-            # S1 分支玩到 150，手动 S3
+            # 进入 M1：rec_2 冻结，M1 下游新开 rec_3；M1 分支玩到 150 保存 M3
+            engine.load_world(world_id=world_id, snapshot=snap_m1)
             mgr.write_state(world_id, _state_at(150))
-            snap_s3 = mgr.create_snapshot(world_id, suffix="manual", game_time=150)
+            snap_m3 = mgr.create_snapshot(world_id, suffix="manual", game_time=150)
 
-            # 跳转到 S2（S3 分支被自动保护 A2）
-            engine.load_world(world_id=world_id, snapshot=snap_s2)
+            # 进入 M2：rec_3 晋升后的当前记录冻结，M2 下游新开记录
+            engine.load_world(world_id=world_id, snapshot=snap_m2)
 
             lineage = mgr.snapshot_lineage(world_id)
             entries = lineage["snapshots"]
-            # 全部手动 + 自动快照都在
-            assert snap_s1 in entries and snap_s2 in entries and snap_s3 in entries
-            auto = [f for f in entries if f.endswith("-auto.ascendsave")]
-            assert len(auto) == 2, "两次跳转应产生两个自动保护点，实际: %s" % auto
-            # A1 保护 S2 分支（父 = S2）
-            parents = {entries[f]["parent"]: f for f in auto}
-            assert parents.get(snap_s2), "A1 应从 S2 派生（保护 S2 分支）"
-            assert parents.get(snap_s3), "A2 应从 S3 派生（保护 S3 分支）"
-            assert lineage["live_origin"] == snap_s2, "当前在 S2 分支"
+            # 全部手动节点都在
+            assert snap_m1 in entries and snap_m2 in entries and snap_m3 in entries
+            autos = [f for f in entries if f.endswith("-auto.ascendsave")]
+            assert len(autos) == 3, "冻结记录+新开记录应共存，实际: %s" % autos
+            # auto 节点恒为叶子且 parent 恒为手动节点（永无下游）
+            for a in autos:
+                assert not any(e["parent"] == a for e in entries.values()), \
+                    f"auto 节点不得有下游: {a}"
+                assert entries[a]["parent"] in (snap_m1, snap_m2, snap_m3), \
+                    f"auto 记录应挂在手动节点下: {a}"
+            # 各分支记录在正确位置
+            parents = {entries[a]["parent"]: a for a in autos}
+            assert parents.get(snap_m2), "M2 线记录应保留（冻结的 rec_2）"
+            assert parents.get(snap_m3), "M3 线记录应保留（冻结的当前记录）"
+            assert lineage["live_origin"].endswith("-auto.ascendsave"), \
+                "当前记录恒为 auto"
+        finally:
+            engine.stop()
+
+    def test_enter_auto_snapshot_continues_in_place(self, monkeypatch):
+        """进入 auto 档 = 继续：不新建任何节点，目标成为当前记录。
+
+        语义：auto 节点是当前线的滚动记录——进入它不产生节点、
+        不产生下游；保存时它原地晋升为 manual（parent/seq 保留）。
+        """
+        _patch_fast_worldgen(monkeypatch)
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            mgr = engine.save_manager
+            world_id = mgr.create_world("自动档续玩", seed=7).world_id
+            engine.load_world(world_id=world_id)
+
+            mgr.write_state(world_id, _state_at(100))
+            snap_m1 = mgr.create_snapshot(world_id, suffix="manual", game_time=100)
+            mgr.write_state(world_id, _state_at(200))
+            snap_m2 = mgr.create_snapshot(world_id, suffix="manual", game_time=200)
+            rec_2 = mgr.snapshot_lineage(world_id)["live_origin"]
+
+            # 进入手动 M1 → M1 下游新开当前记录 rec_3
+            engine.load_world(world_id=world_id, snapshot=snap_m1)
+            lineage = mgr.snapshot_lineage(world_id)
+            rec_3 = lineage["live_origin"]
+            assert rec_3 != rec_2
+
+            # 进入 auto rec_3：节点数不变，rec_3 成为当前记录
+            n_before = len(lineage["snapshots"])
+            engine.load_world(world_id=world_id, snapshot=rec_3)
+            lineage = mgr.snapshot_lineage(world_id)
+            assert len(lineage["snapshots"]) == n_before, "进入 auto 不新建节点"
+            assert lineage["live_origin"] == rec_3, "auto 目标成为当前记录"
+
+            # 从 auto 保存 → rec_3 晋升为 M3（parent=M1 保留），新开 rec_4
+            seq_before = lineage["snapshots"][rec_3]["seq"]
+            mgr.write_state(world_id, _state_at(150))
+            snap_m3 = mgr.create_snapshot(world_id, suffix="manual", game_time=150)
+            lineage = mgr.snapshot_lineage(world_id)
+            assert rec_3 not in lineage["snapshots"], "auto 应晋升为手动而非残留"
+            assert lineage["snapshots"][snap_m3]["parent"] == snap_m1, \
+                "晋升保留原 parent"
+            assert lineage["snapshots"][snap_m3]["seq"] == seq_before, \
+                "晋升保留原 seq（出生序）"
+            rec_4 = lineage["live_origin"]
+            assert rec_4.endswith("-auto.ascendsave") and rec_4 != rec_3, \
+                "保存后新开当前记录"
+            assert lineage["snapshots"][rec_4]["parent"] == snap_m3
+        finally:
+            engine.stop()
+
+    def test_leave_auto_into_manual_freezes_in_place(self, monkeypatch):
+        """从 auto 位置直接进入手动档：记录原地冻结，分叉在手动档。
+
+        语义：离开 auto 线不产生新节点——把离开时刻的活状态刷进
+        该 auto 节点（冻结），并在手动档处形成分叉（冻结记录 vs
+        新当前记录），树中不堆积重复节点。
+        """
+        _patch_fast_worldgen(monkeypatch)
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            mgr = engine.save_manager
+            world_id = mgr.create_world("冻结世界", seed=7).world_id
+            engine.load_world(world_id=world_id)
+
+            mgr.write_state(world_id, _state_at(100))
+            snap_m1 = mgr.create_snapshot(world_id, suffix="manual", game_time=100)
+            mgr.write_state(world_id, _state_at(200))
+            snap_m2 = mgr.create_snapshot(world_id, suffix="manual", game_time=200)
+            # 进入 M1 → M1 下游新开当前记录 rec_3
+            engine.load_world(world_id=world_id, snapshot=snap_m1)
+            rec_3 = mgr.snapshot_lineage(world_id)["live_origin"]
+
+            # 进入 auto rec_3，玩到 150，不保存直接跳入手动 M2
+            engine.load_world(world_id=world_id, snapshot=rec_3)
+            mgr.write_state(world_id, _state_at(150))
+            engine.load_world(world_id=world_id, snapshot=snap_m2)
+
+            lineage = mgr.snapshot_lineage(world_id)
+            assert rec_3 in lineage["snapshots"], "离开的记录应原地保留（冻结）"
+            assert lineage["snapshots"][rec_3]["game_time"] > 100, \
+                "冻结应为离开时刻（引擎实际时钟 > 创建时刻 100）"
+            assert lineage["snapshots"][rec_3]["parent"] == snap_m1, \
+                "冻结不改变血缘位置"
+            rec_new = lineage["live_origin"]
+            assert rec_new != rec_3 and rec_new.endswith("-auto.ascendsave")
+            assert lineage["snapshots"][rec_new]["parent"] == snap_m2, \
+                "新当前记录开在 M2 下游（M2 处与旧记录分叉）"
+            autos = [f for f in lineage["snapshots"]
+                     if f.endswith("-auto.ascendsave")]
+            for a in autos:
+                assert not any(e["parent"] == a
+                               for e in lineage["snapshots"].values()), \
+                    f"auto 节点不得有下游: {a}"
+
+            # 展开后活目录应为 M2 内容（冻结与展开互不影响）
+            assert mgr.read_state(world_id)["clock"]["time"] >= 200, \
+                "展开目标 M2 的内容（200），冻结与展开互不影响"
         finally:
             engine.stop()

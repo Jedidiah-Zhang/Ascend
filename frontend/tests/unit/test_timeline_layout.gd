@@ -91,9 +91,9 @@ func test_unknown_live_origin_chains_at_end() -> void:
 
 
 func test_live_dangling_origin_never_chains_head() -> void:
-	"""历史 bug 回归：LIVE 悬空来源 + 游戏时间 0 时不能成为链头。
+	"""防护：LIVE 悬空来源 + 游戏时间 0 时不能成为链头。
 
-	旧实现 LIVE 的 time 取 0（排序最前），悬空来源时成为链头，
+	LIVE 的 time 若取 0（排序最前），悬空来源时会成为链头，
 	初始快照反成其子节点，树整体反转。
 	"""
 	var snaps: Array = [_snap("s1", "", 100, 0.0, "manual", 0)]
@@ -140,6 +140,56 @@ func test_auto_snapshots_visible_quit_filtered() -> void:
 	assert_eq(ids, ["m1", "a1", TimelineLayout.LIVE_ID], "manual + auto 参与，quit 过滤")
 	assert_eq(suffix_map["a1"], "auto", "节点应携带来源标识供 UI 区分样式")
 	assert_eq(tree["edges"].size(), 2)
+
+
+func test_auto_live_origin_is_current_position() -> void:
+	"""当前位置是 auto 记录时：该记录标记 is_live，不挂重复伪节点。
+
+	手动保存后当前线 = 手动节点 + auto 当前记录——LIVE 伪节点与
+	当前记录重复（三个点）；auto 记录即当前位置（★ 高亮）。
+	"""
+	var snaps: Array = [
+		_snap("m1", "", 100, 0.0, "manual", 0),
+		_snap("a1", "m1", 200, 0.0, "auto", 1),
+	]
+	var tree: Dictionary = TimelineLayout.build(snaps, 200, "a1")
+	var ids: Array = []
+	for n in tree["nodes"]:
+		ids.append(n["id"])
+	assert_eq(ids, ["m1", "a1"], "手动 + auto 当前记录，仅两个节点")
+	assert_false(tree["nodes"].any(
+		func(n): return n["id"] == TimelineLayout.LIVE_ID),
+		"auto 来源时不产生 LIVE 伪节点")
+	assert_true(tree["nodes"].any(
+		func(n): return n["id"] == "a1" and n["is_live"]),
+		"当前 auto 记录标记 is_live（当前位置提示）")
+	assert_false(tree["nodes"].any(
+		func(n): return n["id"] == "m1" and n["is_live"]),
+		"手动节点不标记为当前位置")
+	assert_eq(tree["edges"].size(), 1, "一条边：m1 → a1")
+
+
+func test_auto_origin_filtered_out_keeps_live() -> void:
+	"""auto 来源被过滤（仅 manual）时仍展示独立当前点（兜底）。"""
+	var snaps: Array = [
+		_snap("m1", "", 100, 0.0, "manual", 0),
+		_snap("a1", "m1", 200, 0.0, "auto", 1),
+	]
+	var tree: Dictionary = TimelineLayout.build(snaps, 200, "a1", ["manual"])
+	assert_true(tree["nodes"].any(func(n): return n["is_live"]),
+		"auto 被过滤 → LIVE 兜底展示")
+	assert_eq(tree["nodes"].size(), 2, "m1 + LIVE")
+
+
+func test_manual_live_origin_keeps_live() -> void:
+	"""live_origin 为手动节点（异常态）时仍展示独立当前点。"""
+	var snaps: Array = [
+		_snap("m1", "", 100, 0.0, "manual", 0),
+		_snap("a1", "m1", 200, 0.0, "auto", 1),
+	]
+	var tree: Dictionary = TimelineLayout.build(snaps, 200, "m1")
+	assert_true(tree["nodes"].any(func(n): return n["is_live"]),
+		"手动来源 → LIVE 仍展示（当前点从 m1 派生）")
 
 
 func test_keep_suffixes_override() -> void:

@@ -7,15 +7,19 @@
     "" = 世界初始），因此回滚后保存的新快照形成分叉
   - 同一来源链上的兄弟快照（parent 相同且非分叉）按时间顺序串成链
   - 「当前时间点」= 活目录节点（is_live）：从 live_origin 派生；
-    无来源时挂在链尾（从未回滚 = 与初始同线）
-  - 回滚保护的自动快照（auto）参与时间线（是分支的延续节点，
-    隐藏会让旧分支在跳转后"消失"）；quit 等其它来源仍可过滤
+    无来源时挂在链尾（从未回滚 = 与初始同线）。**当 live_origin
+    是树内的 auto 记录时省略该伪节点，并把该记录标记 is_live**——
+    auto 记录即当前线的滚动记录（当前位置），既保留当前位置提示
+    又不重复挂点（如手动保存后「手动点 + auto 点 + 当前点」三点）
+  - auto 节点（当前线的滚动记录：恒为叶子，手动保存/离开线时原地
+    晋升/冻结）参与时间线，隐藏会让旧分支在跳转后"消失"；
+    quit 等其它来源仍可过滤
 
 排序键 = 血缘 seq（后端权威的单调创建顺序，回滚后游戏时间倒退
 不影响它）：save_order_ids 编号、链内串链、兄弟排序全部统一，
 saved_at/game_time 仅作展示字段（旧档缺 seq 时回退 saved_at 排序）。
 LIVE 节点取伪 seq = max+1，恒排最后——悬空来源时也只会串在链尾，
-不可能成为链头（历史 bug：LIVE 的 time 取 0 时排最前导致树反转）。
+不可能成为链头（防护：LIVE 的 time 若取 0 会排最前导致树反转）。
 
 布局：深度 = 距链头代数（x 轴），槽位 = 子树纵向区间（y 轴），
 经典 tidy 树分配：叶子占一个槽位，内部节点取子节点中点。
@@ -89,7 +93,7 @@ static func save_order_ids(snapshots: Array) -> Array:
 ##     live_game_time: 活目录当前游戏时间（世界摘要 game_time，仅展示）。
 ##     live_origin: 活目录来源快照 file（"" = 世界初始）。
 ##     keep_suffixes: 参与时间线的快照来源（默认 manual + auto——
-##         回滚保护自动快照是分支的延续节点，隐藏会使旧分支"消失"）。
+##         auto 是分支的滚动记录/延续节点，隐藏会使旧分支"消失"）。
 ##
 ## Returns:
 ##     {nodes: [{id, label, time, saved_at, seq, depth, slot, is_live, suffix, children}],
@@ -126,16 +130,26 @@ static func build(
 			"suffix": str(snap.get("suffix", "")),
 			"is_live": false,
 		}
+	# LIVE 伪节点：live_origin 是树内的 auto 记录时省略——该记录
+	# 即当前线的滚动记录（当前位置），标记 is_live 供 UI 高亮，
+	# 不再挂「当前时间点」伪节点（会重复）；
+	# ""（世界初始）/ 悬空来源 / 非 auto 来源（异常态）仍展示。
 	# LIVE 伪 seq = max+1：恒排最后，悬空来源时只会串到链尾（不做链头）
-	nodes[LIVE_ID] = {
-		"id": LIVE_ID,
-		"parent": live_origin if nodes.has(live_origin) else "",
-		"seq": max_seq + 1,
-		"time": live_game_time,
-		"saved_at": 0.0,
-		"suffix": "live",
-		"is_live": true,
-	}
+	if (
+		nodes.has(live_origin)
+		and str(nodes[live_origin]["suffix"]) == "auto"
+	):
+		nodes[live_origin]["is_live"] = true
+	else:
+		nodes[LIVE_ID] = {
+			"id": LIVE_ID,
+			"parent": live_origin if nodes.has(live_origin) else "",
+			"seq": max_seq + 1,
+			"time": live_game_time,
+			"saved_at": 0.0,
+			"suffix": "live",
+			"is_live": true,
+		}
 
 	# 2. 布局父节点：真实 parent 存在则用之（分叉）；否则按排序串链
 	#    （同一来源的兄弟快照 = 同一条线上的先后点，非分叉）。

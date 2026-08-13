@@ -518,7 +518,7 @@ func test_unload_preserves_nearby_chunks() -> void:
 func test_field_only_response_stores_data_keeps_field_requested() -> void:
 	"""字段响应：缓存数据，状态保持 FIELD_REQUESTED（等待流循环发完整请求）。
 
-	回归：旧实现字段响应无条件清 _pending 标记，导致完整请求标记被抹掉、
+	防护：字段响应不得清 _pending 标记——否则完整请求标记被抹掉、
 	每帧重发 include_tiles=true 请求直到响应到达（双请求竞态）。
 	"""
 	var main: Node3D = _make_world_instance()
@@ -592,7 +592,7 @@ func test_stale_response_after_unload_ignored() -> void:
 func test_disconnect_demotes_inflight_states() -> void:
 	"""断线后：在途请求作废（无数据 → UNKNOWN），有数据降级重发完整请求。
 
-	回归：旧实现断线不清 _pending，重连后这些 chunk 永远被跳过，
+	防护：断线必须清 _pending——否则重连后这些 chunk 永远被跳过，
 	玩家周围地形永久缺失。
 	"""
 	var main: Node3D = _make_world_instance()
@@ -663,8 +663,8 @@ func test_fast_movement_keeps_inflight_chunks() -> void:
 func test_single_chunk_two_requests_from_enter_to_built() -> void:
 	"""集成场景：chunk 从进入视野到构建完成恰好 2 次请求（字段 + 完整）。
 
-	回归：旧实现字段请求在途时 tile 队列分支同样命中（_chunks 以 null
-	占位已存在），同一 chunk 并发发出 字段+完整 双请求。
+	防护：字段请求在途时 tile 队列分支不得同样命中（_chunks 以 null
+	占位已存在）——否则同一 chunk 并发发出 字段+完整 双请求。
 	"""
 	var main: Node3D = _make_world_instance()
 	main._set_birth_chunk(0, 0)
@@ -910,7 +910,7 @@ func test_entity_snapshot_consumes_player_entity() -> void:
 func test_player_move_small_delta_keeps_local_position() -> void:
 	"""权威位置与本地差距小于容差（RTT 内继续移动的距离）→ 不吸附。
 
-	回归：旧实现无条件吸附导致每 0.2s 一次回跳（橡皮筋）。
+	防护：小差距不得无条件吸附——否则每 0.2s 一次回跳（橡皮筋）。
 	"""
 	var main: Node3D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
@@ -928,8 +928,8 @@ func test_player_move_small_delta_keeps_local_position() -> void:
 func test_player_move_clamped_position_snapped() -> void:
 	"""权威差距超阈值（真钳制/传送）→ 平滑过渡到权威位置，后端权威保留。
 
-	回归：旧实现直接瞬跳吸附导致每 0.2s 一次回跳（橡皮筋）；中等差距
-	改为 SNAP_DURATION 平滑过渡，不再瞬跳。
+	防护：超阈值差距不得直接瞬跳吸附（每 0.2s 一次回跳的橡皮筋）；
+	中等差距走 SNAP_DURATION 平滑过渡。
 	"""
 	var main: Node3D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
@@ -1015,7 +1015,7 @@ func test_snap_transition_then_input_applies() -> void:
 func test_player_move_follows_reported_keeps_local() -> void:
 	"""后端原样回显上报（回声，seq 对齐）→ 零纠正。
 
-	回归：旧实现按差距吸附，把"滞后"误当"偏离"，每 0.2s 拉回一次。
+	防护：按差距吸附会把"滞后"误当"偏离"（每 0.2s 拉回一次）；
 	差距 3 tiles（> SNAP_TOLERANCE）时同样不应纠正。
 	"""
 	var main: Node3D = _make_world_instance()
@@ -1050,9 +1050,9 @@ func test_player_move_reverse_follows_reported_keeps_local() -> void:
 func test_player_move_speed_change_echoes_keeps_local() -> void:
 	"""上报窗口内变速 → 权威位置仍是旧上报回声，零纠正。
 
-	回归：旧实现比较"权威位移 vs 最新上报窗口位移"，变速使两窗口位移
+	防护：不得比较"权威位移 vs 最新上报窗口位移"——变速使两窗口位移
 	错位（δ_权威 = 6 ≠ δ_上报 = 12）→ 误判偏离触发拉回；seq 对齐后
-	权威位置 ≈ 该次上报位置即可判定认可，变速不再误伤。
+	权威位置 ≈ 该次上报位置即可判定认可。
 	"""
 	var main: Node3D = _make_world_instance()
 	main._player_pos = Vector3(118.0, 0.0, 100.0)
@@ -1086,8 +1086,8 @@ func test_player_move_clamped_delta_snaps_back() -> void:
 
 
 func test_snap_input_accumulates_across_frames() -> void:
-	"""过渡期间连续多帧输入不丢失（回归：旧实现每帧从固定起点插值，
-	覆盖上一帧输入位移，0.15s 内玩家只前进约一帧）。"""
+	"""过渡期间连续多帧输入不丢失（防护：每帧从固定起点插值会覆盖
+	上一帧输入位移，0.15s 内玩家只前进约一帧）。"""
 	var main: Node3D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 	main._handle_response({

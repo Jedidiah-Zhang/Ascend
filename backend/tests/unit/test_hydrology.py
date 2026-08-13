@@ -529,9 +529,8 @@ class TestRainShadowOmni:
     def test_flat_land_coast_no_depth_artifact(self):
         """平坦陆地→深海的向海风不产生伪影（海深不是地形起伏）。
 
-        旧实现把「陆高 + 海深」当成伪抬升，近岸海格因子直达
-        min_factor；修复后海域无自身抬升项，平坦陆地无抬升 →
-        近岸海域因子为 1.0。
+        海域无自身抬升项：不得把「陆高 + 海深」当成伪抬升——
+        平坦陆地无抬升时近岸海域因子为 1.0。
         """
         from array import array
         from ascend.space.hydrology import _rain_shadow_omnidirectional_c
@@ -612,7 +611,7 @@ class TestComputeClimateC:
     def test_sea_temp_is_surface_no_depth_effect(self):
         """海域温度为海面温度：与水深无关，不含直减率。
 
-        同一纬度下深水格与浅水格温度一致（旧实现深海被误算为更高温）。
+        同一纬度下深水格与浅水格温度一致（深海不得被误算为更高温）。
         """
         temp = self._compute([0.0, -2000.0, 0.0, -10.0], h=2)
         assert temp[1] == 10.0, f"深海温度 {temp[1]} 应为海面温度 10"
