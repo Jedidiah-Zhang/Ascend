@@ -599,7 +599,7 @@ func test_tile_response_rejects_version_mismatch() -> void:
 		},
 	})
 
-	assert_push_error_text("BLOB 版本",
+	assert_push_error("BLOB 版本",
 		"版本漂移应报错（契约错误须可见，而非静默跳过）")
 	assert_eq(main._stream_machine.get_state(key), main.ChunkState.FIELD_REQUESTED,
 		"版本不匹配应降级 FIELD_REQUESTED")

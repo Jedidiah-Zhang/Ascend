@@ -1,7 +1,7 @@
 """调试信息覆盖层 — 类似 Minecraft F3 的半透明调试面板。
 
 渲染所有已注册 DebugSection 的文本行，显示在屏幕左上角。
-F3 键切换可见性（自管理，无需世界脚本介入）。
+F3 键切换可见性（自管理，无需世界脚本介入；调试模式关闭时忽略）。
 每个 Section 自行管理数据拉取与轮询，
 DebugOverlay 仅负责统一调度（process_sections / broadcast_event / broadcast_response）。
 
@@ -45,6 +45,9 @@ var _shown: bool = false
 var _font: Font = null
 var _refresh_accum: float = 0.0
 
+## 测试注入的设置门面（Variant：settings.gd 无 class_name，动态派发）
+var _settings_override = null
+
 
 # ── 生命周期 ────────────────────────────────────────────────
 
@@ -57,15 +60,18 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_font = FontUtils.get_mono_font()
 	hide()
+	if not _settings().debug_mode_changed.is_connected(_on_debug_mode_changed):
+		_settings().debug_mode_changed.connect(_on_debug_mode_changed)
 
 
 ## 捕获 F3 键切换覆盖层可见性，并消费该输入事件避免继续传播。
+## 调试模式关闭时忽略 F3（不消费事件）。
 ##
 ## Args:
 ##     event: 输入事件，仅响应按键按下且非重复回显的 F3。
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_F3:
+		if event.keycode == KEY_F3 and _settings().get_debug_mode():
 			toggle()
 			get_viewport().set_input_as_handled()
 
@@ -130,6 +136,21 @@ func _draw() -> void:
 
 
 # ── 公共接口 ────────────────────────────────────────────────
+
+## 测试用：注入独立设置门面（须在 add_child 前调用，_ready 取其信号）。
+func set_settings_override(override) -> void:
+	_settings_override = override
+
+
+func _settings():
+	return _settings_override if _settings_override != null else Settings
+
+
+## 调试模式关闭时隐藏已打开的信息面板（toggled 信号联动 EventLog 隐藏）。
+func _on_debug_mode_changed(enabled: bool) -> void:
+	if not enabled and _shown:
+		toggle()
+
 
 ## 注册调试分区，加入统一渲染列表。
 ##

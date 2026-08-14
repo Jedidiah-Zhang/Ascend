@@ -30,6 +30,9 @@ var _close_button: Button = null
 var _done_button: Button = null
 var _language_label: Label = null
 var _language_option: OptionButton = null
+var _debug_mode_label: Label = null
+var _debug_mode_check: CheckBox = null
+var _debug_mode_hint: Label = null
 var _resolution_label: Label = null
 var _resolution_option: OptionButton = null
 var _resolution_hint: Label = null
@@ -208,6 +211,23 @@ func _build_general_tab() -> void:
 	_language_option.item_selected.connect(_on_language_selected)
 	row.add_child(_language_option)
 
+	var debug_row := HBoxContainer.new()
+	debug_row.add_theme_constant_override("separation", 12)
+	page.add_child(debug_row)
+	_debug_mode_label = Label.new()
+	_debug_mode_label.custom_minimum_size = Vector2(110, 0)
+	_debug_mode_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	debug_row.add_child(_debug_mode_label)
+	_debug_mode_check = CheckBox.new()
+	_debug_mode_check.custom_minimum_size = Vector2(220, 0)
+	_debug_mode_check.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_debug_mode_check.toggled.connect(_on_debug_mode_toggled)
+	debug_row.add_child(_debug_mode_check)
+
+	_debug_mode_hint = Label.new()
+	_debug_mode_hint.theme_type_variation = "MutedLabel"
+	page.add_child(_debug_mode_hint)
+
 
 func _build_display_tab() -> void:
 	var page := VBoxContainer.new()
@@ -320,6 +340,7 @@ func _refresh_all() -> void:
 	_refresh_texts()
 	_refresh_language()
 	_refresh_display()
+	_refresh_debug_mode()
 	_refresh_keys()
 
 
@@ -333,6 +354,8 @@ func _refresh_texts() -> void:
 	_tab.set_tab_title(2, tr("ui.settings.tab.keys"))
 	_tab.set_tab_title(3, tr("ui.settings.tab.audio"))
 	_language_label.text = tr("ui.settings.language")
+	_debug_mode_label.text = tr("ui.settings.debug_mode")
+	_debug_mode_hint.text = tr("ui.settings.debug_mode_hint")
 	_resolution_label.text = tr("ui.settings.resolution")
 	_mode_label.text = tr("ui.settings.window_mode")
 	for i in _mode_option.item_count:
@@ -348,6 +371,11 @@ func _refresh_language() -> void:
 		if _language_option.get_item_metadata(i) == locale:
 			_language_option.select(i)
 			return
+
+
+## 调试模式复选框与门面同步（幂等：同值设置不触发 toggled 事件）。
+func _refresh_debug_mode() -> void:
+	_debug_mode_check.button_pressed = _settings().get_debug_mode()
 
 
 func _refresh_display() -> void:
@@ -402,6 +430,10 @@ func _refresh_keys() -> void:
 
 func _on_language_selected(index: int) -> void:
 	_settings().set_locale(str(_language_option.get_item_metadata(index)))
+
+
+func _on_debug_mode_toggled(pressed: bool) -> void:
+	_settings().set_debug_mode(pressed)
 
 
 func _on_resolution_selected(index: int) -> void:

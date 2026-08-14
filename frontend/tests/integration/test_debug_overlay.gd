@@ -1,8 +1,28 @@
 extends GutTest
 
+const SETTINGS_SCRIPT: String = "res://scripts/autoload/settings.gd"
+const TEST_PATH: String = "user://test_debug_overlay_settings.cfg"
+
+var _facade = null
+var _prev_locale: String = ""
+
+
+func before_each() -> void:
+	_prev_locale = TranslationServer.get_locale()
+	_facade = load(SETTINGS_SCRIPT).new()
+	_facade.setup(SettingsStore.new(TEST_PATH), null)
+
+
+func after_each() -> void:
+	_facade.free()
+	_facade = null
+	TranslationServer.set_locale(_prev_locale)
+	DirAccess.remove_absolute(TEST_PATH)
+
 
 func _create_overlay() -> DebugOverlay:
 	var overlay: DebugOverlay = autoqfree(DebugOverlay.new())
+	overlay.set_settings_override(_facade)
 	add_child(overlay)
 	return overlay
 
@@ -43,6 +63,30 @@ func test_toggled_signal() -> void:
 	assert_true(results[0])
 	o.toggle()
 	assert_false(results[0])
+
+
+# ── 调试模式门控 ────────────────────────────────────────────
+
+func test_f3_ignored_when_debug_disabled() -> void:
+	_facade.set_debug_mode(false)
+	var o: DebugOverlay = _create_overlay()
+	o._input(_make_key_event(KEY_F3))
+	assert_false(o.is_shown(), "调试模式关闭时 F3 不应打开信息面板")
+
+
+func test_f3_toggles_when_debug_enabled() -> void:
+	_facade.set_debug_mode(true)
+	var o: DebugOverlay = _create_overlay()
+	o._input(_make_key_event(KEY_F3))
+	assert_true(o.is_shown(), "调试模式开启时 F3 应正常切换")
+
+
+func test_debug_disabled_hides_open_overlay() -> void:
+	var o: DebugOverlay = _create_overlay()
+	o._input(_make_key_event(KEY_F3))
+	assert_true(o.is_shown())
+	_facade.set_debug_mode(false)
+	assert_false(o.is_shown(), "调试模式关闭应隐藏已打开的信息面板")
 
 
 # ── 分区管理 ────────────────────────────────────────────────

@@ -48,6 +48,7 @@ func test_load_missing_file_keeps_defaults() -> void:
 	assert_eq(store.get_value("display/resolution"), "1280x720")
 	assert_eq(store.get_value("display/window_mode"), "windowed")
 	assert_eq(store.get_value("language/locale"), "zh_CN")
+	assert_eq(store.get_value("debug/debug_mode"), true, "默认调试模式应开启")
 
 
 func test_load_corrupt_file_falls_back_to_defaults() -> void:
@@ -128,6 +129,29 @@ func test_sanitize_invalid_locale() -> void:
 	reloaded.load()
 	assert_eq(reloaded.get_value("language/locale"), "zh_CN",
 		"非法语言（手改 cfg）应回退默认")
+
+
+func test_debug_mode_roundtrip() -> void:
+	var store := SettingsStore.new(TEST_PATH)
+	store.load()
+	store.set_value("debug/debug_mode", false)
+	assert_eq(store.save(), OK)
+
+	var reloaded := SettingsStore.new(TEST_PATH)
+	reloaded.load()
+	assert_eq(reloaded.get_value("debug/debug_mode"), false, "关闭状态应往返落盘")
+
+
+func test_sanitize_invalid_debug_mode() -> void:
+	var store := SettingsStore.new(TEST_PATH)
+	store.load()
+	store.set_value("debug/debug_mode", "banana")
+	store.save()
+
+	var reloaded := SettingsStore.new(TEST_PATH)
+	reloaded.load()
+	assert_eq(reloaded.get_value("debug/debug_mode"), true,
+		"非布尔调试模式（手改 cfg）应回退默认开启")
 
 
 func test_is_valid_locale() -> void:

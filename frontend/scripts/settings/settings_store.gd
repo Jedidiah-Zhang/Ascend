@@ -16,6 +16,7 @@ const DEFAULTS: Dictionary = {
 	"display/resolution": "1280x720",
 	"display/window_mode": "windowed",
 	"language/locale": "zh_CN",
+	"debug/debug_mode": true,
 }
 
 ## 窗口模式白名单：windowed 窗口化 / borderless 无边框全屏 / fullscreen 独占全屏
@@ -83,7 +84,8 @@ func set_value(key: String, value: Variant) -> void:
 	_values[key] = value
 
 
-## 非法值清洗：窗口模式白名单、分辨率格式、语言格式（xx_XX）。
+## 非法值清洗：窗口模式白名单、分辨率格式、语言格式（xx_XX）、
+## 调试模式布尔类型（手改 cfg 为字符串时回退默认）。
 func _sanitize() -> void:
 	if not WINDOW_MODES.has(_values.get("display/window_mode")):
 		_values["display/window_mode"] = DEFAULTS["display/window_mode"]
@@ -91,6 +93,8 @@ func _sanitize() -> void:
 		_values["display/resolution"] = DEFAULTS["display/resolution"]
 	if not is_valid_locale(str(_values.get("language/locale", ""))):
 		_values["language/locale"] = DEFAULTS["language/locale"]
+	if not (_values.get("debug/debug_mode") is bool):
+		_values["debug/debug_mode"] = DEFAULTS["debug/debug_mode"]
 
 
 ## 语言格式校验（"xx_XX"）；非法值（如手改 cfg 的 12345）会导致

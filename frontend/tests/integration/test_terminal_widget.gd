@@ -1,6 +1,24 @@
 extends GutTest
 
 const Config = preload("res://scripts/config.gd")
+const SETTINGS_SCRIPT: String = "res://scripts/autoload/settings.gd"
+const TEST_PATH: String = "user://test_terminal_widget_settings.cfg"
+
+var _facade = null
+var _prev_locale: String = ""
+
+
+func before_each() -> void:
+	_prev_locale = TranslationServer.get_locale()
+	_facade = load(SETTINGS_SCRIPT).new()
+	_facade.setup(SettingsStore.new(TEST_PATH), null)
+
+
+func after_each() -> void:
+	_facade.free()
+	_facade = null
+	TranslationServer.set_locale(_prev_locale)
+	DirAccess.remove_absolute(TEST_PATH)
 
 
 func _make_key_event(keycode: Key, pressed: bool = true, echo: bool = false) -> InputEventKey:
@@ -22,6 +40,7 @@ func _make_text_event(char_code: int) -> InputEventKey:
 
 func _create_widget() -> TerminalWidget:
 	var w: TerminalWidget = autoqfree(TerminalWidget.new())
+	w.set_settings_override(_facade)
 	add_child(w)
 	return w
 
@@ -76,6 +95,30 @@ func test_toggle_method() -> void:
 	assert_true(w.is_open())
 	w.toggle()
 	assert_false(w.is_open())
+
+
+# ── 调试模式门控 ────────────────────────────────────────────
+
+func test_slash_ignored_when_debug_disabled() -> void:
+	_facade.set_debug_mode(false)
+	var w: TerminalWidget = _create_widget()
+	w._input(_make_key_event(KEY_SLASH))
+	assert_false(w.is_open(), "调试模式关闭时 / 不应打开终端")
+
+
+func test_slash_opens_when_debug_enabled() -> void:
+	_facade.set_debug_mode(true)
+	var w: TerminalWidget = _create_widget()
+	w._input(_make_key_event(KEY_SLASH))
+	assert_true(w.is_open(), "调试模式开启时 / 应正常打开终端")
+
+
+func test_debug_disabled_closes_open_terminal() -> void:
+	var w: TerminalWidget = _create_widget()
+	w._input(_make_key_event(KEY_SLASH))
+	assert_true(w.is_open())
+	_facade.set_debug_mode(false)
+	assert_false(w.is_open(), "调试模式关闭应关闭已打开终端")
 
 
 # ── 本地指令 ────────────────────────────────────────────────

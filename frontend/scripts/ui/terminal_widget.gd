@@ -78,6 +78,9 @@ var _font_height: int = FONT_SIZE
 ## 本地指令注册表: name -> {"handler": Callable, "help": String}
 var _local_commands: Dictionary = {}
 
+## 测试注入的设置门面（Variant：settings.gd 无 class_name，动态派发）
+var _settings_override = null
+
 
 # ── 生命周期 ────────────────────────────────────────────────
 
@@ -94,6 +97,8 @@ func _ready() -> void:
 	register_command("clear", _cmd_clear, "clear - 清空终端输出")
 	_write_output("Ascend 调试终端")
 	_write_output("输入 help 查看指令列表，/ 切换终端")
+	if not _settings().debug_mode_changed.is_connected(_on_debug_mode_changed):
+		_settings().debug_mode_changed.connect(_on_debug_mode_changed)
 
 
 func _notification(what: int) -> void:
@@ -125,7 +130,7 @@ func _process(delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == Key.KEY_SLASH and not event.shift_pressed and not event.ctrl_pressed and not event.alt_pressed:
-			if not _is_open:
+			if _settings().get_debug_mode() and not _is_open:
 				toggle()
 				get_viewport().set_input_as_handled()
 			return
@@ -249,6 +254,21 @@ func _draw() -> void:
 
 
 # ── 公开接口 ────────────────────────────────────────────────
+
+## 测试用：注入独立设置门面（须在 add_child 前调用，_ready 取其信号）。
+func set_settings_override(override) -> void:
+	_settings_override = override
+
+
+func _settings():
+	return _settings_override if _settings_override != null else Settings
+
+
+## 调试模式关闭时强制关闭已打开的终端（EventLog 面板同理由门面广播触发隐藏）。
+func _on_debug_mode_changed(enabled: bool) -> void:
+	if not enabled and _is_open:
+		close()
+
 
 func open() -> void:
 	"""打开终端，占据全屏并捕获输入焦点。"""

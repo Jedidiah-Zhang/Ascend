@@ -13,6 +13,7 @@ extends Node
 signal display_changed
 signal locale_changed(locale: String)
 signal keybinds_changed
+signal debug_mode_changed(enabled: bool)
 
 var store: SettingsStore = null
 var keybinds: KeybindMap = null
@@ -83,6 +84,21 @@ func set_display(resolution: String, window_mode: String) -> void:
 	store.save()
 	SettingsApplier.apply_display(resolution, window_mode)
 	display_changed.emit()
+
+
+# ── 调试 ──────────────────────────────────────────────────
+
+## 调试模式：开启时控制台（/）与信息面板（F3）可用。
+func get_debug_mode() -> bool:
+	return bool(store.get_value("debug/debug_mode"))
+
+
+func set_debug_mode(enabled: bool) -> void:
+	if enabled == get_debug_mode():
+		return
+	store.set_value("debug/debug_mode", enabled)
+	store.save()
+	debug_mode_changed.emit(enabled)
 
 
 # ── 按键 ──────────────────────────────────────────────────

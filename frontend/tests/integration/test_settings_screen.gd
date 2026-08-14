@@ -29,6 +29,7 @@ func before_each() -> void:
 func after_each() -> void:
 	_screen.close()
 	_screen.queue_free()
+	_facade.free()
 	_facade = null
 	TranslationServer.set_locale(_prev_locale)
 	DirAccess.remove_absolute(TEST_PATH)
@@ -172,6 +173,26 @@ func test_reset_binds_restores_defaults() -> void:
 	assert_eq(_facade.keybinds.get_binds("interact"),
 		KeybindMap.default_binds()["interact"], "恢复默认应还原")
 	assert_eq(_row("interact").get_children().size(), 3, "键帽应重新出现")
+
+
+# ── 调试模式 ────────────────────────────────────────────────
+
+func test_debug_mode_checkbox_reflects_facade() -> void:
+	assert_true(_screen._debug_mode_check.button_pressed, "默认调试模式开启，复选框应勾选")
+	_facade.set_debug_mode(false)
+	_screen._refresh_debug_mode()
+	assert_false(_screen._debug_mode_check.button_pressed, "门面关闭后刷新应取消勾选")
+
+
+func test_debug_mode_toggle_persists() -> void:
+	watch_signals(_facade)
+	_screen._on_debug_mode_toggled(false)
+	assert_false(_facade.get_debug_mode(), "门面应更新调试模式")
+	assert_signal_emitted(_facade, "debug_mode_changed")
+
+	var reloaded := SettingsStore.new(TEST_PATH)
+	reloaded.load()
+	assert_eq(reloaded.get_value("debug/debug_mode"), false, "应落盘")
 
 
 # ── 语言切换时刷新 ──────────────────────────────────────────

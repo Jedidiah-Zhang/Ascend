@@ -151,6 +151,8 @@
   "ui.settings.tab.keys": "Controls",
   "ui.settings.tab.audio": "Audio",
   "ui.settings.language": "Language",
+  "ui.settings.debug_mode": "Debug Mode",
+  "ui.settings.debug_mode_hint": "When enabled, use / for the console and F3 to toggle the info panel",
   "ui.settings.resolution": "Resolution",
   "ui.settings.window_mode": "Window Mode",
   "ui.settings.mode.windowed": "Windowed",

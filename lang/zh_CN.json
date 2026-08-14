@@ -151,6 +151,8 @@
   "ui.settings.tab.keys": "按键",
   "ui.settings.tab.audio": "音频",
   "ui.settings.language": "语言",
+  "ui.settings.debug_mode": "调试模式",
+  "ui.settings.debug_mode_hint": "开启后可通过 / 打开控制台、F3 切换信息面板",
   "ui.settings.resolution": "分辨率",
   "ui.settings.window_mode": "窗口模式",
   "ui.settings.mode.windowed": "窗口化",
