@@ -89,7 +89,7 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
                 saved_grid = chunk_store.load_tiles(*coord)
                 if saved_grid is not None:
                     chunk = gen.generate_chunk(*coord)
-                    chunk.generate_tiles(saved_grid)
+                    chunk.restore_tiles(saved_grid)
                     coord_to_chunk[coord] = chunk
                     chunk_store.put(chunk)
                     if weather_engine is not None:

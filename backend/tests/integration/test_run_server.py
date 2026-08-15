@@ -208,3 +208,18 @@ def test_world_mode_valid_world_opens_port_then_graceful_stop(tmp_path) -> None:
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+def test_parse_args_regen_continent_flag() -> None:
+    """--regen-continent 布尔旗标解析（组合与缺省）。"""
+    import sys as _sys
+    _sys.path.insert(0, str(BACKEND_DIR))
+    from run_server import _parse_args
+
+    assert _parse_args(["--world-id", "w1", "--regen-continent"]) == (
+        "w1", None, None, None, True,
+    )
+    assert _parse_args(["--world-id", "w1"]) == (
+        "w1", None, None, None, False,
+    )
+    assert _parse_args([]) == (None, None, None, None, False)

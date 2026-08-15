@@ -23,10 +23,11 @@ from ascend.space.tile_grid import TileGrid
 
 GOLDEN_SEED = 20260806
 # 2026-08-06 首次固化；同日坐标单位统一（tile=格点 1:1）后重新固化一次
-# 2026-08-07 缓存格式 v3（序列化新增 land_ratio 字段）后重新固化一次
+# 2026-08-07 缓存格式新增 land_ratio 字段后重新固化一次
 # 2026-08-07 大陆轮廓层改为绝对频率（尺寸延伸而非缩放）后重新固化一次
 # 2026-08-11 温度语义统一（海域=海面温度、直减率仅陆地、开阔海洋无雨影）后重新固化一次
-GOLDEN_HASH = "c944dfdd8fbf8c77a269235c871e1dbdd71ecc15462e32c0c76e7542774d45ad"
+# 2026-08-15 缓存头部新增生成环境指纹字段（格式版本归 1；世界数值不变）后重新固化一次
+GOLDEN_HASH = "5e44818bd52e1f23d7b58f6fbc4f79ec8c06b71bbe00aea7d83c45e19cead666"
 
 
 def _pipeline_digest(seed: int) -> str:

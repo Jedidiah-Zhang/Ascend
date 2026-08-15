@@ -11,6 +11,7 @@
 """
 
 import os
+import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -37,12 +38,53 @@ from ascend.config import (
     MOISTURE_TILE_FREQUENCY as _MOISTURE_FREQ,
 )
 
+# 生成环境指纹覆盖的管线源码（相对 backend/ascend/space/）。
+# 开发环境源码在场：任一文件变更 → 指纹变化 → 加载时漂移告警。
+# 打包环境源码缺失：退化为 CONTINENT_GEN_VERSION（发布时递增）。
+_GEN_SOURCE_FILES: tuple[str, ...] = (
+    "continent.py", "hydrology.py", "streamlines.py", "climate.py", "noise.py",
+    "_hydrology.c", "_streamlines.c", "_perlin.c",
+)
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def compute_gen_fingerprint() -> str:
+    """当前生成环境的指纹（诊断用途，不参与缓存失效判定）。
+
+    组成：CONTINENT_GEN_CONSTANT_NAMES 所列 config 常量值 + 生成
+    管线源码内容（在场时）+ CONTINENT_GEN_VERSION（打包退位）。
+
+    Returns:
+        sha256 十六进制摘要。同环境同结果；任一常量/源码变化即变。
+    """
+    import hashlib
+
+    import ascend.config as config
+
+    h = hashlib.sha256()
+    for name in config.CONTINENT_GEN_CONSTANT_NAMES:
+        h.update(name.encode())
+        h.update(repr(getattr(config, name)).encode())
+    for rel in _GEN_SOURCE_FILES:
+        path = os.path.join(_HERE, rel)
+        try:
+            with open(path, "rb") as f:
+                h.update(f.read())
+        except OSError:
+            # 打包环境：源码不在包内，由 CONTINENT_GEN_VERSION 覆盖
+            pass
+    h.update(str(config.CONTINENT_GEN_VERSION).encode())
+    return h.hexdigest()
+
 
 class WorldGenerator:
     """世界生成器。
 
     封装噪声生成器和分块生成流程。
-    线程安全：除 _templates 缓存外无可变状态。
+    线程安全：_continent 由 _continent_lock 保护的单一创建入口
+    （_create_continent）惰性初始化——并发首触只生成一次，此后
+    只读无锁。其余属性构造后不变。
 
     用法:
         gen = WorldGenerator(seed=42)
@@ -61,6 +103,7 @@ class WorldGenerator:
         land_ratio: float | None = None,
         width_km: float | None = None,
         height_km: float | None = None,
+        ignore_cache: bool = False,
     ) -> None:
         """初始化世界生成器。
 
@@ -78,6 +121,9 @@ class WorldGenerator:
             width_km: 大陆东西宽度 (km)；None 用默认 100
                 （创建世界调参的地图尺寸，随档 gen_params 定案）。
             height_km: 大陆南北高度 (km)；None 用默认 60。
+            ignore_cache: True 时无视缓存强制重新生成（--regen-continent
+                / continent regen 语义）。对存档世界有破坏性：玩家改动的
+                chunk 数据与新场可能出现接缝不一致。
 
         参数归一化：None 一律落为 ContinentParams() 默认值，大陆是
         (seed, land_ratio, 尺寸) 的确定性函数，缓存校验与生成统一
@@ -86,7 +132,9 @@ class WorldGenerator:
         self._seed = seed
         self._executor = executor
         self._continent = None  # ContinentGenerator 惰性创建
+        self._continent_lock = threading.Lock()  # 单一创建入口的并发闸门
         self._continent_cache_path = continent_cache_path
+        self._ignore_cache = ignore_cache
         default_params = ContinentParams()
         self._land_ratio = (
             land_ratio if land_ratio is not None else default_params.land_ratio)
@@ -130,16 +178,10 @@ class WorldGenerator:
     ) -> "ContinentData":
         """主动生成并缓存宏观大陆数据，返回 ContinentData。
 
-        默认 get_altitude 是惰性生成，首次调用才跑（侵蚀慢）。
-        本方法强制预生成，供 GameEngine 在启动时主动触发，
-        并把 ContinentData 暴露给出生点选择 / TileGenerator。
-
-        磁盘缓存（<world_id>/continent.bin，由 GameEngine 传入路径）：
-        大陆宏观场是 seed 的确定性函数，生成耗时 5-30s；缓存随档分发，
-        命中直接反序列化恢复（秒级），缓存失效/损坏时重新生成并覆盖。
-
-        生成后补充沙漠档的 moisture 噪声动态值域（continent 生成时
-        无 moisture 噪声实例，此处补算）。
+        供 GameEngine 在启动时主动触发（首选方式：可带阶段进度
+        回调），并把 ContinentData 暴露给出生点选择 / TileGenerator。
+        惰性路径（get_altitude 首触）走同一创建入口（_create_continent），
+        两路径产出同一份大陆（含沙漠 moisture 动态值域与磁盘缓存）。
 
         Args:
             progress_cb: 可选阶段回调（ContinentGenerator.generate 的
@@ -148,58 +190,87 @@ class WorldGenerator:
         Returns:
             ContinentData 宏观场（缓存于 self._continent）。
         """
-        if self._continent is None:
-            # 尺寸由网格数 × cell_size 反推（序列化不存尺寸字段）：
-            # 缓存必须与期望尺寸一致，避免同 seed 不同尺寸的调参结果混入
-            cache_path = self._continent_cache_path
-            if cache_path:
-                self._continent = self._load_continent_cache(cache_path)
-                if (
-                    self._continent is not None
-                    and (
-                        self._continent.seed != self._seed
-                        or self._continent.land_ratio != self._land_ratio
-                        or abs(
-                            self._continent.grid_width
-                            * self._continent.cell_size / 1000.0
-                            - self._width_km
-                        ) > 1e-6
-                        or abs(
-                            self._continent.grid_height
-                            * self._continent.cell_size / 1000.0
-                            - self._height_km
-                        ) > 1e-6
-                    )
-                ):
-                    # 缓存属于其它种子/参数（如手动拷贝错档、缓存损坏、
-                    # 同 seed 不同 land_ratio/尺寸的调参结果混入）：
-                    # 视为未命中，重新生成并覆盖
-                    logger.warning(
-                        "大陆缓存参数不符（缓存=seed %d land %.3f "
-                        "%.1fx%.1fkm，期望=seed %d land %.3f %.1fx%.1fkm），"
-                        "重新生成: %s",
-                        self._continent.seed, self._continent.land_ratio,
-                        self._continent.grid_width
-                        * self._continent.cell_size / 1000.0,
-                        self._continent.grid_height
-                        * self._continent.cell_size / 1000.0,
-                        self._seed, self._land_ratio,
-                        self._width_km, self._height_km, cache_path,
-                    )
-                    self._continent = None
+        with self._continent_lock:
             if self._continent is None:
-                self._continent = ContinentGenerator(
-                    seed=self._seed, params=self._params,
-                ).generate(progress_cb=progress_cb)
-                self._supplement_moisture_range()
-                if cache_path:
-                    self._save_continent_cache(cache_path, self._continent)
-                logger.info("大陆生成完成: %s", self._continent)
-            else:
-                if progress_cb is not None:
-                    progress_cb(ContinentGenerator.STAGE_DONE)
-                logger.info("大陆从缓存恢复: %s", self._continent)
+                self._create_continent(progress_cb)
         return self._continent
+
+    def _create_continent(
+        self, progress_cb: "Callable[[str], None] | None",
+    ) -> None:
+        """大陆的单一创建入口（须持 _continent_lock 调用）。
+
+        ensure_continent 与 get_altitude 共用：磁盘缓存恢复/校验 →
+        未命中则生成 + 补充沙漠档 moisture 动态值域 + 落盘缓存。
+        保证任何首次触达路径产出同一份 _continent（缓存读写与
+        沙漠校准不因路径而异），并发首触由锁收敛为一次生成。
+        """
+        # 尺寸由网格数 × cell_size 反推（序列化不存尺寸字段）：
+        # 缓存必须与期望尺寸一致，避免同 seed 不同尺寸的调参结果混入
+        cache_path = self._continent_cache_path
+        if cache_path and not self._ignore_cache:
+            self._continent = self._load_continent_cache(cache_path)
+            if (
+                self._continent is not None
+                and (
+                    self._continent.seed != self._seed
+                    or self._continent.land_ratio != self._land_ratio
+                    or abs(
+                        self._continent.grid_width
+                        * self._continent.cell_size / 1000.0
+                        - self._width_km
+                    ) > 1e-6
+                    or abs(
+                        self._continent.grid_height
+                        * self._continent.cell_size / 1000.0
+                        - self._height_km
+                    ) > 1e-6
+                )
+            ):
+                # 缓存属于其它种子/参数（如手动拷贝错档、缓存损坏、
+                # 同 seed 不同 land_ratio/尺寸的调参结果混入）：
+                # 视为未命中，重新生成并覆盖
+                logger.warning(
+                    "大陆缓存参数不符（缓存=seed %d land %.3f "
+                    "%.1fx%.1fkm，期望=seed %d land %.3f %.1fx%.1fkm），"
+                    "重新生成: %s",
+                    self._continent.seed, self._continent.land_ratio,
+                    self._continent.grid_width
+                    * self._continent.cell_size / 1000.0,
+                    self._continent.grid_height
+                    * self._continent.cell_size / 1000.0,
+                    self._seed, self._land_ratio,
+                    self._width_km, self._height_km, cache_path,
+                )
+                self._continent = None
+            elif (
+                self._continent is not None
+                and self._continent.gen_fingerprint
+                and self._continent.gen_fingerprint
+                != compute_gen_fingerprint()
+            ):
+                # 生成环境漂移：沿用缓存（世界保持创建时样貌——
+                # 每个存档的大陆在创建时定案），仅告警——调参验证
+                # 请新建世界或 continent regen / --regen-continent
+                # 强制重建。
+                logger.warning(
+                    "大陆缓存生成环境与当前算法/参数不一致（世界保持"
+                    "创建时样貌，派生层按当前算法解释；调参验证请"
+                    "新建世界，或 continent regen 强制重建）: %s",
+                    cache_path,
+                )
+        if self._continent is None:
+            self._continent = ContinentGenerator(
+                seed=self._seed, params=self._params,
+            ).generate(progress_cb=progress_cb)
+            self._supplement_moisture_range()
+            if cache_path:
+                self._save_continent_cache(cache_path, self._continent)
+            logger.info("大陆生成完成: %s", self._continent)
+        else:
+            if progress_cb is not None:
+                progress_cb(ContinentGenerator.STAGE_DONE)
+            logger.info("大陆从缓存恢复: %s", self._continent)
 
     # ── 大陆磁盘缓存 ──────────────────────────────────────
 
@@ -217,7 +288,8 @@ class WorldGenerator:
         return data
 
     def _save_continent_cache(self, path: str, data: "ContinentData") -> None:
-        """序列化大陆宏观场到磁盘（原子写，生成算法变更时覆盖）。"""
+        """序列化大陆宏观场到磁盘（原子写），记录生成环境指纹。"""
+        data.gen_fingerprint = compute_gen_fingerprint()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
         with open(tmp, "wb") as f:
@@ -261,6 +333,9 @@ class WorldGenerator:
     def get_altitude(self, world_x: float, world_y: float) -> float:
         """查询任意世界坐标的构造海拔。
 
+        首触时经统一创建入口惰性生成大陆（与 ensure_continent 同构：
+        缓存读写 + 沙漠 moisture 动态值域补齐，锁内单次生成）。
+
         Args:
             world_x: 世界 tile X。
             world_y: 世界 tile Y。
@@ -269,9 +344,9 @@ class WorldGenerator:
             海拔 (m)。
         """
         if self._continent is None:
-            self._continent = ContinentGenerator(
-                seed=self._seed, params=self._params,
-            ).generate()
+            with self._continent_lock:
+                if self._continent is None:
+                    self._create_continent(None)
         return self._continent.sample_altitude(world_x, world_y)
 
     def _sample_altitude_at_chunk(self, cx: int, cy: int) -> float:

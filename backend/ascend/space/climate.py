@@ -17,7 +17,8 @@ from enum import IntEnum
 class ClimateZone(IntEnum):
     """8 档气候类型 — 由年均温、年降雨量、海拔纯静态判定。
 
-    判定顺序（见 classify）：
+    判定顺序（见 classify；下列数值为 config 默认值，运行期阈值
+    由 config 注入 C 层，以 config 为准）：
       海拔 ≥2000 → ALPINE
       温度 <-5   → POLAR_TUNDRA
       降雨 <200  → DESERT
@@ -262,7 +263,8 @@ def classify(
 ) -> ClimateZone:
     """由年均温、年降雨量、海拔纯静态判定气候档位（绑定 C）。
 
-    判定顺序（前者优先）：
+    判定顺序（前者优先；下列数值为 config 默认值，运行期阈值
+    由 config 注入 C 层，以 config 为准）：
       1. 海拔 ≥ 2000m → ALPINE（覆盖纬度气候，高山独立）
       2. 温度 < -5°C → POLAR_TUNDRA（极地，不论降雨）
       3. 降雨 < 200mm → DESERT（极端干旱，不论温暖）
@@ -271,9 +273,10 @@ def classify(
       6. 温度 ≥ 5°C → TEMPERATE_FOREST
       7. -5≤T<5°C → SUBARCTIC_TAIGA（R≥400）/ POLAR_TUNDRA（冷干合并）
 
-    实现本体在 _hydrology.c（hydrology_classify，阈值 #define 镜像
-    ascend.config），此处仅为 ctypes 绑定——单源 C，无 Python 侧
-    双实现。纯函数，线程安全。
+    实现本体在 _hydrology.c（hydrology_classify）。判定阈值单一
+    事实源在 ascend/config.py，由 hydrology 模块导入期注入 C
+    （apply_config_climate_constants），C 侧无阈值副本；此处仅为
+    ctypes 绑定——单源 C，无 Python 侧双实现。纯函数，线程安全。
 
     Args:
         mean_temp: 年均温度 (°C)。

@@ -178,14 +178,43 @@ class TestClimateZone:
         """高山海拔覆盖热带纬度气候。"""
         assert classify(30.0, 3000.0, 2500.0) == ClimateZone.ALPINE
 
-    def test_c_ext_classify_consistent_with_python(self):
-        """C 端 classify 绑定全范围冒烟（单源 C 后的一致性回归锁）。
+    def test_classify_matches_python_reference(self):
+        """C 分类与独立 Python 参考实现逐点一致（参考读 config 常量）。
 
-        climate.classify 现为 _hydrology.c（hydrology_classify）的
-        ctypes 绑定，无 Python 侧双实现；本测试以全范围扫描锁定
-        绑定返回值在 8 档枚举内且与 IntEnum 自洽。
+        防护：C 侧阈值由 config 经导入期注入，本测试以独立参考
+        实现锁定判定树结构与数值——config 变更后参考同步、C 经
+        注入同步，任一侧漂移都会红。
         """
+        from ascend.config import (
+            ALPINE_ALTITUDE, POLAR_TEMP, DESERT_RAINFALL,
+            STEPPE_RAINFALL, STEPPE_MIN_TEMP, TROPICAL_TEMP,
+            TEMPERATE_TEMP, RAINFOREST_RAINFALL, TAIGA_RAINFALL,
+        )
         from ascend.space.hydrology import classify_climate_c
+
+        def reference(temp: float, rain: float, alt: float) -> int:
+            if alt >= ALPINE_ALTITUDE:
+                return int(ClimateZone.ALPINE)
+            if temp < POLAR_TEMP:
+                return int(ClimateZone.POLAR_TUNDRA)
+            if rain < DESERT_RAINFALL:
+                return int(ClimateZone.DESERT)
+            if rain < STEPPE_RAINFALL and temp > STEPPE_MIN_TEMP:
+                return int(ClimateZone.STEPPE)
+            if temp >= TROPICAL_TEMP:
+                return int(
+                    ClimateZone.EQUATORIAL_RAINFOREST
+                    if rain >= RAINFOREST_RAINFALL
+                    else ClimateZone.TROPICAL_SAVANNA
+                )
+            if temp >= TEMPERATE_TEMP:
+                return int(ClimateZone.TEMPERATE_FOREST)
+            return int(
+                ClimateZone.SUBARCTIC_TAIGA
+                if rain >= TAIGA_RAINFALL
+                else ClimateZone.POLAR_TUNDRA
+            )
+
         temps = [-30.0, -12.0, -5.0, -4.9, 0.0, 4.9, 5.0, 8.0, 19.9,
                  20.0, 24.0, 36.0, 40.0]
         rains = [0.0, 100.0, 199.9, 200.0, 400.0, 599.9, 600.0, 800.0,
@@ -194,11 +223,48 @@ class TestClimateZone:
         for temp in temps:
             for rain in rains:
                 for alt in alts:
-                    c = classify_climate_c(temp, rain, alt)
-                    assert int(classify(temp, rain, alt)) == c, (
-                        f"绑定不一致: temp={temp} rain={rain} alt={alt}"
+                    got = classify_climate_c(temp, rain, alt)
+                    assert got == reference(temp, rain, alt), (
+                        f"分类不一致: temp={temp} rain={rain} alt={alt}"
                     )
-                    assert 0 <= c <= 7, f"分类越界: {c}"
+                    assert 0 <= got <= 7, f"分类越界: {got}"
+
+    def test_climate_constants_injection(self):
+        """C 侧气候常量由 config 注入：运行时修改即刻生效，可重置。
+
+        防护：C 不再内置阈值副本——改 config 常量无需重编译，
+        classify/lapse_rate 行为随注入值变化。
+        """
+        from ascend.space.hydrology import (
+            apply_config_climate_constants,
+            apply_lapse_rate_c,
+            set_climate_constants,
+        )
+        try:
+            # 高山阈值哨兵：2000 → 3000 后原 ALPINE 点落回热带档
+            assert classify(25.0, 1000.0, 2500.0) == ClimateZone.ALPINE
+            set_climate_constants(
+                lapse_rate=9.0, rainfall_min=50.0, rainfall_max=3500.0,
+                alpine_altitude=3000.0, polar_temp=-5.0, desert_rainfall=200.0,
+                steppe_rainfall=600.0, steppe_min_temp=5.0, tropical_temp=20.0,
+                temperate_temp=5.0, rainforest_rainfall=1500.0,
+                taiga_rainfall=400.0,
+            )
+            assert classify(25.0, 1000.0, 2500.0) == ClimateZone.TROPICAL_SAVANNA
+
+            # 直减率哨兵：0 → 温度不随海拔下降
+            assert abs(apply_lapse_rate_c(20.0, 1000.0) - 11.0) < 1e-9
+            set_climate_constants(
+                lapse_rate=0.0, rainfall_min=50.0, rainfall_max=3500.0,
+                alpine_altitude=3000.0, polar_temp=-5.0, desert_rainfall=200.0,
+                steppe_rainfall=600.0, steppe_min_temp=5.0, tropical_temp=20.0,
+                temperate_temp=5.0, rainforest_rainfall=1500.0,
+                taiga_rainfall=400.0,
+            )
+            assert abs(apply_lapse_rate_c(20.0, 1000.0) - 20.0) < 1e-9
+        finally:
+            apply_config_climate_constants()
+        assert classify(25.0, 1000.0, 2500.0) == ClimateZone.ALPINE
 
     def test_polar_overrides_desert(self):
         """极地严寒优先于沙漠干旱判定。"""
@@ -480,7 +546,7 @@ class TestChunkData:
         assert c.tile_grid.get(50, 50) == TerrainType.GRASSLAND
 
     def test_unload_tiles(self):
-        """卸载 tile 释放内存。"""
+        """clean chunk 卸载 tile 释放内存，返回 True。"""
         c = ChunkData(
             cx=0, cy=0,
             biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
@@ -490,9 +556,64 @@ class TestChunkData:
         grid = TileGrid()
         c.generate_tiles(grid)
         assert c.has_tiles
-        c.unload_tiles()
+        assert c.unload_tiles() is True
         assert not c.has_tiles
         assert c.tile_grid is None
+
+    def test_unload_tiles_refuses_dirty(self):
+        """脏 chunk 拒绝卸载网格（未落盘的玩家改动不可丢弃）。"""
+        c = ChunkData(
+            cx=0, cy=0,
+            biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
+            climate_zone=ClimateZone.TEMPERATE_FOREST,
+            annual_baseline=WeatherParams(15, 800, 10, 200, 60, 5),
+        )
+        grid = TileGrid()
+        c.generate_tiles(grid)
+        c.dirty = True
+        assert c.unload_tiles() is False
+        assert c.has_tiles
+        assert c.tile_grid is grid
+
+    def test_generate_tiles_refuses_dirty(self):
+        """脏 chunk 拒绝覆盖网格（覆盖即丢弃未落盘改动）。"""
+        c = ChunkData(
+            cx=0, cy=0,
+            biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
+            climate_zone=ClimateZone.TEMPERATE_FOREST,
+            annual_baseline=WeatherParams(15, 800, 10, 200, 60, 5),
+        )
+        c.generate_tiles(TileGrid())
+        c.dirty = True
+        with pytest.raises(ValueError):
+            c.generate_tiles(TileGrid())
+
+    def test_restore_tiles_marks_dirty(self):
+        """从持久化恢复网格的 chunk 自动标记为脏（库中行 = 玩家改动）。"""
+        c = ChunkData(
+            cx=0, cy=0,
+            biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
+            climate_zone=ClimateZone.TEMPERATE_FOREST,
+            annual_baseline=WeatherParams(15, 800, 10, 200, 60, 5),
+        )
+        grid = TileGrid()
+        c.restore_tiles(grid)
+        assert c.has_tiles
+        assert c.tile_grid is grid
+        assert c.dirty
+
+    def test_restore_tiles_refuses_dirty(self):
+        """脏 chunk 拒绝恢复网格（与 generate_tiles 同一守卫）。"""
+        c = ChunkData(
+            cx=0, cy=0,
+            biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
+            climate_zone=ClimateZone.TEMPERATE_FOREST,
+            annual_baseline=WeatherParams(15, 800, 10, 200, 60, 5),
+        )
+        c.generate_tiles(TileGrid())
+        c.dirty = True
+        with pytest.raises(ValueError):
+            c.restore_tiles(TileGrid())
 
     def test_markers(self):
         """标记的添加和移除。"""

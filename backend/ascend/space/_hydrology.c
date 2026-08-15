@@ -769,32 +769,56 @@ void hydrology_rain_shadow_omnidirectional(
 
 /* ── compute_climate ──────────────────────────────────────── */
 
-/* climate classification constants */
-#define LAPSE_RATE 9.0
-#define RAINFALL_MIN 50.0
-#define RAINFALL_MAX 3500.0
-#define ALPINE_ALT 2000.0
-#define POLAR_TEMP -5.0
-#define DESERT_RAIN 200.0
-#define STEPPE_RAIN 600.0
-#define STEPPE_MIN_T 5.0
-#define TROPICAL_T 20.0
-#define TEMPERATE_T 5.0
-#define RAINFOREST_RAIN 1500.0
-#define TAIGA_RAIN 400.0
+/* 气候常量：单一事实源在 ascend/config.py，经
+   hydrology_set_climate_constants 于导入期注入（hydrology.py）。
+   未注入时保持 0——hydrology.py 与扩展加载同一导入路径，
+   加载后立即注入，无遗漏窗口。 */
+
+static double g_lapse_rate;
+static double g_rainfall_min;
+static double g_rainfall_max;
+static double g_alpine_alt;
+static double g_polar_temp;
+static double g_desert_rain;
+static double g_steppe_rain;
+static double g_steppe_min_t;
+static double g_tropical_t;
+static double g_temperate_t;
+static double g_rainforest_rain;
+static double g_taiga_rain;
+
+void hydrology_set_climate_constants(
+    double lapse_rate, double rainfall_min, double rainfall_max,
+    double alpine_alt, double polar_temp, double desert_rain,
+    double steppe_rain, double steppe_min_t, double tropical_t,
+    double temperate_t, double rainforest_rain, double taiga_rain)
+{
+    g_lapse_rate = lapse_rate;
+    g_rainfall_min = rainfall_min;
+    g_rainfall_max = rainfall_max;
+    g_alpine_alt = alpine_alt;
+    g_polar_temp = polar_temp;
+    g_desert_rain = desert_rain;
+    g_steppe_rain = steppe_rain;
+    g_steppe_min_t = steppe_min_t;
+    g_tropical_t = tropical_t;
+    g_temperate_t = temperate_t;
+    g_rainforest_rain = rainforest_rain;
+    g_taiga_rain = taiga_rain;
+}
 
 static int classify_climate(double temp, double rainfall, double altitude) {
-    /* 8-zone climate classification, mirrors climate.py:classify() */
-    if (altitude >= ALPINE_ALT) return 7;        /* ALPINE */
-    if (temp < POLAR_TEMP) return 6;              /* POLAR_TUNDRA */
-    if (rainfall < DESERT_RAIN) return 2;          /* DESERT */
-    if (rainfall < STEPPE_RAIN && temp > STEPPE_MIN_T) return 3; /* STEPPE */
-    if (temp >= TROPICAL_T) {
-        if (rainfall >= RAINFOREST_RAIN) return 0;  /* EQUATORIAL_RAINFOREST */
+    /* 8-zone climate classification（阈值经 set_climate_constants 注入） */
+    if (altitude >= g_alpine_alt) return 7;        /* ALPINE */
+    if (temp < g_polar_temp) return 6;              /* POLAR_TUNDRA */
+    if (rainfall < g_desert_rain) return 2;          /* DESERT */
+    if (rainfall < g_steppe_rain && temp > g_steppe_min_t) return 3; /* STEPPE */
+    if (temp >= g_tropical_t) {
+        if (rainfall >= g_rainforest_rain) return 0;  /* EQUATORIAL_RAINFOREST */
         return 1;                                  /* TROPICAL_SAVANNA */
     }
-    if (temp >= TEMPERATE_T) return 4;             /* TEMPERATE_FOREST */
-    if (rainfall >= TAIGA_RAIN) return 5;           /* SUBARCTIC_TAIGA */
+    if (temp >= g_temperate_t) return 4;             /* TEMPERATE_FOREST */
+    if (rainfall >= g_taiga_rain) return 5;           /* SUBARCTIC_TAIGA */
     return 6;                                      /* POLAR_TUNDRA */
 }
 
@@ -814,19 +838,20 @@ double hydrology_sea_level_temperature(double latitude_noise) {
 
 double hydrology_rainfall_from_noise(double rain_noise) {
     /* 降雨噪声 → 年降雨量（clamp [0, 5000]） */
-    double r = RAINFALL_MIN + (rain_noise + 1.0) * 0.5 * (RAINFALL_MAX - RAINFALL_MIN);
+    double r = g_rainfall_min + (rain_noise + 1.0) * 0.5 * (g_rainfall_max - g_rainfall_min);
     if (r < 0.0) r = 0.0;
     if (r > 5000.0) r = 5000.0;
     return r;
 }
 
 double hydrology_apply_lapse_rate(double sea_level_temp, double altitude) {
-    /* 气温直减率：海拔每升高 1000m 温度下降 LAPSE_RATE °C。
+    /* 气温直减率：海拔每升高 1000m 温度下降 g_lapse_rate °C
+       （g_lapse_rate 由 config 经 set_climate_constants 注入）。
        与 compute_climate 统一语义：直减率仅作用于陆地（altitude>0），
        海域返回海面温度本身（无深度伪影）；陆地 clamp [-20, 36]。 */
     double t = sea_level_temp;
     if (altitude > 0.0) {
-        t -= altitude * LAPSE_RATE / 1000.0;
+        t -= altitude * g_lapse_rate / 1000.0;
         if (t < -20.0) t = -20.0;
         if (t > 36.0) t = 36.0;
     }
@@ -860,7 +885,7 @@ void hydrology_compute_climate(
     */
     double inv_w = 1.0 / (double)w;
     double inv_h = 1.0 / (double)h;
-    double lapse = LAPSE_RATE / 1000.0;
+    double lapse = g_lapse_rate / 1000.0;
     int n = w * h;
 
     for (int i = 0; i < n; i++) {

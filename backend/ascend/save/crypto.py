@@ -9,7 +9,9 @@
     藏进 manifest.json 的 secrets_blob 字段——普通工具看到的只是乱码；
   - world_id/seed 本身在 manifest 明文，派生密钥可被推算，因此这只是
     混淆层（防直读/防手贱），不是真实加密（真实加密见 PBKDF2 用户密码方案）；
-  - 防篡改的真实防线是 HMAC（decrypt 先验签名）。
+  - 防篡改的真实防线是 HMAC（decrypt 先验签名）；
+  - lineage.json（快照血缘）明文可读，以同一 sign_key 独立签名
+    （见 lineage.py）——与存档文件同级：防直读/防手贱，不防推导。
 
 文件加密格式:
     HMAC_SHA256(ciphertext) || ciphertext
@@ -19,6 +21,10 @@
 
 密钥生成: 每存档自动生成 32 字节 Fernet 密钥 + 32 字节签名密钥，
 加密后藏于 manifest.secrets_blob（随档分发，可移植）。
+
+快照文件（.ascendsave）的会话钥匙同样经 protect 混淆后藏入
+快照头部 secrets_blob（world_id/seed 明文在头部，为解锁派生
+输入）——与存档位同级：防直读/防手贱，不防推导。
 """
 
 import base64
@@ -104,6 +110,10 @@ class SaveKeys:
     def sign_bytes(self, data: bytes) -> bytes:
         """独立签名（供非加密文件做完整性校验）。"""
         return hmac.new(self.sign_key, data, hashlib.sha256).digest()
+
+    def verify_bytes(self, data: bytes, sig: bytes) -> bool:
+        """校验独立签名（sign_bytes 的对称操作，恒时比较）。"""
+        return hmac.compare_digest(self.sign_bytes(data), sig)
 
     # ── 密钥管理 ──────────────────────────────────────────
 

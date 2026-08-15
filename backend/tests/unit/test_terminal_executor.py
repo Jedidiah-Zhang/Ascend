@@ -1213,3 +1213,81 @@ class TestRepr:
         r = repr(executor)
         assert "CommandExecutor" in r
         assert "×1.0" in r
+
+
+class TestContinentCommand:
+    """continent status / regen 指令测试。"""
+
+    def _executor_with(self, clock, calendar, i18n, tmp_path, fp="cur-fp"):
+        return CommandExecutor(
+            clock=clock, calendar=calendar, i18n=i18n,
+            continent_path=str(tmp_path / "continent.bin"),
+            gen_fingerprint_fn=lambda: fp,
+        )
+
+    @staticmethod
+    def _write_cache(path, fp: str) -> None:
+        """写入仅含头部的最小合法缓存（read_continent_header 只解析头部）。"""
+        import struct
+        import zlib
+
+        from ascend.space.continent import CONTINENT_CACHE_VERSION
+        head = (
+            b"ASCNT" + struct.pack("<B", CONTINENT_CACHE_VERSION)
+            + struct.pack("<i", len(fp)) + fp.encode()
+        )
+        path.write_bytes(zlib.compress(head))
+
+    def test_status_no_save_mode(self, clock, calendar, i18n):
+        """无存档模式（未注入 continent_path）：明确报不可用。"""
+        ex = CommandExecutor(clock=clock, calendar=calendar, i18n=i18n)
+        r = ex.execute("continent status")
+        assert r.success is False
+        assert "没有大陆记录" in r.output
+
+    def test_status_no_cache_file(self, clock, calendar, i18n, tmp_path):
+        """缓存文件不存在：报告并提示下次进入生成。"""
+        ex = self._executor_with(clock, calendar, i18n, tmp_path)
+        r = ex.execute("continent status")
+        assert r.success is True
+        assert "尚未记录" in r.output
+
+    def test_status_drift_detected(self, clock, calendar, i18n, tmp_path):
+        """缓存指纹与当前生成环境不一致：输出漂移提示。"""
+        ex = self._executor_with(clock, calendar, i18n, tmp_path, fp="cur-fp")
+        self._write_cache(tmp_path / "continent.bin", "old-fp")
+        r = ex.execute("continent status")
+        assert r.success is True
+        assert "法则" in r.output
+
+    def test_status_match(self, clock, calendar, i18n, tmp_path):
+        """缓存指纹与当前生成环境一致：报告一致。"""
+        ex = self._executor_with(clock, calendar, i18n, tmp_path, fp="cur-fp")
+        self._write_cache(tmp_path / "continent.bin", "cur-fp")
+        r = ex.execute("continent status")
+        assert r.success is True
+        assert "一致" in r.output
+
+    def test_regen_removes_cache(self, clock, calendar, i18n, tmp_path):
+        """regen 删除缓存文件并提示重新进入生效。"""
+        ex = self._executor_with(clock, calendar, i18n, tmp_path)
+        path = tmp_path / "continent.bin"
+        self._write_cache(path, "old-fp")
+        r = ex.execute("continent regen")
+        assert r.success is True
+        assert "已清除" in r.output
+        assert not path.exists()
+
+    def test_regen_missing_cache(self, clock, calendar, i18n, tmp_path):
+        """regen 对不存在的缓存报告无需删除。"""
+        ex = self._executor_with(clock, calendar, i18n, tmp_path)
+        r = ex.execute("continent regen")
+        assert r.success is True
+        assert "可清除" in r.output
+
+    def test_unknown_subcommand(self, clock, calendar, i18n, tmp_path):
+        """未知子命令返回用法提示。"""
+        ex = self._executor_with(clock, calendar, i18n, tmp_path)
+        r = ex.execute("continent frobnicate")
+        assert r.success is False
+        assert "用法" in r.output

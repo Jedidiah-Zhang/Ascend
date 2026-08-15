@@ -24,6 +24,16 @@ bash build/build_release.sh linux     # 或单平台
 发布：`git tag v<版本> && bash build/ci/publish_release.sh`（版本化命名上传
 GitHub Releases，本地不留历史产物）。
 
+**发布清单（生成算法变更时）**：若本版本改了大陆生成算法或
+`config.py` 中影响宏观场的常量（见 `CONTINENT_GEN_CONSTANT_NAMES`），
+递增 `ascend/config.py` 的 `CONTINENT_GEN_VERSION`——打包环境的
+大陆缓存漂移诊断依赖它（开发环境靠源码哈希自动覆盖，无需维护）。
+
+**发布清单（C 扩展变更时）**：改了 `backend/ascend/space/_*.c` 后，
+须重建各平台二进制（Linux `.so` / Windows `.dll`，见 `nuitka/`
+构建脚本）——本地 `.dll` 等旧构建不含新符号，Windows 打包前不
+重建会导致符号缺失。
+
 ## CI 打包后端（研究平台发行）
 
 前端为闭源商业资产（`frontend/assets/` 不入库），CI 不参与前端构建；

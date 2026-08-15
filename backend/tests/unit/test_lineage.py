@@ -1,7 +1,8 @@
 """LineageStore 单元测试 — 血缘文件读写与条目维护原语。
 
-覆盖 ascend/save/lineage.py：load 的缺失/损坏/非 dict 分支、
-get 的归一化、record_snapshot 的 parent/seq 语义、write 失败契约。
+覆盖 ascend/save/lineage.py：签名格式的 load 验签（严格模式：
+无签名/篡改/无密钥 = 损坏）、get 的归一化、record_snapshot 的
+parent/seq 语义、write 失败契约。
 """
 
 import json
@@ -9,12 +10,30 @@ import os
 
 import pytest
 
+from ascend.save.crypto import SaveKeys
 from ascend.save.lineage import LineageStore, LINEAGE_FILE
 
 
 @pytest.fixture()
-def store(tmp_path) -> LineageStore:
-    """隔离的血缘存储。"""
+def keys() -> SaveKeys:
+    """固定的世界签名密钥。"""
+    return SaveKeys.generate()
+
+
+@pytest.fixture()
+def store(tmp_path, keys) -> LineageStore:
+    """带密钥提供者的血缘存储（SaveManager 注入同构）。"""
+    root = str(tmp_path / "saves")
+
+    def _keys(_world_id: str) -> SaveKeys:
+        return keys
+
+    return LineageStore(root=root, keys_provider=_keys)
+
+
+@pytest.fixture()
+def store_no_keys(tmp_path) -> LineageStore:
+    """无密钥提供者的血缘存储（读写全部降级）。"""
     return LineageStore(root=str(tmp_path / "saves"))
 
 
@@ -31,14 +50,14 @@ def _write_lineage_file(store: LineageStore, world_id: str, data: dict) -> None:
 
 
 class TestLoad:
-    """load：缺失/损坏/非 dict 的区分。"""
+    """load：缺失/损坏/无签名/篡改/验签通过的区分（严格模式）。"""
 
     def test_load_missing_returns_none(self, store) -> None:
         """文件不存在 → None（区分「世界尚无血缘」与「损坏」）。"""
         assert store.load("a" * 32) is None
 
-    def test_load_corrupt_returns_none(self, store, tmp_path) -> None:
-        """JSON 损坏 → None（按空血缘处理，防反向对账误删）。"""
+    def test_load_corrupt_returns_none(self, store) -> None:
+        """JSON 损坏 → None（按损坏处理，防反向对账误删）。"""
         world_id = "b" * 32
         path = store.lineage_path(world_id)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -52,36 +71,91 @@ class TestLoad:
         _write_lineage_file(store, world_id, [1, 2, 3])
         assert store.load(world_id) is None
 
-    def test_load_returns_dict(self, store) -> None:
-        """正常文件原样返回。"""
+    def test_load_unsigned_returns_none(self, store) -> None:
+        """历史无签名格式（合法 JSON）→ None（严格：不兼容、不信任）。"""
         world_id = "d" * 32
-        _write_lineage_file(store, world_id, {"live_origin": "", "snapshots": {}})
-        assert store.load(world_id) == {"live_origin": "", "snapshots": {}}
+        _write_lineage_file(
+            store, world_id, {"live_origin": "", "snapshots": {}},
+        )
+        assert store.load(world_id) is None
+
+    def test_load_tampered_data_returns_none(self, store) -> None:
+        """data 被改（签名不匹配）→ None。"""
+        world_id = "e" * 32
+        _world_dir_ready(store, world_id)
+        lineage = {"live_origin": "@x-auto.ascendsave", "snapshots": {}}
+        assert store.write(world_id, lineage)
+        path = store.lineage_path(world_id)
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+        payload["data"]["live_origin"] = "@hacked-auto.ascendsave"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        assert store.load(world_id) is None
+
+    def test_load_tampered_sig_returns_none(self, store) -> None:
+        """sig 被改 → None。"""
+        world_id = "f" * 32
+        _world_dir_ready(store, world_id)
+        assert store.write(world_id, {"live_origin": "", "snapshots": {}})
+        path = store.lineage_path(world_id)
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+        payload["sig"] = "A" * 44
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        assert store.load(world_id) is None
+
+    def test_load_without_keys_returns_none(self, store_no_keys) -> None:
+        """密钥不可用 → 无法验签 → None（宁缺勿删）。"""
+        world_id = "g" * 32
+        store = store_no_keys
+        _world_dir_ready(store, world_id)
+        _write_lineage_file(
+            store, world_id, {"data": {"live_origin": ""}, "sig": "x"},
+        )
+        assert store.load(world_id) is None
+
+    def test_load_verifies_signed_file(self, store) -> None:
+        """store 写入的签名文件可验签读回。"""
+        world_id = "h" * 32
+        _world_dir_ready(store, world_id)
+        lineage = {"live_origin": "@x.ascendsave", "snapshots": {}}
+        assert store.write(world_id, lineage)
+        assert store.load(world_id) == lineage
 
 
 class TestGet:
-    """get：空血缘默认值 + 字段归一化。"""
+    """get：空血缘默认值 + 字段归一化（基于验签通过的签名文件）。"""
 
     def test_get_empty_default(self, store) -> None:
         """无文件 → 空血缘默认结构（不改动调用方期望的字段）。"""
-        assert store.get("e" * 32) == {"live_origin": "", "snapshots": {}}
+        assert store.get("i" * 32) == {"live_origin": "", "snapshots": {}}
+
+    def test_get_empty_when_unverifiable(self, store) -> None:
+        """无签名/损坏 → 空血缘（调用方降级路径）。"""
+        world_id = "j" * 32
+        _write_lineage_file(store, world_id, {"live_origin": "@x", "snapshots": {}})
+        assert store.get(world_id) == {"live_origin": "", "snapshots": {}}
 
     def test_get_normalizes_missing_fields(self, store) -> None:
         """缺字段补齐；snapshots 非 dict 归一化为空。"""
-        world_id = "f" * 32
-        _write_lineage_file(store, world_id, {"snapshots": "not-a-dict"})
+        world_id = "k" * 32
+        _world_dir_ready(store, world_id)
+        assert store.write(world_id, {"snapshots": "not-a-dict"})
         data = store.get(world_id)
         assert data["live_origin"] == ""
         assert data["snapshots"] == {}
 
     def test_get_preserves_existing_data(self, store) -> None:
         """既有血缘内容保留。"""
-        world_id = "g" * 32
+        world_id = "l" * 32
+        _world_dir_ready(store, world_id)
         original = {
             "live_origin": "@x-auto.ascendsave",
             "snapshots": {"@x-auto.ascendsave": {"parent": "", "seq": 0}},
         }
-        _write_lineage_file(store, world_id, original)
+        assert store.write(world_id, original)
         assert store.get(world_id) == original
 
 
@@ -90,7 +164,7 @@ class TestRecordSnapshot:
 
     def test_record_first_snapshot(self, store) -> None:
         """首个条目：parent=""、seq=0、live_origin 指向新文件。"""
-        world_id = "h" * 32
+        world_id = "m" * 32
         _world_dir_ready(store, world_id)
         ok = store.record_snapshot(world_id, "@1-auto.ascendsave", 100, 1.0)
         assert ok
@@ -103,7 +177,7 @@ class TestRecordSnapshot:
 
     def test_record_chains_and_increments_seq(self, store) -> None:
         """连续记录：parent 指向上一来源，seq 单调递增（删除后仍递增）。"""
-        world_id = "i" * 32
+        world_id = "n" * 32
         _world_dir_ready(store, world_id)
         store.record_snapshot(world_id, "@1-manual.ascendsave", 100, 1.0)
         store.record_snapshot(world_id, "@2-auto.ascendsave", 200, 2.0)
@@ -122,27 +196,37 @@ class TestRecordSnapshot:
 
     def test_record_write_failure_returns_false(self, store, monkeypatch) -> None:
         """写入失败（磁盘错误）→ False，血缘未变更。"""
-        world_id = "j" * 32
+        world_id = "o" * 32
         monkeypatch.setattr(store, "write", lambda w, d: False)
         assert store.record_snapshot(world_id, "@1.ascendsave", 0, 0.0) is False
 
 
 class TestWrite:
-    """write：原子写入与失败契约。"""
+    """write：签名写入与失败契约。"""
 
     def test_write_persists_lineage(self, store) -> None:
-        """写入后 load 可读回。"""
-        world_id = "k" * 32
+        """写入后 load 可验签读回。"""
+        world_id = "p" * 32
         _world_dir_ready(store, world_id)
         lineage = {"live_origin": "@1.ascendsave", "snapshots": {}}
         assert store.write(world_id, lineage) is True
         assert store.load(world_id) == lineage
 
+    def test_write_without_keys_returns_false(self, store_no_keys) -> None:
+        """密钥不可用 → 不写无签名文件，返回 False。"""
+        store = store_no_keys
+        world_id = "q" * 32
+        _world_dir_ready(store, world_id)
+        assert store.write(world_id, {"live_origin": "", "snapshots": {}}) is False
+        assert not os.path.isfile(store.lineage_path(world_id))
+
     def test_write_failure_returns_false(self, store, monkeypatch) -> None:
         """写入异常（如目录只读）→ False 而非抛异常。"""
-        world_id = "l" * 32
+        world_id = "r" * 32
         monkeypatch.setattr(
             "ascend.save.lineage.atomic_write",
             lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")),
         )
         assert store.write(world_id, {}) is False
+
+

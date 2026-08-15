@@ -1676,3 +1676,100 @@ class TestWorldTreeTileQuery:
             (0, 0), radius=1, center_tile=(10, 10), sub_radius=0,
         )
         assert len(results) == 2  # 周边 chunk 不过滤 sub-cell
+
+    def test_tile_query_consistent_across_trim(self):
+        """sub-cell 过滤在事件归档后结果不变（trim 前后等价）。
+
+        防护：归档查询路径必须与内存路径执行同一 sub-cell 过滤，
+        否则同一查询在 trim 前后返回不同结果集。
+        """
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        bus = WorldTree(validate=False, archive_path=path)
+        try:
+            events = [
+                # 中心 chunk 命中 sub-cell (0,0)
+                make_event(timestamp=10, id="in1", weight=1, location=(0, 0, 10, 10)),
+                make_event(timestamp=11, id="in2", weight=1, location=(0, 0, 15, 15)),
+                # 中心 chunk 无 tile 坐标 → sub-cell 0 → 命中
+                make_event(timestamp=12, id="in3", weight=1, location=(0, 0, None, None)),
+                # 中心 chunk 其他 sub-cell → 不命中
+                make_event(timestamp=13, id="out1", weight=1, location=(0, 0, 50, 50)),
+                make_event(timestamp=14, id="out2", weight=1, location=(0, 0, 16, 10)),
+                # 周边 chunk 不受 sub-cell 限制 → 命中
+                make_event(timestamp=15, id="in4", weight=1, location=(1, 0, 50, 50)),
+                make_event(timestamp=16, id="in5", weight=1, location=(0, 1, 99, 99)),
+                # 半径外 → 不命中
+                make_event(timestamp=17, id="out3", weight=1, location=(2, 0, 10, 10)),
+            ]
+            for ev in events:
+                bus.publish(ev)
+
+            before = bus.get_events_in_region(
+                (0, 0), radius=1, center_tile=(10, 10), sub_radius=0,
+            )
+            before_ids = {ev.id for ev in before}
+            assert before_ids == {"in1", "in2", "in3", "in4", "in5"}
+
+            # 首轮 trim（cycle=1）归档全部 weight=1 事件 → 查询全走归档
+            bus._trim(100)
+            assert bus.event_count == 0, "全部事件应已归档"
+
+            after = bus.get_events_in_region(
+                (0, 0), radius=1, center_tile=(10, 10), sub_radius=0,
+            )
+            after_ids = {ev.id for ev in after}
+            assert after_ids == before_ids, "归档后查询结果必须与归档前一致"
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+
+class TestEventArchiveTileFilter:
+    """query_region 的 sub-cell 过滤（与内存路径同一语义）。"""
+
+    @staticmethod
+    def _make_archive() -> tuple[EventArchive, str]:
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        return EventArchive(path), path
+
+    def test_query_region_tile_filter(self):
+        """center_tile/sub_radius 只过滤中心 chunk，含 NULL 与边界 tile。"""
+        archive, path = self._make_archive()
+        try:
+            archive.archive([
+                make_event(timestamp=10, id="e1", location=(0, 0, 10, 10)),
+                make_event(timestamp=11, id="e2", location=(0, 0, 50, 50)),
+                make_event(timestamp=12, id="e3", location=(0, 0, None, None)),
+                make_event(timestamp=13, id="e4", location=(1, 0, 50, 50)),
+                make_event(timestamp=14, id="e5", location=(2, 0, 10, 10)),
+            ])
+            results = archive.query_region(
+                (0, 0), radius=1, center_tile=(10, 10), sub_radius=0,
+            )
+            assert {r.id for r in results} == {"e1", "e3", "e4"}
+        finally:
+            archive.close()
+            os.unlink(path)
+
+    def test_query_region_tile_filter_sub_radius_boundary(self):
+        """sub_radius=1 的 tile 边界：sub-cell 内的 tile 命中，邻 sub-cell 不命中。"""
+        archive, path = self._make_archive()
+        try:
+            archive.archive([
+                make_event(timestamp=10, id="edge_in", location=(0, 0, 31, 15)),
+                make_event(timestamp=11, id="edge_out", location=(0, 0, 32, 15)),
+                make_event(timestamp=12, id="y_edge_out", location=(0, 0, 10, 32)),
+                make_event(timestamp=13, id="far", location=(0, 0, 50, 50)),
+            ])
+            # center_tile=(10,10), sub_radius=1 → sub-cell x∈[0,1] y∈[0,1]
+            # tile 范围 x∈[0,31] y∈[0,31]
+            results = archive.query_region(
+                (0, 0), radius=0, center_tile=(10, 10), sub_radius=1,
+            )
+            assert {r.id for r in results} == {"edge_in"}
+        finally:
+            archive.close()
+            os.unlink(path)

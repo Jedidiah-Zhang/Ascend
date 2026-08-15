@@ -52,6 +52,7 @@ from ascend.net.handlers.entity_handler import make_entity_handlers
 from ascend.net.handlers.save_handler import make_save_handlers
 from ascend.net.handlers.preview_handler import make_preview_handlers
 from ascend.space import WorldGenerator, TileGenerator
+from ascend.space.generator import compute_gen_fingerprint
 from ascend.space.chunk_store import ChunkStore
 from ascend.entity import EntityManager, PlayerService
 from ascend.weather import WeatherEngine
@@ -118,6 +119,7 @@ class GameEngine:
         self.world_id: str | None = None      # 当前存档位（None=无存档模式）
         self._manifest = None                 # 内存中的 Manifest（touch 用）
         self._load_state: dict | None = None  # 读档恢复的状态
+        self._regen_continent: bool = False   # 强制重建大陆（--regen-continent）
         self._last_state_save: float = 0.0    # 上次 state 落盘时刻（monotonic）
         self._last_chunk_flush: float = 0.0   # 上次 dirty chunk flush 时刻
         self._world_start_monotonic: float = 0.0
@@ -302,6 +304,7 @@ class GameEngine:
         self.world_gen = WorldGenerator(
             seed=self.seed, continent_cache_path=continent_cache_path,
             land_ratio=land_ratio, width_km=width_km, height_km=height_km,
+            ignore_cache=self._regen_continent,
         )
         continent = self.world_gen.ensure_continent(
             progress_cb=self._broadcast_world_progress,
@@ -383,6 +386,8 @@ class GameEngine:
             default_chunk=self.birth_chunk,
             player_service=self.player_service,
             entity_manager=self.entity_manager,
+            continent_path=continent_cache_path,
+            gen_fingerprint_fn=compute_gen_fingerprint,
         )
 
         # 8b. 世界观处理程序（进程内只注册一次；save 处理程序已在
@@ -427,14 +432,19 @@ class GameEngine:
 
     def load_world(
         self, world_id: str | None = None, snapshot: str | None = None,
+        regen_continent: bool = False,
     ) -> None:
         """世界进程启动入口：进入语义 → 展开快照 → 构建世界。
 
-        由 run_server --world-id/--snapshot 调用（取代旧 save_load
-        同进程换世界）。回滚时活目录即目标世界的当前状态（上一进程
-        退出时已最终保存）；进入语义（冻结离开记录 → 展开 → 手动档
-        开启新当前记录）由 SaveManager.enter_snapshot 统一保证——
-        auto 节点是当前线的滚动记录，永无下游、永不重复新建。
+        由 run_server --world-id/--snapshot/--regen-continent 调用
+        （取代旧 save_load 同进程换世界）。回滚时活目录即目标世界
+        的当前状态（上一进程退出时已最终保存）；进入语义（冻结离开
+        记录 → 展开 → 手动档开启新当前记录）由 SaveManager.enter_snapshot
+        统一保证——auto 节点是当前线的滚动记录，永无下游、永不重复新建。
+
+        regen_continent=True 时无视大陆缓存强制重建（开发者/研究侧
+        调参用；对存档世界有破坏性——玩家改动的 chunk 与新场可能
+        出现接缝不一致）。
 
         若引擎已在运行（测试中模拟进程切换），先 stop() 清旧状态：
         语义 = "以该世界重启引擎"，与进程模型一致。
@@ -442,12 +452,14 @@ class GameEngine:
         Args:
             world_id: 目标存档位。
             snapshot: 快照文件（回滚）；None 时加载活目录。
+            regen_continent: True 时无视大陆缓存强制重建。
 
         Raises:
             ValueError: 回滚未指定 world_id 或存档不存在。
         """
         if self._running.is_set():
             self.stop()
+        self._regen_continent = regen_continent
         self._ensure_network()
         try:
             if snapshot is not None:
@@ -470,7 +482,7 @@ class GameEngine:
         """停止引擎并清理所有子系统。
 
         退出前执行最终保存（flush + 最终 state 落盘），
-        等价 MC 关服保存——实时存档保证此步幂等、开销小。
+        等价于最后一次完整落盘——实时存档保证此步幂等、开销小。
 
         幂等：已停止时调用无效果。
         """
@@ -638,7 +650,7 @@ class GameEngine:
         def _build_tiles(chunk):
             saved_grid = self.chunk_store.load_tiles(chunk.cx, chunk.cy)
             if saved_grid is not None:
-                chunk.generate_tiles(saved_grid)
+                chunk.restore_tiles(saved_grid)
             else:
                 grid = self.tile_generator.generate_chunk_for(chunk)
                 chunk.generate_tiles(grid)
@@ -754,7 +766,7 @@ class GameEngine:
         self._persist_manifest()
 
     def _maybe_save_state(self) -> None:
-        """周期实时保存：state 每 5s、dirty chunk 每 30s（MC 同款节奏）。
+        """周期实时保存：state 每 5s、dirty chunk 每 30s。
 
         单次失败不中断游戏循环，记录后下个周期重试。
         """

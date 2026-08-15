@@ -77,10 +77,12 @@ def center_distance(dx: float, dy: float) -> float:
 
 logger = get_logger(__name__)
 
-# 大陆缓存格式版本：生成算法变更（侵蚀/水文/气候）或序列化格式
-# 变更（如 v1 pickle → v2 显式二进制）时递增，旧缓存自动失效重新生成
-# （同一 seed 的结果必须完全一致才能缓存）
-CONTINENT_CACHE_VERSION: int = 3
+# 大陆缓存格式版本：仅标识当前二进制格式，不追溯历史版本——
+# 格式变更时保持 1 即可，任何版本字节不匹配的旧缓存一律
+# 反序列化失败 → 重新生成。生成算法/调参变化不使缓存失效
+# （每个存档的大陆在创建时定案），头部 gen_fingerprint 字段
+# 仅用于加载时的漂移诊断（告警 + continent status 查询）。
+CONTINENT_CACHE_VERSION: int = 1
 
 # Knuth 乘法哈希：seed → 确定性角度 [0, 2π)（温度梯度/盛行风向共用）
 def _seed_angle(seed: int) -> float:
@@ -99,6 +101,7 @@ def _seed_angle(seed: int) -> float:
 # 无代码执行面，截断/篡改数据一律拒绝（返回 None 重新生成）。
 # 布局（小端）:
 #   magic "ASCNT" + version u8
+#   gen_fingerprint  u32 字节长度 + utf-8 字节（生成环境指纹，诊断用）
 #   seed i64, grid_width i32, grid_height i32, cell_size f64
 #   land_ratio f64
 #   land_mask      u32 n + n×u8        （布尔掩码按 0/1 字节）
@@ -163,6 +166,14 @@ def _w_land_mask(buf: io.BytesIO, values) -> None:
         buf.write(bytes(1 if v else 0 for v in values))
 
 
+def _w_str(buf: io.BytesIO, value: str) -> None:
+    """utf-8 字符串写入（u32 字节长度前缀）。"""
+    raw = value.encode("utf-8")
+    _w_i32(buf, len(raw))
+    if raw:
+        buf.write(raw)
+
+
 class _Reader:
     """带边界检查的顺序读取器（截断/负长度抛 ValueError）。"""
 
@@ -216,6 +227,12 @@ class _Reader:
             return array("d")
         return array("d", self._take(8 * n))
 
+    def string(self) -> str:
+        n = self.i32()
+        if n < 0:
+            raise ValueError("非法长度")
+        return self._take(n).decode("utf-8")
+
 
 def serialize_continent(data: "ContinentData") -> bytes:
     """ContinentData → 压缩字节（大陆缓存落盘格式）。
@@ -228,6 +245,7 @@ def serialize_continent(data: "ContinentData") -> bytes:
     buf = io.BytesIO()
     buf.write(_MAGIC)
     _w_u8(buf, CONTINENT_CACHE_VERSION)
+    _w_str(buf, data.gen_fingerprint)
     _w_i64(buf, int(data.seed))
     _w_i32(buf, data.grid_width)
     _w_i32(buf, data.grid_height)
@@ -302,6 +320,7 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
             return None
         if r.u8() != CONTINENT_CACHE_VERSION:
             return None
+        gen_fingerprint = r.string()
         seed = r.i64()
         width = r.i32()
         height = r.i32()
@@ -397,6 +416,7 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
             seed=int(seed),
             grid_width=width, grid_height=height, cell_size=cell_size,
             land_ratio=land_ratio,
+            gen_fingerprint=gen_fingerprint,
             land_mask=land_mask, elevation_field=elevation,
             river_width=river_width, hydrology=hydrology,
             subdiv_ranges=subdiv_ranges, _chunk_climate=chunk_climate,
@@ -404,6 +424,36 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
     except (struct.error, zlib.error, ValueError, IndexError) as exc:
         # 截断/篡改数据 → 缓存失效重新生成（有日志，便于区分真 bug）
         logger.warning("大陆缓存反序列化失败（重新生成）: %s", exc)
+        return None
+
+
+def read_continent_header(raw: bytes) -> "tuple[int, str] | None":
+    """轻量读取缓存头部（格式版本 + 生成环境指纹），不解析场体。
+
+    供 continent status 诊断命令使用：仅解压头部字节，
+    不反序列化整个大陆场。
+
+    Args:
+        raw: continent.bin 原始字节（zlib 压缩）。
+
+    Returns:
+        (版本号, 指纹字符串)；格式非法/损坏/旧版本无指纹字段时
+        返回 (版本, "")，magic 不符或不可解压时返回 None。
+    """
+    try:
+        head = zlib.decompressobj().decompress(raw, 64 + 256)
+    except zlib.error:
+        return None
+    try:
+        r = _Reader(head)
+        if r._take(len(_MAGIC)) != _MAGIC:
+            return None
+        version = r.u8()
+        if version != CONTINENT_CACHE_VERSION:
+            # 非当前格式（旧缓存/未来版本产物）：指纹无从解析
+            return (version, "")
+        return (version, r.string())
+    except (struct.error, ValueError, IndexError):
         return None
 
 
@@ -457,6 +507,11 @@ class ContinentData:
     # 生成参数快照（land_ratio）：缓存校验用——大陆是 (seed, land_ratio)
     # 的确定性函数，同 seed 不同 land_ratio 必须重新生成。
     land_ratio: float = 0.55
+
+    # 生成环境指纹（config 常量 + 生成管线源码摘要）：由 generator
+    # 写入缓存时填充；仅用于加载时漂移诊断（告警/查询），不参与
+    # 缓存失效判定——每个存档的大陆在创建时定案。
+    gen_fingerprint: str = ""
 
     land_mask: list[bool] = field(default_factory=list)
     elevation_field: Union[list[float], "array[float]"] = field(

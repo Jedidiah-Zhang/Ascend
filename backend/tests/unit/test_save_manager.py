@@ -7,6 +7,7 @@
 import io
 import json
 import os
+import shutil
 import sqlite3
 import struct
 import zipfile
@@ -15,7 +16,7 @@ import pytest
 
 from ascend.save.manager import (
     SaveManager, SNAPSHOT_SUFFIX, AUTO_SNAPSHOT_KEEP, QUIT_SNAPSHOT_KEEP,
-    STATE_FILE,
+    STATE_FILE, CHUNKS_DB, ENTITIES_FILE, EVENTS_DB,
 )
 from ascend.save.manifest import Manifest, SaveFormatError, MANIFEST_NAME
 from ascend.save.crypto import SaveCryptoError, SaveKeys
@@ -31,7 +32,8 @@ def _pages_payload(page_size: int, file_size: int, pages: dict) -> bytes:
 
 def _build_delta_snapshot(
     path: str, base_file: str | None, wdir: str,
-    entries: list[str], pages: dict[str, bytes], *, version: int = 2,
+    entries: list[str], pages: dict[str, bytes], *,
+    version: int = 2, world_id: str = "test-world", seed: int = 1,
 ) -> None:
     """构造 v2 增量快照文件（测试用：文件级条目 + 页图条目）。"""
     buffer = io.BytesIO()
@@ -41,13 +43,13 @@ def _build_delta_snapshot(
         for db_name, payload in pages.items():
             zf.writestr(db_name + ".pages", payload)
     session_key = SaveKeys.generate()
-    key_dict = session_key.to_dict()
     header = json.dumps({
         "format": "ascendsave",
         "version": version,
         "base": base_file,
-        "fernet_key": key_dict["fernet_key"],
-        "sign_key": key_dict["sign_key"],
+        "world_id": world_id,
+        "seed": seed,
+        "secrets_blob": session_key.protect(world_id, seed),
     }, ensure_ascii=False).encode("utf-8") + b"\n"
     with open(path, "wb") as f:
         f.write(header)
@@ -642,6 +644,47 @@ class TestSnapshot:
         ).read()
         assert b"42.0" not in raw
 
+    def test_snapshot_header_hides_session_keys(self, manager, world):
+        """快照头部不落裸钥匙：会话钥匙经 protect 混淆藏入 secrets_blob。
+
+        防护：钥匙明文随头部分发会被普通工具直读——与存档位
+        manifest.secrets_blob 同级（防直读/防手贱，不防推导）。
+        """
+        filename = manager.create_snapshot(world)
+        path = os.path.join(manager.snapshot_dir(world), filename)
+        with open(path, "rb") as f:
+            header = json.loads(f.readline().decode("utf-8"))
+        for field in ("fernet_key", "sign_key"):
+            assert field not in header, "头部不得出现裸钥匙字段"
+        blob = header["secrets_blob"]
+        assert "fernet_key" not in blob and "sign_key" not in blob, (
+            "混淆串内不得出现钥匙字段名"
+        )
+        assert header["world_id"] == world
+        # 头部身份与混淆串一致 → 可解锁（往返可用性由其余用例覆盖）
+        keys = SaveKeys.from_protected(blob, header["world_id"], header["seed"])
+        assert len(keys.fernet_key) == 32
+
+    def test_snapshot_header_tampered_identity_rejected(self, manager, world):
+        """篡改头部 world_id/seed 与 secrets_blob 不匹配 → 拒绝打开。
+
+        防护：身份是混淆钥匙的派生输入——改身份即改派生密钥，
+        混淆串无法还原，按防篡改处理。
+        """
+        filename = manager.create_snapshot(world)
+        path = os.path.join(manager.snapshot_dir(world), filename)
+        with open(path, "rb") as f:
+            header_line = f.readline()
+            payload = f.read()
+        header = json.loads(header_line.decode("utf-8"))
+        header["seed"] = header["seed"] + 1
+        tampered = json.dumps(header, ensure_ascii=False).encode("utf-8") + b"\n"
+        with open(path, "wb") as f:
+            f.write(tampered)
+            f.write(payload)
+        with pytest.raises(SaveCryptoError):
+            manager.read_snapshot_state(path)
+
     def test_extract_restores_state(self, manager, world):
         """快照展开后 state 与原一致（回滚核心语义）。"""
         original = {
@@ -705,11 +748,10 @@ class TestSnapshot:
                 "world_id": world,
             }))
         keys = SaveKeys.generate()
-        key_dict = keys.to_dict()
         header = json.dumps({
             "format": "ascendsave", "version": 1,
-            "fernet_key": key_dict["fernet_key"],
-            "sign_key": key_dict["sign_key"],
+            "world_id": world, "seed": 1,
+            "secrets_blob": keys.protect(world, 1),
         }).encode() + b"\n"
         malicious = os.path.join(manager.snapshot_dir(world), "evil.ascendsave")
         with open(malicious, "wb") as f:
@@ -792,8 +834,8 @@ class TestSnapshot:
             cs2.close()
             ar2.close()
 
-    def test_extract_snapshot_world_id_override(self, manager, world, tmp_path):
-        """复制存档的快照回滚须以目标 world_id 覆盖（回归 #P0-2）。"""
+    def test_extract_copied_snapshot_targets_copy(self, manager, world):
+        """复制档快照已改绑副本 ID：不带覆盖的展开作用于副本本身。"""
         manager.write_state(world, {"clock": {"time": 100, "speed": 1.0,
                                               "paused": False}, "player": {},
                                     "archive_max_timestamp": 0})
@@ -802,29 +844,27 @@ class TestSnapshot:
         copied_snapshot = os.path.join(
             manager.snapshot_dir(new_id), filename
         )
-        # 不覆盖 → 仍指向原世界（回滚会动原世界，属危险用法）
-        assert manager.extract_snapshot(copied_snapshot) == world
-        # 显式覆盖 → 展开为复制档
-        assert manager.extract_snapshot(
-            copied_snapshot, world_id=new_id,
-        ) == new_id
-        manifest = manager.get_manifest(new_id)
-        assert manifest.world_id == new_id
+        # 不带覆盖：内嵌 ID 已是副本 → 展开为副本，原世界不受影响
+        assert manager.extract_snapshot(copied_snapshot) == new_id
+        assert manager.get_manifest(new_id).world_id == new_id
 
     def test_extract_cross_world_override_warns(
         self, manager, world, caplog,
     ):
-        """跨世界覆盖展开记录 warning（复制档回滚属正常用法，不阻断）。"""
+        """跨世界覆盖展开记录 warning（显式把 A 世界快照展开进 B）。"""
         import logging
 
         manager.write_state(world, {"clock": {"time": 100}})
         filename = manager.create_snapshot(world, suffix="manual")
-        new_id = manager.export_world(world)
-        copied_snapshot = os.path.join(manager.snapshot_dir(new_id), filename)
+        other_id = manager.create_world("另一个世界", seed=9).world_id
+        moved = os.path.join(manager.snapshot_dir(other_id), filename)
+        shutil.copy2(
+            os.path.join(manager.snapshot_dir(world), filename), moved,
+        )
         with caplog.at_level(logging.WARNING, logger="ascend.save"):
             assert manager.extract_snapshot(
-                copied_snapshot, world_id=new_id,
-            ) == new_id
+                moved, world_id=other_id,
+            ) == other_id
         assert any("不一致" in r.message for r in caplog.records), \
             "内嵌世界与目标不一致应记录 warning"
 
@@ -1932,3 +1972,336 @@ class TestSecretsInManifest:
         restored = mgr2.extract_snapshot(snapshot_path)
         assert restored == world
         assert mgr2.read_state(world)["clock"]["time"] == 100
+
+
+class TestExtractCrashRecovery:
+    """回滚换目录的崩溃自愈（P0-06：extract 两段 rename 崩溃窗口）。"""
+
+    def _write_pending(self, manager, world, snap_name):
+        """手工写挂起标记（模拟崩溃残留，格式与实现一致）。"""
+        path = os.path.join(manager.root, f".extract-pending-{world}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"snapshot": snap_name}, f)
+
+    def _fake_materialize(self, backup, tmp):
+        """把墓碑内活文件复制为"物化产物"（资产不随快照打包，不复制）。"""
+        os.makedirs(tmp, exist_ok=True)
+        for name in (MANIFEST_NAME, STATE_FILE, CHUNKS_DB, EVENTS_DB, ENTITIES_FILE):
+            src = os.path.join(backup, name)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(tmp, name))
+
+    def _assert_root_clean(self, manager):
+        """断言存档根目录无任何点号前缀残留。"""
+        leftovers = [e for e in os.listdir(manager.root) if e.startswith(".")]
+        assert leftovers == [], f"崩溃残留未清理: {leftovers}"
+
+    def test_recovers_swap_interrupted_between_renames(self, manager, world):
+        """①与②之间崩溃（活目录缺失）→ 向前补全：临时目录上位、旧目录抛弃。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap = manager.create_snapshot(world, suffix="manual")
+        snap_path = os.path.join(manager.snapshot_dir(world), snap)
+        wdir = manager.world_dir(world)
+        backup = os.path.join(manager.root, f".old-{world}")
+        tmp = os.path.join(manager.root, f".extract-{world}")
+        os.rename(wdir, backup)  # ① 已执行
+        self._fake_materialize(backup, tmp)  # 物化产物（模拟）
+        self._write_pending(manager, world, snap)
+        # 进程重启（新管理器构造）→ 自愈
+        mgr2 = SaveManager(root=manager.root)
+        assert os.path.isdir(wdir)
+        assert os.path.isfile(os.path.join(wdir, MANIFEST_NAME))
+        assert os.path.isfile(snap_path), "回退点应搬回新活目录"
+        assert mgr2.snapshot_lineage(world)["live_origin"] == snap
+        assert not os.path.exists(backup)
+        assert not os.path.exists(tmp)
+        self._assert_root_clean(manager)
+        assert [w["world_id"] for w in mgr2.list_worlds()] == [world]
+        # 再构造一次：自愈幂等，世界不受影响
+        mgr3 = SaveManager(root=manager.root)
+        assert os.path.isdir(manager.world_dir(world))
+        assert mgr3.read_state(world)["clock"]["time"] == 100
+
+    def test_recovers_swap_landed_before_asset_moves(self, manager, world):
+        """②与③之间崩溃（活目录已上位）→ 补搬资产后抛弃旧目录。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap = manager.create_snapshot(world, suffix="manual")
+        wdir = manager.world_dir(world)
+        backup = os.path.join(manager.root, f".old-{world}")
+        tmp = os.path.join(manager.root, f".extract-{world}")
+        os.rename(wdir, backup)
+        self._fake_materialize(backup, tmp)
+        os.rename(tmp, wdir)  # ② 已执行、③ 未执行
+        self._write_pending(manager, world, snap)
+        mgr2 = SaveManager(root=manager.root)
+        assert os.path.isfile(os.path.join(wdir, MANIFEST_NAME))
+        assert os.path.isfile(os.path.join(wdir, "snapshots", snap))
+        assert mgr2.snapshot_lineage(world)["live_origin"] == snap
+        assert not os.path.exists(backup)
+        self._assert_root_clean(manager)
+
+    def test_marker_only_residue_cleaned_without_touching_world(self, manager, world):
+        """仅剩挂起标记（回滚已全部完成）→ 清理标记，不动世界。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap = manager.create_snapshot(world, suffix="manual")
+        manager.set_live_origin(world, snap)  # 模拟 live_origin 已还原
+        self._write_pending(manager, world, snap)
+        mgr2 = SaveManager(root=manager.root)
+        assert os.path.isdir(manager.world_dir(world))
+        assert mgr2.snapshot_lineage(world)["live_origin"] == snap
+        assert os.path.isfile(os.path.join(manager.snapshot_dir(world), snap))
+        self._assert_root_clean(manager)
+
+    def test_recovers_tombstone_when_tmp_missing(self, manager, world):
+        """防御分支：临时目录缺失 → 墓碑整目录移回（回滚按未发生处理）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap = manager.create_snapshot(world, suffix="manual")
+        wdir = manager.world_dir(world)
+        backup = os.path.join(manager.root, f".old-{world}")
+        os.rename(wdir, backup)
+        self._write_pending(manager, world, snap)
+        mgr2 = SaveManager(root=manager.root)
+        assert os.path.isdir(wdir)
+        assert mgr2.read_state(world)["clock"]["time"] == 100
+        assert os.path.isfile(os.path.join(wdir, "snapshots", snap))
+        self._assert_root_clean(manager)
+
+    def test_recovers_legacy_uuid_tombstone(self, manager, world):
+        """历史遗留 uuid 命名墓碑：按墓碑内 manifest 反查世界并移回。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        wdir = manager.world_dir(world)
+        legacy = os.path.join(manager.root, ".old-deadbeefdeadbeef")
+        os.rename(wdir, legacy)
+        mgr2 = SaveManager(root=manager.root)
+        assert os.path.isdir(wdir)
+        assert mgr2.read_state(world)["clock"]["time"] == 100
+        assert not os.path.exists(legacy)
+        self._assert_root_clean(manager)
+
+    def test_recovery_merges_lineage_when_live_has_newer(self, manager, world):
+        """罕见态：交换已落定、资产搬运曾失败（标记已移除）、活目录
+        已产生新血缘 → 自愈合并旧条目，不回写 live_origin。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        manager.create_snapshot(world, suffix="manual")
+        manager.write_state(world, {"clock": {"time": 200}})
+        s2 = manager.create_snapshot(world, suffix="manual")
+        old_entries = set(manager.snapshot_lineage(world)["snapshots"].keys())
+        wdir = manager.world_dir(world)
+        backup = os.path.join(manager.root, f".old-{world}")
+        tmp = os.path.join(manager.root, f".extract-{world}")
+        os.rename(wdir, backup)
+        self._fake_materialize(backup, tmp)
+        os.rename(tmp, wdir)
+        # 活目录已产生"新血缘"（模拟回滚后新记录）：仅含 live_origin
+        manager.set_live_origin(world, "newer-auto.ascendsave")
+        mgr2 = SaveManager(root=manager.root)
+        lineage = mgr2.snapshot_lineage(world)
+        assert lineage["live_origin"] == "newer-auto.ascendsave", "活目录版本优先"
+        assert old_entries <= set(lineage["snapshots"].keys()), "旧条目应合并保留"
+        assert os.path.isfile(os.path.join(wdir, "snapshots", s2))
+        self._assert_root_clean(manager)
+
+    def test_recovery_restores_live_origin_when_marker_present(self, manager, world):
+        """崩溃于收尾前（标记仍在）→ 自愈重写 live_origin 为被展开的快照。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap = manager.create_snapshot(world, suffix="manual")
+        wdir = manager.world_dir(world)
+        backup = os.path.join(manager.root, f".old-{world}")
+        tmp = os.path.join(manager.root, f".extract-{world}")
+        os.rename(wdir, backup)
+        self._fake_materialize(backup, tmp)
+        os.rename(tmp, wdir)
+        self._write_pending(manager, world, snap)
+        # 模拟"资产已搬、set_live_origin 前崩溃"：血缘已在新活目录、
+        # 值为旧来源
+        mgr2 = SaveManager(root=manager.root)
+        assert mgr2.snapshot_lineage(world)["live_origin"] == snap
+        self._assert_root_clean(manager)
+
+    def test_recovers_other_temp_residue(self, manager, world):
+        """其它请求期临时目录残留（物化/重基座/预览）启动时一并回收。"""
+        for name in (".preview-abc", ".base-def", ".rebase-ghi", ".extract-xyz"):
+            os.makedirs(os.path.join(manager.root, name), exist_ok=True)
+        SaveManager(root=manager.root)
+        self._assert_root_clean(manager)
+
+    def test_list_worlds_excludes_dot_tombstones(self, manager, world):
+        """点号前缀残留（含 manifest 的墓碑）不被列成幽灵世界。"""
+        ghost_dir = os.path.join(manager.root, ".old-" + "a" * 32)
+        os.makedirs(ghost_dir, exist_ok=True)
+        with open(manager.manifest_path(world), encoding="utf-8") as f:
+            data = json.load(f)
+        data["name"] = "幽灵世界"
+        with open(os.path.join(ghost_dir, MANIFEST_NAME), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        assert [w["world_id"] for w in manager.list_worlds()] == [world]
+        # 重名检查同样不把墓碑当世界（幽灵名字可正常创建）
+        new_world = manager.create_world("幽灵世界", seed=1)
+        assert new_world.world_id != world
+
+    def test_extract_rejects_concurrent_residue(self, manager, world):
+        """同进程残留（并发回滚/极端故障）→ 拒绝展开而非互相踩踏。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap = manager.create_snapshot(world, suffix="manual")
+        snap_path = os.path.join(manager.snapshot_dir(world), snap)
+        self._write_pending(manager, world, snap)
+        with pytest.raises(SaveFormatError, match="尚未完成"):
+            manager.extract_snapshot(snap_path)
+
+    def test_extract_self_heals_soft_failure_residue(self, manager, world):
+        """软失败后墓碑残留（无标记）：同会话再次回滚内联自愈，无需重启。
+
+        前端真实路径：裸文件名 + 目标世界——快照文件此刻仍在墓碑
+        snapshots/ 内，须先自愈搬回活目录才能解析（回归：自愈在
+        resolve_snapshot_path 之前执行）。
+        """
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap = manager.create_snapshot(world, suffix="manual")
+        wdir = manager.world_dir(world)
+        backup = os.path.join(manager.root, f".old-{world}")
+        tmp = os.path.join(manager.root, f".extract-{world}")
+        os.rename(wdir, backup)
+        self._fake_materialize(backup, tmp)
+        os.rename(tmp, wdir)  # 交换已落定、资产未搬、标记已移除（软失败现场）
+        assert not os.path.isdir(manager.snapshot_dir(world)), \
+            "现场前提：活目录无快照子目录（在墓碑内）"
+        assert manager.extract_snapshot(snap, world_id=world) == world
+        self._assert_root_clean(manager)
+        assert os.path.isfile(os.path.join(manager.snapshot_dir(world), snap)), \
+            "内联自愈搬回的回退点应在随后回滚中保全"
+
+    def test_extract_cleans_stale_tmp_dir(self, manager, world):
+        """无标记无墓碑的临时目录残留：清理后照常回滚。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap = manager.create_snapshot(world, suffix="manual")
+        snap_path = os.path.join(manager.snapshot_dir(world), snap)
+        stale = os.path.join(manager.root, f".extract-{world}")
+        os.makedirs(stale, exist_ok=True)
+        assert manager.extract_snapshot(snap_path, world_id=world) == world
+        self._assert_root_clean(manager)
+
+    def test_extract_leaves_no_residue_and_preserves_assets(self, manager, world):
+        """正常回滚后无墓碑/临时目录/标记残留，资产完整搬回。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        snap = manager.create_snapshot(world, suffix="manual")
+        wdir = manager.world_dir(world)
+        with open(os.path.join(wdir, "continent.bin"), "wb") as f:
+            f.write(b"fake-continent")
+        snap_path = os.path.join(manager.snapshot_dir(world), snap)
+        manager.extract_snapshot(snap_path)
+        self._assert_root_clean(manager)
+        with open(os.path.join(wdir, "continent.bin"), "rb") as f:
+            assert f.read() == b"fake-continent"
+        assert os.path.isfile(os.path.join(wdir, "snapshots", snap))
+        assert manager.snapshot_lineage(world)["live_origin"] == snap
+
+
+class TestLineageTamperProtection:
+    """血缘签名防护（P0-07：lineage.json 无签名 → prune 可被借刀误删）。"""
+
+    def test_prune_skips_when_lineage_unsigned(self, manager, world):
+        """无签名血缘（历史格式）→ prune 零淘汰、零删除。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        # 把血缘退回无签名历史格式（模拟升级前的旧档）
+        with open(manager.lineage_path(world), encoding="utf-8") as f:
+            payload = json.load(f)
+        with open(manager.lineage_path(world), "w", encoding="utf-8") as f:
+            json.dump(payload["data"], f)
+        assert manager.prune_snapshots(world) == 0
+        assert os.path.isfile(os.path.join(manager.snapshot_dir(world), s1))
+
+    def test_prune_skips_when_lineage_tampered(self, manager, world):
+        """血缘 data 被篡改 → prune 零删除（宁缺勿删）。
+
+        借刀手法复现：把 manual 条目从血缘抹掉，若无签名防线，
+        反向对账会把该文件当幽灵删除。
+        """
+        manager.write_state(world, {"clock": {"time": 100}})
+        s1 = manager.create_snapshot(world, suffix="manual")
+        rec = manager.snapshot_lineage(world)["live_origin"]
+        with open(manager.lineage_path(world), encoding="utf-8") as f:
+            payload = json.load(f)
+        payload["data"]["snapshots"].pop(s1)
+        with open(manager.lineage_path(world), "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        assert manager.prune_snapshots(world) == 0
+        assert {s1, rec} <= {s["file"] for s in manager.list_snapshots(world)}
+
+
+class TestSnapshotRebind:
+    """复制档快照改绑新世界 ID（P0-08：复制档自愈，不依赖原世界）。"""
+
+    def test_export_rebinds_snapshot_identity(self, manager, world):
+        """导出后快照头部与内嵌 manifest 均为副本 ID，钥匙可独立解锁。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        filename = manager.create_snapshot(world, suffix="manual")
+        new_id = manager.export_world(world)
+        copied = os.path.join(manager.snapshot_dir(new_id), filename)
+        header, zf = manager._snap.open_snapshot(copied)
+        try:
+            assert header["world_id"] == new_id
+            manifest = Manifest.from_dict(
+                json.loads(zf.read(MANIFEST_NAME).decode("utf-8"))
+            )
+        finally:
+            zf.close()
+        assert manifest.world_id == new_id
+        # 副本 ID 可解出钥匙（混淆层已换绑）
+        SaveKeys.from_protected(manifest.secrets_blob, new_id, manifest.seed)
+
+    def test_copied_delta_previews_after_original_deleted(self, manager, world):
+        """原世界删除后，复制档增量快照仍可预览（沿副本链解析）。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        base = manager.create_snapshot(world, suffix="manual", game_time=100)
+        manager.write_state(world, {"clock": {"time": 200}})
+        delta = "@2026-01-01-000000-test-auto.ascendsave"
+        _build_delta_snapshot(
+            os.path.join(manager.snapshot_dir(world), delta),
+            base, manager.world_dir(world),
+            [MANIFEST_NAME, STATE_FILE], {},
+        )
+        manager._record_snapshot_lineage(world, delta, 200, 0.0)
+        new_id = manager.export_world(world)
+        manager.delete_world(world)
+        state = manager.read_snapshot_state(
+            os.path.join(manager.snapshot_dir(new_id), delta),
+        )
+        assert state["clock"]["time"] == 200
+
+    def test_copied_delta_extracts_standalone(self, manager, world):
+        """复制档增量快照不带覆盖即可展开，原世界不受影响。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        base = manager.create_snapshot(world, suffix="manual", game_time=100)
+        manager.write_state(world, {"clock": {"time": 200}})
+        delta = "@2026-01-01-000000-test-auto.ascendsave"
+        _build_delta_snapshot(
+            os.path.join(manager.snapshot_dir(world), delta),
+            base, manager.world_dir(world),
+            [MANIFEST_NAME, STATE_FILE], {},
+        )
+        manager._record_snapshot_lineage(world, delta, 200, 0.0)
+        new_id = manager.export_world(world)
+        assert manager.extract_snapshot(
+            os.path.join(manager.snapshot_dir(new_id), delta),
+        ) == new_id
+        assert manager.read_state(new_id)["clock"]["time"] == 200
+        assert manager.read_state(world)["clock"]["time"] == 200, \
+            "原世界活目录不受副本回滚影响"
+
+    def test_export_fails_on_corrupt_snapshot(self, manager, world):
+        """任一快照损坏 → 导出整体失败，不留半成品目录。"""
+        manager.write_state(world, {"clock": {"time": 100}})
+        filename = manager.create_snapshot(world, suffix="manual")
+        path = os.path.join(manager.snapshot_dir(world), filename)
+        data = bytearray(open(path, "rb").read())
+        data[len(data) // 2] ^= 0xFF
+        with open(path, "wb") as f:
+            f.write(bytes(data))
+        before = {w["world_id"] for w in manager.list_worlds()}
+        with pytest.raises(SaveCryptoError):
+            manager.export_world(world)
+        assert {w["world_id"] for w in manager.list_worlds()} == before, \
+            "导出失败不得留下半成品目录"
+        leftovers = [e for e in os.listdir(manager.root) if e.startswith(".")]
+        assert leftovers == [], f"导出失败残留: {leftovers}"

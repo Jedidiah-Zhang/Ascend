@@ -506,6 +506,7 @@ class WorldTree:
                 center_chunk, radius,
                 layer_id=layer_id,
                 start_time=start_time, end_time=end_time,
+                center_tile=center_tile, sub_radius=sub_radius,
             )
             return self._merge_archived(archived, results)
 

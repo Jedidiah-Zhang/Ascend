@@ -145,13 +145,70 @@ _HYDRO.hydrology_classify.argtypes = [
 ]
 _HYDRO.hydrology_classify.restype = ctypes.c_int
 
+# 气候常量注入（单一事实源 = ascend/config.py）
+_HYDRO.hydrology_set_climate_constants.argtypes = [ctypes.c_double] * 12
+_HYDRO.hydrology_set_climate_constants.restype = None
+
+
+def set_climate_constants(
+    *,
+    lapse_rate: float,
+    rainfall_min: float,
+    rainfall_max: float,
+    alpine_altitude: float,
+    polar_temp: float,
+    desert_rainfall: float,
+    steppe_rainfall: float,
+    steppe_min_temp: float,
+    tropical_temp: float,
+    temperate_temp: float,
+    rainforest_rainfall: float,
+    taiga_rainfall: float,
+) -> None:
+    """向 C 扩展注入气候分类与气候常量（运行时生效）。
+
+    单一事实源在 ascend/config.py：本模块加载后立即以 config
+    值调用（apply_config_climate_constants），C 侧不内置阈值副本，
+    config 变更无需重编译。
+    """
+    _HYDRO.hydrology_set_climate_constants(
+        lapse_rate, rainfall_min, rainfall_max,
+        alpine_altitude, polar_temp, desert_rainfall,
+        steppe_rainfall, steppe_min_temp, tropical_temp,
+        temperate_temp, rainforest_rainfall, taiga_rainfall,
+    )
+
+
+def apply_config_climate_constants() -> None:
+    """以当前 ascend.config 值注入气候常量（导入期与测试重置用）。"""
+    from ascend.config import (
+        LAPSE_RATE, RAINFALL_MIN, RAINFALL_MAX,
+        ALPINE_ALTITUDE, POLAR_TEMP, DESERT_RAINFALL,
+        STEPPE_RAINFALL, STEPPE_MIN_TEMP, TROPICAL_TEMP,
+        TEMPERATE_TEMP, RAINFOREST_RAINFALL, TAIGA_RAINFALL,
+    )
+    set_climate_constants(
+        lapse_rate=LAPSE_RATE,
+        rainfall_min=RAINFALL_MIN,
+        rainfall_max=RAINFALL_MAX,
+        alpine_altitude=ALPINE_ALTITUDE,
+        polar_temp=POLAR_TEMP,
+        desert_rainfall=DESERT_RAINFALL,
+        steppe_rainfall=STEPPE_RAINFALL,
+        steppe_min_temp=STEPPE_MIN_TEMP,
+        tropical_temp=TROPICAL_TEMP,
+        temperate_temp=TEMPERATE_TEMP,
+        rainforest_rainfall=RAINFOREST_RAINFALL,
+        taiga_rainfall=TAIGA_RAINFALL,
+    )
+
 
 def classify_climate_c(temp: float, rainfall: float, altitude: float) -> int:
     """C 端气候分类（climate.classify 的实现本体）。
 
-    阈值硬编码于 _hydrology.c（#define，镜像 ascend.config），
-    由 test_space.test_c_ext_classify_consistent_with_python 锁定
-    Python 绑定与 C 判定的一致性，防止单侧修改漂移。
+    判定阈值由 ascend/config.py 经导入期注入（本模块加载即注入），
+    C 侧无阈值副本；与 Python 参考实现的一致性由
+    test_space.test_classify_matches_python_reference 锁定。
 
     Args:
         temp: 年均温度 (°C)。
@@ -908,4 +965,9 @@ __all__ = [
     "erode",
     "find_lakes",
     "compute_river_width",
+    "set_climate_constants",
+    "apply_config_climate_constants",
 ]
+
+# 加载即注入：C 侧气候常量随 config 生效，无阈值副本
+apply_config_climate_constants()

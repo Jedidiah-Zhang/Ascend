@@ -97,7 +97,11 @@ class TestContinentSerialize:
         assert deserialize_continent(zlib.compress(payload)) is None
 
     def test_version_mismatch_returns_none(self):
-        """版本不符返回 None（算法变更后旧缓存失效）。"""
+        """格式版本不符返回 None（序列化格式迁移 → 重新生成）。
+
+        注意：算法/调参变化不使缓存失效——每个存档的大陆在创建时
+        定案，由指纹漂移告警覆盖（见 TestGenerationFingerprint）。
+        """
         original = _small_continent()
         from unittest import mock
 
@@ -355,3 +359,183 @@ class TestWorldGeneratorCache:
         cont = wg.ensure_continent()
         assert calls["n"] == 0
         assert cont.seed == 444
+
+
+class TestGenerationFingerprint:
+    """生成环境指纹：漂移沿用告警、强制重建、头部读取。"""
+
+    def test_fingerprint_mismatch_keeps_cache_with_warning(
+        self, tmp_path, monkeypatch, caplog,
+    ):
+        """生成环境漂移：沿用缓存 + 告警，不重新生成。
+
+        防护：算法/调参变化不得改变已创建世界的大陆——每个存档的
+        大陆在创建时定案，缓存照常命中，漂移仅以 warning 显式化
+        （调参验证请新建世界或强制重建）。
+        """
+        import logging
+
+        from ascend.space import generator as gen_mod
+
+        fake = _small_continent(seed=313)
+        fake.gen_fingerprint = "old-env"
+        cache_path = str(tmp_path / "continent.bin")
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "wb") as f:
+            f.write(serialize_continent(fake))
+
+        monkeypatch.setattr(
+            gen_mod, "compute_gen_fingerprint", lambda: "new-env",
+        )
+
+        def _fake_generate(self, *a, **k):
+            raise AssertionError("漂移时不应重新生成（世界连续性优先）")
+
+        monkeypatch.setattr(
+            "ascend.space.continent.ContinentGenerator.generate",
+            _fake_generate,
+        )
+        with caplog.at_level(logging.WARNING, logger="ascend.space.generator"):
+            wg = WorldGenerator(
+                seed=313, width_km=6.0, height_km=4.0,
+                continent_cache_path=cache_path,
+            )
+            cont = wg.ensure_continent()
+        assert cont is not None and cont.seed == 313, "漂移时沿用缓存"
+        assert cont.gen_fingerprint == "old-env"
+        assert "生成环境" in caplog.text, "漂移必须显式告警"
+
+    def test_ignore_cache_forces_regen(self, tmp_path, monkeypatch):
+        """ignore_cache=True：无视缓存强制重新生成并覆盖（含当前指纹）。"""
+        from ascend.space.generator import compute_gen_fingerprint
+
+        fake = _small_continent(seed=424)
+        cache_path = str(tmp_path / "continent.bin")
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "wb") as f:
+            f.write(serialize_continent(fake))
+
+        calls = {"n": 0}
+
+        def _fake_generate(self, *a, **k):
+            calls["n"] += 1
+            return fake
+
+        monkeypatch.setattr(
+            "ascend.space.continent.ContinentGenerator.generate",
+            _fake_generate,
+        )
+        wg = WorldGenerator(
+            seed=424, width_km=6.0, height_km=4.0,
+            continent_cache_path=cache_path, ignore_cache=True,
+        )
+        cont = wg.ensure_continent()
+        assert calls["n"] == 1, "ignore_cache 应强制重新生成"
+        assert cont is fake
+        with open(cache_path, "rb") as f:
+            restored = deserialize_continent(f.read())
+        assert restored.gen_fingerprint == compute_gen_fingerprint(), (
+            "覆盖后的缓存携带当前生成环境指纹"
+        )
+
+    def test_read_continent_header_roundtrip(self):
+        """read_continent_header 轻量读取版本与指纹，不解析场体。"""
+        from ascend.space.continent import read_continent_header
+
+        fake = _small_continent(seed=1)
+        fake.gen_fingerprint = "test-fp-123456"
+        header = read_continent_header(serialize_continent(fake))
+        assert header == (CONTINENT_CACHE_VERSION, "test-fp-123456")
+
+    def test_read_continent_header_invalid(self):
+        """非法/损坏/空输入返回 None。"""
+        from ascend.space.continent import read_continent_header
+
+        assert read_continent_header(b"garbage-not-zlib") is None
+        assert read_continent_header(b"") is None
+
+
+class TestWorldGeneratorLazyPath:
+    """惰性首触（get_altitude）与主动 ensure_continent 统一创建入口（P0-09）。"""
+
+    def test_lazy_path_matches_ensure_path(self):
+        """两条路径产出同一份大陆（含沙漠 moisture 动态值域与群系结果）。"""
+        gen_a = WorldGenerator(seed=777, width_km=6.0, height_km=4.0)
+        gen_a.get_altitude(0.0, 0.0)  # 惰性首触
+        gen_b = WorldGenerator(seed=777, width_km=6.0, height_km=4.0)
+        gen_b.ensure_continent()      # 主动
+        assert (
+            gen_a._continent.subdiv_ranges == gen_b._continent.subdiv_ranges
+        ), "两路径的群系细分值域应一致（含沙漠校准）"
+        assert gen_a.generate_chunk(0, 0).biome == gen_b.generate_chunk(0, 0).biome
+
+    def test_lazy_first_touch_loads_cache(self, tmp_path, monkeypatch):
+        """惰性首触走缓存恢复，不重新生成。"""
+        fake = _small_continent(seed=99)
+        cache_path = str(tmp_path / "world-99" / "continent.bin")
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "wb") as f:
+            f.write(serialize_continent(fake))
+
+        def _no_generate(self, *a, **k):
+            raise AssertionError("缓存命中时不应执行生成")
+
+        monkeypatch.setattr(
+            "ascend.space.continent.ContinentGenerator.generate",
+            _no_generate,
+        )
+        wg = WorldGenerator(
+            seed=99, width_km=6.0, height_km=4.0,
+            continent_cache_path=cache_path,
+        )
+        wg.get_altitude(0.0, 0.0)
+        assert wg._continent.seed == 99
+        assert wg._continent.elevation_field == fake.elevation_field
+
+    def test_lazy_first_touch_writes_cache(self, tmp_path, monkeypatch):
+        """惰性首触未命中：生成并落盘缓存（与主动路径一致）。"""
+        fake = _small_continent(seed=77)
+        cache_path = str(tmp_path / "world-77" / "continent.bin")
+        monkeypatch.setattr(
+            "ascend.space.continent.ContinentGenerator.generate",
+            lambda self, *a, **k: fake,
+        )
+        wg = WorldGenerator(seed=77, continent_cache_path=cache_path)
+        wg.get_altitude(0.0, 0.0)
+        assert os.path.isfile(cache_path)
+        with open(cache_path, "rb") as f:
+            assert deserialize_continent(f.read()).seed == 77
+
+    def test_concurrent_first_touch_generates_once(self, monkeypatch):
+        """并发首触：锁收敛为单次生成，全员拿到同一大陆。"""
+        import threading
+        import time
+
+        fake = _small_continent(seed=777)
+        calls = {"n": 0}
+
+        def _fake_generate(self, *a, **k):
+            calls["n"] += 1
+            time.sleep(0.05)  # 放大竞争窗口
+            return fake
+
+        monkeypatch.setattr(
+            "ascend.space.continent.ContinentGenerator.generate",
+            _fake_generate,
+        )
+        wg = WorldGenerator(seed=777)
+        results: list[float] = []
+        barrier = threading.Barrier(9)
+
+        def worker() -> None:
+            barrier.wait()
+            results.append(wg.get_altitude(0.0, 0.0))
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        barrier.wait()
+        for t in threads:
+            t.join()
+        assert calls["n"] == 1, "并发首触应只生成一次"
+        assert len(set(results)) == 1, "所有线程拿到同一大陆的同一采样"

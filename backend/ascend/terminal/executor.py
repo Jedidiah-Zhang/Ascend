@@ -12,6 +12,7 @@
 """
 
 import math
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -87,6 +88,8 @@ class CommandExecutor:
         default_chunk: tuple[int, int] | None = None,
         player_service=None,
         entity_manager=None,
+        continent_path: str | None = None,
+        gen_fingerprint_fn=None,
     ) -> None:
         """初始化指令执行器。
 
@@ -98,6 +101,10 @@ class CommandExecutor:
             default_chunk: weather 指令省略坐标时的默认 chunk（通常为出生点）。
             player_service: 可选的 PlayerService 实例，用于 tp 指令。
             entity_manager: 可选的 EntityManager 实例，用于 entity 指令。
+            continent_path: 可选的大陆缓存文件路径（存档内 continent.bin），
+                用于 continent 指令；None = 无存档模式。
+            gen_fingerprint_fn: 可选的无参回调，返回当前生成环境指纹，
+                用于 continent status 漂移诊断。
         """
         self._clock = clock
         self._calendar = calendar
@@ -106,20 +113,23 @@ class CommandExecutor:
         self._default_chunk = default_chunk or (0, 0)
         self._player = player_service
         self._entities = entity_manager
+        self._continent_path = continent_path
+        self._gen_fingerprint_fn = gen_fingerprint_fn
         self._active_real_time: float = 0.0
 
         # 指令路由表：{cmd_name: handler_func(args) -> CommandResult}
         # 可被外部扩展（mod 注入）
         self._handlers: dict[str, Callable[[list[str]], CommandResult]] = {
-            "status":  lambda a: CommandResult(success=True, output=self._cmd_status()),
-            "time":    self._h_time,
-            "weather": self._h_weather,
-            "entity":  self._h_entity,
-            "tp":      self._h_tp,
-            "lang":    self._h_lang,
-            "events":  self._h_events,
-            "?":       lambda a: CommandResult(success=True, output=self._cmd_help()),
-            "help":    lambda a: CommandResult(success=True, output=self._cmd_help()),
+            "status":    lambda a: CommandResult(success=True, output=self._cmd_status()),
+            "time":      self._h_time,
+            "weather":   self._h_weather,
+            "entity":    self._h_entity,
+            "continent": self._h_continent,
+            "tp":        self._h_tp,
+            "lang":      self._h_lang,
+            "events":    self._h_events,
+            "?":         lambda a: CommandResult(success=True, output=self._cmd_help()),
+            "help":      lambda a: CommandResult(success=True, output=self._cmd_help()),
         }
 
     @property
@@ -531,6 +541,102 @@ class CommandExecutor:
 
     # ── entity 指令组 ───────────────────────────────────
 
+    def _h_continent(self, args: list[str]) -> CommandResult:
+        """处理 continent 指令组：status 诊断 / regen 强制重建。
+
+        Args:
+            args: 参数列表。
+
+        Returns:
+            执行结果。
+        """
+        if self._continent_path is None:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t("console.continent_unavailable"),
+            )
+        if not args or args[0].lower() == "status":
+            return self._h_continent_status()
+        if args[0].lower() == "regen":
+            return self._h_continent_regen()
+        return CommandResult(
+            success=False, output=self._i18n.t("console.continent_usage"),
+        )
+
+    def _h_continent_status(self) -> CommandResult:
+        """continent status：缓存存在性 + 生成环境指纹漂移诊断。
+
+        Returns:
+            执行结果。
+        """
+        from ascend.space.continent import read_continent_header
+
+        path = self._continent_path
+        if not os.path.isfile(path):
+            return CommandResult(
+                success=True,
+                output=self._i18n.t("console.continent_no_cache"),
+            )
+        try:
+            with open(path, "rb") as f:
+                header = read_continent_header(f.read())
+        except OSError as exc:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t(
+                    "console.continent_read_failed", error=str(exc),
+                ),
+            )
+        if header is None:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t("console.continent_header_invalid"),
+            )
+        version, stored_fp = header
+        current_fp = (
+            self._gen_fingerprint_fn() if self._gen_fingerprint_fn else ""
+        )
+        if stored_fp and current_fp and stored_fp != current_fp:
+            drift = self._i18n.t("console.continent_drift")
+        else:
+            drift = self._i18n.t("console.continent_match")
+        lines = [
+            self._i18n.t("console.continent_status_header"),
+            self._i18n.t("console.continent_status_version", version=version),
+            self._i18n.t(
+                "console.continent_status_fp",
+                fp=(stored_fp[:12] + "…") if stored_fp else "-",
+            ),
+            drift,
+        ]
+        return CommandResult(success=True, output="\n".join(lines))
+
+    def _h_continent_regen(self) -> CommandResult:
+        """continent regen：删除大陆缓存，下次进入世界时按当前算法重建。
+
+        Returns:
+            执行结果。
+        """
+        path = self._continent_path
+        if not os.path.isfile(path):
+            return CommandResult(
+                success=True,
+                output=self._i18n.t("console.continent_regen_missing"),
+            )
+        try:
+            os.remove(path)
+        except OSError as exc:
+            return CommandResult(
+                success=False,
+                output=self._i18n.t(
+                    "console.continent_regen_failed", error=str(exc),
+                ),
+            )
+        return CommandResult(
+            success=True,
+            output=self._i18n.t("console.continent_regen_ok"),
+        )
+
     def _h_entity(self, args: list[str]) -> CommandResult:
         """处理 entity 指令组：list 列表 / birth 诞生 / death 死亡。
 
@@ -931,6 +1037,7 @@ class CommandExecutor:
             f"  entity [list]                            {t('console.help_entity_list')}",
             f"  entity birth <type> [x y]                {t('console.help_entity_birth')}",
             f"  entity death <id>                        {t('console.help_entity_death')}",
+            f"  continent status | regen                   {t('console.help_continent')}",
             f"  tp [x y]                                 {t('console.help_tp')}",
             f"  lang [code]                              {t('console.help_lang')}",
             f"  events [n]                               {t('console.help_events')}",

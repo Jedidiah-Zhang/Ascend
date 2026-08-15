@@ -265,7 +265,13 @@ func _on_process_ready() -> void:
 
 
 func _on_process_failed(reason: String) -> void:
-	"""启动失败（终态）：通知 UI，不再自动重试。"""
+	"""启动/停止失败（终态）：通知 UI，不再自动重试。
+
+	切换中处于等待停止阶段时同步中止——旧进程未退出（强杀失败），
+	不得拉起新进程连上旧参数的后端。
+	"""
+	if _restart_phase == RestartPhase.WAIT_STOP:
+		_restart_phase = RestartPhase.NONE
 	_sync_status()
 	backend_failed.emit(reason)
 

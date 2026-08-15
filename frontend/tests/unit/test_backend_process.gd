@@ -353,6 +353,7 @@ func test_stop_kills_on_port_held_until_timeout() -> void:
 	p.tick(0.1)
 	p.state = BackendProcess.State.READY
 	watch_signals(p)
+	var reasons := _capture_failures(p)
 	# 端口被占用且永不释放：无限返回"开放"的探测
 	_created_probes.clear()
 	p.probe_factory = func() -> Object:
@@ -362,15 +363,23 @@ func test_stop_kills_on_port_held_until_timeout() -> void:
 		return probe
 	p.stop()
 	assert_eq(p.state, BackendProcess.State.STOPPING)
-	# 每枚探测 0.1s tick：3.0s 优雅超时 → 强杀 → 再 3.0s 放弃
+	# 每枚探测 0.1s tick：3.0s 优雅超时 → 强杀 → 再 3.0s 端口仍占用
 	for i in 80:
 		p.tick(0.1)
 		if p.state != BackendProcess.State.STOPPING:
 			break
-	assert_eq(p.state, BackendProcess.State.IDLE, "端口始终占用时超时放弃")
+	assert_eq(p.state, BackendProcess.State.FAILED, "端口始终占用应置 FAILED（不谎报 stopped）")
 	assert_eq(_force_kill_calls.size(), 1, "强杀只执行一次")
 	assert_eq(_kill_calls, [4242])
-	assert_signal_emit_count(p, "stopped", 1)
+	assert_eq(p.pid, -1, "FAILED 后 PID 复位")
+	assert_signal_emit_count(p, "failed", 1)
+	assert_signal_emit_count(p, "stopped", 0, "强杀失败不得发 stopped")
+	assert_eq(reasons.size(), 1, "应携带失败原因")
+	assert_string_contains(String(reasons[0]), "port")
+	# FAILED 是终态：继续 tick 不改变
+	p.tick(0.1)
+	assert_eq(p.state, BackendProcess.State.FAILED)
+	assert_signal_emit_count(p, "failed", 1)
 
 
 func test_stop_when_idle_immediate() -> void:
@@ -434,6 +443,41 @@ func test_stop_sync_when_noop() -> void:
 	watch_signals(p)
 	p.stop_sync()
 	assert_eq(p.state, BackendProcess.State.IDLE)
+
+
+# ── 强杀/按名清理命令清单（P0-10） ────────────────────────
+
+func test_force_kill_commands_include_pid_and_patterns() -> void:
+	var p := _make_proc("user://t_proj")
+	var cmds: Array = p._force_kill_commands(4242)
+	assert_true(cmds.has(["kill", ["-9", "4242"]]), "应含按 PID 强杀")
+	assert_true(cmds.has(["pkill", ["-9", "-f", "user://t_proj/backend/run_server\\.py"]]),
+		"应含开发模式脚本路径 pattern（正则转义）")
+	assert_true(cmds.has(["pkill", ["-9", "-f", "server/server"]]),
+		"应保留打包模式 pattern（fork 子进程兜底）")
+
+
+func test_force_kill_commands_skip_pid_when_unset() -> void:
+	var p := _make_proc()
+	for cmd: Array in p._force_kill_commands(-1):
+		assert_false(cmd[0] == "kill", "pid<=0 不应拼 kill -9（防误杀全场）")
+		if cmd[0] == "taskkill":
+			assert_false(Array(cmd[1]).has("/PID"), "pid<=0 不应拼 /PID")
+
+
+func test_untracked_kill_commands_cover_dev_and_packaged() -> void:
+	var p := _make_proc("user://t_proj")
+	var cmds: Array = p._untracked_kill_commands()
+	assert_true(cmds.has(["pkill", ["-TERM", "-f", "user://t_proj/backend/run_server\\.py"]]),
+		"未跟踪清理应覆盖开发模式脚本路径")
+	assert_true(cmds.has(["pkill", ["-TERM", "-f", "server/server"]]),
+		"未跟踪清理应保留打包模式")
+
+
+func test_regex_escape_metachars() -> void:
+	var p := _make_proc()
+	assert_eq(p._regex_escape("run_server.py"), "run_server\\.py")
+	assert_eq(p._regex_escape("a.b+c"), "a\\.b\\+c")
 
 
 # ── 参数语义 ───────────────────────────────────────────────

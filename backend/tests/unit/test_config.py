@@ -54,3 +54,24 @@ class TestWorldConstants:
         assert config.CHUNK_STORE_MAX_SIZE > 0
         assert config.INITIAL_CHUNK_RADIUS >= 0
         assert config.TILE_WORKERS > 0
+
+
+class TestGenFingerprintConstants:
+    """生成环境指纹常量名单。"""
+
+    def test_T8_constant_names_all_resolve(self):
+        """名单内每个名字必须可解析（防名单漂移——漏改=指纹失真）。"""
+        for name in config.CONTINENT_GEN_CONSTANT_NAMES:
+            assert hasattr(config, name), f"指纹名单常量缺失: {name}"
+            assert isinstance(getattr(config, name), (int, float, tuple)), (
+                f"指纹名单常量类型异常: {name}"
+            )
+
+    def test_T9_fingerprint_covers_climate_thresholds(self):
+        """气候阈值（P0-03 注入 C 的常量）必须在指纹覆盖内。"""
+        for name in (
+            "LAPSE_RATE", "ALPINE_ALTITUDE", "POLAR_TEMP", "DESERT_RAINFALL",
+            "STEPPE_RAINFALL", "STEPPE_MIN_TEMP", "TROPICAL_TEMP",
+            "TEMPERATE_TEMP", "RAINFOREST_RAINFALL", "TAIGA_RAINFALL",
+        ):
+            assert name in config.CONTINENT_GEN_CONSTANT_NAMES

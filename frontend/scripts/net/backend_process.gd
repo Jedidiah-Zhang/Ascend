@@ -4,8 +4,9 @@
   - 启动序列：端口预探测 → 拉起后端（开发 .venv python / 打包 server 二进制）
     → 等待端口就绪（每 0.5s 探测一次）→ ready 信号
   - 启动超时（BACKEND_STARTUP_TIMEOUT）→ FAILED 终态 + failed 信号
-  - 停止序列：SIGTERM（按 PID + 按名清理 Nuitka 孤儿）→ 等端口释放
-    → 超时强杀 → 再超时放弃 → stopped 信号
+  - 停止序列：SIGTERM（按 PID + 按名清理孤儿）→ 等端口释放
+    → 超时强杀（按 PID -9 + 开发/打包按名 pattern）→ 端口仍占用则
+    FAILED（不谎报 stopped——重启预探测会连上旧进程旧参数）
   - 参数语义：args 持有当前模式（[] 菜单 / ["--world-id", id, ...] 世界），
     world_id() 唯一解析处
 
@@ -79,8 +80,9 @@ var probe_factory: Callable = _probe_default
 ## 优雅终止命令 (pid)，默认按 OS 分支。
 var kill_command: Callable = _kill_term_default
 
-## 强杀命令 (pid)，默认按 OS 分支。Nuitka onefile fork 出的真实服务
-## 子进程需按名清理（bootstrap 仅监督进程），故按名 pattern 而非 PID。
+## 强杀命令 (pid)，默认按 OS 分支。三路清理：按 PID -9（standalone
+## 布局下跟踪 PID 即真实服务进程）+ 开发模式按脚本路径 pattern +
+## 打包模式按服务二进制名（onefile fork 子进程等 PID 跟踪不到的场景）。
 var force_kill_command: Callable = _force_kill_default
 
 ## 按名清理未跟踪进程 ()，默认按 OS 分支。
@@ -122,18 +124,68 @@ func _kill_term_default(p_pid: int) -> void:
 		OS.execute("kill", ["-TERM", str(p_pid)])
 
 
-func _force_kill_default(_p_pid: int) -> void:
+func _force_kill_commands(p_pid: int) -> Array:
+	"""强杀命令清单（纯函数，测试可断言内容）。
+
+	三路清理：
+	  - 按 PID SIGKILL（standalone 布局下跟踪 PID 即真实服务进程；
+	    仅 pid > 0 时加入，防 kill -9 -1 误杀）；
+	  - 开发模式按脚本路径（项目根绝对路径正则转义后精确匹配，
+	    不误伤其它 python 进程）；
+	  - 打包模式按服务二进制名（覆盖 fork 子进程等 PID 跟踪不到
+	    的场景）。
+	"""
 	if _is_windows():
-		OS.execute("taskkill", ["/IM", "server.exe", "/F"])
-	else:
-		OS.execute("pkill", ["-9", "-f", "server/server"])
+		var wcmds: Array = []
+		if p_pid > 0:
+			wcmds.append(["taskkill", ["/PID", str(p_pid), "/F"]])
+		wcmds.append(["taskkill", ["/IM", "server.exe", "/F"]])
+		return wcmds
+	var cmds: Array = []
+	if p_pid > 0:
+		cmds.append(["kill", ["-9", str(p_pid)]])
+	cmds.append(["pkill", ["-9", "-f", _dev_backend_pattern()]])
+	cmds.append(["pkill", ["-9", "-f", "server/server"]])
+	return cmds
+
+
+func _force_kill_default(p_pid: int) -> void:
+	for cmd: Array in _force_kill_commands(p_pid):
+		OS.execute(cmd[0], cmd[1])
+
+
+func _untracked_kill_commands() -> Array:
+	"""按名清理命令清单（纯函数，测试可断言内容）。
+
+	覆盖开发模式（脚本路径精确匹配）与打包模式（服务二进制名）
+	两类孤儿；TERM 优雅，强杀见 _force_kill_commands。
+	"""
+	if _is_windows():
+		return [["taskkill", ["/IM", "server.exe"]]]
+	return [
+		["pkill", ["-TERM", "-f", _dev_backend_pattern()]],
+		["pkill", ["-TERM", "-f", "server/server"]],
+	]
 
 
 func _kill_untracked_default() -> void:
-	if _is_windows():
-		OS.execute("taskkill", ["/IM", "server.exe", "/F"])
-	else:
-		OS.execute("pkill", ["-TERM", "-f", "server/server"])
+	for cmd: Array in _untracked_kill_commands():
+		OS.execute(cmd[0], cmd[1])
+
+
+## 开发模式后端的 pkill 匹配 pattern：项目内 run_server.py 绝对路径
+## （pkill -f 按正则匹配整条命令行，元字符须转义；绝对路径保证
+## 不误伤其它项目的开发后端）。
+func _dev_backend_pattern() -> String:
+	return _regex_escape(project_root.path_join(BACKEND_SCRIPT_REL))
+
+
+## 正则元字符转义（pkill -f pattern 用）。
+func _regex_escape(text: String) -> String:
+	var out := text.replace("\\", "\\\\")
+	for ch in [".", "+", "(", ")", "[", "]", "{", "}", "^", "$", "|", "*", "?"]:
+		out = out.replace(ch, "\\" + ch)
+	return out
 
 
 func _init(p_host: String, p_port: int, p_project_root: String, p_data_root: String) -> void:
@@ -318,7 +370,7 @@ func _on_start_probe_closed() -> void:
 
 
 func _on_stop_probe_open() -> void:
-	# 端口仍占用：等待优雅超时后强杀，强杀后再等一轮放弃
+	# 端口仍占用：等待优雅超时后强杀，强杀后再等一轮
 	if not _force_killed:
 		if _stop_elapsed >= BACKEND_STOP_TIMEOUT_MS / 1000.0:
 			push_warning("Connection: backend not stopped in time, force killing")
@@ -327,7 +379,14 @@ func _on_stop_probe_open() -> void:
 			_stop_elapsed = 0.0
 	else:
 		if _stop_elapsed >= FORCE_KILL_WAIT_MS / 1000.0:
-			_finish_stop()
+			# 强杀后端口仍未释放：不再谎报 stopped——重启预探测会
+			# 命中旧进程并连上旧参数。置 FAILED 终态，由门面中止
+			# 重启并通知 UI（须人工介入）。
+			_close_probe()
+			pid = -1
+			_enter_failed_state(
+				"backend process could not be killed (port %d still occupied)" % port
+			)
 
 
 func _on_stop_probe_closed() -> void:

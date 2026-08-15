@@ -27,9 +27,11 @@ GameEngine 负责把运行时状态喂给 write_state，读档时从 read_state 
   - 不变式：live_origin（活目录来源）恒为当前 auto 记录
     （世界初始 "" 除外）；进入手动档会在其下游开启新当前记录。
 
-快照作为世界目录内的兄弟子目录：回滚 = 用快照内容替换活文件，
-快照子目录在交换期间先移出再放回，自身不受影响（否则回滚会
-删除自己的回退点）。
+快照作为世界目录内的兄弟子目录：回滚 = 用快照内容替换活文件。
+交换期间世界级资产（血缘/回退点/大陆缓存）由墓碑目录搬回新活
+目录，旧活目录整体抛弃（其内容在回滚前已冻结进快照树，见
+enter_snapshot）；墓碑与临时目录确定性命名 + 挂起标记，进程
+崩溃后由 _recover_interrupted_extract 向前补全（见该函数）。
 
 快照 .ascendsave 格式与增量链模型见 snapshot.py 模块 docstring。
 """
@@ -47,7 +49,7 @@ from ascend.log import get_logger
 
 from .crypto import SaveKeys, SaveCryptoError
 from .io import atomic_write
-from .lineage import LineageStore, LINEAGE_FILE
+from .lineage import LineageStore, LINEAGE_FILE, parse_lineage_raw
 from .manifest import Manifest, SaveFormatError, MANIFEST_NAME, SEED_MAX
 from .snapshot import (
     SnapshotStore, _SNAPSHOT_ENTRIES, AUTO_SNAPSHOT_KEEP,
@@ -62,6 +64,16 @@ logger = get_logger(__name__)
 _WORLD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 # 大陆宏观场缓存（可再生数据，随档分发保证换机后首次加载也秒开）
 CONTINENT_FILE: str = "continent.bin"
+
+# 回滚（extract）换目录操作的墓碑/临时目录/挂起标记前缀：
+# 确定性命名（.old-<world_id> / .extract-<world_id>），目录存在性
+# 即崩溃现场状态，_recover_interrupted_extract 据此向前补全
+EXTRACT_BACKUP_PREFIX: str = ".old-"
+EXTRACT_TMP_PREFIX: str = ".extract-"
+EXTRACT_PENDING_PREFIX: str = ".extract-pending-"
+# 挂起标记后缀：内容 {"snapshot": 被展开的快照文件名}——恢复时
+# 据此还原 live_origin，没有它回滚后血缘串链无从接续
+EXTRACT_PENDING_SUFFIX: str = ".json"
 
 # 存档位活目录中的规范文件集合（导出/复制只拷这些，排除 WAL/临时文件；
 # 含 continent.bin——同 seed 确定性产物，随档复制保证副本首次加载秒开；
@@ -87,9 +99,26 @@ class SaveManager:
         """
         self._root = os.path.abspath(root)
         os.makedirs(self._root, exist_ok=True)
-        self._lineage = LineageStore(self._root)
+        self._lineage = LineageStore(
+            self._root, keys_provider=self._lineage_keys,
+        )
         self._snap = SnapshotStore(self._root, self._lineage)
+        # 构造期自愈：补全/清理上次回滚崩溃残留（先于任何 handler）
+        self._recover_interrupted_extract()
         logger.info("存档管理器就绪: %s", self._root)
+
+    # ── 血缘密钥提供者（注入 LineageStore） ────────────────
+
+    def _lineage_keys(self, world_id: str) -> SaveKeys | None:
+        """世界签名密钥（血缘验签/签名用）；不可用时返回 None。
+
+        密钥藏在 manifest.secrets_blob 混淆层：取不到 = manifest 缺失
+        或损坏——血缘读写按「不可验签」降级（宁缺勿删），不阻断。
+        """
+        try:
+            return self._load_keys(world_id)
+        except (SaveCryptoError, SaveFormatError, OSError):
+            return None
 
     def __repr__(self) -> str:
         return f"SaveManager(root={self._root})"
@@ -232,8 +261,12 @@ class SaveManager:
         if not os.path.isdir(self._root):
             return result
         for entry in sorted(os.listdir(self._root)):
+            # 跳过点号前缀的运行期残留/临时目录（.extract-* / .old-* /
+            # .preview-* / 挂起标记）——墓碑内 manifest 与活目录重复，
+            # 绝不能把崩溃残留列成幽灵世界
+            if entry.startswith("."):
+                continue
             path = os.path.join(self._root, entry)
-            # 跳过运行期残留/临时目录（.extract-* / .old-* / live / snapshots）
             if not os.path.isdir(path) or not os.path.isfile(
                 os.path.join(path, MANIFEST_NAME)
             ):
@@ -293,10 +326,17 @@ class SaveManager:
     def export_world(self, world_id: str) -> str:
         """复制世界为新的存档位（Issue #14 "复制存档"），含快照。
 
-        只复制活目录的规范文件（manifest/key/state/DB），排除运行期
-        残留的 -wal/-shm/.tmp 等垃圾；快照目录整体复制（单文件安全）。
-        复制出的快照仍指向原世界，回滚时须以目标 world_id 覆盖
-        （见 extract_snapshot 的 world_id 参数）。
+        活目录只复制规范文件（manifest/state/DB/血缘/大陆缓存），
+        排除运行期残留的 -wal/-shm/.tmp 等垃圾；快照逐个改绑新世界
+        ID（rebind_snapshot：头部与内嵌 manifest 的世界身份换为副本
+        ID，钥匙不变）——副本自包含：预览/回滚沿副本自身血缘与
+        快照目录解析，不依赖原世界。任一快照损坏即整体失败，
+        不留半成品目录。
+
+        Raises:
+            SaveCryptoError: 快照损坏/篡改（改绑需解密每个快照）。
+            SaveFormatError: 快照内嵌 manifest 损坏。
+            ValueError: world_id 非法。
 
         Returns:
             新存档位的 world_id。
@@ -307,33 +347,39 @@ class SaveManager:
         new_dir = self.world_dir(new_id)
         os.makedirs(new_dir, exist_ok=False)
         os.makedirs(self.snapshot_dir(new_id), exist_ok=True)
-        src_dir = self.world_dir(world_id)
-        for entry in _LIVE_ENTRIES:
-            src = os.path.join(src_dir, entry)
-            if os.path.isfile(src):
-                shutil.copy2(src, os.path.join(new_dir, entry))
-        for filename in os.listdir(self.snapshot_dir(world_id)):
-            if not filename.endswith(SNAPSHOT_SUFFIX):
-                continue
-            shutil.copy2(
-                os.path.join(self.snapshot_dir(world_id), filename),
-                os.path.join(self.snapshot_dir(new_id), filename),
+        try:
+            src_dir = self.world_dir(world_id)
+            for entry in _LIVE_ENTRIES:
+                src = os.path.join(src_dir, entry)
+                if os.path.isfile(src):
+                    shutil.copy2(src, os.path.join(new_dir, entry))
+            for filename in os.listdir(self.snapshot_dir(world_id)):
+                if not filename.endswith(SNAPSHOT_SUFFIX):
+                    continue
+                self._snap.rebind_snapshot(
+                    os.path.join(self.snapshot_dir(world_id), filename),
+                    os.path.join(self.snapshot_dir(new_id), filename),
+                    new_id,
+                )
+            # 新世界的 manifest 换 ID，其余元信息保留；
+            # 密钥混淆层绑定存档身份：须用原 ID 解出、新 ID 重新混淆
+            new_manifest = Manifest.read(self.manifest_path(new_id))
+            new_manifest.world_id = new_id
+            # 名称唯一：副本追加"副本"后缀（原档仍占用原名称）
+            new_manifest.name = self._unique_copy_name(
+                new_manifest.name, exclude_world_id=new_id,
             )
-        # 新世界的 manifest 换 ID，其余元信息保留；
-        # 密钥混淆层绑定存档身份：须用原 ID 解出、新 ID 重新混淆
-        new_manifest = Manifest.read(self.manifest_path(new_id))
-        new_manifest.world_id = new_id
-        # 名称唯一：副本追加"副本"后缀（原档仍占用原名称）
-        new_manifest.name = self._unique_copy_name(
-            new_manifest.name, exclude_world_id=new_id,
-        )
-        if new_manifest.secrets_blob:
-            keys = SaveKeys.from_protected(
-                new_manifest.secrets_blob, world_id, new_manifest.seed,
-            )
-            new_manifest.secrets_blob = keys.protect(new_id, new_manifest.seed)
-        new_manifest.created_at = _real_time.time()
-        new_manifest.write(self.manifest_path(new_id))
+            if new_manifest.secrets_blob:
+                keys = SaveKeys.from_protected(
+                    new_manifest.secrets_blob, world_id, new_manifest.seed,
+                )
+                new_manifest.secrets_blob = keys.protect(new_id, new_manifest.seed)
+            new_manifest.created_at = _real_time.time()
+            new_manifest.write(self.manifest_path(new_id))
+        except Exception:
+            # 副本必须完整自洽：任何一步失败整体放弃，不留半成品
+            shutil.rmtree(new_dir, ignore_errors=True)
+            raise
         logger.info("复制存档: %s → %s (%s)", world_id, new_id, new_manifest.name)
         return new_id
 
@@ -445,7 +491,7 @@ class SaveManager:
                     logger.warning(
                         "空增量写失败，回退全量: %s (%s)", world_id, anchor,
                     )
-                    self._snap.write_snapshot_file(path, wdir)
+                    self._snap.write_snapshot_file(path, wdir, world_id)
             else:
                 self._snap.write_snapshot(world_id, path, parent)
         else:
@@ -637,8 +683,9 @@ class SaveManager:
 
         Args:
             snapshot_path: 快照文件路径（绝对/相对/文件名）。
-            world_id: 目标 world_id 覆盖（回滚必须显式传入，见
-                extract_snapshot）。None 时无法冻结离开记录（跳过分）。
+            world_id: 目标 world_id 覆盖（正常回滚由前端显式传入；
+                跨世界展开语义见 extract_snapshot）。None 时无法冻结
+                离开记录（跳过分）。
 
         Returns:
             展开后的 world_id。
@@ -811,8 +858,10 @@ class SaveManager:
             时间线的「当前点」悬空）；
           - 血缘条目存在但文件已缺失的孤儿条目一并清理（重接父链）；
           - 磁盘上无血缘条目的残留快照文件（如晋升时旧文件删除失败
-            的幽灵节点）一并删除（反向对账）——仅在血缘文件完好时
-            执行：血缘缺失/损坏时无法判断何为幽灵，宁缺勿删。
+            的幽灵节点）一并删除（反向对账）。
+          - 血缘缺失/损坏/无有效签名时不做任何淘汰并告警（宁缺勿删）：
+            空血缘下按文件名序淘汰会误删最近的记录，反向对账会把
+            全部文件当幽灵——文件保留待修复。
         淘汰列表算齐后统一经 remove_snapshots 原语删除（血缘重接、
         live_origin 回退、文件容忍由原语结构性保证）。
 
@@ -822,9 +871,11 @@ class SaveManager:
         self._validate_world_id(world_id)
         sdir = self.snapshot_dir(world_id)
         lineage = self.snapshot_lineage(world_id)
-        # 血缘完好性：文件存在且可解析（区分「世界尚无血缘」与
-        # 「血缘缺失/损坏」——后者不做反向对账，防全量误删）
-        lineage_ok = self._lineage.load(world_id) is not None
+        if self._lineage.load(world_id) is None:
+            logger.warning(
+                "血缘缺失或验签失败，跳过快照淘汰（宁缺勿删）: %s", world_id,
+            )
+            return 0
         live_origin = lineage.get("live_origin", "")
         to_delete: list[str] = []
 
@@ -839,29 +890,29 @@ class SaveManager:
 
         # 1b. 反向对账：磁盘上无血缘条目的残留快照文件（幽灵节点）
         #     直接删除（不产生血缘变更；live_origin 文件永不误删）。
-        #     血缘缺失/损坏时跳过——known 为空会把全部文件当幽灵
-        if lineage_ok:
-            known = set(lineage.get("snapshots", {}))
-            for name in on_disk:
-                if SNAPSHOT_SUFFIX + ".tmp-" in name:
-                    # 快照原子写入中途崩溃残留的临时文件（永不有效）
-                    try:
-                        os.remove(os.path.join(sdir, name))
-                    except OSError:
-                        pass
-                    continue
-                if not name.endswith(SNAPSHOT_SUFFIX):
-                    continue
-                if name not in known and name != live_origin:
-                    try:
-                        os.remove(os.path.join(sdir, name))
-                        logger.warning(
-                            "清理无血缘快照文件: %s/%s", world_id, name,
-                        )
-                    except OSError as exc:
-                        logger.warning(
-                            "幽灵快照文件删除失败: %s (%s)", name, exc,
-                        )
+        #     血缘已在上方验签把关（不可验签时提前返回），known
+        #     可信：不会把有主文件当幽灵
+        known = set(lineage.get("snapshots", {}))
+        for name in on_disk:
+            if SNAPSHOT_SUFFIX + ".tmp-" in name:
+                # 快照原子写入中途崩溃残留的临时文件（永不有效）
+                try:
+                    os.remove(os.path.join(sdir, name))
+                except OSError:
+                    pass
+                continue
+            if not name.endswith(SNAPSHOT_SUFFIX):
+                continue
+            if name not in known and name != live_origin:
+                try:
+                    os.remove(os.path.join(sdir, name))
+                    logger.warning(
+                        "清理无血缘快照文件: %s/%s", world_id, name,
+                    )
+                except OSError as exc:
+                    logger.warning(
+                        "幽灵快照文件删除失败: %s (%s)", name, exc,
+                    )
 
         # 2. 按来源分组保留策略（组内按血缘 seq = 创建顺序；
         #    文件名同秒内排序任意，不能作时间序依据）
@@ -918,8 +969,9 @@ class SaveManager:
     def read_snapshot_state(self, snapshot_path: str) -> dict:
         """读取快照内的世界状态（回滚前展示/确认用）。
 
-        增量快照先沿其所属世界血缘链式物化再读取（基座文件须在
+        增量快照先沿其内嵌世界血缘链式物化再读取（基座文件须在
         该世界快照目录内；脱离存档孤立拷贝的增量文件无法预览）。
+        复制档（export）的快照已改绑副本 ID，物化沿副本世界解析。
 
         Args:
             snapshot_path: 快照文件路径（绝对路径或相对当前目录）。
@@ -985,9 +1037,9 @@ class SaveManager:
         Args:
             snapshot_path: 快照文件路径（绝对路径、相对路径或文件名——
                 文件名从目标世界的快照目录解析）。
-            world_id: 目标 world_id 覆盖。快照内 manifest 记录的是
-                创建时所属世界；复制存档（export）后快照仍指向原世界，
-                回滚到复制档时必须显式传入目标 ID，避免覆盖原世界。
+            world_id: 目标 world_id 覆盖（跨世界展开用）。复制存档
+                （export）的快照已改绑副本 ID，无需覆盖；仅当显式把
+                一个世界的快照展开进另一个世界时传入目标 ID。
 
         Returns:
             展开后的 world_id。
@@ -998,6 +1050,10 @@ class SaveManager:
         """
         if world_id is not None:
             self._validate_world_id(world_id)
+            # 前置自愈：目标世界已知时，先解决本世界的交换残留再解析
+            # 快照路径——软失败后快照文件仍在墓碑内，裸文件名（前端
+            # --snapshot 下发形式）必须等墓碑搬回活目录才能解析
+            self._pre_extract_residue(world_id)
         snapshot_path = self._snap.resolve_snapshot_path(snapshot_path, world_id)
         header, zf = self._snap.open_snapshot(snapshot_path)
         is_delta = bool(header.get("base"))
@@ -1014,12 +1070,12 @@ class SaveManager:
             if override:
                 embedded_id = manifest.world_id
                 if embedded_id != world_id:
-                    # 跨世界快照展开（复制档回滚属正常用法）：展开后
-                    # live_origin 指向目标世界内可能不存在的文件名，
-                    # 血缘会短暂悬空（前端串链兜底、删除时归一），
-                    # 记录 warning 供排查
+                    # 跨世界快照展开（显式覆盖，如把 A 世界快照展开
+                    # 进 B）：展开后 live_origin 指向目标世界内可能
+                    # 不存在的文件名，血缘会短暂悬空（前端串链兜底、
+                    # 删除时归一），记录 warning 供排查
                     logger.warning(
-                        "快照内嵌世界 %s 与目标 %s 不一致（复制档回滚？）",
+                        "快照内嵌世界 %s 与目标 %s 不一致（跨世界展开？）",
                         embedded_id, world_id,
                     )
                 manifest.world_id = world_id
@@ -1033,9 +1089,16 @@ class SaveManager:
                         world_id, manifest.seed,
                     )
             world_id = manifest.world_id
+            if not override:
+                # 无覆盖参数：目标世界此刻才可知（内嵌世界），在此自愈
+                self._pre_extract_residue(world_id)
 
-            tmp_dir = os.path.join(
-                self._root, f".extract-{uuid.uuid4().hex}"
+            wdir = self.world_dir(world_id)
+            tmp_dir = os.path.join(self._root, EXTRACT_TMP_PREFIX + world_id)
+            backup = os.path.join(self._root, EXTRACT_BACKUP_PREFIX + world_id)
+            marker_path = os.path.join(
+                self._root,
+                EXTRACT_PENDING_PREFIX + world_id + EXTRACT_PENDING_SUFFIX,
             )
             os.makedirs(tmp_dir, exist_ok=True)
             try:
@@ -1057,46 +1120,287 @@ class SaveManager:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 raise
 
-            # 原子替换活目录：整体 swap（2 次 rename）——回滚绝不能删除
-            # 自己的回退点（快照子目录），也不应丢秒开缓存（大陆场）；
-            # 二者从备份目录拷回，即使中途失败原目录也完整保留在 backup
-            wdir = self.world_dir(world_id)
-            backup = wdir + f".old-{uuid.uuid4().hex}"
+            # ── 原子替换活目录（2 次 rename）──
+            # 回滚前离开记录已冻结进快照树（enter_snapshot），旧活目录
+            # 内容整体抛弃；血缘/回退点/大陆缓存不随快照打包，从墓碑
+            # 目录 rename 搬回。墓碑/临时目录确定性命名 + 挂起标记
+            # （记录被展开的快照名），进程崩溃后由
+            # _recover_interrupted_extract 向前补全（含 live_origin）。
+            try:
+                self._write_extract_pending(
+                    marker_path, os.path.basename(snapshot_path),
+                )
+            except OSError:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                raise
             if os.path.isdir(wdir):
                 os.rename(wdir, backup)
             try:
                 os.rename(tmp_dir, wdir)
             except OSError:
-                # 回滚失败时恢复原目录（整体移回，快照与缓存一并还原）
-                if os.path.isdir(wdir):
-                    shutil.rmtree(wdir, ignore_errors=True)
+                # 上位失败：恢复原目录（整体移回），清理本次操作
                 if os.path.isdir(backup):
-                    os.rename(backup, wdir)
+                    try:
+                        os.rename(backup, wdir)
+                    except OSError:
+                        logger.warning(
+                            "回滚失败且原目录恢复失败，墓碑保留待下次启动自愈: %s",
+                            world_id,
+                        )
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                self._remove_extract_pending(marker_path)
                 raise
-            if os.path.isdir(backup):
-                try:
-                    # 快照子目录（回退点自身）与大陆缓存从旧目录拷回
-                    old_snaps = os.path.join(backup, SNAPSHOT_DIR)
-                    if os.path.isdir(old_snaps):
-                        shutil.copytree(old_snaps, os.path.join(wdir, SNAPSHOT_DIR))
-                    old_cont = os.path.join(backup, CONTINENT_FILE)
-                    if os.path.isfile(old_cont):
-                        shutil.copy2(old_cont, os.path.join(wdir, CONTINENT_FILE))
-                    # 血缘文件随活目录被替换进了 backup：回滚后必须保留
-                    # 原血缘（否则分叉上下文丢失），再记录活目录新来源
-                    old_lineage = os.path.join(backup, LINEAGE_FILE)
-                    if os.path.isfile(old_lineage):
-                        shutil.copy2(old_lineage, os.path.join(wdir, LINEAGE_FILE))
-                except OSError:
-                    logger.warning("快照/缓存回拷失败（已展开，仅保底丢失）: %s", world_id)
+            if self._move_preserved_assets(backup, wdir):
+                # 资产已全部搬入，旧活目录可安全抛弃；先记录活目录来源
+                # 再删墓碑——两者之间崩溃时墓碑仍在，自愈重写同值幂等
+                self.set_live_origin(world_id, os.path.basename(snapshot_path))
                 shutil.rmtree(backup, ignore_errors=True)
-            self.set_live_origin(world_id, os.path.basename(snapshot_path))
+                self._remove_extract_pending(marker_path)
+            else:
+                # 资产搬运未完成：墓碑保留，下次启动自愈补全；标记
+                # 立即移除——回滚已返回，活目录可能继续产生新血缘，
+                # 自愈时不得再回写 live_origin（见 _recover_interrupted_extract）
+                if os.path.isfile(os.path.join(wdir, LINEAGE_FILE)):
+                    self.set_live_origin(world_id, os.path.basename(snapshot_path))
+                self._remove_extract_pending(marker_path)
+                logger.warning(
+                    "回滚资产搬运未完成，墓碑保留待下次启动自愈: %s", world_id,
+                )
             logger.info("快照展开为活目录: %s", world_id)
             return world_id
         finally:
             # 双分支已各自关闭 zf（增量分支先关以释放链上文件句柄）；
             # 此处仅兜底未走分支的异常路径
             zf.close()
+
+    # ── 回滚换目录的崩溃自愈 ──────────────────────────────
+
+    def _write_extract_pending(self, marker_path: str, snapshot_file: str) -> None:
+        """写挂起标记：记录被展开的快照文件名（崩溃恢复还原 live_origin 用）。"""
+        atomic_write(marker_path, json.dumps({"snapshot": snapshot_file}))
+
+    def _read_extract_pending(self, marker_path: str) -> str:
+        """读挂起标记里的快照文件名；缺失/损坏返回空串（按无标记处理）。"""
+        if not os.path.isfile(marker_path):
+            return ""
+        try:
+            with open(marker_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            logger.warning("回滚挂起标记损坏，按缺失处理: %s (%s)", marker_path, exc)
+            return ""
+        name = data.get("snapshot", "") if isinstance(data, dict) else ""
+        return name if isinstance(name, str) else ""
+
+    def _remove_extract_pending(self, marker_path: str) -> None:
+        """移除挂起标记（回滚全部完成后调用）。"""
+        try:
+            os.remove(marker_path)
+        except OSError:
+            pass
+
+    def _move_preserved_assets(self, backup: str, wdir: str) -> bool:
+        """把世界级资产从墓碑目录搬入新活目录（rename，原子且幂等）。
+
+        血缘/回退点/大陆缓存不随快照打包：交换后必须从旧目录搬回。
+        每项独立搬运，目标已存在即跳过（上次搬运已完成或活目录已
+        产生新内容——新内容优先保留）；快照目录目标已存在时按文件
+        合并（同名冲突保留活目录版本）。
+
+        Returns:
+            True = 全部搬运完成（或本无内容可搬），旧目录可安全抛弃。
+        """
+        ok = True
+        for name in (LINEAGE_FILE, SNAPSHOT_DIR, CONTINENT_FILE):
+            src = os.path.join(backup, name)
+            dst = os.path.join(wdir, name)
+            if not os.path.lexists(src):
+                continue
+            if os.path.lexists(dst):
+                if name == SNAPSHOT_DIR:
+                    # 合并旧回退点（仅新增，同名保留活目录版本）
+                    for fname in os.listdir(src):
+                        s = os.path.join(src, fname)
+                        d = os.path.join(dst, fname)
+                        if not os.path.lexists(d):
+                            try:
+                                os.rename(s, d)
+                            except OSError:
+                                ok = False
+                continue
+            try:
+                os.rename(src, dst)
+            except OSError:
+                ok = False
+        return ok
+
+    def _merge_lineage_snapshots(
+        self, backup: str, wdir: str, world_id: str,
+    ) -> None:
+        """合并墓碑血缘的快照条目进活目录血缘（活目录版本优先）。
+
+        仅在两者文件同时存在且墓碑血缘可验签时有效（资产搬运失败后
+        活目录又产生了新血缘的罕见态）：把旧条目录入活目录血缘，
+        避免已搬入的回退点因血缘缺失被反向对账当成幽灵。墓碑血缘
+        不可验签（历史无签名/被篡改）时不信任其内容，跳过合并。
+        """
+        src_path = os.path.join(backup, LINEAGE_FILE)
+        if not os.path.isfile(src_path) or not os.path.isfile(
+            os.path.join(wdir, LINEAGE_FILE)
+        ):
+            return
+        try:
+            with open(src_path, encoding="utf-8") as f:
+                raw = json.load(f)
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            logger.warning("墓碑血缘损坏，跳过合并: %s (%s)", src_path, exc)
+            return
+        src = parse_lineage_raw(raw, self._lineage_keys(world_id))
+        if src is None:
+            logger.warning("墓碑血缘不可验签，跳过合并: %s", world_id)
+            return
+        lineage = self._lineage.get(world_id)
+        changed = False
+        for fname, entry in src["snapshots"].items():
+            if fname not in lineage["snapshots"]:
+                lineage["snapshots"][fname] = entry
+                changed = True
+        if changed:
+            self._lineage.write(world_id, lineage)
+
+    def _recover_interrupted_extract(self) -> None:
+        """启动自愈：补全/清理上次回滚（extract）崩溃留下的残留。
+
+        墓碑（.old-<world_id>）与临时目录（.extract-<world_id>）确定性
+        命名、挂起标记记录被展开的快照名——目录存在性即崩溃现场，
+        无需 journal。规则：
+
+          - 活目录在：交换已落定 → 搬回世界级资产，抛弃旧活目录
+            （其内容在回滚前已冻结进快照树）；
+          - 活目录缺失、临时目录在：交换中断于两次 rename 之间 →
+            临时目录上位，同样抛弃旧活目录（向前补全）；
+          - 活目录缺失、临时目录缺失：防御性回滚——墓碑整目录移回，
+            本次回滚按未发生处理；
+          - 历史遗留 uuid 命名墓碑：从墓碑内 manifest 反查世界身份。
+
+        任一搬运失败即保留墓碑与标记，下次启动重试。自愈在构造期
+        执行（任何 handler 注册之前），不存在在途回滚可踩踏。
+        """
+        try:
+            self._recover_interrupted_extract_impl()
+        except OSError as exc:
+            # 自愈是最佳努力：任何意外都不允许阻断存档管理器启动
+            logger.warning("回滚残留自愈失败，跳过: %s", exc)
+
+    def _recover_interrupted_extract_impl(self) -> None:
+        """_recover_interrupted_extract 的实现（异常由调用方兜底）。"""
+        if not os.path.isdir(self._root):
+            return
+        for entry in sorted(os.listdir(self._root)):
+            if not entry.startswith(EXTRACT_BACKUP_PREFIX):
+                continue
+            suffix = entry[len(EXTRACT_BACKUP_PREFIX):]
+            world_id = suffix if _WORLD_ID_RE.fullmatch(suffix) else ""
+            backup = os.path.join(self._root, entry)
+            if not world_id:
+                # 历史遗留（uuid 命名）：从墓碑内 manifest 反查世界身份
+                try:
+                    world_id = Manifest.read(
+                        os.path.join(backup, MANIFEST_NAME)
+                    ).world_id
+                except SaveFormatError:
+                    logger.warning("无法识别的回滚墓碑，跳过: %s", entry)
+                    continue
+            self._resolve_swap_residue(backup, world_id)
+        # 第二遍：无墓碑对应的临时目录/挂起标记 = 未开始或已结束的
+        # 回滚残留，一律清理（构造期不存在在途操作）。挂起标记
+        # （.extract-pending-* 是文件）必须先于 .extract-* 判断；
+        # .base-*/.rebase-*/.preview-* 为快照物化/重基座临时目录，
+        # 同为请求期产物、崩溃即垃圾
+        for entry in os.listdir(self._root):
+            if entry.startswith(EXTRACT_PENDING_PREFIX):
+                self._remove_extract_pending(os.path.join(self._root, entry))
+            elif entry.startswith(EXTRACT_TMP_PREFIX) or entry.startswith(
+                (".preview-", ".base-", ".rebase-")
+            ):
+                shutil.rmtree(os.path.join(self._root, entry), ignore_errors=True)
+
+    def _pre_extract_residue(self, world_id: str) -> None:
+        """回滚前的交换残留处理（extract 两个入口共用）。
+
+        分发单线程，同世界不存在并发回滚：挂起标记在 = 真正在途
+        → 拒绝防踩踏；墓碑/临时目录残留 = 上次软失败/崩溃遗留，
+        就地补全后继续（与启动自愈同一原语 _resolve_swap_residue），
+        无需重启。
+
+        Args:
+            world_id: 目标世界 ID。
+
+        Raises:
+            SaveFormatError: 挂起标记在（在途）或墓碑搬运再次失败。
+        """
+        backup = os.path.join(self._root, EXTRACT_BACKUP_PREFIX + world_id)
+        marker_path = os.path.join(
+            self._root,
+            EXTRACT_PENDING_PREFIX + world_id + EXTRACT_PENDING_SUFFIX,
+        )
+        tmp_dir = os.path.join(self._root, EXTRACT_TMP_PREFIX + world_id)
+        if os.path.lexists(marker_path):
+            raise SaveFormatError("上一次回滚尚未完成，请稍后重试")
+        if os.path.isdir(backup):
+            self._resolve_swap_residue(backup, world_id)
+            if os.path.isdir(backup):
+                # 原语保留墓碑 = 搬运再次失败：不冒进，拒绝本次回滚
+                raise SaveFormatError(
+                    "上一次回滚的残留无法清理，请重启后端后重试"
+                )
+        if os.path.lexists(tmp_dir):
+            # 无标记无墓碑的临时目录：未开始/已放弃的回滚垃圾
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _resolve_swap_residue(self, backup: str, world_id: str) -> None:
+        """解决单个世界的回滚交换残留（单一原语，幂等）。
+
+        启动扫描与 extract 开头共用：向前补全 / 防御性移回 / 资产
+        搬运 + 血缘合并 + live_origin 重写 + 清理。墓碑最终要么被
+        移回/抛弃，要么保留待下次重试（搬运失败）。
+
+        Args:
+            backup: 墓碑目录路径（.old-<world_id>）。
+            world_id: 世界 ID。
+        """
+        wdir = self.world_dir(world_id)
+        tmp = os.path.join(self._root, EXTRACT_TMP_PREFIX + world_id)
+        marker_path = os.path.join(
+            self._root,
+            EXTRACT_PENDING_PREFIX + world_id + EXTRACT_PENDING_SUFFIX,
+        )
+        snap_name = self._read_extract_pending(marker_path)
+        if not os.path.isdir(wdir) and os.path.isdir(tmp):
+            os.rename(tmp, wdir)  # 向前补全：临时目录上位
+        if not os.path.isdir(wdir):
+            # 临时目录也缺失：无法补全 → 墓碑整目录移回
+            try:
+                os.rename(backup, wdir)
+                logger.warning("已恢复上次中断的回滚（按未发生处理）: %s", world_id)
+            except OSError:
+                logger.warning("回滚墓碑移回失败，保留待人工处理: %s", backup)
+                return
+            self._remove_extract_pending(marker_path)
+            return
+        # 活目录在：补全资产搬运后抛弃旧活目录
+        if not self._move_preserved_assets(backup, wdir):
+            logger.warning("回滚资产搬运未完成，墓碑保留待下次启动重试: %s", backup)
+            return
+        self._merge_lineage_snapshots(backup, wdir, world_id)
+        if snap_name:
+            # 标记存在 ⟹ 进程死于回滚收尾之前（活目录不可能产生
+            # 新血缘——软失败路径返回前已移除标记），重写 live_origin
+            # 恒为幂等（要么尚未写过、要么同值）
+            self.set_live_origin(world_id, snap_name)
+        shutil.rmtree(backup, ignore_errors=True)
+        self._remove_extract_pending(marker_path)
+        logger.warning("已补全上次中断的回滚并清理旧目录: %s", world_id)
 
     # ── 内部 ──────────────────────────────────────────────
 
@@ -1106,6 +1410,8 @@ class SaveManager:
         if not os.path.isdir(self._root):
             return names
         for entry in os.listdir(self._root):
+            if entry.startswith("."):
+                continue  # 运行期残留/临时目录（与 list_worlds 同口径）
             if entry == exclude_world_id:
                 continue
             mp = os.path.join(self._root, entry, MANIFEST_NAME)

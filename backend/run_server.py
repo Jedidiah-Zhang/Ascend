@@ -15,6 +15,10 @@
     cd backend && PYTHONPATH=. python run_server.py
     cd backend && PYTHONPATH=. python run_server.py --world-id <id>
     cd backend && PYTHONPATH=. python run_server.py --world-id <id> --snapshot <file>
+    cd backend && PYTHONPATH=. python run_server.py --world-id <id> --regen-continent
+
+--regen-continent: 无视大陆缓存强制重建（开发者/研究侧调参用；
+对存档世界有破坏性——玩家改动的 chunk 与新场可能出现接缝不一致）。
 
 按 Ctrl+C 停止；前端退出时会发送 SIGTERM 优雅停止（先落盘再退出）。
 
@@ -77,13 +81,14 @@ def _cleanup_old_logs() -> None:
             Path(log_file).unlink()
 
 
-def _parse_args(argv: list[str]) -> tuple[str | None, str | None, str | None, str | None]:
-    """解析 --world-id / --snapshot / --project-root / --data-root
-    （无第三方依赖的手写解析）。"""
+def _parse_args(argv: list[str]) -> tuple[str | None, str | None, str | None, str | None, bool]:
+    """解析 --world-id / --snapshot / --project-root / --data-root /
+    --regen-continent（无第三方依赖的手写解析）。"""
     world_id: str | None = None
     snapshot: str | None = None
     project_root: str | None = None
     data_root: str | None = None
+    regen_continent: bool = False
     i = 0
     while i < len(argv):
         if argv[i] == "--world-id" and i + 1 < len(argv):
@@ -98,10 +103,13 @@ def _parse_args(argv: list[str]) -> tuple[str | None, str | None, str | None, st
         elif argv[i] == "--data-root" and i + 1 < len(argv):
             data_root = argv[i + 1]
             i += 2
+        elif argv[i] == "--regen-continent":
+            regen_continent = True
+            i += 1
         else:
             print(f"未知参数: {argv[i]}", file=sys.stderr)
             sys.exit(2)
-    return world_id, snapshot, project_root, data_root
+    return world_id, snapshot, project_root, data_root, regen_continent
 
 
 def _force_utf8_stdio() -> None:
@@ -125,7 +133,7 @@ def main() -> None:
 
     _force_utf8_stdio()
 
-    world_id, snapshot, project_root, data_root = _parse_args(sys.argv[1:])
+    world_id, snapshot, project_root, data_root, regen_continent = _parse_args(sys.argv[1:])
     if project_root is not None:
         _PROJECT_ROOT = Path(project_root)
     if data_root is not None:
@@ -162,7 +170,10 @@ def main() -> None:
         # 世界进程：世界加载失败（存档不存在/损坏/回滚目标无效）时
         # 打印错误并以非零码退出——前端端口探测超时后按启动失败处理
         try:
-            engine.load_world(world_id=world_id, snapshot=snapshot)
+            engine.load_world(
+                world_id=world_id, snapshot=snapshot,
+                regen_continent=regen_continent,
+            )
         except Exception as exc:
             logger = get_logger("run_server")
             logger.error("世界启动失败: world=%s snapshot=%s: %s", world_id, snapshot, exc)

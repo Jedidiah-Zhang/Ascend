@@ -18,7 +18,7 @@ from ascend.config import (
 )
 from ascend.log import get_logger
 
-from .event import Event
+from .event import Event, SUB_CELL_SIZE, sub_cell_range
 from .affected import AffectedParty
 
 # SQLite DDL 文件与此文件同目录
@@ -249,8 +249,16 @@ class EventArchive:
         layer_id: int = 0,
         start_time: int | None = None,
         end_time: int | None = None,
+        center_tile: tuple[int, int] | None = None,
+        sub_radius: int = 0,
     ) -> list[Event]:
         """按空间区域查询归档事件（限定单层）。
+
+        chunk 级粗筛 + 可选的 sub-cell 精筛——与内存路径
+        （WorldTree.get_events_in_region）同一过滤语义：
+        center_tile/sub_radius 仅作用于中心 chunk，周边 chunk 返回
+        全部 sub-cell；tile 为 NULL 的事件按 sub-cell 0 处理
+        （与内存 spatial_key 一致）。
 
         Args:
             center_chunk: 中心 chunk 坐标 (chunk_x, chunk_y)。
@@ -258,6 +266,9 @@ class EventArchive:
             layer_id: 只查询该层的事件，默认 0（地表）。
             start_time: 可选，时间下界。
             end_time: 可选，时间上界。
+            center_tile: 可选，中心 tile 坐标 (tile_x, tile_y)，
+                传入后中心 chunk 仅返回 sub_radius 范围内的 sub-cell。
+            sub_radius: sub-cell 搜索半径，默认 0 即仅匹配自身 sub-cell。
 
         Returns:
             该层区域内满足条件的事件列表。
@@ -274,6 +285,22 @@ class EventArchive:
             cx - radius, cx + radius,
             cy - radius, cy + radius,
         ]
+
+        if center_tile is not None:
+            (scx_lo, scx_hi), (scy_lo, scy_hi) = sub_cell_range(
+                center_tile[0], center_tile[1], sub_radius,
+            )
+            sql += """
+                AND (chunk_x != ? OR chunk_y != ? OR (
+                    COALESCE(tile_x, 0) BETWEEN ? AND ?
+                    AND COALESCE(tile_y, 0) BETWEEN ? AND ?
+                ))
+            """
+            params.extend([
+                cx, cy,
+                scx_lo * SUB_CELL_SIZE, (scx_hi + 1) * SUB_CELL_SIZE - 1,
+                scy_lo * SUB_CELL_SIZE, (scy_hi + 1) * SUB_CELL_SIZE - 1,
+            ])
 
         if start_time is not None:
             sql += " AND timestamp >= ?"

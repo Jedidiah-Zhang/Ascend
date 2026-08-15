@@ -9,8 +9,15 @@ _unpack_full / _apply_* / _materialize_snapshot / _rebase_* 等）。
 快照 .ascendsave 格式（增量链模型）:
     第一行: 明文 JSON {"format": "ascendsave", "version": 2,
                         "base": <锚点文件名|null>,
-                        "fernet_key": <b64>, "sign_key": <b64>}
+                        "world_id": <存档位>, "seed": <世界种子>,
+                        "secrets_blob": <会话钥匙混淆串>}
     随后:   HMAC(sign_key, payload) || Fernet(key)(payload)
+
+    会话钥匙（Fernet + HMAC）每次生成，经 SaveKeys.protect 以
+    world_id + seed 派生密钥混淆后藏入头部 secrets_blob——与存档位
+    的 manifest.secrets_blob 同级（防直读/防手贱，不防推导）；
+    world_id/seed 头部明文（解锁派生输入，威胁模型见 crypto.py）。
+    payload 用会话钥匙加密：HMAC 覆盖整个密文，先验签名再解密。
 
     payload = zip 打包的差异数据:
       - base = null（全量，v1 兼容）: 完整活目录文件字节
@@ -21,6 +28,10 @@ _unpack_full / _apply_* / _materialize_snapshot / _rebase_* 等）。
     锚点规则：每个节点锚定其最近手动祖先（沿血缘 parent 上溯，
     跳过 auto/quit；到 "" 则 base=null）。物化 = 沿链合并：
     全量解包 + 逐级应用增量页覆盖。
+
+    复制档自愈：export 时以 rebind_snapshot 把每个快照整体改绑
+    新世界 ID（头部与内嵌 manifest 同步换身份，钥匙不变）——
+    副本沿自身血缘与快照目录解析，不依赖原世界。
 """
 
 import io
@@ -108,7 +119,38 @@ class SnapshotStore:
 
     # ── 写入（全量/增量） ─────────────────────────────────
 
-    def write_snapshot_file(self, path: str, wdir: str) -> None:
+    @staticmethod
+    def _world_seed(wdir: str) -> int:
+        """从目录内 manifest.json 读取世界种子（快照解锁派生输入）。
+
+        活目录与物化目录（materialize/rebase 的临时目录）均含
+        manifest.json（_SNAPSHOT_ENTRIES 打包项），故本方法对两类
+        目录通用。
+
+        Raises:
+            OSError / ValueError / KeyError: manifest 缺失/损坏（
+                无法生成可解锁的快照，直接失败）。
+        """
+        with open(os.path.join(wdir, MANIFEST_NAME), encoding="utf-8") as f:
+            return int(json.load(f)["seed"])
+
+    @staticmethod
+    def _session_header(
+        base: str | None, world_id: str, seed: int, session_key: SaveKeys,
+    ) -> bytes:
+        """构造快照头部明文行：会话钥匙经 protect 混淆，不落裸钥匙。"""
+        return json.dumps({
+            "format": "ascendsave",
+            "version": 2,
+            "base": base,
+            "world_id": world_id,
+            "seed": seed,
+            "secrets_blob": session_key.protect(world_id, seed),
+        }, ensure_ascii=False).encode("utf-8") + b"\n"
+
+    def write_snapshot_file(
+        self, path: str, wdir: str, world_id: str,
+    ) -> None:
         """把活目录规范文件打包为加密快照单文件（v2 全量基座，base=null）。
 
         新建（create_snapshot）、刷新（refresh_snapshot）与晋升
@@ -126,15 +168,9 @@ class SnapshotStore:
                     zf.write(src, entry)
         zip_bytes = buffer.getvalue()
 
+        seed = self._world_seed(wdir)
         session_key = SaveKeys.generate()
-        key_dict = session_key.to_dict()
-        header = json.dumps({
-            "format": "ascendsave",
-            "version": 2,
-            "base": None,
-            "fernet_key": key_dict["fernet_key"],
-            "sign_key": key_dict["sign_key"],
-        }, ensure_ascii=False).encode("utf-8") + b"\n"
+        header = self._session_header(None, world_id, seed, session_key)
         encrypted = session_key.encrypt(zip_bytes)
         tmp = f"{path}.tmp-{uuid.uuid4().hex}"
         try:
@@ -151,7 +187,7 @@ class SnapshotStore:
 
     def write_delta_payload(
         self, path: str, base_filename: str, wdir: str,
-        files: list[str], pages: dict[str, bytes],
+        files: list[str], pages: dict[str, bytes], world_id: str,
     ) -> None:
         """把差异打包为 v2 增量快照文件（base=锚点，原子写入）。"""
         buffer = io.BytesIO()
@@ -162,15 +198,11 @@ class SnapshotStore:
                 zf.writestr(db_name + _PAGES_SUFFIX, payload)
         zip_bytes = buffer.getvalue()
 
+        seed = self._world_seed(wdir)
         session_key = SaveKeys.generate()
-        key_dict = session_key.to_dict()
-        header = json.dumps({
-            "format": "ascendsave",
-            "version": 2,
-            "base": base_filename,
-            "fernet_key": key_dict["fernet_key"],
-            "sign_key": key_dict["sign_key"],
-        }, ensure_ascii=False).encode("utf-8") + b"\n"
+        header = self._session_header(
+            base_filename, world_id, seed, session_key,
+        )
         encrypted = session_key.encrypt(zip_bytes)
         tmp_path = f"{path}.tmp-{uuid.uuid4().hex}"
         try:
@@ -200,7 +232,7 @@ class SnapshotStore:
         wdir = os.path.join(self._root, world_id)
         anchor = self.anchor_of(world_id, parent)
         if anchor is None:
-            self.write_snapshot_file(path, wdir)
+            self.write_snapshot_file(path, wdir, world_id)
             return
         try:
             self.write_delta_snapshot(
@@ -210,7 +242,7 @@ class SnapshotStore:
             logger.warning(
                 "增量写失败，回退全量基座: %s (%s)", world_id, anchor,
             )
-            self.write_snapshot_file(path, wdir)
+            self.write_snapshot_file(path, wdir, world_id)
 
     def write_delta_snapshot(
         self, world_id: str, path: str, wdir: str,
@@ -246,7 +278,7 @@ class SnapshotStore:
                 raise
         try:
             files, pages = self.diff_snapshot(base_content_dir, wdir)
-            self.write_delta_payload(path, base_filename, wdir, files, pages)
+            self.write_delta_payload(path, base_filename, wdir, files, pages, world_id)
         finally:
             if tmp is not None:
                 shutil.rmtree(tmp, ignore_errors=True)
@@ -364,6 +396,10 @@ class SnapshotStore:
     def open_snapshot(snapshot_path: str) -> tuple[dict, zipfile.ZipFile]:
         """解析快照文件：头部明文 JSON 行 + 解密 payload 为 ZipFile。
 
+        会话钥匙从头部 secrets_blob 经 world_id + seed 派生还原
+        （SaveKeys.from_protected）——头部不含裸钥匙；world_id/seed
+        被篡改即派生失败，按防篡改处理。
+
         Returns:
             (header dict, 打开的 ZipFile)。
 
@@ -379,8 +415,13 @@ class SnapshotStore:
             header = json.loads(header_line.decode("utf-8"))
             if header.get("format") != "ascendsave":
                 raise SaveCryptoError("快照格式标识非法")
-            keys = SaveKeys.from_dict(header)
-        except (json.JSONDecodeError, UnicodeDecodeError, SaveCryptoError) as exc:
+            keys = SaveKeys.from_protected(
+                header["secrets_blob"],
+                str(header["world_id"]),
+                int(header["seed"]),
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError,
+                KeyError, TypeError, ValueError, SaveCryptoError) as exc:
             raise SaveCryptoError(f"快照头部非法: {exc}") from exc
         try:
             zip_bytes = keys.decrypt(payload)
@@ -406,6 +447,93 @@ class SnapshotStore:
             if os.path.isfile(candidate):
                 return candidate
         return snapshot_path
+
+    def rebind_snapshot(
+        self, src_path: str, dst_path: str, new_world_id: str,
+    ) -> None:
+        """把快照文件改绑到新世界（复制档自愈），整体重写为目标路径。
+
+        头部与内嵌 manifest 的 world_id/secrets_blob 换为新 ID
+        （钥匙不变——副本与原档同钥，仅混淆层绑定换身份）；payload
+        用同一会话钥匙重加密。base 锚点文件名不变（副本快照目录内
+        同名基座齐备），副本此后沿自身血缘与快照目录解析，不依赖
+        原世界。原子写入（临时文件 + replace）。
+
+        Raises:
+            SaveCryptoError: 头部/密钥/解密失败（快照损坏或篡改）。
+            SaveFormatError: 内嵌 manifest 损坏。
+            OSError: 写入失败。
+        """
+        with open(src_path, "rb") as f:
+            header_line = f.readline()
+            payload = f.read()
+        if not header_line or not payload:
+            raise SaveCryptoError(f"快照文件为空或损坏: {src_path}")
+        try:
+            header = json.loads(header_line.decode("utf-8"))
+            if header.get("format") != "ascendsave":
+                raise SaveCryptoError("快照格式标识非法")
+            old_world_id = str(header["world_id"])
+            seed = int(header["seed"])
+            session_keys = SaveKeys.from_protected(
+                header["secrets_blob"], old_world_id, seed,
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError,
+                KeyError, TypeError, ValueError, SaveCryptoError) as exc:
+            raise SaveCryptoError(f"快照头部非法: {exc}") from exc
+        try:
+            zip_bytes = session_keys.decrypt(payload)
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                entries = {info.filename: zf.read(info) for info in zf.infolist()}
+        except (SaveCryptoError, zipfile.BadZipFile) as exc:
+            raise SaveCryptoError(
+                f"快照解密失败（可能被篡改）: {exc}"
+            ) from exc
+        # 内嵌 manifest 换身份（世界钥匙不变，混淆层绑定换 ID）
+        try:
+            manifest = Manifest.from_dict(
+                json.loads(entries[MANIFEST_NAME].decode("utf-8"))
+            )
+        except KeyError as exc:
+            raise SaveFormatError("快照缺少 manifest") from exc
+        except (json.JSONDecodeError, UnicodeDecodeError, SaveFormatError) as exc:
+            raise SaveFormatError(f"快照 manifest 损坏: {exc}") from exc
+        if manifest.secrets_blob:
+            # 混淆层自洽解锁：用 manifest 自己的 world_id（与 extract
+            # 的覆盖路径一致），再重新混淆绑定到新 ID
+            world_keys = SaveKeys.from_protected(
+                manifest.secrets_blob, manifest.world_id, manifest.seed,
+            )
+            manifest.secrets_blob = world_keys.protect(
+                new_world_id, manifest.seed,
+            )
+        manifest.world_id = new_world_id
+        entries[MANIFEST_NAME] = json.dumps(
+            manifest.dict, ensure_ascii=False,
+        ).encode("utf-8")
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, data in entries.items():
+                zf.writestr(name, data)
+        new_header = dict(header)
+        new_header["world_id"] = new_world_id
+        new_header["secrets_blob"] = session_keys.protect(new_world_id, seed)
+        out = (
+            json.dumps(new_header, ensure_ascii=False).encode("utf-8") + b"\n"
+            + session_keys.encrypt(buffer.getvalue())
+        )
+        tmp = f"{dst_path}.tmp-{uuid.uuid4().hex}"
+        try:
+            with open(tmp, "wb") as f:
+                f.write(out)
+            os.replace(tmp, dst_path)
+        except OSError:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
 
     def unpack_full(self, tmp_dir: str, zf: zipfile.ZipFile) -> None:
         """把全量快照解包进目录（重建内容，防路径穿越白名单）。"""
@@ -628,7 +756,7 @@ class SnapshotStore:
             )
             if new_anchor is None:
                 # 无存活手动祖先：成为新的全量基座
-                self.write_snapshot_file(path, content_tmp)
+                self.write_snapshot_file(path, content_tmp, world_id)
                 return
             base_tmp = os.path.join(self._root, f".rebase-{uuid.uuid4().hex}")
             os.makedirs(base_tmp, exist_ok=True)
@@ -640,7 +768,7 @@ class SnapshotStore:
                 )
                 files, pages = self.diff_snapshot(base_tmp, content_tmp)
                 self.write_delta_payload(
-                    path, new_anchor, content_tmp, files, pages,
+                    path, new_anchor, content_tmp, files, pages, world_id,
                 )
             finally:
                 shutil.rmtree(base_tmp, ignore_errors=True)
