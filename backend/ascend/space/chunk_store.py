@@ -2,27 +2,38 @@
 
 职责:
   1. LRU 内存缓存 ChunkData（有界地图可控容量）
-  2. **仅玩家改动（dirty chunk）落盘**——确定性生成的 clean chunk
-     是 seed 的纯函数，可再生、无落盘价值（重访时重新生成）
-  3. dirty chunk 的持久化是强制的（玩家修改不可再生）
+  2. **已加载 chunk 全量落盘**——首次加载的 chunk（含确定性生成的
+     clean chunk）在保存脉搏时写入 SQLite，避免重访/读档时重新生成
+     （~1s/chunk）；重访的 chunk 靠 _persisted_coords 集合识别，
+     内容不变则不重写
+  3. 玩家改动（dirty chunk）落盘是强制的（玩家修改不可再生）
   4. 从 SQLite 恢复已持久化的改动 chunk
-  5. flush() 在正常退出与快照前保存所有缓存中的 dirty chunk
+  5. flush() 在正常退出与快照前保存所有待落盘 chunk
 
 脏标记位于 ChunkData.dirty（数据自带状态，无平行标记结构），
 不变量：**dirty ⇒ 持有 tile_grid**。置脏入口（mark_dirty）要求
 网格在场，覆盖/卸载入口（ChunkData.generate_tiles / unload_tiles）
 拒绝脏 chunk——脏 chunk 在任何时刻都保有落盘所需的数据源。
 
-淘汰策略（write-back on eviction，仅 dirty）：
-  脏 chunk 在淘汰时写库提交；clean chunk 淘汰即弃（确定性，
-  重访再生成，内容一致）。
-  SQLite WAL 模式保证写入中途崩溃不会损坏数据库。
+落盘判定（已落盘坐标集合）：
+   需落盘 = 持有网格 and (dirty or 坐标不在 _persisted_coords)
+_persisted_coords 只增不删（库中行无删除路径）、启动时从库重建，
+与库必然一致；落盘后 dirty 清除、坐标入集合。
+
+淘汰策略（write-back on eviction）：
+   待落盘 chunk 在淘汰时写库提交（脉搏之间的安全网）；
+   已落盘 clean chunk 淘汰即弃（库中已有，重访直接恢复）。
+   SQLite WAL 模式保证写入中途崩溃不会损坏数据库。
+
+存储格式：TileGrid BLOB 经 zlib 压缩，前缀区分压缩/旧版明文
+（"ZC" = zlib，无前缀 = 旧库明文），读取自动兼容。
 """
 
 import os
 import sqlite3
 import threading
 import time as _real_time
+import zlib
 from collections import OrderedDict
 from collections.abc import Callable
 
@@ -40,16 +51,20 @@ from .tile_grid import TileGrid
 
 logger = get_logger(__name__)
 
+# 存储 BLOB 前缀：压缩（"ZC" + zlib 数据）/ 旧版明文（无前缀），
+# 读取按前缀自动分流，旧库兼容。
+_BLOB_ZLIB: bytes = b"ZC"
+
 
 class ChunkStore:
     """分块数据缓存与持久化存储。
 
     持久化策略：
-      - **仅 dirty（玩家改动）落盘**；clean chunk 是 seed 确定性
-        产物，淘汰即弃、重访再生成，不占磁盘与存档体积；
-      - SQLite 中的行 = 玩家改动，经 load_tiles 读取、
-        ChunkData.restore_tiles 恢复的 chunk 自动保持脏标记，
-        后续淘汰/退出时重新落盘。
+      - 已加载 chunk 全量落盘（含确定性 clean chunk，免重访重生成）；
+        _persisted_coords（单调集合，启动时从库重建）记录已落盘坐标，
+        内容不变不重写；
+      - SQLite 中的行 = 已加载 chunk（含玩家改动），经 load_tiles
+        读取、ChunkData.restore_tiles 恢复。
 
     用法:
         store = ChunkStore("save/chunks.db", max_size=49)
@@ -93,7 +108,16 @@ class ChunkStore:
             "PRIMARY KEY (cx, cy))"
         )
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_chunk_tiles_coord ON chunk_tiles(cx, cy)")
-        logger.info("ChunkStore 就绪: %s max_size=%d", db_path, max_size)
+        # 已落盘坐标集合：只增不删（库中行无删除路径）、启动时从库
+        # 重建，与库必然一致。落盘判定 = dirty or 坐标不在集合。
+        rows = self._db.execute(
+            "SELECT cx, cy FROM chunk_tiles"
+        ).fetchall()
+        self._persisted_coords: set[tuple[int, int]] = {(r[0], r[1]) for r in rows}
+        logger.info(
+            "ChunkStore 就绪: %s max_size=%d 已落盘=%d",
+            db_path, max_size, len(self._persisted_coords),
+        )
 
     def __repr__(self) -> str:
         dirty = sum(1 for chunk in self._cache.values() if chunk.dirty)
@@ -201,9 +225,9 @@ class ChunkStore:
     def load_tiles(self, cx: int, cy: int) -> TileGrid | None:
         """从 SQLite 加载已持久化的 TileGrid。
 
-        库中行 = 玩家改动（确定性 tile 不落盘）。调用方应以
-        ChunkData.restore_tiles 恢复网格——恢复的 chunk 自动
-        标记为脏，保证后续淘汰/退出时重新落盘。
+        库中行 = 已加载 chunk（含玩家改动）。BLOB 为 zlib 压缩格式，
+        旧版明文（无前缀）自动兼容读取。调用方应以
+        ChunkData.restore_tiles 恢复网格。
 
         Args:
             cx, cy: chunk 坐标。
@@ -217,7 +241,10 @@ class ChunkStore:
             ).fetchone()
         if row is None:
             return None
-        return TileGrid.from_bytes(bytes(row["tiles"]))
+        blob = bytes(row["tiles"])
+        if blob[:2] == _BLOB_ZLIB:
+            blob = zlib.decompress(blob[2:])
+        return TileGrid.from_bytes(blob)
 
     def contains_tiles(self, cx: int, cy: int) -> bool:
         """检查 SQLite 中是否有已持久化的 tile 数据。
@@ -235,18 +262,20 @@ class ChunkStore:
         return row is not None
 
     def _save_tiles(self, cx: int, cy: int, grid: TileGrid) -> None:
-        """将单个 chunk 的 TileGrid 写入 SQLite（INSERT OR REPLACE）。"""
-        blob = grid.to_bytes()
+        """将单个 chunk 的 TileGrid 写入 SQLite（zlib 压缩，INSERT OR REPLACE）。"""
+        blob = _BLOB_ZLIB + zlib.compress(grid.to_bytes(), zlib.Z_DEFAULT_COMPRESSION)
         self._db.execute(
             "INSERT OR REPLACE INTO chunk_tiles VALUES (?, ?, ?)",
             (cx, cy, sqlite3.Binary(blob)),
         )
 
     def _persist(self, chunk: ChunkData) -> None:
-        """将脏 chunk 的网格写回 SQLite 并清除脏标记。
+        """将待落盘 chunk 的网格写回 SQLite 并更新状态。
 
         调用方须持有 _lock。脏标记不变量（dirty ⇒ 持有网格）
         保证网格在场；违反时抛错而非静默跳过——脏数据不可丢失。
+
+        落盘后：脏标记清除、坐标记入 _persisted_coords（重访不再重写）。
 
         Raises:
             RuntimeError: 脏 chunk 无网格（不变量被破坏）。
@@ -258,42 +287,41 @@ class ChunkStore:
             )
         self._save_tiles(chunk.cx, chunk.cy, grid)
         chunk.dirty = False
+        self._persisted_coords.add((chunk.cx, chunk.cy))
 
-    def _flush_dirty_chunks(self) -> int:
-        """落盘缓存中所有脏 chunk 并清除脏标记，返回写入数。"""
-        with self._lock:
-            count = 0
-            for chunk in self._cache.values():
-                if chunk.dirty:
-                    self._persist(chunk)
-                    count += 1
-            return count
+    def _flush_persistable(self) -> int:
+        """落盘缓存中所有待落盘 chunk（dirty 或首次加载）并更新状态。
 
-    def flush(self) -> None:
-        """将缓存中所有脏 chunk 写回 SQLite 并提交。
-
-        确定性生成的 clean chunk 不落盘（seed 可再生，无保存价值）；
-        正常退出与快照前调用，确保玩家改动持久化。
-        """
-        count = self._flush_dirty_chunks()
-        if count:
-            with self._lock:
-                self._db.commit()
-            logger.info("已 flush %d 个 dirty chunk", count)
-
-    def flush_dirty(self) -> int:
-        """周期实时保存：落盘所有脏 chunk 并提交（与 flush 同语义）。
-
-        脏数据最多滞后一个周期（SAVE_CHUNK_FLUSH_INTERVAL）。
+        无网格的 chunk（详细层未生成）无可落盘数据，跳过。
 
         Returns:
             实际写入的 chunk 数。
         """
-        count = self._flush_dirty_chunks()
+        with self._lock:
+            count = 0
+            for chunk in self._cache.values():
+                if chunk.tile_grid is None:
+                    continue
+                if chunk.dirty or (chunk.cx, chunk.cy) not in self._persisted_coords:
+                    self._persist(chunk)
+                    count += 1
+            return count
+
+    def flush(self) -> int:
+        """将缓存中所有待落盘 chunk 写回 SQLite 并提交。
+
+        待落盘 = 玩家改动（dirty）或首次加载（坐标不在已落盘集合）。
+        已落盘 chunk 跳过（重访内容不变不重写）。正常退出、保存
+        脉搏与快照前调用，确保已加载 chunk 与玩家改动持久化。
+
+        Returns:
+            实际写入的 chunk 数。
+        """
+        count = self._flush_persistable()
         if count:
             with self._lock:
                 self._db.commit()
-            logger.info("已 flush %d 个 dirty chunk", count)
+            logger.info("已 flush %d 个 chunk", count)
         return count
 
     def checkpoint(self) -> None:
@@ -351,14 +379,17 @@ class ChunkStore:
     def _evict_if_needed(self) -> None:
         """淘汰 LRU 头部（最久未访问）直到缓存不超限。
 
-        脏 chunk 淘汰前先持久化（玩家改动不可再生）；clean chunk
-        是 seed 确定性产物，淘汰即弃（重访再生成）。写入提交后才
-        算安全，跨进程重启不丢失。
+        待落盘 chunk（dirty 或首次加载未落盘）淘汰前先持久化——
+        dirty 不可再生、首次加载的 clean chunk 不落盘则重访仍要
+        重新生成；已落盘 clean chunk 淘汰即弃（库中已有，重访
+        直接恢复）。写入提交后才算安全，跨进程重启不丢失。
         """
         wrote = False
         while len(self._cache) >= self._max_size:
             key, chunk = self._cache.popitem(last=False)
-            if chunk.dirty:
+            if chunk.tile_grid is not None and (
+                chunk.dirty or key not in self._persisted_coords
+            ):
                 self._persist(chunk)
                 wrote = True
             if self._on_evict:

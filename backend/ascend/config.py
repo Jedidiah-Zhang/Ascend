@@ -213,8 +213,7 @@ MAX_CHUNK_QUERY: int = 512              # get_chunks 单请求最大 chunk 数�
 # Save — 存档（实时写入频率）
 # ═══════════════════════════════════════════════════════════════
 
-SAVE_STATE_INTERVAL: float = 5.0        # state.json 实时写入间隔（真实秒）
-SAVE_CHUNK_FLUSH_INTERVAL: float = 30.0 # dirty chunk 定时 flush 间隔（真实秒）
+SAVE_PULSE_INTERVAL: float = 5.0        # 统一保存脉搏间隔（真实秒）
 
 
 # 天气分级阈值 — 按数值升序排列，返回值为区间索引（0-based）
@@ -281,17 +280,22 @@ STEEP_GRADIENT: float = 1.0             # 陡坡梯度阈值 (m/m)
 # ═══════════════════════════════════════════════════════════════
 
 import os as _os
+import tempfile as _tempfile
 
 _PROJECT_ROOT: str = _os.path.normpath(_os.path.join(_os.path.dirname(__file__), "..", ".."))
 
+# 无存档模式（测试/调试，world_id=None）的数据根：系统临时目录，
+# 调试数据不污染项目根（原有项目根 save/ 残留已删），随 /tmp 系统清理
+_DEV_DATA_ROOT: str = _os.path.join(_tempfile.gettempdir(), "ascend-dev")
+
 # ChunkStore
-CHUNK_STORE_DB_PATH: str = _os.path.join(_PROJECT_ROOT, "save", "chunks.db")
+CHUNK_STORE_DB_PATH: str = _os.path.join(_DEV_DATA_ROOT, "chunks.db")
 CHUNK_STORE_MAX_SIZE: int = 49          # LRU 缓存最大 chunk 数
 
 # WorldTree 归档
 WT_MAX_MEMORY_EVENTS: int = 100_000     # 内存最大事件数
 WT_GRAPH_WARMUP_EVENTS: int = 10_000    # 图预热事件数
-WT_ARCHIVE_PATH: str = _os.path.join(_PROJECT_ROOT, "save", "events.db")
+WT_ARCHIVE_PATH: str = _os.path.join(_DEV_DATA_ROOT, "events.db")
 
 # SQLite 性能参数
 SQLITE_JOURNAL_MODE: str = "WAL"

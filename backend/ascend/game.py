@@ -20,6 +20,7 @@
 """
 
 import os
+import queue
 import random
 import threading
 import time as _real_time
@@ -41,8 +42,7 @@ from ascend.config import (
     WT_ARCHIVE_PATH,
     WT_GRAPH_WARMUP_EVENTS,
     SAVE_ROOT,
-    SAVE_STATE_INTERVAL,
-    SAVE_CHUNK_FLUSH_INTERVAL,
+    SAVE_PULSE_INTERVAL,
 )
 from ascend.log import get_logger
 from ascend.net import GameServer, MessageDispatcher, EventBridge
@@ -127,8 +127,9 @@ class GameEngine:
         self._manifest = None                 # 内存中的 Manifest（touch 用）
         self._load_state: dict | None = None  # 读档恢复的状态
         self._regen_continent: bool = False   # 强制重建大陆（--regen-continent）
-        self._last_state_save: float = 0.0    # 上次 state 落盘时刻（monotonic）
-        self._last_chunk_flush: float = 0.0   # 上次 dirty chunk flush 时刻
+        self._last_pulse: float = 0.0         # 上次保存脉搏时刻（monotonic）
+        self._save_queue: queue.Queue = queue.Queue(maxsize=1)  # 单槽位防堆积
+        self._save_thread: threading.Thread | None = None
         self._world_start_monotonic: float = 0.0
         self._service_mode: bool = False      # 服务模式：仅网络+存档，无世界
         self._running: threading.Event = threading.Event()
@@ -430,11 +431,11 @@ class GameEngine:
         self._persist_manifest()
 
         # 11. 启动 tick 循环——clock.tick() 推进时间，calendar 自动收事件。
-        self._last_state_save = _real_time.monotonic()
-        self._last_chunk_flush = self._last_state_save
-        self._world_start_monotonic = self._last_state_save
+        self._last_pulse = _real_time.monotonic()
+        self._world_start_monotonic = self._last_pulse
         self._running.set()
         self._ensure_tick_thread()
+        self._ensure_save_thread()
         logger.info("游戏引擎在后台运行 (tick=%.1f Hz)", TICK_RATE)
 
     def load_world(
@@ -508,6 +509,16 @@ class GameEngine:
                 if self._thread.is_alive():
                     logger.error("tick 线程仍未退出，强制继续资源清理")
         self._thread = None
+        if self._save_thread is not None and self._save_thread.is_alive():
+            # 保存线程在 _running 清除后最多 0.5s（心跳）退出；
+            # 最终脉搏由 _cleanup_world 同步排空，此处只回收线程。
+            # join 超时（脉搏 >3s，如慢盘）后 _final_pulse 与幸存
+            # worker 并发执行：archive/chunk 有内部锁串行、state 原子
+            # 写 last-wins，无数据破坏
+            self._save_thread.join(timeout=3.0)
+            if self._save_thread.is_alive():
+                logger.warning("保存线程 3s 内未退出（最终脉搏由 _cleanup_world 排空）")
+        self._save_thread = None
         self._cleanup()
 
     def _cleanup_world(self) -> None:
@@ -520,7 +531,7 @@ class GameEngine:
         释放（读档重建时 stop() 的清理顺序复用本方法）。
         """
         world_tree.await_async()
-        self._save_state_now()
+        self._final_pulse()
         if self.calendar:
             self.calendar.shutdown()
             self.calendar = None
@@ -772,24 +783,69 @@ class GameEngine:
         self.save_manager.write_state(self.world_id, state)
         self._persist_manifest()
 
-    def _maybe_save_state(self) -> None:
-        """周期实时保存：state 每 5s、dirty chunk 每 30s。
+    def _maybe_save_pulse(self) -> None:
+        """保存脉搏调度（tick 线程调用）：到点入队，零 I/O 阻塞。
 
-        单次失败不中断游戏循环，记录后下个周期重试。
+        单槽位防堆积：上一脉搏在途时跳过本次（脉搏天然可合并，
+        数据由在途或下一次脉搏落盘，滞后 ≤ 脉搏时长 + SAVE_PULSE_INTERVAL；
+        退出时最终脉搏兜底）。
         """
+        if self._save_thread is None:
+            return
         now = _real_time.monotonic()
-        if now - self._last_state_save >= SAVE_STATE_INTERVAL:
-            self._last_state_save = now
+        if now - self._last_pulse < SAVE_PULSE_INTERVAL:
+            return
+        self._last_pulse = now
+        try:
+            self._save_queue.put_nowait(None)
+        except queue.Full:
+            pass  # 上一脉搏在途，本次合并
+
+    def _ensure_save_thread(self) -> None:
+        """确保保存脉搏线程存活（世界进程常驻线程）。"""
+        if self._save_thread is not None and self._save_thread.is_alive():
+            return
+        self._save_thread = threading.Thread(
+            target=self._save_worker, name="save-pulse", daemon=True
+        )
+        self._save_thread.start()
+
+    def _save_worker(self) -> None:
+        """保存线程主体：串行执行脉搏（退出时最多等 0.5s 心跳退出）。"""
+        while self._running.is_set():
             try:
-                self._save_state_now()
-            except Exception:
-                logger.exception("周期状态保存失败")
-        if self.chunk_store is not None and now - self._last_chunk_flush >= SAVE_CHUNK_FLUSH_INTERVAL:
-            self._last_chunk_flush = now
+                self._save_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
             try:
-                self.chunk_store.flush_dirty()
+                self._run_pulse()
             except Exception:
-                logger.exception("dirty chunk 定时保存失败")
+                logger.exception("保存脉搏执行失败")
+
+    def _run_pulse(self) -> None:
+        """单个保存脉搏：事件 flush → state 写入 → chunk flush。
+
+        顺序保证 state 的 archive_max_timestamp 新鲜（事件先落盘）；
+        任一步失败不阻断其余步骤，下一次脉搏重试（事件丢失 ≤1 窗口
+        由 archive_pending 语义兜底）。
+        """
+        try:
+            world_tree.archive_pending()
+        except Exception:
+            logger.exception("保存脉搏: 事件 flush 失败")
+        try:
+            self._save_state_now()
+        except Exception:
+            logger.exception("保存脉搏: state 写入失败")
+        if self.chunk_store is not None:
+            try:
+                self.chunk_store.flush()
+            except Exception:
+                logger.exception("保存脉搏: chunk flush 失败")
+
+    def _final_pulse(self) -> None:
+        """排空：同步执行完整脉搏（退出/快照强一致点）。"""
+        self._run_pulse()
 
     def snapshot_current(self, world_id: str | None = None, suffix: str = "manual") -> str:
         """创建一致性快照：flush 全部缓存 → 两库 WAL checkpoint → 打包。
@@ -817,11 +873,12 @@ class GameEngine:
         if not world_id or not self.save_manager:
             raise ValueError("当前无存档位，无法创建快照")
         if world_id == self.world_id:
-            # 当前加载的世界：DB 打开中，须先提交缓存并 checkpoint，
-            # 否则打包的 .db 缺 WAL 内数据（注：is not None——
-            # ChunkStore 定义 __len__，空缓存时 bool 为 False）
+            # 当前加载的世界：DB 打开中，先同步完整脉搏（事件 flush →
+            # state 写入 → chunk flush）再 checkpoint，否则打包的 .db 缺
+            # WAL 内数据、快照缺近期事件（注：is not None——ChunkStore
+            # 定义 __len__，空缓存时 bool 为 False）
+            self._final_pulse()
             if self.chunk_store is not None:
-                self.chunk_store.flush()
                 self.chunk_store.checkpoint()
             world_tree.checkpoint_archive()
             # 血缘 game_time：当前世界用引擎时钟（比周期 state 落盘更新）；
@@ -883,4 +940,4 @@ class GameEngine:
                 executor.add_active_time(TICK_DT)
         if dispatcher:
             dispatcher.process()
-        self._maybe_save_state()
+        self._maybe_save_pulse()

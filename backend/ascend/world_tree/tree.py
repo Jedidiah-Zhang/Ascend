@@ -5,8 +5,7 @@
 - 事件路由（按 event_type 匹配订阅者）
 - 空间索引（按 chunk + sub-cell 分桶，sub-cell = 16×16 tiles）
 - 实体索引（按 affected 自动建立）
-
-MVP 阶段同步调用，内存存储。
+- 事件持久化（events.db 单一事实源，保存脉搏 flush-and-drop）
 """
 
 import bisect
@@ -56,11 +55,12 @@ class WorldTree:
         self._trim_cycle: int = 0
         self._publish_count: int = 0
         self._trim_count: int = 0
+        self._flush_count: int = 0
         self._async_dispatch_count: int = 0
-        # 最近一次 trim 的截止时间：归档中所有事件 timestamp < 此值。
-        # 权重分层 trim 后归档与内存窗口的时间边界可能交叉（同 tick 事件
-        # 一部分归档、一部分保留），查询合并以该值判定范围是否重叠。
-        self._last_trim_cutoff: int | None = None
+        # 归档水位：归档中所有事件 timestamp < 此值（trim 与 archive_pending
+        # 共同推进，单调不回退）。查询合并以该值判定范围是否重叠：
+        # start < 水位 → 归档可能存在事件，合并后按 ID 去重。
+        self._archive_boundary: int | None = None
         self._event_log: list[Event] = []
         self._id_index: dict[str, Event] = {}
         self._subscriptions: dict[
@@ -115,9 +115,8 @@ class WorldTree:
         Args:
             event: 要发布的事件。
         """
-        self._publish_count += 1
-
         with self._lock:
+            self._publish_count += 1
             self._event_log.append(event)
             self._id_index[event.id] = event
 
@@ -260,18 +259,69 @@ class WorldTree:
 
     # ── 归档合并 ──────────────────────────────────────
 
+    def archive_pending(self) -> int:
+        """归档全部内存缓冲并清空（flush-and-drop，保存脉搏调用）。
+
+        events.db 是事件唯一事实源，内存只是写缓冲 + 热窗口：本方法把
+        全部内存缓冲写入归档，然后从内存/索引/因果图移除并推进水位
+        （cutoff = 本次归档最大 tick + 1）。
+
+        水位仅用于合并判定：归档中事件 timestamp 均 < _archive_boundary，
+        查询 start < 水位时归档可能存在重叠事件，合并后按 ID 去重。
+        注意同 tick 迟到事件（flush 后才发布、ts < 水位）留在内存缓冲，
+        不依赖严格时间分区——重叠由去重兜底。
+
+        写路径为两阶段：锁内仅摘取缓冲列表并清空内存结构（原子），
+        SQLite 写放锁外（不占总线锁）。已知取舍：
+          - 写窗口（毫秒级）内查询可能短暂 miss 本批事件；
+          - 写失败时本批已从内存摘取 = 丢失 ≤1 个脉搏窗口的事件
+            （等价崩溃语义，不破坏水位不变量——水位只在写成功后才推进）。
+
+        注：_trim 护栏路径（超 max_memory_events 时）仍在锁内写归档，
+        与本文的锁外写不同——trim 仅极端突发时触发，不阻塞正常脉搏。
+
+        Args:
+            无。
+
+        Returns:
+            本批归档的事件数。无归档时返回 0（内存缓冲保留，
+            不改变无持久化模式的语义）。
+
+        Raises:
+            sqlite3.Error: 归档写入失败（由调用方记录日志后继续）。
+        """
+        with self._lock:
+            batch = self._event_log
+            if not batch or self._archive is None:
+                return 0
+            self._event_log = []
+            self._id_index.clear()
+            self._entity_index.clear()
+            self._spatial_index.clear()
+            self._graph = EventGraph()
+        try:
+            self._archive.archive(batch)
+        except Exception:
+            raise
+        with self._lock:
+            cutoff = max(ev.timestamp for ev in batch) + 1
+            if self._archive_boundary is None or cutoff > self._archive_boundary:
+                self._archive_boundary = cutoff
+            self._flush_count += 1
+        return len(batch)
+
     def _should_merge_archive(self, start_time: int) -> bool:
         """查询范围是否与归档数据重叠。
 
-        归档中事件的 timestamp 均 < 最近一次 trim 截止时间；
+        按归档水位判断：归档中事件 timestamp 均 < _archive_boundary；
         内存为空（如重启后）时归档可能包含任意历史事件，一律合并。
         """
         if self._archive is None:
             return False
         if not self._event_log:
             return True
-        cutoff = self._last_trim_cutoff
-        return cutoff is not None and start_time < cutoff
+        boundary = self._archive_boundary
+        return boundary is not None and start_time < boundary
 
     @staticmethod
     def _merge_archived(
@@ -561,6 +611,8 @@ class WorldTree:
                 )
                 self._archive.close()
                 self._archive = None
+                # 新归档内容未知，水位必须重置（否则查询会漏合并）
+                self._archive_boundary = None
             if self._archive is None:
                 self._archive = EventArchive(archive_path)
                 self._archive_path = archive_path
@@ -635,7 +687,6 @@ class WorldTree:
             self._trim_cycle += 1
             cycle = self._trim_cycle
             self._trim_count += 1
-            self._last_trim_cutoff = before_time
 
             # 权重分层：按 weight 分别处理前缀中的事件
             to_archive: list[Event] = []
@@ -649,6 +700,12 @@ class WorldTree:
             # 归档到磁盘（仅归档符合条件的低权重事件）
             if self._archive and to_archive:
                 self._archive.archive(to_archive)
+                # 归档水位单调推进：以实际归档事件的最大 ts + 1 为准
+                # （前缀含 ts == before_time 的同 tick 事件，用 before_time
+                # 会违反"归档中所有事件 timestamp < 水位"不变量）
+                archived_max = max(ev.timestamp for ev in to_archive) + 1
+                if self._archive_boundary is None or archived_max > self._archive_boundary:
+                    self._archive_boundary = archived_max
 
             # 记录被移除的事件 ID
             removed_ids = {ev.id for ev in to_archive}
@@ -733,6 +790,7 @@ class WorldTree:
                 "event_count": len(self._event_log),
                 "trim_count": self._trim_count,
                 "trim_cycle": self._trim_cycle,
+                "flush_count": self._flush_count,
                 "subscriber_count": sum(
                     len(cbs) for cbs in self._subscriptions.values()
                 ),
@@ -772,8 +830,9 @@ class WorldTree:
             self._trim_cycle = 0
             self._publish_count = 0
             self._trim_count = 0
+            self._flush_count = 0
             self._async_dispatch_count = 0
-            self._last_trim_cutoff = None
+            self._archive_boundary = None
 
     def reset(self) -> None:
         """重置世界数据（读档重建用），保留订阅。
@@ -792,5 +851,6 @@ class WorldTree:
             self._trim_cycle = 0
             self._publish_count = 0
             self._trim_count = 0
+            self._flush_count = 0
             self._async_dispatch_count = 0
-            self._last_trim_cutoff = None
+            self._archive_boundary = None

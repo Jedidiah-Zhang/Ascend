@@ -1,6 +1,7 @@
 """事件总线单元测试。"""
 
 import os
+import sqlite3
 import tempfile
 import threading
 import time
@@ -509,6 +510,293 @@ class TestWorldTreeTrim:
             # 带 lookup（覆盖内存+归档）时因果链完整恢复
             chain = bus.graph.get_causal_chain("ev2", lookup=bus.get_event_by_id)
             assert chain == ["ev0", "ev1"]
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+
+# ── 保存脉搏 flush-and-drop（Issue #40 地基） ──────────────
+
+
+class TestArchivePending:
+    """archive_pending 保存脉搏归档：events.db 单一事实源。"""
+
+    def test_flush_all_to_disk_and_clear_memory(self):
+        """flush 后：全部事件落盘、内存/索引/图清空、查询自动合并。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        bus = WorldTree(archive_path=path)
+        try:
+            for t in range(5):
+                bus.publish(make_event(timestamp=t, id=f"ev{t}"))
+
+            n = bus.archive_pending()
+
+            assert n == 5
+            assert bus.event_count == 0
+            assert bus.graph.node_count == 0
+            assert bus._archive.event_count() == 5
+            # 内存空 → 一律合并归档（重启语义），不重复不遗漏
+            results = bus.get_events_in_range(0, 1000)
+            assert len(results) == 5
+            assert {e.id for e in results} == {f"ev{t}" for t in range(5)}
+            assert bus.get_event_by_id("ev0") is not None
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_flush_idempotent(self):
+        """重复 flush 幂等：空缓冲返回 0，归档条数不变。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        bus = WorldTree(archive_path=path)
+        try:
+            bus.publish(make_event(timestamp=0, id="ev0"))
+            assert bus.archive_pending() == 1
+            assert bus.archive_pending() == 0
+            assert bus._archive.event_count() == 1
+            assert bus.stats["flush_count"] == 1
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_flush_without_archive_noop(self):
+        """无归档时 no-op：返回 0，内存缓冲保留（不丢数据）。"""
+        bus = WorldTree()
+        bus.publish(make_event(timestamp=0))
+        bus.publish(make_event(timestamp=1))
+        assert bus.archive_pending() == 0
+        assert bus.event_count == 2
+
+    def test_partition_invariant(self):
+        """水位合并语义：查询按水位自动合并归档，跨分区不重复不遗漏。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        bus = WorldTree(archive_path=path)
+        try:
+            for t in range(5):
+                bus.publish(make_event(timestamp=t, id=f"old{t}"))
+            bus.archive_pending()  # 水位 = 5（max_ts=4 + 1）
+
+            for t in range(5, 10):
+                bus.publish(make_event(timestamp=t, id=f"new{t}"))
+
+            # 水位边界：start < 水位 → 合并；start ≥ 水位 → 仅内存
+            assert bus._should_merge_archive(4) is True
+            assert bus._should_merge_archive(5) is False
+
+            # 仅归档
+            assert [e.timestamp for e in bus.get_events_in_range(0, 4)] == [0, 1, 2, 3, 4]
+            # 仅内存
+            assert [e.timestamp for e in bus.get_events_in_range(5, 9)] == [5, 6, 7, 8, 9]
+            # 合并去重
+            merged = bus.get_events_in_range(0, 9)
+            assert len(merged) == 10
+            assert len({e.id for e in merged}) == 10, "合并不得重复"
+            # 实体/空间索引跨分区同样合并
+            assert len(bus.get_entity_events("a", 0, 9)) == 10
+            assert len(bus.get_events_in_region((0, 0), radius=0)) == 10
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_same_timestamp_boundary_merged(self):
+        """同 tick 事件跨分区不遗漏：start == 水位前一刻仍合并归档。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        bus = WorldTree(archive_path=path)
+        try:
+            for t in range(3):
+                bus.publish(make_event(timestamp=t, id=f"a{t}"))
+            bus.archive_pending()  # 水位 = 3
+
+            # 同一 tick（ts=2 < 水位 3）新发布的事件
+            bus.publish(make_event(timestamp=2, id="b2"))
+
+            results = bus.get_events_in_range(2, 2)
+            assert {e.id for e in results} == {"a2", "b2"}
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_flush_then_trim_boundary_monotonic(self):
+        """flush 后 trim 归档低于旧水位的同 tick 事件：水位不回退。
+
+        回归：水位若按实际归档 max_ts + 1 直接覆盖，会从 flush 水位
+        回退，导致边界查询漏掉已归档事件。
+        """
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        bus = WorldTree(archive_path=path)
+        try:
+            for t in range(5):
+                bus.publish(make_event(timestamp=t, id=f"a{t}"))
+            bus.archive_pending()  # 水位 = 5
+
+            # flush 后发布低于旧水位的同 tick 迟到事件
+            bus.publish(make_event(timestamp=2, id="b2"))
+            bus.publish(make_event(timestamp=3, id="b3"))
+
+            bus._trim(3)  # 归档 b2/b3（max_ts=3）；无保护则水位回退到 4
+
+            assert bus._archive_boundary == 5, "水位不得回退到实际归档 max_ts 之下"
+            # 已归档的 a4（ts=4 == 潜在回退水位）查询不可遗漏
+            assert [e.id for e in bus.get_events_in_range(4, 4)] == ["a4"], \
+                "水位回退会让同 tick 归档事件漏出查询"
+            # 新旧归档合并：flush 批（a2/a3）与 trim 批（b2/b3）都在
+            assert {e.id for e in bus.get_events_in_range(2, 3)} == {"a2", "a3", "b2", "b3"}
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_causal_chain_across_restart(self):
+        """flush 后新实例读档：因果链（雨 → 观测 → 行动）从归档完整追溯。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        bus = WorldTree(archive_path=path)
+        try:
+            rain = make_event(timestamp=0, id="rain", event_type="precipitation_start")
+            obs = make_event(
+                timestamp=1, id="obs", event_type="observation",
+                caused_by=["rain"], observes="rain",
+            )
+            action = make_event(
+                timestamp=2, id="action", event_type="npc_action",
+                caused_by=["obs"], initiator_type="npc",
+            )
+            for ev in (rain, obs, action):
+                bus.publish(ev)
+            bus.archive_pending()
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+
+        # 新实例 = 读档后的世界（内存空、图空，仅归档）
+        bus2 = WorldTree(archive_path=path)
+        try:
+            assert bus2.event_count == 0
+            for eid in ("rain", "obs", "action"):
+                assert bus2.get_event_by_id(eid) is not None, f"事件 {eid} 应可追溯"
+            chain = bus2.graph.get_causal_chain("action", lookup=bus2.get_event_by_id)
+            assert chain == ["rain", "obs"], f"因果链应完整恢复: {chain}"
+        finally:
+            bus2._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_trim_boundary_excludes_archived_same_tick(self):
+        """trim 边界：归档中 ts == before_time 的同 tick 事件不逃出水位。
+
+        回归：水位若按 before_time 推进，查询 [boundary, x] 会漏掉
+        已归档的同 tick 事件（违反"归档中事件 ts < 水位"不变量）。
+        """
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        bus = WorldTree(archive_path=path)
+        try:
+            # ev5 与 trim 边界同 tick；ev6 高权重保留在内存
+            for t in range(6):
+                bus.publish(make_event(timestamp=t, id=f"ev{t}"))
+            bus.publish(make_event(timestamp=6, id="ev6", weight=5))
+
+            bus._trim(5)  # 前缀含 ts == 5 的 ev5（weight=1 被归档）
+
+            # 水位 = 实际归档最大 ts(5) + 1 = 6，查询边界不遗漏
+            assert bus._archive_boundary == 6
+            results = bus.get_events_in_range(5, 5)
+            assert [e.id for e in results] == ["ev5"], \
+                f"同 tick 归档事件不得遗漏: {results}"
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_archive_pending_write_failure(self, monkeypatch):
+        """归档写失败：内存已清、水位不推进、异常传播、下次 flush 恢复。
+
+        崩溃语义：写失败 = 该批丢失（≤1 脉搏窗口），不破坏水位不变量。
+        """
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        bus = WorldTree(archive_path=path)
+        try:
+            bus.publish(make_event(timestamp=0, id="ev0"))
+            bus.publish(make_event(timestamp=1, id="ev1"))
+
+            def _boom(events):
+                raise sqlite3.OperationalError("disk full")
+
+            monkeypatch.setattr(bus._archive, "archive", _boom)
+            with pytest.raises(sqlite3.OperationalError):
+                bus.archive_pending()
+
+            assert bus.event_count == 0, "摘取后内存已清空"
+            assert bus._archive_boundary is None, "写失败不得推进水位"
+
+            # 恢复正常后，后续 flush 不受影响（水位仍一致）
+            monkeypatch.undo()
+            bus.archive_pending()
+            assert bus._archive.event_count() == 0, "失败批已丢（等价崩溃窗口）"
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
+    def test_configure_switch_archive_resets_boundary(self):
+        """configure 切换归档库：水位重置，新库查询合并正确。"""
+        fd1, path1 = tempfile.mkstemp(suffix=".db")
+        fd2, path2 = tempfile.mkstemp(suffix=".db")
+        os.close(fd1)
+        os.close(fd2)
+        bus = WorldTree(archive_path=path1)
+        try:
+            bus.publish(make_event(timestamp=0, id="old_a"))
+            bus.archive_pending()  # 水位 = 1（针对库1）
+
+            # 切换到库2（读档切存档位）
+            bus.configure(archive_path=path2)
+            assert bus._archive_boundary is None, "切库必须重置水位"
+
+            bus.publish(make_event(timestamp=0, id="new_a"))
+            # 库2 无旧数据：查询不遗漏（新水位语义）
+            assert [e.id for e in bus.get_events_in_range(0, 1000)] == ["new_a"]
+            assert bus.get_event_by_id("old_a") is None, "旧库事件不可见"
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path1)
+            os.unlink(path2)
+
+    def test_concurrent_publish_and_flush(self):
+        """并发 publish + archive_pending 无异常（复刻既有线程安全风格）。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        bus = WorldTree(archive_path=path)
+        errors: list[Exception] = []
+        try:
+            stop = threading.Event()
+
+            def publisher():
+                t = 0
+                while not stop.is_set():
+                    bus.publish(make_event(timestamp=t, id=f"p{t}"))
+                    t += 1
+
+            def flusher():
+                while not stop.is_set():
+                    try:
+                        bus.archive_pending()
+                    except Exception as e:  # pragma: no cover
+                        errors.append(e)
+
+            pub_thread = threading.Thread(target=publisher)
+            flusher_thread = threading.Thread(target=flusher)
+            pub_thread.start()
+            flusher_thread.start()
+            time.sleep(0.3)
+            stop.set()
+            pub_thread.join(timeout=3)
+            flusher_thread.join(timeout=3)
+
+            assert errors == []
+            # 缓冲与归档总和 == 发布总数（不重复不遗漏）
+            total = bus.event_count + bus._archive.event_count()
+            assert total == bus._publish_count
         finally:
             bus._archive.close()  # type: ignore[union-attr]
             os.unlink(path)

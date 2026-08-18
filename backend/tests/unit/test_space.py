@@ -588,8 +588,8 @@ class TestChunkData:
         with pytest.raises(ValueError):
             c.generate_tiles(TileGrid())
 
-    def test_restore_tiles_marks_dirty(self):
-        """从持久化恢复网格的 chunk 自动标记为脏（库中行 = 玩家改动）。"""
+    def test_restore_tiles_keeps_clean(self):
+        """从持久化恢复网格的 chunk 保持 clean（库中行 = 已加载内容）。"""
         c = ChunkData(
             cx=0, cy=0,
             biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
@@ -600,7 +600,7 @@ class TestChunkData:
         c.restore_tiles(grid)
         assert c.has_tiles
         assert c.tile_grid is grid
-        assert c.dirty
+        assert not c.dirty, "恢复内容 = 库中记录，无需重写；改动须经 mark_dirty"
 
     def test_restore_tiles_refuses_dirty(self):
         """脏 chunk 拒绝恢复网格（与 generate_tiles 同一守卫）。"""

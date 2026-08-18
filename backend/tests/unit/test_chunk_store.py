@@ -1,8 +1,8 @@
 """ChunkStore 单元测试。
 
-覆盖：LRU 命中/淘汰/访问顺序、淘汰写库（write-back，仅 dirty 落盘）、
+覆盖：LRU 命中/淘汰/访问顺序、淘汰写库（write-back，已加载全量落盘）、
 on_evict 回调、脏标记不变量（dirty ⇒ 持有网格）、flush/close 持久化、
-SQLite roundtrip。
+已落盘坐标集合（重访不重写）、zlib 压缩存储、SQLite roundtrip。
 
 数据库使用 tmp_path，测试间完全隔离。
 """
@@ -112,7 +112,7 @@ class TestChunkStoreCache:
 
 
 class TestChunkStorePersistence:
-    """SQLite write-back 持久化（仅玩家改动落盘）。"""
+    """SQLite write-back 持久化（已加载 chunk 全量落盘）。"""
 
     def test_T7_dirty_eviction_persists_tiles(self, db_path):
         """带 tile 的 dirty chunk 被淘汰时写入 SQLite，可 load 回来。"""
@@ -128,15 +128,34 @@ class TestChunkStorePersistence:
         finally:
             store.close()
 
-    def test_T7b_clean_eviction_not_persisted(self, db_path):
-        """clean（确定性生成）chunk 淘汰即弃，不写库（无落盘价值）。"""
+    def test_T7b_clean_eviction_persists_first_load(self, db_path):
+        """clean chunk 首次加载后被淘汰：写回库（否则重访仍要重生成）。"""
         store = ChunkStore(db_path, max_size=1)
         try:
             store.put(_make_chunk(0, 0, with_tiles=True))
-            store.put(_make_chunk(1, 0))  # 淘汰 (0,0)，clean → 不写库
+            store.put(_make_chunk(1, 0))  # 淘汰 (0,0)，首次加载 → 写回
 
-            assert not store.contains_tiles(0, 0)
-            assert store.load_tiles(0, 0) is None
+            assert store.contains_tiles(0, 0)
+            assert store.load_tiles(0, 0) is not None
+        finally:
+            store.close()
+
+    def test_T7c_clean_eviction_skips_when_already_persisted(self, db_path):
+        """已落盘 clean chunk 淘汰即弃：库中已有，不重写。"""
+        store = ChunkStore(db_path, max_size=2)
+        try:
+            store.put(_make_chunk(0, 0, with_tiles=True))
+            store.flush()  # (0,0) 已落盘
+            assert store._persisted_coords == {(0, 0)}
+
+            store2 = ChunkStore(db_path, max_size=1)  # 新连接：集合从库重建
+            try:
+                store2.put(_make_chunk(0, 0, with_tiles=True))
+                store2.put(_make_chunk(1, 0))  # 淘汰 (0,0) → 已落盘，不写
+                assert store2.load_tiles(0, 0) is not None, "库中已有记录"
+                assert store2._persisted_coords == {(0, 0)}, "重写不应入集合"
+            finally:
+                store2.close()
         finally:
             store.close()
 
@@ -173,17 +192,18 @@ class TestChunkStorePersistence:
         finally:
             store.close()
 
-    def test_T10_flush_persists_dirty_only(self, db_path):
-        """flush 只写 dirty chunk；clean 缓存不落盘。"""
+    def test_T10_flush_persists_all_loaded(self, db_path):
+        """flush 落盘所有已加载 chunk（clean 首次加载 + dirty），返回写入数。"""
         store = ChunkStore(db_path, max_size=4)
         try:
             store.put(_make_chunk(0, 0, with_tiles=True))
             store.put(_make_chunk(1, 0, with_tiles=True))
             store.mark_dirty(1, 0)
-            store.flush()
-            assert not store.contains_tiles(0, 0), "clean 不落盘"
+            assert store.flush() == 2, "clean 首次加载与 dirty 都落盘"
+            assert store.contains_tiles(0, 0), "clean 落盘"
             assert store.contains_tiles(1, 0), "dirty 落盘"
             assert store.get(1, 0).dirty is False, "落盘后脏标记清除"
+            assert store.flush() == 0, "全部已落盘后返回 0"
         finally:
             store.close()
 
@@ -205,29 +225,30 @@ class TestChunkStorePersistence:
         finally:
             store2.close()
 
-    def test_T11b_restored_chunk_survives_eviction(self, db_path):
-        """restore_tiles 恢复的 chunk 保持脏标记，淘汰时重新落盘。
+    def test_T11b_restored_chunk_player_change_survives_eviction(self, db_path):
+        """恢复的 chunk 保持 clean；玩家改动经 mark_dirty 后淘汰必落盘。
 
-        库中行 = 玩家改动（确定性 tile 不落盘）；恢复的 chunk 若被
-        当 clean 淘汰，后续修改将随确定性重生成而丢失。
+        恢复 = 内容与库中一致，不置脏（无冗余重写）；改动必须走
+        mark_dirty 统一入口，脏 chunk 淘汰时写回、跨重启保留。
         """
-        # 初始：写入一行（模拟历史玩家改动）
+        # 初始：写入一行（模拟已加载落盘）
         store = ChunkStore(db_path, max_size=4)
         c = _make_chunk(0, 0, with_tiles=True)
         store.put(c)
-        store.mark_dirty(0, 0)
+        store.flush()
         store.close()
 
-        # 重新打开：恢复网格 → 追加修改 → 淘汰 → 修改必须跨重启存活
+        # 重新打开：恢复网格（不置脏）→ 玩家改动 → 淘汰 → 修改必须跨重启存活
         store2 = ChunkStore(db_path, max_size=1)
         try:
             grid = store2.load_tiles(0, 0)
             assert grid is not None
             restored = _make_chunk(0, 0)
             restored.restore_tiles(grid)
-            assert restored.dirty, "恢复的 chunk 必须保持脏标记"
+            assert restored.dirty is False, "恢复的 chunk 不置脏（库中已有）"
             restored.tile_grid.set(10, 10, TerrainType.SAND)
             store2.put(restored)
+            store2.mark_dirty(0, 0)  # 玩家改动统一入口
             store2.put(_make_chunk(1, 0))  # 淘汰 (0,0) → dirty 落盘
         finally:
             store2.close()
@@ -280,20 +301,111 @@ class TestChunkStorePersistence:
         finally:
             store.close()
 
-    def test_T15_flush_dirty_persists_and_reports_count(self, db_path):
-        """flush_dirty（周期保存）与 flush 同语义：只写脏 chunk 并返回写入数。"""
+    def test_T15_flush_persists_and_reports_count(self, db_path):
+        """flush 落盘待落盘 chunk 并返回写入数（脉搏保存入口语义）。"""
         store = ChunkStore(db_path, max_size=4)
         try:
             store.put(_make_chunk(0, 0, with_tiles=True))
             store.put(_make_chunk(1, 0, with_tiles=True))
             store.mark_dirty(1, 0)
-            assert store.flush_dirty() == 1
-            assert not store.contains_tiles(0, 0), "clean 不落盘"
-            assert store.contains_tiles(1, 0), "dirty 落盘"
+            assert store.flush() == 2, "clean 首次加载 + dirty 都写入"
+            assert store.contains_tiles(0, 0)
+            assert store.contains_tiles(1, 0)
             assert store.get(1, 0).dirty is False
-            assert store.flush_dirty() == 0, "无脏 chunk 时返回 0"
+            assert store.flush() == 0, "全部已落盘时返回 0"
         finally:
             store.close()
+
+    def test_T19_clean_chunk_roundtrip_across_reopen(self, db_path):
+        """clean chunk 落盘后重开：可直接恢复，免重新生成。"""
+        chunk = _make_chunk(3, 4, with_tiles=True)
+        original = chunk.tile_grid.to_bytes()
+
+        store = ChunkStore(db_path, max_size=4)
+        store.put(chunk)
+        assert store.flush() == 1, "首次加载落盘"
+        store.close()
+
+        store2 = ChunkStore(db_path, max_size=4)
+        try:
+            grid = store2.load_tiles(3, 4)
+            assert grid is not None, "重开即可恢复（免重生成）"
+            assert grid.to_bytes() == original, "内容一致（确定性）"
+        finally:
+            store2.close()
+
+    def test_T20_reexplored_chunk_not_rewritten(self, db_path):
+        """重访 chunk（淘汰后重新生成）不重写：已落盘坐标集合命中。"""
+        chunk = _make_chunk(0, 0, with_tiles=True)
+        store = ChunkStore(db_path, max_size=1)
+        try:
+            store.put(chunk)
+            assert store.flush() == 1
+
+            # 模拟重访：新 chunk 对象（重新生成），同一坐标
+            store.put(_make_chunk(5, 5, with_tiles=True))  # 淘汰 (0,0)：已落盘，不写
+            assert store.flush() == 1, "仅新加载的 (5,5) 写入"
+
+            store.put(_make_chunk(0, 0, with_tiles=True))  # 重访 (0,0)
+            assert store.flush() == 0, "重访内容不变，不重写"
+            assert store.contains_tiles(0, 0), "库中仍有记录"
+        finally:
+            store.close()
+
+    def test_T21_blob_compressed_and_legacy_readable(self, db_path):
+        """存储 BLOB 为 zlib 压缩；旧版明文格式仍可读取（兼容）。"""
+        import sqlite3
+        import zlib
+
+        chunk = _make_chunk(0, 0, with_tiles=True)
+        raw = chunk.tile_grid.to_bytes()
+
+        store = ChunkStore(db_path, max_size=4)
+        store.put(chunk)
+        store.flush()
+        store.close()
+
+        # 库中 BLOB 带压缩前缀且明显小于明文
+        con = sqlite3.connect(db_path)
+        try:
+            blob = bytes(con.execute(
+                "SELECT tiles FROM chunk_tiles WHERE cx = 0 AND cy = 0"
+            ).fetchone()[0])
+        finally:
+            con.close()
+        assert blob[:2] == b"ZC", "压缩前缀"
+        assert len(blob) < len(raw) / 2, "压缩后应显著小于明文"
+        assert zlib.decompress(blob[2:]) == raw
+
+        # 旧版明文（无前缀）仍可读
+        con = sqlite3.connect(db_path)
+        con.execute(
+            "INSERT OR REPLACE INTO chunk_tiles VALUES (9, 9, ?)",
+            (sqlite3.Binary(raw),),
+        )
+        con.commit()
+        con.close()
+        store2 = ChunkStore(db_path, max_size=4)
+        try:
+            grid = store2.load_tiles(9, 9)
+            assert grid is not None and grid.to_bytes() == raw, "旧明文兼容"
+            assert store2._persisted_coords >= {(9, 9)}, "旧行进入已落盘集合"
+        finally:
+            store2.close()
+
+    def test_T22_persisted_set_rebuilt_from_db(self, db_path):
+        """启动时已落盘坐标集合从库重建（崩溃后集合与库一致）。"""
+        store = ChunkStore(db_path, max_size=4)
+        store.put(_make_chunk(0, 0, with_tiles=True))
+        store.put(_make_chunk(1, 0, with_tiles=True))
+        store.flush()
+        store.close()
+
+        store2 = ChunkStore(db_path, max_size=4)
+        try:
+            assert store2._persisted_coords == {(0, 0), (1, 0)}, "集合从库重建"
+        finally:
+            store2.close()
 
     def test_T16_put_refuses_to_replace_dirty_chunk(self, db_path):
         """不能替换未落盘的脏 chunk（否则其脏状态被静默丢弃）。"""

@@ -2,7 +2,7 @@
 
 ChunkData 持有大地图层信息（群系、气候、标记）与按需生成的
 详细 tile 网格（tile_grid）。详细层由 TileGenerator 生成，
-经 ChunkStore 持久化玩家改动。
+经 ChunkStore 持久化（已加载 chunk 全量落盘，玩家改动置脏）。
 
 创建后归属调用线程，无跨线程共享，天然线程安全。
 """
@@ -19,7 +19,8 @@ class ChunkData:
     """一个分块的大地图层数据与按需生成的详细 tile 网格。
 
     详细层（tile_grid）由 TileGenerator 生成，None 表示未生成；
-    玩家改动经 ChunkStore.mark_dirty 置脏、由 ChunkStore 持久化。
+    已加载 chunk 全量落盘（见 ChunkStore），玩家改动经
+    ChunkStore.mark_dirty 置脏、由 ChunkStore 持久化。
 
     连续气候属性（mean_temp/annual_rainfall/sea_level_temp/altitude）
     是层1场在该 chunk 中心的值，气候档位与群系由其派生。
@@ -67,7 +68,8 @@ class ChunkData:
     # 玩家修改未落盘标记。不变量：dirty ⇒ 持有 tile_grid——
     # 置脏入口（ChunkStore.mark_dirty）要求网格在场，覆盖/卸载
     # 入口（generate_tiles / unload_tiles）拒绝脏 chunk；持久化
-    # 成功后由 ChunkStore 清除。
+    # 成功后由 ChunkStore 清除。已落盘判定由 ChunkStore 的
+    # _persisted_coords 集合负责（不在此处维护状态）。
     dirty: bool = False
 
     @property
@@ -112,10 +114,11 @@ class ChunkData:
         self.tile_grid = grid
 
     def restore_tiles(self, grid: TileGrid) -> None:
-        """从持久化恢复详细 tile 数据，并标记为脏。
+        """从持久化恢复详细 tile 数据（内容 = 库中记录，不置脏）。
 
-        库中行 = 玩家改动（确定性 tile 从不落盘）：恢复的 chunk
-        必须保持脏标记，使淘汰/退出时重新落盘。
+        库中行 = 已加载 chunk（含玩家改动）；恢复的网格与库中内容
+        一致，无需重写。玩家改动必须经 ChunkStore.mark_dirty 置脏
+        （统一入口约束），脏 chunk 淘汰/落盘时必然写回。
 
         Args:
             grid: 200×200 的 TileGrid。
@@ -124,7 +127,6 @@ class ChunkData:
             ValueError: chunk 为脏，或网格尺寸不符。
         """
         self.generate_tiles(grid)
-        self.dirty = True
 
     def unload_tiles(self) -> bool:
         """卸载详细 tile 层以释放内存。

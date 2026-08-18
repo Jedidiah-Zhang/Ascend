@@ -800,7 +800,7 @@ class TestSnapshot:
                 chunk.generate_tiles(TileGrid())
                 cs.put(chunk)
                 cs.mark_dirty(cx, cy)
-            cs.flush_dirty()
+            cs.flush()
             ar.archive([
                 Event(
                     timestamp=100 + i, location=(0, 0, None, None),

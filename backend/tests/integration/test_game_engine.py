@@ -4,6 +4,7 @@
 TCP 服务器、WorldGenerator 和 MessageDispatcher 的能力。
 """
 
+import os
 import time
 import pytest
 
@@ -494,3 +495,152 @@ class TestWorldProcessEntry:
                 "展开目标 M2 的内容（200），冻结与展开互不影响"
         finally:
             engine.stop()
+
+
+class TestSavePulseEndToEnd:
+    """保存脉搏端到端（Issue #40）：事件跨重启持久化 + 快照含近期事件。
+
+    _final_pulse() 同步执行完整脉搏（事件 flush → state → chunk），
+    确定性模拟保存线程的落盘（不等真实 SAVE_PULSE_INTERVAL）。
+    """
+
+    def _publish_chain(self):
+        """发布因果链：雨 → 观测 → 行动（observes + caused_by）。"""
+        from ascend.world_tree import world_tree, Event, AffectedParty
+
+        world_tree.publish(Event(
+            id="rain", timestamp=100, location=(0, 0, None, None),
+            initiator_type="system", initiator_id="weather_system",
+            event_type="precipitation_start", weight=3,
+            affected=[AffectedParty("world", "subject")],
+            data={"intensity": 10},
+        ))
+        world_tree.publish(Event(
+            id="obs", timestamp=101, location=(0, 0, None, None),
+            initiator_type="npc", initiator_id="npc_1",
+            event_type="observation", caused_by=["rain"], observes="rain",
+            affected=[AffectedParty("npc_1", "subject")],
+            data={"saw": "rain"},
+        ))
+        world_tree.publish(Event(
+            id="action", timestamp=102, location=(0, 0, None, None),
+            initiator_type="npc", initiator_id="npc_1",
+            event_type="npc_action", caused_by=["obs"],
+            affected=[AffectedParty("npc_1", "subject")],
+            data={"action": "seek_shelter"},
+        ))
+
+    def test_events_persist_across_restart_via_pulse(self, monkeypatch):
+        """脉搏 flush 后重启（新进程语义）：事件完整、因果链可追溯。
+
+        崩溃语义：flush 后事件即落盘，重启不丢；丢失窗口 = 脉搏间隔。
+        """
+        _patch_fast_worldgen(monkeypatch)
+        from ascend.world_tree import world_tree
+
+        engine1 = GameEngine(seed=42)
+        try:
+            engine1.start_service()
+            world_id = engine1.save_manager.create_world("脉搏世界", seed=7).world_id
+            engine1.load_world(world_id=world_id)
+            self._publish_chain()
+            engine1._final_pulse()  # 模拟保存脉搏落盘
+        finally:
+            engine1.stop()
+
+        # 新进程（新引擎实例）读档
+        engine2 = GameEngine(seed=42)
+        try:
+            engine2.start_service()
+            engine2.load_world(world_id=world_id)
+            for eid in ("rain", "obs", "action"):
+                assert world_tree.get_event_by_id(eid) is not None, \
+                    f"事件 {eid} 应跨重启可追溯"
+            chain = world_tree.graph.get_causal_chain(
+                "action", lookup=world_tree.get_event_by_id,
+            )
+            assert chain == ["rain", "obs"], f"因果链应完整: {chain}"
+        finally:
+            engine2.stop()
+
+    def test_snapshot_contains_recent_events(self, monkeypatch):
+        """快照强一致点：checkpoint 前同步完整脉搏，快照含近期事件。"""
+        import shutil
+        import tempfile
+
+        from ascend.save import SaveManager
+        from ascend.world_tree import world_tree, Event, AffectedParty
+        from ascend.world_tree.archive import EventArchive
+
+        _patch_fast_worldgen(monkeypatch)
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            world_id = engine.save_manager.create_world("快照世界", seed=7).world_id
+            engine.load_world(world_id=world_id)
+            for i in range(5):
+                world_tree.publish(Event(
+                    id=f"snap{i}", timestamp=200 + i,
+                    location=(0, 0, None, None),
+                    initiator_type="system", initiator_id="test",
+                    event_type="test",
+                    affected=[AffectedParty("t", "subject")],
+                ))
+            filename = engine.snapshot_current(world_id, suffix="manual")
+
+            # 展开到全新存档根：快照内 events.db 应含近期事件
+            new_root = tempfile.mkdtemp()
+            try:
+                mgr2 = SaveManager(root=new_root)
+                mgr2.extract_snapshot(
+                    engine.save_manager.snapshot_dir(world_id) + os.sep + filename,
+                )
+                ar = EventArchive(mgr2.events_db_path(world_id))
+                try:
+                    for i in range(5):
+                        assert ar.query_by_id(f"snap{i}") is not None, \
+                            f"快照应含事件 snap{i}"
+                finally:
+                    ar.close()
+            finally:
+                shutil.rmtree(new_root, ignore_errors=True)
+        finally:
+            engine.stop()
+
+    def test_loaded_chunks_persist_across_restart(self, monkeypatch):
+        """已加载 chunk（未改动）经脉搏落盘，重启后直接命中免重生成。"""
+        from ascend.space import BiomeType, ClimateZone, WeatherParams
+        from ascend.space.chunk import ChunkData
+        from ascend.space.tile_grid import TileGrid
+
+        _patch_fast_worldgen(monkeypatch)
+        engine1 = GameEngine(seed=42)
+        try:
+            engine1.start_service()
+            world_id = engine1.save_manager.create_world("chunk世界", seed=7).world_id
+            engine1.load_world(world_id=world_id)
+
+            # 模拟首次加载：clean chunk（未改动）进入缓存
+            chunk = ChunkData(
+                cx=3, cy=5,
+                biome=BiomeType.TEMPERATE_MIXED_FOREST,
+                climate_zone=ClimateZone.TEMPERATE_FOREST,
+                annual_baseline=WeatherParams(15.0, 800.0, 12.0, 100.0, 60.0, 5.0),
+            )
+            chunk.generate_tiles(TileGrid())
+            engine1.chunk_store.put(chunk)
+            assert engine1.chunk_store.flush() == 1, "首次加载落盘"
+        finally:
+            engine1.stop()
+
+        # 重启（新进程）：库中已有记录，直接命中
+        engine2 = GameEngine(seed=42)
+        try:
+            engine2.start_service()
+            engine2.load_world(world_id=world_id)
+            assert engine2.chunk_store.contains_tiles(3, 5), "重启直接命中"
+            grid = engine2.chunk_store.load_tiles(3, 5)
+            assert grid is not None
+            assert grid == TileGrid(), "内容一致（确定性生成）"
+        finally:
+            engine2.stop()
