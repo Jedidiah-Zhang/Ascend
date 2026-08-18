@@ -29,6 +29,7 @@ from typing import Union
 
 from .noise import PerlinNoise
 from .climate import ClimateZone, LAPSE_RATE
+from .randomness import seed_angle
 from ascend.config import (
     EROSION_ITERATIONS,
     LAKE_MIN_PIXELS,
@@ -83,17 +84,6 @@ logger = get_logger(__name__)
 # （每个存档的大陆在创建时定案），头部 gen_fingerprint 字段
 # 仅用于加载时的漂移诊断（告警 + continent status 查询）。
 CONTINENT_CACHE_VERSION: int = 1
-
-# Knuth 乘法哈希：seed → 确定性角度 [0, 2π)（温度梯度/盛行风向共用）
-def _seed_angle(seed: int) -> float:
-    """seed → 确定性角度 [0, 2π)。
-
-    Knuth 乘法哈希将任意整数种子均匀映射到角度；温度梯度方向
-    与盛行风向均由此派生（各自独立调用点，同一 seed 结果相同）。
-    """
-    import math
-
-    return ((seed * 2654435761) & 0xFFFFFFFF) / 0xFFFFFFFF * 2.0 * math.pi
 
 # ── 二进制序列化（显式 schema，非 pickle） ────────────────
 # 缓存随档分发（存档可分享）：pickle 反序列化可执行任意代码，
@@ -1294,7 +1284,7 @@ class ContinentGenerator:
         import math
 
         # seed → 随机温度梯度方向
-        angle = _seed_angle(self._seed)
+        angle = seed_angle(self._seed)
         gx = math.cos(angle)
         gy = math.sin(angle)
 
@@ -1351,7 +1341,7 @@ class ContinentGenerator:
         from .hydrology import _rain_shadow_omnidirectional_c
 
         # seed → 连续风向角（与温度梯度相同的 Knuth 乘法哈希）
-        wind_angle = _seed_angle(self._seed)
+        wind_angle = seed_angle(self._seed)
 
         # 次风向：偏移 45°，模拟环境风切变
         secondary_angle = wind_angle + math.pi / 4.0

@@ -1554,6 +1554,33 @@ class TestWeatherReport:
         assert report[0].rainfall == pytest.approx(wp.rainfall)
         e.shutdown()
 
+    def test_report_sun_azimuth_daily_constant_seasonal(self):
+        """sun_azimuth 日内恒定（光照轨道基准）、随季节渐变（P2-01）。"""
+        from ascend.weather.weather_engine import WeatherEngine
+        from ascend.weather.diurnal import sunrise_azimuth, _solar_declination
+        wt = WorldTree()
+        clock = WorldClock()
+        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
+        e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
+        field = e._fields[(0, 0)]
+        # 日内恒定：t0 与 t0+6h 方位角相同（前端轨道基准不随小时跳变）
+        t0 = clock.time
+        az0 = e.get_weather_report(0, 0)[5]
+        clock.skip(6 * GAME_HOUR)
+        az1 = e.get_weather_report(0, 0)[5]
+        assert az0 == az1
+        # 对拍直接计算（不重复实现公式）
+        day_of_year = (clock.time // GAME_DAY) % 360
+        expected = sunrise_azimuth(
+            day_of_year, field.baseline.latitude,
+            solar_decl=_solar_declination(day_of_year))
+        assert az1 == pytest.approx(expected)
+        # 跨季渐变：180 天后（不同季节）方位角不同
+        clock.skip(180 * GAME_DAY)
+        az2 = e.get_weather_report(0, 0)[5]
+        assert az2 != az1
+        e.shutdown()
+
     def test_get_weather_event_consistency(self):
         """get_weather 值与事件发布的数值一致（强制等级变化后比较）。"""
         from ascend.weather.weather_engine import WeatherEngine
@@ -2071,4 +2098,60 @@ class TestForceControl:
         starts = [ev.start_tick for ev in rain._events]
         assert starts == sorted(starts)
         assert len(starts) == len(set(starts))
+        e.shutdown()
+
+
+class TestWeatherQueryConcurrency:
+    """handler 线程查询与引擎线程推进并发安全（P2-12）。"""
+
+    def test_concurrent_query_and_tick(self):
+        import threading
+        from ascend.weather.weather_engine import WeatherEngine
+        wt = WorldTree()
+        clock = WorldClock()
+        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
+        for cx in range(3):
+            e.register_chunk(cx, 0, _make_baseline(),
+                             ClimateZone.TEMPERATE_FOREST, 15.0)
+        errors: list[Exception] = []
+        stop = threading.Event()
+
+        def query_loop() -> None:
+            i = 0
+            try:
+                while not stop.is_set() and i < 5000:
+                    cx = i % 3
+                    report = e.get_weather_report(cx, 0)
+                    if report is not None:
+                        assert 0.0 <= report[5] <= 180.0
+                        assert report[1] < report[2]
+                    wp = e.get_weather(cx, 0)
+                    if wp is not None:
+                        assert -30.0 <= wp.temperature <= 50.0
+                    i += 1
+            except Exception as ex:  # noqa: BLE001
+                errors.append(ex)
+
+        threads = [threading.Thread(target=query_loop) for _ in range(4)]
+        for t in threads:
+            t.start()
+        try:
+            for day in range(10):
+                clock.skip(GAME_DAY)
+                _publish_minute(wt, clock.time)
+                # 引擎线程典型操作：重注册与注销交替（迭代期间 dict 增删）
+                e.register_chunk(day % 3, 0, _make_baseline(),
+                                 ClimateZone.TEMPERATE_FOREST, 15.0)
+                other = (day + 1) % 3
+                if day % 2 == 0:
+                    e.unregister_chunk(other, 0)
+                else:
+                    e.register_chunk(other, 0, _make_baseline(),
+                                     ClimateZone.TEMPERATE_FOREST, 15.0)
+        finally:
+            stop.set()
+            for t in threads:
+                t.join(timeout=10)
+        assert not errors
+        assert all(not t.is_alive() for t in threads)
         e.shutdown()

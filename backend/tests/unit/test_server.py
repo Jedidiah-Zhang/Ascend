@@ -89,3 +89,36 @@ class TestAcceptLoop:
                 assert srv.is_running, "is_running 由 stop() 管理，循环退出不应改它"
             finally:
                 srv.stop()
+
+    def test_tcp_nodelay_on_accepted_connections(self) -> None:
+        """每个连接 socket 设置 TCP_NODELAY（P2-05：禁 Nagle 聚合）。"""
+        from ascend.net.server import ClientHandler
+
+        captured: dict = {}
+
+        class SpyingHandler(ClientHandler):
+            def __init__(self, conn, addr, on_msg, on_disc, token=""):
+                captured["conn"] = conn
+                super().__init__(conn, addr, on_msg, on_disc, token=token)
+
+        srv = _make_listening_server()
+        client = None
+        with patch("ascend.net.server.ClientHandler", SpyingHandler):
+            thread = _start_accept_thread(srv)
+            try:
+                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client.settimeout(1.0)
+                client.connect(("127.0.0.1", srv._socket.getsockname()[1]))
+
+                deadline = time.monotonic() + 3.0
+                while "conn" not in captured and time.monotonic() < deadline:
+                    time.sleep(0.02)
+
+                assert "conn" in captured, "accept 应创建 ClientHandler"
+                assert captured["conn"].getsockopt(
+                    socket.IPPROTO_TCP, socket.TCP_NODELAY
+                ) == 1, "连接 socket 应启用 TCP_NODELAY"
+            finally:
+                if client:
+                    client.close()
+                srv.stop()

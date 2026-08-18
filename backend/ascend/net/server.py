@@ -185,6 +185,15 @@ class GameServer:
         while self.is_running:
             try:
                 conn, addr = self._socket.accept()
+                # TCP_NODELAY：低延迟小包（游戏实时事件）场景禁用 Nagle
+                # 聚合（P2-05）；每个连接 socket 独立设置（监听 socket
+                # 不生效）。设置失败（平台差异）仅告警，不中断 accept 循环
+                try:
+                    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except OSError:
+                    logger.warning(
+                        "TCP_NODELAY 设置失败: %s:%d", addr[0], addr[1],
+                    )
                 logger.info("新连接: %s:%d", addr[0], addr[1])
                 handler = ClientHandler(
                     conn, addr, self._on_message, self._on_disconnect,

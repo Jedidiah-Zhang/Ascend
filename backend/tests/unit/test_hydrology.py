@@ -287,6 +287,100 @@ class TestHydraulicErosion:
         avg_change = abs(total_change) / len(dem)
         assert avg_change < 1.0, f"净质量变化 {total_change:.2f}，平均 {avg_change:.4f}m/像素"
 
+    def test_seafloor_unchanged(self):
+        """海底（dem<0）不参与侵蚀与沉积，海拔逐轮保持原样（P2-15）。"""
+        from ascend.space.hydrology import erode
+        w, h = 10, 10
+        # 斜坡陆地（顶部高）+ 右侧 3 列海洋
+        dem: list[float] = []
+        for y in range(h):
+            for x in range(w):
+                dem.append((10.0 - x) * 10.0 if x < w - 3 else -20.0 - x)
+        sea_idx = [i for i, v in enumerate(dem) if v < 0]
+        assert len(sea_idx) == 30
+        rainfall = [1.0] * (w * h)
+        eroded = erode(dem, rainfall, w, h, iterations=5)
+        for i in sea_idx:
+            assert eroded.dem[i] == dem[i], f"海底格 {i} 被修改: {dem[i]} -> {eroded.dem[i]}"
+        # 陆地仍在侵蚀（对比确认测试有效）
+        assert max(eroded.dem) < max(dem)
+
+    def test_subsea_land_erodes_to_sea_then_frozen(self):
+        """陆地格被侵蚀到海平面以下后按海洋处理（后续轮次不再参与）。"""
+        from ascend.space.hydrology import erode
+        w, h = 5, 5
+        dem = [30.0] * 25
+        dem[2 * w + 2] = 60.0  # 高峰
+        for x in range(w):
+            dem[4 * w + x] = -10.0  # 底部海洋
+        rainfall = [1.0] * 25
+        eroded = erode(dem, rainfall, w, h, iterations=8)
+        # 峰值物质下移，不产生 NaN/Inf
+        for v in eroded.dem:
+            assert not math.isnan(v)
+            assert not math.isinf(v)
+
+
+class TestFillDepressions:
+    """fill_depressions 直测 — 填洼语义 + 退化路径（P2-17）。"""
+
+    def test_fills_depression_with_ocean_boundary(self):
+        """有海洋边界的陆地洼地 → 填到溢出口。"""
+        from ascend.space.hydrology import fill_depressions
+        w = h = 5
+        dem = [5.0] * 25
+        dem[4 * w + 0] = -10.0  # 底部一行海洋
+        dem[4 * w + 1] = -10.0
+        dem[4 * w + 2] = -10.0
+        dem[4 * w + 3] = -10.0
+        dem[4 * w + 4] = -10.0
+        dem[2 * w + 2] = 1.0  # 中央洼地
+        dem[1 * w + 2] = 2.0
+        dem[2 * w + 1] = 2.0
+        dem[2 * w + 3] = 2.0
+        dem[3 * w + 2] = 2.0
+        filled = fill_depressions(dem, w, h)
+        # 洼地组件抬升到溢出口（5.0 减微小的 0.001 传播余量）
+        assert filled[2 * w + 2] > 2.0
+        assert filled[1 * w + 2] > 2.0
+        assert filled[2 * w + 1] > 2.0
+        assert filled[2 * w + 3] > 2.0
+        # (3,2) 邻接海洋行 → 排水通道，不填
+        assert filled[3 * w + 2] == pytest.approx(2.0)
+        # 高于溢出口的格不变（抬升不超过传播水位 5.0 + 0.001）
+        assert 5.0 <= filled[0 * w + 0] <= 5.001
+
+    def test_all_land_no_ocean_unchanged(self):
+        """全陆地（无海洋边界）：无排水口 → 原样返回（退化语义锁定）。"""
+        from ascend.space.hydrology import fill_depressions
+        w = h = 5
+        dem = [5.0] * 25
+        dem[2 * w + 2] = 1.0
+        dem[1 * w + 2] = 2.0
+        dem[2 * w + 1] = 2.0
+        filled = fill_depressions(dem, w, h)
+        assert filled == dem
+
+    def test_single_cell(self):
+        """1×1 极端尺寸不崩溃、原样返回。"""
+        from ascend.space.hydrology import fill_depressions
+        assert fill_depressions([3.0], 1, 1) == [3.0]
+        assert fill_depressions([-5.0], 1, 1) == [-5.0]
+
+    def test_ocean_cells_unchanged(self):
+        """海洋格海拔不被填洼修改。"""
+        from ascend.space.hydrology import fill_depressions
+        w = h = 4
+        dem = [5.0] * 16
+        dem[3 * w + 0] = -30.0
+        dem[3 * w + 1] = -20.0
+        dem[3 * w + 2] = -25.0
+        dem[3 * w + 3] = -30.0
+        filled = fill_depressions(dem, w, h)
+        assert filled[3 * w + 0] == -30.0
+        assert filled[3 * w + 1] == -20.0
+        assert filled[3 * w + 2] == -25.0
+
 
 # ════════════════════════════════════════════════════════════════
 # 5. 集成测试 — 把 continent + hydrology 串起来

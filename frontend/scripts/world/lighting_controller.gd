@@ -101,7 +101,7 @@ func configure_environment(camera_distance: float) -> void:
 ## Args:
 ##     game_hour/game_minute: 当前游戏时间。
 ##     sunrise/sunset: 日出日落时刻。
-##     sun_azimuth: 太阳方位角（0-360，从后端种子派生）。
+##     sun_azimuth: 日出方位角（0-180°，由纬度+季节派生，跨季渐变日内恒定）。
 ##     sunshine_intensity: 日照强度（0-1，来自后端）。
 ##     camera_distance: 相机距离（阴影覆盖距离计算用）。
 func update(game_hour: float, game_minute: int,

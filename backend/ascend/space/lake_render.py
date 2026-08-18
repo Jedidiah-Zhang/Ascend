@@ -12,12 +12,11 @@
     from ascend.space.lake_render import render_lake_chunk
 
     render_lake_chunk(tile_grid, world_x0, world_y0, lake_basins,
-                       dem_macro, cell_size)
+                      continent, seed)
 """
 
-import math
-
 from ascend.config import LAKE_DEEP_AREA_KM2, LAKE_DEEP_DEPTH_M, LAKE_WETLAND_DEPTH_MAX
+from .randomness import cell_hash
 from .terrain import TerrainType
 from .tile_grid import TileGrid, TILE_MAP_SIZE
 
@@ -27,6 +26,7 @@ def render_lake_chunk(
     world_x0: int, world_y0: int,
     lake_basins: list,  # list[LakeBasin]
     continent,  # ContinentData (for bilinear elevation sampling)
+    seed: int,
     *,
     macro_elev_grid: list[float] | None = None,
 ) -> None:
@@ -44,6 +44,7 @@ def render_lake_chunk(
         world_y0: chunk 左上角世界 Y 坐标。
         lake_basins: 层1 湖泊盆地列表（LakeBasin 对象）。
         continent: ContinentData（用于海拔采样，macro_elev_grid 提供时可省略）。
+        seed: 世界种子（湿地斑块随机源，保证不同世界湿地模式不同）。
         macro_elev_grid: 预计算的 chunk 宏观海拔网格（200×200 行优先），
                          提供后跳过逐 tile 双线性插值。
     """
@@ -78,7 +79,8 @@ def render_lake_chunk(
                               basin.area_km2, basin.cells, continent,
                               macro_elev_grid)
         _generate_wetland_fringe(tile_grid, world_x0, world_y0, surface,
-                                 basin.cells, continent, macro_elev_grid)
+                                 basin.cells, continent, seed,
+                                 macro_elev_grid)
 
 
 def _basin_tiles(
@@ -160,6 +162,7 @@ def _generate_wetland_fringe(
     surface_elev: float,
     cells: list[int],
     continent,
+    seed: int,
     macro_elev_grid: list[float] | None = None,
 ) -> None:
     """在湖面边缘生成湿地（MARSH）。
@@ -174,6 +177,7 @@ def _generate_wetland_fringe(
         surface_elev: 湖面海拔 (m)。
         cells: 湖盆地格点索引列表。
         continent: ContinentData（macro_elev_grid 提供时可省略）。
+        seed: 世界种子（湿地斑块随机源）。
         macro_elev_grid: 预计算宏观海拔网格（行优先，200×200）。
     """
     size = tile_grid.size
@@ -210,7 +214,7 @@ def _generate_wetland_fringe(
             prob_threshold = 1.0 - wetland_depth / LAKE_WETLAND_DEPTH_MAX
             wx = world_x0 + tx
             wy = world_y0 + ty
-            hash_val = ((wx * 2654435761 + wy * 1597334677) & 0xFFFFFFFF) / 0xFFFFFFFF
+            hash_val = cell_hash(wx, wy, seed)
 
             if hash_val < prob_threshold:
                 tile_grid.set(tx, ty, TerrainType.MARSH)

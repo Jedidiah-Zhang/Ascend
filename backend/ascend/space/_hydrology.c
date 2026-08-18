@@ -125,6 +125,9 @@ void hydrology_fill_depressions(
         }
     }
 
+    /* 全陆地地图（无 dem<0）：堆为空，下方传播循环零次执行，
+       result = dem 原样返回（无排水口 → 不填洼，语义锁定有测试）。 */
+
     /* 从最低海洋格向外单次传播 */
     while (heap->size > 0) {
         HeapEntry e = heap_pop(heap);
@@ -266,10 +269,17 @@ void hydrology_erode_step(
 
        侵蚀量 = K × sqrt(flow) × slope
        限制：不超过 slope × 0.5（不能把山削成坑）
+
+       海洋边界（侵蚀基准面 = 海平面）：
+       - 海洋格（dem < 0）不参与侵蚀（跳过）
+       - 下游为海洋：侵蚀物质离开陆地系统入海，不再搬运
+       （海底保持生成原貌；降至海平面以下的格在后续轮次按海洋处理）
     */
     int n = w * h;
 
     for (int i = 0; i < n; i++) {
+        if (dem[i] < 0.0) continue;  /* 海底不侵蚀 */
+
         int d = directions[i];
         if (d < 0) continue;  /* 汇点 */
 
@@ -291,6 +301,8 @@ void hydrology_erode_step(
         /* 限制 */
         double max_erode = slope * 0.5;
         if (erosion > max_erode) erosion = max_erode;
+
+        if (dem[ni] < 0.0) continue;  /* 下游为海：物质入海，不再沉积 */
 
         delta_out[i] -= erosion;
         delta_out[ni] += erosion;

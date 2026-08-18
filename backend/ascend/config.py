@@ -89,8 +89,6 @@ CONTINENTALITY_K: float = 3.0
 CONTINENTALITY_D0_KM: float = 200.0
 
 # 噪声频率
-NOISE_FREQ_LATITUDE: float = 0.0003   # 纬度噪声（超低频，暖/冷带宽 ~3000 chunk）
-NOISE_FREQ_RAINFALL: float = 0.004    # 降雨噪声（低频，区域降水模式）
 NOISE_FREQ_DERIVED: float = 0.005     # 派生参数噪声（中频，日照/湿度/风速）
 
 # 群系细分 moisture 噪声（tile 级世界坐标频率——与 chunk 级 NOISE_FREQ_DERIVED

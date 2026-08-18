@@ -6,6 +6,16 @@ const Config = preload("res://scripts/config.gd")
 const TOKEN_PATH: String = "user://test_handshake_token"
 
 
+# 编码失败注入桩（P2-34）
+class StubCodec extends FrameCodecClass:
+	var fail_encode: bool = false
+
+	func frame_encode(message: Dictionary) -> PackedByteArray:
+		if fail_encode:
+			return PackedByteArray()
+		return super.frame_encode(message)
+
+
 # ── 夹具 ───────────────────────────────────────────────────
 
 var _captured: Array = []
@@ -84,6 +94,21 @@ func test_missing_token_file_sends_empty_token() -> void:
 	assert_eq(_captured.size(), 1, "token 缺失不应阻止握手")
 	assert_eq(_last_hello()["payload"]["token"], "", "缺失时以空 token 发送")
 	assert_eq(hs.token, "")
+	for err in get_errors():
+		err.handled = true
+
+
+func test_encode_failure_aborts_handshake() -> void:
+	"""回归（P2-34）：hello 编码失败不发送空帧，按 ANOMALY 拒绝可重试。"""
+	var codec: StubCodec = StubCodec.new()
+	codec.fail_encode = true
+	var sent: Array = []
+	var hs: Handshake = Handshake.new(codec, func(body): sent.append(body), TOKEN_PATH)
+	watch_signals(hs)
+	hs.start()
+	assert_eq(sent.size(), 0, "编码失败不得发送空帧")
+	assert_eq(hs.state, Handshake.State.IDLE, "失败后回 IDLE（可重试）")
+	assert_signal_emit_count(hs, "rejected", 1)
 	for err in get_errors():
 		err.handled = true
 

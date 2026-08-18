@@ -14,6 +14,7 @@
 
 import math
 import random
+import threading
 import zlib
 from dataclasses import dataclass
 
@@ -60,7 +61,7 @@ from ascend.config import (
 from .atmosphere import AtmosphereField
 from .diurnal import (
     sunrise_hour, sunset_hour, hour_of_game_time, diurnal_phase,
-    _solar_declination,
+    _solar_declination, sunrise_azimuth,
 )
 from .events import register_weather_schemas
 from .weather_modifier import ModifierSchedule, WEATHER_MODIFIERS
@@ -326,8 +327,12 @@ class WeatherEngine:
         """
         self._clock = clock
         self._seed = seed
-        self._sun_azimuth = random.Random(seed + 99999).uniform(0.0, 360.0)
         self._wt = world_tree_arg if world_tree_arg is not None else _default_wt
+        # 查询/写入互斥：handler 线程查询（get_weather 系）与游戏线程
+        # 推进（_on_minute_change / register / unregister）并发安全。
+        # RLock：_publish 在锁内同步分发事件，防未来订阅者回调重入查询 API
+        # （当前唯一订阅者 EventBridge 仅转发不查询，RLock 为低成本防御）。
+        self._query_lock = threading.RLock()
         self._atmosphere = AtmosphereField(seed=seed)
         self._fields: dict[tuple[int, int], WeatherField] = {}
         self._climates: dict[tuple[int, int], ClimateZone] = {}
@@ -391,32 +396,33 @@ class WeatherEngine:
             latitude=latitude,
         )
         key = (cx, cy)
-        self._fields[key] = WeatherField(
-            cx, cy, bl,
-            tile_map_size=TILE_MAP_SIZE,
-            atmos_resolution=ATMOSPHERE_RESOLUTION,
-        )
-        self._climates[key] = climate
-        # 降雨调度（chunk 坐标派生 rng 种子，保证确定性）
-        mean_intensity, mean_duration_h, ramp_up, ramp_down = _RAIN_PROFILE.get(
-            climate, (5.0, 2.0, 0.2, 0.2),
-        )
-        chunk_seed = _chunk_seed(self._seed, cx, cy)
-        rain = RainSchedule(
-            random.Random(chunk_seed),
-            baseline.rainfall, mean_intensity, mean_duration_h,
-            ramp_up_ratio=ramp_up, ramp_down_ratio=ramp_down,
-        )
-        self._rain_schedules[key] = rain
-        self._seed_rain(rain)
-        # 天气修改器调度（每类型独立队列，仅可能发生的气候带创建）
-        for config in WEATHER_MODIFIERS.values():
-            if config.rates.get(climate, 0.0) <= 0:
-                continue
-            ext_seed = _modifier_seed(chunk_seed, config.type_name)
-            ext = ModifierSchedule(random.Random(ext_seed), config, climate)
-            self._modifier_schedules[(cx, cy, config.type_name)] = ext
-            self._seed_modifier(ext)
+        with self._query_lock:
+            self._fields[key] = WeatherField(
+                cx, cy, bl,
+                tile_map_size=TILE_MAP_SIZE,
+                atmos_resolution=ATMOSPHERE_RESOLUTION,
+            )
+            self._climates[key] = climate
+            # 降雨调度（chunk 坐标派生 rng 种子，保证确定性）
+            mean_intensity, mean_duration_h, ramp_up, ramp_down = _RAIN_PROFILE.get(
+                climate, (5.0, 2.0, 0.2, 0.2),
+            )
+            chunk_seed = _chunk_seed(self._seed, cx, cy)
+            rain = RainSchedule(
+                random.Random(chunk_seed),
+                baseline.rainfall, mean_intensity, mean_duration_h,
+                ramp_up_ratio=ramp_up, ramp_down_ratio=ramp_down,
+            )
+            self._rain_schedules[key] = rain
+            self._seed_rain(rain)
+            # 天气修改器调度（每类型独立队列，仅可能发生的气候带创建）
+            for config in WEATHER_MODIFIERS.values():
+                if config.rates.get(climate, 0.0) <= 0:
+                    continue
+                ext_seed = _modifier_seed(chunk_seed, config.type_name)
+                ext = ModifierSchedule(random.Random(ext_seed), config, climate)
+                self._modifier_schedules[(cx, cy, config.type_name)] = ext
+                self._seed_modifier(ext)
         logger.debug("注册 chunk (%d,%d) climate=%s", cx, cy, climate)
 
     def unregister_chunk(self, cx: int, cy: int) -> None:
@@ -427,12 +433,13 @@ class WeatherEngine:
             cy: chunk Y 坐标。
         """
         key = (cx, cy)
-        self._fields.pop(key, None)
-        self._climates.pop(key, None)
-        self._rain_schedules.pop(key, None)
-        for mk in list(self._modifier_schedules.keys()):
-            if mk[:2] == (cx, cy):
-                del self._modifier_schedules[mk]
+        with self._query_lock:
+            self._fields.pop(key, None)
+            self._climates.pop(key, None)
+            self._rain_schedules.pop(key, None)
+            for mk in list(self._modifier_schedules.keys()):
+                if mk[:2] == (cx, cy):
+                    del self._modifier_schedules[mk]
 
     def shutdown(self) -> None:
         """取消订阅，释放资源。"""
@@ -555,13 +562,14 @@ class WeatherEngine:
         """
         time = self._validate_time(time)
         key = (cx, cy)
-        field = self._fields.get(key)
-        if field is None:
-            return None
-        ctx = self._tick_context(time)
-        params, _, _ = self._compute_params(
-            field, time, ctx, self._rain_schedules.get(key))
-        return params
+        with self._query_lock:
+            field = self._fields.get(key)
+            if field is None:
+                return None
+            ctx = self._tick_context(time)
+            params, _, _ = self._compute_params(
+                field, time, ctx, self._rain_schedules.get(key))
+            return params
 
     def get_weather_report(self, cx: int, cy: int) -> (
             "tuple[WeatherParams, float, float, float, float, float] | None"):
@@ -578,20 +586,25 @@ class WeatherEngine:
             (WeatherParams, sunrise_hour, sunset_hour, daylight_hours,
             sunshine_intensity, sun_azimuth) 或 None（chunk 未注册时）。
             sunshine_intensity 为 0~1 归一化值。
-            sun_azimuth 为太阳方位角（0~360°）。
+            sun_azimuth 为当日日出方位角（0~180°，从北顺时针），
+            随季节渐变、日内恒定（前端光照轨道基准方位）。
         """
         key = (cx, cy)
-        field = self._fields.get(key)
-        if field is None:
-            return None
-        now = self._clock.time
-        ctx = self._tick_context(now)
-        params, sr, ss = self._compute_params(
-            field, now, ctx, self._rain_schedules.get(key))
-        intensity = self._sunlight_intensity(
-            field, ctx["hour"], sr, ss, params.rainfall,
-            ctx["drift_x"], ctx["drift_y"])
-        return (params, sr, ss, ss - sr, intensity, self._sun_azimuth)
+        with self._query_lock:
+            field = self._fields.get(key)
+            if field is None:
+                return None
+            now = self._clock.time
+            ctx = self._tick_context(now)
+            params, sr, ss = self._compute_params(
+                field, now, ctx, self._rain_schedules.get(key))
+            intensity = self._sunlight_intensity(
+                field, ctx["hour"], sr, ss, params.rainfall,
+                ctx["drift_x"], ctx["drift_y"])
+            az = sunrise_azimuth(
+                ctx["day_of_year_val"], field.baseline.latitude,
+                solar_decl=ctx["solar_decl"])
+            return (params, sr, ss, ss - sr, intensity, az)
 
     def get_tiers(self, cx: int, cy: int,
                   time: int | None = None) -> dict[str, int] | None:
@@ -637,11 +650,12 @@ class WeatherEngine:
             True=状态已切换；False=已处于目标状态（no-op）；
             None=chunk 未注册。
         """
-        rain = self._rain_schedules.get((cx, cy))
-        if rain is None:
-            return None
-        now = self._clock.time
-        changed = rain.force_start(now) if active else rain.force_stop(now)
+        with self._query_lock:
+            rain = self._rain_schedules.get((cx, cy))
+            if rain is None:
+                return None
+            now = self._clock.time
+            changed = rain.force_start(now) if active else rain.force_stop(now)
         if changed:
             logger.info(
                 "强制%s降雨: chunk (%d,%d)",
@@ -674,23 +688,24 @@ class WeatherEngine:
         if type_name not in WEATHER_MODIFIERS:
             raise ValueError(f"未知天气修改器类型: {type_name}")
         chunk_key = (cx, cy)
-        if chunk_key not in self._fields:
-            return None
-        now = self._clock.time
-        key = (cx, cy, type_name)
-        sched = self._modifier_schedules.get(key)
-        if sched is None:
-            if not active:
-                return False
-            config = WEATHER_MODIFIERS[type_name]
-            chunk_seed = _chunk_seed(self._seed, cx, cy)
-            ext_seed = _modifier_seed(chunk_seed, config.type_name)
-            sched = ModifierSchedule(
-                random.Random(ext_seed), config, self._climates.get(chunk_key),
-            )
-            sched.seed_current(now)
-            self._modifier_schedules[key] = sched
-        changed = sched.force_start(now) if active else sched.force_stop(now)
+        with self._query_lock:
+            if chunk_key not in self._fields:
+                return None
+            now = self._clock.time
+            key = (cx, cy, type_name)
+            sched = self._modifier_schedules.get(key)
+            if sched is None:
+                if not active:
+                    return False
+                config = WEATHER_MODIFIERS[type_name]
+                chunk_seed = _chunk_seed(self._seed, cx, cy)
+                ext_seed = _modifier_seed(chunk_seed, config.type_name)
+                sched = ModifierSchedule(
+                    random.Random(ext_seed), config, self._climates.get(chunk_key),
+                )
+                sched.seed_current(now)
+                self._modifier_schedules[key] = sched
+            changed = sched.force_start(now) if active else sched.force_stop(now)
         if changed:
             logger.info(
                 "强制%s修改器 %s: chunk (%d,%d)",
@@ -869,106 +884,107 @@ class WeatherEngine:
         hour = ctx["hour"]
         wind_x = ctx["wind_x"]
         wind_y = ctx["wind_y"]
-        # 全局季节事件（location=(0,0)，不 per-chunk）
-        if self._last_season is not None and season != self._last_season:
-            self._publish(0, 0, now, "season_change", {
-                "season": season, "time_of_day": int(tod),
-            })
-        self._last_season = season
-        # per-chunk 事件
-        for (cx, cy), field in self._fields.items():
-            rain = self._rain_schedules.get((cx, cy))
-            params, sr, ss = self._compute_params(field, now, ctx, rain)
-            # 温度 — 等级变化时发布（首刻静默初始化，初始状态走查询 API）
-            temp_tier = classify_temperature(params.temperature)
-            if field.last_temp_tier is None:
-                field.last_temp_tier = temp_tier
-            elif temp_tier != field.last_temp_tier:
-                self._publish(cx, cy, now, "temperature_change", {
-                    "temperature": float(params.temperature),
-                    "prev_tier": field.last_temp_tier,
-                    "tier": temp_tier,
-                    "season": season,
-                    "time_of_day": int(tod),
+        with self._query_lock:
+            # 全局季节事件（location=(0,0)，不 per-chunk）
+            if self._last_season is not None and season != self._last_season:
+                self._publish(0, 0, now, "season_change", {
+                    "season": season, "time_of_day": int(tod),
                 })
-                field.last_temp_tier = temp_tier
-            # 湿度 — 等级变化时发布
-            hum_tier = classify_humidity(params.humidity)
-            if field.last_humidity_tier is None:
-                field.last_humidity_tier = hum_tier
-            elif hum_tier != field.last_humidity_tier:
-                self._publish(cx, cy, now, "humidity_change", {
-                    "humidity": float(params.humidity),
-                    "prev_tier": field.last_humidity_tier,
-                    "tier": hum_tier,
-                    "time_of_day": int(tod),
-                })
-                field.last_humidity_tier = hum_tier
-            # 风 — 等级变化时发布（风向使用 tick 级预计算值）
-            wind_tier = classify_wind(params.wind_speed)
-            if field.last_wind_tier is None:
-                field.last_wind_tier = wind_tier
-            elif wind_tier != field.last_wind_tier:
-                self._publish(cx, cy, now, "wind_change", {
-                    "wind_speed": float(params.wind_speed),
-                    "prev_tier": field.last_wind_tier,
-                    "tier": wind_tier,
-                    "wind_dir_x": float(wind_x),
-                    "wind_dir_y": float(wind_y),
-                    "time_of_day": int(tod),
-                })
-                field.last_wind_tier = wind_tier
-            # 日照 — 等级变化时发布
-            sun_tier = classify_sunshine(params.sunshine)
-            if field.last_sunshine_tier is None:
-                field.last_sunshine_tier = sun_tier
-            elif sun_tier != field.last_sunshine_tier:
-                self._publish(cx, cy, now, "sunshine_change", {
-                    "sunshine": float(params.sunshine),
-                    "prev_tier": field.last_sunshine_tier,
-                    "tier": sun_tier,
-                    "season": season,
-                    "time_of_day": int(tod),
-                })
-                field.last_sunshine_tier = sun_tier
-            # per-chunk 昼夜切换（复用 _compute_params 返回的 sr/ss）
-            is_day = sr <= hour < ss
-            if (field.last_is_daytime is not None
-                    and is_day != field.last_is_daytime):
-                dl = ss - sr
-                self._publish(cx, cy, now, "sunrise" if is_day else "sunset", {
-                    "time_of_day": int(tod),
-                    "daylight_hours": float(dl),
-                })
-            field.last_is_daytime = is_day
-            # 降水（rain 已在循环顶部预查找）
-            if rain is not None and rain.pop_due(now):
-                if rain.is_raining(now):
-                    self._publish(cx, cy, now, "precipitation_start", {
-                        "precip_type": precip_type_for(params.temperature),
-                        "intensity": float(params.rainfall),
+            self._last_season = season
+            # per-chunk 事件
+            for (cx, cy), field in self._fields.items():
+                rain = self._rain_schedules.get((cx, cy))
+                params, sr, ss = self._compute_params(field, now, ctx, rain)
+                # 温度 — 等级变化时发布（首刻静默初始化，初始状态走查询 API）
+                temp_tier = classify_temperature(params.temperature)
+                if field.last_temp_tier is None:
+                    field.last_temp_tier = temp_tier
+                elif temp_tier != field.last_temp_tier:
+                    self._publish(cx, cy, now, "temperature_change", {
+                        "temperature": float(params.temperature),
+                        "prev_tier": field.last_temp_tier,
+                        "tier": temp_tier,
+                        "season": season,
                         "time_of_day": int(tod),
                     })
-                else:
-                    self._publish(cx, cy, now, "precipitation_stop", {
+                    field.last_temp_tier = temp_tier
+                # 湿度 — 等级变化时发布
+                hum_tier = classify_humidity(params.humidity)
+                if field.last_humidity_tier is None:
+                    field.last_humidity_tier = hum_tier
+                elif hum_tier != field.last_humidity_tier:
+                    self._publish(cx, cy, now, "humidity_change", {
+                        "humidity": float(params.humidity),
+                        "prev_tier": field.last_humidity_tier,
+                        "tier": hum_tier,
                         "time_of_day": int(tod),
                     })
-            # 补算降水（先裁剪过期事件）
-            self._replenish_rain((cx, cy), now)
-            # 天气修改器事件（遍历 WEATHER_MODIFIERS 注册表）
-            for config in WEATHER_MODIFIERS.values():
-                sched = self._modifier_schedules.get((cx, cy, config.type_name))
-                if sched is None:
-                    continue
-                if sched.pop_due(now):
-                    if sched.is_active(now):
-                        data = sched.start_event_data(now)
-                        data["time_of_day"] = int(tod)
-                        self._publish(cx, cy, now, f"{config.type_name}_start", data)
+                    field.last_humidity_tier = hum_tier
+                # 风 — 等级变化时发布（风向使用 tick 级预计算值）
+                wind_tier = classify_wind(params.wind_speed)
+                if field.last_wind_tier is None:
+                    field.last_wind_tier = wind_tier
+                elif wind_tier != field.last_wind_tier:
+                    self._publish(cx, cy, now, "wind_change", {
+                        "wind_speed": float(params.wind_speed),
+                        "prev_tier": field.last_wind_tier,
+                        "tier": wind_tier,
+                        "wind_dir_x": float(wind_x),
+                        "wind_dir_y": float(wind_y),
+                        "time_of_day": int(tod),
+                    })
+                    field.last_wind_tier = wind_tier
+                # 日照 — 等级变化时发布
+                sun_tier = classify_sunshine(params.sunshine)
+                if field.last_sunshine_tier is None:
+                    field.last_sunshine_tier = sun_tier
+                elif sun_tier != field.last_sunshine_tier:
+                    self._publish(cx, cy, now, "sunshine_change", {
+                        "sunshine": float(params.sunshine),
+                        "prev_tier": field.last_sunshine_tier,
+                        "tier": sun_tier,
+                        "season": season,
+                        "time_of_day": int(tod),
+                    })
+                    field.last_sunshine_tier = sun_tier
+                # per-chunk 昼夜切换（复用 _compute_params 返回的 sr/ss）
+                is_day = sr <= hour < ss
+                if (field.last_is_daytime is not None
+                        and is_day != field.last_is_daytime):
+                    dl = ss - sr
+                    self._publish(cx, cy, now, "sunrise" if is_day else "sunset", {
+                        "time_of_day": int(tod),
+                        "daylight_hours": float(dl),
+                    })
+                field.last_is_daytime = is_day
+                # 降水（rain 已在循环顶部预查找）
+                if rain is not None and rain.pop_due(now):
+                    if rain.is_raining(now):
+                        self._publish(cx, cy, now, "precipitation_start", {
+                            "precip_type": precip_type_for(params.temperature),
+                            "intensity": float(params.rainfall),
+                            "time_of_day": int(tod),
+                        })
                     else:
-                        self._publish(cx, cy, now, f"{config.type_name}_stop",
-                                      {"time_of_day": int(tod)})
-                self._replenish_modifier((cx, cy, config.type_name), now)
+                        self._publish(cx, cy, now, "precipitation_stop", {
+                            "time_of_day": int(tod),
+                        })
+                # 补算降水（先裁剪过期事件）
+                self._replenish_rain((cx, cy), now)
+                # 天气修改器事件（遍历 WEATHER_MODIFIERS 注册表）
+                for config in WEATHER_MODIFIERS.values():
+                    sched = self._modifier_schedules.get((cx, cy, config.type_name))
+                    if sched is None:
+                        continue
+                    if sched.pop_due(now):
+                        if sched.is_active(now):
+                            data = sched.start_event_data(now)
+                            data["time_of_day"] = int(tod)
+                            self._publish(cx, cy, now, f"{config.type_name}_start", data)
+                        else:
+                            self._publish(cx, cy, now, f"{config.type_name}_stop",
+                                          {"time_of_day": int(tod)})
+                    self._replenish_modifier((cx, cy, config.type_name), now)
 
     def _publish(
         self, cx: int, cy: int, now: int,

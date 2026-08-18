@@ -83,7 +83,15 @@ func start() -> void:
 			"protocol_version": PROTOCOL_VERSION,
 		},
 	}
-	_send_frame.call(_codec.frame_encode(msg))
+	var frame: PackedByteArray = _codec.frame_encode(msg)
+	if frame.is_empty():
+		# 编码失败（消息含不可序列化值）→ 不发送空帧，按可重试异常交还门面
+		push_error("Handshake: hello encode failed")
+		rejected.emit(RejectKind.ANOMALY, "hello encode failed")
+		state = State.IDLE
+		_elapsed = 0.0
+		return
+	_send_frame.call(frame)
 
 
 func reset() -> void:

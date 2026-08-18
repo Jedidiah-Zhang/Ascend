@@ -13,6 +13,12 @@ from ascend.net.handlers import parse_coord
 
 logger = get_logger(__name__)
 
+# 模块级持久化线程池（P2-04：复用而非每请求新建；线程惰性创建，
+# 仅在 submit 时才派生，固定 max_workers 无实际开销）
+_TILE_POOL = ThreadPoolExecutor(
+    max_workers=TILE_WORKERS, thread_name_prefix="tile-gen"
+)
+
 
 def make_map_handlers(gen, tile_gen=None, chunk_store=None,
                       weather_engine=None):
@@ -118,13 +124,11 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
         if include_tiles and tile_gen is not None:
             tiles_needed = [c for c in ordered if not c.has_tiles]
             if tiles_needed:
-                n_workers = min(TILE_WORKERS, len(tiles_needed))
-                with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                    futures = [
-                        pool.submit(_generate_tiles, c) for c in tiles_needed
-                    ]
-                    for future in as_completed(futures):
-                        future.result()
+                futures = [
+                    _TILE_POOL.submit(_generate_tiles, c) for c in tiles_needed
+                ]
+                for future in as_completed(futures):
+                    future.result()
 
         result_chunks = []
         for c in ordered:

@@ -29,7 +29,8 @@ GOLDEN_SEED = 20260806
 # 2026-08-11 温度语义统一（海域=海面温度、直减率仅陆地、开阔海洋无雨影）后重新固化一次
 # 2026-08-15 缓存头部新增生成环境指纹字段（格式版本归 1；世界数值不变）后重新固化一次
 # 2026-08-18 黄金 hash 纳入真实 TileGenerator 输出后重新固化一次
-GOLDEN_HASH = "c6f78751833b15a10b66b6357c9af3bebb7a56f867fd126b3684e79935b1f8cb"
+# 2026-08-18 侵蚀基准面=海平面（海底不参与侵蚀/沉积）后重新固化一次
+GOLDEN_HASH = "aa9c2c13d6500de1fe493180d4bd136427623cbaa6af828c625d2bc0955ea57d"
 
 
 def _pipeline_digest(seed: int) -> str:

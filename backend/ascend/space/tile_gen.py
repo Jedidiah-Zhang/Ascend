@@ -194,7 +194,7 @@ class TileGenerator:
                 from .lake_render import render_lake_chunk
                 render_lake_chunk(
                     grid, world_x0, world_y0,
-                    hyd.lake_basins, cont,
+                    hyd.lake_basins, cont, self._seed,
                     macro_elev_grid=macro_elev_arr,
                 )
 

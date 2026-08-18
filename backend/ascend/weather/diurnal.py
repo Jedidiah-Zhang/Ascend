@@ -158,3 +158,29 @@ def daylight_hours(day_of_year: int, latitude_deg: float,
     """
     return (sunset_hour(day_of_year, latitude_deg, solar_decl=solar_decl)
             - sunrise_hour(day_of_year, latitude_deg, solar_decl=solar_decl))
+
+
+def sunrise_azimuth(day_of_year: int, latitude_deg: float,
+                    solar_decl: float | None = None) -> float:
+    """当日日出方位角（度，从北顺时针，[0, 180]）。
+
+    北半球春秋分日出正东（90°），夏至偏东北（<90°），冬至偏东南（>90°）；
+    南半球镜像。极昼/极夜边界钳制到 [0, 180]。
+
+    语义：一天内恒定、随季节渐变的"轨道参考方位"——前端光照轨道
+    （rotation = az + day_progress*180）消费的正是该基准。
+
+    Args:
+        day_of_year: 年内日 [0, 360)。
+        latitude_deg: 纬度（度），北纬为正 [-90, 90]。
+        solar_decl: 可选预计算太阳赤纬（弧度），传入时跳过内部重复计算。
+
+    Returns:
+        日出方位角（度）[0, 180]。
+    """
+    decl = solar_decl if solar_decl is not None else _solar_declination(day_of_year)
+    lat = math.radians(latitude_deg)
+    # 日出时刻太阳在地平线（alt≈0）→ cos(az) = sin(decl)/cos(lat)；
+    # 极地 cos(lat)→0 时钳制，避免除零与域外 acos
+    cos_az = math.sin(decl) / max(1e-9, math.cos(lat))
+    return math.degrees(math.acos(max(-1.0, min(1.0, cos_az))))
