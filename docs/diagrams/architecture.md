@@ -179,13 +179,14 @@ classDiagram
         +stop()
         +_tick()
         +paused: bool
-        +loaded_chunks: dict
+        +chunk_store: ChunkStore
     }
 
     class WorldTree {
         +publish(event)
         +subscribe(event_type, callback)
-        +get_events_in_region(layer, cx, cy, radius)
+        +get_events_in_range(start, end)
+        +get_events_in_region(center_chunk, radius)
         +get_entity_events(entity_id)
         +configure(archive_path)
     }
@@ -217,16 +218,15 @@ classDiagram
     }
 
     class WeatherEngine {
-        +register_chunk(cx, cy, baseline, climate, sea_temp)
+        +register_chunk(cx, cy, baseline, climate, sea_level_temp)
         +unregister_chunk(cx, cy)
         +get_weather(cx, cy, time?) WeatherParams
         +get_weather_report(cx, cy) tuple
-        +get_perceptions(cx, cy, time?) dict
-        +get_daylight_info(cx, cy, time?, rainfall?) tuple
+        +get_tiers(cx, cy, time?) dict
         +shutdown()
         -_on_minute_change(event)
         -_compute_params(...)
-        -_classify_perception(value, boundaries)
+        -_classify(value, boundaries)
     }
 
     class EntityManager {

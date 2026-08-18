@@ -1,4 +1,4 @@
-"""玩家服务 — 后端权威玩家实体（壳子版）。
+"""玩家服务 — 后端权威玩家实体。
 
 玩家位置的唯一权威来源。前端本地插值仅作预测显示，
 通过 player_move 上报、player_state 查询、player_teleported 事件对齐。
@@ -7,8 +7,8 @@
 区别是决策来自玩家输入而非 AI。本服务封装的是"玩家控制的那个实体"
 的生命周期与位置写入，而非一种特殊实体类型。
 
-壳子范围：
-  - move_to 无条件接受上报位置（未来在此加碰撞/速度/边界校验）
+范围：
+  - move_to 上报坐标越界时钳制到地图边界（max_chunk 约束），返回裁决位置
   - 单玩家、单层（layer_id=0）、无持久化
 
 坐标约定：
@@ -36,7 +36,7 @@ class PlayerService:
     Usage:
         svc = PlayerService(entity_manager, clock, birth_chunk=(3, 5))
         svc.birth()
-        svc.move_to(612.4, 1000.8)      # 前端上报（壳子：直接接受）
+        svc.move_to(612.4, 1000.8)      # 前端上报（越界钳制到地图边界）
         svc.teleport(100.0, 200.0)      # 强制传送，发布 player_teleported
         x, y = svc.position
     """

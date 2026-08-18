@@ -14,8 +14,8 @@
     save_delete     {payload: {world_id}} → {payload: {}}
     save_export     {payload: {world_id}} → {payload: {world_id: 新ID}}
 
-进入世界 / 回滚不再走 save_load 请求：由前端停菜单进程、以
-run_server --world-id/--snapshot 拉起世界进程完成（进程模型重构）。
+进入世界 / 回滚不走请求通道：由前端停菜单进程、以
+run_server --world-id/--snapshot 拉起世界进程完成（进程模型）。
 """
 
 from ascend.log import get_logger

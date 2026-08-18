@@ -3,7 +3,7 @@
 纯磁盘层：不依赖 GameEngine / 实体等运行时子系统。
 GameEngine 负责把运行时状态喂给 write_state，读档时从 read_state 恢复。
 
-职责划分（2026-08 拆分）:
+职责划分:
   - 本模块（SaveManager）：世界管理 + 实时状态 + 快照编排（进入/
     晋升/冻结/删除/保留策略的语义组合）。
   - snapshot.SnapshotStore：快照文件原语（打包/增量 diff/物化/
@@ -1469,7 +1469,7 @@ class SaveManager:
             manifest.secrets_blob, world_id, manifest.seed,
         )
 
-    # ── 协作者转发（原私有方法名，测试/旧调用保持兼容） ─────
+    # ── 协作者转发 ─────────────────────────────────────
 
     @staticmethod
     def snapshot_kind(filename: str) -> str:

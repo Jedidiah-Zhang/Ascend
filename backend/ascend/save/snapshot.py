@@ -2,9 +2,6 @@
 
 纯磁盘层：不依赖存档管理器/运行时子系统，只依赖血缘存储
 （LineageStore，链式物化与锚点解析需要父子上下文）。
-从 ascend/save/manager.py 拆出，职责单一化（原 SaveManager 的
-_write_snapshot_file / _write_delta_* / _diff_* / _open_snapshot /
-_unpack_full / _apply_* / _materialize_snapshot / _rebase_* 等）。
 
 快照 .ascendsave 格式（增量链模型）:
     第一行: 明文 JSON {"format": "ascendsave", "version": 2,
@@ -74,9 +71,8 @@ QUIT_SNAPSHOT_KEEP: int = 3
 # 快照打包的固定文件集合（密钥藏于 manifest.secrets_blob，无需独立文件；
 # continent.bin 可再生，不进快照，保持回退点精简；lineage 为世界级元数据，
 # 不随快照打包——快照依赖世界内 lineage 提供父子上下文。
-# chunks.db 语义：仅玩家改动（dirty chunk）落盘——确定性生成的 tile
-# 是 seed 的纯函数、可再生，不写库（ChunkStore v2 策略），
-# 因此 chunks.db 本身即动态数据，随快照链走）
+# chunks.db 语义：已加载 chunk 全量落盘（含确定性生成的 clean chunk，
+# 见 ChunkStore 模块说明）——chunks.db 本身即动态数据，随快照链走）
 _SNAPSHOT_ENTRIES: tuple[str, ...] = (
     MANIFEST_NAME, STATE_FILE, ENTITIES_FILE, CHUNKS_DB, EVENTS_DB,
 )

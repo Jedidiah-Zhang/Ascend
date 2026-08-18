@@ -444,8 +444,7 @@ class GameEngine:
     ) -> None:
         """世界进程启动入口：进入语义 → 展开快照 → 构建世界。
 
-        由 run_server --world-id/--snapshot/--regen-continent 调用
-        （取代旧 save_load 同进程换世界）。回滚时活目录即目标世界
+        由 run_server --world-id/--snapshot/--regen-continent 调用。回滚时活目录即目标世界
         的当前状态（上一进程退出时已最终保存）；进入语义（冻结离开
         记录 → 展开 → 手动档开启新当前记录）由 SaveManager.enter_snapshot
         统一保证——auto 节点是当前线的滚动记录，永无下游、永不重复新建。
@@ -712,7 +711,7 @@ class GameEngine:
         """注册绑定世界观子系统的处理程序（进程内仅一次）。
 
         闭包引用本次 start() 构建的子系统实例；进程模型下每个世界
-        进程只 start 一次，无需覆盖语义（区别于旧同进程换世界）。
+        进程只 start 一次，无需覆盖语义。
         """
         handlers: dict = {}
         handlers.update(make_map_handlers(

@@ -12,7 +12,7 @@ Ascend serves a dual purpose:
 
 **Research platform.** A procedurally constructed world with complete causal mechanisms, plus a structured event causality graph (WorldTree) covering all systems. The research goal is to train a world model for this world from the causality graph and spatiotemporal sequences—Ascend provides a reproducible, intervenable, and traceable environment for this purpose.
 
-**Game.** The player is an individual within the world, steering population evolution through genetic engineering. NPCs are AI-driven—dialogue, decisions, memory, and relationships are all dynamically generated rather than scripted text and behavior trees.
+**Game.** The player is an individual within the world, steering population evolution through genetic engineering. NPCs are AI-driven—dialogue, decisions, memory, and relationships are all dynamically generated rather than scripted text and behavior trees. (Currently early-stage: world generation, time/weather, event system, saves, and the debug terminal are implemented; NPCs and genetic engineering gameplay are not yet, see `docs/`)
 
 ---
 
@@ -57,9 +57,9 @@ The system consists of three parts:
 
 ![Architecture Layers](docs/diagrams/ascend-system-architecture.svg)
 
-**① World Generation Layer** — A procedurally generated causal space that runs and evolves independently. Provides a perception interface (numerical quantities → semantic labels) to NPCs as decision input. State changes are recorded via the event causality graph (WorldTree), both supporting NPC perception and constituting spatiotemporal training samples for the world model.
+**① World Generation Layer** — A procedurally generated causal space that runs and evolves independently. Provides a perception interface (numerical quantities → semantic labels) to NPCs as decision input. State changes are recorded via the event causality graph (WorldTree), both supporting NPC perception and constituting spatiotemporal training samples for the world model. (The event bus/archive is implemented; causal edge relations are declared by publishers at publish time, and current publish paths do not set relation fields, see `docs/研究方案与理论.md`)
 
-**② NPC Decision Layer** — Perceives the world, combines personality parameters and memory, outputs actions. LLM is invoked on-demand driven by saliency scoring; the five-layer architecture (role / goal / motivation / skill / execution) in the design docs is a game-side detail, see `docs/心智系统/`. The world model is trained offline on causality graphs and spatiotemporal sequences; once trained, it can replace the LLM decision layer.
+**② NPC Decision Layer** — Perceives the world, combines personality parameters and memory, outputs actions. LLM is invoked on-demand driven by saliency scoring; the five-layer architecture (role / goal / motivation / skill / execution) in the design docs is a game-side detail, see `docs/心智系统/`. The world model is trained offline on causality graphs and spatiotemporal sequences; once trained, it can replace the LLM decision layer. (**Not implemented**—no NPC/LLM code exists, see `docs/心智系统/`)
 
 **③ Action Interface Layer** — Defines the contract for NPC-selectable actions. The decision layer selects from the action set, executes via the interface, and writes back to the world, which then continues evolving.
 

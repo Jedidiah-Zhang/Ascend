@@ -1,9 +1,6 @@
 """快照血缘存储 — lineage.json 的读写与条目维护（时间线分叉元数据）。
 
 纯磁盘层：不依赖快照文件/存档管理器，只读写世界目录内的血缘文件。
-从 ascend/save/manager.py 拆出（原 SaveManager._load_lineage /
-_write_lineage / _record_snapshot_lineage / snapshot_lineage /
-set_live_origin），职责单一化。
 
 文件格式（签名包装）:
     {"data": {live_origin, snapshots}, "sig": "<urlsafe base64>"}
