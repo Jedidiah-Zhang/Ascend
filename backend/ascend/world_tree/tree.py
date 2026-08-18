@@ -19,7 +19,6 @@ from ascend.log import get_logger
 from .archive import EventArchive
 from .event import Event, LocationFilter, SUB_CELL_SIZE, SUB_CELLS, spatial_key, sub_cell_range
 from .graph import EventGraph
-from .registry import SchemaRegistry
 
 logger = get_logger(__name__)
 
@@ -40,27 +39,20 @@ class WorldTree:
     def __init__(
         self,
         *,
-        validate: bool = True,
         archive_path: str | None = None,
         max_memory_events: int | None = None,
-        schema_registry: SchemaRegistry | None = None,
     ) -> None:
         """初始化空的事件总线。
 
         Args:
-            validate: True 时在 publish 前校验事件必填字段。默认开启。
             archive_path: SQLite 归档数据库路径。None 表示不启用归档，
                          trim 时直接丢弃旧事件。传入路径则 trim 时归档到磁盘，
                          查询方法自动从归档合并结果。
             max_memory_events: 内存中最大事件数。超过此阈值时 publish()
                          自动触发 _trim() 将旧事件移出内存（若配了
                          archive_path 则先归档）。None 表示不自动 trim。
-            schema_registry: 可选的 SchemaRegistry。传入后 publish 会
-                        对已注册的事件类型执行 data 字段类型校验。
         """
-        self._validate = validate
         self._max_memory_events = max_memory_events
-        self._schema_registry = schema_registry
         self._trim_cycle: int = 0
         self._publish_count: int = 0
         self._trim_count: int = 0
@@ -108,87 +100,21 @@ class WorldTree:
             event.location[2], event.location[3],
         )
 
-    # ── 校验 ──────────────────────────────────────────
-
-    @staticmethod
-    def _validate_event(event: Event) -> None:
-        """校验事件必填字段。"""
-        if not event.event_type or not event.event_type.strip():
-            raise ValueError(f"事件类型不能为空: {event}")
-        if not event.initiator_id or not event.initiator_id.strip():
-            raise ValueError(f"发起方 ID 不能为空: {event}")
-        if event.initiator_type not in ("system", "npc", "player"):
-            raise ValueError(
-                f"无效的发起方类型: {event.initiator_type}，"
-                f"应为 'system' / 'npc' / 'player'"
-            )
-        if event.timestamp < 0:
-            raise ValueError(f"时间戳不能为负: {event.timestamp}")
-        location = event.location
-        if not isinstance(location, tuple) or len(location) != 4:
-            raise ValueError(f"位置格式无效: {location}")
-
-    def _validate_schema(self, event: Event) -> None:
-        """校验事件 data 字段是否符合注册的 schema。"""
-        if self._schema_registry is None:
-            return
-        errors = self._schema_registry.validate(
-            event.event_type, event.data
-        )
-        if errors:
-            raise ValueError(
-                f"事件 schema 校验失败 (event_type={event.event_type}, "
-                f"id={event.id}):\n  " + "\n  ".join(errors)
-            )
-
-    # ── Schema 注册 ────────────────────────────────────
-
-    @property
-    def schema_registry(self) -> SchemaRegistry | None:
-        """事件 schema 注册表。"""
-        return self._schema_registry
-
-    def register_event_schema(
-        self,
-        event_type: str,
-        *,
-        required: dict[str, type | tuple[type, ...]] | None = None,
-        optional: dict[str, type | tuple[type, ...]] | None = None,
-        description: str = "",
-    ) -> None:
-        """注册一个事件类型的 schema，若未配置 registry 则自动创建。"""
-        if self._schema_registry is None:
-            self._schema_registry = SchemaRegistry()
-        self._schema_registry.register(
-            event_type,
-            required=required,
-            optional=optional,
-            description=description,
-        )
-
     # ── 发布 ──────────────────────────────────────────
 
     def publish(self, event: Event) -> None:
         """发布事件到总线。
 
         依次完成:
-        1. 校验事件必填字段（可选，锁外）
-        2. 写入全局日志
-        3. 更新实体索引（initiator + affected）
-        4. 更新空间索引（按 chunk 分桶）
-        5. 更新事件关系图
-        6. 通知匹配的订阅者（锁外分发，回调异常隔离）
+        1. 写入全局日志
+        2. 更新实体索引（initiator + affected）
+        3. 更新空间索引（按 chunk 分桶）
+        4. 更新事件关系图
+        5. 通知匹配的订阅者（锁外分发，回调异常隔离）
 
         Args:
             event: 要发布的事件。
-
-        Raises:
-            ValueError: 校验开启且事件必填字段无效时抛出。
         """
-        if self._validate:
-            self._validate_event(event)
-            self._validate_schema(event)
-
         self._publish_count += 1
 
         with self._lock:

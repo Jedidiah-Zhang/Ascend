@@ -26,7 +26,12 @@ tile 级天气通过双线性插值运行时计算，保证跨 chunk 平滑。
 """
 
 from .atmosphere import AtmosphereField
-from .events import register_weather_schemas
+from .events import (
+    TemperatureChange, HumidityChange, WindChange, SunshineChange,
+    PrecipitationStart, PrecipitationStop, SeasonChange, Sunrise, Sunset,
+    ColdSnapStart, ColdSnapStop, HeatWaveStart, HeatWaveStop,
+    StormStart, StormStop,
+)
 from .weather_engine import (
     WeatherEngine, classify_temperature, classify_humidity,
     classify_wind, classify_sunshine, classify_sunlight_intensity,
@@ -41,7 +46,21 @@ __all__ = [
     "WeatherField",
     "Season",
     "AtmosphereField",
-    "register_weather_schemas",
+    "TemperatureChange",
+    "HumidityChange",
+    "WindChange",
+    "SunshineChange",
+    "PrecipitationStart",
+    "PrecipitationStop",
+    "SeasonChange",
+    "Sunrise",
+    "Sunset",
+    "ColdSnapStart",
+    "ColdSnapStop",
+    "HeatWaveStart",
+    "HeatWaveStop",
+    "StormStart",
+    "StormStop",
     "classify_temperature",
     "classify_humidity",
     "classify_wind",

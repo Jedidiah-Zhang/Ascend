@@ -5,11 +5,18 @@
 
 import pytest
 import random as _random
+from dataclasses import fields
 
 from ascend.time import WorldClock
 from ascend.config import GAME_HOUR, GAME_DAY, GAME_YEAR
 from ascend.world_tree import WorldTree, Event, AffectedParty
 from ascend.space import WeatherParams, ClimateZone, TILE_MAP_SIZE
+from ascend.weather.events import (
+    TemperatureChange, HumidityChange, WindChange, SunshineChange,
+    PrecipitationStart, PrecipitationStop, SeasonChange, Sunrise, Sunset,
+    ColdSnapStart, ColdSnapStop, HeatWaveStart, HeatWaveStop,
+    StormStart, StormStop,
+)
 
 
 def _publish_minute(wt, game_time):
@@ -129,133 +136,68 @@ class TestWeatherConstants:
         assert 0 < RAIN_REPLENISH_THRESHOLD < RAIN_FORECAST_DEPTH
 
 
-# ── events schema ──────────────────────────────────────────────────
+# ── 事件契约 ───────────────────────────────────────────────────────
 
 
-class TestWeatherEventsSchema:
-    """per-parameter 事件 schema 注册测试（含 sunshine_change）。"""
+class TestWeatherEventContracts:
+    """天气事件 data 契约：as_dict 键 == dataclass 字段，event_type 唯一非空。"""
 
-    def test_all_schemas_registered(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        types = world_tree.schema_registry.registered_types
-        for t in ("temperature_change", "humidity_change", "wind_change",
-                  "sunshine_change",
-                  "precipitation_start", "precipitation_stop"):
-            assert t in types, f"缺少 schema: {t}"
+    SAMPLES: dict[type, dict] = {
+        TemperatureChange: dict(
+            temperature=25.0, prev_tier=3, tier=4, season=1, time_of_day=36000,
+        ),
+        HumidityChange: dict(
+            humidity=70.0, prev_tier=2, tier=3, time_of_day=36000,
+        ),
+        WindChange: dict(
+            wind_speed=3.5, prev_tier=0, tier=1,
+            wind_dir_x=0.5, wind_dir_y=-0.8, time_of_day=36000,
+        ),
+        SunshineChange: dict(
+            sunshine=12.0, prev_tier=2, tier=3, season=1, time_of_day=36000,
+        ),
+        PrecipitationStart: dict(
+            precip_type="rain", intensity=2.5, time_of_day=36000,
+        ),
+        PrecipitationStop: dict(time_of_day=36000),
+        SeasonChange: dict(season=1, time_of_day=36000),
+        Sunrise: dict(time_of_day=36000, daylight_hours=10.5),
+        Sunset: dict(time_of_day=36000, daylight_hours=10.5),
+        ColdSnapStart: dict(temperature_offset=-12.0, time_of_day=36000),
+        HeatWaveStart: dict(temperature_offset=14.0, time_of_day=36000),
+        StormStart: dict(
+            wind_multiplier=2.0, rain_multiplier=1.5, time_of_day=36000,
+        ),
+        ColdSnapStop: dict(time_of_day=36000),
+        HeatWaveStop: dict(time_of_day=36000),
+        StormStop: dict(time_of_day=36000),
+    }
 
-    def test_temperature_change_fields(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        s = world_tree.schema_registry.get("temperature_change")
-        assert s.required["temperature"] is float
-        assert s.required["prev_tier"] is int
-        assert s.required["tier"] is int
-        assert s.required["season"] is int
-        assert s.required["time_of_day"] is int
+    @pytest.mark.parametrize("cls", list(SAMPLES))
+    def test_contract(self, cls):
+        """as_dict 键 == 字段集合，样本值完整往返。"""
+        ev = cls(**self.SAMPLES[cls])
+        d = ev.as_dict()
+        assert set(d) == {f.name for f in fields(cls)}
+        for name, value in self.SAMPLES[cls].items():
+            assert d[name] == value
 
-    def test_humidity_change_fields(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        s = world_tree.schema_registry.get("humidity_change")
-        assert s.required["humidity"] is float
-        assert s.required["prev_tier"] is int
-        assert s.required["tier"] is int
-        assert s.required["time_of_day"] is int
+    def test_all_weather_modifier_events_covered(self):
+        """WEATHER_MODIFIERS 注册表的 start/stop 事件类全部在契约样本中。
 
-    def test_wind_change_fields(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        s = world_tree.schema_registry.get("wind_change")
-        assert s.required["wind_speed"] is float
-        assert s.required["prev_tier"] is int
-        assert s.required["tier"] is int
-        assert s.required["wind_dir_x"] is float
-        assert s.required["wind_dir_y"] is float
-        assert s.required["time_of_day"] is int
+        全局 event_type 唯一性由 test_event_contracts.py 统一断言。
+        """
+        from ascend.weather.weather_modifier import WEATHER_MODIFIERS
+        for config in WEATHER_MODIFIERS.values():
+            assert config.start_event_cls in self.SAMPLES
+            assert config.stop_event_cls in self.SAMPLES
 
-    def test_sunshine_change_fields(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        s = world_tree.schema_registry.get("sunshine_change")
-        assert s.required["sunshine"] is float
-        assert s.required["prev_tier"] is int
-        assert s.required["tier"] is int
-        assert s.required["season"] is int
-        assert s.required["time_of_day"] is int
-
-    def test_precip_start_fields(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        s = world_tree.schema_registry.get("precipitation_start")
-        assert s.required["precip_type"] is str
-        assert s.required["intensity"] is float
-        assert s.required["time_of_day"] is int
-
-    def test_precip_stop_fields(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        s = world_tree.schema_registry.get("precipitation_stop")
-        assert s.required["time_of_day"] is int
-
-    def test_validate_temperature_change(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        errors = world_tree.schema_registry.validate("temperature_change", {
-            "temperature": 25.0, "prev_tier": 3, "tier": 4,
-            "season": 1, "time_of_day": 36000,
-        })
-        assert errors == []
-
-    def test_validate_missing_field_fails(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        errors = world_tree.schema_registry.validate("temperature_change", {
-            "temperature": 25.0, "prev_tier": 3, "tier": 4,
-        })
-        assert any("time_of_day" in e for e in errors)
-
-    def test_validate_wrong_type_fails(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        errors = world_tree.schema_registry.validate("wind_change", {
-            "wind_speed": "fast", "prev_tier": 0, "tier": 1,
-            "wind_dir_x": 0.5, "wind_dir_y": -0.8,
-            "time_of_day": 0,
-        })
-        assert len(errors) >= 1
-
-    def test_global_schemas_registered(self):
-        """season_change/sunrise/sunset schema 注册。"""
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        types = world_tree.schema_registry.registered_types
-        for t in ("season_change", "sunrise", "sunset"):
-            assert t in types
-
-    def test_season_change_schema_fields(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        s = world_tree.schema_registry.get("season_change")
-        assert s.required["season"] is int
-        assert s.required["time_of_day"] is int
-
-    def test_sunrise_sunset_schema_fields(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        for t in ("sunrise", "sunset"):
-            s = world_tree.schema_registry.get(t)
-            assert s.required["time_of_day"] is int
-            assert s.required["daylight_hours"] is float
-
-    def test_validate_sunshine_change(self):
-        import ascend.weather.events  # noqa: F401
-        from ascend.world_tree import world_tree
-        errors = world_tree.schema_registry.validate("sunshine_change", {
-            "sunshine": 12.0, "prev_tier": 2, "tier": 3,
-            "season": 1, "time_of_day": 36000,
-        })
-        assert errors == []
+    def test_as_dict_is_json_serializable(self):
+        """所有事件 data 可被 json.dumps 直接序列化（EventBridge 契约）。"""
+        import json
+        for cls in self.SAMPLES:
+            d = cls(**self.SAMPLES[cls]).as_dict()
+            json.dumps(d, ensure_ascii=False)
 
 
 # ── season ─────────────────────────────────────────────────────────
@@ -1024,8 +966,8 @@ class TestWeatherEngine:
         assert events[0].data["precip_type"] == "snow"
         e.shutdown()
 
-    def test_event_data_schema_valid(self):
-        """发布的事件 data 通过 schema 校验（含 prev_tier / tier 字段）。"""
+    def test_event_data_matches_contract(self):
+        """发布的事件 data 与 TemperatureChange 契约字段一致。"""
         from ascend.weather.weather_engine import WeatherEngine
         wt = WorldTree()
         events = []
@@ -1038,12 +980,11 @@ class TestWeatherEngine:
         clock.skip(1)
         _publish_minute(wt, clock.time)
         d = events[0].data
+        assert set(d) == {f.name for f in fields(TemperatureChange)}
         assert "prev_tier" in d
         assert "tier" in d
         assert isinstance(d["prev_tier"], int)
         assert isinstance(d["tier"], int)
-        errors = wt.schema_registry.validate("temperature_change", d)
-        assert errors == []
         e.shutdown()
 
     def test_shutdown_unsubscribes(self):

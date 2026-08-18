@@ -226,8 +226,8 @@ class TestEntityManager:
         assert e.tile_x == 10
         assert e.chunk == (1, 0)
         assert len(events) == 1
-        assert events[0].data["old_position"] == (0, 0, 5, 5)
-        assert events[0].data["new_position"] == (1, 0, 10, 10)
+        assert events[0].data["old_position"] == [0, 0, 5, 5]
+        assert events[0].data["new_position"] == [1, 0, 10, 10]
 
     def test_move_nonexistent(self):
         """移动不存在的实体，返回 False。"""

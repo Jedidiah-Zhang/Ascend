@@ -8,30 +8,15 @@
   - 停服等世界外操作不得调用 death()——那会向因果历史写入虚假死亡。
 """
 
-from ascend.world_tree import world_tree, Event, AffectedParty
+from ascend.world_tree import world_tree, Event, AffectedParty, WorldEvent
 from ascend.world_tree.event import (
     SUB_CELL_SIZE, SUB_CELLS, spatial_key, sub_cell_range,
 )
 from ascend.log import get_logger
 from .entity import Entity, EntityType, Controller
+from .events import EntityBorn, EntityDied, EntityMoved
 
 logger = get_logger(__name__)
-
-world_tree.register_event_schema(
-    "entity_born",
-    required={"entity_id": str, "entity_type": str, "position": tuple},
-    description="实体在虚拟世界诞生时发布",
-)
-world_tree.register_event_schema(
-    "entity_died",
-    required={"entity_id": str, "entity_type": str},
-    description="实体在虚拟世界死亡/消亡时发布",
-)
-world_tree.register_event_schema(
-    "entity_moved",
-    required={"entity_id": str, "old_position": tuple, "new_position": tuple},
-    description="实体位置变更时发布",
-)
 
 
 class EntityManager:
@@ -74,6 +59,19 @@ class EntityManager:
 
     # ── 生灭 ──────────────────────────────────────────────
 
+    def _publish(self, entity: Entity, game_time: int, ev: WorldEvent) -> None:
+        """发布实体生命周期事件（location 取实体位置，受影响方为实体自身）。"""
+        self._world_tree.publish(Event(
+            timestamp=game_time,
+            location=entity.position,
+            layer_id=entity.layer_id,
+            initiator_type="system",
+            initiator_id="entity_manager",
+            affected=[AffectedParty(entity.id, "subject")],
+            event_type=ev.event_type,
+            data=ev.as_dict(),
+        ))
+
     def birth(
         self,
         entity_type: EntityType,
@@ -115,23 +113,14 @@ class EntityManager:
         self._register(entity)
 
         gx, gy = entity.global_xy
-        self._world_tree.publish(Event(
-            timestamp=game_time,
-            location=entity.position,
+        self._publish(entity, game_time, EntityBorn(
+            entity_id=entity.id,
+            entity_type=entity_type.name,
+            controller=entity.controller.name,
+            position=entity.position,
             layer_id=entity.layer_id,
-            initiator_type="system",
-            initiator_id="entity_manager",
-            affected=[AffectedParty(entity.id, "subject")],
-            event_type="entity_born",
-            data={
-                "entity_id": entity.id,
-                "entity_type": entity_type.name,
-                "controller": entity.controller.name,
-                "position": entity.position,
-                "layer_id": entity.layer_id,
-                "x": gx,
-                "y": gy,
-            },
+            x=gx,
+            y=gy,
         ))
         logger.debug(
             "birth: %s type=%s controller=%s at chunk %s",
@@ -213,18 +202,9 @@ class EntityManager:
             entity_id,
         )
 
-        self._world_tree.publish(Event(
-            timestamp=game_time,
-            location=entity.position,
-            layer_id=entity.layer_id,
-            initiator_type="system",
-            initiator_id="entity_manager",
-            affected=[AffectedParty(entity_id, "subject")],
-            event_type="entity_died",
-            data={
-                "entity_id": entity_id,
-                "entity_type": entity.entity_type.name,
-            },
+        self._publish(entity, game_time, EntityDied(
+            entity_id=entity_id,
+            entity_type=entity.entity_type.name,
         ))
         logger.debug("death: %s type=%s", entity_id, entity.entity_type.name)
         return entity
@@ -298,22 +278,13 @@ class EntityManager:
 
         gx, gy = entity.global_xy
         if publish:
-            self._world_tree.publish(Event(
-                timestamp=game_time,
-                location=entity.position,
+            self._publish(entity, game_time, EntityMoved(
+                entity_id=entity_id,
+                old_position=old_pos,
+                new_position=entity.position,
                 layer_id=entity.layer_id,
-                initiator_type="system",
-                initiator_id="entity_manager",
-                affected=[AffectedParty(entity_id, "subject")],
-                event_type="entity_moved",
-                data={
-                    "entity_id": entity_id,
-                    "old_position": old_pos,
-                    "new_position": entity.position,
-                    "layer_id": entity.layer_id,
-                    "x": gx,
-                    "y": gy,
-                },
+                x=gx,
+                y=gy,
             ))
         logger.debug("move: %s %s → %s", entity_id, old_pos, entity.position)
         return True

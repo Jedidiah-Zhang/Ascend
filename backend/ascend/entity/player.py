@@ -24,15 +24,10 @@ from ascend.time import WorldClock
 from ascend.world_tree import world_tree as _default_wt, Event, AffectedParty
 
 from .entity import Entity, EntityType, Controller, split_coords
+from .events import PlayerTeleported
 from .manager import EntityManager
 
 logger = get_logger(__name__)
-
-_default_wt.register_event_schema(
-    "player_teleported",
-    required={"x": float, "y": float},
-    description="玩家被强制传送（终端 tp 指令等）时发布，前端据此吸附位置",
-)
 
 
 class PlayerService:
@@ -70,12 +65,6 @@ class PlayerService:
         self._birth_chunk = birth_chunk
         self._max_chunk = max_chunk
         self._wt = world_tree_arg if world_tree_arg is not None else _default_wt
-        if world_tree_arg is not None:
-            world_tree_arg.register_event_schema(
-                "player_teleported",
-                required={"x": float, "y": float},
-                description="玩家被强制传送时发布",
-            )
         self._entity: Entity | None = None
 
     def __repr__(self) -> str:
@@ -171,8 +160,8 @@ class PlayerService:
             initiator_type="system",
             initiator_id="player_service",
             affected=[AffectedParty(entity.id if entity else "player", "subject")],
-            event_type="player_teleported",
-            data={"x": pos[0], "y": pos[1]},
+            event_type=PlayerTeleported.event_type,
+            data=PlayerTeleported(x=pos[0], y=pos[1]).as_dict(),
         ))
         logger.info("玩家传送至 (%.1f, %.1f)", pos[0], pos[1])
         return pos

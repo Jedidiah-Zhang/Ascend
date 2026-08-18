@@ -23,7 +23,7 @@ from ascend.space import (
     WeatherParams, ClimateZone, SeasonalityMode, get_climate_template, clamp,
 )
 from ascend.time import WorldClock
-from ascend.world_tree import world_tree as _default_wt, Event, AffectedParty
+from ascend.world_tree import world_tree as _default_wt, Event, AffectedParty, WorldEvent
 
 from ascend.config import (
     TILE_MAP_SIZE,
@@ -63,7 +63,10 @@ from .diurnal import (
     sunrise_hour, sunset_hour, hour_of_game_time, diurnal_phase,
     _solar_declination, sunrise_azimuth,
 )
-from .events import register_weather_schemas
+from .events import (
+    HumidityChange, PrecipitationStart, PrecipitationStop, SeasonChange,
+    SunshineChange, Sunrise, Sunset, TemperatureChange, WindChange,
+)
 from .weather_modifier import ModifierSchedule, WEATHER_MODIFIERS
 from .rain_events import RainSchedule
 from .season import season_of, season_phase, day_of_season
@@ -339,7 +342,6 @@ class WeatherEngine:
         self._rain_schedules: dict[tuple[int, int], RainSchedule] = {}
         self._modifier_schedules: dict[tuple[int, int, str], ModifierSchedule] = {}
         self._last_season: int | None = None
-        register_weather_schemas(self._wt)
         self._unsub = self._wt.subscribe("minute_change", self._on_minute_change)
         logger.debug("天气引擎初始化 seed=%d", seed)
 
@@ -887,9 +889,9 @@ class WeatherEngine:
         with self._query_lock:
             # 全局季节事件（location=(0,0)，不 per-chunk）
             if self._last_season is not None and season != self._last_season:
-                self._publish(0, 0, now, "season_change", {
-                    "season": season, "time_of_day": int(tod),
-                })
+                self._publish(0, 0, now, SeasonChange(
+                    season=season, time_of_day=int(tod),
+                ))
             self._last_season = season
             # per-chunk 事件
             for (cx, cy), field in self._fields.items():
@@ -900,75 +902,76 @@ class WeatherEngine:
                 if field.last_temp_tier is None:
                     field.last_temp_tier = temp_tier
                 elif temp_tier != field.last_temp_tier:
-                    self._publish(cx, cy, now, "temperature_change", {
-                        "temperature": float(params.temperature),
-                        "prev_tier": field.last_temp_tier,
-                        "tier": temp_tier,
-                        "season": season,
-                        "time_of_day": int(tod),
-                    })
+                    self._publish(cx, cy, now, TemperatureChange(
+                        temperature=float(params.temperature),
+                        prev_tier=field.last_temp_tier,
+                        tier=temp_tier,
+                        season=season,
+                        time_of_day=int(tod),
+                    ))
                     field.last_temp_tier = temp_tier
                 # 湿度 — 等级变化时发布
                 hum_tier = classify_humidity(params.humidity)
                 if field.last_humidity_tier is None:
                     field.last_humidity_tier = hum_tier
                 elif hum_tier != field.last_humidity_tier:
-                    self._publish(cx, cy, now, "humidity_change", {
-                        "humidity": float(params.humidity),
-                        "prev_tier": field.last_humidity_tier,
-                        "tier": hum_tier,
-                        "time_of_day": int(tod),
-                    })
+                    self._publish(cx, cy, now, HumidityChange(
+                        humidity=float(params.humidity),
+                        prev_tier=field.last_humidity_tier,
+                        tier=hum_tier,
+                        time_of_day=int(tod),
+                    ))
                     field.last_humidity_tier = hum_tier
                 # 风 — 等级变化时发布（风向使用 tick 级预计算值）
                 wind_tier = classify_wind(params.wind_speed)
                 if field.last_wind_tier is None:
                     field.last_wind_tier = wind_tier
                 elif wind_tier != field.last_wind_tier:
-                    self._publish(cx, cy, now, "wind_change", {
-                        "wind_speed": float(params.wind_speed),
-                        "prev_tier": field.last_wind_tier,
-                        "tier": wind_tier,
-                        "wind_dir_x": float(wind_x),
-                        "wind_dir_y": float(wind_y),
-                        "time_of_day": int(tod),
-                    })
+                    self._publish(cx, cy, now, WindChange(
+                        wind_speed=float(params.wind_speed),
+                        prev_tier=field.last_wind_tier,
+                        tier=wind_tier,
+                        wind_dir_x=float(wind_x),
+                        wind_dir_y=float(wind_y),
+                        time_of_day=int(tod),
+                    ))
                     field.last_wind_tier = wind_tier
                 # 日照 — 等级变化时发布
                 sun_tier = classify_sunshine(params.sunshine)
                 if field.last_sunshine_tier is None:
                     field.last_sunshine_tier = sun_tier
                 elif sun_tier != field.last_sunshine_tier:
-                    self._publish(cx, cy, now, "sunshine_change", {
-                        "sunshine": float(params.sunshine),
-                        "prev_tier": field.last_sunshine_tier,
-                        "tier": sun_tier,
-                        "season": season,
-                        "time_of_day": int(tod),
-                    })
+                    self._publish(cx, cy, now, SunshineChange(
+                        sunshine=float(params.sunshine),
+                        prev_tier=field.last_sunshine_tier,
+                        tier=sun_tier,
+                        season=season,
+                        time_of_day=int(tod),
+                    ))
                     field.last_sunshine_tier = sun_tier
                 # per-chunk 昼夜切换（复用 _compute_params 返回的 sr/ss）
                 is_day = sr <= hour < ss
                 if (field.last_is_daytime is not None
                         and is_day != field.last_is_daytime):
                     dl = ss - sr
-                    self._publish(cx, cy, now, "sunrise" if is_day else "sunset", {
-                        "time_of_day": int(tod),
-                        "daylight_hours": float(dl),
-                    })
+                    self._publish(cx, cy, now, Sunrise(
+                        time_of_day=int(tod), daylight_hours=float(dl),
+                    ) if is_day else Sunset(
+                        time_of_day=int(tod), daylight_hours=float(dl),
+                    ))
                 field.last_is_daytime = is_day
                 # 降水（rain 已在循环顶部预查找）
                 if rain is not None and rain.pop_due(now):
                     if rain.is_raining(now):
-                        self._publish(cx, cy, now, "precipitation_start", {
-                            "precip_type": precip_type_for(params.temperature),
-                            "intensity": float(params.rainfall),
-                            "time_of_day": int(tod),
-                        })
+                        self._publish(cx, cy, now, PrecipitationStart(
+                            precip_type=precip_type_for(params.temperature),
+                            intensity=float(params.rainfall),
+                            time_of_day=int(tod),
+                        ))
                     else:
-                        self._publish(cx, cy, now, "precipitation_stop", {
-                            "time_of_day": int(tod),
-                        })
+                        self._publish(cx, cy, now, PrecipitationStop(
+                            time_of_day=int(tod),
+                        ))
                 # 补算降水（先裁剪过期事件）
                 self._replenish_rain((cx, cy), now)
                 # 天气修改器事件（遍历 WEATHER_MODIFIERS 注册表）
@@ -978,17 +981,20 @@ class WeatherEngine:
                         continue
                     if sched.pop_due(now):
                         if sched.is_active(now):
-                            data = sched.start_event_data(now)
-                            data["time_of_day"] = int(tod)
-                            self._publish(cx, cy, now, f"{config.type_name}_start", data)
+                            self._publish(
+                                cx, cy, now,
+                                sched.start_event(now, time_of_day=int(tod)),
+                            )
                         else:
-                            self._publish(cx, cy, now, f"{config.type_name}_stop",
-                                          {"time_of_day": int(tod)})
+                            self._publish(
+                                cx, cy, now,
+                                sched.stop_event(time_of_day=int(tod)),
+                            )
                     self._replenish_modifier((cx, cy, config.type_name), now)
 
     def _publish(
         self, cx: int, cy: int, now: int,
-        event_type: str, data: dict,
+        ev: WorldEvent,
     ) -> None:
         """发布天气事件。"""
         self._wt.publish(Event(
@@ -997,6 +1003,6 @@ class WeatherEngine:
             initiator_type="system",
             initiator_id="weather_engine",
             affected=[AffectedParty("world", "subject")],
-            event_type=event_type,
-            data=data,
+            event_type=ev.event_type,
+            data=ev.as_dict(),
         ))

@@ -12,7 +12,7 @@ graph TD
         WT_Tree["WorldTree<br/>事件总线"]
         WT_Graph["EventGraph<br/>因果图"]
         WT_Archive["EventArchive<br/>SQLite归档"]
-        WT_Schema["SchemaRegistry<br/>事件校验"]
+        WT_Contract["WorldEvent 契约类<br/>事件 data 结构"]
     end
 
     subgraph Time["⏰ 时间模块"]
@@ -33,7 +33,6 @@ graph TD
 
     WT_Tree --> WT_Graph
     WT_Tree --> WT_Archive
-    WT_Tree --> WT_Schema
     CLK --> CAL
     GEN --> WEA
 

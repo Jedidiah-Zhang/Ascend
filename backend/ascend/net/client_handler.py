@@ -28,6 +28,7 @@ logger = get_logger(__name__)
 
 AUTH_TIMEOUT: float = 30.0  # 未认证连接的最大存活时间（秒）
 SEND_QUEUE_LIMIT: int = 1024  # 发送队列上限（帧），超限 = 客户端消费太慢
+RECV_CHUNK_SIZE: int = 4096  # 单次 recv 缓冲大小（字节）
 
 
 class ClientHandler:
@@ -120,7 +121,7 @@ class ClientHandler:
                     "发送队列超限 %d，断开 %s:%d",
                     SEND_QUEUE_LIMIT, self.addr[0], self.addr[1],
                 )
-                self._request_close()
+                self.request_close()
                 return False
             self._send_queue.append(frame)
             self._send_cond.notify()
@@ -143,8 +144,11 @@ class ClientHandler:
         except OSError:
             pass
 
-    def _request_close(self) -> None:
-        """请求断开：置停止标志并关闭 socket 使各线程退出。"""
+    def request_close(self) -> None:
+        """请求断开：置停止标志并关闭 socket 使各线程退出。
+
+        线程安全的异步断开，可在 recv/send 线程内调用（不 join 自身）。
+        """
         self._running = False
         with self._send_cond:
             self._send_cond.notify_all()
@@ -179,7 +183,7 @@ class ClientHandler:
                 logger.warning("握手超时，断开 %s:%d", self.addr[0], self.addr[1])
                 break
             try:
-                data = self.sock.recv(4096)
+                data = self.sock.recv(RECV_CHUNK_SIZE)
                 if not data:
                     break
                 buffer.extend(data)

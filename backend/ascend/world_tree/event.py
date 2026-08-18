@@ -1,10 +1,16 @@
 """事件数据结构 — 总线上流动的消息单元。
 
 所有状态变化通过 Event 在模块间传递，各模块不直接耦合。
+
+Event 与 WorldEvent 的分工：
+  - Event: 总线上的消息单元（元数据 + data），由各系统发布。
+  - WorldEvent: 事件 data 的契约基类。子类字段即 data 键，类型即
+    data 值类型；event_type 由类属性声明，发布时不再重复写字符串。
+    序列化经 as_dict() 输出 JSON 安全 dict（tuple 递归转 list）。
 """
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, ClassVar
 import uuid
 
 from ascend.config import TILE_MAP_SIZE
@@ -50,6 +56,41 @@ def sub_cell_range(
     scy_lo = max(0, csy - sub_radius)
     scy_hi = min(SUB_CELLS - 1, csy + sub_radius)
     return ((scx_lo, scx_hi), (scy_lo, scy_hi))
+
+
+def _json_safe(value: Any) -> Any:
+    """递归将 tuple 转为 list。
+
+    统一 data 值为 JSON 形状（list），与 EventBridge 广播、归档往返
+    的类型一致，避免测试/订阅者侧 tuple↔list 漂移。
+    """
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    return value
+
+
+@dataclass
+class WorldEvent:
+    """事件 data 契约基类。
+
+    子类覆写 event_type 并声明字段（dataclass 字段即 data 键）：
+    as_dict() 输出统一为 JSON 形状（tuple 递归转 list），与 EventBridge
+    广播、归档往返一致。字段支持 int/float/str/bool/tuple/list/dict
+    （及嵌套 dataclass，asdict 自动转 dict）。
+
+    此类不直接发布——event_type 为空串的子类（如事件基类）仅作
+    字段复用，不进入总线。
+    """
+
+    event_type: ClassVar[str] = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        """事件 data 字典（JSON 形状，tuple→list）。"""
+        return _json_safe(asdict(self))
 
 
 @dataclass

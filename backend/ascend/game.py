@@ -24,6 +24,9 @@ import random
 import threading
 import time as _real_time
 
+from dataclasses import dataclass
+from typing import ClassVar
+
 from ascend.config import (
     TICK_RATE,
     TICK_DT,
@@ -59,7 +62,7 @@ from ascend.weather import WeatherEngine
 from ascend.terminal import CommandExecutor
 from ascend.time import WorldClock, GameCalendar
 from ascend.i18n import I18n
-from ascend.world_tree import world_tree, Event, AffectedParty
+from ascend.world_tree import world_tree, Event, AffectedParty, WorldEvent
 from ascend.save import SaveManager, collect_state, aligned_time, apply_clock, apply_player
 
 logger = get_logger(__name__)
@@ -68,12 +71,16 @@ logger = get_logger(__name__)
 _NDX = (1, -1, 0, 0, 1, -1, 1, -1)
 _NDY = (0, 0, 1, -1, 1, 1, -1, -1)
 
-world_tree.register_event_schema(
-    "world_initialized",
-    required={"seed": int, "birth_chunk": list, "loaded_chunks": int},
-    optional={"world_id": str},
-    description="地图生成完毕、出生点确定、周边区块就绪后发布",
-)
+
+@dataclass
+class WorldInitialized(WorldEvent):
+    """地图生成完毕、出生点确定、周边区块就绪后发布。"""
+
+    event_type: ClassVar[str] = "world_initialized"
+    seed: int
+    birth_chunk: list
+    loaded_chunks: int
+    world_id: str = ""
 
 
 class GameEngine:
@@ -678,14 +685,14 @@ class GameEngine:
             initiator_type="system",
             initiator_id="game_engine",
             affected=[AffectedParty("world", "subject")],
-            event_type="world_initialized",
+            event_type=WorldInitialized.event_type,
             weight=5,
-            data={
-                "world_id": self.world_id or "",
-                "seed": self.seed,
-                "birth_chunk": list(bc),
-                "loaded_chunks": len(self.chunk_store),
-            },
+            data=WorldInitialized(
+                world_id=self.world_id or "",
+                seed=self.seed,
+                birth_chunk=list(bc),
+                loaded_chunks=len(self.chunk_store),
+            ).as_dict(),
         ))
 
     # ── 存档（实时保存 / 读档重建） ──────────────────────

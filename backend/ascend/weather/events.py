@@ -1,4 +1,4 @@
-"""天气事件 schema 注册 — 等级变化事件 + 离散事件。
+"""天气事件契约 — 等级变化事件 + 离散事件。
 
 事件类型：
   - temperature_change / humidity_change / wind_change / sunshine_change：
@@ -9,79 +9,161 @@
   - storm_start / storm_stop：暴风雨事件切换
   - season_change / sunrise / sunset：全局季节 / per-chunk 昼夜
 
-导入此模块即向 world_tree 单例注册。WeatherEngine 构造时也会在注入实例注册。
+data 键即 dataclass 字段，event_type 由类属性声明（不再重复写字符串）。
 """
 
-from ascend.world_tree import world_tree
-from .weather_modifier import WEATHER_MODIFIERS
+from dataclasses import dataclass
+from typing import ClassVar
+
+from ascend.world_tree.event import WorldEvent
 
 
-def register_weather_schemas(wt) -> None:
-    """在指定 WorldTree 实例上注册天气事件 schema。"""
-    wt.register_event_schema(
-        "temperature_change",
-        required={"temperature": float, "prev_tier": int, "tier": int,
-                  "season": int, "time_of_day": int},
-        description="温度等级变化时发布。prev_tier 为变化前等级，tier 为当前等级。",
-    )
-    wt.register_event_schema(
-        "humidity_change",
-        required={"humidity": float, "prev_tier": int, "tier": int,
-                  "time_of_day": int},
-        description="湿度等级变化时发布。prev_tier 为变化前等级，tier 为当前等级。",
-    )
-    wt.register_event_schema(
-        "wind_change",
-        required={"wind_speed": float, "prev_tier": int, "tier": int,
-                  "wind_dir_x": float, "wind_dir_y": float, "time_of_day": int},
-        description="风速等级变化时发布。prev_tier 为变化前等级，tier 为当前等级。",
-    )
-    wt.register_event_schema(
-        "sunshine_change",
-        required={"sunshine": float, "prev_tier": int, "tier": int,
-                  "season": int, "time_of_day": int},
-        description="日照时长等级变化时发布。prev_tier 为变化前等级，tier 为当前等级。",
-    )
-    wt.register_event_schema(
-        "precipitation_start",
-        required={"precip_type": str, "intensity": float, "time_of_day": int},
-        description="降水开始时发布。precip_type: rain|snow，由当前温度判定。",
-    )
-    wt.register_event_schema(
-        "precipitation_stop",
-        required={"time_of_day": int},
-        description="降水停止时发布（RainSchedule 事件结束）。",
-    )
-    wt.register_event_schema(
-        "season_change",
-        required={"season": int, "time_of_day": int},
-        description="季节切换时发布（全局事件，location=(0,0)）。season 0=春 1=夏 2=秋 3=冬。",
-    )
-    wt.register_event_schema(
-        "sunrise",
-        required={"time_of_day": int, "daylight_hours": float},
-        description="日出时发布（per-chunk，用 chunk 纬度算昼夜切换）。"
-                    "daylight_hours 为当日天文日照时长（小时/天），供下游种植/生理系统使用。",
-    )
-    wt.register_event_schema(
-        "sunset",
-        required={"time_of_day": int, "daylight_hours": float},
-        description="日落时发布（per-chunk，用 chunk 纬度算昼夜切换）。"
-                    "daylight_hours 为当日天文日照时长（小时/天）。",
-    )
-    # 天气修改器事件 schema（从 WEATHER_MODIFIERS 注册表自动生成）
-    for config in WEATHER_MODIFIERS.values():
-        wt.register_event_schema(
-            f"{config.type_name}_start",
-            required=config.start_schema,
-            description=f"{config.type_name} 开始时发布。",
-        )
-        wt.register_event_schema(
-            f"{config.type_name}_stop",
-            required={"time_of_day": int},
-            description=f"{config.type_name} 停止时发布。",
-        )
+@dataclass
+class TemperatureChange(WorldEvent):
+    """温度等级变化。prev_tier 为变化前等级，tier 为当前等级。"""
+
+    event_type: ClassVar[str] = "temperature_change"
+    temperature: float
+    prev_tier: int
+    tier: int
+    season: int
+    time_of_day: int
 
 
-# 单例注册（生产环境用 world_tree 单例时生效）
-register_weather_schemas(world_tree)
+@dataclass
+class HumidityChange(WorldEvent):
+    """湿度等级变化。prev_tier 为变化前等级，tier 为当前等级。"""
+
+    event_type: ClassVar[str] = "humidity_change"
+    humidity: float
+    prev_tier: int
+    tier: int
+    time_of_day: int
+
+
+@dataclass
+class WindChange(WorldEvent):
+    """风速等级变化。prev_tier 为变化前等级，tier 为当前等级。"""
+
+    event_type: ClassVar[str] = "wind_change"
+    wind_speed: float
+    prev_tier: int
+    tier: int
+    wind_dir_x: float
+    wind_dir_y: float
+    time_of_day: int
+
+
+@dataclass
+class SunshineChange(WorldEvent):
+    """日照等级变化。prev_tier 为变化前等级，tier 为当前等级。"""
+
+    event_type: ClassVar[str] = "sunshine_change"
+    sunshine: float
+    prev_tier: int
+    tier: int
+    season: int
+    time_of_day: int
+
+
+@dataclass
+class PrecipitationStart(WorldEvent):
+    """降水开始。precip_type: rain|snow，由当前温度判定。"""
+
+    event_type: ClassVar[str] = "precipitation_start"
+    precip_type: str
+    intensity: float
+    time_of_day: int
+
+
+@dataclass
+class PrecipitationStop(WorldEvent):
+    """降水停止（RainSchedule 事件结束）。"""
+
+    event_type: ClassVar[str] = "precipitation_stop"
+    time_of_day: int
+
+
+@dataclass
+class SeasonChange(WorldEvent):
+    """季节切换（全局事件，location=(0,0)）。season 0=春 1=夏 2=秋 3=冬。"""
+
+    event_type: ClassVar[str] = "season_change"
+    season: int
+    time_of_day: int
+
+
+@dataclass
+class Sunrise(WorldEvent):
+    """日出（per-chunk，用 chunk 纬度算昼夜切换）。
+
+    daylight_hours 为当日天文日照时长（小时/天），供下游种植/生理系统使用。
+    """
+
+    event_type: ClassVar[str] = "sunrise"
+    time_of_day: int
+    daylight_hours: float
+
+
+@dataclass
+class Sunset(WorldEvent):
+    """日落（per-chunk）。daylight_hours 为当日天文日照时长（小时/天）。"""
+
+    event_type: ClassVar[str] = "sunset"
+    time_of_day: int
+    daylight_hours: float
+
+
+# ── 天气修改器事件（寒潮/热浪/暴风雨）───────────────────────────
+# 事件类由 ModifierConfig 注册表指定（start_event_cls / stop_event_cls），
+# 新增修改器 = 注册表加一行 + 指定事件类（或复用既有字段结构）。
+
+
+@dataclass
+class TemperatureOffsetStart(WorldEvent):
+    """温度偏移型修改器 start 事件的字段结构（寒潮/热浪共用，不直接发布）。"""
+
+    event_type: ClassVar[str] = ""
+    temperature_offset: float
+    time_of_day: int
+
+
+@dataclass
+class ColdSnapStart(TemperatureOffsetStart):
+    event_type: ClassVar[str] = "cold_snap_start"
+
+
+@dataclass
+class HeatWaveStart(TemperatureOffsetStart):
+    event_type: ClassVar[str] = "heat_wave_start"
+
+
+@dataclass
+class StormStart(WorldEvent):
+    event_type: ClassVar[str] = "storm_start"
+    wind_multiplier: float
+    rain_multiplier: float
+    time_of_day: int
+
+
+@dataclass
+class ModifierStop(WorldEvent):
+    """修改器 stop 事件的字段结构（共用，不直接发布）。"""
+
+    event_type: ClassVar[str] = ""
+    time_of_day: int
+
+
+@dataclass
+class ColdSnapStop(ModifierStop):
+    event_type: ClassVar[str] = "cold_snap_stop"
+
+
+@dataclass
+class HeatWaveStop(ModifierStop):
+    event_type: ClassVar[str] = "heat_wave_stop"
+
+
+@dataclass
+class StormStop(ModifierStop):
+    event_type: ClassVar[str] = "storm_stop"

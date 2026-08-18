@@ -233,7 +233,7 @@ class GameServer:
                     "接收队列超限 %d，断开 %s:%d",
                     RECEIVE_QUEUE_LIMIT, handler.addr[0], handler.addr[1],
                 )
-                handler._request_close()  # 本回调在 recv 线程，close() 会自 join 死锁
+                handler.request_close()  # 本回调在 recv 线程，close() 会自 join 死锁
                 return
             self._receive_queue.append((handler.client_id, message))
 

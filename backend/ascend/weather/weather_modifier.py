@@ -10,13 +10,19 @@
 
 修改器由 ModifierConfig 集中定义，包含：
   - 各气候带频率、典型持续、基准强度、效果类别
-  - WorldTree 事件 schema 的 required 字段
+  - start/stop 事件类（data 契约与事件类型一体声明，见 weather/events.py）
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 from ascend.config import GAME_DAY, GAME_HOUR, GAME_YEAR, MODIFIER_FORECAST_DEPTH, MODIFIER_REPLENISH_THRESHOLD
 from ascend.space import ClimateZone
+from ascend.world_tree.event import WorldEvent
+
+from .events import (
+    ColdSnapStart, ColdSnapStop, HeatWaveStart, HeatWaveStop,
+    StormStart, StormStop,
+)
 
 
 @dataclass(slots=True)
@@ -29,7 +35,8 @@ class ModifierConfig:
         mean_duration: 典型持续时长均值（tick），实际在 0.5x-1.5x 随机化。
         base_intensity: 基准强度，实际在 0.5x-1.5x 随机化。
         effect: 效果类别—"temperature"（施加 temp_offset °C）或 "multiplier"（倍率）。
-        start_schema: start 事件的 required 字段映射 {field_name: type}。
+        start_event_cls: start 事件类（字段即 data 契约）。
+        stop_event_cls: stop 事件类。
     """
 
     type_name: str
@@ -37,7 +44,8 @@ class ModifierConfig:
     mean_duration: int
     base_intensity: float
     effect: str  # "temperature" | "multiplier"
-    start_schema: dict[str, type] = field(default_factory=dict)
+    start_event_cls: type[WorldEvent]
+    stop_event_cls: type[WorldEvent]
 
 
 # ── 注册表：添加新类型只需在此加一行 ──────────────────────────────
@@ -58,7 +66,8 @@ WEATHER_MODIFIERS: dict[str, ModifierConfig] = {
         mean_duration=3 * GAME_DAY,
         base_intensity=-15.0,
         effect="temperature",
-        start_schema={"temperature_offset": float, "time_of_day": int},
+        start_event_cls=ColdSnapStart,
+        stop_event_cls=ColdSnapStop,
     ),
     "heat_wave": ModifierConfig(
         type_name="heat_wave",
@@ -75,7 +84,8 @@ WEATHER_MODIFIERS: dict[str, ModifierConfig] = {
         mean_duration=5 * GAME_DAY,
         base_intensity=15.0,
         effect="temperature",
-        start_schema={"temperature_offset": float, "time_of_day": int},
+        start_event_cls=HeatWaveStart,
+        stop_event_cls=HeatWaveStop,
     ),
     "storm": ModifierConfig(
         type_name="storm",
@@ -92,8 +102,8 @@ WEATHER_MODIFIERS: dict[str, ModifierConfig] = {
         mean_duration=6 * GAME_HOUR,
         base_intensity=3.0,
         effect="multiplier",
-        start_schema={"wind_multiplier": float, "rain_multiplier": float,
-                      "time_of_day": int},
+        start_event_cls=StormStart,
+        stop_event_cls=StormStop,
     ),
 }
 
@@ -191,19 +201,23 @@ class ModifierSchedule:
             return 1.0
         return ev.magnitude * self._base_intensity
 
-    def start_event_data(self, now: int) -> dict:
-        """构造 start 事件的 data 字典（根据 config.start_schema）。"""
-        data: dict = {"time_of_day": 0}  # caller 会覆盖 time_of_day
-        for field_name in self._config.start_schema:
-            if field_name == "time_of_day":
-                continue  # caller 填入
-            if field_name == "temperature_offset":
-                data[field_name] = float(self.temp_offset(now))
-            elif field_name == "wind_multiplier":
-                data[field_name] = float(self.wind_rain_multiplier(now))
-            elif field_name == "rain_multiplier":
-                data[field_name] = float(self.wind_rain_multiplier(now))
-        return data
+    def start_event(self, now: int, time_of_day: int) -> WorldEvent:
+        """构造 start 事件实例（字段按事件类驱动，time_of_day 由调用方填入）。"""
+        kwargs: dict[str, float] = {"time_of_day": time_of_day}
+        for f in fields(self._config.start_event_cls):
+            if f.name == "time_of_day":
+                continue
+            if f.name == "temperature_offset":
+                kwargs[f.name] = float(self.temp_offset(now))
+            elif f.name == "wind_multiplier":
+                kwargs[f.name] = float(self.wind_rain_multiplier(now))
+            elif f.name == "rain_multiplier":
+                kwargs[f.name] = float(self.wind_rain_multiplier(now))
+        return self._config.start_event_cls(**kwargs)
+
+    def stop_event(self, time_of_day: int) -> WorldEvent:
+        """构造 stop 事件实例。"""
+        return self._config.stop_event_cls(time_of_day=time_of_day)
 
     def seed_current(self, now: int) -> None:
         self._last_active = self.is_active(now)

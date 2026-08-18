@@ -17,6 +17,7 @@ from ascend.weather.weather_modifier import (
     ModifierEvent,
     ModifierSchedule,
 )
+from dataclasses import fields
 
 
 def _make_schedule(type_name="cold_snap", climate=ClimateZone.TEMPERATE_FOREST,
@@ -47,11 +48,11 @@ class TestModifierRegistry:
                 assert isinstance(climate, ClimateZone)
                 assert rate >= 0.0
 
-    def test_T4_positive_duration_and_schema(self):
-        """mean_duration > 0，start_schema 含 time_of_day。"""
+    def test_T4_positive_duration_and_event_classes(self):
+        """mean_duration > 0，start 事件类含 time_of_day 字段。"""
         for config in WEATHER_MODIFIERS.values():
             assert config.mean_duration > 0
-            assert "time_of_day" in config.start_schema
+            assert any(f.name == "time_of_day" for f in fields(config.start_event_cls))
 
 
 class TestModifierEvent:
@@ -140,17 +141,20 @@ class TestScheduleEffects:
         cold.push(ModifierEvent(100, 50, "cold_snap", 1.0))
         assert cold.wind_rain_multiplier(120) == 1.0
 
-    def test_T13_start_event_data_matches_schema(self):
-        """start_event_data 按 config.start_schema 填充字段。"""
+    def test_T13_start_event_matches_event_class(self):
+        """start_event 按事件类字段填充。"""
         cold = _make_schedule("cold_snap")
         cold.push(ModifierEvent(100, 50, "cold_snap", 1.0))
-        data = cold.start_event_data(120)
-        assert set(data.keys()) == set(cold._config.start_schema.keys())
+        ev = cold.start_event(120, time_of_day=36000)
+        data = ev.as_dict()
+        assert set(data) == {f.name for f in fields(cold._config.start_event_cls)}
+        assert ev.event_type == "cold_snap_start"
+        assert data["time_of_day"] == 36000
         assert data["temperature_offset"] == pytest.approx(-15.0)
 
         storm = _make_schedule("storm", ClimateZone.TEMPERATE_FOREST)
         storm.push(ModifierEvent(100, 50, "storm", 1.0))
-        data = storm.start_event_data(120)
+        data = storm.start_event(120, time_of_day=0).as_dict()
         assert "wind_multiplier" in data
         assert "rain_multiplier" in data
 

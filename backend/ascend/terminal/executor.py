@@ -5,48 +5,40 @@
 
 指令结构（Issue #2）:
     status                                  运行状态（时间 + 世界树统计）
-    time [speed|pause|resume|jump|tick]     时间控制组
-    weather [status|set]                    天气查询与强制控制组
-    entity [list|birth|death]               实体生灭调试组（Issue #20）
+    time [speed|pause|resume|jump|tick]     时间控制组（TimeCommandsMixin）
+    weather [status|set]                    天气查询与强制控制组（WeatherCommandsMixin）
+    entity [list|birth|death]               实体生灭调试组（EntityCommandsMixin）
+    continent [status|regen]                大陆缓存诊断组（ContinentCommandsMixin）
+    tp [x y]                                玩家传送（EntityCommandsMixin）
     lang / events / help / quit             独立指令
+
+指令组按 mixin 拆分至同目录 *_commands.py，本类负责路由、参数解析、
+格式化与独立指令实现。
 """
 
-import math
-import os
 from collections.abc import Callable
-from dataclasses import dataclass
 
 from ascend.world_tree import world_tree
 from ascend.log import get_logger
 from ascend.i18n import I18n
-from ascend.config import SUNRISE_HOUR, TILE_MAP_SIZE
-from ascend.entity import EntityType, split_coords, Controller
-from ascend.weather.weather_engine import (
-    classify_temperature, classify_humidity, classify_wind,
-    classify_sunshine, classify_sunlight_intensity, precip_type_for,
-)
-from ascend.weather.weather_modifier import WEATHER_MODIFIERS
-from ascend.time import WorldClock, GameCalendar, GAME_DAY, GAME_HOUR, GAME_YEAR
+from ascend.time import WorldClock, GameCalendar, GAME_YEAR
 from ascend.time.calendar import tick_to_hms
+
+from .continent_commands import ContinentCommandsMixin
+from .entity_commands import EntityCommandsMixin
+from .result import CommandResult
+from .time_commands import TimeCommandsMixin
+from .weather_commands import WeatherCommandsMixin
 
 logger = get_logger(__name__)
 
 
-@dataclass
-class CommandResult:
-    """指令执行结果。
-
-    Attributes:
-        success: 是否成功执行。
-        output: 执行输出的文本（空字符串表示无输出）。
-        is_quit: 是否为退出指令。
-    """
-    success: bool = True
-    output: str = ""
-    is_quit: bool = False
-
-
-class CommandExecutor:
+class CommandExecutor(
+    TimeCommandsMixin,
+    WeatherCommandsMixin,
+    EntityCommandsMixin,
+    ContinentCommandsMixin,
+):
     """指令执行器。
 
     解析指令字符串，调用对应逻辑，返回结构化结果。
@@ -62,23 +54,6 @@ class CommandExecutor:
     # 退出指令集（集合查找 O(1)）
     _QUIT_CMDS: frozenset = frozenset({"q", "quit", "exit"})
 
-    # weather set 的合法状态词
-    _ON_OFF: frozenset = frozenset({"on", "off"})
-
-    # time tick 单次执行上限（step 同步触发日历边界回调，过大冻结游戏线程）
-    MAX_TICK_STEPS: int = 10_000
-
-    # ── time 指令组子命令注册表（sub → 处理器(executor, rest)） ──
-    # 处理器签名与顶层 handler 不同（多收 executor 以访问 i18n），
-    # 组内复用由 lambda 闭包捕获 self。
-    _TIME_SUBS: dict[str, Callable[["CommandExecutor", list[str]], CommandResult]] = {
-        "speed": lambda e, rest: e._h_time_speed(rest),
-        "pause": lambda e, _r: CommandResult(success=True, output=e._cmd_pause()),
-        "resume": lambda e, _r: CommandResult(success=True, output=e._cmd_resume()),
-        "jump": lambda e, rest: e._h_time_jump(rest),
-        "tick": lambda e, rest: e._h_time_tick(rest),
-    }
-
     def __init__(
         self,
         clock: WorldClock,
@@ -90,6 +65,7 @@ class CommandExecutor:
         entity_manager=None,
         continent_path: str | None = None,
         gen_fingerprint_fn=None,
+        world_tree_arg=None,
     ) -> None:
         """初始化指令执行器。
 
@@ -105,6 +81,8 @@ class CommandExecutor:
                 用于 continent 指令；None = 无存档模式。
             gen_fingerprint_fn: 可选的无参回调，返回当前生成环境指纹，
                 用于 continent status 漂移诊断。
+            world_tree_arg: 可选的 WorldTree 实例（测试注入隔离），
+                默认使用模块级单例。
         """
         self._clock = clock
         self._calendar = calendar
@@ -115,6 +93,7 @@ class CommandExecutor:
         self._entities = entity_manager
         self._continent_path = continent_path
         self._gen_fingerprint_fn = gen_fingerprint_fn
+        self._wt = world_tree_arg if world_tree_arg is not None else world_tree
         self._active_real_time: float = 0.0
 
         # 指令路由表：{cmd_name: handler_func(args) -> CommandResult}
@@ -242,599 +221,6 @@ class CommandExecutor:
         except ValueError:
             return None
 
-    # ── time 指令组 ─────────────────────────────────────
-
-    def _h_time(self, args: list[str]) -> CommandResult:
-        """处理 time 指令组：无参查看状态，子指令控制时间。
-
-        Args:
-            args: 参数列表，args[0] 为子指令（speed/pause/resume/jump/tick）。
-
-        Returns:
-            执行结果。
-        """
-        if not args:
-            return CommandResult(success=True, output=self._cmd_time_status())
-
-        sub = args[0].lower()
-        handler = self._TIME_SUBS.get(sub)
-        if handler is None:
-            return CommandResult(
-                success=False, output=self._i18n.t("console.time_usage"),
-            )
-        return handler(self, args[1:])
-
-    def _h_time_jump(self, rest: list[str]) -> CommandResult:
-        """time jump <days>：跳 N 天（校验与单次上限）。"""
-        days = self._parse_int(rest, 0, 1)
-        if days is None or days < 1:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.invalid_number",
-                                    value=rest[0] if rest else ""),
-            )
-        return CommandResult(success=True, output=self._cmd_jump(days))
-
-    def _h_time_tick(self, rest: list[str]) -> CommandResult:
-        """time tick <count>：手动推进 N tick（校验与单次上限）。
-
-        step() 同步触发日历边界回调，超大 count 会冻结游戏线程数秒。
-        """
-        count = self._parse_int(rest, 0, 1)
-        if count is None or count < 1:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.invalid_number",
-                                    value=rest[0] if rest else ""),
-            )
-        if count > self.MAX_TICK_STEPS:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.tick_limit",
-                                    limit=self.MAX_TICK_STEPS),
-            )
-        return CommandResult(success=True, output=self._cmd_tick(count))
-
-    def _h_time_speed(self, args: list[str]) -> CommandResult:
-        """处理 time speed <n>：设置时间流速（0=暂停）。
-
-        Args:
-            args: 参数列表，args[0] 为流速数值。
-
-        Returns:
-            执行结果。
-        """
-        if not args:
-            return CommandResult(
-                success=False, output=self._i18n.t("console.time_usage"),
-            )
-        try:
-            speed = float(args[0])
-        except ValueError:
-            speed = -1.0
-        if not math.isfinite(speed) or speed < 0:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.speed_invalid", value=args[0]),
-            )
-        if speed == 0:
-            return CommandResult(success=True, output=self._cmd_pause())
-        if self._clock.paused:
-            self._clock.resume()
-        self._clock.speed = speed
-        return CommandResult(
-            success=True,
-            output=self._i18n.t("console.speed_set", speed=f"{speed:g}"),
-        )
-
-    def _cmd_time_status(self) -> str:
-        """生成时间状态文本。
-
-        Returns:
-            包含日、时间、速度、状态的字符串。
-        """
-        day = self._calendar.day
-        state = self._i18n.t(
-            "console.state_paused" if self._clock.paused else "console.state_running"
-        )
-        return self._i18n.t(
-            "console.time_status",
-            day=day,
-            time=self._fmt_time_of_day(),
-            mode=self._speed_label(),
-            state=state,
-        )
-
-    def _cmd_pause(self) -> str:
-        """暂停游戏时间。
-
-        Returns:
-            暂停确认文本。
-        """
-        if self._clock.paused:
-            return self._i18n.t("console.already_paused")
-        self._clock.pause()
-        return self._i18n.t("console.paused")
-
-    def _cmd_resume(self) -> str:
-        """恢复游戏时间。
-
-        Returns:
-            恢复确认文本。
-        """
-        if not self._clock.paused:
-            return self._i18n.t("console.already_running")
-        self._clock.resume()
-        return self._i18n.t("console.resumed")
-
-    def _cmd_tick(self, count: int = 1) -> str:
-        """手动推进 N tick（忽略暂停和速度，调试用）。
-
-        每次 step 都会触发日历边界回调，超大 count 会冻结游戏线程，
-        因此限制单次执行上限（见 _h_time_tick）。
-
-        Args:
-            count: 要推进的 tick 数。
-
-        Returns:
-            推进确认文本。
-        """
-        for _ in range(count):
-            self._clock.step()
-        return self._i18n.t("console.ticked", count=count, time=f"{self._clock.time:,}")
-
-    def _cmd_jump(self, days: int = 1) -> str:
-        """跳过 N 天，落地到目标日 06:00。
-
-        Args:
-            days: 要跳过的天数。
-
-        Returns:
-            跳转后状态文本。
-        """
-        target_day = self._calendar.day + days
-        target = (target_day - 1) * GAME_DAY + SUNRISE_HOUR * GAME_HOUR
-        skipped = target - self._clock.time
-        self._clock.skip(skipped)
-        return self._i18n.t("console.jumped", days=days, day=self._calendar.day)
-
-    # ── weather 指令组 ──────────────────────────────────
-
-    def _h_weather(self, args: list[str]) -> CommandResult:
-        """处理 weather 指令组：status 查询 / set 强制控制。
-
-        Args:
-            args: 参数列表。
-
-        Returns:
-            执行结果。
-        """
-        if self._weather is None:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.weather_unavailable"),
-            )
-        if not args or args[0].lower() == "status":
-            return self._h_weather_status(args[1:] if args else [])
-        if args[0].lower() == "set":
-            return self._h_weather_set(args[1:])
-        return CommandResult(
-            success=False, output=self._i18n.t("console.weather_usage"),
-        )
-
-    def _h_weather_status(self, args: list[str]) -> CommandResult:
-        """处理 weather status [cx cy]：查询指定位置当前天气。
-
-        Args:
-            args: 坐标参数（空 或 [cx, cy]）。
-
-        Returns:
-            执行结果。
-        """
-        coord = self._parse_chunk(args)
-        if coord is None:
-            return CommandResult(
-                success=False, output=self._i18n.t("console.weather_usage"),
-            )
-        cx, cy = coord
-        report = self._weather.get_weather_report(cx, cy)
-        if report is None:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t(
-                    "console.weather_chunk_unregistered", cx=cx, cy=cy,
-                ),
-            )
-        wp, sunrise_h, sunset_h, _, intensity, _ = report
-
-        t = self._i18n.t
-        temp = round(wp.temperature, 1)
-        hum = round(wp.humidity, 1)
-        wind = round(wp.wind_speed, 1)
-        sun = round(wp.sunshine, 1)
-        light = round(intensity, 2)
-        if wp.rainfall > 0:
-            precip_key = ("weather.snow" if precip_type_for(temp) == "snow"
-                          else "weather.rain")
-            precip = t("weather.intensity", type=t(precip_key),
-                       intensity=f"{wp.rainfall:.1f}")
-        else:
-            precip = t("weather.clear")
-        lines = [
-            t("console.weather_header", cx=cx, cy=cy),
-            f"  {t('console.weather_temp')}: {temp}°C"
-            f" (tier {classify_temperature(temp)})",
-            f"  {t('console.weather_hum')}: {hum}%"
-            f" (tier {classify_humidity(hum)})",
-            f"  {t('console.weather_wind')}: {wind} m/s"
-            f" (tier {classify_wind(wind)})",
-            f"  {t('console.weather_sun')}: {sun}h"
-            f" (tier {classify_sunshine(sun)})"
-            f"  |  {t('console.weather_light')}: {light}"
-            f" (tier {classify_sunlight_intensity(light)})",
-            f"  {t('console.weather_precip')}: {precip}",
-            f"  {t('console.weather_sun_times', sunrise=self._fmt_hour(sunrise_h), sunset=self._fmt_hour(sunset_h))}",
-        ]
-        return CommandResult(success=True, output="\n".join(lines))
-
-    def _h_weather_set(self, args: list[str]) -> CommandResult:
-        """处理 weather set <rain|modifier> <on|off> [cx cy]。
-
-        Args:
-            args: [target, state, cx?, cy?]。
-
-        Returns:
-            执行结果。
-        """
-        if len(args) < 2:
-            return CommandResult(
-                success=False, output=self._i18n.t("console.weather_usage"),
-            )
-        target = args[0].lower()
-        state = args[1].lower()
-        valid_targets = ["rain"] + list(WEATHER_MODIFIERS.keys())
-        if target not in valid_targets:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t(
-                    "console.weather_target_unknown",
-                    name=target, targets=", ".join(valid_targets),
-                ),
-            )
-        if state not in self._ON_OFF:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.weather_state_invalid"),
-            )
-        coord = self._parse_chunk(args[2:])
-        if coord is None:
-            return CommandResult(
-                success=False, output=self._i18n.t("console.weather_usage"),
-            )
-        cx, cy = coord
-        active = state == "on"
-
-        if target == "rain":
-            changed = self._weather.set_rain(cx, cy, active)
-        else:
-            changed = self._weather.set_modifier(cx, cy, target, active)
-
-        if changed is None:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t(
-                    "console.weather_chunk_unregistered", cx=cx, cy=cy,
-                ),
-            )
-        if not changed:
-            return CommandResult(
-                success=True,
-                output=self._i18n.t(
-                    "console.weather_set_noop", target=target, cx=cx, cy=cy,
-                ),
-            )
-        key = "console.weather_set_on" if active else "console.weather_set_off"
-        return CommandResult(
-            success=True,
-            output=self._i18n.t(key, target=target, cx=cx, cy=cy),
-        )
-
-    # ── entity 指令组 ───────────────────────────────────
-
-    def _h_continent(self, args: list[str]) -> CommandResult:
-        """处理 continent 指令组：status 诊断 / regen 强制重建。
-
-        Args:
-            args: 参数列表。
-
-        Returns:
-            执行结果。
-        """
-        if self._continent_path is None:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.continent_unavailable"),
-            )
-        if not args or args[0].lower() == "status":
-            return self._h_continent_status()
-        if args[0].lower() == "regen":
-            return self._h_continent_regen()
-        return CommandResult(
-            success=False, output=self._i18n.t("console.continent_usage"),
-        )
-
-    def _h_continent_status(self) -> CommandResult:
-        """continent status：缓存存在性 + 生成环境指纹漂移诊断。
-
-        Returns:
-            执行结果。
-        """
-        from ascend.space.continent import read_continent_header
-
-        path = self._continent_path
-        if not os.path.isfile(path):
-            return CommandResult(
-                success=True,
-                output=self._i18n.t("console.continent_no_cache"),
-            )
-        try:
-            with open(path, "rb") as f:
-                header = read_continent_header(f.read())
-        except OSError as exc:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t(
-                    "console.continent_read_failed", error=str(exc),
-                ),
-            )
-        if header is None:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.continent_header_invalid"),
-            )
-        version, stored_fp = header
-        current_fp = (
-            self._gen_fingerprint_fn() if self._gen_fingerprint_fn else ""
-        )
-        if stored_fp and current_fp and stored_fp != current_fp:
-            drift = self._i18n.t("console.continent_drift")
-        else:
-            drift = self._i18n.t("console.continent_match")
-        lines = [
-            self._i18n.t("console.continent_status_header"),
-            self._i18n.t("console.continent_status_version", version=version),
-            self._i18n.t(
-                "console.continent_status_fp",
-                fp=(stored_fp[:12] + "…") if stored_fp else "-",
-            ),
-            drift,
-        ]
-        return CommandResult(success=True, output="\n".join(lines))
-
-    def _h_continent_regen(self) -> CommandResult:
-        """continent regen：删除大陆缓存，下次进入世界时按当前算法重建。
-
-        Returns:
-            执行结果。
-        """
-        path = self._continent_path
-        if not os.path.isfile(path):
-            return CommandResult(
-                success=True,
-                output=self._i18n.t("console.continent_regen_missing"),
-            )
-        try:
-            os.remove(path)
-        except OSError as exc:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t(
-                    "console.continent_regen_failed", error=str(exc),
-                ),
-            )
-        return CommandResult(
-            success=True,
-            output=self._i18n.t("console.continent_regen_ok"),
-        )
-
-    def _h_entity(self, args: list[str]) -> CommandResult:
-        """处理 entity 指令组：list 列表 / birth 诞生 / death 死亡。
-
-        调试用生灭入口（Issue #20 验收）：birth/death 是世界内因果
-        事件，经 EntityManager 发布 entity_born/entity_died 到世界树，
-        EventBridge 广播后前端应实时渲染/移除。
-
-        Args:
-            args: 参数列表。
-
-        Returns:
-            执行结果。
-        """
-        if self._entities is None:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.entity_unavailable"),
-            )
-        if not args or args[0].lower() == "list":
-            return self._h_entity_list()
-        sub = args[0].lower()
-        if sub == "birth":
-            return self._h_entity_birth(args[1:])
-        if sub == "death":
-            return self._h_entity_death(args[1:])
-        return CommandResult(
-            success=False, output=self._i18n.t("console.entity_usage"),
-        )
-
-    def _h_entity_list(self) -> CommandResult:
-        """处理 entity list：列出所有活跃实体。
-
-        Returns:
-            执行结果（ID 短前缀、类型、控制者、全局坐标）。
-        """
-        entities = self._entities.all_entities()
-        if not entities:
-            return CommandResult(
-                success=True, output=self._i18n.t("console.entity_none"),
-            )
-        lines = [self._i18n.t("console.entity_list_header", count=len(entities))]
-        for e in entities:
-            x, y = e.global_xy
-            lines.append(
-                f"  {e.id[:8]}  {e.entity_type.name:<9s}  "
-                f"{e.controller.name:<6s}  ({x:.1f}, {y:.1f})  L{e.layer_id}"
-            )
-        return CommandResult(success=True, output="\n".join(lines))
-
-    def _h_entity_birth(self, args: list[str]) -> CommandResult:
-        """处理 entity birth <type> [x y]：实体在指定位置诞生。
-
-        位置缺省为玩家当前位置（无玩家服务时为默认 chunk 原点）。
-
-        Args:
-            args: [type, x?, y?]。
-
-        Returns:
-            执行结果。
-        """
-        if not args:
-            return CommandResult(
-                success=False, output=self._i18n.t("console.entity_usage"),
-            )
-        type_name = args[0].upper()
-        if type_name not in EntityType.__members__:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t(
-                    "console.entity_type_unknown",
-                    name=args[0],
-                    types=", ".join(t.name.lower() for t in EntityType),
-                ),
-            )
-        entity_type = EntityType[type_name]
-
-        if len(args) >= 3:
-            try:
-                x, y = float(args[1]), float(args[2])
-            except ValueError:
-                return CommandResult(
-                    success=False, output=self._i18n.t("console.entity_usage"),
-                )
-        elif self._player is not None:
-            x, y = self._player.position
-        else:
-            dcx, dcy = self._default_chunk
-            x, y = float(dcx * TILE_MAP_SIZE), float(dcy * TILE_MAP_SIZE)
-
-        gx, gy, tx, ty = split_coords(x, y)
-        entity = self._entities.birth(
-            entity_type, gx, gy, tx, ty,
-            data={"fx": x, "fy": y},
-            game_time=self._clock.time,
-        )
-        return CommandResult(
-            success=True,
-            output=self._i18n.t(
-                "console.entity_born",
-                id=entity.id[:8], type=entity.entity_type.name,
-                x=f"{x:.1f}", y=f"{y:.1f}",
-            ),
-        )
-
-    def _h_entity_death(self, args: list[str]) -> CommandResult:
-        """处理 entity death <id前缀>：实体死亡。
-
-        接受唯一的 ID 前缀（≥4 字符），避免手输完整 UUID。
-        拒绝玩家控制的实体——PlayerService 会持有悬垂引用，
-        且玩家死亡应走死亡机制而非调试命令。
-
-        Args:
-            args: [id_prefix]。
-
-        Returns:
-            执行结果。
-        """
-        if len(args) != 1 or len(args[0]) < 4:
-            return CommandResult(
-                success=False, output=self._i18n.t("console.entity_usage"),
-            )
-        prefix = args[0].lower()
-        matches = [
-            e for e in self._entities.all_entities()
-            if e.id.startswith(prefix)
-        ]
-        if not matches:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.entity_not_found", id=args[0]),
-            )
-        if len(matches) > 1:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.entity_ambiguous", id=args[0]),
-            )
-        entity = matches[0]
-        if entity.controller == Controller.PLAYER:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t(
-                    "console.entity_player_protected", id=entity.id[:8],
-                ),
-            )
-        self._entities.death(entity.id, game_time=self._clock.time)
-        return CommandResult(
-            success=True,
-            output=self._i18n.t(
-                "console.entity_dead",
-                id=entity.id[:8], type=entity.entity_type.name,
-            ),
-        )
-
-    # ── tp 指令 ─────────────────────────────────────────
-
-    def _h_tp(self, args: list[str]) -> CommandResult:
-        """处理 tp [x y]：传送玩家（权威实体在后端）。
-
-        无参数回出生点。传送通过 player_teleported 事件推送前端吸附。
-
-        Args:
-            args: 参数列表（空 或 [x, y]）。
-
-        Returns:
-            执行结果。
-        """
-        if self._player is None:
-            return CommandResult(
-                success=False,
-                output=self._i18n.t("console.player_unavailable"),
-            )
-        if not args:
-            x, y = self._player.teleport_home()
-            return CommandResult(
-                success=True,
-                output=self._i18n.t("console.tp_home", x=f"{x:.0f}", y=f"{y:.0f}"),
-            )
-        if len(args) != 2:
-            return CommandResult(
-                success=False, output=self._i18n.t("console.tp_usage"),
-            )
-        try:
-            x = float(args[0])
-            y = float(args[1])
-        except ValueError:
-            return CommandResult(
-                success=False, output=self._i18n.t("console.tp_usage"),
-            )
-        if not math.isfinite(x) or not math.isfinite(y):
-            return CommandResult(
-                success=False, output=self._i18n.t("console.tp_usage"),
-            )
-        x, y = self._player.teleport(x, y)
-        return CommandResult(
-            success=True,
-            output=self._i18n.t("console.tp_done", x=f"{x:.0f}", y=f"{y:.0f}"),
-        )
-
     # ── 其余指令处理程序 ────────────────────────────────
 
     def _h_lang(self, args: list[str]) -> CommandResult:
@@ -871,7 +257,7 @@ class CommandExecutor:
             )
         return CommandResult(success=True, output=self._cmd_events(count))
 
-    # ── 内部实现 ────────────────────────────────────────
+    # ── 格式化辅助 ──────────────────────────────────────
 
     def _speed_label(self) -> str:
         """获取当前速度标签。
@@ -921,6 +307,8 @@ class CommandExecutor:
         m = int((hour_float - h) * 60)
         return f"{h:02d}:{m:02d}"
 
+    # ── 顶层指令实现 ────────────────────────────────────
+
     def _cmd_status(self) -> str:
         """生成运行状态报告（合并原 st + report）。
 
@@ -930,7 +318,7 @@ class CommandExecutor:
         state = self._i18n.t(
             "console.state_paused" if self._clock.paused else "console.state_running"
         )
-        stats = world_tree.stats
+        stats = self._wt.stats
         lines = [
             self._i18n.t(
                 "console.status",
@@ -944,7 +332,7 @@ class CommandExecutor:
             f"  {self._i18n.t('console.report_elapsed')}:    {self._calendar.elapsed_days}",
             f"  {self._i18n.t('console.report_day_changes')}:    {self._calendar.day_change_count}",
             f"  {self._i18n.t('console.report_ticks')}:   {self._clock.tick_count:,}",
-            f"  {self._i18n.t('console.report_events')}:    {world_tree.event_count:,}",
+            f"  {self._i18n.t('console.report_events')}:    {self._wt.event_count:,}",
             f"  ---",
             f"  publish:     {stats['publish_count']:,}",
             f"  trim:        {stats['trim_count']} (cycle={stats['trim_cycle']})",
@@ -991,14 +379,14 @@ class CommandExecutor:
         Returns:
             事件列表文本。
         """
-        total = world_tree.event_count
+        total = self._wt.event_count
         if total == 0:
             return self._i18n.t("console.no_events")
 
         count = min(count, total)
         now = self._clock.time
         start = max(0, now - GAME_YEAR)
-        events = world_tree.get_events_in_range(start, now)
+        events = self._wt.get_events_in_range(start, now)
         log = events[-count:] if len(events) >= count else events
         lines = [self._i18n.t("console.events_header", count=min(count, len(log)), total=total)]
         time_hdr = self._i18n.t("console.events_col_time")

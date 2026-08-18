@@ -4,9 +4,10 @@
 检测到分钟/小时/天边界后发布对应的语义事件到 WorldTree。
 """
 
-from ascend.world_tree import world_tree, Event, AffectedParty
+from ascend.world_tree import world_tree, Event, AffectedParty, WorldEvent
 from ascend.log import get_logger
 from .clock import WorldClock
+from .events import DayChange, DayEnd, HourChange, MinuteChange
 from ascend.config import GAME_DAY, GAME_HOUR, GAME_MINUTE
 
 logger = get_logger(__name__)
@@ -31,44 +32,6 @@ def tick_to_hms(game_time: int) -> tuple[int, int, int]:
     return hour, minute, second
 
 
-world_tree.register_event_schema(
-    "day_end",
-    required={"day": int, "elapsed_days": int},
-    description="每日结束时发布（day_change 之前），用于日终结算",
-)
-world_tree.register_event_schema(
-    "day_change",
-    required={
-        "day": int,
-        "previous_day": int,
-        "elapsed_days": int,
-        "day_change_count": int,
-        "skipped_days": int,
-    },
-    description="日期变更时发布，触发群体/生态等日更模块",
-)
-world_tree.register_event_schema(
-    "hour_change",
-    required={
-        "day": int,
-        "hour": int,
-        "previous_hour": int,
-        "hour_change_count": int,
-    },
-    description="整点变更时发布，用于高频定期任务",
-)
-world_tree.register_event_schema(
-    "minute_change",
-    required={
-        "day": int,
-        "hour": int,
-        "minute": int,
-        "game_time": int,
-    },
-    description="分钟变更时发布，用于需要分钟级更新的模块（如天气引擎）",
-)
-
-
 class GameCalendar:
     """游戏日历。
 
@@ -83,16 +46,22 @@ class GameCalendar:
         calendar.minute # 当前分钟（0-59）
     """
 
-    def __init__(self, clock: WorldClock, start_day: int = 1) -> None:
+    def __init__(
+        self, clock: WorldClock, start_day: int = 1,
+        world_tree_arg=None,
+    ) -> None:
         """初始化日历。
 
         Args:
             clock: 世界时钟，通过 on_tick/on_skip 接收时间推进。
             start_day: 起始游戏日，必须 ≥ 1。
+            world_tree_arg: 可选 WorldTree 实例（测试注入隔离），
+                默认使用模块级单例。
         """
         if start_day < 1:
             raise ValueError(f"起始日必须 >= 1，实际为 {start_day}")
 
+        self._wt = world_tree_arg if world_tree_arg is not None else world_tree
         self._day: int = start_day
         self._hour: int | None = None
         self._minute: int | None = None
@@ -144,6 +113,18 @@ class GameCalendar:
         """跳转回调 — 检测跳过的边界并发布事件。"""
         self._check_boundaries(game_time)
 
+    def _publish(self, game_time: int, ev: WorldEvent) -> None:
+        """发布全局日历事件（location=(0,0)）。"""
+        self._wt.publish(Event(
+            timestamp=game_time,
+            location=(0, 0, None, None),
+            initiator_type="system",
+            initiator_id="game_calendar",
+            affected=[AffectedParty("world", "subject")],
+            event_type=ev.event_type,
+            data=ev.as_dict(),
+        ))
+
     def _check_boundaries(self, game_time: int) -> None:
         """检测分钟/小时/天边界，发布对应事件。
 
@@ -167,36 +148,20 @@ class GameCalendar:
             previous_day = self._day
             real_skipped = current_day - previous_day - 1
 
-            world_tree.publish(Event(
-                timestamp=game_time,
-                location=(0, 0, None, None),
-                initiator_type="system",
-                initiator_id="game_calendar",
-                affected=[AffectedParty("world", "subject")],
-                event_type="day_end",
-                data={
-                    "day": previous_day,
-                    "elapsed_days": previous_day - self._start_day,
-                },
+            self._publish(game_time, DayEnd(
+                day=previous_day,
+                elapsed_days=previous_day - self._start_day,
             ))
 
             self._day = current_day
             self._day_change_count += 1
 
-            world_tree.publish(Event(
-                timestamp=game_time,
-                location=(0, 0, None, None),
-                initiator_type="system",
-                initiator_id="game_calendar",
-                affected=[AffectedParty("world", "subject")],
-                event_type="day_change",
-                data={
-                    "day": current_day,
-                    "previous_day": previous_day,
-                    "elapsed_days": self.elapsed_days,
-                    "day_change_count": self._day_change_count,
-                    "skipped_days": real_skipped,
-                },
+            self._publish(game_time, DayChange(
+                day=current_day,
+                previous_day=previous_day,
+                elapsed_days=self.elapsed_days,
+                day_change_count=self._day_change_count,
+                skipped_days=real_skipped,
             ))
             logger.info(
                 "日期变更: day %d → %d (累计 %d 天, 跳过 %d 天)",
@@ -211,19 +176,11 @@ class GameCalendar:
             self._hour = current_hour
             self._hour_change_count += 1
 
-            world_tree.publish(Event(
-                timestamp=game_time,
-                location=(0, 0, None, None),
-                initiator_type="system",
-                initiator_id="game_calendar",
-                affected=[AffectedParty("world", "subject")],
-                event_type="hour_change",
-                data={
-                    "day": self._day,
-                    "hour": current_hour,
-                    "previous_hour": previous_hour,
-                    "hour_change_count": self._hour_change_count,
-                },
+            self._publish(game_time, HourChange(
+                day=self._day,
+                hour=current_hour,
+                previous_hour=previous_hour,
+                hour_change_count=self._hour_change_count,
             ))
             logger.debug(
                 "整点: day %d %02d:00 (累计 %d 次)",
@@ -235,19 +192,11 @@ class GameCalendar:
             self._minute = current_minute
         elif current_minute != self._minute:
             self._minute = current_minute
-            world_tree.publish(Event(
-                timestamp=game_time,
-                location=(0, 0, None, None),
-                initiator_type="system",
-                initiator_id="game_calendar",
-                affected=[AffectedParty("world", "subject")],
-                event_type="minute_change",
-                data={
-                    "day": self._day,
-                    "hour": self._hour,
-                    "minute": current_minute,
-                    "game_time": game_time,
-                },
+            self._publish(game_time, MinuteChange(
+                day=self._day,
+                hour=self._hour,
+                minute=current_minute,
+                game_time=game_time,
             ))
 
     def day_at(self, game_time: int) -> int:
