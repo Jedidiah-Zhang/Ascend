@@ -14,10 +14,12 @@ from .affected import AffectedParty
 from .archive import EventArchive
 from .event import Event, LocationFilter, WorldEvent
 from .graph import EventGraph
+from .scope import SubscriptionScope
 from .tree import WorldTree
 
 # 模块级世界树单例，各模块通过此实例通信
 world_tree = WorldTree()
 
 __all__ = ["world_tree", "Event", "LocationFilter", "AffectedParty",
-           "WorldEvent", "EventGraph", "WorldTree", "EventArchive"]
+           "WorldEvent", "EventGraph", "WorldTree", "EventArchive",
+           "SubscriptionScope"]

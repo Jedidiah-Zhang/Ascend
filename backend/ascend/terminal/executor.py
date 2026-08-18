@@ -17,6 +17,7 @@
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from ascend.world_tree import world_tree
 from ascend.log import get_logger
@@ -33,6 +34,36 @@ from .weather_commands import WeatherCommandsMixin
 logger = get_logger(__name__)
 
 
+@dataclass
+class ExecutorConfig:
+    """指令执行器的可选运行时服务依赖。
+
+    集中承载指令组依赖的运行时服务（weather/entity/continent 等），
+    替代构造时散落的长参数列表——新增指令组只需在此加字段，
+    构造签名不变。
+
+    Attributes:
+        weather_engine: WeatherEngine 实例，用于 weather 指令。
+        default_chunk: weather/entity 指令省略坐标时的默认 chunk。
+        player_service: PlayerService 实例，用于 tp 指令。
+        entity_manager: EntityManager 实例，用于 entity 指令。
+        continent_path: 大陆缓存文件路径（存档内 continent.bin），
+            用于 continent 指令；None = 无存档模式。
+        gen_fingerprint_fn: 无参回调，返回当前生成环境指纹，
+            用于 continent status 漂移诊断。
+        world_tree: WorldTree 实例（测试注入隔离），
+            默认使用模块级单例。
+    """
+
+    weather_engine: object = None
+    default_chunk: tuple[int, int] | None = None
+    player_service: object = None
+    entity_manager: object = None
+    continent_path: str | None = None
+    gen_fingerprint_fn: object = None
+    world_tree: object = None
+
+
 class CommandExecutor(
     TimeCommandsMixin,
     WeatherCommandsMixin,
@@ -46,7 +77,8 @@ class CommandExecutor(
     注入新指令，不修改核心代码。
 
     Usage:
-        executor = CommandExecutor(clock, calendar, I18n())
+        executor = CommandExecutor(clock, calendar, I18n(),
+                                   config=ExecutorConfig(...))
         result = executor.execute("status")
         print(result.output)
     """
@@ -59,41 +91,31 @@ class CommandExecutor(
         clock: WorldClock,
         calendar: GameCalendar,
         i18n: I18n,
-        weather_engine=None,
-        default_chunk: tuple[int, int] | None = None,
-        player_service=None,
-        entity_manager=None,
-        continent_path: str | None = None,
-        gen_fingerprint_fn=None,
-        world_tree_arg=None,
+        config: ExecutorConfig | None = None,
     ) -> None:
         """初始化指令执行器。
+
+        核心依赖（时钟/日历/国际化）为必选参数；可选运行时服务
+        （天气/实体/玩家/大陆等）经 ExecutorConfig 聚合传入。
 
         Args:
             clock: 世界时钟实例。
             calendar: 游戏日历实例。
             i18n: 国际化实例。
-            weather_engine: 可选的 WeatherEngine 实例，用于 weather 指令。
-            default_chunk: weather 指令省略坐标时的默认 chunk（通常为出生点）。
-            player_service: 可选的 PlayerService 实例，用于 tp 指令。
-            entity_manager: 可选的 EntityManager 实例，用于 entity 指令。
-            continent_path: 可选的大陆缓存文件路径（存档内 continent.bin），
-                用于 continent 指令；None = 无存档模式。
-            gen_fingerprint_fn: 可选的无参回调，返回当前生成环境指纹，
-                用于 continent status 漂移诊断。
-            world_tree_arg: 可选的 WorldTree 实例（测试注入隔离），
-                默认使用模块级单例。
+            config: 可选运行时服务依赖；None = 全部缺省
+                （weather/entity/continent 等指令不可用）。
         """
+        config = config or ExecutorConfig()
         self._clock = clock
         self._calendar = calendar
         self._i18n = i18n
-        self._weather = weather_engine
-        self._default_chunk = default_chunk or (0, 0)
-        self._player = player_service
-        self._entities = entity_manager
-        self._continent_path = continent_path
-        self._gen_fingerprint_fn = gen_fingerprint_fn
-        self._wt = world_tree_arg if world_tree_arg is not None else world_tree
+        self._weather = config.weather_engine
+        self._default_chunk = config.default_chunk or (0, 0)
+        self._player = config.player_service
+        self._entities = config.entity_manager
+        self._continent_path = config.continent_path
+        self._gen_fingerprint_fn = config.gen_fingerprint_fn
+        self._wt = config.world_tree if config.world_tree is not None else world_tree
         self._active_real_time: float = 0.0
 
         # 指令路由表：{cmd_name: handler_func(args) -> CommandResult}

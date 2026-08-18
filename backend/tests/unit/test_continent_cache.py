@@ -106,7 +106,7 @@ class TestContinentSerialize:
         from unittest import mock
 
         with mock.patch(
-            "ascend.space.continent.CONTINENT_CACHE_VERSION",
+            "ascend.space.continent_io.CONTINENT_CACHE_VERSION",
             CONTINENT_CACHE_VERSION + 1,
         ):
             stale = serialize_continent(original)

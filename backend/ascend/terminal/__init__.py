@@ -5,7 +5,7 @@
 指令组实现按 mixin 拆分至 *_commands.py。
 """
 
-from .executor import CommandExecutor
+from .executor import CommandExecutor, ExecutorConfig
 from .result import CommandResult
 
-__all__ = ["CommandExecutor", "CommandResult"]
+__all__ = ["CommandExecutor", "ExecutorConfig", "CommandResult"]

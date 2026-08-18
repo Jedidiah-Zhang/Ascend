@@ -25,6 +25,8 @@ import random
 import threading
 import time as _real_time
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -43,6 +45,7 @@ from ascend.config import (
     WT_GRAPH_WARMUP_EVENTS,
     SAVE_ROOT,
     SAVE_PULSE_INTERVAL,
+    TILE_WORKERS,
 )
 from ascend.log import get_logger
 from ascend.net import GameServer, MessageDispatcher, EventBridge
@@ -62,6 +65,7 @@ from ascend.weather import WeatherEngine
 from ascend.terminal import CommandExecutor
 from ascend.time import WorldClock, GameCalendar
 from ascend.i18n import I18n
+from ascend.lifecycle import LifecycleStack
 from ascend.world_tree import world_tree, Event, AffectedParty, WorldEvent
 from ascend.save import SaveManager, collect_state, aligned_time, apply_clock, apply_player
 
@@ -134,6 +138,31 @@ class GameEngine:
         self._service_mode: bool = False      # 服务模式：仅网络+存档，无世界
         self._running: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
+        # 装配/拆卸生命周期栈：装配时登记逆操作，拆卸时按逆序回滚
+        # （世界层与网络层分开，见 start/_ensure_network/_cleanup_*）
+        self._world_stack: LifecycleStack = LifecycleStack()
+        self._net_stack: LifecycleStack = LifecycleStack()
+
+    def _unset(
+        self, attr: str, teardown: Callable[[], None] | None = None,
+    ) -> Callable[[], None]:
+        """构造逆操作：先执行 teardown（若有）再清除属性引用。
+
+        供生命周期栈 push 使用——装配时登记，拆卸逆序执行时
+        先释放资源再清引用（避免 teardown 后属性仍指向已关闭实例）。
+
+        Args:
+            attr: 引擎属性名（装配时已赋值，拆卸时置 None）。
+            teardown: 可选资源释放回调（如 calendar.shutdown）。
+
+        Returns:
+            无参逆操作闭包。
+        """
+        def _invoke() -> None:
+            if teardown is not None:
+                teardown()
+            setattr(self, attr, None)
+        return _invoke
 
     def __repr__(self) -> str:
         """返回引擎状态摘要。
@@ -226,6 +255,10 @@ class GameEngine:
             self.dispatcher.register(req_type, handler)
         self.event_bridge = EventBridge(world_tree, self.server)
         self.event_bridge.install()
+        # 登记网络层逆操作（逆序回滚：bridge → server → dispatcher）
+        self._net_stack.push(self._unset("event_bridge", self.event_bridge.uninstall))
+        self._net_stack.push(self._unset("server", self.server.stop))
+        self._net_stack.push(self._unset("dispatcher"))
         logger.info("网络层已就绪: %s:%d", SERVER_HOST, SERVER_PORT)
 
     def _ensure_tick_thread(self) -> None:
@@ -289,6 +322,7 @@ class GameEngine:
         if self.calendar is not None:
             self.calendar.shutdown()
         self.calendar = GameCalendar(clock=self.clock)
+        self._world_stack.push(self._unset("calendar", self.calendar.shutdown))
 
         # 1. 种子（seed=0 仅在无存档模式启动时随机；存档世界在
         # create_world 时已定案——见 SaveManager.create_world）。
@@ -314,12 +348,14 @@ class GameEngine:
             land_ratio=land_ratio, width_km=width_km, height_km=height_km,
             ignore_cache=self._regen_continent,
         )
+        self._world_stack.push(self._unset("world_gen"))
         continent = self.world_gen.ensure_continent(
             progress_cb=self._broadcast_world_progress,
         )
         self.tile_generator = TileGenerator(
             seed=self.seed, continent=continent,
         )
+        self._world_stack.push(self._unset("tile_generator"))
         logger.info("大陆生成完成: %s", continent)
 
         # 3. 出生点（读档优先用存档中的出生点）
@@ -338,6 +374,7 @@ class GameEngine:
             db_path, max_size=CHUNK_STORE_MAX_SIZE,
             on_evict=self._on_chunk_evicted,
         )
+        self._world_stack.push(self._unset("chunk_store", self.chunk_store.close))
         # 读档防篡改（设计文档承诺）：明文 SQLite 靠完整性校验兜底
         if self.world_id:
             try:
@@ -357,6 +394,7 @@ class GameEngine:
 
         # 5. 实体管理器（接入事件管线）
         self.entity_manager = EntityManager()
+        self._world_stack.push(self._unset("entity_manager"))
 
         # 5a. 权威玩家实体（读档静默恢复，不发布 entity_born）
         # 地图为有界矩形：chunk 坐标 ∈ [0, grid//2)，玩家坐标越界钳制
@@ -367,6 +405,7 @@ class GameEngine:
                 continent.grid_height // 2,
             ),
         )
+        self._world_stack.push(self._unset("player_service"))
         player_state = (
             self._load_state.get("player", {}) if self._load_state else {}
         )
@@ -378,6 +417,9 @@ class GameEngine:
 
         # 5b. 天气引擎（接入已加载 chunk 的天气基线）
         self.weather_engine = WeatherEngine(self.clock, seed=self.seed)
+        self._world_stack.push(
+            self._unset("weather_engine", self.weather_engine.shutdown)
+        )
         for (cx, cy), chunk in self.chunk_store.items():
             self.weather_engine.register_chunk(
                 cx, cy, chunk.annual_baseline, chunk.climate_zone,
@@ -386,16 +428,26 @@ class GameEngine:
         logger.info("天气引擎已接入 %d 个 chunk", len(self.chunk_store))
 
         # 8. 终端指令执行器
+        from ascend.terminal.executor import ExecutorConfig
         self._executor = CommandExecutor(
-            clock=self.clock,
-            calendar=self.calendar,
-            i18n=self.i18n,
-            weather_engine=self.weather_engine,
-            default_chunk=self.birth_chunk,
-            player_service=self.player_service,
-            entity_manager=self.entity_manager,
-            continent_path=continent_cache_path,
-            gen_fingerprint_fn=compute_gen_fingerprint,
+            self.clock, self.calendar, self.i18n,
+            config=ExecutorConfig(
+                weather_engine=self.weather_engine,
+                default_chunk=self.birth_chunk,
+                player_service=self.player_service,
+                entity_manager=self.entity_manager,
+                continent_path=continent_cache_path,
+                gen_fingerprint_fn=compute_gen_fingerprint,
+            ),
+        )
+        self._world_stack.push(self._unset("_executor"))
+
+        # 8a. tile 生成线程池（服务世界观；随引擎停止回收）
+        self._tile_pool = ThreadPoolExecutor(
+            max_workers=TILE_WORKERS, thread_name_prefix="tile-gen"
+        )
+        self._world_stack.push(
+            self._unset("_tile_pool", self._tile_pool.shutdown)
         )
 
         # 8b. 世界观处理程序（进程内只注册一次；save 处理程序已在
@@ -526,42 +578,23 @@ class GameEngine:
         停服是世界外操作：不发 entity_died（那会向因果历史写入虚假
         死亡），直接释放内存；实体状态持久化是存档系统的职责。
 
+        先提交再回滚：await_async（等待异步回调）+ 最终保存（依赖
+        各子系统存活）在前，随后按装配逆序执行世界层生命周期栈——
+        "后创建的先销毁"由栈派生，无需手写清单。
+
         网络层（服务器/分发器/事件桥）在此保留，由 _cleanup 统一
         释放（读档重建时 stop() 的清理顺序复用本方法）。
         """
         world_tree.await_async()
         self._final_pulse()
-        if self.calendar:
-            self.calendar.shutdown()
-            self.calendar = None
-        if self.weather_engine:
-            self.weather_engine.shutdown()
-            self.weather_engine = None
-        self.player_service = None
-        self.entity_manager = None
-        self.tile_generator = None
-        # 注：显式 is not None —— ChunkStore 定义 __len__，空缓存时
-        # bool(store) 为 False，真值判断会静默跳过 close（回归测试暴露）
-        if self.chunk_store is not None:
-            self.chunk_store.close()
-            self.chunk_store = None
-        if self.world_gen:
-            self.world_gen = None
-        if self._executor:
-            self._executor = None
+        self._world_stack.teardown()
         self._load_state = None
         logger.info("世界观已清理（网络层保留）")
 
     def _cleanup(self) -> None:
         """完全停止：世界观 + 网络层。"""
         self._cleanup_world()
-        if self.event_bridge:
-            self.event_bridge.uninstall()
-            self.event_bridge = None
-        if self.server:
-            self.server.stop()
-            self.server = None
-        self.dispatcher = None
+        self._net_stack.teardown()
         logger.info("游戏引擎已停止")
 
     def _on_chunk_evicted(self, cx: int, cy: int) -> None:
@@ -718,6 +751,7 @@ class GameEngine:
             self.world_gen, tile_gen=self.tile_generator,
             chunk_store=self.chunk_store,
             weather_engine=self.weather_engine,
+            tile_pool=self._tile_pool,
         ))
         handlers.update(make_weather_handler(self.weather_engine, self.i18n))
         handlers.update(make_player_handler(self.player_service))

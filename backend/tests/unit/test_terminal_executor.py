@@ -5,7 +5,7 @@
 """
 
 import pytest
-from ascend.terminal import CommandExecutor, CommandResult
+from ascend.terminal import CommandExecutor, ExecutorConfig, CommandResult
 from ascend.time import GAME_HOUR
 
 
@@ -62,7 +62,9 @@ def executor_weather(clock, calendar, i18n, weather_engine):
     """含 WeatherEngine + 默认 chunk (0,0) 的 CommandExecutor 固件。"""
     return CommandExecutor(
         clock=clock, calendar=calendar, i18n=i18n,
-        weather_engine=weather_engine, default_chunk=(0, 0),
+        config=ExecutorConfig(
+            weather_engine=weather_engine, default_chunk=(0, 0),
+        ),
     )
 
 
@@ -668,7 +670,7 @@ class TestTeleportCommand:
         """含 PlayerService 的 CommandExecutor 固件。"""
         return CommandExecutor(
             clock=clock, calendar=calendar, i18n=i18n,
-            player_service=player_service,
+            config=ExecutorConfig(player_service=player_service),
         )
 
     def test_tp_without_service(self, executor):
@@ -767,7 +769,7 @@ class TestEntityCommand:
         """含 EntityManager 的 CommandExecutor 固件。"""
         return CommandExecutor(
             clock=clock, calendar=calendar, i18n=i18n,
-            entity_manager=entity_manager,
+            config=ExecutorConfig(entity_manager=entity_manager),
         )
 
     def test_entity_without_manager(self, executor):
@@ -856,7 +858,9 @@ class TestEntityCommand:
         svc.move_to(77.5, 88.5)
         executor = CommandExecutor(
             clock=clock, calendar=calendar, i18n=i18n,
-            player_service=svc, entity_manager=manager,
+            config=ExecutorConfig(
+                player_service=svc, entity_manager=manager,
+            ),
         )
         result = executor.execute("entity birth plant")
         assert result.success is True
@@ -923,7 +927,8 @@ class TestEntityCommand:
             EntityType.CREATURE, 0, 0, 0, 0, controller=Controller.PLAYER,
         )
         executor = CommandExecutor(
-            clock=clock, calendar=calendar, i18n=i18n, entity_manager=manager,
+            clock=clock, calendar=calendar, i18n=i18n,
+            config=ExecutorConfig(entity_manager=manager),
         )
         result = executor.execute(f"entity death {player.id[:8]}")
         assert result.success is False
@@ -1221,8 +1226,10 @@ class TestContinentCommand:
     def _executor_with(self, clock, calendar, i18n, tmp_path, fp="cur-fp"):
         return CommandExecutor(
             clock=clock, calendar=calendar, i18n=i18n,
-            continent_path=str(tmp_path / "continent.bin"),
-            gen_fingerprint_fn=lambda: fp,
+            config=ExecutorConfig(
+                continent_path=str(tmp_path / "continent.bin"),
+                gen_fingerprint_fn=lambda: fp,
+            ),
         )
 
     @staticmethod

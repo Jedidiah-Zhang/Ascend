@@ -234,7 +234,7 @@ class TestSaveSnapshotDelete:
         b = manager.create_snapshot(world_id, suffix="manual")
         c1 = manager.create_snapshot(world_id, suffix="manual")
         c1a = manager.create_snapshot(world_id, suffix="manual")
-        manager.set_live_origin(world_id, b)
+        manager._set_live_origin(world_id, b)
         c2 = manager.create_snapshot(world_id, suffix="manual")
         return world_id, {"a": a, "b": b, "c1": c1, "c1a": c1a, "c2": c2}
 

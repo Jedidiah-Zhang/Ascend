@@ -3,10 +3,9 @@
 通过订阅 "*" 通配符监听所有事件，转换为 JSON 消息广播给连接的前端。
 """
 
-from collections.abc import Callable
-
 from ascend.log import get_logger
 from ascend.time.calendar import tick_to_hms
+from ascend.world_tree import SubscriptionScope
 from ascend.world_tree.event import Event
 from ascend.net.server import GameServer
 
@@ -35,7 +34,7 @@ class EventBridge:
         self._world_tree = world_tree
         self._server: GameServer = server
         self._installed: bool = False
-        self._unsubscribe: Callable[[], None] | None = None
+        self._scope: SubscriptionScope | None = None
 
     def __repr__(self) -> str:
         """返回桥接器状态。
@@ -52,7 +51,8 @@ class EventBridge:
         """
         if self._installed:
             return
-        self._unsubscribe = self._world_tree.subscribe("*", self._forward)
+        self._scope = SubscriptionScope()
+        self._scope.subscribe(self._world_tree, "*", self._forward)
         self._installed = True
         logger.info("EventBridge 已安装，开始转发事件")
 
@@ -63,9 +63,9 @@ class EventBridge:
         """
         if not self._installed:
             return
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
+        if self._scope:
+            self._scope.close()
+            self._scope = None
         self._installed = False
         logger.info("EventBridge 已卸载")
 

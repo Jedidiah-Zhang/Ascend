@@ -4,7 +4,7 @@
 检测到分钟/小时/天边界后发布对应的语义事件到 WorldTree。
 """
 
-from ascend.world_tree import world_tree, Event, AffectedParty, WorldEvent
+from ascend.world_tree import world_tree, Event, AffectedParty, WorldEvent, SubscriptionScope
 from ascend.log import get_logger
 from .clock import WorldClock
 from .events import DayChange, DayEnd, HourChange, MinuteChange
@@ -70,8 +70,9 @@ class GameCalendar:
         self._hour_change_count: int = 0
         self._last_game_time: int = 0
 
-        self._unsub_tick = clock.on_tick(self._on_tick_advance)
-        self._unsub_skip = clock.on_skip(self._on_skip_advance)
+        self._scope = SubscriptionScope()
+        self._scope.capture(clock.on_tick(self._on_tick_advance))
+        self._scope.capture(clock.on_skip(self._on_skip_advance))
 
         logger.debug("日历初始化: day=%d", self._day)
 
@@ -223,8 +224,7 @@ class GameCalendar:
 
     def shutdown(self) -> None:
         """取消订阅，释放资源。"""
-        self._unsub_tick()
-        self._unsub_skip()
+        self._scope.close()
         logger.debug("日历已关闭: day=%d", self._day)
 
     def __repr__(self) -> str:

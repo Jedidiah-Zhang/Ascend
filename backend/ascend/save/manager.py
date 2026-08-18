@@ -441,8 +441,11 @@ class SaveManager:
         self._validate_world_id(world_id)
         return self._lineage.get(world_id)
 
-    def set_live_origin(self, world_id: str, snapshot_file: str) -> None:
-        """记录活目录来源：回滚后调用，标记当前时间点从该快照派生。"""
+    def _set_live_origin(self, world_id: str, snapshot_file: str) -> None:
+        """记录活目录来源：回滚后调用，标记当前时间点从该快照派生。
+
+        内部实现细节：仅快照展开（extract）路径使用，外部不直接调用。
+        """
         self._validate_world_id(world_id)
         self._lineage.set_live_origin(world_id, snapshot_file)
 
@@ -509,7 +512,7 @@ class SaveManager:
             return filename
         # 保留策略：每次创建后淘汰超量快照（失败不阻断快照本身）
         try:
-            self.prune_snapshots(world_id)
+            self._prune_snapshots(world_id)
         except OSError as exc:
             logger.warning("快照保留策略执行失败: %s (%s)", world_id, exc)
         return filename
@@ -613,7 +616,7 @@ class SaveManager:
             logger.warning("晋升后旧 auto 文件删除失败: %s (%s)", origin, exc)
         logger.info("晋升快照: %s %s → %s", world_id, origin, filename)
         try:
-            self.prune_snapshots(world_id)
+            self._prune_snapshots(world_id)
         except OSError as exc:
             logger.warning("快照保留策略执行失败: %s (%s)", world_id, exc)
         return filename
@@ -627,7 +630,7 @@ class SaveManager:
         except (SaveFormatError, SaveCryptoError):
             return 0
 
-    def refresh_snapshot(
+    def _refresh_snapshot(
         self, world_id: str, filename: str, *, game_time: int | None = None,
     ) -> None:
         """把活目录当前状态重打包进既有快照（auto 节点原地冻结）。
@@ -636,6 +639,9 @@ class SaveManager:
         血缘位置不变（parent/seq 保留），内容与 game_time/saved_at
         刷新为离开时刻的活状态——离开当前线时用它原地记录进度，
         不新建节点、不产生下游（时间线分叉只发生在手动节点处）。
+
+        内部实现细节：由 enter_snapshot 的"冻结离开记录"步骤调用，
+        外部不直接调用。
 
         Args:
             world_id: 世界 ID。
@@ -702,7 +708,7 @@ class SaveManager:
                 # 冻结离开的当前记录（auto 是滚动记录：原地刷新，不新建）；
                 # 异常态（文件缺失等）降级继续，不阻断回滚
                 try:
-                    self.refresh_snapshot(world_id, origin)
+                    self._refresh_snapshot(world_id, origin)
                 except (SaveFormatError, OSError):
                     logger.warning(
                         "冻结离开记录失败，继续展开: %s/%s", world_id, origin,
@@ -801,7 +807,7 @@ class SaveManager:
         子树定义 = 节点 + 后代（血缘森林中沿 parent 链可到达该节点的
         全体节点）；兄弟分支（parent 相同但非该节点后代）不在删除集内。
         删除集算完统一走 remove_snapshots 原语，与保留策略（
-        prune_snapshots）无耦合。
+        _prune_snapshots）无耦合。
 
         Args:
             world_id: 世界 ID。
@@ -833,23 +839,15 @@ class SaveManager:
             stack.extend(children.get(cur, []))
         return self.remove_snapshots(world_id, removed)
 
-    def delete_snapshot(self, world_id: str, filename: str) -> None:
-        """删除单个快照并重接血缘父链（子树提升）— 单点便捷入口。
-
-        实现 = remove_snapshots(world_id, [filename])：删除集为单点，
-        血缘重接、live_origin 回退与文件容忍语义由原语统一保证。
-
-        Raises:
-            OSError: 快照文件删除失败（血缘已先行自洽重接）。
-        """
-        self.remove_snapshots(world_id, [filename])
-
-    def prune_snapshots(
+    def _prune_snapshots(
         self, world_id: str, *,
         keep_auto: int = AUTO_SNAPSHOT_KEEP,
         keep_quit: int = QUIT_SNAPSHOT_KEEP,
     ) -> int:
         """按保留策略淘汰超量快照（手动快照永久保留）。
+
+        内部实现细节：每次创建/晋升快照后由编排路径调用，
+        外部不直接调用。
 
         规则：
           - auto（当前/冻结记录）环形保留最近 keep_auto 个；
@@ -1153,7 +1151,7 @@ class SaveManager:
             if self._move_preserved_assets(backup, wdir):
                 # 资产已全部搬入，旧活目录可安全抛弃；先记录活目录来源
                 # 再删墓碑——两者之间崩溃时墓碑仍在，自愈重写同值幂等
-                self.set_live_origin(world_id, os.path.basename(snapshot_path))
+                self._set_live_origin(world_id, os.path.basename(snapshot_path))
                 shutil.rmtree(backup, ignore_errors=True)
                 self._remove_extract_pending(marker_path)
             else:
@@ -1161,7 +1159,7 @@ class SaveManager:
                 # 立即移除——回滚已返回，活目录可能继续产生新血缘，
                 # 自愈时不得再回写 live_origin（见 _recover_interrupted_extract）
                 if os.path.isfile(os.path.join(wdir, LINEAGE_FILE)):
-                    self.set_live_origin(world_id, os.path.basename(snapshot_path))
+                    self._set_live_origin(world_id, os.path.basename(snapshot_path))
                 self._remove_extract_pending(marker_path)
                 logger.warning(
                     "回滚资产搬运未完成，墓碑保留待下次启动自愈: %s", world_id,
@@ -1397,7 +1395,7 @@ class SaveManager:
             # 标记存在 ⟹ 进程死于回滚收尾之前（活目录不可能产生
             # 新血缘——软失败路径返回前已移除标记），重写 live_origin
             # 恒为幂等（要么尚未写过、要么同值）
-            self.set_live_origin(world_id, snap_name)
+            self._set_live_origin(world_id, snap_name)
         shutil.rmtree(backup, ignore_errors=True)
         self._remove_extract_pending(marker_path)
         logger.warning("已补全上次中断的回滚并清理旧目录: %s", world_id)
@@ -1470,11 +1468,6 @@ class SaveManager:
         )
 
     # ── 协作者转发 ─────────────────────────────────────
-
-    @staticmethod
-    def snapshot_kind(filename: str) -> str:
-        """转发到 SnapshotStore.snapshot_kind：快照来源标识解析。"""
-        return SnapshotStore.snapshot_kind(filename)
 
     def _write_lineage(self, world_id: str, lineage: dict) -> bool:
         """转发到 LineageStore.write：血缘文件原子写入。"""

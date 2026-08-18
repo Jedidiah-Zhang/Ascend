@@ -23,7 +23,7 @@ from ascend.space import (
     WeatherParams, ClimateZone, SeasonalityMode, get_climate_template, clamp,
 )
 from ascend.time import WorldClock
-from ascend.world_tree import world_tree as _default_wt, Event, AffectedParty, WorldEvent
+from ascend.world_tree import world_tree as _default_wt, Event, AffectedParty, WorldEvent, SubscriptionScope
 
 from ascend.config import (
     TILE_MAP_SIZE,
@@ -342,7 +342,8 @@ class WeatherEngine:
         self._rain_schedules: dict[tuple[int, int], RainSchedule] = {}
         self._modifier_schedules: dict[tuple[int, int, str], ModifierSchedule] = {}
         self._last_season: int | None = None
-        self._unsub = self._wt.subscribe("minute_change", self._on_minute_change)
+        self._scope = SubscriptionScope()
+        self._scope.subscribe(self._wt, "minute_change", self._on_minute_change)
         logger.debug("天气引擎初始化 seed=%d", seed)
 
     @property
@@ -445,7 +446,7 @@ class WeatherEngine:
 
     def shutdown(self) -> None:
         """取消订阅，释放资源。"""
-        self._unsub()
+        self._scope.close()
         logger.debug("天气引擎已关闭")
 
     # ── 公开：查询 API ──────────────────────────────────────────

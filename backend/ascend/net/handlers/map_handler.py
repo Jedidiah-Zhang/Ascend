@@ -13,15 +13,16 @@ from ascend.net.handlers import parse_coord
 
 logger = get_logger(__name__)
 
-# 模块级持久化线程池（P2-04：复用而非每请求新建；线程惰性创建，
-# 仅在 submit 时才派生，固定 max_workers 无实际开销）
-_TILE_POOL = ThreadPoolExecutor(
+# 默认 tile 生成线程池（模块级兜底：独立使用/测试时未注入引擎池）。
+# 生产路径由 GameEngine 注入自有池子并负责关闭（见 game.py），
+# 本默认池仅作兼容，生命周期不归任何模块显式管理。
+_DEFAULT_TILE_POOL = ThreadPoolExecutor(
     max_workers=TILE_WORKERS, thread_name_prefix="tile-gen"
 )
 
 
 def make_map_handlers(gen, tile_gen=None, chunk_store=None,
-                      weather_engine=None):
+                      weather_engine=None, tile_pool=None):
     """为给定的 WorldGenerator 创建地图相关的请求处理程序。
 
     Args:
@@ -29,6 +30,8 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
         tile_gen: TileGenerator 实例（可选），提供时支持 include_tiles。
         chunk_store: ChunkStore 实例，LRU 缓存 + SQLite 持久化。
         weather_engine: WeatherEngine 实例（可选），动态生成 chunk 时自动注册天气。
+        tile_pool: tile 生成线程池（可选）；None 用模块级默认池。
+            生产路径由 GameEngine 注入自有池子并负责其关闭。
 
     Returns:
         一个字典，将 request_type 字符串映射到处理函数。
@@ -124,8 +127,9 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
         if include_tiles and tile_gen is not None:
             tiles_needed = [c for c in ordered if not c.has_tiles]
             if tiles_needed:
+                pool = tile_pool if tile_pool is not None else _DEFAULT_TILE_POOL
                 futures = [
-                    _TILE_POOL.submit(_generate_tiles, c) for c in tiles_needed
+                    pool.submit(_generate_tiles, c) for c in tiles_needed
                 ]
                 for future in as_completed(futures):
                     future.result()
