@@ -66,6 +66,22 @@ func test_apply_locale_changes_server_locale() -> void:
 	assert_eq(TranslationServer.get_locale(), "en_US")
 
 
+# ── apply_fps_limit ─────────────────────────────────────────
+
+func test_apply_fps_limit_sets_engine_max_fps() -> void:
+	var prev: int = Engine.max_fps
+	SettingsApplier.apply_fps_limit(144)
+	assert_eq(Engine.max_fps, 144, "Engine.max_fps 应更新")
+	SettingsApplier.apply_fps_limit(prev)
+
+
+func test_apply_fps_limit_zero_means_unlimited() -> void:
+	var prev: int = Engine.max_fps
+	SettingsApplier.apply_fps_limit(0)
+	assert_eq(Engine.max_fps, 0, "0 = 不限")
+	SettingsApplier.apply_fps_limit(prev)
+
+
 # ── apply_display（headless 安全） ──────────────────────────
 
 func test_apply_display_headless_noop() -> void:

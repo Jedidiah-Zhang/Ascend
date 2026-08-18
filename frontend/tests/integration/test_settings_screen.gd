@@ -31,6 +31,7 @@ func after_each() -> void:
 	_screen.queue_free()
 	_facade.free()
 	_facade = null
+	Engine.max_fps = 0
 	TranslationServer.set_locale(_prev_locale)
 	DirAccess.remove_absolute(TEST_PATH)
 
@@ -120,6 +121,54 @@ func test_windowed_reenables_resolution() -> void:
 	_screen._on_mode_selected(SettingsStore.WINDOW_MODES.find("windowed"))
 	assert_false(_screen._resolution_option.disabled)
 	assert_false(_screen._resolution_hint.visible)
+
+
+# ── 帧率上限档位 ────────────────────────────────────────────
+
+func test_fps_option_synced_on_open() -> void:
+	var limit: int = _facade.get_fps_limit()
+	assert_eq(int(_screen._fps_option.get_item_metadata(_screen._fps_option.selected)),
+		limit, "下拉框应反映当前帧率档位")
+
+	_facade.set_fps_limit(120)
+	_screen._refresh_fps()
+	assert_eq(int(_screen._fps_option.get_item_metadata(_screen._fps_option.selected)),
+		120, "门面 120 帧应选中对应档位")
+
+
+func test_fps_option_selection_persists_and_applies() -> void:
+	# 选非默认档位（索引 0 = 不限，会被门面幂等守卫拦截为 no-op）
+	var target: int = int(_screen._fps_option.get_item_metadata(1))
+	assert_ne(target, _facade.get_fps_limit(), "索引 1 应非默认档位")
+	watch_signals(_facade)
+	_screen._on_fps_selected(1)
+	assert_eq(_facade.get_fps_limit(), target, "帧率上限应生效")
+	assert_eq(Engine.max_fps, target, "Engine.max_fps 应立即生效")
+	assert_signal_emitted(_facade, "fps_limit_changed")
+	var reloaded := SettingsStore.new(TEST_PATH)
+	reloaded.load()
+	assert_eq(reloaded.get_value("display/fps_limit"), target, "应落盘")
+
+
+func test_fps_option_unlimited_applies_zero() -> void:
+	_facade.set_fps_limit(60)
+	_screen._refresh_fps()
+	var unlimited_index: int = SettingsStore.fps_presets().find(0)
+	assert_eq(int(_screen._fps_option.get_item_metadata(_screen._fps_option.selected)),
+		60, "前置：60 帧档位已选中")
+	_screen._on_fps_selected(unlimited_index)
+	assert_eq(_facade.get_fps_limit(), 0, "不限档位应存 0")
+	assert_eq(Engine.max_fps, 0, "Engine.max_fps 应为 0（不限）")
+	assert_eq(_screen._fps_option.get_item_text(unlimited_index),
+		tr("ui.settings.fps.unlimited"), "不限档位文案应为「不限」")
+
+
+func test_fps_option_items_cover_all_presets() -> void:
+	assert_eq(_screen._fps_option.item_count, SettingsStore.fps_presets().size(),
+		"下拉框应覆盖全部档位")
+	for i in _screen._fps_option.item_count:
+		assert_eq(int(_screen._fps_option.get_item_metadata(i)),
+			SettingsStore.fps_presets()[i], "档位顺序应与预设一致")
 
 
 # ── 按键捕获 ────────────────────────────────────────────────

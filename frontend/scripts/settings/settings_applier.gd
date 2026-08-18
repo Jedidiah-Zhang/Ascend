@@ -17,15 +17,34 @@ static func apply_display(resolution: String, window_mode: String) -> void:
 		size = SettingsStore.parse_resolution(SettingsStore.DEFAULTS["display/resolution"])
 	match window_mode:
 		"fullscreen":
-			DisplayServer.window_set_size(size)
+			_set_window_size(size)
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
 		"borderless":
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 		_:  # windowed
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 			DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, false)
-			DisplayServer.window_set_size(size)
+			_set_window_size(size)
 			_center_window(size)
+
+
+## 运行时改窗口尺寸必须走 Window.size 而非 DisplayServer.window_set_size：
+## X11 下后者的 OS 窗口实际会变，但 Godot 内部 Window 收不到尺寸事件，
+## 视口拉伸矩形（stretch 缩放）不会重算 → UI 不随窗口缩放。
+static func _set_window_size(size: Vector2i) -> void:
+	var window: Window = _main_window()
+	if window != null:
+		window.size = size
+	else:
+		DisplayServer.window_set_size(size)
+
+
+## 主窗口（运行期 SceneTree.root；非 SceneTree 环境回退 DisplayServer）。
+static func _main_window() -> Window:
+	var loop: MainLoop = Engine.get_main_loop()
+	if loop is SceneTree:
+		return (loop as SceneTree).root
+	return null
 
 
 ## 窗口居中到当前屏幕可用区域（任务栏等已排除）。
@@ -55,3 +74,8 @@ static func apply_keybinds(binds: Dictionary) -> void:
 
 static func apply_locale(locale: String) -> void:
 	TranslationServer.set_locale(locale)
+
+
+## 应用帧率上限：0 = 不限。headless 下同样生效（引擎属性，非窗口）。
+static func apply_fps_limit(limit: int) -> void:
+	Engine.max_fps = limit

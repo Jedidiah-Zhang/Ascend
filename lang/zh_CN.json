@@ -174,6 +174,8 @@
   "ui.settings.mode.borderless": "无边框全屏",
   "ui.settings.mode.fullscreen": "独占全屏",
   "ui.settings.resolution_disabled": "无边框全屏使用桌面分辨率",
+  "ui.settings.fps_limit": "帧率上限",
+  "ui.settings.fps.unlimited": "无限制",
   "ui.settings.audio_note": "音频系统尚未上线",
   "ui.settings.action.move_up": "向前移动",
   "ui.settings.action.move_down": "向后移动",

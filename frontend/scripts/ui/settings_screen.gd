@@ -38,6 +38,8 @@ var _resolution_option: OptionButton = null
 var _resolution_hint: Label = null
 var _mode_label: Label = null
 var _mode_option: OptionButton = null
+var _fps_label: Label = null
+var _fps_option: OptionButton = null
 var _keys_list: VBoxContainer = null
 var _keys_status: Label = null
 var _reset_binds_button: Button = null
@@ -267,6 +269,23 @@ func _build_display_tab() -> void:
 	_resolution_hint.theme_type_variation = "MutedLabel"
 	page.add_child(_resolution_hint)
 
+	var fps_row := HBoxContainer.new()
+	fps_row.add_theme_constant_override("separation", 12)
+	page.add_child(fps_row)
+	_fps_label = Label.new()
+	_fps_label.custom_minimum_size = Vector2(110, 0)
+	_fps_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	fps_row.add_child(_fps_label)
+	_fps_option = OptionButton.new()
+	_fps_option.custom_minimum_size = Vector2(220, 0)
+	_fps_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for limit in SettingsStore.fps_presets():
+		var idx: int = _fps_option.item_count
+		_fps_option.add_item(_fps_item_text(limit))  # 文本在 _refresh_texts 重译
+		_fps_option.set_item_metadata(idx, limit)
+	_fps_option.item_selected.connect(_on_fps_selected)
+	fps_row.add_child(_fps_option)
+
 
 func _build_keys_tab() -> void:
 	var page := VBoxContainer.new()
@@ -361,6 +380,9 @@ func _refresh_texts() -> void:
 	for i in _mode_option.item_count:
 		_mode_option.set_item_text(i, tr("ui.settings.mode." + str(_mode_option.get_item_metadata(i))))
 	_resolution_hint.text = tr("ui.settings.resolution_disabled")
+	_fps_label.text = tr("ui.settings.fps_limit")
+	for i in _fps_option.item_count:
+		_fps_option.set_item_text(i, _fps_item_text(int(_fps_option.get_item_metadata(i))))
 	_reset_binds_button.text = tr("ui.settings.reset_binds")
 	_audio_note.text = tr("ui.settings.audio_note")
 
@@ -397,6 +419,7 @@ func _refresh_display() -> void:
 			_mode_option.select(i)
 			break
 	_update_resolution_enabled(mode)
+	_refresh_fps()
 
 
 ## 无边框全屏下分辨率无意义（跟随桌面），禁用并提示。
@@ -404,6 +427,22 @@ func _update_resolution_enabled(mode: String) -> void:
 	var borderless: bool = mode == "borderless"
 	_resolution_option.disabled = borderless
 	_resolution_hint.visible = borderless
+
+
+## 帧率档位下拉与门面同步。
+func _refresh_fps() -> void:
+	var limit: int = _settings().get_fps_limit()
+	for i in _fps_option.item_count:
+		if int(_fps_option.get_item_metadata(i)) == limit:
+			_fps_option.select(i)
+			return
+
+
+## 档位文案：0 = 不限，其余 "%d FPS"。
+func _fps_item_text(limit: int) -> String:
+	if limit == 0:
+		return tr("ui.settings.fps.unlimited")
+	return "%d FPS" % limit
 
 
 ## 按键页整页重建（行数少，重建最省心；同时复位捕获按钮引用）。
@@ -447,6 +486,10 @@ func _on_mode_selected(index: int) -> void:
 	var resolution := str(_resolution_option.get_item_metadata(maxi(_resolution_option.selected, 0)))
 	_update_resolution_enabled(mode)
 	_settings().set_display(resolution, mode)
+
+
+func _on_fps_selected(index: int) -> void:
+	_settings().set_fps_limit(int(_fps_option.get_item_metadata(index)))
 
 
 func _on_remove_bind(action: String, index: int) -> void:

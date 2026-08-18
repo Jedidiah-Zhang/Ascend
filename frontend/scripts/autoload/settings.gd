@@ -14,6 +14,7 @@ signal display_changed
 signal locale_changed(locale: String)
 signal keybinds_changed
 signal debug_mode_changed(enabled: bool)
+signal fps_limit_changed(limit: int)
 
 var store: SettingsStore = null
 var keybinds: KeybindMap = null
@@ -39,6 +40,7 @@ func setup(p_store: SettingsStore, p_catalog: LocaleCatalog = null) -> void:
 	SettingsApplier.apply_keybinds(keybinds.to_dict())
 	var d: Dictionary = get_display()
 	SettingsApplier.apply_display(d["resolution"], d["window_mode"])
+	SettingsApplier.apply_fps_limit(get_fps_limit())
 	_initialized = true
 
 
@@ -84,6 +86,22 @@ func set_display(resolution: String, window_mode: String) -> void:
 	store.save()
 	SettingsApplier.apply_display(resolution, window_mode)
 	display_changed.emit()
+
+
+# ── 帧率上限 ───────────────────────────────────────────────
+
+## 帧率上限：0 = 不限。
+func get_fps_limit() -> int:
+	return int(store.get_value("display/fps_limit"))
+
+
+func set_fps_limit(limit: int) -> void:
+	if limit == get_fps_limit():
+		return
+	store.set_value("display/fps_limit", limit)
+	store.save()
+	SettingsApplier.apply_fps_limit(limit)
+	fps_limit_changed.emit(limit)
 
 
 # ── 调试 ──────────────────────────────────────────────────

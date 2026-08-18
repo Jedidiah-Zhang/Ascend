@@ -47,6 +47,7 @@ func test_load_missing_file_keeps_defaults() -> void:
 	store.load()
 	assert_eq(store.get_value("display/resolution"), "1280x720")
 	assert_eq(store.get_value("display/window_mode"), "windowed")
+	assert_eq(store.get_value("display/fps_limit"), 0, "默认帧率上限应是不限")
 	assert_eq(store.get_value("language/locale"), "zh_CN")
 	assert_eq(store.get_value("debug/debug_mode"), true, "默认调试模式应开启")
 
@@ -165,6 +166,41 @@ func test_sanitize_invalid_debug_mode() -> void:
 	reloaded.load()
 	assert_eq(reloaded.get_value("debug/debug_mode"), true,
 		"非布尔调试模式（手改 cfg）应回退默认开启")
+
+
+# ── 帧率上限 ────────────────────────────────────────────────
+
+func test_fps_limit_roundtrip() -> void:
+	var store := SettingsStore.new(TEST_PATH)
+	store.load()
+	store.set_value("display/fps_limit", 144)
+	assert_eq(store.save(), OK)
+
+	var reloaded := SettingsStore.new(TEST_PATH)
+	reloaded.load()
+	assert_eq(reloaded.get_value("display/fps_limit"), 144, "帧率上限应往返落盘")
+
+
+func test_sanitize_invalid_fps_limit() -> void:
+	var store := SettingsStore.new(TEST_PATH)
+	store.load()
+	store.set_value("display/fps_limit", "banana")
+	store.save()
+	var reloaded := SettingsStore.new(TEST_PATH)
+	reloaded.load()
+	assert_eq(reloaded.get_value("display/fps_limit"), 0, "非整数（手改 cfg）应回退默认（不限）")
+
+	store.set_value("display/fps_limit", -5)
+	store.save()
+	reloaded = SettingsStore.new(TEST_PATH)
+	reloaded.load()
+	assert_eq(reloaded.get_value("display/fps_limit"), 0, "负值应回退默认（不限）")
+
+	store.set_value("display/fps_limit", 99999)
+	store.save()
+	reloaded = SettingsStore.new(TEST_PATH)
+	reloaded.load()
+	assert_eq(reloaded.get_value("display/fps_limit"), 0, "超过上限应回退默认（不限）")
 
 
 func test_is_valid_locale() -> void:

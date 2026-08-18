@@ -15,12 +15,20 @@ extends RefCounted
 const DEFAULTS: Dictionary = {
 	"display/resolution": "1280x720",
 	"display/window_mode": "windowed",
+	"display/fps_limit": 0,
 	"language/locale": "zh_CN",
 	"debug/debug_mode": true,
 }
 
 ## 窗口模式白名单：windowed 窗口化 / borderless 无边框全屏 / fullscreen 独占全屏
 const WINDOW_MODES: Array[String] = ["windowed", "borderless", "fullscreen"]
+
+## 帧率上限最大值（防御手改 cfg 的天文数字导致 Engine.max_fps 异常）。
+const MAX_FPS_LIMIT: int = 1000
+
+## 帧率上限档位：0 = 不限（置于末位）。
+static func fps_presets() -> Array[int]:
+	return [30, 60, 120, 144, 165, 240, 0]
 
 var _path: String = default_path()
 ## 内存值表：键 → Variant（含 "input/<action>" 绑定数组）
@@ -85,13 +93,18 @@ func set_value(key: String, value: Variant) -> void:
 	_values[key] = value
 
 
-## 非法值清洗：窗口模式白名单、分辨率格式、语言格式（xx_XX）、
-## 调试模式布尔类型（手改 cfg 为字符串时回退默认）。
+## 非法值清洗：窗口模式白名单、分辨率格式、帧率上限（0 = 不限，
+## 非负整数）、语言格式（xx_XX）、调试模式布尔类型（手改 cfg 为
+## 字符串时回退默认）。
 func _sanitize() -> void:
 	if not WINDOW_MODES.has(_values.get("display/window_mode")):
 		_values["display/window_mode"] = DEFAULTS["display/window_mode"]
 	if parse_resolution(str(_values.get("display/resolution", ""))) == Vector2i.ZERO:
 		_values["display/resolution"] = DEFAULTS["display/resolution"]
+	if not (_values.get("display/fps_limit") is int) \
+			or _values.get("display/fps_limit") < 0 \
+			or _values.get("display/fps_limit") > MAX_FPS_LIMIT:
+		_values["display/fps_limit"] = DEFAULTS["display/fps_limit"]
 	if not is_valid_locale(str(_values.get("language/locale", ""))):
 		_values["language/locale"] = DEFAULTS["language/locale"]
 	if not (_values.get("debug/debug_mode") is bool):
@@ -128,9 +141,16 @@ static func parse_resolution(text: String) -> Vector2i:
 	return v
 
 
-## 分辨率预设档位。
+## 分辨率预设档位（16:9 与 16:10 混排，按宽度升序）。
 static func resolution_presets() -> Array[String]:
-	return ["1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"]
+	return [
+		"1280x720", "1280x800",
+		"1440x900",
+		"1600x900", "1680x1050",
+		"1920x1080", "1920x1200",
+		"2560x1440", "2560x1600",
+		"3840x2160",
+	]
 
 
 ## 下拉框档位：预设中不超过屏幕尺寸的 + 恒含当前值；
