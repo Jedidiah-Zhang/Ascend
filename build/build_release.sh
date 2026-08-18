@@ -27,6 +27,8 @@ echo "==> [0/3] 同步语言文件到前端项目 ..."
 rm -rf "$ROOT/frontend/lang"
 mkdir -p "$ROOT/frontend/lang"
 cp "$ROOT/lang/"*.json "$ROOT/frontend/lang/"
+# 版本号（单一源 build/nuitka/version.txt）同样拷入进入 PCK，主菜单据此显示
+cp "$ROOT/build/nuitka/version.txt" "$ROOT/frontend/version.txt"
 if $NEED_LINUX; then
   echo "==> [1/3] 导出前端 Linux ..."
   mkdir -p "$ROOT/build/work/exports/linux"
@@ -53,58 +55,10 @@ if $NEED_WIN; then
 fi
 
 # ── 组装 → 冒烟 → 归档 ────────────────────────────────────
-_smoke() {
-  local stage="$1" platform="$2"
-  local port=19081
-  local tmp; tmp="$(mktemp -d)"
-  local logf="$tmp/server.log"
-  local pid ok=""
-  echo "    [冒烟] 启动打包后端，等待端口 $port ..."
-  case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*)
-      # 原生 Windows（CI runner 的 Git Bash）：路径须转 Windows 风格
-      #（msys 的 /c/... 会被 Windows Python 解析为 C:\c\... 而崩溃）
-      local stage_win tmp_win
-      stage_win="$(cygpath -w "$stage")"
-      tmp_win="$(cygpath -w "$tmp")"
-      ASCEND_SERVER_PORT=$port ASCEND_SAVE_ROOT="$tmp_win" \
-        "$stage/server/server.exe" --project-root "$stage_win" >"$logf" 2>&1 &
-      ;;
-    *)
-      if [ "$platform" = "windows" ]; then
-        # Linux 本机构建 Windows 包：wine 冒烟
-        ASCEND_SERVER_PORT=$port ASCEND_SAVE_ROOT="$tmp" \
-          wine "$stage/server/server.exe" --project-root "Z:$(echo "$stage" | sed 's|/|\\|g')" >"$logf" 2>&1 &
-      else
-        ASCEND_SERVER_PORT=$port ASCEND_SAVE_ROOT="$tmp" \
-          "$stage/server/server" --project-root "$stage" >"$logf" 2>&1 &
-      fi
-      ;;
-  esac
-  pid=$!
-  for _ in $(seq 1 45); do
-    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
-      exec 3>&- 3<&-; ok=1; break
-    fi
-    sleep 1
-  done
-  kill "$pid" 2>/dev/null || true
-  pkill -f "$stage/server/server" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
-  if [ -z "$ok" ]; then
-    echo "    [冒烟] 失败：后端未在端口 $port 就绪，日志:" >&2
-    cat "$logf" 2>/dev/null | tail -20 >&2 || true
-    rm -rf "$tmp"
-    exit 1
-  fi
-  rm -rf "$tmp"
-  echo "    [冒烟] 通过"
-}
-
 if $NEED_LINUX; then
   echo "==> [3/3] 组装 + 冒烟 + 归档 Linux ..."
   bash "$ROOT/build/package/assemble_release.sh" linux
-  _smoke "$ROOT/build/work/staging/Ascend-linux" linux
+  bash "$ROOT/build/ci/smoke.sh" "$ROOT/build/work/staging/Ascend-linux" linux
   bash "$ROOT/build/package/linux/make_tar_gz.sh"
   bash "$ROOT/build/package/linux/make_deb.sh"
   bash "$ROOT/build/package/linux/make_rpm.sh"
@@ -114,7 +68,7 @@ fi
 if $NEED_WIN; then
   echo "==> [3/3] 组装 + 冒烟 + 归档 Windows ..."
   bash "$ROOT/build/package/assemble_release.sh" windows
-  _smoke "$ROOT/build/work/staging/Ascend-windows" windows
+  bash "$ROOT/build/ci/smoke.sh" "$ROOT/build/work/staging/Ascend-windows" windows
   bash "$ROOT/build/package/windows/make_zip.sh"
   bash "$ROOT/build/package/windows/make_installer.sh"
   rm -rf "$ROOT/build/work/staging/Ascend-windows"

@@ -202,8 +202,6 @@ func _ready() -> void:
 	_name_input.text_submitted.connect(_on_name_submitted)
 	add_child(_name_input)
 
-	Connection.message_received.connect(_on_message)
-	Connection.connection_lost.connect(_on_connection_lost)
 	Connection.backend_failed.connect(_on_backend_failed)
 	Connection.connection_established.connect(_on_connected)
 	if not Settings.locale_changed.is_connected(_on_locale_changed):
@@ -215,10 +213,6 @@ func _ready() -> void:
 
 ## 节点退出场景树时断开与 Connection 的信号连接，避免悬挂引用。
 func _exit_tree() -> void:
-	if Connection.message_received.is_connected(_on_message):
-		Connection.message_received.disconnect(_on_message)
-	if Connection.connection_lost.is_connected(_on_connection_lost):
-		Connection.connection_lost.disconnect(_on_connection_lost)
 	if Connection.backend_failed.is_connected(_on_backend_failed):
 		Connection.backend_failed.disconnect(_on_backend_failed)
 	if Connection.connection_established.is_connected(_on_connected):
@@ -242,10 +236,38 @@ func _on_connected(_host: String, _port: int) -> void:
 # ── 数据 ──────────────────────────────────────────────────
 
 func _refresh_list() -> void:
-	"""请求存档列表。"""
+	"""请求存档列表（响应回调应用列表；错误/超时/断线经回调复位忙状态）。"""
 	_status_text = tr("ui.saves.loading")
 	_status_color = STATUS_WAIT_COLOR
-	Connection.send(SaveApi.list_request())
+	Connection.send(SaveApi.list_request(), _on_list_response)
+
+
+## save_list 响应回调：应用列表或显示错误（列表刷新不锁忙状态）。
+func _on_list_response(message: Dictionary) -> void:
+	_busy = false
+	if message.get("type", "") == "error":
+		_on_request_error(message)
+		return
+	_apply_worlds(message.get("payload", {}))
+	queue_redraw()
+
+
+## 变更类请求（改名/复制/删除）的响应回调：成功后刷新列表。
+func _on_simple_refresh(message: Dictionary) -> void:
+	_busy = false
+	if message.get("type", "") == "error":
+		_on_request_error(message)
+		return
+	_refresh_list()
+
+
+## 请求失败统一处理：关闭确认弹窗、显示解析后的错误文本。
+func _on_request_error(message: Dictionary) -> void:
+	_close_confirm_dialog()
+	_set_error(tr("ui.common.request_failed").format({
+		"reason": SaveApi.parse_error(message),
+	}))
+	queue_redraw()
 
 
 func _apply_worlds(payload: Dictionary) -> void:
@@ -283,18 +305,10 @@ func _set_error(text: String) -> void:
 	queue_redraw()
 
 
-# ── 连接中断 ──────────────────────────────────────────────
+# ── 连接失效 ──────────────────────────────────────────────
 
-func _on_connection_lost() -> void:
-	"""连接断开时复位忙状态（响应可能永远不来，避免 UI 卡死）。"""
-	if _busy:
-		_busy = false
-		_close_confirm_dialog()
-		_entering_world = false
-		_set_error(tr("ui.common.connection_lost_retry"))
-	queue_redraw()
-
-
+## 连接失效：挂起请求由 Connection 统一作废（回调收到本地 error，
+## 忙状态随回调复位），此处兜底复位全局状态。
 func _on_backend_failed(reason: String) -> void:
 	"""后端启动失败：同样复位忙状态。"""
 	_busy = false
@@ -1009,7 +1023,7 @@ func _confirm_snapshot_delete(world_id: String, id: String) -> void:
 	_busy = true
 	_status_text = tr("ui.saves.deleting_snapshot") if recursive else tr("ui.saves.deleting_node")
 	_status_color = STATUS_WAIT_COLOR
-	Connection.send(SaveApi.snapshot_delete_request(world_id, id, recursive))
+	Connection.send(SaveApi.snapshot_delete_request(world_id, id, recursive), _on_simple_refresh)
 	queue_redraw()
 
 
@@ -1023,7 +1037,7 @@ func _confirm_delete_world() -> void:
 	_busy = true
 	_status_text = tr("ui.saves.deleting")
 	_status_color = STATUS_WAIT_COLOR
-	Connection.send(SaveApi.delete_request(world_id))
+	Connection.send(SaveApi.delete_request(world_id), _on_simple_refresh)
 	queue_redraw()
 
 
@@ -1204,7 +1218,7 @@ func _activate_action(row: int, action: int) -> void:
 		"export":
 			_busy = true
 			_status_text = tr("ui.saves.copying")
-			Connection.send(SaveApi.export_request(world_id))
+			Connection.send(SaveApi.export_request(world_id), _on_simple_refresh)
 		"delete":
 			_open_delete_world_dialog(row)
 
@@ -1265,7 +1279,7 @@ func _on_name_submitted(text: String) -> void:
 	var world_id: String = str(_worlds[_input_row]["world_id"])
 	_busy = true
 	_status_text = tr("ui.saves.renaming")
-	Connection.send(SaveApi.rename_request(world_id, save_name))
+	Connection.send(SaveApi.rename_request(world_id, save_name), _on_simple_refresh)
 	_close_input()
 
 
@@ -1293,40 +1307,6 @@ func _enter_world() -> void:
 ## 返回主菜单场景。
 func _go_back() -> void:
 	get_tree().change_scene_to_file(MAIN_MENU_SCENE)
-
-
-# ── 消息处理 ──────────────────────────────────────────────
-
-## Connection 消息回调：response 按请求类型分发（列表应用、创建后进入世界、读档后切场景、改名/复制/删除后刷新），error 显示解析后的错误文本并复位忙状态。
-##
-## Args:
-##     message: 后端消息字典（type / request_type / payload）。
-func _on_message(message: Dictionary) -> void:
-	var msg_type: String = message.get("type", "")
-	var request_type: String = message.get("request_type", "")
-
-	if msg_type == "response":
-		_busy = false
-		match request_type:
-			SaveApi.LIST:
-				_apply_worlds(message.get("payload", {}))
-			SaveApi.CREATE:
-				var world_id: String = str(message.get("payload", {}).get("world_id", ""))
-				if world_id.is_empty():
-					_set_error(tr("ui.saves.create_failed"))
-				else:
-					_load_world(world_id)
-			SaveApi.RENAME, SaveApi.EXPORT:
-				_refresh_list()
-			SaveApi.DELETE, SaveApi.SNAPSHOT_DELETE:
-				_refresh_list()
-	elif msg_type == "error":
-		_busy = false
-		_close_confirm_dialog()
-		_set_error(tr("ui.common.request_failed").format({
-			"reason": SaveApi.parse_error(message),
-		}))
-		queue_redraw()
 
 
 ## 语言切换回调（设置界面改动后重绘文案）。

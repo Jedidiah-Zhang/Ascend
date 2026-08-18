@@ -27,7 +27,7 @@ from ascend.world_tree import world_tree as _default_wt, Event, AffectedParty
 from ascend.config import (
     TILE_MAP_SIZE,
     GAME_DAY,
-    ATMOSPHERE_RESOLUTION, ATMOSPHERE_DRIFT_RATE,
+    ATMOSPHERE_RESOLUTION, ATMOSPHERE_DRIFT_RATE, ATMOSPHERE_DRIFT_RADIUS,
     RAIN_FORECAST_DEPTH, RAIN_REPLENISH_THRESHOLD,
     MODIFIER_FORECAST_DEPTH, MODIFIER_REPLENISH_THRESHOLD,
     TEMP_PERTURB_SCALE, HUMIDITY_PERTURB_SCALE, WIND_PERTURB_SCALE,
@@ -479,8 +479,13 @@ class WeatherEngine:
         hour = hour_of_game_time(now)  # 带小数小时，昼夜偏移需要精确时间
         day_of_year_val = (now // GAME_DAY) % 360
         wind_x, wind_y = self._atmosphere.wind_vector(now)
-        # 大气扰动漂移偏移 — tick 级常数
-        drift = now * ATMOSPHERE_DRIFT_RATE
+        # 大气扰动漂移偏移 — 圆形轨道采样：
+        # 采样坐标沿半径 ATMOSPHERE_DRIFT_RADIUS 的圆运动，弧长 = DRIFT_RATE·now，
+        # θ = 弧长/半径。t=0 时偏移为 (0,0)。轨道周期 ≈ 363.6 游戏日，
+        # 与 360 日季节年错位，跨年不精确重复。
+        theta = now * ATMOSPHERE_DRIFT_RATE / ATMOSPHERE_DRIFT_RADIUS
+        drift_x = ATMOSPHERE_DRIFT_RADIUS * (math.cos(theta) - 1.0)
+        drift_y = ATMOSPHERE_DRIFT_RADIUS * math.sin(theta)
         # 季节/昼夜余弦基 — phase 对所有 chunk 相同，只有 amplitude 不同
         season_cos = math.cos(season_phase(day))
         diurnal_cos = math.cos(diurnal_phase(hour))
@@ -488,7 +493,7 @@ class WeatherEngine:
             "season": season, "hour": hour,
             "day_of_year_val": day_of_year_val,
             "wind_x": wind_x, "wind_y": wind_y,
-            "drift_x": wind_x * drift, "drift_y": wind_y * drift,
+            "drift_x": drift_x, "drift_y": drift_y,
             "solar_decl": _solar_declination(day_of_year_val),
             "season_cos": season_cos,
             "diurnal_cos": diurnal_cos,
@@ -505,7 +510,7 @@ class WeatherEngine:
             sr: 日出小时。
             ss: 日落小时。
             rainfall: 降雨强度 mm/h（含修改器效果），用于衰减日照。
-            drift_x: 大气漂移 X 偏移（与 _compute_params 同源，随风向）。
+            drift_x: 大气漂移 X 偏移（与 _compute_params 同源，圆形轨道）。
             drift_y: 大气漂移 Y 偏移。
 
         Returns:
@@ -520,7 +525,7 @@ class WeatherEngine:
         if rainfall > 0:
             rain_factor = min(rainfall / 30.0, 1.0) * 0.8
             intensity *= (1.0 - rain_factor)
-        # 大气扰动微调 — 与 _compute_params 同一风向漂移，0.1x 慢速作云层效果
+        # 大气扰动微调 — 与 _compute_params 同一漂移偏移，0.1x 慢速作云层效果
         w_p = self._atmosphere.sample_raw(
             field.atmos_nx + drift_x * 0.1,
             field.atmos_ny + drift_y * 0.1,

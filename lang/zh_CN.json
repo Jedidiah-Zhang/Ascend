@@ -211,7 +211,11 @@
   "ui.menu.backend_connected": "后端已连接",
   "ui.menu.reconnecting_backend": "正在重连后端...",
   "ui.menu.backend_failed": "后端连接失败（详见输出）",
-  "ui.menu.backend_failed_reason": "后端启动失败：{reason}",
+  "ui.menu.backend_failed_reason": "后端连接失败：{reason}",
+  "ui.menu.handshake_version_mismatch": "版本不兼容，请更新游戏后重试",
+  "ui.menu.handshake_auth_failed": "后端拒绝连接，请重启游戏",
+  "ui.menu.handshake_timeout": "后端无响应，请重启游戏",
+  "ui.menu.handshake_anomaly": "后端通信异常，请重启游戏",
 
   "ui.pause.title": "游戏暂停",
   "ui.pause.resume": "继续游戏",
@@ -333,5 +337,6 @@
   "ui.common.entering_world": "正在进入世界...",
   "ui.common.connection_lost_retry": "连接中断，操作未完成 — 请重试",
   "ui.common.backend_unavailable": "后端不可用：{reason}",
-  "ui.common.request_failed": "请求失败：{reason}"
+  "ui.common.request_failed": "请求失败：{reason}",
+  "ui.common.request_timeout": "请求超时，请重试"
 }

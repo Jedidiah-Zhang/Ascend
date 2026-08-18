@@ -5,6 +5,7 @@ const FrameCodecClass = preload("res://scripts/utils/frame_codec.gd")
 const BackendProcessClass = preload("res://scripts/net/backend_process.gd")
 const TcpTransportClass = preload("res://scripts/net/tcp_transport.gd")
 const HandshakeClass = preload("res://scripts/net/handshake.gd")
+const HandshakePolicyClass = preload("res://scripts/net/handshake_policy.gd")
 const Fakes = preload("res://tests/fakes/connection_layers.gd")
 
 
@@ -32,6 +33,9 @@ func before_each() -> void:
 	_fake_handshake = Fakes.FakeHandshake.new()
 	_fake_worker = Fakes.FakeWorker.new()
 	Connection._set_layers(_fake_process, _fake_transport, _fake_handshake, _fake_worker)
+	Connection._policy = HandshakePolicyClass.new()
+	Connection._pending_requests = {}
+	Connection._fatal_reason = ""
 	Connection.status = Connection.Status.DISCONNECTED
 	Connection._restart_phase = Connection.RestartPhase.NONE
 	Connection._outage_emitted = false
@@ -188,20 +192,106 @@ func test_handshake_ack_emits_established() -> void:
 
 
 func test_handshake_rejected_retries() -> void:
-	"""握手被拒 → 传输层进入重连重试（不广播断线）。"""
+	"""可重试拒绝（协议异常）→ 传输层进入重连重试（不广播断线）。"""
 	var lost: int = 0
 	Connection.connection_lost.connect(func(): lost += 1)
 
-	_fake_handshake.rejected.emit("bad token")
+	_fake_transport.state = TcpTransportClass.State.CONNECTED  # 握手期 TCP 已连
+	_fake_handshake.rejected.emit(HandshakeClass.RejectKind.ANOMALY, "unexpected hello")
 
 	assert_eq(_fake_transport.retry_count, 1, "应重置传输层等待重连")
 	assert_eq(lost, 0, "重试期不应广播 connection_lost")
+	assert_eq(Connection.status, Connection.Status.DISCONNECTED)
 
 
 func test_handshake_timeout_retries() -> void:
-	"""握手超时 → 同样走重连重试（旧回归：ack 后不再误触发，层内覆盖）。"""
+	"""握手超时 → 走预算重连（预算内）。"""
+	_fake_transport.state = TcpTransportClass.State.CONNECTED  # 握手超时时 TCP 仍挂着
 	_fake_handshake.timeout.emit()
 	assert_eq(_fake_transport.retry_count, 1, "超时应重置传输层")
+
+
+# ── 握手失败终态（重试预算 + 分类终态） ─────────────
+
+func test_version_mismatch_fails_immediately() -> void:
+	"""版本不兼容是永久性失败：不消耗预算，立即 FAILED 终态。"""
+	var failed: Array = []
+	Connection.backend_failed.connect(func(r): failed.append(r))
+
+	_fake_transport.state = TcpTransportClass.State.CONNECTED
+	_fake_handshake.rejected.emit(HandshakeClass.RejectKind.VERSION_MISMATCH, "protocol version")
+
+	assert_eq(_fake_transport.retry_count, 0, "版本不兼容不应重试")
+	assert_eq(_fake_transport.disconnect_count, 1, "终态应静默断开传输层")
+	assert_eq(failed.size(), 1, "应广播 backend_failed")
+	assert_eq(Connection.status, Connection.Status.FAILED, "应进入 FAILED 终态")
+
+
+func test_retry_budget_exhaustion_fails() -> void:
+	"""可重试失败耗尽预算 → FAILED 终态（不再无限重连）。"""
+	var failed: Array = []
+	Connection.backend_failed.connect(func(r): failed.append(r))
+
+	for i in Config.HANDSHAKE_MAX_RETRIES:
+		_fake_transport.state = TcpTransportClass.State.CONNECTED  # 握手超时时 TCP 仍挂着
+		_fake_handshake.timeout.emit()
+	assert_eq(_fake_transport.retry_count, Config.HANDSHAKE_MAX_RETRIES, "预算内每次重试")
+	assert_eq(failed.size(), 0, "预算内不进入终态")
+
+	_fake_transport.state = TcpTransportClass.State.CONNECTED
+	_fake_handshake.timeout.emit()
+	assert_eq(_fake_transport.retry_count, Config.HANDSHAKE_MAX_RETRIES, "终态后不再重试")
+	assert_eq(failed.size(), 1, "预算耗尽应广播 backend_failed")
+	assert_eq(Connection.status, Connection.Status.FAILED)
+
+
+func test_disconnect_during_handshake_counts_to_budget() -> void:
+	"""握手进行中断开（token 失效/后端重启）计入预算；已 ack 后断开不计。
+
+	握手期断开会复位握手（重连后重新 HELLO_SENT），模拟新一轮握手周期。
+	"""
+	for i in Config.HANDSHAKE_MAX_RETRIES:
+		_fake_handshake.state = HandshakeClass.State.HELLO_SENT
+		_fake_transport.reset_for_reconnect()  # 模拟 transport 检测到断线（retry+1 并发射 disconnected）
+	assert_eq(Connection._policy._failures, Config.HANDSHAKE_MAX_RETRIES,
+		"握手期断开每次计入预算")
+
+	_fake_handshake.state = HandshakeClass.State.ACKED
+	_fake_transport.reset_for_reconnect()
+	assert_eq(Connection._policy._failures, Config.HANDSHAKE_MAX_RETRIES,
+		"已 ack 后断开是普通断线，不耗预算")
+
+
+func test_ack_resets_retry_budget() -> void:
+	"""握手成功清零预算：此后再失败从头计数。"""
+	for i in Config.HANDSHAKE_MAX_RETRIES:
+		_fake_handshake.state = HandshakeClass.State.HELLO_SENT
+		_fake_transport.reset_for_reconnect()
+
+	_fake_handshake.acked.emit()  # 恢复（预算清零）
+	_fake_handshake.state = HandshakeClass.State.HELLO_SENT
+	_fake_transport.reset_for_reconnect()
+	assert_eq(_fake_transport.retry_count, Config.HANDSHAKE_MAX_RETRIES + 1,
+		"ack 后预算重置，断开继续走预算重试")
+	assert_eq(Connection.status, Connection.Status.DISCONNECTED)
+
+
+func test_connect_to_server_clears_handshake_fatal() -> void:
+	"""FAILED 终态可经 connect_to_server 重置（预算与致命标记清空）。"""
+	var failed: Array = []
+	Connection.backend_failed.connect(func(r): failed.append(r))
+	for i in Config.HANDSHAKE_MAX_RETRIES + 1:
+		_fake_handshake.timeout.emit()
+	assert_eq(Connection.status, Connection.Status.FAILED)
+
+	Connection.connect_to_server()
+
+	assert_eq(Connection.status, Connection.Status.CONNECTING, "重置后应重新发起连接")
+	assert_eq(_fake_transport.connect_count, 1)
+	assert_eq(Connection._policy._failures, 0, "重置后预算从零计数")
+	_fake_handshake.timeout.emit()
+	assert_eq(Connection._policy._failures, 1, "重置后失败从零计数")
+	assert_ne(Connection.status, Connection.Status.FAILED)
 
 
 # ── 断线广播（去重 + 主动切换静默） ────────────────────────
@@ -402,3 +492,170 @@ func decode_ok(frame: PackedByteArray) -> void:
 	var d: Dictionary = Connection._codec.frame_decode(frame, Config.MAX_MESSAGE_SIZE)
 	assert_eq(d["bodies"].size(), 1, "业务帧应可解码")
 	assert_not_null(JsonCodec.decode(d["bodies"][0]))
+
+
+# ── 挂起请求表（seq 配对 + 超时/断线清理） ───
+
+func _register_pending(seq: int, callback: Callable) -> void:
+	Connection._pending_requests[seq] = {
+		"request_type": "save_list",
+		"callback": callback,
+		"deadline": Time.get_ticks_msec() + 60000,
+	}
+
+
+func _collect(msg: Dictionary) -> void:
+	_fake_handshake.state = HandshakeClass.State.ACKED
+	_fake_worker.decoded.append(msg)
+	Connection._collect_decoded()
+
+
+func test_send_with_callback_registers_pending() -> void:
+	"""send 带回调：自动分配 seq 并登记挂起请求。"""
+	_fake_handshake.state = HandshakeClass.State.ACKED
+	var seq_before: int = Connection._codec.seq
+	Connection.send({"type": "request", "request_type": "ping", "payload": {}}, _noop_cb)
+	assert_eq(Connection._pending_requests.size(), 1)
+	assert_true(Connection._pending_requests.has(seq_before + 1), "应按自增 seq 登记")
+
+
+func test_send_without_callback_not_registered() -> void:
+	"""send 不带回调：不进挂起表（走广播路径）。"""
+	_fake_handshake.state = HandshakeClass.State.ACKED
+	Connection.send({"type": "request", "request_type": "ping", "payload": {}})
+	assert_eq(Connection._pending_requests.size(), 0)
+
+
+func test_response_hits_pending_callback_only() -> void:
+	"""已登记 seq 的响应：精确投递回调，不广播，表项即删。"""
+	var got: Array = []
+	_register_pending(7, func(msg): got.append(msg))
+	var broadcasted: Array = []
+	Connection.message_received.connect(func(m): broadcasted.append(m))
+
+	_collect({"type": "response", "request_type": "save_list", "seq": 7, "payload": {"ok": true}})
+
+	assert_eq(got.size(), 1, "应按 seq 投递回调")
+	assert_eq(got[0]["payload"], {"ok": true})
+	assert_eq(broadcasted.size(), 0, "命中回调的响应不应广播")
+	assert_false(Connection._pending_requests.has(7), "响应后表项应删除")
+
+
+func test_response_hits_pending_with_float_seq() -> void:
+	"""真实链路 JSON.parse 将数字解析为 float（2.0）：查表前归一化仍命中。
+
+	回归：P1-04 seq 配对后，float seq 未命中 → 响应退回广播 → 10s 超时
+	→ UI 显示"请求失败：请求超时"。
+	"""
+	var got: Array = []
+	_register_pending(2, func(msg): got.append(msg))
+
+	_collect({"type": "response", "request_type": "save_list", "seq": 2.0, "payload": {"ok": true}})
+
+	assert_eq(got.size(), 1, "float seq 响应应命中 int 键回调")
+	assert_false(Connection._pending_requests.has(2), "响应后表项应删除")
+
+
+func test_response_not_hit_pending_falls_back_to_broadcast() -> void:
+	"""未登记的响应（无回调消费方）：退回广播（兼容原按类型分发路径）。"""
+	var got: Array = []
+	_register_pending(7, func(msg): got.append(msg))
+	var broadcasted: Array = []
+	Connection.message_received.connect(func(m): broadcasted.append(m))
+
+	_collect({"type": "response", "request_type": "save_list", "seq": 99, "payload": {}})
+
+	assert_eq(got.size(), 0, "seq 不匹配不应投递回调")
+	assert_eq(broadcasted.size(), 1, "未命中应退回广播")
+	assert_true(Connection._pending_requests.has(7), "不匹配不应消耗表项")
+
+
+func test_error_hits_pending_callback() -> void:
+	"""后端 error 消息同样按 seq 投递回调。"""
+	var got: Array = []
+	_register_pending(3, func(msg): got.append(msg))
+	_collect({"type": "error", "request_type": "save_list", "seq": 3, "error": "boom"})
+	assert_eq(got.size(), 1)
+	assert_eq(got[0]["type"], "error")
+	assert_eq(got[0]["error"], "boom")
+	assert_false(Connection._pending_requests.has(3))
+
+
+func test_event_always_broadcast() -> void:
+	"""事件消息不进挂起表：即使 seq 撞上登记值也直接广播。"""
+	var got: Array = []
+	_register_pending(5, func(msg): got.append(msg))
+	var broadcasted: Array = []
+	Connection.message_received.connect(func(m): broadcasted.append(m))
+
+	_collect({"type": "event", "seq": 5, "payload": {"data": {}}})
+
+	assert_eq(got.size(), 0, "事件不应投递请求回调")
+	assert_eq(broadcasted.size(), 1, "事件应广播")
+
+
+func test_pending_timeout_delivers_local_error() -> void:
+	"""请求超时（REQUEST_TIMEOUT）：投本地 error 并移除表项（UI 忙状态复位）。"""
+	var got: Array = []
+	_register_pending(8, func(msg): got.append(msg))
+	Connection._pending_requests[8]["deadline"] = Time.get_ticks_msec() - 1
+
+	Connection._tick_pending_timeouts()
+
+	assert_eq(got.size(), 1, "超时应投递本地错误")
+	assert_eq(got[0]["type"], "error")
+	assert_eq(got[0]["seq"], 8)
+	assert_eq(got[0]["request_type"], "save_list")
+	assert_eq(got[0]["error"], tr("ui.common.request_timeout"))
+	assert_false(Connection._pending_requests.has(8), "超时后表项应删除")
+
+
+func test_pending_not_expired_kept() -> void:
+	"""未到期请求保留。"""
+	var got: Array = []
+	_register_pending(9, func(msg): got.append(msg))
+	Connection._pending_requests[9]["deadline"] = Time.get_ticks_msec() + 60000
+	Connection._tick_pending_timeouts()
+	assert_eq(got.size(), 0)
+	assert_true(Connection._pending_requests.has(9))
+
+
+func test_connection_loss_flushes_pending() -> void:
+	"""普通断线：挂起请求统一作废（本地 error），表清空，仍广播断线。"""
+	var got: Array = []
+	_register_pending(11, func(msg): got.append(msg))
+	var lost: Array = []
+	Connection.connection_lost.connect(func(): lost.append(1))
+
+	_fake_transport.disconnected.emit()
+
+	assert_eq(got.size(), 1, "断线应作废在途请求")
+	assert_eq(got[0]["type"], "error")
+	assert_eq(got[0]["request_type"], "save_list")
+	assert_eq(got[0]["error"], tr("ui.common.connection_lost_retry"))
+	assert_eq(Connection._pending_requests.size(), 0, "表应清空")
+	assert_eq(lost.size(), 1, "断线广播不受影响")
+
+
+func test_connect_to_server_flushes_pending() -> void:
+	"""主动重连：清空旧连接挂起请求（响应不会再来）。"""
+	var got: Array = []
+	_register_pending(12, func(msg): got.append(msg))
+	Connection.connect_to_server()
+	assert_eq(got.size(), 1)
+	assert_eq(got[0]["type"], "error")
+	assert_eq(Connection._pending_requests.size(), 0)
+
+
+func test_restart_backend_flushes_pending() -> void:
+	"""进程切换（restart_backend）：清空旧挂起请求。"""
+	var got: Array = []
+	_register_pending(13, func(msg): got.append(msg))
+	Connection.restart_backend(PackedStringArray(["--world-id", "w1"]))
+	assert_eq(got.size(), 1)
+	assert_eq(got[0]["type"], "error")
+	assert_eq(Connection._pending_requests.size(), 0)
+
+
+func _noop_cb(_msg: Dictionary) -> void:
+	pass

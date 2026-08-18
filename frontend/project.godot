@@ -12,7 +12,6 @@ config_version=5
 
 config/name="Ascend"
 config/description="AI 原生 2D 俯视生存经营模拟游戏"
-config/version="0.0.2-alpha"
 run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.7")
 
@@ -20,7 +19,6 @@ config/features=PackedStringArray("4.7")
 
 Connection="*res://scripts/autoload/connection.gd"
 Settings="*res://scripts/autoload/settings.gd"
-MCPRuntimeProbe="*res://addons/godot_mcp/runtime/mcp_runtime_probe.gd"
 
 [display]
 

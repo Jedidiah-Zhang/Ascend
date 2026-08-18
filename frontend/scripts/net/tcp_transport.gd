@@ -8,7 +8,9 @@
   - 发送队列：send_frame 入队（send_frame_front 队首，握手帧专用），
     CONNECTED 时逐帧落盘，失败只保留未发送部分
   - 收包超时：CONNECTED 下无数据超时（RECEIVE_TIMEOUT）→ 重连
-  - 重连：DISCONNECTED 下倒计时 RECONNECT_INTERVAL 后自动 connect
+  - 重连：DISCONNECTED 下倒计时后自动 connect；连续失败指数退避
+    （reconnect_interval 翻倍，封顶 RECONNECT_MAX_INTERVAL），
+    任何一次连接成功即复位基础间隔
 
 注入点：socket_factory（默认 StreamPeerTCP.new，测试可注入 fake）。
 依赖方向：connection(门面) → 本层；本层不感知其他子层。
@@ -50,6 +52,8 @@ const MAX_MESSAGE_SIZE: int = Config.MAX_MESSAGE_SIZE
 
 var host: String
 var port: int
+## 当前重连间隔（秒）：连续失败翻倍封顶，连接成功复位基础间隔
+var reconnect_interval: float = Config.RECONNECT_INTERVAL
 
 
 # ── 注入点 ─────────────────────────────────────────────────
@@ -111,6 +115,7 @@ func disconnect_from_host() -> void:
 	_dispose_socket()
 	_recv_buf = PackedByteArray()
 	_reconnect_timer = 0.0
+	reconnect_interval = Config.RECONNECT_INTERVAL
 	_connect_elapsed = 0.0
 	_receive_idle = 0.0
 	state = State.DISCONNECTED
@@ -123,17 +128,19 @@ func reset() -> void:
 	_recv_buf = PackedByteArray()
 	_send_queue.clear()
 	_reconnect_timer = 0.0
+	reconnect_interval = Config.RECONNECT_INTERVAL
 	_connect_elapsed = 0.0
 	_receive_idle = 0.0
 	state = State.DISCONNECTED
 
 
 func reset_for_reconnect() -> void:
-	"""连接失效清理 + 进入重连等待，发射 disconnected（断线去重由门面负责）。"""
+	"""连接失效清理 + 进入重连等待（间隔按退避递增），发射 disconnected。"""
 	_allow_auto_reconnect = true
 	_dispose_socket()
 	_recv_buf = PackedByteArray()
-	_reconnect_timer = RECONNECT_INTERVAL
+	_reconnect_timer = reconnect_interval
+	reconnect_interval = min(reconnect_interval * 2.0, Config.RECONNECT_MAX_INTERVAL)
 	_connect_elapsed = 0.0
 	_receive_idle = 0.0
 	state = State.DISCONNECTED
@@ -182,6 +189,7 @@ func _tick_connecting(delta: float) -> void:
 	var status: int = _socket.get_status()
 	if status == StreamPeerTCP.STATUS_CONNECTED:
 		state = State.CONNECTED
+		reconnect_interval = Config.RECONNECT_INTERVAL  # 成功即复位退避
 		_receive_idle = 0.0
 		connected.emit()
 		_flush_send_queue()

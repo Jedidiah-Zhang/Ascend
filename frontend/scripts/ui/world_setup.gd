@@ -89,7 +89,30 @@ func _route_to_loading_default() -> void:
 
 
 func _send_default(message: Dictionary) -> void:
-	Connection.send(message)
+	Connection.send(message, _on_request_response)
+
+
+## 请求响应回调（挂起请求表按 seq 精确配对）：CREATE 进入世界流程、
+## 其余错误/超时/断线统一复位忙状态并提示。
+func _on_request_response(message: Dictionary) -> void:
+	if message.get("type", "") == "error":
+		_busy = false
+		_set_status(tr("ui.common.request_failed").format({
+			"reason": SaveApi.parse_error(message),
+		}), STATUS_ERR_COLOR)
+		return
+	if message.get("request_type", "") != SaveApi.CREATE:
+		return
+	_busy = false
+	var world_id: String = str(message.get("payload", {}).get("world_id", ""))
+	if world_id.is_empty():
+		_set_status(tr("ui.saves.create_failed"), STATUS_ERR_COLOR)
+		return
+	_entering_world = true
+	_set_status(tr("ui.common.entering_world"), STATUS_WAIT_COLOR)
+	backend_launcher.call(PackedStringArray(["--world-id", world_id]))
+	# 不等连接就绪：切进度页，由其等待后端启动与生成
+	scene_router.call()
 
 
 # ── 生命周期 ──────────────────────────────────────────────
@@ -113,7 +136,6 @@ func _ready() -> void:
 	_status_text = tr("ui.setup.step_progress").format({"current": 1, "total": _steps.size()})
 	_status_color = SUBTITLE_COLOR
 
-	Connection.message_received.connect(_on_message)
 	Connection.connection_lost.connect(_on_connection_lost)
 	Connection.backend_failed.connect(_on_backend_failed)
 	Connection.connection_established.connect(_on_connected)
@@ -122,8 +144,6 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
-	if Connection.message_received.is_connected(_on_message):
-		Connection.message_received.disconnect(_on_message)
 	if Connection.connection_lost.is_connected(_on_connection_lost):
 		Connection.connection_lost.disconnect(_on_connection_lost)
 	if Connection.backend_failed.is_connected(_on_backend_failed):
@@ -310,36 +330,6 @@ func _start_create() -> void:
 static func _default_save_name() -> String:
 	"""新建存档的默认名称（当前日期时间，与存档页一致）。"""
 	return SaveInfoFormatter.datetime_string(float(Time.get_unix_time_from_system()))
-
-
-func _on_message(message: Dictionary) -> void:
-	var msg_type: String = message.get("type", "")
-	var request_type: String = message.get("request_type", "")
-	if msg_type == "response":
-		match request_type:
-			SaveApi.CREATE:
-				_busy = false
-				var world_id: String = str(message.get("payload", {}).get("world_id", ""))
-				if world_id.is_empty():
-					_set_status(tr("ui.saves.create_failed"), STATUS_ERR_COLOR)
-					return
-				_entering_world = true
-				_set_status(tr("ui.common.entering_world"), STATUS_WAIT_COLOR)
-				backend_launcher.call(PackedStringArray(["--world-id", world_id]))
-				# 不等连接就绪：切进度页，由其等待后端启动与生成
-				scene_router.call()
-			SaveApi.MAP_PREVIEW:
-				_current_step().on_preview_response(message.get("payload", {}))
-				queue_redraw()
-	elif msg_type == "error":
-		if request_type == SaveApi.MAP_PREVIEW:
-			_current_step().on_preview_failed()
-			queue_redraw()
-			return
-		_busy = false
-		_set_status(tr("ui.common.request_failed").format({
-			"reason": SaveApi.parse_error(message),
-		}), STATUS_ERR_COLOR)
 
 
 ## 创建成功后已切 world_loading 进度页，本页不再处理连接就绪；

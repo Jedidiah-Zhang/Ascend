@@ -5,9 +5,14 @@
   - tick()：HELLO_SENT 下累计 ack 等待，超时（HELLO_TIMEOUT）→ timeout 信号
   - on_message()：消费握手完成前的服务器消息：
       hello_ack → acked 信号（门面据此发 connection_established 并放行 send）
-      error/hello → rejected(reason)（门面据此重连）
+      error/hello → rejected(kind, reason)（门面据此重试或终态）
       其他 → 返回 false（调用方丢弃：认证前后端不会发普通消息）
   - 关键回归语义：ack 后停止计时，连接不再误触发 hello 超时重连
+
+拒绝分类（RejectKind）：
+  - VERSION_MISMATCH：服务端发 error 帧（协议版本不兼容，唯一会发的握手拒绝）
+    ——永久性失败，重试无意义，策略应直接终态
+  - ANOMALY：服务端行为异常（不应主动发 hello）——可重试
 
 注入点：send_frame（门面注入 transport.send_frame）、token_path、codec。
 依赖方向：connection(门面) → 本层；本层不感知其他子层。
@@ -22,7 +27,7 @@ const Config = preload("res://scripts/config.gd")
 # ── 信号（向门面汇报） ─────────────────────────────────────
 
 signal acked
-signal rejected(reason: String)
+signal rejected(kind: RejectKind, reason: String)
 signal timeout
 
 
@@ -31,6 +36,11 @@ signal timeout
 enum State { IDLE, HELLO_SENT, ACKED }
 
 var state: State = State.IDLE
+
+
+# ── 拒绝分类 ───────────────────────────────────────────────
+
+enum RejectKind { VERSION_MISMATCH, ANOMALY }
 
 
 # ── 常量（唯一事实源 = config.gd） ─────────────────────────
@@ -105,13 +115,13 @@ func on_message(msg: Dictionary) -> bool:
 		acked.emit()
 		return true
 	if msg.get("type", "") == "error" and msg.get("request_type", "") == "hello":
-		rejected.emit(str(msg.get("error", "")))
+		rejected.emit(RejectKind.VERSION_MISMATCH, str(msg.get("error", "")))
 		state = State.IDLE
 		_elapsed = 0.0
 		return true
 	if msg.get("type", "") == "hello":
-		# 服务端不应主动发 hello；收到视为握手异常，交给门面重连
-		rejected.emit("unexpected hello from server")
+		# 服务端不应主动发 hello；收到视为握手异常，交给门面重试
+		rejected.emit(RejectKind.ANOMALY, "unexpected hello from server")
 		state = State.IDLE
 		_elapsed = 0.0
 		return true

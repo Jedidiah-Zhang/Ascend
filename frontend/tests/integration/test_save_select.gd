@@ -2,6 +2,7 @@ extends GutTest
 
 const SAVE_SELECT_SCRIPT: String = "res://scripts/ui/save_select.gd"
 const TimelineLayout = preload("res://scripts/ui/timeline_layout.gd")
+const Fakes = preload("res://tests/fakes/connection_layers.gd")
 
 
 func _make_select() -> Control:
@@ -9,10 +10,6 @@ func _make_select() -> Control:
 	sel.size = Vector2(1280, 720)
 	autoqfree(sel)
 	add_child(sel)
-	# 测试隔离：断开真实后端消息订阅——后端就绪握手会触发 _on_connected
-	# 刷新，真实 save_list 空响应会覆盖测试注入的世界数据（时间线测试失败）
-	if Connection.message_received.is_connected(sel._on_message):
-		Connection.message_received.disconnect(sel._on_message)
 	return sel
 
 
@@ -26,6 +23,12 @@ func _payload(worlds: Array, snaps: Array = [], current: String = "") -> Diction
 func before_each() -> void:
 	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
 	TranslationServer.set_locale("zh_CN")
+	# 隔离真实网络层：save_select._ready 仅在 CONNECTED 时发真实请求，
+	# fake 层 + DISCONNECTED 状态使其不发起（测试数据自给自足）。
+	Connection._set_layers(
+		Fakes.FakeProcess.new(), Fakes.FakeTransport.new(),
+		Fakes.FakeHandshake.new(), Fakes.FakeWorker.new())
+	Connection.status = Connection.Status.DISCONNECTED
 
 
 func test_apply_worlds_stores_lineage_data() -> void:

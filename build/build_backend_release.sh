@@ -52,52 +52,6 @@ bash "$BACKEND_SCRIPT"
 # ── 组装 → 冒烟 → 归档 ────────────────────────────────────
 STAGE="$ROOT/build/work/staging/Server-$PLATFORM"
 
-_smoke() {
-  local port=19081
-  local tmp; tmp="$(mktemp -d)"
-  local logf="$tmp/server.log"
-  local pid ok=""
-  echo "    [冒烟] 启动打包后端，等待端口 $port ..."
-  case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*)
-      # 原生 Windows（CI runner 的 Git Bash）：路径须转 Windows 风格
-      local stage_win tmp_win
-      stage_win="$(cygpath -w "$STAGE")"
-      tmp_win="$(cygpath -w "$tmp")"
-      ASCEND_SERVER_PORT=$port ASCEND_SAVE_ROOT="$tmp_win" \
-        "$STAGE/server/server.exe" --project-root "$stage_win" >"$logf" 2>&1 &
-      ;;
-    *)
-      if [ "$PLATFORM" = "windows" ]; then
-        # Linux 本机构建 Windows 包：wine 冒烟
-        ASCEND_SERVER_PORT=$port ASCEND_SAVE_ROOT="$tmp" \
-          wine "$STAGE/server/server.exe" --project-root "Z:$(echo "$STAGE" | sed 's|/|\\|g')" >"$logf" 2>&1 &
-      else
-        ASCEND_SERVER_PORT=$port ASCEND_SAVE_ROOT="$tmp" \
-          "$STAGE/server/server" --project-root "$STAGE" >"$logf" 2>&1 &
-      fi
-      ;;
-  esac
-  pid=$!
-  for _ in $(seq 1 45); do
-    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
-      exec 3>&- 3<&-; ok=1; break
-    fi
-    sleep 1
-  done
-  kill "$pid" 2>/dev/null || true
-  pkill -f "$STAGE/server/server" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
-  if [ -z "$ok" ]; then
-    echo "    [冒烟] 失败：后端未在端口 $port 就绪，日志:" >&2
-    cat "$logf" 2>/dev/null | tail -20 >&2 || true
-    rm -rf "$tmp"
-    exit 1
-  fi
-  rm -rf "$tmp"
-  echo "    [冒烟] 通过"
-}
-
 echo "==> [2/3] 组装 + 冒烟 $PLATFORM ..."
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
@@ -112,7 +66,7 @@ Ascend 后端服务器 $VERSION ($PLATFORM) — 研究平台
 （服务模式监听 127.0.0.1:9081；ASCEND_SAVE_ROOT 可重定向存档目录）
 EOF
 
-_smoke
+bash "$ROOT/build/ci/smoke.sh" "$STAGE" "$PLATFORM"
 
 echo "==> [3/3] 归档 $PLATFORM ..."
 mkdir -p "$(dirname "$ARCHIVE")"

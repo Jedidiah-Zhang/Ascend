@@ -19,6 +19,7 @@ from ascend.space.continent import (
     serialize_continent,
 )
 from ascend.space.generator import WorldGenerator
+from ascend.space.tile_gen import TileGenerator
 from ascend.space.tile_grid import TileGrid
 
 GOLDEN_SEED = 20260806
@@ -27,11 +28,12 @@ GOLDEN_SEED = 20260806
 # 2026-08-07 大陆轮廓层改为绝对频率（尺寸延伸而非缩放）后重新固化一次
 # 2026-08-11 温度语义统一（海域=海面温度、直减率仅陆地、开阔海洋无雨影）后重新固化一次
 # 2026-08-15 缓存头部新增生成环境指纹字段（格式版本归 1；世界数值不变）后重新固化一次
-GOLDEN_HASH = "5e44818bd52e1f23d7b58f6fbc4f79ec8c06b71bbe00aea7d83c45e19cead666"
+# 2026-08-18 黄金 hash 纳入真实 TileGenerator 输出后重新固化一次
+GOLDEN_HASH = "c6f78751833b15a10b66b6357c9af3bebb7a56f867fd126b3684e79935b1f8cb"
 
 
 def _pipeline_digest(seed: int) -> str:
-    """固定 seed 的生成管线输出 sha256（大陆场 + 首块 + tile）。"""
+    """固定 seed 的生成管线输出 sha256（大陆场 + 首块 + 真实 tile）。"""
     continent = ContinentGenerator(
         seed=seed,
         params=ContinentParams(width_km=6, height_km=4, sample_resolution=200),
@@ -39,8 +41,7 @@ def _pipeline_digest(seed: int) -> str:
     gen = WorldGenerator(seed=seed)
     gen._continent = continent  # 注入小尺寸大陆（避免默认大尺寸 5-30s）
     chunk = gen.generate_chunk(0, 0)
-    grid = TileGrid()
-    chunk.generate_tiles(grid)
+    grid = TileGenerator(seed=seed, continent=continent).generate_chunk_for(chunk)
 
     h = hashlib.sha256()
     h.update(serialize_continent(continent))

@@ -66,6 +66,7 @@ class FakeTransport:
 	func reset_for_reconnect() -> void:
 		retry_count += 1
 		state = State.DISCONNECTED
+		disconnected.emit()
 
 	func connect_to_host() -> void:
 		connect_count += 1

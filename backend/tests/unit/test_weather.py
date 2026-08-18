@@ -65,6 +65,10 @@ class TestWeatherConstants:
         from ascend.config import ATMOSPHERE_DRIFT_RATE
         assert ATMOSPHERE_DRIFT_RATE > 0
 
+    def test_drift_radius_positive(self):
+        from ascend.config import ATMOSPHERE_DRIFT_RADIUS
+        assert ATMOSPHERE_DRIFT_RADIUS > 0
+
     def test_seasons_per_year_is_four(self):
         from ascend.config import SEASONS_PER_YEAR
         assert SEASONS_PER_YEAR == 4
@@ -799,6 +803,30 @@ class TestWeatherEngine:
         from ascend.weather.weather_engine import WeatherEngine
         wt = WorldTree()
         e = WeatherEngine(WorldClock(), seed=42, world_tree_arg=wt)
+        e.shutdown()
+
+    def test_atmosphere_drift_no_short_cycle(self):
+        """扰动漂移不得在 ~148 游戏日近似环绕重复。
+
+        圆形轨道（半径 100，周期 ≈363.6 游戏日）：148 日偏移
+        显著非零，1 年（360 日）与轨道周期错位亦不精确重复。
+        """
+        import math
+        from ascend.weather.weather_engine import WeatherEngine
+        from ascend.config import GAME_DAY, GAME_YEAR
+        wt = WorldTree()
+        clock = WorldClock()
+        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
+        e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
+        base = e._tick_context(0)
+        d148 = e._tick_context(148 * GAME_DAY)
+        dyear = e._tick_context(GAME_YEAR)
+        shift148 = math.hypot(
+            d148["drift_x"] - base["drift_x"], d148["drift_y"] - base["drift_y"])
+        shiftyear = math.hypot(
+            dyear["drift_x"] - base["drift_x"], dyear["drift_y"] - base["drift_y"])
+        assert shift148 > 1.0, f"148 日漂移回到原位（shift={shift148:.3f}），旧周期环绕复现"
+        assert shiftyear > 1.0, f"1 年漂移精确重复（shift={shiftyear:.3f}）"
         e.shutdown()
 
     def test_no_fields_tick_noop(self):

@@ -13,6 +13,16 @@ permissions:
   contents: write   # 发布 job 需要创建 Release
 
 jobs:
+  check-version:
+    name: 版本对账
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')   # 仅 tag 触发时校验
+    steps:
+      - uses: actions/checkout@v5.1.0
+
+      - name: 校验触发 tag 与 version.txt 一致
+        run: bash build/ci/check_version.sh --tag "${{ github.ref_name }}"
+
   build-linux:
     name: 构建 Linux
     runs-on: ubuntu-latest
@@ -101,7 +111,7 @@ jobs:
   release:
     name: 发布 GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')   # 仅 tag 触发时发版
-    needs: [build-linux, build-windows, test]
+    needs: [check-version, build-linux, build-windows, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5.1.0

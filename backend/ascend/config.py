@@ -169,7 +169,12 @@ PARAM_BOUNDS: dict[str, tuple[float, float]] = {
 
 # 全局大气场
 ATMOSPHERE_RESOLUTION: float = 2000.0   # 大气噪声采样间距 (m)
-ATMOSPHERE_DRIFT_RATE: float = 1e-5     # 气团漂移率（世界单位/tick）
+ATMOSPHERE_DRIFT_RATE: float = 1e-5     # 气团漂移线速度（噪声单位/tick）
+ATMOSPHERE_DRIFT_RADIUS: float = 100.0  # 气团漂移轨道半径（噪声单位）
+
+# 漂移轨道：采样坐标沿半径 100 的圆以 1e-5 噪声单位/tick 的线速度运动，
+# 角速度 = DRIFT_RATE / RADIUS → 轨道周期 = 2π·RADIUS/(DRIFT_RATE·GAME_DAY)
+# ≈ 363.6 游戏日 ≈ 1 年，与 360 日季节年错位，跨年不精确重复。
 
 # 季节
 SEASONS_PER_YEAR: int = 4

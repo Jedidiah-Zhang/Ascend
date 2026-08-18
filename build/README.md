@@ -18,7 +18,7 @@ bash build/build_release.sh linux     # 或单平台
 ```
 
 流程：同步语言文件（repo 根 `lang/*.json` → `frontend/lang/`，进 PCK）→
-导出前端 → 编译后端 → 组装舞台目录 → 冒烟测试（端口就绪）→ 打归档。
+导出前端 → 编译后端 → 组装舞台目录 → 冒烟测试（协议级握手）→ 打归档。
 产物：`build/dist/release/ascend-linux.tar.gz`、`ascend-windows.zip`。
 
 发布：`git tag v<版本> && bash build/ci/publish_release.sh`（版本化命名上传
@@ -102,8 +102,10 @@ push tag v* ──► [ubuntu-latest]  Linux 后端 ──┐
 
 ## 约定
 
-- 版本号单一来源：`build/nuitka/version.txt`（当前 0.0.1-alpha），
-  需与 `frontend/project.godot` 的 `config/version` 保持一致
+- 版本号单一来源：`build/nuitka/version.txt`（当前 0.0.2-alpha）——Release 命名、
+  产物文件名、Windows exe 属性、主菜单显示（`build_release.sh` 拷入前端 PCK）全部
+  由此派生；`frontend/project.godot` 无版本字段。打 tag 前跑
+  `bash build/ci/check_version.sh --tag v<版本>` 对账（CI 的 check-version job 自动执行）
 - **本地永远只有最新版**：中间产物构建前清空；产物固定名每次覆盖；
   历史版本归档只存在于 GitHub Releases（或制品库），不进工作区
 - 打包数据文件仅：C 加速模块 `.so`/`.dll` + `schema.sqlite.sql`；

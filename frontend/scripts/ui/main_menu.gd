@@ -64,6 +64,8 @@ var _status_color: Color = STATUS_WAITING_COLOR
 var _checking_saves: bool = false
 ## 设置覆盖层（首次打开时惰性实例化）
 var _settings_screen: SettingsScreen = null
+## 版本号（读取打包注入的 res://version.txt，见 build_release.sh；开发期无此文件则为空）
+var _version_text: String = ""
 
 
 ## 初始化主菜单：全屏锚点、等宽字体，并订阅 Connection 的连接状态
@@ -74,6 +76,7 @@ func _ready() -> void:
 	anchor_right = 1.0
 	anchor_bottom = 1.0
 	_font = FontUtils.get_mono_font()
+	_version_text = _load_version()
 	_update_status()
 	# 兜底：若后端仍处世界进程模式（异常路径未走暂停菜单），切回菜单模式
 	if Connection.backend_args.size() > 0:
@@ -84,8 +87,6 @@ func _ready() -> void:
 		Connection.connection_lost.connect(_on_disconnected)
 	if not Connection.backend_failed.is_connected(_on_backend_failed):
 		Connection.backend_failed.connect(_on_backend_failed)
-	if not Connection.message_received.is_connected(_on_message):
-		Connection.message_received.connect(_on_message)
 	if not Settings.locale_changed.is_connected(_on_locale_changed):
 		Settings.locale_changed.connect(_on_locale_changed)
 
@@ -98,8 +99,6 @@ func _exit_tree() -> void:
 		Connection.connection_lost.disconnect(_on_disconnected)
 	if Connection.backend_failed.is_connected(_on_backend_failed):
 		Connection.backend_failed.disconnect(_on_backend_failed)
-	if Connection.message_received.is_connected(_on_message):
-		Connection.message_received.disconnect(_on_message)
 	if Settings.locale_changed.is_connected(_on_locale_changed):
 		Settings.locale_changed.disconnect(_on_locale_changed)
 
@@ -152,8 +151,22 @@ func _draw() -> void:
 	# 状态
 	draw_string(_font, Vector2(16, view_size.y - 20), _status_text,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, STATUS_FONT_SIZE, _status_color)
-	draw_string(_font, Vector2(16, view_size.y - 20 - 16), "v%s" % ProjectSettings.get_setting("application/config/version", "0.1"),
-		HORIZONTAL_ALIGNMENT_LEFT, -1, STATUS_FONT_SIZE, SUBTITLE_COLOR)
+	if not _version_text.is_empty():
+		draw_string(_font, Vector2(16, view_size.y - 20 - 16), _version_text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, STATUS_FONT_SIZE, SUBTITLE_COLOR)
+
+
+# ── 版本 ──────────────────────────────────────────────────
+
+## 读取打包注入的版本文件（build/nuitka/version.txt 单一源，发布流程拷入
+## frontend/version.txt 进入 PCK）；开发期无该文件，返回空串不显示版本。
+func _load_version() -> String:
+	if not FileAccess.file_exists("res://version.txt"):
+		return ""
+	var text: String = FileAccess.get_file_as_string("res://version.txt").strip_edges()
+	if text.is_empty():
+		return ""
+	return "v%s" % text
 
 
 # ── 输入 ──────────────────────────────────────────────────
@@ -227,7 +240,7 @@ func _activate(index: int) -> void:
 			_checking_saves = true
 			_status_text = tr("ui.menu.checking_saves")
 			_status_color = STATUS_WAITING_COLOR
-			Connection.send(SaveApi.list_request())
+			Connection.send(SaveApi.list_request(), _on_list_response)
 		"settings":
 			_open_settings()
 		"quit":
@@ -244,15 +257,19 @@ func _open_settings() -> void:
 
 # ── 消息 ──────────────────────────────────────────────────
 
-## save_list 响应：无存档 → 直达创建世界流程（Issue #8）；
-## 有存档 → 存档选择页。
-func _on_message(message: Dictionary) -> void:
+## save_list 响应回调：无存档 → 直达创建世界流程（Issue #8）；
+## 有存档 → 存档选择页。错误/超时/断线经回调复位检查标记（防永久等待）。
+func _on_list_response(message: Dictionary) -> void:
 	if not _checking_saves:
 		return
-	if message.get("type", "") != "response" \
-			or message.get("request_type", "") != SaveApi.LIST:
-		return
 	_checking_saves = false
+	if message.get("type", "") == "error":
+		_status_text = tr("ui.common.request_failed").format({
+			"reason": SaveApi.parse_error(message),
+		})
+		_status_color = STATUS_ERROR_COLOR
+		queue_redraw()
+		return
 	var worlds: Array = SaveApi.parse_worlds(message.get("payload", {}))
 	if worlds.is_empty():
 		_status_text = tr("ui.menu.no_saves_enter_create")

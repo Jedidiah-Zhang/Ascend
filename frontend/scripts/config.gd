@@ -10,7 +10,12 @@ extends RefCounted
 
 const DEFAULT_HOST: String = "127.0.0.1"
 const DEFAULT_PORT: int = 9081
+## 重连基础间隔（秒）；连续失败指数退避，上限 RECONNECT_MAX_INTERVAL，成功复位
 const RECONNECT_INTERVAL: float = 2.0
+## 重连退避封顶间隔（秒）
+const RECONNECT_MAX_INTERVAL: float = 32.0
+## 握手失败重试上限：超过即进入 FAILED 终态（版本不兼容不计数、立即终态）
+const HANDSHAKE_MAX_RETRIES: int = 5
 const MAX_MESSAGE_SIZE: int = 16 * 1024 * 1024  # 16 MiB
 const PROTOCOL_VERSION: int = 0x01  # 与后端 ascend/net/protocol.py 同步
 
@@ -22,6 +27,8 @@ const TOKEN_FILE_REL: String = ".ascend_token"
 const CONNECTING_TIMEOUT: float = 10.0
 ## 连接建立后最后收包超时（秒）：超过该时长未收到任何数据视为后端挂死，断开重连
 const RECEIVE_TIMEOUT: float = 60.0
+## 请求超时（秒）：请求发出后未收到响应即投本地错误（UI 复位忙状态，防假死）
+const REQUEST_TIMEOUT: float = 10.0
 ## 握手（hello/hello_ack）超时（秒）
 const HELLO_TIMEOUT: float = 10.0
 ## 后端启动超时：大陆生成（侵蚀+水文）耗时 5-30s+，须覆盖整个启动窗口

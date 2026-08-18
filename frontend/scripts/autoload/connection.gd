@@ -8,12 +8,28 @@
   process.ready  → transport.reset + handshake.reset + connect_to_host
   transport.connected → worker.start + handshake.start（发 hello）
   handshake.acked → connection_established + 放行 send
-  handshake.rejected/timeout → transport.reset_for_reconnect（重连重握手）
-  transport.disconnected → worker.stop + handshake.reset + 去重 connection_lost
-  worker.drain 逐帧 → 未 ack 走 handshake.on_message；已 ack 广播
+  handshake.rejected/timeout → handshake_policy 判定（RETRY = 重连重握手，
+    FAIL = FAILED 终态，不再自动重试）
+  transport.disconnected → worker.stop + handshake.reset + 去重 connection_lost；
+    握手进行中断开（token 失效/后端重启）同样计入握手失败预算
+  worker.drain 逐帧 → 未 ack 走 handshake.on_message；已 ack 的
+  response/error 先按 seq 命中挂起请求表（send 回调），未命中退回广播；
+  event 一律广播
 
 Status 为门面枚举（0-3，FAILED=3 测试锁定），在事件边界由子层状态
-派生（传输层优先，其次进程 FAILED，否则 DISCONNECTED），非每帧派生。
+派生（传输层优先，其次进程 FAILED / 握手失败终态，否则 DISCONNECTED），
+非每帧派生。
+
+挂起请求（pending-request）: send(message, on_response) 登记
+seq → 回调；响应/错误按 seq 精确配对（过期响应命中失败退回广播，
+不会被错误消费）。清理策略：请求超时（REQUEST_TIMEOUT）投本地错误；
+连接失效/主动切换/终态统一 _flush_pending 投"连接失效"错误——UI 忙
+状态由回调复位，不再依赖广播必然到达。
+
+握手失败策略（handshake_policy.gd）: 版本不兼容（后端 error 帧）立即
+FAILED；token 失效/超时/异常计入重试预算（HANDSHAKE_MAX_RETRIES 次），
+耗尽即 FAILED。重连间隔退避归 TcpTransport 所有（连续失败翻倍封顶，
+成功复位）。FAILED 终态可经 connect_to_server() 重置重试。
 
 restart_backend 为异步状态机（WAIT_STOP → RESET → SPAWN），不阻塞
 主线程（不得用 OS.delay_msec 忙等）。
@@ -26,6 +42,7 @@ const FrameCodecClass = preload("res://scripts/utils/frame_codec.gd")
 const BackendProcessClass = preload("res://scripts/net/backend_process.gd")
 const TcpTransportClass = preload("res://scripts/net/tcp_transport.gd")
 const HandshakeClass = preload("res://scripts/net/handshake.gd")
+const HandshakePolicyClass = preload("res://scripts/net/handshake_policy.gd")
 const DecodeWorkerClass = preload("res://scripts/net/decode_worker.gd")
 
 
@@ -68,6 +85,15 @@ var _restart_args: PackedStringArray = PackedStringArray()
 
 ## 当前断线事件是否已广播（断线期只广播一次，防失败重连刷屏）
 var _outage_emitted: bool = false
+var _suppress_disconnect: bool = false
+
+## 握手失败终态原因（非空 = 连接层永久失败，Status 派生优先 FAILED；
+## 经 connect_to_server/restart_backend 复位）
+var _fatal_reason: String = ""
+
+## 挂起请求表：seq → {request_type, callback, deadline}（send 带回调登记，
+## 响应/错误按 seq 命中；超时/断线统一清理，见类文档）
+var _pending_requests: Dictionary = {}
 
 
 # ── 子层（组合对象，测试可经 _set_layers 注入） ───────────
@@ -76,6 +102,7 @@ var _process_layer: BackendProcess
 var _transport: TcpTransport
 var _handshake: Handshake
 var _worker: DecodeWorker
+var _policy: HandshakePolicy = HandshakePolicyClass.new()
 
 
 # ── 生命周期 ──────────────────────────────────────────────
@@ -114,6 +141,7 @@ func _process(delta: float) -> void:
 	_transport.tick(delta)
 	_handshake.tick(delta)
 	_collect_decoded()
+	_tick_pending_timeouts()
 	last_process_us = Time.get_ticks_usec() - t0
 
 
@@ -165,6 +193,9 @@ func connect_to_server(host: String = DEFAULT_HOST, port: int = DEFAULT_PORT) ->
 	"""重连（FAILED 终态可经此重置并重新尝试）。"""
 	_transport.host = host
 	_transport.port = port
+	_flush_pending(tr("ui.common.connection_lost_retry"))
+	_policy.reset()
+	_fatal_reason = ""
 	if _process_layer.state == BackendProcessClass.State.FAILED:
 		# 终态重置：重新走完整启动流程
 		_restart_args = backend_args
@@ -178,6 +209,7 @@ func connect_to_server(host: String = DEFAULT_HOST, port: int = DEFAULT_PORT) ->
 
 func disconnect_from_server() -> void:
 	"""断开连接（静默，不广播 connection_lost；由调用方决定语义）。"""
+	_flush_pending(tr("ui.common.connection_lost_retry"))
 	_transport.disconnect_from_host()
 	_worker.stop()
 	_handshake.reset()
@@ -185,17 +217,75 @@ func disconnect_from_server() -> void:
 	_sync_status()
 
 
-func send(message: Dictionary) -> void:
-	"""发送一条消息（握手完成前后端未认证，普通帧会被直接断开）。"""
+## 发送一条消息（握手完成前后端未认证，普通帧会被直接断开）。
+##
+## on_response 非空时登记挂起请求：响应/错误按 seq 精确投递该回调
+## （回调内用 msg.type 区分 response/error）。请求超时或连接失效时
+## 投本地 error 消息（回调收到后应复位忙状态）。不登记回调的消息
+## 走原广播路径（message_received 按 request_type 分发）。
+func send(message: Dictionary, on_response: Callable = Callable()) -> void:
 	if not _handshake.is_acked():
 		push_warning("Connection: send before handshake ack ignored")
 		return
 	if not message.has("seq"):
 		message["seq"] = _codec.next_seq()
+	if on_response.is_valid():
+		_pending_requests[int(message["seq"])] = {
+			"request_type": str(message.get("request_type", "")),
+			"callback": on_response,
+			"deadline": Time.get_ticks_msec() + int(Config.REQUEST_TIMEOUT * 1000.0),
+		}
 	var framed: PackedByteArray = _codec.frame_encode(message)
 	if framed.is_empty():
 		return
 	_transport.send_frame(framed)
+
+
+## 逐帧推进挂起请求：超时（REQUEST_TIMEOUT）未响应 → 投本地错误并移除。
+func _tick_pending_timeouts() -> void:
+	if _pending_requests.is_empty():
+		return
+	var now: int = Time.get_ticks_msec()
+	var expired: Array = []
+	for seq: Variant in _pending_requests:
+		if int(_pending_requests[seq]["deadline"]) <= now:
+			expired.append(seq)
+	for seq: Variant in expired:
+		_deliver_pending(seq, _local_error(int(seq),
+			_pending_requests[seq]["request_type"],
+			tr("ui.common.request_timeout")))
+
+
+## 按 seq 命中挂起请求：投递回调（响应或错误）并从表移除。命中失败返回 false。
+func _deliver_pending(seq: Variant, msg: Dictionary) -> bool:
+	# 键统一为 int：Godot JSON.parse 将数字解析为 float（如 2.0），
+	# send() 登记时已 int 化，查表前同样归一化避免类型不匹配。
+	seq = int(seq)
+	if not _pending_requests.has(seq):
+		return false
+	var callback: Callable = _pending_requests[seq]["callback"]
+	_pending_requests.erase(seq)
+	if callback.is_valid():
+		callback.call(msg)
+	return true
+
+
+## 全部挂起请求作废：投"连接失效"本地错误（UI 忙状态随之复位）并清表。
+## 调用时机：连接断开（非握手预算路径）、主动切换、FAILED 终态。
+func _flush_pending(reason: String) -> void:
+	for seq: Variant in _pending_requests.keys():
+		_deliver_pending(seq, _local_error(
+			int(seq), _pending_requests[seq]["request_type"], reason))
+
+
+## 本地构造的 error 消息（与后端 error 消息同构，回调消费路径一致）。
+func _local_error(seq: int, request_type: String, reason: String) -> Dictionary:
+	return {
+		"type": "error",
+		"seq": seq,
+		"request_type": request_type,
+		"error": reason,
+	}
 
 
 ## 主动切换后端进程模式（进程模型：菜单 ⇄ 世界）。异步状态机：
@@ -209,6 +299,9 @@ func restart_backend(args: PackedStringArray = PackedStringArray()) -> void:
 		return  # 已是目标模式
 	backend_args = args  # 目标参数立即生效（UI 据此感知模式）
 	_restart_args = args
+	_flush_pending(tr("ui.common.connection_lost_retry"))
+	_policy.reset()
+	_fatal_reason = ""
 	_transport.reset()
 	_handshake.reset()
 	_worker.stop()
@@ -272,6 +365,7 @@ func _on_process_failed(reason: String) -> void:
 	"""
 	if _restart_phase == RestartPhase.WAIT_STOP:
 		_restart_phase = RestartPhase.NONE
+	_flush_pending(tr("ui.common.connection_lost_retry"))
 	_sync_status()
 	backend_failed.emit(reason)
 
@@ -297,39 +391,73 @@ func _on_transport_connected() -> void:
 
 
 func _on_transport_disconnected() -> void:
-	"""连接失效：停解码线程、重置握手；主动切换中不广播断线。"""
+	"""连接失效：停解码线程、重置握手；握手进行中断开计入失败预算。"""
+	if _suppress_disconnect:
+		_suppress_disconnect = false
+		return
 	_worker.stop()
+	var was_handshaking: bool = _handshake.state == HandshakeClass.State.HELLO_SENT
 	_handshake.reset()
 	if _restart_phase != RestartPhase.NONE:
 		_sync_status()
 		return
+	if was_handshaking:
+		# 已连上但握手未完成即被断开：token 失效/后端重启。
+		# token 每次握手重读，后端重启后可能恢复 → 走预算重试。
+		_handle_handshake_verdict(_policy.on_disconnect(), tr("ui.menu.handshake_auth_failed"))
+		return
 	if not _outage_emitted:
 		_outage_emitted = true
 		push_warning("Connection: connection lost")
+		_flush_pending(tr("ui.common.connection_lost_retry"))
 		connection_lost.emit()
 	_sync_status()
 
 
 func _on_handshake_acked() -> void:
-	"""握手完成：广播已连接，此后 send 放行。"""
+	"""握手完成：预算清零、广播已连接，此后 send 放行。"""
 	print("Connection: handshake ok")
+	_policy.on_ack()
 	_outage_emitted = false
 	connection_established.emit(_transport.host, _transport.port)
 	_sync_status()
 
 
-func _on_handshake_rejected(reason: String) -> void:
-	"""认证/版本被拒：重连重握手（token 每次 start 重读）。"""
-	push_warning("Connection: handshake rejected: %s, retrying" % reason)
-	_transport.reset_for_reconnect()
-	_sync_status()
+func _on_handshake_rejected(kind: HandshakeClass.RejectKind, reason: String) -> void:
+	"""认证/版本被拒：版本不兼容立即终态，其余计入预算重试。"""
+	push_warning("Connection: handshake rejected: %s" % reason)
+	var reason_key: String = "ui.menu.handshake_anomaly"
+	if kind == HandshakeClass.RejectKind.VERSION_MISMATCH:
+		reason_key = "ui.menu.handshake_version_mismatch"
+	_handle_handshake_verdict(_policy.on_rejected(kind), tr(reason_key))
 
 
 func _on_handshake_timeout() -> void:
-	"""等待 ack 超时：断开重连。"""
-	push_warning("Connection: hello timeout (%.1fs), reconnecting" % Config.HELLO_TIMEOUT)
-	_transport.reset_for_reconnect()
+	"""等待 ack 超时：后端挂起，计入预算重试。"""
+	push_warning("Connection: hello timeout (%.1fs)" % Config.HELLO_TIMEOUT)
+	_handle_handshake_verdict(_policy.on_timeout(), tr("ui.menu.handshake_timeout"))
+
+
+## 握手失败统一裁定：策略判定重试（复位重连）或终态（不再自动重试）。
+func _handle_handshake_verdict(verdict: HandshakePolicyClass.Verdict, reason: String) -> void:
+	if verdict == HandshakePolicyClass.Verdict.FAIL:
+		_transport.disconnect_from_host()
+		_enter_failed(reason)
+		return
+	# 断线路径下 transport 已自行进入重连等待；rejected/timeout 路径
+	# 连接仍挂着，需主动 reset（其 disconnected 信号被抑制，避免重试期广播）。
+	if _transport.state != TcpTransportClass.State.DISCONNECTED:
+		_suppress_disconnect = true
+		_transport.reset_for_reconnect()
 	_sync_status()
+
+
+## 进入连接层终态：不再自动重试，通知 UI（可经 connect_to_server 重置）。
+func _enter_failed(reason: String) -> void:
+	_fatal_reason = reason
+	_flush_pending(tr("ui.common.connection_lost_retry"))
+	_sync_status()
+	backend_failed.emit(reason)
 
 
 func _on_frame_received(body: PackedByteArray) -> void:
@@ -340,12 +468,17 @@ func _on_frame_received(body: PackedByteArray) -> void:
 # ── 解码消息收集 ──────────────────────────────────────────
 
 func _collect_decoded() -> void:
-	"""主线程收集已解码消息：握手完成前走握手消费，否则广播。"""
+	"""主线程收集已解码消息：握手完成前走握手消费；已 ack 的
+	response/error 按 seq 命中挂起请求回调，未命中退回广播；event 广播。"""
 	for msg: Dictionary in _worker.drain():
 		if not _handshake.is_acked():
 			if _handshake.on_message(msg):
 				continue
 			push_warning("Connection: message before handshake ack dropped")
+			continue
+		var msg_type: String = msg.get("type", "")
+		if (msg_type == "response" or msg_type == "error") \
+				and _deliver_pending(msg.get("seq", -1), msg):
 			continue
 		message_received.emit(msg)
 
@@ -363,7 +496,8 @@ func _sync_status() -> void:
 		TcpTransportClass.State.CONNECTED:
 			status = Status.CONNECTED
 		_:
-			if _process_layer.state == BackendProcessClass.State.FAILED:
+			if _process_layer.state == BackendProcessClass.State.FAILED \
+					or not _fatal_reason.is_empty():
 				status = Status.FAILED
 			else:
 				status = Status.DISCONNECTED

@@ -72,6 +72,7 @@ func save() -> Error:
 	var cfg := ConfigFile.new()
 	for key in _values:
 		cfg.set_value(key.get_slice("/", 0), key.get_slice("/", 1), _values[key])
+	DirAccess.make_dir_recursive_absolute(_path.get_base_dir())
 	return cfg.save(_path)
 
 

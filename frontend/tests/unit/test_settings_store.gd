@@ -59,6 +59,19 @@ func test_load_corrupt_file_falls_back_to_defaults() -> void:
 		"损坏文件应回退默认值（下次 save 覆盖重建）")
 
 
+func test_save_creates_missing_parent_dir() -> void:
+	var nested := TEST_PATH.get_base_dir().path_join("nested/settings.cfg")
+	DirAccess.remove_absolute(nested.get_base_dir())
+	var store := SettingsStore.new(nested)
+	store.set_value("display/resolution", "1600x900")
+	assert_eq(store.save(), OK, "父目录不存在时 save 应自动创建并成功")
+	assert_true(FileAccess.file_exists(nested))
+	var reloaded := SettingsStore.new(nested)
+	reloaded.load()
+	assert_eq(reloaded.get_value("display/resolution"), "1600x900")
+	DirAccess.remove_absolute(nested.get_base_dir())
+
+
 func test_save_then_load_roundtrip() -> void:
 	var store := SettingsStore.new(TEST_PATH)
 	store.load()

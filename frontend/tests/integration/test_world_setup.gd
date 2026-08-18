@@ -46,8 +46,6 @@ func _make_setup() -> Array:
 	autoqfree(setup)
 	add_child(setup)
 	# 测试隔离：断开 _ready 中建立的真实订阅
-	if Connection.message_received.is_connected(setup._on_message):
-		Connection.message_received.disconnect(setup._on_message)
 	if Connection.connection_lost.is_connected(setup._on_connection_lost):
 		Connection.connection_lost.disconnect(setup._on_connection_lost)
 	if Connection.backend_failed.is_connected(setup._on_backend_failed):
@@ -125,7 +123,7 @@ func test_create_response_launches_and_routes_to_loading() -> void:
 	var setup: Control = pair[0]
 	var launched: Array = pair[1]
 	var routed: Array = pair[2]
-	setup._on_message({
+	setup._on_request_response({
 		"type": "response",
 		"request_type": SaveApi.CREATE,
 		"payload": {"world_id": "w-123"},
@@ -140,7 +138,7 @@ func test_create_response_empty_world_id_shows_error() -> void:
 	var setup: Control = pair[0]
 	var launched: Array = pair[1]
 	var routed: Array = pair[2]
-	setup._on_message({
+	setup._on_request_response({
 		"type": "response",
 		"request_type": SaveApi.CREATE,
 		"payload": {"world_id": ""},
@@ -153,7 +151,7 @@ func test_create_response_empty_world_id_shows_error() -> void:
 func test_create_error_message_shows_reason() -> void:
 	var pair: Array = _make_setup()
 	var setup: Control = pair[0]
-	setup._on_message({
+	setup._on_request_response({
 		"type": "error",
 		"request_type": SaveApi.CREATE,
 		"error": "磁盘已满",
@@ -170,16 +168,14 @@ func test_connection_lost_during_create_shows_error() -> void:
 	assert_string_contains(setup._status_text, "连接中断")
 
 
-# ── 预览响应分发 ──────────────────────────────────────────
+# ── 预览响应（map_step 回调化后由步骤自身消费） ────────────
 
 func test_preview_response_reaches_step() -> void:
 	var pair: Array = _make_setup()
 	var setup: Control = pair[0]
-	setup._on_message({
-		"type": "response",
-		"request_type": SaveApi.MAP_PREVIEW,
-		"payload": {"seed": 42, "land_ratio": 0.55, "elevation": [1, 2, 3, 4]},
-	})
+	setup._current_step()._preview_pending = true
+	setup._current_step().on_preview_response(
+		{"seed": 42, "land_ratio": 0.55, "elevation": [1, 2, 3, 4]})
 	assert_false(setup._current_step()._preview_pending, "响应应送达步骤")
 	assert_eq(setup._current_step()._preview["elevation"], [1, 2, 3, 4])
 
@@ -188,9 +184,5 @@ func test_preview_error_clears_pending() -> void:
 	var pair: Array = _make_setup()
 	var setup: Control = pair[0]
 	setup._current_step()._preview_pending = true
-	setup._on_message({
-		"type": "error",
-		"request_type": SaveApi.MAP_PREVIEW,
-		"payload": {"error": "种子无效"},
-	})
+	setup._current_step().on_preview_failed()
 	assert_false(setup._current_step()._preview_pending)

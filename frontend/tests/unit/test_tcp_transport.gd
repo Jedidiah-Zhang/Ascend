@@ -350,6 +350,59 @@ func test_receive_timeout_resets_and_data_resets_counter() -> void:
 	assert_signal_emit_count(t, "disconnected", 1)
 
 
+# ── 重连退避 ───────────────────────────────────────────────
+
+func test_reconnect_interval_backs_off_and_caps() -> void:
+	"""连续失败间隔指数翻倍并封顶（2→4→8→16→32→32…）。"""
+	var t := _make_transport()
+	_sock_queue.append(_make_fake(3))
+	t.connect_to_host()
+	t.tick(0.016)  # 连接被拒 → 首次失败
+	assert_eq(t.reconnect_interval, Config.RECONNECT_INTERVAL * 2.0, "首次失败后间隔 4s")
+	var expected_calls: int = 1
+	for i in 5:  # 每轮：间隔满自动重连 → 新连接再失败 → 退避翻倍
+		_sock_queue.append(_make_fake(3))
+		t.tick(t.reconnect_interval + 0.1)
+		expected_calls += 1
+		assert_eq(_factory_calls, expected_calls, "间隔满应自动重连")
+		t.tick(0.016)
+	assert_eq(t.reconnect_interval, Config.RECONNECT_MAX_INTERVAL, "应封顶 32s")
+
+
+func test_reconnect_interval_resets_on_success() -> void:
+	"""任何一次连接成功即复位基础间隔。"""
+	var t := _make_transport()
+	_sock_queue.append(_make_fake(3))
+	t.connect_to_host()
+	t.tick(0.016)  # 失败 → 间隔 4s
+	assert_eq(t.reconnect_interval, Config.RECONNECT_INTERVAL * 2.0)
+	_sock_queue.append(_make_fake(3))
+	t.tick(Config.RECONNECT_INTERVAL * 2.0 + 0.1)  # 4s 后重连
+	t.tick(0.016)  # 再失败 → 间隔 8s
+	assert_eq(t.reconnect_interval, Config.RECONNECT_INTERVAL * 4.0, "连续失败翻倍到 8s")
+	_sock_queue.append(_make_fake(2))
+	t.tick(Config.RECONNECT_INTERVAL * 4.0 + 0.1)  # 8s 后重连
+	t.tick(0.016)  # CONNECTED
+	assert_eq(t.reconnect_interval, Config.RECONNECT_INTERVAL, "成功后复位基础间隔")
+
+
+func test_reconnect_interval_resets_on_manual_reset() -> void:
+	"""reset/disconnect 复位退避（主动操作后回基础间隔，退避从头计）。"""
+	var t := _make_transport()
+	_sock_queue.append(_make_fake(3))
+	t.connect_to_host()
+	t.tick(0.016)  # 失败 → 间隔 4s
+	assert_eq(t.reconnect_interval, Config.RECONNECT_INTERVAL * 2.0)
+	t.reset()
+	assert_eq(t.reconnect_interval, Config.RECONNECT_INTERVAL)
+	_sock_queue.append(_make_fake(3))
+	t.connect_to_host()
+	t.tick(0.016)  # reset 后再失败 → 退避从头计
+	assert_eq(t.reconnect_interval, Config.RECONNECT_INTERVAL * 2.0, "reset 后退避从头计")
+	t.disconnect_from_host()
+	assert_eq(t.reconnect_interval, Config.RECONNECT_INTERVAL, "手动断开也应复位")
+
+
 # ── reset / disconnect ─────────────────────────────────────
 
 func test_reset_clears_all_silently() -> void:

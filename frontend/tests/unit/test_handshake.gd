@@ -152,13 +152,28 @@ func test_rejected_error_message() -> void:
 	assert_signal_emit_count(hs, "timeout", 0, "被拒后不应再超时")
 
 
-func test_rejected_carries_reason() -> void:
+func test_rejected_carries_kind_and_reason() -> void:
 	var hs := _make_hs()
-	var reasons: Array = []
-	hs.rejected.connect(func(r): reasons.append(r))
+	var captured: Array = []
+	hs.rejected.connect(func(k, r): captured.append([k, r]))
 	hs.start()
 	hs.on_message({"type": "error", "request_type": "hello", "error": "version mismatch"})
-	assert_eq(reasons, ["version mismatch"])
+	assert_eq(captured.size(), 1)
+	assert_eq(captured[0][0], Handshake.RejectKind.VERSION_MISMATCH,
+		"服务端 error 帧 = 版本不兼容（永久性失败）")
+	assert_eq(captured[0][1], "version mismatch")
+
+
+func test_unexpected_hello_classified_anomaly() -> void:
+	var hs := _make_hs()
+	var captured: Array = []
+	hs.rejected.connect(func(k, r): captured.append([k, r]))
+	hs.start()
+	var consumed: bool = hs.on_message({"type": "hello"})
+	assert_true(consumed, "服务端主动 hello 应被消费")
+	assert_eq(captured.size(), 1)
+	assert_eq(captured[0][0], Handshake.RejectKind.ANOMALY,
+		"服务端不应主动发 hello，归类为可重试异常")
 
 
 func test_unknown_pre_ack_message_not_consumed() -> void:

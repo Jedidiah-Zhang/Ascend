@@ -211,7 +211,11 @@
   "ui.menu.backend_connected": "Backend connected",
   "ui.menu.reconnecting_backend": "Reconnecting to backend...",
   "ui.menu.backend_failed": "Backend connection failed (see output)",
-  "ui.menu.backend_failed_reason": "Backend failed to start: {reason}",
+  "ui.menu.backend_failed_reason": "Backend connection failed: {reason}",
+  "ui.menu.handshake_version_mismatch": "Version mismatch - please update the game and retry",
+  "ui.menu.handshake_auth_failed": "Backend rejected the connection - please restart the game",
+  "ui.menu.handshake_timeout": "Backend is not responding - please restart the game",
+  "ui.menu.handshake_anomaly": "Backend communication anomaly - please restart the game",
 
   "ui.pause.title": "Game Paused",
   "ui.pause.resume": "Resume",
@@ -333,5 +337,6 @@
   "ui.common.entering_world": "Entering world...",
   "ui.common.connection_lost_retry": "Connection lost, operation failed - retry",
   "ui.common.backend_unavailable": "Backend unavailable: {reason}",
-  "ui.common.request_failed": "Request failed: {reason}"
+  "ui.common.request_failed": "Request failed: {reason}",
+  "ui.common.request_timeout": "Request timed out, please retry"
 }

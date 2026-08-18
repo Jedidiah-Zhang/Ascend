@@ -149,7 +149,11 @@ var _page_rect: Rect2 = Rect2()
 
 
 func _send_default(message: Dictionary) -> void:
-	Connection.send(message)
+	Connection.send(message, func(msg: Dictionary) -> void:
+		if msg.get("type", "") == "error":
+			on_preview_failed()
+		else:
+			on_preview_response(msg.get("payload", {})))
 
 
 # ── 生命周期（SetupStep 契约） ────────────────────────────
