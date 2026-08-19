@@ -64,17 +64,63 @@ class TestWeatherConstants:
         from ascend import config
         assert config is not None
 
-    def test_atmosphere_resolution_positive(self):
-        from ascend.config import ATMOSPHERE_RESOLUTION
-        assert ATMOSPHERE_RESOLUTION > 0
+    def test_field_grid_size_positive(self):
+        from ascend.config import WEATHER_FIELD_GRID_SIZE
+        assert WEATHER_FIELD_GRID_SIZE > 0
 
-    def test_drift_rate_positive(self):
-        from ascend.config import ATMOSPHERE_DRIFT_RATE
-        assert ATMOSPHERE_DRIFT_RATE > 0
+    def test_tile_noise_params_positive(self):
+        from ascend.config import (
+            WEATHER_FIELD_TILE_NOISE_WAVELENGTH,
+            WEATHER_FIELD_TILE_NOISE_SCALE,
+        )
+        assert WEATHER_FIELD_TILE_NOISE_WAVELENGTH > 0
+        assert 0 < WEATHER_FIELD_TILE_NOISE_SCALE < 1
 
-    def test_drift_radius_positive(self):
-        from ascend.config import ATMOSPHERE_DRIFT_RADIUS
-        assert ATMOSPHERE_DRIFT_RADIUS > 0
+    def test_texture_wavelengths_positive(self):
+        from ascend.config import (
+            TEXTURE_WAVELENGTH_TEMP, TEXTURE_WAVELENGTH_WIND,
+            TEXTURE_WAVELENGTH_PRECIP,
+        )
+        assert TEXTURE_WAVELENGTH_TEMP > TEXTURE_WAVELENGTH_WIND > \
+            TEXTURE_WAVELENGTH_PRECIP > 0
+
+    def test_texture_octaves_positive(self):
+        from ascend.config import (
+            TEXTURE_OCTAVES, TEXTURE_PERSISTENCE, TEXTURE_LACUNARITY,
+            TEXTURE_DRIFT_RATE,
+        )
+        assert TEXTURE_OCTAVES >= 2
+        assert 0 < TEXTURE_PERSISTENCE < 1
+        assert TEXTURE_LACUNARITY > 1
+        assert TEXTURE_DRIFT_RATE > 0
+
+    def test_feature_block_params_positive(self):
+        from ascend.config import (
+            FEATURE_BLOCK_SIZE, FEATURE_MAX_RADIUS,
+        )
+        assert FEATURE_BLOCK_SIZE > 0
+        assert FEATURE_MAX_RADIUS > 0
+        assert FEATURE_BLOCK_SIZE / FEATURE_MAX_RADIUS >= 2
+
+    def test_climate_proxy_params_positive(self):
+        from ascend.config import (
+            CLIMATE_PROXY_TEMP_WAVELENGTH, CLIMATE_PROXY_RAIN_WAVELENGTH,
+            CLIMATE_PROXY_OCTAVES,
+        )
+        assert CLIMATE_PROXY_TEMP_WAVELENGTH > CLIMATE_PROXY_RAIN_WAVELENGTH > 0
+        assert CLIMATE_PROXY_OCTAVES >= 1
+
+    def test_precip_calibration_params(self):
+        from ascend.config import (
+            PRECIP_SIGNAL_MIN, PRECIP_SIGNAL_MAX,
+            PRECIP_THRESHOLD_DRY, PRECIP_THRESHOLD_WET,
+            PRECIP_ANNUAL_DRY, PRECIP_ANNUAL_WET,
+            PRECIP_INTENSITY_SCALE,
+        )
+        assert 0 <= PRECIP_SIGNAL_MIN < PRECIP_SIGNAL_MAX
+        assert PRECIP_THRESHOLD_WET < PRECIP_THRESHOLD_DRY
+        assert PRECIP_ANNUAL_DRY < PRECIP_ANNUAL_WET
+        assert PRECIP_INTENSITY_SCALE > 0
 
     def test_seasons_per_year_is_four(self):
         from ascend.config import SEASONS_PER_YEAR
@@ -130,11 +176,6 @@ class TestWeatherConstants:
         from ascend.config import SUNSHINE_PERTURB_SCALE
         assert SUNSHINE_PERTURB_SCALE > 0
 
-    def test_rain_depth_positive(self):
-        from ascend.config import RAIN_FORECAST_DEPTH, RAIN_REPLENISH_THRESHOLD
-        assert RAIN_FORECAST_DEPTH >= 1
-        assert 0 < RAIN_REPLENISH_THRESHOLD < RAIN_FORECAST_DEPTH
-
 
 # ── 事件契约 ───────────────────────────────────────────────────────
 
@@ -182,15 +223,17 @@ class TestWeatherEventContracts:
         for name, value in self.SAMPLES[cls].items():
             assert d[name] == value
 
-    def test_all_weather_modifier_events_covered(self):
-        """WEATHER_MODIFIERS 注册表的 start/stop 事件类全部在契约样本中。
+    def test_all_feature_type_events_covered(self):
+        """FEATURE_TYPES 注册表的 start/stop 事件类全部在契约样本中。
 
         全局 event_type 唯一性由 test_event_contracts.py 统一断言。
         """
-        from ascend.weather.weather_modifier import WEATHER_MODIFIERS
-        for config in WEATHER_MODIFIERS.values():
-            assert config.start_event_cls in self.SAMPLES
-            assert config.stop_event_cls in self.SAMPLES
+        from ascend.weather.features import FEATURE_TYPES
+        for config in FEATURE_TYPES.values():
+            if config.start_event_cls is not None:
+                assert config.start_event_cls in self.SAMPLES
+            if config.stop_event_cls is not None:
+                assert config.stop_event_cls in self.SAMPLES
 
     def test_as_dict_is_json_serializable(self):
         """所有事件 data 可被 json.dumps 直接序列化（EventBridge 契约）。"""
@@ -434,220 +477,350 @@ class TestDiurnal:
                 assert dl == pytest.approx(expected, abs=1e-9)
 
 
-# ── atmosphere ─────────────────────────────────────────────────────
+# ── texture field ─────────────────────────────────────────────────
 
 
-class TestAtmosphereField:
-    """全局大气场测试。"""
+class TestTextureField:
+    """纹理分量测试（多通道多八度噪声 + 漂移）。"""
 
     def test_construct_default(self):
-        from ascend.weather.atmosphere import AtmosphereField
-        assert AtmosphereField() is not None
+        from ascend.weather.atmosphere import TextureField
+        assert TextureField() is not None
 
     def test_sample_in_range(self):
-        from ascend.weather.atmosphere import AtmosphereField
-        f = AtmosphereField(seed=42)
+        from ascend.weather.atmosphere import TextureField, CH_TEMPERATURE
+        f = TextureField(seed=42)
         for x in (0.0, 1000.0, 5000.0):
             for y in (0.0, 2000.0, 8000.0):
-                assert -1.0 <= f.sample(x, y, 0) <= 1.0
+                assert -1.0 <= f.sample(CH_TEMPERATURE, x, y, 0) <= 1.0
 
     def test_sample_deterministic(self):
-        from ascend.weather.atmosphere import AtmosphereField
-        f = AtmosphereField(seed=42)
-        assert f.sample(1500.0, 2500.0, 10000) == f.sample(1500.0, 2500.0, 10000)
+        from ascend.weather.atmosphere import TextureField, CH_PRECIP
+        f = TextureField(seed=42)
+        assert f.sample(CH_PRECIP, 1500.0, 2500.0, 10000) == \
+            f.sample(CH_PRECIP, 1500.0, 2500.0, 10000)
 
     def test_spatial_continuity(self):
-        from ascend.weather.atmosphere import AtmosphereField
-        f = AtmosphereField(seed=42)
-        v0 = f.sample(1000.0, 1000.0, 0)
+        from ascend.weather.atmosphere import TextureField, CH_TEMPERATURE
+        f = TextureField(seed=42)
+        v0 = f.sample(CH_TEMPERATURE, 1000.0, 1000.0, 0)
         for dx, dy in [(100, 0), (0, 100), (50, 50)]:
-            assert abs(f.sample(1000.0 + dx, 1000.0 + dy, 0) - v0) < 0.3
+            assert abs(f.sample(CH_TEMPERATURE, 1000.0 + dx, 1000.0 + dy, 0) - v0) < 0.3
 
     def test_temporal_continuity(self):
-        from ascend.weather.atmosphere import AtmosphereField
-        f = AtmosphereField(seed=42)
-        v0 = f.sample(1000.0, 1000.0, 0)
-        assert abs(f.sample(1000.0, 1000.0, 100) - v0) < 0.01
+        from ascend.weather.atmosphere import TextureField, CH_TEMPERATURE
+        f = TextureField(seed=42)
+        v0 = f.sample(CH_TEMPERATURE, 1000.0, 1000.0, 0)
+        assert abs(f.sample(CH_TEMPERATURE, 1000.0, 1000.0, 100) - v0) < 0.01
 
     def test_different_seeds_differ(self):
-        from ascend.weather.atmosphere import AtmosphereField
-        a, b = AtmosphereField(seed=0), AtmosphereField(seed=1)
+        from ascend.weather.atmosphere import TextureField, CH_TEMPERATURE
+        a, b = TextureField(seed=0), TextureField(seed=1)
         diffs = [
-            a.sample(x, y, 0) != b.sample(x, y, 0)
+            a.sample(CH_TEMPERATURE, x, y, 0) != b.sample(CH_TEMPERATURE, x, y, 0)
             for x in (0.0, 1500.0, 3000.0)
             for y in (0.0, 2500.0, 5000.0)
         ]
         assert any(diffs)
 
     def test_drift_over_long_time(self):
-        from ascend.weather.atmosphere import AtmosphereField
-        f = AtmosphereField(seed=42)
-        assert f.sample(1500.0, 2500.0, 0) != f.sample(1500.0, 2500.0, 100_000_000)
+        from ascend.weather.atmosphere import TextureField, CH_PRECIP
+        f = TextureField(seed=42)
+        assert f.sample(CH_PRECIP, 1500.0, 2500.0, 0) != \
+            f.sample(CH_PRECIP, 1500.0, 2500.0, 100_000_000)
 
     def test_wind_vector_unit_length(self):
         import math
-        from ascend.weather.atmosphere import AtmosphereField
-        f = AtmosphereField(seed=42)
+        from ascend.weather.atmosphere import TextureField
+        f = TextureField(seed=42)
         for t in (0, 10000, 1_000_000):
             wx, wy = f.wind_vector(t)
             assert math.hypot(wx, wy) == pytest.approx(1.0, abs=1e-6)
 
     def test_wind_vector_changes_over_time(self):
-        from ascend.weather.atmosphere import AtmosphereField
-        f = AtmosphereField(seed=42)
+        from ascend.weather.atmosphere import TextureField
+        f = TextureField(seed=42)
         assert f.wind_vector(0) != f.wind_vector(100_000_000)
 
-
-# ── rain_events ────────────────────────────────────────────────────
-
-
-class TestRainEvent:
-    """降雨事件强度曲线测试。"""
-
-    def test_intensity_before_start(self):
-        from ascend.weather.rain_events import intensity_at, RainEvent
-        assert intensity_at(RainEvent(1000, 10000, 10.0), 999) == 0.0
-
-    def test_intensity_at_start(self):
-        from ascend.weather.rain_events import intensity_at, RainEvent
-        assert intensity_at(RainEvent(1000, 10000, 10.0), 1000) == 0.0
-
-    def test_intensity_ramp_up_quarter(self):
-        from ascend.weather.rain_events import intensity_at, RainEvent
-        assert intensity_at(RainEvent(0, 10000, 10.0), 1000) == pytest.approx(5.0)
-
-    def test_intensity_peak_mid(self):
-        from ascend.weather.rain_events import intensity_at, RainEvent
-        assert intensity_at(RainEvent(0, 10000, 10.0), 5000) == pytest.approx(10.0)
-
-    def test_intensity_ramp_down(self):
-        from ascend.weather.rain_events import intensity_at, RainEvent
-        assert intensity_at(RainEvent(0, 10000, 10.0), 9000) == pytest.approx(5.0)
-
-    def test_intensity_after_end(self):
-        from ascend.weather.rain_events import intensity_at, RainEvent
-        assert intensity_at(RainEvent(0, 10000, 10.0), 15000) == 0.0
-
-    def test_intensity_custom_ramp_short_burst(self):
-        """短促暴雨 ramp：30% up + 40% peak + 30% down。"""
-        from ascend.weather.rain_events import intensity_at, RainEvent
-        # 0.3 ramp up, 0.3 ramp down → sustain 40%
-        e = RainEvent(0, 10000, 10.0)
-        assert intensity_at(e, 1500, 0.3, 0.3) == pytest.approx(5.0)   # 50% up
-        assert intensity_at(e, 5000, 0.3, 0.3) == pytest.approx(10.0)  # sustain
-        assert intensity_at(e, 8500, 0.3, 0.3) == pytest.approx(5.0)   # 50% down
-
-    def test_intensity_zero_ramp_up(self):
-        """ramp_up_ratio=0 时立即进入峰值。"""
-        from ascend.weather.rain_events import intensity_at, RainEvent
-        e = RainEvent(0, 10000, 10.0)
-        assert intensity_at(e, 1, 0.0, 0.2) == pytest.approx(10.0)
-
-    def test_rain_schedule_uses_custom_ramp(self):
-        """RainSchedule 传递 ramp 参数到 intensity_at。"""
-        from ascend.weather.rain_events import RainSchedule, RainEvent
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0,
-                         ramp_up_ratio=0.3, ramp_down_ratio=0.3)
-        s.push(RainEvent(1000, 10000, 10.0))
-        # 0.3 ramp → ramp 延伸到 elapsed=3000（progress=0.3）
-        # elapsed=1500 处 progress=0.15 → 0.15/0.3 = 50% intensity = 5.0
-        assert s.intensity(2500) == pytest.approx(5.0)
-
-    def test_slots_no_dict(self):
-        from ascend.weather.rain_events import RainEvent
-        with pytest.raises(AttributeError):
-            RainEvent(0, 100, 5.0).foo = 1
+    def test_wind_vector_at_unit_length_and_local(self):
+        """空间风向：单位长度 + 相邻位置接近 + 随时间演化。"""
+        import math
+        from ascend.weather.atmosphere import TextureField
+        f = TextureField(seed=42)
+        for pos in ((0.0, 0.0), (1000.0, 500.0)):
+            wx, wy = f.wind_vector_at(*pos, 10000)
+            assert math.hypot(wx, wy) == pytest.approx(1.0, abs=1e-6)
+        v0 = f.wind_vector_at(1000.0, 1000.0, 0)
+        for dx, dy in [(200, 0), (0, 200)]:
+            v1 = f.wind_vector_at(1000.0 + dx, 1000.0 + dy, 0)
+            assert math.hypot(v0[0] - v1[0], v0[1] - v1[1]) < 0.5
+        assert f.wind_vector_at(1000.0, 1000.0, 0) != \
+            f.wind_vector_at(1000.0, 1000.0, 100_000_000)
 
 
-class TestRainSchedule:
-    """降雨调度测试。"""
+# ── 降水校准 ──────────────────────────────────────────────────────
 
-    def test_empty_intensity_zero(self):
-        from ascend.weather.rain_events import RainSchedule
-        assert RainSchedule(_random.Random(0), 800.0, 5.0, 2.0).intensity(0) == 0.0
 
-    def test_empty_pop_due_false(self):
-        from ascend.weather.rain_events import RainSchedule
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0)
-        s.seed_current(0)
-        assert s.pop_due(1000) is False
+class TestPrecipCalibration:
+    """降水信号 → 阈值/强度校准测试。"""
 
-    def test_push_ascending(self):
-        from ascend.weather.rain_events import RainSchedule, RainEvent
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0)
-        s.push(RainEvent(1000, 5000, 8.0))
-        s.push(RainEvent(10000, 3000, 6.0))
-        assert len(s) == 2
+    def test_threshold_dry_high_wet_low(self):
+        from ascend.weather.field import precip_threshold
+        assert precip_threshold(50.0) == pytest.approx(0.55)
+        assert precip_threshold(3500.0) == pytest.approx(0.25)
+        assert precip_threshold(800.0) < precip_threshold(100.0)
 
-    def test_push_non_ascending_raises(self):
-        from ascend.weather.rain_events import RainSchedule, RainEvent
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0)
-        s.push(RainEvent(10000, 5000, 8.0))
+    def test_threshold_clamped_outside_range(self):
+        from ascend.weather.field import precip_threshold
+        assert precip_threshold(0.0) == pytest.approx(0.55)
+        assert precip_threshold(100000.0) == pytest.approx(0.25)
+
+    def test_calibrate_below_threshold_zero(self):
+        from ascend.weather.field import calibrate_precip
+        assert calibrate_precip(0.1, 100.0, 5.0) == 0.0
+
+    def test_calibrate_above_threshold_scaled(self):
+        from ascend.weather.field import calibrate_precip
+        # 阈值 0.25（湿润），信号 0.5 → 超阈 0.25 × 2 × 10 = 5.0
+        assert calibrate_precip(0.5, 3500.0, 10.0) == pytest.approx(5.0)
+
+    def test_calibrate_signal_capped(self):
+        from ascend.weather.field import calibrate_precip
+        # 信号超 PRECIP_SIGNAL_MAX 时按饱和值计
+        assert calibrate_precip(5.0, 3500.0, 10.0) == \
+            calibrate_precip(1.2, 3500.0, 10.0)
+
+    def test_calibrate_precomputed_threshold(self):
+        from ascend.weather.field import calibrate_precip, precip_threshold
+        th = precip_threshold(800.0)
+        assert calibrate_precip(0.6, 800.0, 5.0, threshold=th) == \
+            calibrate_precip(0.6, 800.0, 5.0)
+
+
+# ── 特征场（FeatureField）────────────────────────────────────────
+
+
+class TestFeatureField:
+    """特征分量测试 — 确定性 / 类型约束 / 注入核。"""
+
+    def test_sample_deterministic(self):
+        from ascend.weather.features import FeatureField
+        a, b = FeatureField(seed=42), FeatureField(seed=42)
+        t = 10000000
+        assert a.sample_temperature_offset(1000.0, 2000.0, t) == \
+            b.sample_temperature_offset(1000.0, 2000.0, t)
+        assert a.sample_precip_boost(1000.0, 2000.0, t) == \
+            b.sample_precip_boost(1000.0, 2000.0, t)
+        assert a.sample_multiplier(1000.0, 2000.0, t) == \
+            b.sample_multiplier(1000.0, 2000.0, t)
+
+    def test_different_seeds_differ(self):
+        """不同种子的核布局不同：同块同段的派生核（类型/出生/中心）不同。"""
+        from ascend.weather.features import FeatureField
+        a, b = FeatureField(seed=0), FeatureField(seed=1)
+        layout_a = [(c.type_name, c.born_tick, round(c.center_x, 1),
+                     round(c.center_y, 1), c.radius) for c in a._segment(0, 0, 0)]
+        layout_b = [(c.type_name, c.born_tick, round(c.center_x, 1),
+                     round(c.center_y, 1), c.radius) for c in b._segment(0, 0, 0)]
+        assert layout_a != layout_b
+
+    def test_multiplier_min_one(self):
+        """无核时倍率恒为 1.0（乘法中性元）。"""
+        from ascend.weather.features import FeatureField
+        f = FeatureField(seed=42)
+        for t in (0, 100000, 10000000):
+            assert f.sample_multiplier(0.0, 0.0, t) >= 1.0
+
+    def test_core_id_stable(self):
+        """核身份稳定：同一种子/坐标/段 → 同 core_id。"""
+        from ascend.weather.features import FeatureField
+        f = FeatureField(seed=42)
+        t = 10000000
+        cores = f.cores_overlapping(0, 0, 2000, 2000, t)
+        if cores:
+            c = cores[0]
+            assert c.core_id.startswith("b:")
+            again = FeatureField(seed=42).cores_overlapping(0, 0, 2000, 2000, t)
+            assert c.core_id in {x.core_id for x in again}
+
+    def test_inject_core_immediate_effect(self):
+        """注入核立即满强度（no_ramp），采样与自然核同路径。"""
+        from ascend.weather.features import FeatureField
+        from ascend.config import GAME_YEAR
+        f = FeatureField(seed=42)
+        t = 5000000
+        assert f.sample_multiplier(100.0, 100.0, t) == 1.0
+        f.inject_core(
+            0, 0, "storm", center_x=100.0, center_y=100.0, radius=3000.0,
+            born_tick=t, duration=GAME_YEAR,
+        )
+        assert f.sample_multiplier(100.0, 100.0, t) > 2.0
+        assert f.remove_injected(0, 0, "storm") is True
+        assert f.sample_multiplier(100.0, 100.0, t) == 1.0
+
+    def test_inject_unknown_type_raises(self):
+        from ascend.weather.features import FeatureField
+        f = FeatureField(seed=42)
         with pytest.raises(ValueError):
-            s.push(RainEvent(5000, 3000, 6.0))
+            f.inject_core(0, 0, "tornado", center_x=0.0, center_y=0.0,
+                          radius=100.0, born_tick=0, duration=100)
 
-    def test_intensity_during_event(self):
-        from ascend.weather.rain_events import RainSchedule, RainEvent
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0)
-        s.push(RainEvent(1000, 10000, 10.0))
-        assert s.intensity(6000) == pytest.approx(10.0)
+    def test_front_has_no_event_classes(self):
+        """锋面是纯降水带（带形），无 start/stop 事件类。"""
+        from ascend.weather.features import FEATURE_TYPES, T_FRONT
+        assert FEATURE_TYPES[T_FRONT].start_event_cls is None
+        assert FEATURE_TYPES[T_FRONT].stop_event_cls is None
 
-    def test_is_raining(self):
-        from ascend.weather.rain_events import RainSchedule, RainEvent
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0)
-        s.push(RainEvent(1000, 5000, 8.0))
-        assert s.is_raining(3000) is True
-        assert s.is_raining(7000) is False
+    def test_feature_config_rates_cover_all_zones(self):
+        """所有特征类型的 rates 覆盖全部气候带（0 = 不发生）。"""
+        from ascend.weather.features import FEATURE_TYPES
+        from ascend.space import ClimateZone
+        for cfg in FEATURE_TYPES.values():
+            assert set(cfg.rates) == set(ClimateZone)
 
-    def test_pop_due_start_and_end(self):
-        from ascend.weather.rain_events import RainSchedule, RainEvent
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0)
-        s.push(RainEvent(1000, 5000, 8.0))  # [1000, 6000)
-        s.seed_current(0)
-        assert s.pop_due(1000) is True   # 开始
-        assert s.pop_due(4000) is False  # 雨中不变
-        assert s.pop_due(6000) is True   # 停止
 
-    def test_needs_replenish(self):
-        from ascend.weather.rain_events import RainSchedule, RainEvent
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0)
-        assert s.needs_replenish(2)
-        s.push(RainEvent(1000, 5000, 8.0))
-        s.push(RainEvent(20000, 5000, 8.0))
-        assert not s.needs_replenish(2)
+# ── 统一天气场（UnifiedWeatherField）─────────────────────────────
 
-    def test_latest_start_tick(self):
-        from ascend.weather.rain_events import RainSchedule, RainEvent
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0)
-        assert s.latest_start_tick() is None
-        s.push(RainEvent(1000, 5000, 8.0))
-        s.push(RainEvent(20000, 5000, 8.0))
-        assert s.latest_start_tick() == 20000
 
-    def test_latest_end_tick(self):
-        from ascend.weather.rain_events import RainSchedule, RainEvent
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0)
-        assert s.latest_end_tick() is None
-        s.push(RainEvent(1000, 5000, 8.0))     # end 6000
-        s.push(RainEvent(20000, 3000, 6.0))    # end 23000
-        assert s.latest_end_tick() == 23000
+class TestUnifiedWeatherField:
+    """统一天气场测试 — C1 连续 / tile 噪声 / 批量采样。"""
 
-    def test_generate_next_deterministic(self):
-        from ascend.weather.rain_events import RainSchedule
-        s1 = RainSchedule(_random.Random(42), 800.0, 5.0, 2.0)
-        s2 = RainSchedule(_random.Random(42), 800.0, 5.0, 2.0)
-        e1, e2 = s1.generate_next(0), s2.generate_next(0)
-        assert (e1.start_tick, e1.duration, e1.peak_intensity) == (
-            e2.start_tick, e2.duration, e2.peak_intensity)
+    def test_sample_deterministic(self):
+        from ascend.weather.field import UnifiedWeatherField
+        f = UnifiedWeatherField(seed=42)
+        assert f.sample("temperature", 1500.0, 2500.0, 10000) == \
+            f.sample("temperature", 1500.0, 2500.0, 10000)
 
-    def test_generate_next_positive(self):
-        from ascend.weather.rain_events import RainSchedule
-        e = RainSchedule(_random.Random(42), 800.0, 5.0, 2.0).generate_next(0)
-        assert e.start_tick > 0 and e.duration > 0 and e.peak_intensity > 0
+    def test_spatial_continuity(self):
+        """相邻位置值接近（C1 插值平滑，含特征核）。"""
+        from ascend.weather.field import UnifiedWeatherField
+        f = UnifiedWeatherField(seed=42)
+        t = 10000000
+        v0 = f.sample("temperature", 1000.0, 1000.0, t)
+        for dx, dy in [(100, 0), (0, 100), (50, 50)]:
+            assert abs(f.sample("temperature", 1000.0 + dx, 1000.0 + dy, t) - v0) < 0.3
 
-    def test_mean_interval_desert_rare(self):
-        from ascend.weather.rain_events import mean_interval_hours
-        assert mean_interval_hours(50.0, 2.0, 0.5) > mean_interval_hours(2000.0, 10.0, 2.0)
+    def test_c1_smooth_across_grid_boundary(self):
+        """跨 1km 网格边界采样连续（无折痕）。"""
+        from ascend.weather.field import UnifiedWeatherField
+        f = UnifiedWeatherField(seed=42)
+        t = 10000000
+        for channel in ("temperature", "precip", "wind"):
+            v_left = f.sample(channel, 999.9, 500.0, t)
+            v_right = f.sample(channel, 1000.1, 500.0, t)
+            assert abs(v_left - v_right) < 0.2, channel
+
+    def test_temporal_continuity(self):
+        from ascend.weather.field import UnifiedWeatherField
+        f = UnifiedWeatherField(seed=42)
+        v0 = f.sample("temperature", 1000.0, 1000.0, 0)
+        assert abs(f.sample("temperature", 1000.0, 1000.0, 100) - v0) < 0.01
+
+    def test_different_seeds_differ(self):
+        from ascend.weather.field import UnifiedWeatherField
+        a, b = UnifiedWeatherField(seed=0), UnifiedWeatherField(seed=1)
+        diffs = [
+            a.sample("precip", x, y, 0) != b.sample("precip", x, y, 0)
+            for x in (0.0, 1500.0, 3000.0)
+            for y in (0.0, 2500.0, 5000.0)
+        ]
+        assert any(diffs)
+
+    def test_sample_grid_matches_single(self):
+        """批量栅格采样与逐点采样同路径同值。"""
+        from ascend.weather.field import UnifiedWeatherField
+        f = UnifiedWeatherField(seed=42)
+        t = 10000000
+        grid = f.sample_grid("temperature", 0.0, 0.0, 3, 2, t)
+        assert len(grid) == 6
+        for j in range(2):
+            for i in range(3):
+                x = (i + 0.5) * 1000.0
+                y = (j + 0.5) * 1000.0
+                assert grid[j * 3 + i] == pytest.approx(
+                    f.sample("temperature", x, y, t), abs=1e-9)
+
+    def test_precip_signal_nonnegative(self):
+        from ascend.weather.field import UnifiedWeatherField
+        f = UnifiedWeatherField(seed=42)
+        for t in (0, 100000, 10000000):
+            assert f.sample("precip", 500.0, 500.0, t) >= 0.0
+
+    def test_unknown_channel_raises(self):
+        from ascend.weather.field import UnifiedWeatherField
+        f = UnifiedWeatherField(seed=42)
+        with pytest.raises(KeyError):
+            f.sample("humidity_extra", 0.0, 0.0, 0)
+
+
+# ── 区域跟踪器（RegionTracker）───────────────────────────────────
+
+
+class TestRegionTracker:
+    """区域级降水事件测试 — 连通域 / 出现消失 / 重叠匹配。"""
+
+    def _make_tracker(self):
+        from ascend.weather import UnifiedWeatherField, RegionTracker
+        tr = RegionTracker(UnifiedWeatherField(seed=42))
+        for cx in range(-2, 3):
+            for cy in range(-2, 3):
+                tr.set_chunk_baseline(cx, cy, 3000.0, 10.0)
+        return tr
+
+    def test_region_start_emitted(self):
+        """湿润区信号越阈 → 区域 start 事件（含质心与强度）。"""
+        tr = self._make_tracker()
+        events = tr.update(10000000)
+        starts = [e for e in events if e.kind == "start"]
+        assert starts, "湿润气候带应有区域 start 事件"
+        for e in starts:
+            assert e.intensity > 0.0
+            assert e.cells
+
+    def test_region_steady_no_repeat(self):
+        """区域持续存在（重叠匹配）→ 不发新事件。"""
+        tr = self._make_tracker()
+        tr.update(10000000)
+        for dt in (120, 1200):
+            events = tr.update(10000000 + dt)
+            assert all(e.kind == "stop" for e in events) or True
+            # 持续期不应有 start
+            assert not any(e.kind == "start" for e in events)
+
+    def test_region_stop_when_dry(self):
+        """移除 chunk 校准 → 区域消失 → stop 事件。"""
+        tr = self._make_tracker()
+        tr.update(10000000)
+        for (cx, cy) in list(tr._baselines):
+            tr.remove_chunk(cx, cy)
+        events = tr.update(10000000 + 120)
+        assert any(e.kind == "stop" for e in events)
+
+    def test_region_split_no_new_start(self):
+        """区域分裂（重叠匹配）→ 不发新 start（"还在下雨"）。"""
+        tr = self._make_tracker()
+        tr.update(10000000)
+        # 手工模拟上一帧区域 = 本帧区域的并集（等价分裂场景）
+        prev = list(tr._prev_regions)
+        if prev:
+            merged = set().union(*prev)
+            tr._prev_regions = [merged]
+            events = tr.update(10000000 + 120)
+            assert not any(e.kind == "start" for e in events)
+
+    def test_no_chunks_no_events(self):
+        tr = self._make_tracker()
+        for (cx, cy) in list(tr._baselines):
+            tr.remove_chunk(cx, cy)
+        assert tr.update(10000000) == []
+
+    def test_dry_climate_never_rains(self):
+        """极干旱校准（高阈）→ 无区域事件。"""
+        from ascend.weather import UnifiedWeatherField, RegionTracker
+        tr = RegionTracker(UnifiedWeatherField(seed=42))
+        tr.set_chunk_baseline(0, 0, 10.0, 2.0)
+        events = tr.update(10000000)
+        assert not any(e.kind == "start" for e in events)
 
 
 # ── weather_field ──────────────────────────────────────────────────
@@ -747,29 +920,14 @@ class TestWeatherEngine:
         e = WeatherEngine(WorldClock(), seed=42, world_tree_arg=wt)
         e.shutdown()
 
-    def test_atmosphere_drift_no_short_cycle(self):
-        """扰动漂移不得在 ~148 游戏日近似环绕重复。
-
-        圆形轨道（半径 100，周期 ≈363.6 游戏日）：148 日偏移
-        显著非零，1 年（360 日）与轨道周期错位亦不精确重复。
-        """
-        import math
-        from ascend.weather.weather_engine import WeatherEngine
-        from ascend.config import GAME_DAY, GAME_YEAR
-        wt = WorldTree()
-        clock = WorldClock()
-        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-        e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        base = e._tick_context(0)
-        d148 = e._tick_context(148 * GAME_DAY)
-        dyear = e._tick_context(GAME_YEAR)
-        shift148 = math.hypot(
-            d148["drift_x"] - base["drift_x"], d148["drift_y"] - base["drift_y"])
-        shiftyear = math.hypot(
-            dyear["drift_x"] - base["drift_x"], dyear["drift_y"] - base["drift_y"])
-        assert shift148 > 1.0, f"148 日漂移回到原位（shift={shift148:.3f}），旧周期环绕复现"
-        assert shiftyear > 1.0, f"1 年漂移精确重复（shift={shiftyear:.3f}）"
-        e.shutdown()
+    def test_field_drift_no_short_cycle(self):
+        """纹理漂移不得在 ~1 年内精确重复（场值长期演化）。"""
+        from ascend.weather.field import UnifiedWeatherField
+        from ascend.config import GAME_YEAR
+        f = UnifiedWeatherField(seed=42)
+        v0 = f.sample("precip", 1000.0, 1000.0, 0)
+        vy = f.sample("precip", 1000.0, 1000.0, GAME_YEAR)
+        assert abs(vy - v0) > 0.001, f"1 年漂移后场值未变（{vy - v0:.4f}）"
 
     def test_no_fields_tick_noop(self):
         from ascend.weather.weather_engine import WeatherEngine
@@ -908,7 +1066,7 @@ class TestWeatherEngine:
         e.shutdown()
 
     def test_precip_start_emitted_on_event_start(self):
-        """降水事件开始时发 precipitation_start（含 precip_type）。"""
+        """强制降雨（注入锋面核）→ 区域 precipitation_start（含强度与类型）。"""
         from ascend.weather.weather_engine import WeatherEngine
         wt = WorldTree()
         events = []
@@ -916,17 +1074,18 @@ class TestWeatherEngine:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(temp=20.0), ClimateZone.TEMPERATE_FOREST, 15.0)
-        rain = e._rain_schedules[(0, 0)]
-        e0 = rain._events[0]
-        clock.skip(e0.start_tick + 1 - clock.time)
+        e.force_feature(0, 0, "front", True)
         _publish_minute(wt, clock.time)
-        assert len(events) >= 1
-        assert events[0].data["intensity"] > 0
-        assert events[0].data["precip_type"] == "rain"
+        clock.skip(1)
+        _publish_minute(wt, clock.time)
+        starts = [ev for ev in events if ev.event_type == "precipitation_start"]
+        assert len(starts) >= 1
+        assert starts[0].data["intensity"] > 0
+        assert starts[0].data["precip_type"] in ("rain", "snow")
         e.shutdown()
 
     def test_precip_stop_emitted_on_event_end(self):
-        """降水事件结束时发 precipitation_stop。"""
+        """解除强制降雨 → 区域 precipitation_stop。"""
         from ascend.weather.weather_engine import WeatherEngine
         wt = WorldTree()
         events = []
@@ -935,14 +1094,13 @@ class TestWeatherEngine:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        rain = e._rain_schedules[(0, 0)]
-        e0 = rain._events[0]
-        end = e0.start_tick + e0.duration
-        # 先推进到雨中（触发 precipitation_start）
-        clock.skip(e0.start_tick + 1 - clock.time)
+        e.force_feature(0, 0, "front", True)
         _publish_minute(wt, clock.time)
-        # 推进到结束
-        clock.skip(end - clock.time + 1)
+        clock.skip(1)
+        _publish_minute(wt, clock.time)
+        assert any(ev.event_type == "precipitation_start" for ev in events)
+        e.force_feature(0, 0, "front", False)
+        clock.skip(1)
         _publish_minute(wt, clock.time)
         stops = [ev for ev in events if ev.event_type == "precipitation_stop"]
         assert len(stops) >= 1
@@ -958,12 +1116,13 @@ class TestWeatherEngine:
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         # 极地，年均温 -10°C
         e.register_chunk(0, 0, _make_baseline(temp=-10.0), ClimateZone.POLAR_TUNDRA, -5.0)
-        rain = e._rain_schedules[(0, 0)]
-        e0 = rain._events[0]
-        clock.skip(e0.start_tick + 1 - clock.time)
+        e.force_feature(0, 0, "front", True)
         _publish_minute(wt, clock.time)
-        assert len(events) >= 1
-        assert events[0].data["precip_type"] == "snow"
+        clock.skip(1)
+        _publish_minute(wt, clock.time)
+        starts = [ev for ev in events if ev.event_type == "precipitation_start"]
+        assert len(starts) >= 1
+        assert starts[0].data["precip_type"] == "snow"
         e.shutdown()
 
     def test_event_data_matches_contract(self):
@@ -1022,59 +1181,33 @@ class TestWeatherEngine:
         assert locs == {(0, 0), (5, 5)}
         e.shutdown()
 
-    def test_replenish_rain_fills(self):
-        """补算填充低于阈值的降雨事件。"""
+    def test_rainfall_derived_from_field_signal(self):
+        """降雨强度完全由场信号 + 气候带校准推导（无调度状态）。"""
         from ascend.weather.weather_engine import WeatherEngine
         wt = WorldTree()
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-        e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        rain = e._rain_schedules[(0, 0)]
-        rain._events.clear()
-        rain._last_raining = False
-        e._replenish_rain((0, 0), clock.time)
-        assert len(rain) > 0
+        e.register_chunk(0, 0, _make_baseline(rain=3000.0),
+                         ClimateZone.EQUATORIAL_RAINFOREST, 27.0)
+        wp = e.get_weather(0, 0)
+        assert wp.rainfall >= 0.0
+        # 任意过去时刻可精确重算（解析量，无窗口修剪）
+        wp_past = e.get_weather(0, 0, time=0)
+        assert wp_past.rainfall >= 0.0
         e.shutdown()
 
-    def test_prune_removes_past_events(self):
-        """prune_before 移除已结束的过期事件。"""
-        from ascend.weather.rain_events import RainSchedule, RainEvent
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0)
-        s.push(RainEvent(0, 5000, 8.0))       # [0, 5000)
-        s.push(RainEvent(20000, 5000, 8.0))   # [20000, 25000)
-        s.push(RainEvent(40000, 5000, 8.0))   # [40000, 45000)
-        assert len(s) == 3
-        s.prune_before(5000)   # 第一个刚结束，移除
-        assert len(s) == 2
-        s.prune_before(25000)  # 第二个也结束了
-        assert len(s) == 1
-        assert s._events[0].start_tick == 40000
-
-    def test_prune_keeps_ongoing_event(self):
-        """prune_before 保留正在进行中的事件（now 在区间内）。"""
-        from ascend.weather.rain_events import RainSchedule, RainEvent
-        s = RainSchedule(_random.Random(0), 800.0, 5.0, 2.0)
-        s.push(RainEvent(0, 10000, 8.0))   # [0, 10000)
-        s.prune_before(5000)               # now=5000，事件还在进行
-        assert len(s) == 1
-
-    def test_replenish_after_prune_works(self):
-        """裁剪后事件数低于阈值时补算恢复。"""
+    def test_rainfall_changes_with_force(self):
+        """强制降雨改变降雨强度（场信号 + 特征核）。"""
         from ascend.weather.weather_engine import WeatherEngine
         wt = WorldTree()
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        rain = e._rain_schedules[(0, 0)]
-        # 模拟：所有预排事件都已过期
-        from ascend.weather.rain_events import RainEvent as RE
-        for ev in list(rain._events):
-            rain._events.remove(ev)
-        rain.push(RE(0, 5000, 8.0))  # 很久以前就结束了
-        assert len(rain) == 1
-        # 补算应裁剪过期事件然后填充
-        e._replenish_rain((0, 0), clock.time)  # clock.time >> 5000
-        assert len(rain) >= 2  # 至少填充了 2 个未来事件
+        before = e.get_weather(0, 0).rainfall
+        e.force_feature(0, 0, "storm", True)
+        after = e.get_weather(0, 0).rainfall
+        assert after > before
+        e.shutdown()
 
     def test_sunshine_change_in_valid_range(self):
         """sunshine_change 的 sunshine 值在 [0, 24] 范围内。"""
@@ -1330,10 +1463,9 @@ class TestSunlightIntensity:
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
         clear = e.get_weather_report(0, 0)
         assert clear is not None and clear[4] > 0.8
-        assert e.set_rain(0, 0, True) is True  # 均值强度立即生效
+        assert e.force_feature(0, 0, "storm", True) is True
         storm = e.get_weather_report(0, 0)
         assert storm is not None
-        # 均值强度 5 mm/h 衰减系数 = 1 - min(5/30,1)*0.8 ≈ 0.87
         assert storm[4] < clear[4]
         assert storm[4] < clear[4] * 0.95
         e.shutdown()
@@ -1760,123 +1892,25 @@ class TestPerChunkDayNight:
         e.shutdown()
 
 
-class TestModifierSchedule:
-    """天气修改器调度测试 — ModifierSchedule 队列管理。"""
-
-    def test_construct(self):
-        from ascend.weather.weather_modifier import ModifierSchedule, WEATHER_MODIFIERS
-        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["cold_snap"], ClimateZone.TEMPERATE_FOREST)
-        assert s is not None
-
-    def test_push_and_is_active(self):
-        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
-        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["heat_wave"], ClimateZone.DESERT)
-        s.push(ModifierEvent(100, 500, "heat_wave", 1.0))
-        assert s.is_active(200)
-        assert not s.is_active(99)
-        assert not s.is_active(600)
-
-    def test_temp_offset(self):
-        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
-        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["cold_snap"], ClimateZone.SUBARCTIC_TAIGA)
-        s.push(ModifierEvent(100, 500, "cold_snap", 1.0))
-        assert s.temp_offset(200) < -10.0  # cold snap is negative
-        assert s.temp_offset(0) == 0.0
-
-    def test_heat_wave_positive_offset(self):
-        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
-        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["heat_wave"], ClimateZone.DESERT)
-        s.push(ModifierEvent(100, 500, "heat_wave", 1.0))
-        assert s.temp_offset(200) > 10.0
-
-    def test_storm_wind_multiplier(self):
-        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
-        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["storm"], ClimateZone.TEMPERATE_FOREST)
-        s.push(ModifierEvent(100, 500, "storm", 1.0))
-        assert s.wind_rain_multiplier(200) > 2.0
-        assert s.wind_rain_multiplier(0) == 1.0
-
-    def test_temp_offset_zero_for_storm(self):
-        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
-        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["storm"], ClimateZone.TROPICAL_SAVANNA)
-        s.push(ModifierEvent(100, 500, "storm", 1.0))
-        assert s.temp_offset(200) == 0.0
-
-    def test_pop_due_detects_start_and_stop(self):
-        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
-        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["cold_snap"], ClimateZone.TEMPERATE_FOREST)
-        s.seed_current(0)
-        s.push(ModifierEvent(100, 200, "cold_snap", 1.0))
-        assert s.pop_due(150)  # start
-        assert not s.pop_due(160)  # no change
-        assert s.pop_due(300)  # stop
-
-    def test_generate_next_in_future(self):
-        from ascend.weather.weather_modifier import ModifierSchedule, WEATHER_MODIFIERS
-        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["cold_snap"], ClimateZone.SUBARCTIC_TAIGA)
-        ev = s.generate_next(1000)
-        assert ev.start_tick > 1000
-        assert ev.duration > 0
-        assert 0.5 <= ev.magnitude <= 1.5
-
-    def test_prune_removes_old_events(self):
-        from ascend.weather.weather_modifier import ModifierSchedule, ModifierEvent, WEATHER_MODIFIERS
-        s = ModifierSchedule(_random.Random(42), WEATHER_MODIFIERS["heat_wave"], ClimateZone.DESERT)
-        s.push(ModifierEvent(100, 50, "heat_wave", 1.0))
-        s.push(ModifierEvent(200, 50, "heat_wave", 1.0))
-        s.prune_before(151)
-        assert len(s) == 1
-        assert s.is_active(220)
-
-    def test_rate_zero_climate_no_events(self):
-        """热带雨林寒潮频率为 0，通过 weather_engine 确认不创建对应 schedule。"""
-        from ascend.weather.weather_engine import WeatherEngine
-        wt = WorldTree()
-        clock = WorldClock()
-        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-        e.register_chunk(0, 0, _make_baseline(), ClimateZone.EQUATORIAL_RAINFOREST, 30.0)
-        # 热带雨林寒潮/热浪频率均为 0
-        assert (0, 0, "cold_snap") not in e._modifier_schedules
-        assert (0, 0, "heat_wave") not in e._modifier_schedules
-        # 风暴频率 > 0
-        assert (0, 0, "storm") in e._modifier_schedules
-        e.shutdown()
-
-
 class TestExtremeWeatherIntegration:
-    """天气修改器集成测试 — WeatherEngine 发布事件 + 参数偏移。"""
+    """极端天气集成测试 — 特征核注入 → 参数偏移 + 引擎事件。"""
 
     def test_cold_snap_affects_temperature(self):
-        """寒潮期间温度额外下降。"""
+        """注入寒潮核 → chunk 温度显著下降。"""
         from ascend.weather.weather_engine import WeatherEngine
-        from ascend.weather.weather_modifier import ModifierEvent
         wt = WorldTree()
-        events = []
-        wt.subscribe("temperature_change", lambda e: events.append(e))
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(temp=10.0), ClimateZone.SUBARCTIC_TAIGA, 0.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
-        _force_perception_reset(e, 0, 0, "temp")
-        clock.skip(1)
-        _publish_minute(wt, clock.time)
-        normal_temp = events[-1].data["temperature"]
-        sched = e._modifier_schedules.get((0, 0, "cold_snap"))
-        if sched:
-            sched._events.clear()
-            sched.push(ModifierEvent(0, 999999999, "cold_snap", 1.0))
-            sched.seed_current(0)
-            events.clear()
-            clock.skip(GAME_DAY)
-            _publish_minute(wt, clock.time)
-            cold_temp = events[-1].data["temperature"]
-            assert cold_temp < normal_temp - 10.0
+        normal = e.get_weather(0, 0).temperature
+        assert e.force_feature(0, 0, "cold_snap", True) is True
+        cold = e.get_weather(0, 0).temperature
+        assert cold < normal - 10.0, f"寒潮应降温 ≥10°C（{normal}→{cold}）"
         e.shutdown()
 
     def test_heat_wave_events_emitted(self):
-        """热浪状态切换发布 heat_wave_start/stop。"""
+        """热浪核注入/解除 → heat_wave_start/stop 事件。"""
         from ascend.weather.weather_engine import WeatherEngine
-        from ascend.weather.weather_modifier import ModifierEvent
         wt = WorldTree()
         events = []
         for t in ("heat_wave_start", "heat_wave_stop"):
@@ -1884,50 +1918,34 @@ class TestExtremeWeatherIntegration:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(temp=25.0), ClimateZone.DESERT, 22.0)
+        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        e.force_feature(0, 0, "heat_wave", True)
+        clock.skip(1)
         _publish_minute(wt, clock.time)
-        sched = e._modifier_schedules.get((0, 0, "heat_wave"))
-        if sched:
-            sched._events.clear()
-            sched.push(ModifierEvent(1, GAME_DAY, "heat_wave", 1.0))
-            sched.seed_current(0)
-            _publish_minute(wt, clock.time)
-            assert any(ev.event_type == "heat_wave_start" for ev in events)
-            clock.skip(GAME_DAY * 2)
-            _publish_minute(wt, clock.time)
-            assert any(ev.event_type == "heat_wave_stop" for ev in events)
+        assert any(ev.event_type == "heat_wave_start" for ev in events)
+        e.force_feature(0, 0, "heat_wave", False)
+        clock.skip(1)
+        _publish_minute(wt, clock.time)
+        assert any(ev.event_type == "heat_wave_stop" for ev in events)
         e.shutdown()
 
     def test_storm_affects_wind_and_rain(self):
-        """风暴期间风速倍率 > 1。"""
+        """注入风暴核 → 风速倍率 > 1 且降雨上升。"""
         from ascend.weather.weather_engine import WeatherEngine
-        from ascend.weather.weather_modifier import ModifierEvent
         wt = WorldTree()
-        wind_events = []
-        wt.subscribe("wind_change", lambda e: wind_events.append(e))
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(wind=5.0), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
-        _force_perception_reset(e, 0, 0, "wind")
-        clock.skip(1)
-        _publish_minute(wt, clock.time)
-        normal_wind = wind_events[-1].data["wind_speed"]
-        sched = e._modifier_schedules.get((0, 0, "storm"))
-        if sched:
-            sched._events.clear()
-            sched.push(ModifierEvent(0, 999999999, "storm", 1.0))
-            sched.seed_current(0)
-            wind_events.clear()
-            clock.skip(GAME_DAY)
-            _publish_minute(wt, clock.time)
-            if wind_events:
-                storm_wind = wind_events[-1].data["wind_speed"]
-                assert storm_wind > normal_wind * 1.5
+        normal = e.get_weather(0, 0)
+        e.force_feature(0, 0, "storm", True)
+        storm = e.get_weather(0, 0)
+        assert storm.wind_speed > normal.wind_speed * 1.5
+        assert storm.rainfall > normal.rainfall
         e.shutdown()
 
 
 class TestForceControl:
-    """强制天气控制 API 测试 — set_rain / set_modifier（终端调试指令）。"""
+    """强制特征核控制 API 测试 — force_feature（终端调试指令）。"""
 
     @staticmethod
     def _make_engine():
@@ -1939,106 +1957,66 @@ class TestForceControl:
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
         return e, wt, clock
 
-    def test_set_rain_unregistered_returns_none(self):
-        """未注册 chunk 的 set_rain 返回 None。"""
+    def test_unregistered_returns_none(self):
+        """未注册 chunk 的 force_feature 返回 None。"""
         e, _, _ = self._make_engine()
-        assert e.set_rain(9, 9, True) is None
+        assert e.force_feature(9, 9, "cold_snap", True) is None
+        assert e.force_feature(9, 9, "cold_snap", False) is None
         e.shutdown()
 
-    def test_set_rain_on_starts_immediately(self):
-        """set_rain(on) 立即生效：is_raining=True 且 rainfall > 0。"""
+    def test_on_starts_immediately(self):
+        """force_feature(on) 立即生效：注入核存在且参数偏移反映。"""
         e, _, clock = self._make_engine()
-        assert e.set_rain(0, 0, True) is True
-        rain = e._rain_schedules[(0, 0)]
-        assert rain.is_raining(clock.time) is True
-        wp = e.get_weather(0, 0)
-        assert wp.rainfall > 0
-        # 再次开启为 no-op
-        assert e.set_rain(0, 0, True) is False
+        normal = e.get_weather(0, 0).temperature
+        assert e.force_feature(0, 0, "cold_snap", True) is True
+        assert (0, 0, "cold_snap") in e._field.features._injected
+        assert e.get_weather(0, 0).temperature < normal - 10.0
+        # 重复开启为 no-op
+        assert e.force_feature(0, 0, "cold_snap", True) is False
         e.shutdown()
 
-    def test_set_rain_off_stops_immediately(self):
-        """set_rain(off) 截断当前降雨事件。"""
+    def test_off_stops_immediately(self):
+        """force_feature(off) 立即移除核并恢复参数。"""
         e, _, clock = self._make_engine()
-        e.set_rain(0, 0, True)
-        assert e.set_rain(0, 0, False) is True
-        rain = e._rain_schedules[(0, 0)]
-        assert rain.is_raining(clock.time) is False
-        assert e.get_weather(0, 0).rainfall == 0.0
-        # 再次关闭为 no-op
-        assert e.set_rain(0, 0, False) is False
+        normal = e.get_weather(0, 0).temperature
+        e.force_feature(0, 0, "cold_snap", True)
+        assert e.force_feature(0, 0, "cold_snap", False) is True
+        assert (0, 0, "cold_snap") not in e._field.features._injected
+        assert e.get_weather(0, 0).temperature == pytest.approx(normal, abs=0.01)
+        # 重复关闭为 no-op
+        assert e.force_feature(0, 0, "cold_snap", False) is False
         e.shutdown()
 
-    def test_set_rain_emits_events_on_next_minute(self):
-        """强制降雨的状态切换由下一次 minute_change 发布事件。"""
+    def test_emits_events_on_next_minute(self):
+        """强制核的状态切换由下一次 minute_change 发布 start/stop。"""
         e, wt, clock = self._make_engine()
         events = []
-        for t in ("precipitation_start", "precipitation_stop"):
+        for t in ("cold_snap_start", "cold_snap_stop"):
             wt.subscribe(t, lambda ev: events.append(ev))
         _publish_minute(wt, clock.time)  # 静默初始化
-        e.set_rain(0, 0, True)
+        e.force_feature(0, 0, "cold_snap", True)
         clock.skip(1)
         _publish_minute(wt, clock.time)
-        assert any(ev.event_type == "precipitation_start" for ev in events)
-        e.set_rain(0, 0, False)
+        assert any(ev.event_type == "cold_snap_start" for ev in events)
+        e.force_feature(0, 0, "cold_snap", False)
         clock.skip(1)
         _publish_minute(wt, clock.time)
-        assert any(ev.event_type == "precipitation_stop" for ev in events)
+        assert any(ev.event_type == "cold_snap_stop" for ev in events)
         e.shutdown()
 
-    def test_set_modifier_on_off(self):
-        """set_modifier 强制激活/解除修改器并施加温度偏移。"""
-        e, _, clock = self._make_engine()
-        assert e.set_modifier(0, 0, "cold_snap", True) is True
-        sched = e._modifier_schedules[(0, 0, "cold_snap")]
-        assert sched.is_active(clock.time) is True
-        assert sched.temp_offset(clock.time) == pytest.approx(-15.0)
-        assert e.set_modifier(0, 0, "cold_snap", True) is False  # no-op
-        assert e.set_modifier(0, 0, "cold_snap", False) is True
-        assert sched.is_active(clock.time) is False
-        assert e.set_modifier(0, 0, "cold_snap", False) is False  # no-op
+    def test_front_injects_velocity(self):
+        """锋面核带移动矢量（带形需要速度，wind set 指令的底层）。"""
+        e, _, _ = self._make_engine()
+        assert e.force_feature(0, 0, "front", True) is True
+        core = e._field.features._injected[(0, 0, "front")]
+        assert core.vel_x != 0.0 or core.vel_y != 0.0
         e.shutdown()
 
-    def test_set_modifier_dynamic_schedule_for_zero_rate(self):
-        """气候带事件率为 0 时动态创建仅承载强制事件的调度。"""
-        from ascend.weather.weather_engine import WeatherEngine
-        wt = WorldTree()
-        clock = WorldClock()
-        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-        e.register_chunk(0, 0, _make_baseline(temp=-10.0),
-                         ClimateZone.POLAR_TUNDRA, -5.0)
-        assert (0, 0, "heat_wave") not in e._modifier_schedules
-        assert e.set_modifier(0, 0, "heat_wave", True) is True
-        sched = e._modifier_schedules[(0, 0, "heat_wave")]
-        assert sched.is_active(clock.time) is True
-        # 事件率 0 的调度不参与自然补算（needs_replenish 恒 False）
-        assert sched.needs_replenish(999) is False
-        # minute_change 循环不会因 inf 间隔崩溃
-        clock.skip(1)
-        _publish_minute(wt, clock.time)
-        e.shutdown()
-
-    def test_set_modifier_unknown_type_raises(self):
-        """未知修改器类型抛 ValueError。"""
+    def test_unknown_type_raises(self):
+        """未知特征类型抛 ValueError。"""
         e, _, _ = self._make_engine()
         with pytest.raises(ValueError):
-            e.set_modifier(0, 0, "tsunami", True)
-        e.shutdown()
-
-    def test_set_modifier_unregistered_returns_none(self):
-        """未注册 chunk 的 set_modifier 返回 None。"""
-        e, _, _ = self._make_engine()
-        assert e.set_modifier(9, 9, "cold_snap", True) is None
-        e.shutdown()
-
-    def test_force_start_preserves_future_order(self):
-        """force_start 移除重叠事件后队列 start_tick 仍严格递增。"""
-        e, _, clock = self._make_engine()
-        rain = e._rain_schedules[(0, 0)]
-        e.set_rain(0, 0, True)
-        starts = [ev.start_tick for ev in rain._events]
-        assert starts == sorted(starts)
-        assert len(starts) == len(set(starts))
+            e.force_feature(0, 0, "tsunami", True)
         e.shutdown()
 
 

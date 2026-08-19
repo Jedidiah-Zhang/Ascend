@@ -1,21 +1,22 @@
-"""天气引擎 — 解析算天气 + 感知层事件发布 + 查询 API。
+"""天气引擎 — 统一天气场解析算 + 感知层事件发布 + 查询 API。
 
-天气参数每游戏分钟解析算（baseline + 季节 + 昼夜 + 大气扰动），无快照。
+天气参数每游戏分钟解析算（baseline + 季节 + 昼夜 + 统一天气场），
+无快照。场为解析量（seed + 时间可完全重算）——任意过去时刻
+精确可查，无调度窗口修剪。
+
+降雨：场降水信号 + 气候带校准阈值判定（连续标定），
+区域级事件由 RegionTracker 从加载区越阈网格连通域追踪产生。
+极端天气：场特征核（寒潮/热浪/风暴/锋面），核出现/消失 →
+区域级 start/stop 事件（per-chunk 覆盖范围跟踪）。
+
 事件按等级发布（整数 tier + prev_tier，边界见 config `*_TIER_BOUNDARIES`），
 仅在等级跨越边界时触发，不再按固定数值阈值。
-
-查询 API：get_weather(cx, cy, time) 返回任意位置当前/过去时刻的精确天气，
-供 UI 面板、生态模拟等需要精确值的模块同步使用。
-
-降雨/季节/昼夜/极端天气保持离散事件调度不变。
 
 订阅 Calendar 的 minute_change 事件（而非 game_tick），分钟级更新。
 """
 
 import math
-import random
 import threading
-import zlib
 from dataclasses import dataclass
 
 from ascend.log import get_logger
@@ -28,9 +29,6 @@ from ascend.world_tree import world_tree as _default_wt, Event, AffectedParty, W
 from ascend.config import (
     TILE_MAP_SIZE,
     GAME_DAY,
-    ATMOSPHERE_RESOLUTION, ATMOSPHERE_DRIFT_RATE, ATMOSPHERE_DRIFT_RADIUS,
-    RAIN_FORECAST_DEPTH, RAIN_REPLENISH_THRESHOLD,
-    MODIFIER_FORECAST_DEPTH, MODIFIER_REPLENISH_THRESHOLD,
     TEMP_PERTURB_SCALE, HUMIDITY_PERTURB_SCALE, WIND_PERTURB_SCALE,
     SUNSHINE_PERTURB_SCALE,
     DIURNAL_TO_SEASONAL_RATIO,
@@ -56,9 +54,13 @@ from ascend.config import (
     SEASONAL_AMP_R_REF as _SEASONAL_AMP_R_REF,
     SEASONAL_AMP_R_BONUS as _SEASONAL_AMP_R_BONUS,
     SEASONAL_AMP_BOUNDS as _SEASONAL_AMP_BOUNDS,
+    PRECIP_SIGNAL_MAX,
+    PRECIP_THRESHOLD_DRY, PRECIP_THRESHOLD_WET,
+    PRECIP_ANNUAL_DRY, PRECIP_ANNUAL_WET,
+    PRECIP_INTENSITY_SCALE,
+    GAME_YEAR,
 )
 
-from .atmosphere import AtmosphereField
 from .diurnal import (
     sunrise_hour, sunset_hour, hour_of_game_time, diurnal_phase,
     _solar_declination, sunrise_azimuth,
@@ -67,10 +69,13 @@ from .events import (
     HumidityChange, PrecipitationStart, PrecipitationStop, SeasonChange,
     SunshineChange, Sunrise, Sunset, TemperatureChange, WindChange,
 )
-from .weather_modifier import ModifierSchedule, WEATHER_MODIFIERS
-from .rain_events import RainSchedule
 from .season import season_of, season_phase, day_of_season
 from .weather_field import WeatherField
+from .field import (
+    UnifiedWeatherField, CH_PRECIPITATION, CH_TEMPERATURE,
+    CH_HUMIDITY, CH_WIND, calibrate_precip,
+)
+from .region_tracker import RegionTracker, RegionEvent
 
 logger = get_logger(__name__)
 
@@ -83,19 +88,27 @@ _SEASONALITY_HUMIDITY_SHARPNESS: dict[SeasonalityMode, float] = {
     SeasonalityMode.ALPINE: 0.0,
 }
 
+# 气候带 → 基准降雨强度 (mm/h)（降水信号超阈放大基准）
+_MEAN_INTENSITY: dict[ClimateZone, float] = {
+    ClimateZone.EQUATORIAL_RAINFOREST: 10.0,
+    ClimateZone.TROPICAL_SAVANNA:      8.0,
+    ClimateZone.DESERT:                2.0,
+    ClimateZone.STEPPE:                4.0,
+    ClimateZone.TEMPERATE_FOREST:      5.0,
+    ClimateZone.SUBARCTIC_TAIGA:       3.0,
+    ClimateZone.POLAR_TUNDRA:          2.0,
+    ClimateZone.ALPINE:                3.0,
+}
+
+
 # ── 分级函数 ────────────────────────────────────────────────
 
 def _chunk_seed(world_seed: int, cx: int, cy: int) -> int:
-    """chunk 坐标 → 确定性 RNG 种子（降雨/修改器调度共用，单一实现）。
+    """chunk 坐标 → 确定性 RNG 种子（调试特征核派生用）。
 
-    同一世界种子 + 同一 chunk 坐标 → 同一种子，保证存档/事件流确定性。
+    同一世界种子 + 同一 chunk 坐标 → 同一种子，保证确定性。
     """
     return (world_seed * 1_000_003 + cx) * 1_000_003 + cy
-
-
-def _modifier_seed(chunk_seed: int, type_name: str) -> int:
-    """chunk 种子 + 修改器类型 → 独立 RNG 种子（类型间去相关）。"""
-    return chunk_seed + zlib.crc32(type_name.encode()) % 1000
 
 
 def precip_type_for(temperature: float) -> str:
@@ -105,6 +118,7 @@ def precip_type_for(temperature: float) -> str:
     保证事件广播与 UI 显示文案一致。
     """
     return "snow" if round(temperature, 1) <= 0 else "rain"
+
 
 def _classify(value: float, boundaries: tuple[float, ...]) -> int:
     """按阈值返回等级索引（0-based）。
@@ -198,18 +212,7 @@ def classify_sunlight_intensity(intensity: float,
     return _classify(intensity, boundaries)
 
 
-# 降雨事件档位：climate → (mean_intensity mm/h, mean_duration h,
-#                             ramp_up_ratio, ramp_down_ratio)
-_RAIN_PROFILE: dict[ClimateZone, tuple[float, float, float, float]] = {
-    ClimateZone.EQUATORIAL_RAINFOREST: (10.0, 2.0, 0.15, 0.15),
-    ClimateZone.TROPICAL_SAVANNA:       (8.0, 1.5, 0.2,  0.2),
-    ClimateZone.DESERT:                 (2.0, 0.5, 0.35, 0.35),
-    ClimateZone.STEPPE:                 (4.0, 1.5, 0.25, 0.25),
-    ClimateZone.TEMPERATE_FOREST:       (5.0, 2.0, 0.2,  0.2),
-    ClimateZone.SUBARCTIC_TAIGA:        (3.0, 1.5, 0.2,  0.25),
-    ClimateZone.POLAR_TUNDRA:           (2.0, 1.0, 0.25, 0.3),
-    ClimateZone.ALPINE:                 (3.0, 1.0, 0.25, 0.25),
-}
+# ── 基线派生 ────────────────────────────────────────────────
 
 def _derive_seasonal_amp(temperature: float, rainfall: float) -> float:
     """从年均温 + 年降雨连续推导季节温度振幅 (°C)。
@@ -269,7 +272,8 @@ class _ChunkWeatherBaseline:
 
     Attributes:
         altitude/sunshine/temperature/humidity/wind_speed/rainfall:
-            年均基线值（rainfall 为 mm/年，用于推算降雨事件频率）。
+            年均基线值（rainfall 为 mm/年，降水校准输入）。
+        mean_intensity: 气候带基准降雨强度 (mm/h)。
         seasonal_amp: 季节温度振幅 (°C)，从年均温+年降雨连续推导（_derive_seasonal_amp），
             保证气候带交界处无跳变。
         diurnal_amp: 昼夜温度振幅 (°C)，= seasonal_amp × DIURNAL_TO_SEASONAL_RATIO。
@@ -285,6 +289,7 @@ class _ChunkWeatherBaseline:
     humidity: float
     wind_speed: float
     rainfall: float
+    mean_intensity: float
     seasonal_amp: float
     diurnal_amp: float
     humidity_seasonal_amp: float
@@ -294,12 +299,12 @@ class _ChunkWeatherBaseline:
 
 
 class WeatherEngine:
-    """天气引擎 — 解析算天气 + 感知层事件 + 查询 API。
+    """天气引擎 — 统一天气场解析算 + 感知层事件 + 查询 API。
 
     构造时订阅 minute_change（Calendar 发布，每游戏分钟一次）；
-    register_chunk 注册 chunk 基线 + 降雨调度；
+    register_chunk 注册 chunk 基线（降水校准输入同时注入区域跟踪器）；
     每分钟解析算各参数，感知类别变化时发对应事件，
-    降水/季节/昼夜/极端天气切换发离散事件。
+    降水（区域连通域）/季节/昼夜/特征核切换发离散事件。
 
     线程安全：由 GameEngine 后台单线程驱动，自身不做并发保护。
 
@@ -325,7 +330,7 @@ class WeatherEngine:
 
         Args:
             clock: 世界时钟，用于读取当前 tick。
-            seed: 大气场噪声种子（也用于派生各 chunk 降雨 rng 种子）。
+            seed: 统一天气场种子（纹理/特征/气候代理派生）。
             world_tree_arg: 可选的 WorldTree 实例（测试注入隔离）。
         """
         self._clock = clock
@@ -336,11 +341,10 @@ class WeatherEngine:
         # RLock：_publish 在锁内同步分发事件，防未来订阅者回调重入查询 API
         # （当前唯一订阅者 EventBridge 仅转发不查询，RLock 为低成本防御）。
         self._query_lock = threading.RLock()
-        self._atmosphere = AtmosphereField(seed=seed)
+        self._field = UnifiedWeatherField(seed=seed)
         self._fields: dict[tuple[int, int], WeatherField] = {}
         self._climates: dict[tuple[int, int], ClimateZone] = {}
-        self._rain_schedules: dict[tuple[int, int], RainSchedule] = {}
-        self._modifier_schedules: dict[tuple[int, int, str], ModifierSchedule] = {}
+        self._tracker = RegionTracker(self._field)
         self._last_season: int | None = None
         self._scope = SubscriptionScope()
         self._scope.subscribe(self._wt, "minute_change", self._on_minute_change)
@@ -348,14 +352,18 @@ class WeatherEngine:
 
     @property
     def seed(self) -> int:
-        """大气场噪声种子（存档序列化用，与 __repr__ 展示一致）。"""
+        """统一天气场种子（存档序列化用，与 __repr__ 展示一致）。"""
         return self._seed
+
+    @property
+    def field(self) -> UnifiedWeatherField:
+        """统一天气场（调试/测试访问）。"""
+        return self._field
 
     def __repr__(self) -> str:
         return (
             f"WeatherEngine(seed={self._seed}, "
-            f"chunks={len(self._fields)}, "
-            f"rain_schedules={len(self._rain_schedules)})"
+            f"chunks={len(self._fields)})"
         )
 
     def register_chunk(
@@ -366,7 +374,7 @@ class WeatherEngine:
         climate: ClimateZone,
         sea_level_temp: float,
     ) -> None:
-        """注册 chunk 的天气基线 + 降雨调度。
+        """注册 chunk 的天气基线（降水校准输入同时注入区域跟踪器）。
 
         Args:
             cx: chunk X 坐标。
@@ -391,6 +399,7 @@ class WeatherEngine:
             humidity=baseline.humidity,
             wind_speed=baseline.wind_speed,
             rainfall=baseline.rainfall,
+            mean_intensity=_MEAN_INTENSITY.get(climate, 5.0),
             seasonal_amp=seasonal_amp,
             diurnal_amp=diurnal_amp,
             humidity_seasonal_amp=humidity_seasonal_amp,
@@ -400,32 +409,11 @@ class WeatherEngine:
         )
         key = (cx, cy)
         with self._query_lock:
-            self._fields[key] = WeatherField(
-                cx, cy, bl,
-                tile_map_size=TILE_MAP_SIZE,
-                atmos_resolution=ATMOSPHERE_RESOLUTION,
-            )
+            self._fields[key] = WeatherField(cx, cy, bl)
             self._climates[key] = climate
-            # 降雨调度（chunk 坐标派生 rng 种子，保证确定性）
-            mean_intensity, mean_duration_h, ramp_up, ramp_down = _RAIN_PROFILE.get(
-                climate, (5.0, 2.0, 0.2, 0.2),
+            self._tracker.set_chunk_baseline(
+                cx, cy, baseline.rainfall, bl.mean_intensity,
             )
-            chunk_seed = _chunk_seed(self._seed, cx, cy)
-            rain = RainSchedule(
-                random.Random(chunk_seed),
-                baseline.rainfall, mean_intensity, mean_duration_h,
-                ramp_up_ratio=ramp_up, ramp_down_ratio=ramp_down,
-            )
-            self._rain_schedules[key] = rain
-            self._seed_rain(rain)
-            # 天气修改器调度（每类型独立队列，仅可能发生的气候带创建）
-            for config in WEATHER_MODIFIERS.values():
-                if config.rates.get(climate, 0.0) <= 0:
-                    continue
-                ext_seed = _modifier_seed(chunk_seed, config.type_name)
-                ext = ModifierSchedule(random.Random(ext_seed), config, climate)
-                self._modifier_schedules[(cx, cy, config.type_name)] = ext
-                self._seed_modifier(ext)
         logger.debug("注册 chunk (%d,%d) climate=%s", cx, cy, climate)
 
     def unregister_chunk(self, cx: int, cy: int) -> None:
@@ -439,10 +427,7 @@ class WeatherEngine:
         with self._query_lock:
             self._fields.pop(key, None)
             self._climates.pop(key, None)
-            self._rain_schedules.pop(key, None)
-            for mk in list(self._modifier_schedules.keys()):
-                if mk[:2] == (cx, cy):
-                    del self._modifier_schedules[mk]
+            self._tracker.remove_chunk(cx, cy)
 
     def shutdown(self) -> None:
         """取消订阅，释放资源。"""
@@ -481,47 +466,39 @@ class WeatherEngine:
 
         Returns:
             dict，含 _compute_params 需要的全部 tick 级预计算值：
-            season/hour/day_of_year_val/wind_x/wind_y/
-            drift_x/drift_y/solar_decl/season_cos/diurnal_cos。
+            season/hour/day_of_year_val/solar_decl/season_cos/diurnal_cos。
         """
         day = now // GAME_DAY + 1
         season = int(season_of(day))
         hour = hour_of_game_time(now)  # 带小数小时，昼夜偏移需要精确时间
         day_of_year_val = (now // GAME_DAY) % 360
-        wind_x, wind_y = self._atmosphere.wind_vector(now)
-        # 大气扰动漂移偏移 — 圆形轨道采样：
-        # 采样坐标沿半径 ATMOSPHERE_DRIFT_RADIUS 的圆运动，弧长 = DRIFT_RATE·now，
-        # θ = 弧长/半径。t=0 时偏移为 (0,0)。轨道周期 ≈ 363.6 游戏日，
-        # 与 360 日季节年错位，跨年不精确重复。
-        theta = now * ATMOSPHERE_DRIFT_RATE / ATMOSPHERE_DRIFT_RADIUS
-        drift_x = ATMOSPHERE_DRIFT_RADIUS * (math.cos(theta) - 1.0)
-        drift_y = ATMOSPHERE_DRIFT_RADIUS * math.sin(theta)
         # 季节/昼夜余弦基 — phase 对所有 chunk 相同，只有 amplitude 不同
         season_cos = math.cos(season_phase(day))
         diurnal_cos = math.cos(diurnal_phase(hour))
         return {
             "season": season, "hour": hour,
             "day_of_year_val": day_of_year_val,
-            "wind_x": wind_x, "wind_y": wind_y,
-            "drift_x": drift_x, "drift_y": drift_y,
             "solar_decl": _solar_declination(day_of_year_val),
             "season_cos": season_cos,
             "diurnal_cos": diurnal_cos,
         }
 
-    def _sunlight_intensity(self, field: WeatherField, hour: float,
-                            sr: float, ss: float, rainfall: float,
-                            drift_x: float, drift_y: float) -> float:
-        """计算日照强度：正弦日弧 × 降雨衰减 + 大气噪声微调。
+    def _sunlight_intensity(
+        self, hour: float, sr: float, ss: float, rainfall: float,
+        world_x: float, world_y: float, now: int,
+        hum_perturb: float | None = None,
+    ) -> float:
+        """计算日照强度：正弦日弧 × 降雨衰减 + 云量微调。
 
         Args:
-            field: chunk 天气状态（含预计算的 atmos_nx/atmos_ny）。
             hour: 当日小时 [0, 24)。
             sr: 日出小时。
             ss: 日落小时。
-            rainfall: 降雨强度 mm/h（含修改器效果），用于衰减日照。
-            drift_x: 大气漂移 X 偏移（与 _compute_params 同源，圆形轨道）。
-            drift_y: 大气漂移 Y 偏移。
+            rainfall: 降雨强度 mm/h（含特征核效果），用于衰减日照。
+            world_x, world_y: 采样位置（世界坐标 m，chunk 中心）。
+            now: 时刻（tick）。
+            hum_perturb: 湿度通道合成值（_compute_params 已采样，
+                同点共享避免重复采样；None=自行采样）。
 
         Returns:
             float，日照强度 [0, 1]，0=黑夜 1=正午烈日。
@@ -535,12 +512,94 @@ class WeatherEngine:
         if rainfall > 0:
             rain_factor = min(rainfall / 30.0, 1.0) * 0.8
             intensity *= (1.0 - rain_factor)
-        # 大气扰动微调 — 与 _compute_params 同一漂移偏移，0.1x 慢速作云层效果
-        w_p = self._atmosphere.sample_raw(
-            field.atmos_nx + drift_x * 0.1,
-            field.atmos_ny + drift_y * 0.1,
+        # 云量微调 — 湿度通道（场合成值，含特征核），0.05x 慢速作云层效果
+        if hum_perturb is None:
+            hum_perturb = self._field.sample(CH_HUMIDITY, world_x, world_y, now)
+        return max(0.0, min(1.0, intensity + hum_perturb * 0.05))
+
+    def _compute_params(
+        self, field: WeatherField, now: int, ctx: dict,
+    ) -> tuple[WeatherParams, float, float, float]:
+        """解析算 chunk 在 now 时刻的天气。
+
+        温度 = baseline + 季节偏移 + 昼夜偏移 + 场扰动
+        湿度 = baseline + 季节偏移（受 SeasonalityMode 影响）+ 昼夜偏移（逆温）+ 场扰动
+        风速 = baseline + 场扰动，再 × 特征核倍率
+        日照 = 天文日照时长(daylight_hours) + 场扰动
+        降雨强度 = 场降水信号 + 气候带校准阈值判定（calibrate_precip）
+
+        Args:
+            field: chunk 天气状态。
+            now: 当前 tick。
+            ctx: _tick_context(now) 返回的 tick 级预计算上下文
+                 （对所有 chunk 相同，调用方在 per-chunk 循环外算一次）。
+
+        Returns:
+            (WeatherParams, sunrise_hour, sunset_hour, hum_perturb)。
+            rainfall 字段装降雨强度 mm/小时；
+            hum_perturb 为湿度通道合成值（与日照云量微调共享，
+            避免同点重复采样）。
+        """
+        season_cos = ctx["season_cos"]
+        diurnal_cos = ctx["diurnal_cos"]
+        day_of_year_val = ctx["day_of_year_val"]
+        bl = field.baseline
+        # 季节/昼夜偏移 — 余弦基预计算（tick 级复用），只做 per-chunk amplitude 乘法
+        season_temp = bl.seasonal_amp * season_cos
+        diurnal_temp = bl.diurnal_amp * diurnal_cos
+        sharpness = _SEASONALITY_HUMIDITY_SHARPNESS.get(bl.seasonality, 0.0)
+        if sharpness > 0:
+            season_hum = bl.humidity_seasonal_amp * math.tanh(season_cos * sharpness)
+        else:
+            season_hum = bl.humidity_seasonal_amp * season_cos
+        diurnal_hum = bl.humidity_diurnal_amp * (-diurnal_cos)
+        # 统一天气场采样 — chunk 中心（场为解析量，任意过去时刻精确）
+        wx = (field.chunk_x + 0.5) * TILE_MAP_SIZE
+        wy = (field.chunk_y + 0.5) * TILE_MAP_SIZE
+        # 同点多通道共享一次核收集与漂移偏移（性能语义，解析值不变）
+        cores = self._field.collect_cores(wx, wy, now)
+        drift = self._field.texture.drift_offset(now)
+        temp_perturb = self._field.sample(CH_TEMPERATURE, wx, wy, now, cores, drift)
+        hum_perturb = self._field.sample(CH_HUMIDITY, wx, wy, now, cores, drift)
+        wind_perturb = self._field.sample(CH_WIND, wx, wy, now, cores, drift)
+        # 合成并钳界
+        temperature = clamp(
+            bl.temperature + season_temp + diurnal_temp
+            + temp_perturb * TEMP_PERTURB_SCALE,
+            *_TEMP_BOUNDS,
         )
-        return max(0.0, min(1.0, intensity + w_p * 0.05))
+        humidity = clamp(
+            bl.humidity + season_hum + diurnal_hum
+            + hum_perturb * HUMIDITY_PERTURB_SCALE,
+            *_HUMIDITY_BOUNDS,
+        )
+        wind_speed = clamp(
+            bl.wind_speed + wind_perturb * WIND_PERTURB_SCALE,
+            *_WIND_BOUNDS,
+        )
+        wind_speed = clamp(
+            wind_speed * self._field.wind_multiplier(wx, wy, now, cores, drift),
+            *_WIND_BOUNDS,
+        )
+        # 日照：天文日照时长（用预计算赤纬，纬度不同仍需 per-chunk 算）
+        sr = sunrise_hour(day_of_year_val, bl.latitude,
+                          solar_decl=ctx["solar_decl"])
+        ss = sunset_hour(day_of_year_val, bl.latitude,
+                         solar_decl=ctx["solar_decl"])
+        daylight = ss - sr
+        sunshine = clamp(
+            daylight + hum_perturb * SUNSHINE_PERTURB_SCALE,
+            *_SUNSHINE_BOUNDS,
+        )
+        # 降雨：场降水信号 + 气候带校准阈值判定
+        signal = self._field.precip_signal(wx, wy, now, cores, drift)
+        intensity = calibrate_precip(
+            signal, bl.rainfall, bl.mean_intensity,
+        )
+        return WeatherParams(
+            temperature=temperature, rainfall=intensity, sunshine=sunshine,
+            altitude=bl.altitude, humidity=humidity, wind_speed=wind_speed,
+        ), sr, ss, hum_perturb
 
     def get_weather(self, cx: int, cy: int,
                     time: int | None = None) -> "WeatherParams | None":
@@ -549,8 +608,8 @@ class WeatherEngine:
         供 UI 面板、温度计、生态模拟等需要精确值的模块同步使用。
         感知层 AI 决策应订阅事件而非轮询此方法。
 
-        注意：降雨与极端天气修改器效果仅对调度保留窗口内的时刻精确；
-        更久远的历史时刻的降雨事件已被修剪，rainfall 返回 0。
+        场为解析量（seed + 时间可完全重算），任意过去时刻精确，
+        无调度窗口修剪。
 
         Args:
             cx: chunk X 坐标。
@@ -570,15 +629,14 @@ class WeatherEngine:
             if field is None:
                 return None
             ctx = self._tick_context(time)
-            params, _, _ = self._compute_params(
-                field, time, ctx, self._rain_schedules.get(key))
+            params, _, _, _ = self._compute_params(field, time, ctx)
             return params
 
     def get_weather_report(self, cx: int, cy: int) -> (
             "tuple[WeatherParams, float, float, float, float, float] | None"):
         """一次计算返回当前时刻的完整天气报告（网络 handler 专用）。
 
-        天文与噪声只算一次，且降雨衰减自动使用含修改器效果的 rainfall，
+        天文与噪声只算一次，且降雨衰减自动使用含特征核效果的 rainfall，
         调用方无需穿递。
 
         Args:
@@ -599,11 +657,12 @@ class WeatherEngine:
                 return None
             now = self._clock.time
             ctx = self._tick_context(now)
-            params, sr, ss = self._compute_params(
-                field, now, ctx, self._rain_schedules.get(key))
+            params, sr, ss, hum_perturb = self._compute_params(field, now, ctx)
+            wx = (cx + 0.5) * TILE_MAP_SIZE
+            wy = (cy + 0.5) * TILE_MAP_SIZE
             intensity = self._sunlight_intensity(
-                field, ctx["hour"], sr, ss, params.rainfall,
-                ctx["drift_x"], ctx["drift_y"])
+                ctx["hour"], sr, ss, params.rainfall, wx, wy, now,
+                hum_perturb=hum_perturb)
             az = sunrise_azimuth(
                 ctx["day_of_year_val"], field.baseline.latitude,
                 solar_decl=ctx["solar_decl"])
@@ -638,47 +697,21 @@ class WeatherEngine:
 
     # ── 公开：调试控制 API ──────────────────────────────────────
 
-    def set_rain(self, cx: int, cy: int, active: bool) -> bool | None:
-        """强制开启/关闭指定 chunk 的降雨（终端调试指令用）。
-
-        开启时以均值强度插入立即生效的降雨事件，关闭时截断当前事件。
-        precipitation_start/stop 事件由下一次 minute_change 自动发布。
-
-        Args:
-            cx: chunk X 坐标。
-            cy: chunk Y 坐标。
-            active: True=开始下雨，False=停止下雨。
-
-        Returns:
-            True=状态已切换；False=已处于目标状态（no-op）；
-            None=chunk 未注册。
-        """
-        with self._query_lock:
-            rain = self._rain_schedules.get((cx, cy))
-            if rain is None:
-                return None
-            now = self._clock.time
-            changed = rain.force_start(now) if active else rain.force_stop(now)
-        if changed:
-            logger.info(
-                "强制%s降雨: chunk (%d,%d)",
-                "开启" if active else "关闭", cx, cy,
-            )
-        return changed
-
-    def set_modifier(
+    def force_feature(
         self, cx: int, cy: int, type_name: str, active: bool,
     ) -> bool | None:
-        """强制开启/关闭指定 chunk 的天气修改器（终端调试指令用）。
+        """强制开启/关闭指定 chunk 的特征核（终端调试指令用）。
 
-        气候带天然不出现该修改器的 chunk（无调度）在开启时动态创建
-        仅承载强制事件的调度（事件率 0，永不自然补算）。
-        {type}_start/stop 事件由下一次 minute_change 自动发布。
+        开启时向特征场注入以 chunk 中心为核心的核（半径 = 该类
+        最大半径，10 年持续），解除时移除。注入核与自然核同代码
+        路径——查询与事件都走场合成，无特判。
+        {type}_start/stop 事件由下一次 minute_change 的核身份
+        差异跟踪自动发布。
 
         Args:
             cx: chunk X 坐标。
             cy: chunk Y 坐标。
-            type_name: 修改器类型（WEATHER_MODIFIERS 的键）。
+            type_name: 特征类型（FEATURE_TYPES 的键）。
             active: True=激活，False=解除。
 
         Returns:
@@ -686,207 +719,55 @@ class WeatherEngine:
             None=chunk 未注册。
 
         Raises:
-            ValueError: type_name 不在 WEATHER_MODIFIERS 注册表中。
+            ValueError: type_name 不在 FEATURE_TYPES 注册表中。
         """
-        if type_name not in WEATHER_MODIFIERS:
-            raise ValueError(f"未知天气修改器类型: {type_name}")
+        from .features import FEATURE_TYPES
+        if type_name not in FEATURE_TYPES:
+            raise ValueError(f"未知特征类型: {type_name}")
         chunk_key = (cx, cy)
         with self._query_lock:
             if chunk_key not in self._fields:
                 return None
             now = self._clock.time
-            key = (cx, cy, type_name)
-            sched = self._modifier_schedules.get(key)
-            if sched is None:
-                if not active:
+            features = self._field.features
+            if active:
+                if features.has_injected(cx, cy, type_name):
                     return False
-                config = WEATHER_MODIFIERS[type_name]
-                chunk_seed = _chunk_seed(self._seed, cx, cy)
-                ext_seed = _modifier_seed(chunk_seed, config.type_name)
-                sched = ModifierSchedule(
-                    random.Random(ext_seed), config, self._climates.get(chunk_key),
+                cfg = FEATURE_TYPES[type_name]
+                wx = (cx + 0.5) * TILE_MAP_SIZE
+                wy = (cy + 0.5) * TILE_MAP_SIZE
+                # front（带形）需要移动矢量；其余核静止即可
+                vel_x = 0.5 if type_name == "front" else 0.0
+                vel_y = 0.3 if type_name == "front" else 0.0
+                features.inject_core(
+                    cx, cy, type_name,
+                    center_x=wx, center_y=wy,
+                    radius=cfg.radius_range[1],
+                    magnitude=1.0,
+                    born_tick=now,
+                    duration=10 * GAME_YEAR,
+                    vel_x=vel_x, vel_y=vel_y,
                 )
-                sched.seed_current(now)
-                self._modifier_schedules[key] = sched
-            changed = sched.force_start(now) if active else sched.force_stop(now)
-        if changed:
-            logger.info(
-                "强制%s修改器 %s: chunk (%d,%d)",
-                "激活" if active else "解除", type_name, cx, cy,
-            )
-        return changed
-
-    # ── 内部：解析算 ────────────────────────────────────────────
-
-    def _compute_params(
-        self, field: WeatherField, now: int, ctx: dict, rain,
-    ) -> tuple[WeatherParams, float, float]:
-        """解析算 chunk 在 now 时刻的天气。
-
-        温度 = baseline + 季节偏移 + 昼夜偏移 + 大气扰动
-        湿度 = baseline + 季节偏移（受 SeasonalityMode 影响）+ 昼夜偏移（逆温）+ 大气扰动
-        风速 = baseline + 大气扰动
-        日照 = 天文日照时长(daylight_hours) + 大气扰动
-        降雨强度 = RainSchedule.intensity(now)
-
-        Args:
-            field: chunk 天气状态（含预计算的 atmos_nx/atmos_ny）。
-            now: 当前 tick。
-            ctx: _tick_context(now) 返回的 tick 级预计算上下文
-                 （对所有 chunk 相同，调用方在 per-chunk 循环外算一次）。
-            rain: chunk 的 RainSchedule 实例（或 None），由调用方预查找。
-
-        Returns:
-            (WeatherParams, sunrise_hour, sunset_hour)。
-            rainfall 字段装降雨强度 mm/小时。
-        """
-        season_cos = ctx["season_cos"]
-        diurnal_cos = ctx["diurnal_cos"]
-        day_of_year_val = ctx["day_of_year_val"]
-        bl = field.baseline
-        # 季节/昼夜偏移 — 余弦基预计算（tick 级复用），只做 per-chunk amplitude 乘法
-        season_temp = bl.seasonal_amp * season_cos
-        diurnal_temp = bl.diurnal_amp * diurnal_cos
-        sharpness = _SEASONALITY_HUMIDITY_SHARPNESS.get(bl.seasonality, 0.0)
-        if sharpness > 0:
-            season_hum = bl.humidity_seasonal_amp * math.tanh(season_cos * sharpness)
-        else:
-            season_hum = bl.humidity_seasonal_amp * season_cos
-        diurnal_hum = bl.humidity_diurnal_amp * (-diurnal_cos)
-        # 空间扰动 — 预计算空间基（field.atmos_nx/_ny）+ tick 级漂移偏移
-        perturb = self._atmosphere.sample_raw(
-            field.atmos_nx + ctx["drift_x"],
-            field.atmos_ny + ctx["drift_y"],
+            else:
+                if not features.has_injected(cx, cy, type_name):
+                    return False
+                features.remove_injected(cx, cy, type_name)
+        logger.info(
+            "强制%s特征核 %s: chunk (%d,%d)",
+            "激活" if active else "解除", type_name, cx, cy,
         )
-        # 合成并钳界
-        temperature = clamp(
-            bl.temperature + season_temp + diurnal_temp
-            + perturb * TEMP_PERTURB_SCALE,
-            *_TEMP_BOUNDS,
-        )
-        # 天气修改器偏移（遍历所有类型，根据 config.effect 施加不同效果）
-        #
-        # 叠加语义：
-        #   - temperature 类偏移相加。cold_snap 与 heat_wave 在部分气候带
-        #     （STEPPE/TEMPERATE_FOREST/ALPINE）都可能触发，同时激活时
-        #     相互抵消（-15 + 15 ≈ 0），视为"异常天气对冲"，可接受；
-        #   - multiplier 类倍率相乘。当前仅 storm 一种，且单个
-        #     ModifierSchedule 的 _active_event 只取首个活动事件，
-        #     不存在同类型倍率自乘。若未来新增 multiplier 类型，
-        #     需重新评估乘法叠加上限。
-        cx, cy = field.chunk_x, field.chunk_y
-        temp_extra = 0.0
-        wind_mult = 1.0
-        rain_mult = 1.0
-        for config in WEATHER_MODIFIERS.values():
-            sched = self._modifier_schedules.get((cx, cy, config.type_name))
-            if sched is None:
-                continue
-            if config.effect == "temperature":
-                temp_extra += sched.temp_offset(now)
-            elif config.effect == "multiplier":
-                m = sched.wind_rain_multiplier(now)
-                wind_mult *= m
-                rain_mult *= m
-        temperature = clamp(
-            temperature + temp_extra, *_TEMP_BOUNDS,
-        )
-        humidity = clamp(
-            bl.humidity + season_hum + diurnal_hum
-            + perturb * HUMIDITY_PERTURB_SCALE,
-            *_HUMIDITY_BOUNDS,
-        )
-        wind_speed = clamp(
-            bl.wind_speed + perturb * WIND_PERTURB_SCALE, *_WIND_BOUNDS,
-        )
-        wind_speed = clamp(wind_speed * wind_mult, *_WIND_BOUNDS)
-        # 日照：天文日照时长（用预计算赤纬，纬度不同仍需 per-chunk 算）
-        sr = sunrise_hour(day_of_year_val, bl.latitude,
-                          solar_decl=ctx["solar_decl"])
-        ss = sunset_hour(day_of_year_val, bl.latitude,
-                         solar_decl=ctx["solar_decl"])
-        daylight = ss - sr
-        sunshine = clamp(
-            daylight + perturb * SUNSHINE_PERTURB_SCALE,
-            *_SUNSHINE_BOUNDS,
-        )
-        intensity = (
-            clamp(rain.intensity(now) * rain_mult, *_RAIN_INTENSITY_BOUNDS)
-            if rain is not None else 0.0
-        )
-        return WeatherParams(
-            temperature=temperature, rainfall=intensity, sunshine=sunshine,
-            altitude=bl.altitude, humidity=humidity, wind_speed=wind_speed,
-        ), sr, ss
-
-    def _seed_schedule(self, schedule, depth: int) -> None:
-        """注册时预排 depth 个未来事件并 seed_current（rain/modifier 共用）。
-
-        Args:
-            schedule: 实现 latest_end_tick / generate_next / push /
-                seed_current 接口的调度对象。
-            depth: 预排事件深度。
-        """
-        now = self._clock.time
-        latest_end = now
-        for _ in range(depth):
-            earliest = latest_end if latest_end is not None else now
-            event = schedule.generate_next(earliest)
-            schedule.push(event)
-            latest_end = schedule.latest_end_tick()
-        schedule.seed_current(now)
-
-    def _seed_rain(self, rain: RainSchedule) -> None:
-        """注册时预排 RAIN_FORECAST_DEPTH 个未来降雨事件并 seed_current。"""
-        self._seed_schedule(rain, RAIN_FORECAST_DEPTH)
-
-    def _replenish_schedule(self, schedule, now: int,
-                            depth: int, threshold: int) -> None:
-        """裁剪过期事件 + 补算到指定深度。
-
-        schedule 需提供 prune_before / needs_replenish /
-        latest_end_tick / generate_next / push 接口。
-        """
-        schedule.prune_before(now)
-        for _ in range(depth):
-            if not schedule.needs_replenish(threshold):
-                break
-            latest_end = schedule.latest_end_tick()
-            earliest = latest_end if latest_end is not None else now
-            schedule.push(schedule.generate_next(earliest))
-
-    def _replenish_rain(self, key: tuple[int, int], now: int) -> None:
-        """裁剪过期 + 补算降雨事件。"""
-        rain = self._rain_schedules.get(key)
-        if rain is not None:
-            self._replenish_schedule(
-                rain, now, RAIN_FORECAST_DEPTH, RAIN_REPLENISH_THRESHOLD,
-            )
-
-    def _seed_modifier(self, schedule: ModifierSchedule) -> None:
-        """注册时预排 MODIFIER_FORECAST_DEPTH 个未来修改器事件并 seed_current。"""
-        self._seed_schedule(schedule, MODIFIER_FORECAST_DEPTH)
-
-    def _replenish_modifier(self, key: tuple[int, int, str], now: int) -> None:
-        """裁剪过期 + 补算修改器事件。"""
-        sched = self._modifier_schedules.get(key)
-        if sched is not None:
-            self._replenish_schedule(
-                sched, now, MODIFIER_FORECAST_DEPTH, MODIFIER_REPLENISH_THRESHOLD,
-            )
+        return True
 
     # ── 内部：tick 调度 ─────────────────────────────────────────
 
     def _on_minute_change(self, event: Event) -> None:
-        """每游戏分钟：全局 season_change + per-chunk 参数事件 + per-chunk 昼夜切换。"""
+        """每游戏分钟：全局季节 + 区域降水事件 + per-chunk 参数/昼夜/特征核。"""
         now: int = event.data["game_time"]
         tod = now % GAME_DAY
         # tick 级预计算 — 这些值对所有 chunk 相同（与查询 API 共用同一推导）
         ctx = self._tick_context(now)
         season = ctx["season"]
         hour = ctx["hour"]
-        wind_x = ctx["wind_x"]
-        wind_y = ctx["wind_y"]
         with self._query_lock:
             # 全局季节事件（location=(0,0)，不 per-chunk）
             if self._last_season is not None and season != self._last_season:
@@ -894,10 +775,12 @@ class WeatherEngine:
                     season=season, time_of_day=int(tod),
                 ))
             self._last_season = season
+            # 区域降水事件（连通域追踪，质心所在 chunk 定位）
+            for r in self._tracker.update(now):
+                self._publish_region_event(r, now, tod, ctx)
             # per-chunk 事件
             for (cx, cy), field in self._fields.items():
-                rain = self._rain_schedules.get((cx, cy))
-                params, sr, ss = self._compute_params(field, now, ctx, rain)
+                params, sr, ss, _ = self._compute_params(field, now, ctx)
                 # 温度 — 等级变化时发布（首刻静默初始化，初始状态走查询 API）
                 temp_tier = classify_temperature(params.temperature)
                 if field.last_temp_tier is None:
@@ -923,11 +806,15 @@ class WeatherEngine:
                         time_of_day=int(tod),
                     ))
                     field.last_humidity_tier = hum_tier
-                # 风 — 等级变化时发布（风向使用 tick 级预计算值）
+                # 风 — 等级变化时发布（风向 = 场纹理风向量）
                 wind_tier = classify_wind(params.wind_speed)
                 if field.last_wind_tier is None:
                     field.last_wind_tier = wind_tier
                 elif wind_tier != field.last_wind_tier:
+                    wx = (cx + 0.5) * TILE_MAP_SIZE
+                    wy = (cy + 0.5) * TILE_MAP_SIZE
+                    wind_x, wind_y = self._field.texture.wind_vector_at(
+                        wx, wy, now)
                     self._publish(cx, cy, now, WindChange(
                         wind_speed=float(params.wind_speed),
                         prev_tier=field.last_wind_tier,
@@ -961,37 +848,118 @@ class WeatherEngine:
                         time_of_day=int(tod), daylight_hours=float(dl),
                     ))
                 field.last_is_daytime = is_day
-                # 降水（rain 已在循环顶部预查找）
-                if rain is not None and rain.pop_due(now):
-                    if rain.is_raining(now):
-                        self._publish(cx, cy, now, PrecipitationStart(
-                            precip_type=precip_type_for(params.temperature),
-                            intensity=float(params.rainfall),
-                            time_of_day=int(tod),
-                        ))
-                    else:
-                        self._publish(cx, cy, now, PrecipitationStop(
-                            time_of_day=int(tod),
-                        ))
-                # 补算降水（先裁剪过期事件）
-                self._replenish_rain((cx, cy), now)
-                # 天气修改器事件（遍历 WEATHER_MODIFIERS 注册表）
-                for config in WEATHER_MODIFIERS.values():
-                    sched = self._modifier_schedules.get((cx, cy, config.type_name))
-                    if sched is None:
-                        continue
-                    if sched.pop_due(now):
-                        if sched.is_active(now):
-                            self._publish(
-                                cx, cy, now,
-                                sched.start_event(now, time_of_day=int(tod)),
-                            )
-                        else:
-                            self._publish(
-                                cx, cy, now,
-                                sched.stop_event(time_of_day=int(tod)),
-                            )
-                    self._replenish_modifier((cx, cy, config.type_name), now)
+                # 特征核区域事件（核出现/消失 → start/stop）
+                self._sync_feature_events(cx, cy, field, now, tod)
+
+    def _sync_feature_events(
+        self, cx: int, cy: int, field: WeatherField, now: int, tod: int,
+    ) -> None:
+        """per-chunk 特征核身份差异 → 区域级 start/stop 事件。
+
+        首刻静默初始化（不补发历史核事件）。
+
+        Args:
+            cx, cy: chunk 坐标。
+            field: chunk 天气状态（活跃核身份缓存）。
+            now: 当前时刻（tick）。
+            tod: 当日 tick（time_of_day 字段）。
+        """
+        x0 = cx * TILE_MAP_SIZE
+        y0 = cy * TILE_MAP_SIZE
+        x1 = (cx + 1) * TILE_MAP_SIZE
+        y1 = (cy + 1) * TILE_MAP_SIZE
+        cores = self._field.features.cores_overlapping(x0, y0, x1, y1, now)
+        ids = {core.core_id for core in cores}
+        prev = field.active_feature_ids
+        if prev is None:
+            # 首刻静默：仅初始化（注入核除外——调试注入是运行时操作，
+            # 应立即可见，不受历史状态静默影响）
+            field.active_feature_ids = {
+                cid for cid in ids if not cid.startswith("inj:")
+            }
+            return
+        for core in cores:
+            if core.core_id in prev:
+                continue
+            ev = self._field.features.start_event(core, now, time_of_day=tod)
+            if ev is not None:
+                self._publish(cx, cy, now, ev)
+        for core_id in prev - ids:
+            # 从当前核列表中定位已消失核的类型（重新收集成本高，
+            # 用 type 前缀区分注入核；自然核从段的确定性生成重查）
+            core = self._find_core(core_id, now)
+            if core is None:
+                continue
+            ev = self._field.features.stop_event(core, time_of_day=tod)
+            if ev is not None:
+                self._publish(cx, cy, now, ev)
+        field.active_feature_ids = ids
+
+    def _find_core(self, core_id: str, now: int):
+        """按 core_id 定位核实例（stop 事件字段派生用）。
+
+        Args:
+            core_id: 稳定标识。
+            now: 当前时刻（tick）。
+
+        Returns:
+            FeatureCore 或 None（不可定位——停止事件按类型兜底）。
+        """
+        if core_id.startswith("inj:"):
+            parts = core_id.split(":")
+            core = self._field.features.get_injected(
+                int(parts[1]), int(parts[2]), parts[3])
+            if core is not None:
+                return core
+            # 已移除：返回最小核（stop_event 只读 type_name）
+            from .features import FeatureCore
+            return FeatureCore(
+                core_id=core_id, type_name=parts[3],
+                born_tick=now, duration=0,
+                center_x=0.0, center_y=0.0, radius=0.0,
+                magnitude=1.0, vel_x=0.0, vel_y=0.0,
+            )
+        # 解析核：从出生段重查（b:{bx}:{by}:{seg}:{idx}）
+        parts = core_id.split(":")
+        bx, by, seg, idx = int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
+        segs = self._field.features._timelines.get((bx, by))
+        if segs is None:
+            return None
+        cores = segs.get(seg)
+        if cores is None or idx >= len(cores):
+            return None
+        return cores[idx]
+
+    def _publish_region_event(
+        self, region: RegionEvent, now: int, tod: int,
+        ctx: dict,
+    ) -> None:
+        """区域降水事件 → precipitation_start/stop 发布。
+
+        Args:
+            region: 区域事件（质心 chunk + 强度）。
+            now: 当前时刻（tick）。
+            tod: 当日 tick（time_of_day 字段）。
+            ctx: _tick_context(now) 预计算结果（tick 级复用）。
+        """
+        cx, cy = region.center_chunk
+        if region.kind == "start":
+            # 降水类型：质心处温度判定（质心 chunk 未注册时缺省 rain，
+            # 不臆造 0°C 判雪——连通域质心几乎必为注册 chunk）
+            temp = None
+            field = self._fields.get((cx, cy))
+            if field is not None:
+                params, _, _, _ = self._compute_params(field, now, ctx)
+                temp = params.temperature
+            self._publish(cx, cy, now, PrecipitationStart(
+                precip_type=precip_type_for(temp) if temp is not None else "rain",
+                intensity=float(region.intensity),
+                time_of_day=tod,
+            ))
+        else:
+            self._publish(cx, cy, now, PrecipitationStop(
+                time_of_day=tod,
+            ))
 
     def _publish(
         self, cx: int, cy: int, now: int,

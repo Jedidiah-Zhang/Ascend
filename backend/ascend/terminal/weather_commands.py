@@ -2,13 +2,17 @@
 
 Mixin，依赖宿主 CommandExecutor 提供的:
   self._weather / self._i18n / self._parse_chunk / self._fmt_hour
+
+强制控制走特征核注入（force_feature）——rain 映射为锋面核
+（纯降水提升，无事件类），cold_snap/heat_wave/storm 映射为
+同名特征核（与自然特征同代码路径，事件由引擎自动发布）。
 """
 
 from ascend.weather.weather_engine import (
     classify_temperature, classify_humidity, classify_wind,
     classify_sunshine, classify_sunlight_intensity, precip_type_for,
 )
-from ascend.weather.weather_modifier import WEATHER_MODIFIERS
+from ascend.weather.features import FEATURE_TYPES
 
 from .result import CommandResult
 
@@ -111,7 +115,8 @@ class WeatherCommandsMixin:
             )
         target = args[0].lower()
         state = args[1].lower()
-        valid_targets = ["rain"] + list(WEATHER_MODIFIERS.keys())
+        # rain → front 核（纯降水，无特征事件）；其余 = 特征类型
+        valid_targets = ["rain"] + list(FEATURE_TYPES.keys())
         if target not in valid_targets:
             return CommandResult(
                 success=False,
@@ -132,11 +137,9 @@ class WeatherCommandsMixin:
             )
         cx, cy = coord
         active = state == "on"
-
-        if target == "rain":
-            changed = self._weather.set_rain(cx, cy, active)
-        else:
-            changed = self._weather.set_modifier(cx, cy, target, active)
+        # rain 指令映射为 front 特征核（带形降水，无事件类）
+        type_name = "front" if target == "rain" else target
+        changed = self._weather.force_feature(cx, cy, type_name, active)
 
         if changed is None:
             return CommandResult(

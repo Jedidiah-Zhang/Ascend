@@ -78,7 +78,7 @@ class PrecipitationStart(WorldEvent):
 
 @dataclass
 class PrecipitationStop(WorldEvent):
-    """降水停止（RainSchedule 事件结束）。"""
+    """降水停止（区域降水事件结束）。"""
 
     event_type: ClassVar[str] = "precipitation_stop"
     time_of_day: int
@@ -114,9 +114,9 @@ class Sunset(WorldEvent):
     daylight_hours: float
 
 
-# ── 天气修改器事件（寒潮/热浪/暴风雨）───────────────────────────
-# 事件类由 ModifierConfig 注册表指定（start_event_cls / stop_event_cls），
-# 新增修改器 = 注册表加一行 + 指定事件类（或复用既有字段结构）。
+# ── 特征核事件（寒潮/热浪/暴风雨）────────────────────────────────
+# 事件类由 FeatureConfig 注册表指定（start_event_cls / stop_event_cls），
+# 新增特征类型 = 注册表加一行 + 指定事件类（或复用既有字段结构）。
 
 
 @dataclass

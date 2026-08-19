@@ -86,7 +86,7 @@
   "console.help_time_tick": "Advance n ticks (default 1)",
   "console.help_weather_status": "Query current weather at position (default: birth chunk)",
   "console.help_weather_rain": "Force rain on/off",
-  "console.help_weather_modifier": "Force weather modifier on/off (cold_snap/heat_wave/storm)",
+  "console.help_weather_feature": "Force feature weather on/off (rain/cold_snap/heat_wave/storm)",
   "console.help_entity_list": "List all active entities",
   "console.help_entity_birth": "Birth an entity at position (defaults to player position)",
   "console.help_entity_death": "Remove an entity by ID prefix",

@@ -86,7 +86,7 @@
   "console.help_time_tick": "手动推进 n tick（默认 1）",
   "console.help_weather_status": "查询位置当前天气（默认出生点）",
   "console.help_weather_rain": "强制开启/关闭降雨",
-  "console.help_weather_modifier": "强制开关特殊气候（cold_snap/heat_wave/storm）",
+  "console.help_weather_feature": "强制开关特征气候（rain/cold_snap/heat_wave/storm）",
   "console.help_entity_list": "列出所有活跃实体",
   "console.help_entity_birth": "在指定位置诞生实体（缺省为玩家位置）",
   "console.help_entity_death": "按 ID 前缀移除实体",

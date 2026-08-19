@@ -508,7 +508,7 @@ class TestWeatherStatus:
 class TestWeatherSetRain:
     """weather set rain 指令测试。"""
 
-    def test_T25_rain_on_off(self, executor_weather, weather_engine, clock):
+    def test_T25_rain_on_off(self, executor_weather, weather_engine):
         """weather set rain on/off 切换降雨状态。
 
         Arrange:
@@ -516,18 +516,18 @@ class TestWeatherSetRain:
         Act:
             执行 set rain on → set rain off。
         Assert:
-            RainSchedule 的 is_raining 状态随之切换。
+            front 特征核随之注入/移除，降雨强度随之变化。
         """
-        rain = weather_engine._rain_schedules[(0, 0)]
-
         r1 = executor_weather.execute("weather set rain on")
         assert r1.success is True
-        assert rain.is_raining(clock.time) is True
+        assert (0, 0, "front") in weather_engine._field.features._injected
+        assert weather_engine.get_weather(0, 0).rainfall > 0
         assert "开启" in r1.output
 
         r2 = executor_weather.execute("weather set rain off")
         assert r2.success is True
-        assert rain.is_raining(clock.time) is False
+        assert (0, 0, "front") not in weather_engine._field.features._injected
+        assert weather_engine.get_weather(0, 0).rainfall == 0.0
         assert "关闭" in r2.output
 
     def test_T26_rain_on_twice_noop(self, executor_weather):
@@ -579,42 +579,46 @@ class TestWeatherSetRain:
 class TestWeatherSetModifier:
     """weather set <modifier> 指令测试。"""
 
-    def test_T29_modifier_on_off(self, executor_weather, weather_engine, clock):
-        """weather set cold_snap on/off 切换修改器状态。
+    def test_T29_modifier_on_off(self, executor_weather, weather_engine):
+        """weather set cold_snap on/off 切换特征核状态。
 
         Arrange:
-            executor_weather，chunk (0,0) 温带森林（cold_snap 率 > 0）。
+            executor_weather，chunk (0,0) 温带森林。
         Act:
             执行 set cold_snap on → off。
         Assert:
-            ModifierSchedule 的激活状态随之切换。
+            cold_snap 特征核随之注入/移除，温度偏移随之生效/恢复。
         """
+        normal = weather_engine.get_weather(0, 0).temperature
         r1 = executor_weather.execute("weather set cold_snap on")
         assert r1.success is True
-        sched = weather_engine._modifier_schedules[(0, 0, "cold_snap")]
-        assert sched.is_active(clock.time) is True
-        assert sched.temp_offset(clock.time) == pytest.approx(-15.0)
+        assert (0, 0, "cold_snap") in weather_engine._field.features._injected
+        assert weather_engine.get_weather(0, 0).temperature < normal - 10.0
 
         r2 = executor_weather.execute("weather set cold_snap off")
         assert r2.success is True
-        assert sched.is_active(clock.time) is False
+        assert (0, 0, "cold_snap") not in weather_engine._field.features._injected
+        assert weather_engine.get_weather(0, 0).temperature == \
+            pytest.approx(normal, abs=0.01)
 
-    def test_T30_modifier_dynamic_schedule(self, executor_weather,
-                                           weather_engine, clock):
-        """气候带天然无该修改器的 chunk 强制开启时动态创建调度。
+    def test_T30_modifier_dynamic_inject(self, executor_weather,
+                                         weather_engine):
+        """气候带天然无该特征（热浪率为 0）的 chunk 强制开启时直接注入核。
 
         Arrange:
-            chunk (1,1) 极地苔原（heat_wave 率为 0，无调度）。
+            chunk (1,1) 极地苔原（heat_wave 率为 0，无自然核）。
         Act:
             执行 "weather set heat_wave on 1 1"。
         Assert:
-            调度被动态创建且激活。
+            heat_wave 特征核被注入且温度上升。
         """
-        assert (1, 1, "heat_wave") not in weather_engine._modifier_schedules
+        assert (1, 1, "heat_wave") not in weather_engine._field.features._injected
+        pre_temp = weather_engine.get_weather(1, 1).temperature
         result = executor_weather.execute("weather set heat_wave on 1 1")
         assert result.success is True
-        sched = weather_engine._modifier_schedules[(1, 1, "heat_wave")]
-        assert sched.is_active(clock.time) is True
+        core = weather_engine._field.features._injected[(1, 1, "heat_wave")]
+        assert core.type_name == "heat_wave"
+        assert weather_engine.get_weather(1, 1).temperature > pre_temp
 
     def test_T31_set_invalid_args(self, executor_weather):
         """set 的目标/状态/坐标非法时返回错误。

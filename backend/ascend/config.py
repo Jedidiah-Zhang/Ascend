@@ -165,14 +165,28 @@ PARAM_BOUNDS: dict[str, tuple[float, float]] = {
 # Weather — 天气参数
 # ═══════════════════════════════════════════════════════════════
 
-# 全局大气场
-ATMOSPHERE_RESOLUTION: float = 2000.0   # 大气噪声采样间距 (m)
-ATMOSPHERE_DRIFT_RATE: float = 1e-5     # 气团漂移线速度（噪声单位/tick）
-ATMOSPHERE_DRIFT_RADIUS: float = 100.0  # 气团漂移轨道半径（噪声单位）
+# 统一天气场（特征 + 纹理双分量）
+WEATHER_FIELD_GRID_SIZE: float = 1000.0  # 采样网格间距 (m)，≈5 chunk
+WEATHER_FIELD_TILE_NOISE_WAVELENGTH: float = 10.0  # tile 级确定性噪声波长 (m)
+WEATHER_FIELD_TILE_NOISE_SCALE: float = 0.06  # tile 级噪声幅度（归一化值）
 
-# 漂移轨道：采样坐标沿半径 100 的圆以 1e-5 噪声单位/tick 的线速度运动，
-# 角速度 = DRIFT_RATE / RADIUS → 轨道周期 = 2π·RADIUS/(DRIFT_RATE·GAME_DAY)
-# ≈ 363.6 游戏日 ≈ 1 年，与 360 日季节年错位，跨年不精确重复。
+# 纹理分量 — 波长按参数独立（多 octave Perlin）
+TEXTURE_WAVELENGTH_TEMP: float = 7500.0  # 温度波长 (m)，5-10km
+TEXTURE_WAVELENGTH_WIND: float = 2500.0  # 风波长 (m)，2-3km
+TEXTURE_WAVELENGTH_PRECIP: float = 1500.0  # 降水波长 (m)，1-2km
+TEXTURE_OCTAVES: int = 4                 # 纹理多八度层数
+TEXTURE_PERSISTENCE: float = 0.5         # 多八度振幅衰减率
+TEXTURE_LACUNARITY: float = 2.0          # 多八度频率倍增率
+TEXTURE_DRIFT_RATE: float = 1e-5         # 场沿风向漂移线速度（噪声单位/tick）
+
+# 特征分量 — 空间块生成（各特征类型配置见 weather/features.py 注册表）
+FEATURE_BLOCK_SIZE: float = 16000.0      # 特征生成空间块边长 (m)
+FEATURE_MAX_RADIUS: float = 6000.0       # 特征核半径上限 (m)
+
+# 气候代理场（特征生成频率 + 降水校准用，低频近似）
+CLIMATE_PROXY_TEMP_WAVELENGTH: float = 100000.0  # 温度代理波长 (m)
+CLIMATE_PROXY_RAIN_WAVELENGTH: float = 60000.0   # 降雨代理波长 (m)
+CLIMATE_PROXY_OCTAVES: int = 3
 
 # 季节
 SEASONS_PER_YEAR: int = 4
@@ -195,13 +209,14 @@ DIURNAL_TO_SEASONAL_RATIO: float = 0.5  # 昼夜振幅 vs 季节振幅
 HUMIDITY_DIURNAL_SCALE: float = 0.8     # 湿度昼夜偏移缩放
 HUMIDITY_SEASONAL_SCALE: float = 0.4    # 湿度季节偏移缩放
 
-# 降雨调度
-RAIN_FORECAST_DEPTH: int = 4            # 预排未来 N 场雨
-RAIN_REPLENISH_THRESHOLD: int = 2       # 低于 N 场时补算
-
-# 天气修改器调度
-MODIFIER_FORECAST_DEPTH: int = 2
-MODIFIER_REPLENISH_THRESHOLD: int = 1
+# 降水标定（场信号 → mm/h，气候带校准）
+PRECIP_SIGNAL_MIN: float = 0.2          # 场信号下界（低于此永不降雨）
+PRECIP_SIGNAL_MAX: float = 1.2          # 场信号上界（校准归一化用）
+PRECIP_THRESHOLD_DRY: float = 0.55      # 最干旱气候带的越阈水平
+PRECIP_THRESHOLD_WET: float = 0.25      # 最湿润气候带的越阈水平
+PRECIP_ANNUAL_DRY: float = 50.0         # 越阈水平推导的干旱参考年降雨 (mm)
+PRECIP_ANNUAL_WET: float = 3500.0       # 越阈水平推导的湿润参考年降雨 (mm)
+PRECIP_INTENSITY_SCALE: float = 2.0     # 信号超阈 → 强度放大系数（基准强度 ×）
 
 # 天气查询 API
 MAX_WEATHER_QUERY_CHUNKS: int = 64      # get_weather 单请求最大 chunk 数（防超大请求卡游戏线程）

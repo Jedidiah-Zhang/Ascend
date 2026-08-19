@@ -443,7 +443,7 @@ class CommandExecutor(
             f"  time tick [n]                            {t('console.help_time_tick')}",
             f"  weather status [cx cy]                   {t('console.help_weather_status')}",
             f"  weather set rain <on|off> [cx cy]        {t('console.help_weather_rain')}",
-            f"  weather set <mod> <on|off> [cx cy]       {t('console.help_weather_modifier')}",
+            f"  weather set <feature> <on|off> [cx cy]   {t('console.help_weather_feature')}",
             f"  entity [list]                            {t('console.help_entity_list')}",
             f"  entity birth <type> [x y]                {t('console.help_entity_birth')}",
             f"  entity death <id>                        {t('console.help_entity_death')}",
