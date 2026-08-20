@@ -143,7 +143,7 @@ func test_background_is_opaque() -> void:
 func test_main_world_uses_overlay_for_loading() -> void:
 	"""main_world 的加载提示应挂载为全屏覆盖层（而非纯文字 Label）。"""
 	var scene: PackedScene = load("res://scenes/main.tscn")
-	var main: Node3D = autoqfree(scene.instantiate())
+	var main: Node2D = autoqfree(scene.instantiate())
 	add_child(main)
 	main.process_mode = Node.PROCESS_MODE_DISABLED
 

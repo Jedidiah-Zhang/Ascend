@@ -53,6 +53,9 @@ const PROTOCOL_VERSION: int = Config.PROTOCOL_VERSION
 
 var token: String = ""
 
+## 服务端协商的 tile 数据 BLOB 版本（hello_ack 携带；默认 0 = 未知）。
+var blob_version: int = 0
+
 
 # ── 注入点 ─────────────────────────────────────────────────
 
@@ -81,6 +84,7 @@ func start() -> void:
 		"payload": {
 			"token": token,
 			"protocol_version": PROTOCOL_VERSION,
+			"tile_blob_version": Config.TILE_BLOB_VERSION,
 		},
 	}
 	var frame: PackedByteArray = _codec.frame_encode(msg)
@@ -120,6 +124,9 @@ func on_message(msg: Dictionary) -> bool:
 	if msg.get("type", "") == "hello_ack":
 		state = State.ACKED
 		_elapsed = 0.0  # 回归：ack 后停止计时，防 10s 后误超时
+		# 服务端 BLOB 版本协商结果：以此作为 tile 数据解码基准
+		# （前端本地上报的 Config.TILE_BLOB_VERSION 仅作握手前的客户端声明）
+		blob_version = int(msg.get("payload", {}).get("blob_version", 0))
 		acked.emit()
 		return true
 	if msg.get("type", "") == "error" and msg.get("request_type", "") == "hello":

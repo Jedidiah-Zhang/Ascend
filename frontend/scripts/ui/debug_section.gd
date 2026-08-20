@@ -32,7 +32,7 @@ func setup(_world: Node) -> void:
 	"""世界初始化时调用一次，子类可缓存 world 引用或 NodePath。
 
 	Args:
-		_world: 世界脚本节点（MainWorld 或 MainWorld3D）。
+		_world: 世界脚本节点（MainWorld）。
 	"""
 	pass
 

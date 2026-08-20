@@ -62,6 +62,8 @@ func test_start_sends_hello_with_token() -> void:
 	assert_gt(int(msg["seq"]), 0)
 	assert_eq(msg["payload"]["token"], "token-before")
 	assert_eq(msg["payload"]["protocol_version"], Config.PROTOCOL_VERSION)
+	assert_eq(msg["payload"]["tile_blob_version"], Config.TILE_BLOB_VERSION,
+		"hello 应上报客户端已知的 tile 数据 BLOB 版本，供服务端裁决兼容性")
 
 
 func test_token_reloaded_each_start() -> void:
@@ -119,11 +121,20 @@ func test_ack_consumes_and_signals() -> void:
 	var hs := _make_hs()
 	watch_signals(hs)
 	hs.start()
-	var consumed: bool = hs.on_message({"type": "hello_ack"})
+	var consumed: bool = hs.on_message({"type": "hello_ack", "payload": {"blob_version": 2}})
 	assert_true(consumed, "hello_ack 应被握手消费")
 	assert_true(hs.is_acked())
 	assert_eq(hs.state, Handshake.State.ACKED)
 	assert_signal_emit_count(hs, "acked", 1)
+	assert_eq(hs.blob_version, 2, "应解析服务端下发的 BLOB 版本")
+
+
+func test_ack_missing_blob_version_defaults_zero() -> void:
+	"""旧后端（无 blob_version 字段）握手 ack 应默认为 0（未知），不报错。"""
+	var hs := _make_hs()
+	hs.start()
+	hs.on_message({"type": "hello_ack"})
+	assert_eq(hs.blob_version, 0, "缺失字段默认 0，由调用方决定回退策略")
 
 
 func test_ack_stops_timeout_countdown() -> void:

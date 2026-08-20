@@ -23,6 +23,7 @@ from ascend.net.protocol import (
     ProtocolError,
     PROTOCOL_VERSION,
 )
+from ascend.space.tile_grid import _TILEGRID_VERSION
 
 logger = get_logger(__name__)
 
@@ -245,7 +246,27 @@ class ClientHandler:
             except OSError:
                 pass
             return False
+        # tile 数据 BLOB 版本协商：客户端上报其支持的版本，低于服务端
+        # 数据格式版本 = 无法解码（BLOB 布局随版本演化），握手即拒绝
+        client_blob = int(payload.get("tile_blob_version", 0) or 0)
+        if client_blob < _TILEGRID_VERSION:
+            logger.warning(
+                "BLOB 版本不兼容 %s:%d: 客户端 %d < 服务端 %d",
+                self.addr[0], self.addr[1], client_blob, _TILEGRID_VERSION,
+            )
+            try:
+                self.sock.sendall(encode_message(make_error(
+                    "hello",
+                    f"tile 数据版本不兼容: 客户端 {client_blob} < 服务端 {_TILEGRID_VERSION}",
+                    seq=0,
+                )))
+            except OSError:
+                pass
+            return False
         self.verified = True
-        self.send(encode_message({"type": "hello_ack"}))
+        self.send(encode_message({
+            "type": "hello_ack",
+            "payload": {"blob_version": _TILEGRID_VERSION},
+        }))
         logger.info("握手成功: %s:%d", self.addr[0], self.addr[1])
         return True

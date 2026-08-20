@@ -18,6 +18,9 @@ const RECONNECT_MAX_INTERVAL: float = 32.0
 const HANDSHAKE_MAX_RETRIES: int = 5
 const MAX_MESSAGE_SIZE: int = 16 * 1024 * 1024  # 16 MiB
 const PROTOCOL_VERSION: int = 0x01  # 与后端 ascend/net/protocol.py 同步
+## tile 数据 BLOB 版本（客户端已知/支持的版本；握手时上报，服务端以
+## 其 _TILEGRID_VERSION 裁决兼容性——见 handshake.gd / client_handler.py）
+const TILE_BLOB_VERSION: int = 2
 
 const VENV_PYTHON_REL: String = ".venv/bin/python"
 const BACKEND_SCRIPT_REL: String = "backend/run_server.py"
@@ -48,27 +51,36 @@ const GAME_DAY: int = 172800        # 1 游戏天 = 172800 tick
 const GAME_YEAR: int = 62208000     # 1 游戏年 = 360 游戏天
 
 # ═══════════════════════════════════════════════════════════
-# 3D — 正交等轴视角 3D 渲染（相机方向 (1,1,1)，见视觉风格设计文档）
+# 2D — 正俯视扁平化渲染（见视觉风格设计文档）
 # ═══════════════════════════════════════════════════════════
 
-## 相机 FOV（极小值近似正交）
-const CAMERA_3D_FOV: float = 5.0
-## 相机默认距离
-const CAMERA_3D_DISTANCE_DEFAULT: float = 400.0
-## 缩放步长（距离变化）
-const CAMERA_3D_DISTANCE_STEP: float = 40.0
-const CAMERA_3D_DISTANCE_MIN: float = 60.0
-const CAMERA_3D_DISTANCE_MAX: float = 1200.0
+## 每地形格像素尺寸（tile 基准；角色 sprite 独立于 tile，可 16×20-24）
+const TILE_PIXEL_SIZE: int = 16
+## 相机默认缩放（zoom=1 即 1 tile = TILE_PIXEL_SIZE 屏幕像素）
+const CAMERA_ZOOM_DEFAULT: float = 1.0
+## 滚轮缩放步长（倍率，zoom_in 乘、zoom_out 除）
+const CAMERA_ZOOM_STEP: float = 1.2
+const CAMERA_ZOOM_MIN: float = 0.5
+const CAMERA_ZOOM_MAX: float = 4.0
 
-## 太阳高度角低于该值时关闭阴影（CameraRig 覆盖区间与 LightingController
-## 淡出带共用，必须同源——只改一侧会造成覆盖放大与阴影淡出区间错位）
-const SHADOW_CUTOFF: float = 0.1
-## 低角度区间上限：低于该值开始放大阴影覆盖范围、压扁 pancake
-const SHADOW_LOW_ANGLE_CEIL: float = 0.25
+## 2D 玩家移动速度（每秒 tile 数，与后端世界坐标一致）
+const PLAYER_2D_SPEED: float = 30.0
+const PLAYER_2D_FAST_MULT: float = 3.0
 
-## 3D 玩家移动速度（每秒世界单位）
-const PLAYER_3D_SPEED: float = 30.0
-const PLAYER_3D_FAST_MULT: float = 3.0
+# ── 海拔五信号（视觉风格设计文档；阈值单位 = 米，与后端 elevation 同刻度） ──
+
+## 崖壁贴片：相邻 tile 海拔差 > 此值时，高侧边缘画悬崖 sprite
+const CLIFF_ELEVATION_DIFF_M: float = 8.0
+## 固定方向投影：光照方向固定（西北），东南侧高差 > 此值时铺半透明阴影贴片
+const SHADOW_ELEVATION_DIFF_M: float = 6.0
+## 雪线：MOUNTAIN_PEAK 且海拔 ≥ 此值 → 雪顶 sprite（对齐后端 ALPINE 2000m 阈值）
+const SNOWLINE_ELEVATION_M: float = 2000.0
+## 等高线调试层：500m 间隔（500/1000/1500/2000 恰与 ALPINE 阈值对齐）
+const CONTOUR_INTERVAL_M: float = 500.0
+## 装饰密度海拔档位（米）：低于档位 0 无装饰，之后逐档加密（见 TerrainTileBuilder）
+const DECOR_ELEVATION_TIERS: Array[float] = [300.0, 1000.0, 2000.0]
+## 等高线调试层默认开关（开发期调试用；挂调试面板后改为运行时开关）
+const CONTOUR_LAYER_ENABLED: bool = false
 
 # ═══════════════════════════════════════════════════════════
 # UI — 界面

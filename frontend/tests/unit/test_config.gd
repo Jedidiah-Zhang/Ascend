@@ -26,11 +26,13 @@ func test_message_size_reasonable() -> void:
 		"MAX_MESSAGE_SIZE 不应超过 512MB")
 
 
-func test_3d_camera_distance_range_valid() -> void:
-	assert_lte(Config.CAMERA_3D_DISTANCE_MIN, Config.CAMERA_3D_DISTANCE_DEFAULT,
-		"DISTANCE_MIN 必须 <= DISTANCE_DEFAULT")
-	assert_lte(Config.CAMERA_3D_DISTANCE_DEFAULT, Config.CAMERA_3D_DISTANCE_MAX,
-		"DISTANCE_DEFAULT 必须 <= DISTANCE_MAX")
+func test_2d_camera_zoom_range_valid() -> void:
+	assert_gt(Config.TILE_PIXEL_SIZE, 0, "TILE_PIXEL_SIZE 必须 > 0")
+	assert_lte(Config.CAMERA_ZOOM_MIN, Config.CAMERA_ZOOM_DEFAULT,
+		"ZOOM_MIN 必须 <= ZOOM_DEFAULT")
+	assert_lte(Config.CAMERA_ZOOM_DEFAULT, Config.CAMERA_ZOOM_MAX,
+		"ZOOM_DEFAULT 必须 <= ZOOM_MAX")
+	assert_gt(Config.CAMERA_ZOOM_STEP, 1.0, "缩放步长应为放大倍率（> 1）")
 
 
 func test_terminal_limits_reasonable() -> void:

@@ -1,7 +1,7 @@
 extends GutTest
 
 const Config = preload("res://scripts/config.gd")
-const TerrainMeshBuilder = preload("res://scripts/world/terrain_mesh_builder.gd")
+const TerrainTileBuilder = preload("res://scripts/world/terrain_tile_builder.gd")
 const CS: int = Config.TILE_MAP_SIZE
 const Fakes = preload("res://tests/fakes/connection_layers.gd")
 
@@ -42,23 +42,23 @@ func test_main_scene_loads() -> void:
 	assert_not_null(instance, "场景实例化不应为 null")
 
 
-func test_main_scene_is_node3d() -> void:
+func test_main_scene_is_node2d() -> void:
 	var scene: PackedScene = load("res://scenes/main.tscn")
 	var instance: Node = autoqfree(scene.instantiate())
 	add_child(instance)
-	assert_true(instance is Node3D)
+	assert_true(instance is Node2D)
 
 
 func test_pause_menu_wired_with_terminal() -> void:
 	"""暂停菜单应注入终端引用（终端打开时 ESC 归终端）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	assert_eq(main._pause_menu._terminal, main._terminal,
 		"ESC 分流依赖终端引用注入")
 
 
 # ── Chunk 地形查询（纯逻辑方法） ──────────────────────────────
 
-func _make_world_instance() -> Node3D:
+func _make_world_instance() -> Node2D:
 	var scene: PackedScene = load("res://scenes/main.tscn")
 	var instance: Node = autoqfree(scene.instantiate())
 	add_child(instance)
@@ -71,10 +71,11 @@ func _make_world_instance() -> Node3D:
 	instance.process_mode = Node.PROCESS_MODE_DISABLED
 	# 注入同步网格构建器：构建结果立即入队（_poll_build_results 挂载），
 	# 测试无需等待后台线程，断言与旧同步语义一致。契约与异步任务相同：
-	# 入队纯数据（build_data），由 _poll_build_results 在主线程组 mesh。
-	instance.mesh_builder = func(key, terr, elev, seq):
-		instance._build_results.append([key, TerrainMeshBuilder.build_data(terr, elev), seq])
-	return instance as Node3D
+	# 入队纯数据（build_cells），由 _poll_build_results 在主线程组 mesh。
+	instance.tile_builder = func(key, terr, elev, neighbors, seq):
+		instance._build_results.append(
+			[key, TerrainTileBuilder.build_cells(terr, elev, neighbors), seq])
+	return instance as Node2D
 
 
 ## 读取并清空 Connection 发送队列中的 get_chunks 请求，返回 include_tiles 序列。
@@ -123,13 +124,13 @@ func _make_tiles_b64(terr: PackedInt32Array, elev: PackedFloat32Array,
 
 
 func test_ground_elevation_at_no_chunk_returns_nan() -> void:
-	var main: Node3D = _make_world_instance()
-	var result: float = main._get_ground_elevation_at(Vector3(100, 0, 100))
+	var main: Node2D = _make_world_instance()
+	var result: float = main._get_ground_elevation_at(Vector2(100, 100))
 	assert_true(is_nan(result), "无 chunk 数据时应返回 NaN")
 
 
 func test_ground_elevation_at_with_data() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	var key := Vector2i(0, 0)
 	var elev_arr: Array = []
@@ -137,12 +138,12 @@ func test_ground_elevation_at_with_data() -> void:
 	elev_arr.fill(10.0)
 	main._chunks[key] = {"elevation": elev_arr}
 
-	var result: float = main._get_ground_elevation_at(Vector3(50, 0, 50))
+	var result: float = main._get_ground_elevation_at(Vector2(50, 50))
 	assert_eq(result, 10.0, "应返回正确海拔")
 
 
 func test_terrain_at_returns_data() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	var key := Vector2i(0, 0)
 	var elev_arr: Array = []
@@ -159,7 +160,7 @@ func test_terrain_at_returns_data() -> void:
 
 
 func test_climate_at_returns_data() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	var key := Vector2i(0, 0)
 	main._chunks[key] = {"temperature": 22.5, "humidity": 65.0, "climate": 3}
@@ -173,7 +174,7 @@ func test_climate_at_returns_data() -> void:
 # ── 出生点 ──────────────────────────────────────────────────
 
 func test_birth_chunk_sets_player_position() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	assert_false(main._has_birth)
 	main._set_birth_chunk(5, 3)
@@ -185,7 +186,7 @@ func test_birth_chunk_sets_player_position() -> void:
 
 
 func test_birth_chunk_only_set_once() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	main._set_birth_chunk(2, 2)
 	assert_eq(main._birth_chunk, Vector2i(2, 2))
@@ -201,7 +202,7 @@ func test_world_initialized_sets_birth_and_requests_state() -> void:
 	回归：连接全程不断线后，entity_snapshot / player_state 原由
 	_on_connected 触发，读档重建后必须由事件重新请求。
 	"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	main._on_world_initialized({"birth_chunk": [5, 3]})
 
@@ -214,7 +215,7 @@ func test_world_initialized_sets_birth_and_requests_state() -> void:
 
 func test_world_initialized_resets_previous_world_state() -> void:
 	"""world_initialized 应清空旧世界的 chunk/地形（换世界读档）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(2, 2)
 	main._chunks[Vector2i(0, 0)] = {"elevation": []}
 	main._stream_machine.mark_built(Vector2i(0, 0))
@@ -230,7 +231,7 @@ func test_world_initialized_resets_previous_world_state() -> void:
 
 func test_terrain_ready_shows_world_after_neighborhood_loaded() -> void:
 	"""出生点 3×3 邻域全部加载后：隐藏加载提示并显示玩家。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(4, 4)
 
 	assert_false(main._world_visible)
@@ -261,7 +262,7 @@ func test_terrain_ready_shows_world_after_neighborhood_loaded() -> void:
 
 func test_terrain_ready_force_timeout_shows_world() -> void:
 	"""超时兜底：区块永不就绪时强制显示世界（同样先补满进度条）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(1, 1)
 
 	main._check_terrain_ready(true)
@@ -285,7 +286,7 @@ func test_completion_fallback_forces_world_visible() -> void:
 	异常导致信号永不发出，COMPLETION_FALLBACK_SEC 兜底计时器随
 	main._process 倒计时归零后强制收尾，防玩家永久卡在加载层。
 	"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(0, 0)
 
 	# 就绪并进入补满收尾；模拟覆盖层异常：隐藏 → _process 停走 → 信号不发
@@ -294,7 +295,7 @@ func test_completion_fallback_forces_world_visible() -> void:
 	main._loading_overlay.visible = false
 
 	# 兜底计时器接近归零，main._process 推进后强制收尾
-	main._completion_fallback_sec = 0.01
+	main._loading_flow._completion_fallback_sec = 0.01
 	main._process(0.05)
 
 	assert_true(main._world_visible, "兜底计时器归零应强制收尾")
@@ -304,7 +305,7 @@ func test_completion_fallback_forces_world_visible() -> void:
 
 func test_reset_world_state_is_idempotent() -> void:
 	"""连续复位（reloading → initialized）不应报错。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(0, 0)
 	main._reset_world_state()
 	main._reset_world_state()
@@ -314,7 +315,7 @@ func test_reset_world_state_is_idempotent() -> void:
 # ── Debug 数据 getter ───────────────────────────────────────
 
 func test_debug_player_info_defaults() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	var info: Dictionary = main.get_debug_player_info()
 	assert_not_null(info.get("world_pos"))
@@ -323,7 +324,7 @@ func test_debug_player_info_defaults() -> void:
 
 
 func test_debug_chunk_stats_defaults() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	var stats: Dictionary = main.get_debug_chunk_stats()
 	assert_eq(stats["loaded"], 0)
@@ -332,7 +333,7 @@ func test_debug_chunk_stats_defaults() -> void:
 
 
 func test_debug_timing_has_expected_keys() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	var timing: Dictionary = main.get_debug_timing()
 	assert_true(timing.has("stream"))
@@ -342,160 +343,116 @@ func test_debug_timing_has_expected_keys() -> void:
 # ── 流式半径 ────────────────────────────────────────────────
 
 func test_stream_radius_minimum() -> void:
-	var main: Node3D = _make_world_instance()
-	main._camera_distance = main.CAMERA_DISTANCE_MIN
+	var main: Node2D = _make_world_instance()
+	main._camera_zoom = Vector2(main.CAMERA_ZOOM_MAX, main.CAMERA_ZOOM_MAX)
 
 	var r: int = main._stream_radius()
 	assert_gt(r, 0, "半径应 > 0")
 
 
-# ── 阴影覆盖 ──────────────────────────────────────────────
+# ── 昼夜色调（2D CanvasModulate） ─────────────────────────
 
-func test_shadow_coverage_scales_with_zoom() -> void:
-	var main: Node3D = _make_world_instance()
-
-	main._camera_distance = 400.0
-	var near: float = main._compute_shadow_coverage(0.5)
-	main._camera_distance = 1200.0
-	var far: float = main._compute_shadow_coverage(0.5)
-
-	assert_gt(far, near, "拉远时覆盖范围应扩大")
-	assert_lt(far, near * 4.0, "覆盖范围应与可视范围线性相关")
-
-
-func test_shadow_coverage_covers_visible_footprint() -> void:
-	var main: Node3D = _make_world_instance()
-	main._camera_distance = 400.0
-
-	var coverage: float = main._compute_shadow_coverage(0.5)
-	var radius: float = main._compute_visible_radius()
-	assert_gt(coverage, radius, "覆盖半径应大于可视半径")
-	assert_lt(coverage, radius * 2.0, "覆盖应紧凑，避免浪费阴影分辨率")
-
-
-func test_low_sun_expands_shadow_coverage() -> void:
-	var main: Node3D = _make_world_instance()
-
-	var low: float = main._compute_shadow_coverage(0.15)
-	var noon: float = main._compute_shadow_coverage(0.5)
-	assert_gt(low, noon, "低角度太阳时应放大覆盖范围")
-
-
-func test_shadow_disabled_below_cutoff() -> void:
-	var main: Node3D = _make_world_instance()
-	main._game_hour = main._sunrise
-
-	main._update_lighting()
-	assert_false(main._sun_light.shadow_enabled, "日出瞬间太阳高度角为 0，应关闭阴影")
-
-
-func test_sunrise_smooth_energy_ramp() -> void:
-	var main: Node3D = _make_world_instance()
+func test_night_color_before_sunrise() -> void:
+	var main: Node2D = _make_world_instance()
 	main._sunshine_intensity = 1.0
-	main._game_hour = main._sunrise + (main._sunset - main._sunrise) * 0.02
+	main._game_hour = main._sunrise - 0.1
 
 	main._update_lighting()
-	var full: float = 1.0 * 1.2
-	assert_gt(main._sun_light.light_energy, 0.0, "日出后直射光应从 0 渐入")
-	assert_lt(main._sun_light.light_energy, full, "日出初期直射光不应瞬间满能量")
+	var col: Color = main._canvas_modulate.color
+	assert_almost_eq(col.r, LightingController.NIGHT_COLOR.r, 0.01, "夜间应为夜晚色调")
 
 
-func test_sunset_shadow_opacity_fades() -> void:
-	var main: Node3D = _make_world_instance()
-	main._game_hour = main._sunset - (main._sunset - main._sunrise) * 0.01
-
-	main._update_lighting()
-	assert_eq(main._sun_light.shadow_opacity, 0.0, "日落前阴影应淡出为 0")
-
-
-func test_shadow_opacity_gradient_region() -> void:
-	var main: Node3D = _make_world_instance()
-	main._game_hour = main._sunrise + (main._sunset - main._sunrise) * 0.04
-
-	main._update_lighting()
-	var op: float = main._sun_light.shadow_opacity
-	assert_gt(op, 0.0, "低角度渐变区阴影不应全透明")
-	assert_lt(op, 1.0, "低角度渐变区阴影不应全不透明")
-
-
-func test_ambient_smooth_at_sunrise() -> void:
-	var main: Node3D = _make_world_instance()
+func test_noon_full_daylight() -> void:
+	var main: Node2D = _make_world_instance()
 	main._sunshine_intensity = 1.0
-	main._game_hour = main._sunrise + (main._sunset - main._sunrise) * 0.02
-
-	main._update_lighting()
-	var env: Environment = main._world_env.environment
-	assert_gt(env.ambient_light_energy, 0.5, "日出初期环境光应高于夜间最小值")
-	assert_lt(env.ambient_light_energy, 1.0, "日出初期环境光不应瞬间满值")
-
-
-func test_shadow_enabled_at_noon_with_tight_coverage() -> void:
-	var main: Node3D = _make_world_instance()
 	main._game_hour = (main._sunrise + main._sunset) * 0.5
 
 	main._update_lighting()
-	assert_true(main._sun_light.shadow_enabled, "正午应开启阴影")
-	var expected: float = main._compute_shadow_coverage(1.0)
-	assert_almost_eq(main._sun_light.directional_shadow_max_distance, expected, 0.01)
+	var col: Color = main._canvas_modulate.color
+	assert_almost_eq(col.r, LightingController.DAY_COLOR.r, 0.01, "正午应为白天色调")
 
 
-# ── 正交相机（阴影精度核心） ────────────────────────────────
+func test_sunrise_smooth_ramp() -> void:
+	var main: Node2D = _make_world_instance()
+	main._sunshine_intensity = 1.0
+	main._game_hour = main._sunrise + (main._sunset - main._sunrise) * 0.02
 
-func test_camera_is_orthographic_with_zoom_mapped_size() -> void:
-	var main: Node3D = _make_world_instance()
-	assert_eq(main._camera.projection, Camera3D.PROJECTION_ORTHOGONAL, "应为真正交投影")
-
-	var expected: float = main.CAMERA_DISTANCE_DEFAULT * tan(deg_to_rad(main.CAMERA_FOV * 0.5))
-	assert_almost_eq(main._camera.size, expected, 0.01, "size 应由相机距离映射")
+	main._update_lighting()
+	var col: Color = main._canvas_modulate.color
+	assert_gt(col.r, LightingController.NIGHT_COLOR.r, "日出初期应从夜色渐亮")
+	assert_lt(col.r, LightingController.DAY_COLOR.r, "日出初期不应瞬间满亮")
 
 
-func test_camera_slab_contains_visible_ground() -> void:
-	var main: Node3D = _make_world_instance()
-	main._camera_distance = 400.0
+func test_sunset_ramp_back_to_night() -> void:
+	var main: Node2D = _make_world_instance()
+	main._sunshine_intensity = 1.0
+	main._game_hour = main._sunset - (main._sunset - main._sunrise) * 0.02
+
+	main._update_lighting()
+	var col: Color = main._canvas_modulate.color
+	assert_lt(col.r, LightingController.DAY_COLOR.r, "日落前应开始变暗")
+
+
+func test_overcast_dims_daylight() -> void:
+	var main: Node2D = _make_world_instance()
+	main._sunshine_intensity = 0.0
+	main._game_hour = (main._sunrise + main._sunset) * 0.5
+
+	main._update_lighting()
+	var dim: Color = main._canvas_modulate.color
+	main._sunshine_intensity = 1.0
+	main._update_lighting()
+	var full: Color = main._canvas_modulate.color
+	assert_lt(dim.r, full.r, "阴天应比晴天暗")
+
+
+# ── 2D 相机（正俯视 Camera2D） ─────────────────────────────
+
+func test_camera_follows_player_focus() -> void:
+	var main: Node2D = _make_world_instance()
+	main._player_pos = Vector3(10, 0, 20)
+	main._configure_camera()
+
+	assert_eq(main._camera.position, Vector2(10, 20) * 16.0,
+		"相机焦点应锚定玩家世界像素坐标")
+	assert_eq(main._camera.zoom, Vector2(1, 1), "默认缩放应为 1x")
+
+
+func test_camera_apply_transform_updates_position() -> void:
+	var main: Node2D = _make_world_instance()
+	main._camera_focus = Vector2(64, 128)
+	main._camera_zoom = Vector2(1.5, 1.5)
 	main._apply_camera_transform()
 
-	var half_perp: float = 400.0 * tan(deg_to_rad(main.CAMERA_FOV * 0.5))
-	var elevation: float = asin(1.0 / sqrt(3.0))
-	var ground_half: float = half_perp / sin(elevation)
-
-	assert_lt(main._camera.near, 400.0 - ground_half, "近平面应在地面最近边之前")
-	assert_gt(main._camera.far, 400.0 + ground_half, "远平面应覆盖地面最远边")
-	assert_lt(main._camera.far, 1000.0, "远平面应紧凑：阴影范围 = 相机视锥，视锥越薄阴影越精")
+	assert_eq(main._camera.position, Vector2(64, 128), "相机应移动至焦点")
+	assert_eq(main._camera.zoom, Vector2(1.5, 1.5), "相机应应用缩放")
 
 
-func test_camera_slab_zoom_scales_range() -> void:
-	var main: Node3D = _make_world_instance()
-	main._camera_distance = 1200.0
-	main._apply_camera_transform()
-	var far_zoom: float = main._camera.far
-
-	main._camera_distance = 60.0
-	main._apply_camera_transform()
-	var near_zoom: float = main._camera.far
-
-	assert_gt(far_zoom, near_zoom, "拉远时视锥范围应扩大（阴影范围随之扩大）")
+func test_camera_zoom_clamped_by_configure() -> void:
+	var main: Node2D = _make_world_instance()
+	main._camera_zoom = Vector2(0.1, 0.1)
+	main._configure_camera()
+	assert_eq(main._camera_zoom, Vector2(1, 1), "configure 应重置默认缩放")
 
 
-# ── 地形映射 ────────────────────────────────────────────────
+# ── 地形 tile 映射（TerrainTileBuilder） ────────────────────
 
 func test_terrain_mapping_length() -> void:
-	assert_eq(TerrainMeshBuilder.TERRAIN_TO_MESH.size(), 9, "应有 9 种地形类型映射")
+	assert_eq(TerrainTileBuilder.TERRAIN_TO_TILE.size(), 9, "应有 9 种地形类型映射")
 
 
-func test_terrain_materials_use_vertex_colors() -> void:
-	var main: Node3D = _make_world_instance()
-	var mats: Dictionary = main._lazy_load_materials()
-	assert_false(mats.is_empty(), "应加载到地形材质")
-	for item_id: int in mats:
-		var mat: StandardMaterial3D = mats[item_id]
-		assert_true(mat.vertex_color_use_as_albedo,
-			"地形材质应启用顶点色倍乘，否则 AO 顶点色不生效 (item_id=%d)" % item_id)
+func test_terrain_tile_set_builds_programmatic_atlas() -> void:
+	var ts: TileSet = TerrainTileBuilder.make_tile_set(TerrainTileBuilder.TERRAIN_TILE_COLORS)
+	assert_eq(ts.tile_size, Vector2i(16, 16), "tile 尺寸应为 16px")
+	assert_eq(ts.get_source_count(), 1, "应为单源占位 atlas")
+	var src: TileSetAtlasSource = ts.get_source(0)
+	assert_eq(src.get_tiles_count(), 9, "9 色块应各建一个 tile")
 
 
 # ── Chunk 卸载 ──────────────────────────────────────────────
 
 func test_unload_distant_chunks_removes_distant() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	var far_key := Vector2i(100, 100)
 	main._stream_machine.mark_built(far_key)
@@ -511,7 +468,7 @@ func test_unload_distant_chunks_removes_distant() -> void:
 
 
 func test_unload_preserves_nearby_chunks() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	var near_key := Vector2i(0, 0)
 	main._stream_machine.mark_built(near_key)
@@ -531,7 +488,7 @@ func test_field_only_response_stores_data_keeps_field_requested() -> void:
 	防护：字段响应不得清 _pending 标记——否则完整请求标记被抹掉、
 	每帧重发 include_tiles=true 请求直到响应到达（双请求竞态）。
 	"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	var key := Vector2i(0, 0)
 	main._set_birth_chunk(0, 0)
 	main._stream_machine.collect_field_requests(key, 0)  # → FIELD_REQUESTED
@@ -553,7 +510,7 @@ func test_field_only_response_stores_data_keeps_field_requested() -> void:
 
 func test_tile_response_marks_received() -> void:
 	"""完整响应：解码并构建（→ BUILT）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	var key := Vector2i(0, 0)
 	main._set_birth_chunk(0, 0)
 	main._stream_machine.collect_field_requests(key, 0)
@@ -579,6 +536,7 @@ func test_tile_response_marks_received() -> void:
 			"include_tiles": true,
 		},
 	})
+	main._poll_build_results()
 
 	assert_eq(main._stream_machine.get_state(key), main.ChunkState.BUILT,
 		"完整数据到达且材质就绪应立即构建（BUILT）")
@@ -588,6 +546,278 @@ func test_tile_response_marks_received() -> void:
 	assert_eq(decoded["ice"][CS * CS - 1], 200, "ice 段末 tile 解码")
 
 
+func test_signal_layers_mount_with_chunk() -> void:
+	"""五信号层随 chunk 挂载：崖壁/投影/装饰节点生成，等高线层按开关跳过。"""
+	var main: Node2D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+	var key := Vector2i(0, 0)
+	main._stream_machine.collect_field_requests(key, 0)
+	main._stream_machine.select_full_requests(func(k): return true, 10)
+
+	# 西半区高台（120m）、东半区低地（50m）：产生崖壁 + 投影 + 装饰
+	var elev := PackedFloat32Array()
+	elev.resize(CS * CS)
+	elev.fill(50.0)
+	var terr := PackedInt32Array()
+	terr.resize(CS * CS)
+	terr.fill(2)
+	for x in range(0, CS / 2):
+		for z in CS:
+			elev[z * CS + x] = 120.0
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev)}],
+			"include_tiles": true,
+		},
+	})
+	main._poll_build_results()
+
+	assert_true(main._terrain_parent.has_node(NodePath("Chunk_0_0")), "地形层应挂载")
+	assert_true(main._terrain_parent.has_node(NodePath("Cliff_0_0")), "崖壁层应挂载")
+	assert_true(main._terrain_parent.has_node(NodePath("Shadow_0_0")), "投影层应挂载")
+	assert_true(main._terrain_parent.has_node(NodePath("Decor_0_0")), "装饰层应挂载")
+	assert_false(main._terrain_parent.has_node(NodePath("Contour_0_0")),
+		"等高线调试层默认关闭，不应挂载")
+
+	# 卸载时全部层节点经 queue_free 释放（节点释放延迟到帧末，此处断言状态复位）
+	main._forget_chunk(key)
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.UNKNOWN,
+		"卸载后 chunk 状态应复位")
+	assert_false(main._chunks.has(key), "卸载后数据应清除")
+
+
+func test_full_response_seeds_state_chaser_and_mounts_layer() -> void:
+	"""完整响应：显示值追赶注册（初始格子立即挂状态动态层），States 层挂载。"""
+	var main: Node2D = _make_world_instance()
+	var key := Vector2i(0, 0)
+	main._set_birth_chunk(0, 0)
+	main._stream_machine.collect_field_requests(key, 0)
+	main._stream_machine.select_full_requests(func(k): return true, 10)
+
+	var terr := PackedInt32Array()
+	terr.resize(CS * CS)
+	terr.fill(2)
+	var elev := PackedFloat32Array()
+	elev.resize(CS * CS)
+	elev.fill(10.0)
+	# 半区覆雪 200（档 3），半区湿润 100（档 1）：初始格子覆盖半区
+	# （状态段布局：moisture [0,1600) / snow [1600,3200) / ice [3200,4800)）
+	var states := PackedByteArray()
+	states.resize(CS * CS * 3)
+	for idx in range(CS * CS, CS * CS + CS * CS / 2):
+		states[idx] = 200  # snow 段前半
+	for idx in range(CS * CS / 2, CS * CS):
+		states[idx] = 100  # moisture 段后半
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, 2, states)}],
+			"include_tiles": true,
+		},
+	})
+
+	var node_name := "States_0_0"
+	assert_true(main._states_parent.has_node(NodePath(node_name)),
+		"状态动态层应随初始格子挂载")
+	var layer: TileMapLayer = main._states_parent.get_node(NodePath(node_name))
+	var snow_count: int = 0
+	var moisture_count: int = 0
+	for x in CS:
+		for z in CS:
+			var cell := layer.get_cell_atlas_coords(Vector2i(x, z))
+			if cell.x >= 4 and cell.x <= 7:
+				snow_count += 1
+			elif cell.x >= 0 and cell.x <= 3:
+				moisture_count += 1
+	assert_eq(snow_count, CS * CS / 2, "覆雪半区初始格子应挂满（列 4..7）")
+	assert_eq(moisture_count, CS * CS / 2, "湿润半区初始格子应挂满（列 0..3）")
+
+	# 卸载：状态动态层一并释放（状态复位；节点释放延迟到帧末）
+	main._forget_chunk(key)
+	assert_eq(main._chaser.chunk_count(), 0, "卸载后 chaser 应遗忘该 chunk")
+
+
+func test_state_refresh_updates_truth_without_rebuild() -> void:
+	"""周期真值刷新：BUILT chunk 拉取完整响应 → chaser 真值更新、状态保持 BUILT
+	（不重建地形），显示值保留并逐帧向新真值收敛。"""
+	var main: Node2D = _make_world_instance()
+	var key := Vector2i(0, 0)
+	main._set_birth_chunk(0, 0)
+	main._stream_machine.collect_field_requests(key, 0)
+	main._stream_machine.select_full_requests(func(k): return true, 10)
+	var terr := PackedInt32Array()
+	terr.resize(CS * CS)
+	terr.fill(2)
+	var elev := PackedFloat32Array()
+	elev.resize(CS * CS)
+	elev.fill(10.0)
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev)}],
+			"include_tiles": true,
+		},
+	})
+	main._poll_build_results()
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.BUILT)
+
+	# 刷新周期触发：玩家 chunk 周围 BUILT 区块收到完整请求（在途登记）
+	_drain_chunk_requests()
+	main._state_refresh_timer = main.STATE_REFRESH_INTERVAL
+	main._process_state_chase(0.0)
+	assert_true(main._refresh_pending.has(key), "BUILT chunk 应进入刷新在途表")
+	assert_true(_drain_chunk_requests().has(true), "应发出完整刷新请求")
+
+	# 刷新响应：真值更新（降雪 0→255），chunk 保持 BUILT（不重建）
+	var states := PackedByteArray()
+	states.resize(CS * CS * 3)
+	states.fill(0)
+	for idx in range(CS * CS, CS * CS * 2):
+		states[idx] = 255  # snow 段全满
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, 2, states)}],
+			"include_tiles": true,
+		},
+	})
+	assert_false(main._refresh_pending.has(key), "刷新在途应清除")
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.BUILT,
+		"刷新响应不应改变 chunk 状态（不重建地形）")
+	assert_eq(int(main._chunks[key]["states"]["snow"][0]), 255,
+		"缓存真值应已更新为刷新数据")
+	assert_eq(main._chunks[key]["terrain"].size(), CS * CS,
+		"刷新替换的缓存字典应保持完整（地形数组不丢失）")
+	assert_eq(main._chunks[key]["elevation"].size(), CS * CS,
+		"刷新替换的缓存字典应保持完整（高程数组不丢失）")
+	assert_eq(main._chaser.display_value(key, "snow", 0), 0,
+		"显示值保持旧值，等待逐帧收敛")
+	assert_true(main._terrain_parent.has_node(NodePath("Chunk_0_0")),
+		"地形层不应因刷新重建（仍挂载）")
+
+
+func test_state_refresh_skips_non_built_chunks() -> void:
+	"""刷新周期只拉 BUILT chunk：未加载/请求中区块不进入刷新在途表。"""
+	var main: Node2D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+	main._stream_machine.collect_field_requests(Vector2i(0, 0), 0)
+	main._state_refresh_timer = main.STATE_REFRESH_INTERVAL
+	main._process_state_chase(0.0)
+	assert_eq(main._refresh_pending.size(), 0, "FIELD_REQUESTED 区块不应刷新")
+
+
+func test_weather_events_boost_state_chase() -> void:
+	"""天气事件 → chaser 加速："快下快铺"钩子贯通（初雪/暴雪）。
+
+	payload 用嵌套 data 形态镜像后端 EventBridge 真实转发契约
+	（bridge.py _forward：事件字段落在 payload.data）。
+	"""
+	var main: Node2D = _make_world_instance()
+	main._on_message({
+		"type": "event",
+		"event_type": "precipitation_start",
+		"payload": {"data": {"precip_type": "snow"}},
+	})
+	assert_eq(main._chaser.boost_mult(), main._chaser.SNOW_BOOST_MULT,
+		"初雪事件应触发抽样加速")
+	main._on_message({
+		"type": "event",
+		"event_type": "storm_start",
+		"payload": {},
+	})
+	assert_eq(main._chaser.boost_mult(), main._chaser.STORM_BOOST_MULT,
+		"暴雪事件应触发更强加速")
+
+
+func test_refresh_response_dropped_after_unload() -> void:
+	"""卸载后到达的刷新响应应被丢弃（陈旧判定，不重建、不污染缓存）。"""
+	var main: Node2D = _make_world_instance()
+	var key := Vector2i(0, 0)
+	main._set_birth_chunk(0, 0)
+	main._stream_machine.collect_field_requests(key, 0)
+	main._stream_machine.select_full_requests(func(k): return true, 10)
+	var terr := PackedInt32Array()
+	terr.resize(CS * CS)
+	terr.fill(2)
+	var elev := PackedFloat32Array()
+	elev.resize(CS * CS)
+	elev.fill(10.0)
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev)}],
+			"include_tiles": true,
+		},
+	})
+	main._poll_build_results()
+	# 刷新在途，随即卸载（响应未到）
+	main._refresh_pending[key] = true
+	main._forget_chunk(key)
+	assert_false(main._refresh_pending.has(key), "卸载应清除刷新在途登记")
+	var states := PackedByteArray()
+	states.resize(CS * CS * 3)
+	states.fill(0)
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, 2, states)}],
+			"include_tiles": true,
+		},
+	})
+	assert_false(main._chunks.has(key), "陈旧刷新响应不应重新入缓存")
+	assert_eq(main._chaser.chunk_count(), 0, "陈旧刷新响应不应污染 chaser")
+
+
+func test_refresh_response_corrupt_keeps_old_cache() -> void:
+	"""刷新 BLOB 损坏（长度不符）：缓存回滚旧字典（地形/高程不丢失），
+	真值保持旧值——瞬时失败可容忍且不损坏已解码数据。"""
+	var main: Node2D = _make_world_instance()
+	var key := Vector2i(0, 0)
+	main._set_birth_chunk(0, 0)
+	main._stream_machine.collect_field_requests(key, 0)
+	main._stream_machine.select_full_requests(func(k): return true, 10)
+	var terr := PackedInt32Array()
+	terr.resize(CS * CS)
+	terr.fill(2)
+	var elev := PackedFloat32Array()
+	elev.resize(CS * CS)
+	elev.fill(10.0)
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev)}],
+			"include_tiles": true,
+		},
+	})
+	main._poll_build_results()
+	assert_eq(int(main._chunks[key]["states"]["snow"][0]), 0, "初始真值 snow=0")
+
+	main._refresh_pending[key] = true
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": "AAAA"}] ,  # 损坏 BLOB
+			"include_tiles": true,
+		},
+	})
+	assert_false(main._refresh_pending.has(key), "刷新在途应清除")
+	assert_eq(main._chunks[key]["terrain"].size(), CS * CS,
+		"刷新失败应回滚旧缓存（地形保留）")
+	assert_eq(int(main._chunks[key]["states"]["snow"][0]), 0,
+		"刷新失败应回滚旧真值")
+	assert_eq(main._stream_machine.get_state(key), main.ChunkState.BUILT,
+		"刷新失败不影响 chunk 状态")
+
+
 func test_tile_response_rejects_version_mismatch() -> void:
 	"""版本头不匹配的 BLOB 应被拒绝并标记失败，而非静默解码或无限重试。
 
@@ -595,7 +825,7 @@ func test_tile_response_rejects_version_mismatch() -> void:
 	前后端 BLOB 布局漂移且长度恰好不变时，会静默解码出错误地形；
 	且版本漂移是永久性契约错误，重排队会每帧无限重发完整请求。
 	"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	var key := Vector2i(0, 0)
 	main._set_birth_chunk(0, 0)
 	main._stream_machine.collect_field_requests(key, 0)
@@ -641,7 +871,7 @@ func test_tile_response_rejects_version_mismatch() -> void:
 
 func test_stale_response_after_unload_ignored() -> void:
 	"""卸载后到达的陈旧响应应被忽略（不复活 chunk）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	var key := Vector2i(9, 9)
 	main._set_birth_chunk(0, 0)
 
@@ -665,7 +895,7 @@ func test_disconnect_demotes_inflight_states() -> void:
 	防护：断线必须清 _pending——否则重连后这些 chunk 永远被跳过，
 	玩家周围地形永久缺失。
 	"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	# 字段在途（无数据）→ UNKNOWN
 	var inflight_key := Vector2i(3, 2)
@@ -704,7 +934,7 @@ func test_fast_movement_keeps_inflight_chunks() -> void:
 	前方区块永远加载不出来（日志：一帧内卸载 13 个 chunk，含距出生
 	点仅 1 格的 chunk）。
 	"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(0, 0)
 	main._player_pos = Vector3(0, 0, 0)
 
@@ -736,7 +966,7 @@ func test_single_chunk_two_requests_from_enter_to_built() -> void:
 	防护：字段请求在途时 tile 队列分支不得同样命中（_chunks 以 null
 	占位已存在）——否则同一 chunk 并发发出 字段+完整 双请求。
 	"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(0, 0)
 
 	var key := Vector2i(0, 0)
@@ -783,7 +1013,7 @@ func test_single_chunk_two_requests_from_enter_to_built() -> void:
 
 func test_received_chunk_builds_after_stream_cycle() -> void:
 	"""RECEIVED（完整数据已到）→ 流循环 → BUILT，且不再发网络请求。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(0, 0)
 	var key := Vector2i(0, 0)
 	# 直接注入已解码数据（模拟完整响应路径到达 RECEIVED）
@@ -806,7 +1036,7 @@ func test_received_chunk_builds_after_stream_cycle() -> void:
 
 func test_world_initialized_records_world_id() -> void:
 	"""world_initialized 事件应记录当前存档位 ID（手动存档数据源）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	main._on_world_initialized({"birth_chunk": [5, 3], "world_id": "w-abc"})
 
@@ -815,7 +1045,7 @@ func test_world_initialized_records_world_id() -> void:
 
 func test_world_initialized_keeps_world_id_when_missing() -> void:
 	"""事件缺 world_id（旧后端）时保留已有值。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._world_id = "w-keep"
 
 	main._on_world_initialized({"birth_chunk": [1, 1]})
@@ -827,7 +1057,7 @@ func test_world_initialized_keeps_world_id_when_missing() -> void:
 
 func test_pause_save_without_world_id_rejected() -> void:
 	"""世界未就绪（无 world_id）时手动存档应拒绝并提示。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	main._on_pause_save_requested()
 
@@ -836,7 +1066,7 @@ func test_pause_save_without_world_id_rejected() -> void:
 
 func test_pause_save_sends_snapshot_request() -> void:
 	"""世界就绪时手动存档应发出 save_snapshot 请求（payload 携带 world_id）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._world_id = "w-abc"
 
 	main._pause_menu._activate("save")
@@ -847,7 +1077,7 @@ func test_pause_save_sends_snapshot_request() -> void:
 
 func test_save_snapshot_response_queues_number_lookup() -> void:
 	"""save_snapshot 响应：记下文件并回查 save_list（菜单保持正在保存）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._world_id = "w-abc"
 	main._pause_menu._saving = true
 
@@ -863,7 +1093,7 @@ func test_save_snapshot_response_queues_number_lookup() -> void:
 
 func test_save_list_lookup_reports_node_number() -> void:
 	"""save_list 回查：按保存顺序计算节点编号并回填菜单。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._world_id = "w-abc"
 	main._save_file = "snap-new"
 
@@ -886,7 +1116,7 @@ func test_save_list_lookup_reports_node_number() -> void:
 
 func test_save_number_lookup_fallback_without_number() -> void:
 	"""快照不在列表中（异常）时显示保存完成而不带编号。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._world_id = "w-abc"
 	main._save_file = "snap-ghost"
 
@@ -902,7 +1132,7 @@ func test_save_number_lookup_fallback_without_number() -> void:
 
 func test_save_snapshot_error_clears_lookup() -> void:
 	"""save_snapshot 错误：清空待编号状态并提示失败。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._save_file = "snap-pending"
 
 	main._handle_error({
@@ -918,7 +1148,7 @@ func test_save_snapshot_error_clears_lookup() -> void:
 
 func test_save_snapshot_error_updates_pause_menu() -> void:
 	"""save_snapshot 错误响应应回填暂停菜单（失败提示）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	main._handle_error({
 		"type": "error",
@@ -931,7 +1161,7 @@ func test_save_snapshot_error_updates_pause_menu() -> void:
 
 
 func test_player_state_sets_entity_id_and_position() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(0, 0)
 
 	main._handle_response({
@@ -946,7 +1176,7 @@ func test_player_state_sets_entity_id_and_position() -> void:
 
 
 func test_player_move_response_applies_authoritative_position() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	main._handle_response({
 		"type": "response",
@@ -959,7 +1189,7 @@ func test_player_move_response_applies_authoritative_position() -> void:
 
 
 func test_entity_snapshot_consumes_player_entity() -> void:
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 
 	main._handle_response({
 		"type": "response",
@@ -982,7 +1212,7 @@ func test_player_move_small_delta_keeps_local_position() -> void:
 
 	防护：小差距不得无条件吸附——否则每 0.2s 一次回跳（橡皮筋）。
 	"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 
 	main._handle_response({
@@ -1001,7 +1231,7 @@ func test_player_move_clamped_position_snapped() -> void:
 	防护：超阈值差距不得直接瞬跳吸附（每 0.2s 一次回跳的橡皮筋）；
 	中等差距走 SNAP_DURATION 平滑过渡。
 	"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 
 	main._handle_response({
@@ -1025,7 +1255,7 @@ func test_player_move_clamped_position_snapped() -> void:
 
 func test_player_move_large_delta_snaps_immediately() -> void:
 	"""差距 ≥ SNAP_HARD_THRESHOLD（传送/读档复位）→ 立即硬吸。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 
 	main._handle_response({
@@ -1041,7 +1271,7 @@ func test_player_move_large_delta_snaps_immediately() -> void:
 
 func test_snap_transition_restarts_on_new_authority() -> void:
 	"""过渡期间新权威响应到达 → 从当前位置重新过渡（平滑连续纠正）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 	main._handle_response({
 		"type": "response", "request_type": "player_move",
@@ -1061,7 +1291,7 @@ func test_snap_transition_restarts_on_new_authority() -> void:
 
 func test_snap_transition_then_input_applies() -> void:
 	"""过渡期间输入照常叠加：位置 = 插值 + 输入位移（不吃移动速度）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 	main._handle_response({
 		"type": "response", "request_type": "player_move",
@@ -1088,7 +1318,7 @@ func test_player_move_follows_reported_keeps_local() -> void:
 	防护：按差距吸附会把"滞后"误当"偏离"（每 0.2s 拉回一次）；
 	差距 3 tiles（> SNAP_TOLERANCE）时同样不应纠正。
 	"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(109.0, 0.0, 100.0)
 	main._report_seq_pos = {5: Vector2(106.0, 100.0)}
 
@@ -1104,7 +1334,7 @@ func test_player_move_follows_reported_keeps_local() -> void:
 
 func test_player_move_reverse_follows_reported_keeps_local() -> void:
 	"""掉头移动后端同样原样回显（方向无关）→ 零纠正。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(103.0, 0.0, 100.0)
 	main._report_seq_pos = {6: Vector2(100.0, 100.0)}
 
@@ -1124,7 +1354,7 @@ func test_player_move_speed_change_echoes_keeps_local() -> void:
 	错位（δ_权威 = 6 ≠ δ_上报 = 12）→ 误判偏离触发拉回；seq 对齐后
 	权威位置 ≈ 该次上报位置即可判定认可。
 	"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(118.0, 0.0, 100.0)
 	main._report_seq_pos = {7: Vector2(106.0, 100.0)}
 
@@ -1139,7 +1369,7 @@ func test_player_move_speed_change_echoes_keeps_local() -> void:
 
 func test_player_move_clamped_delta_snaps_back() -> void:
 	"""后端钳制（δ_权威 = 0 ≠ δ_上报 = 6，权威位置 ≠ 上报位置）→ 真偏离，平滑拉回。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(105.0, 0.0, 100.0)
 	main._report_seq_pos = {8: Vector2(106.0, 100.0)}
 
@@ -1158,7 +1388,7 @@ func test_player_move_clamped_delta_snaps_back() -> void:
 func test_snap_input_accumulates_across_frames() -> void:
 	"""过渡期间连续多帧输入不丢失（防护：每帧从固定起点插值会覆盖
 	上一帧输入位移，0.15s 内玩家只前进约一帧）。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 	main._handle_response({
 		"type": "response", "request_type": "player_move",
@@ -1184,7 +1414,7 @@ func test_snap_input_accumulates_across_frames() -> void:
 
 func test_teleport_resets_authority_state() -> void:
 	"""传送事件应重置吸附过渡与对账基准：在途过渡不会把位置插值"撤销"回旧目标。"""
-	var main: Node3D = _make_world_instance()
+	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 	main._handle_response({
 		"type": "response", "request_type": "player_move",
@@ -1207,14 +1437,14 @@ func test_teleport_resets_authority_state() -> void:
 
 # ── 异步网格构建 ──────────────────────────────────────────
 
-func _make_async_world_instance() -> Node3D:
+func _make_async_world_instance() -> Node2D:
 	"""实例化并恢复默认（WorkerThreadPool）构建器，走真实异步路径。"""
-	var main: Node3D = _make_world_instance()
-	main.mesh_builder = main._default_mesh_builder
+	var main: Node2D = _make_world_instance()
+	main.tile_builder = main._default_tile_builder
 	return main
 
 
-func _inject_full_chunk_response(main: Node3D, cx: int, cy: int) -> void:
+func _inject_full_chunk_response(main: Node2D, cx: int, cy: int) -> void:
 	var elev := PackedFloat32Array()
 	elev.resize(CS * CS)
 	elev.fill(10.0)
@@ -1233,7 +1463,7 @@ func _inject_full_chunk_response(main: Node3D, cx: int, cy: int) -> void:
 
 func test_full_response_submits_async_build() -> void:
 	"""默认构建器：完整响应只提交后台任务（CONSTRUCTING），不阻塞主线程挂载。"""
-	var main: Node3D = _make_async_world_instance()
+	var main: Node2D = _make_async_world_instance()
 	main._set_birth_chunk(0, 0)
 	var key := Vector2i(0, 0)
 	main._stream_machine.collect_field_requests(key, 0)
@@ -1262,7 +1492,7 @@ func test_full_response_submits_async_build() -> void:
 
 func test_unload_discards_inflight_result() -> void:
 	"""卸载后的陈旧构建结果应丢弃（不复活 chunk）。"""
-	var main: Node3D = _make_async_world_instance()
+	var main: Node2D = _make_async_world_instance()
 	main._set_birth_chunk(0, 0)
 	var key := Vector2i(0, 0)
 	main._stream_machine.collect_field_requests(key, 0)
@@ -1287,7 +1517,7 @@ func test_unload_discards_inflight_result() -> void:
 
 func test_disconnect_discards_inflight_result_then_rebuild() -> void:
 	"""断线：构建在途降级 RECEIVED，陈旧结果丢弃；重连后重新构建挂载。"""
-	var main: Node3D = _make_async_world_instance()
+	var main: Node2D = _make_async_world_instance()
 	main._set_birth_chunk(0, 0)
 	var key := Vector2i(0, 0)
 	main._stream_machine.collect_field_requests(key, 0)
@@ -1323,7 +1553,7 @@ func test_disconnect_discards_inflight_result_then_rebuild() -> void:
 
 func test_inflight_limit_keeps_received() -> void:
 	"""在飞构建达到上限：其余 RECEIVED chunk 保持等待，不超限提交。"""
-	var main: Node3D = _make_async_world_instance()
+	var main: Node2D = _make_async_world_instance()
 	main._set_birth_chunk(0, 0)
 	# 前 MAX_BUILD_INFLIGHT 个 chunk 先提交构建（占满在飞上限）
 	for cx in range(main.MAX_BUILD_INFLIGHT):
@@ -1347,3 +1577,257 @@ func test_inflight_limit_keeps_received() -> void:
 		await get_tree().process_frame
 		main._poll_build_results()
 	main._poll_build_results()
+
+
+# ── 实体 pawn 渲染（阶段4） ────────────────────────────────
+
+func test_player_pawn_has_parts_nameplate_and_torch() -> void:
+	"""玩家 pawn 应由 PawnRenderer 铺设部件 + 名称浮层 + 火炬光源。"""
+	var main: Node2D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+	main._finish_world_visible()
+
+	assert_true(main._player != null)
+	var slots := []
+	for child in main._player.get_children():
+		if child is Sprite2D:
+			slots.append(String(child.name))
+	assert_eq(slots, ["head", "body", "limb_left", "limb_right"],
+		"玩家部件应按 SLOT_ORDER 铺设（头/躯干/左右附肢）")
+	var nameplate: Label = main._player.get_node_or_null("Nameplate")
+	assert_true(nameplate != null, "应有头顶名称浮层")
+	assert_eq(nameplate.text, "生物", "zh_CN 下玩家名称应为「生物」")
+	assert_eq(nameplate.custom_minimum_size, Vector2(64, 0), "名称浮层应为固定宽居中")
+	assert_eq(nameplate.position.x, 8.0 - 32.0, "固定宽左端应落在锚点左 32px（居中）")
+	var torch: PointLight2D = main._player.get_node_or_null("PlayerTorch")
+	assert_true(torch != null, "应有火炬局部光源")
+	assert_false(torch.visible, "火炬初始应熄灭")
+	assert_eq(main._player.get_parent(), main._entities_root(),
+		"玩家应挂在 Y-sort 实体层")
+
+
+func test_player_facing_left_mirrors_parts() -> void:
+	var main: Node2D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+	main._finish_world_visible()
+	var right_x := {}
+	var left_x := {}
+	for child in main._player.get_children():
+		if child is Sprite2D:
+			right_x[child.name] = child.position.x
+
+	main._set_pawn_facing(main._player, true)
+	assert_eq(main._pawn_mgr._pawn_facing[main._player], true)
+	for child in main._player.get_children():
+		if child is Sprite2D:
+			left_x[child.name] = child.position.x
+	assert_true(left_x["limb_left"] > left_x["limb_right"],
+		"朝左时左附肢应镜像到右侧")
+	assert_eq(right_x["head"], left_x["head"], "头部居中，镜像后位置不变")
+
+
+func test_entity_snapshot_spawns_pawns_for_non_player() -> void:
+	"""快照中的非玩家实体（植物/建筑）应生成分层 pawn。"""
+	var main: Node2D = _make_world_instance()
+	main._handle_response({
+		"type": "response",
+		"request_type": "entity_snapshot",
+		"payload": {"entities": [
+			{"id": "plr1", "controller": "PLAYER", "x": 30.0, "y": 40.0},
+			{"id": "bush1", "entity_type": "PLANT", "controller": "AI",
+				"x": 5.0, "y": 6.0},
+			{"id": "rock1", "entity_type": "STRUCTURE", "controller": "NONE",
+				"x": 9.0, "y": 10.0},
+		]},
+	})
+
+	assert_eq(main._pawn_mgr._pawns.keys().size(), 2)
+	var bush: Node2D = main._pawn_mgr._pawns["bush1"]
+	assert_eq(bush.name, "Pawn_bush1")
+	assert_eq(bush.get_parent(), main._entities_root())
+	assert_true(bush.get_node_or_null("crown") != null, "植物应有冠部件")
+	assert_true(bush.get_node_or_null("stem") != null, "植物应有茎部件")
+	var rock: Node2D = main._pawn_mgr._pawns["rock1"]
+	assert_true(rock.get_node_or_null("block") != null, "建筑应有石块部件")
+	assert_eq(bush.position, Vector2(5.0 * 16.0, 6.0 * 16.0),
+		"pawn 应置于世界坐标（tile × TILE_PIXEL_SIZE）")
+
+
+func test_entity_born_and_moved_events_upsert_pawns() -> void:
+	var main: Node2D = _make_world_instance()
+	main._handle_event({
+		"type": "event", "event_type": "entity_born",
+		"payload": {"data": {"entity_id": "bush1", "entity_type": "PLANT",
+			"controller": "AI", "x": 1.0, "y": 2.0}},
+	})
+	assert_true(main._pawn_mgr._pawns.has("bush1"), "诞生事件应创建 pawn")
+
+	main._handle_event({
+		"type": "event", "event_type": "entity_moved",
+		"payload": {"data": {"entity_id": "bush1", "x": 7.0, "y": 8.0}},
+	})
+	assert_eq(main._pawn_mgr._pawns["bush1"].position, Vector2(7.0 * 16.0, 8.0 * 16.0),
+		"移动事件应更新 pawn 位置")
+
+
+func test_entity_died_event_despawns_pawn() -> void:
+	var main: Node2D = _make_world_instance()
+	main._handle_event({
+		"type": "event", "event_type": "entity_born",
+		"payload": {"data": {"entity_id": "bush1", "entity_type": "PLANT",
+			"controller": "AI", "x": 1.0, "y": 2.0}},
+	})
+	main._handle_event({
+		"type": "event", "event_type": "entity_died",
+		"payload": {"data": {"entity_id": "bush1", "entity_type": "PLANT"}},
+	})
+	assert_false(main._pawn_mgr._pawns.has("bush1"), "死亡事件应移除 pawn")
+	assert_false(main._pawn_mgr._pawn_specs.has(main._player), "不应误伤玩家表项")
+
+
+func test_entity_born_skips_player_controller() -> void:
+	"""玩家自己的 entity_born（后端 birth 必发）不得建 pawn——玩家由
+	player_state/快照独占消费，否则与 _player 双渲染分身。"""
+	var main: Node2D = _make_world_instance()
+	main._handle_event({
+		"type": "event", "event_type": "entity_born",
+		"payload": {"data": {"entity_id": "player-1", "entity_type": "CREATURE",
+			"controller": "PLAYER", "x": 1.0, "y": 2.0}},
+	})
+	assert_true(main._pawn_mgr._pawns.is_empty(), "PLAYER 实体不应进 pawn 表")
+	main._handle_event({
+		"type": "event", "event_type": "entity_born",
+		"payload": {"data": {"entity_id": "bush1", "entity_type": "PLANT",
+			"controller": "AI", "x": 1.0, "y": 2.0}},
+	})
+	assert_eq(main._pawn_mgr._pawns.size(), 1, "非玩家实体仍应正常建 pawn")
+
+
+func test_player_entity_died_hides_player() -> void:
+	var main: Node2D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+	main._finish_world_visible()
+	main._player_entity_id = "player-1"
+	assert_true(main._player.visible)
+	main._handle_event({
+		"type": "event", "event_type": "entity_died",
+		"payload": {"data": {"entity_id": "player-1",
+			"entity_type": "CREATURE"}},
+	})
+	assert_false(main._player.visible, "玩家死亡应隐藏玩家 pawn")
+	assert_true(main._pawn_mgr._pawns.is_empty(), "不应把玩家当普通实体移除")
+
+
+func test_world_reset_clears_pawns() -> void:
+	var main: Node2D = _make_world_instance()
+	main._handle_event({
+		"type": "event", "event_type": "entity_born",
+		"payload": {"data": {"entity_id": "bush1", "entity_type": "PLANT",
+			"controller": "AI", "x": 1.0, "y": 2.0}},
+	})
+	var bush: Node2D = main._pawn_mgr._pawns["bush1"]
+	assert_eq(main._pawn_mgr._pawns.size(), 1)
+	main._reset_world_state()
+	assert_true(main._pawn_mgr._pawns.is_empty(), "世界重建应清空实体 pawn")
+	assert_false(main._pawn_mgr._pawn_specs.has(bush), "bush 的规格表项应移除")
+	assert_false(main._pawn_mgr._pawn_facing.has(bush), "bush 的朝向表项应移除")
+
+
+func test_pawn_facing_rebuild_keeps_nameplate_and_torch() -> void:
+	"""朝向重建只换 Sprite2D 部件，名称浮层与火炬不得被误删。"""
+	var main: Node2D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+	main._finish_world_visible()
+	main._set_pawn_facing(main._player, true)
+	assert_true(main._player.get_node_or_null("Nameplate") != null)
+	assert_true(main._player.get_node_or_null("PlayerTorch") != null)
+	assert_eq(main._pawn_mgr._pawn_facing[main._player], true)
+	# 二次变向（朝右）：部件重建幂等
+	main._set_pawn_facing(main._player, false)
+	var limbs := {}
+	for child in main._player.get_children():
+		if child is Sprite2D:
+			limbs[String(child.name)] = child.position.x
+	assert_true(limbs["limb_left"] < limbs["limb_right"],
+		"朝右时左附肢应回到左侧")
+
+
+func test_torch_lights_up_at_night() -> void:
+	"""昼夜循环驱动火炬开关：白天熄灭、夜晚点亮。"""
+	var main: Node2D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+	main._finish_world_visible()
+	main._sunrise = 6.0
+	main._sunset = 18.0
+
+	main._game_hour = 12.0
+	main._update_lighting()
+	assert_false(main._player.get_node("PlayerTorch").visible, "白天火炬应灭")
+
+	main._game_hour = 21.0
+	main._update_lighting()
+	assert_true(main._player.get_node("PlayerTorch").visible, "夜晚火炬应亮")
+
+	main._game_hour = 5.0
+	main._update_lighting()
+	assert_true(main._player.get_node("PlayerTorch").visible, "凌晨也应亮")
+
+
+# ── 接缝上下文（构建邻居边条，阶段 6） ────────────────────
+
+func _inject_full_chunk_response_elev(main: Node2D, cx: int, cy: int,
+		elev_value: float) -> void:
+	var elev := PackedFloat32Array()
+	elev.resize(CS * CS)
+	elev.fill(elev_value)
+	var terr := PackedInt32Array()
+	terr.resize(CS * CS)
+	terr.fill(2)
+	main._handle_response({
+		"type": "response",
+		"request_type": "get_chunks",
+		"payload": {
+			"chunks": [{"cx": cx, "cy": cy, "tiles_b64": _make_tiles_b64(terr, elev)}],
+			"include_tiles": true,
+		},
+	})
+
+
+func test_build_plumbs_neighbor_context() -> void:
+	"""构建提交时收集已加载邻居的紧邻边条（接缝上下文进入 build_cells）。"""
+	var main: Node2D = _make_world_instance()
+	main._set_birth_chunk(0, 0)
+	# 预载东邻居（完整数据，模拟先于本 chunk 加载）
+	var n_terr := PackedInt32Array()
+	n_terr.resize(CS * CS)
+	n_terr.fill(2)
+	var n_elev := PackedFloat32Array()
+	n_elev.resize(CS * CS)
+	n_elev.fill(50.0)
+	main._chunks[Vector2i(1, 0)] = {"terrain": n_terr, "elevation": n_elev}
+
+	var captured := {}
+	var captured_cells := {}
+	main.tile_builder = func(key, terr, elev, neighbors, seq):
+		captured[key] = neighbors
+		captured_cells[key] = TerrainTileBuilder.build_cells(terr, elev, neighbors)
+		main._build_results.append([key, captured_cells[key], seq])
+
+	var key := Vector2i(0, 0)
+	main._stream_machine.collect_field_requests(key, 0)
+	main._stream_machine.select_full_requests(func(k): return k == key, 10)
+	_inject_full_chunk_response_elev(main, 0, 0, 120.0)
+	main._poll_build_results()
+
+	assert_true(captured.has(key), "本 chunk 应被提交构建")
+	assert_true(captured[key].has("east"), "已加载的东邻居应进接缝上下文")
+	assert_eq(captured[key]["east"]["elevation"][0], 50.0,
+		"east 边条海拔应来自东邻居")
+	assert_false(captured[key].has("west"), "未加载的西邻居不应进上下文")
+
+	var cells: Dictionary = captured_cells[key]
+	var cliff_at_east := false
+	for cell in cells[TerrainTileBuilder.LAYER_CLIFF]:
+		if cell[0].x == CS - 1:
+			cliff_at_east = true
+	assert_true(cliff_at_east, "东邻低地断崖应在本 chunk 东边（x=CS-1）画崖壁")

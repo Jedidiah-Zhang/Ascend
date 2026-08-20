@@ -197,6 +197,7 @@ func setup_default_sections(world: Node) -> void:
 	add_section(WeatherSection.new())
 	add_section(ChunkSection.new())
 	add_section(ElevationSection.new())
+	add_section(StateSection.new())
 	setup_sections(world)
 
 

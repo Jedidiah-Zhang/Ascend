@@ -1,7 +1,8 @@
-"""CameraRig 单元测试 — 相机几何纯函数。
+"""CameraRig 单元测试 — 2D 相机缩放与可视半径纯函数。
 
-visible_radius / shadow_coverage 为纯数学计算（不依赖相机节点绑定），
-可独立验证；节点操作（bind/apply）由集成测试覆盖。
+process_zoom 依赖 Input 单例（需要节点树），此处验证纯数学：
+visible_radius 为纯计算（无绑定相机时用兜底视口）；缩放钳制/节点
+操作（bind/apply）由集成测试覆盖。
 """
 
 extends GutTest
@@ -13,39 +14,31 @@ func _make() -> CameraRig:
 
 # ── 可视半径 ──────────────────────────────────────────────
 
-func test_visible_radius_scales_with_distance() -> void:
-	"""可视半径随相机距离增大而增大（正比关系）。"""
+func test_visible_radius_scales_with_zoom() -> void:
+	"""可视半径随缩放增大而减小（zoom 越大看得越近）。"""
 	var rig := _make()
-	var r1: float = rig.visible_radius(400.0)
-	var r2: float = rig.visible_radius(800.0)
-	assert_gt(r1, 0.0, "正距离应有正半径")
-	assert_almost_eq(r2, r1 * 2.0, 0.01, "正交投影下半径与距离成正比")
+	var r1: float = rig.visible_radius(1.0)
+	var r2: float = rig.visible_radius(2.0)
+	assert_gt(r1, 0.0, "有效缩放应有正半径")
+	assert_almost_eq(r2, r1 * 0.5, 0.01, "半径与缩放成反比")
 
 
-# ── 阴影覆盖 ──────────────────────────────────────────────
-
-func test_shadow_coverage_normal_sun_is_margin_scaled_visible() -> void:
-	"""正常太阳高度角：覆盖 = 可视半径 × 余量（1.35）。"""
+func test_visible_radius_uses_pixel_scale() -> void:
+	"""1x 缩放、16px tile：1280x720 视口半径 = 屏幕半对角线/16。"""
 	var rig := _make()
-	var coverage: float = rig.shadow_coverage(400.0, 0.5)
-	assert_almost_eq(
-		coverage, rig.visible_radius(400.0) * CameraRig.SHADOW_COVERAGE_MARGIN,
-		0.001)
+	var expected: float = (Vector2(1280, 720) * 0.5).length() / 16.0
+	assert_almost_eq(rig.visible_radius(1.0), expected, 0.001)
 
 
-func test_shadow_coverage_low_sun_expands() -> void:
-	"""低角度太阳：覆盖范围放大（最长阴影 3 倍余量）。"""
+func test_visible_radius_custom_viewport() -> void:
+	"""显式视口尺寸优先于兜底值。"""
 	var rig := _make()
-	var normal: float = rig.shadow_coverage(400.0, 0.5)
-	var low: float = rig.shadow_coverage(400.0, 0.05)
-	assert_gt(low, normal, "低角度应放大覆盖范围")
+	var r_small: float = rig.visible_radius(1.0, Vector2(640, 360))
+	var r_default: float = rig.visible_radius(1.0)
+	assert_lt(r_small, r_default, "小视口半径应小于默认视口")
 
 
-func test_shadow_coverage_monotonic_in_sun_altitude() -> void:
-	"""覆盖随高度角单调递减（低角度放大，高角度收敛 1.35 倍）。"""
+func test_visible_radius_zoom_zero_returns_infinity() -> void:
+	"""zoom=0 为非法输入（除零）：函数应返回 inf 而非崩溃（由钳制保证不触发）。"""
 	var rig := _make()
-	var prev := 1e9
-	for alt in [0.01, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.5, 0.9]:
-		var c: float = rig.shadow_coverage(400.0, alt)
-		assert_lte(c, prev, "高度角 %f 覆盖应不超过低角度值" % alt)
-		prev = c
+	assert_eq(is_inf(rig.visible_radius(0.0)), true, "zoom=0 应为 inf（调用方钳制）")

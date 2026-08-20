@@ -89,6 +89,20 @@ static func advance_snap(delta: float, snap_time: float,
 	return [current + (snap_target - current) * weight, t_new]
 
 
+## 移动输入 → 朝向判定：x 分量符号决定左右朝向。
+## 纯逻辑：main_world 据此调用 _set_pawn_facing（副作用留在调用方），
+## 输入预测/对账链路的判定部分收敛到此纯逻辑类。
+##
+## Returns:
+##     -1 朝左 / 0 静止（x 无分量）/ 1 朝右。
+static func facing_from_move(move: Vector2) -> int:
+	if move.x < 0.0:
+		return -1
+	if move.x > 0.0:
+		return 1
+	return 0
+
+
 ## 记录一次上报位置（seq → Vector2），超限丢最旧。
 ##
 ## Args:

@@ -91,7 +91,7 @@ func test_debug_disabled_hides_open_overlay() -> void:
 
 # ── 分区管理 ────────────────────────────────────────────────
 
-const EXPECTED_SECTION_COUNT := 9
+const EXPECTED_SECTION_COUNT := 10
 
 
 class TestSection extends DebugSection:

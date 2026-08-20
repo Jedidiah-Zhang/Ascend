@@ -11,6 +11,11 @@
   "item.stone": "石材",
   "item.fiber": "纤维",
 
+  "entity.type.creature": "生物",
+  "entity.type.plant": "植物",
+  "entity.type.item": "物品",
+  "entity.type.structure": "建筑",
+
   "event.weather_change": "天气变化",
   "event.rain_start": "开始下雨",
   "event.rain_stop": "雨停了",

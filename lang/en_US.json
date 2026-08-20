@@ -11,6 +11,11 @@
   "item.stone": "Stone",
   "item.fiber": "Fiber",
 
+  "entity.type.creature": "Creature",
+  "entity.type.plant": "Plant",
+  "entity.type.item": "Item",
+  "entity.type.structure": "Structure",
+
   "event.weather_change": "Weather Change",
   "event.rain_start": "Rain Started",
   "event.rain_stop": "Rain Stopped",

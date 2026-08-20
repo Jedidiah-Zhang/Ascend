@@ -111,3 +111,22 @@ func test_record_report_drops_oldest_over_limit() -> void:
 	assert_eq(records.size(), PlayerSync.REPORT_SEQ_MAX)
 	assert_false(records.has(0), "最早上报应被丢弃")
 	assert_true(records.has(PlayerSync.REPORT_SEQ_MAX + 4), "最新上报应保留")
+
+
+# ── 朝向判定 ──────────────────────────────────────────────
+
+func test_facing_from_move_left() -> void:
+	assert_eq(PlayerSync.facing_from_move(Vector2(-1, 0)), -1, "左移应朝左")
+	assert_eq(PlayerSync.facing_from_move(Vector2(-0.5, 1.0)), -1,
+		"x 分量为负即朝左（含斜向）")
+
+
+func test_facing_from_move_right() -> void:
+	assert_eq(PlayerSync.facing_from_move(Vector2(1, 0)), 1, "右移应朝右")
+	assert_eq(PlayerSync.facing_from_move(Vector2(0.5, -1.0)), 1,
+		"x 分量为正即朝右（含斜向）")
+
+
+func test_facing_from_move_still() -> void:
+	assert_eq(PlayerSync.facing_from_move(Vector2.ZERO), 0, "静止不改变朝向")
+	assert_eq(PlayerSync.facing_from_move(Vector2(0, 1)), 0, "纯纵向移动不改变朝向")
