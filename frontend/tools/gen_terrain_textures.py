@@ -6,7 +6,7 @@ Replace these PNGs with AI-generated assets or user texture packs later.
 
 Usage:
     cd /home/Jedidiah/Documents/Ascend
-    .venv/bin/python scripts/gen_terrain_textures.py
+    .venv/bin/python frontend/tools/gen_terrain_textures.py
 """
 
 import os
@@ -16,10 +16,8 @@ from PIL import Image
 
 # ── config ──────────────────────────────────────────────────
 SIZE = 64
-OUT_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "frontend", "assets", "terrain", "textures",
-)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+OUT_DIR = os.path.join(_REPO_ROOT, "frontend", "assets", "terrain", "textures")
 OCTAVES = 4
 PERSISTENCE = 0.5
 LACUNARITY = 2.0

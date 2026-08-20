@@ -3,7 +3,7 @@
 游戏在后台线程实时运行，用户可以随时输入指令干预。
 
 用法:
-    PYTHONPATH=backend .venv/bin/python backend/tests/interactive/console.py
+    PYTHONPATH=backend .venv/bin/python backend/tools/console.py
 """
 
 import sys
@@ -13,7 +13,7 @@ import readline
 from pathlib import Path
 
 # 确保 backend 在 Python 路径中
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # 指令历史文件
 _HISTORY_FILE = Path(__file__).parent / ".ascend_history"

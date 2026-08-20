@@ -13,7 +13,7 @@
   高峰 (> 4000m)     → 白色 #f0f0f0
 
 用法:
-    from tests.visual.render import render_elevation, render_mask
+    from tools.visual.render import render_elevation, render_mask
     render_elevation(dem, 1000, 600, "output/04_elevation.png", title="原始海拔")
 """
 

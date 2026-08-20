@@ -1,7 +1,7 @@
 """世界地图可视化 Web 服务器 — 开发调试用。
 
 用法:
-    cd backend && PYTHONPATH=. python tests/web/server.py
+    cd backend && PYTHONPATH=. python tools/web/server.py
     浏览器打开 http://localhost:8080
 """
 
