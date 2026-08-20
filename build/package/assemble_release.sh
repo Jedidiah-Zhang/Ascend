@@ -11,7 +11,8 @@
 #   ├── server/                    # 后端（standalone 目录，含依赖库）
 #   │   └── server[.exe]
 #   ├── .ascend_token              # （运行时由后端生成）
-#   └── README.txt                 # 运行说明
+#   ├── README.txt                 # 运行说明
+#   └── LICENSE.txt                # 发行许可证（代码 CC BY-NC-SA / 资产专有）
 #
 # 前置: 前端已导出（build/work/exports/<平台>/）、后端已编译
 #   （build/work/nuitka/ 或 nuitka-win/）。
@@ -81,6 +82,27 @@ Ascend $VERSION ($PLATFORM)
 运行: 执行 ./$GAME_EXE（Linux 需 chmod +x）。
 游戏会自动拉起同目录 server/ 中的后端进程。
 首次运行会生成 .ascend_token 与存档目录（默认 ~/.ascend/saves）。
+EOF
+
+cat > "$STAGE/LICENSE.txt" <<EOF
+Ascend $VERSION — 许可证 / License
+
+Copyright (c) 2026 Jedidiah-Zhang
+
+代码（server/ 与游戏逻辑）依据 CC BY-NC-SA 4.0（署名-非商业性使用-相同方式共享）许可：
+https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+游戏资源（美术、音频等）保留所有权利。
+本游戏仅授予运行许可；禁止解包、提取、复制、修改或再分发游戏资源。
+商业使用本游戏或其中任何部分，请联系作者获取授权。
+
+Code (server/ and game logic) is licensed under CC BY-NC-SA 4.0:
+https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+Game assets (art, audio, etc.) all rights reserved. This game grants a license to
+run it only; unpacking, extracting, copying, modifying, or redistributing the
+assets is prohibited. Commercial use of the game or any part of it requires
+separate authorization from the author.
 EOF
 
 echo "舞台目录已组装: $STAGE"

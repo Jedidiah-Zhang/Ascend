@@ -94,8 +94,4 @@ requirements.txt  Python 依赖
 
 ## License
 
-本仓库采用**双授权**结构：
-
-- **仓库根**（后端 `backend/`、`lang/`、`docs/`、`build/`）：[MIT](LICENSE)
-- **前端 `frontend/`**：[PolyForm Noncommercial 1.0.0](frontend/LICENSE)
-- **`frontend/assets/`**：不公开
+[CC BY-NC-SA 4.0](LICENSE)（商业使用需联系作者授权）

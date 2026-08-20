@@ -1,0 +1,48 @@
+name: CLA Check
+
+# 贡献者许可协议自动核验（自托管，替代 CLA Assistant）
+#
+# 注意：用 pull_request_target 以便 fork PR 也能以写入权限创建 check；
+# 本 workflow 不检出任何 PR 代码，仅通过 context 读取 PR 描述，安全。
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  checks: write
+  pull-requests: write
+
+jobs:
+  cla:
+    name: 贡献者许可协议核验
+    runs-on: ubuntu-latest
+    steps:
+      - name: 核验 CLA 同意
+        id: cla
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            const agreed = /\[x\]\s*我已阅读并同意/.test(body);
+            core.setOutput('agreed', String(agreed));
+
+      - name: 报告核验结果
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const agreed = '${{ steps.cla.outputs.agreed }}' === 'true';
+            const sha = context.payload.pull_request.head.sha;
+            const conclusion = agreed ? 'success' : 'neutral';
+            const title = agreed ? 'CLA 已同意' : 'CLA 未同意';
+            const summary = agreed
+              ? '贡献者已同意 CLA.md，感谢贡献！'
+              : '请在 PR 描述中勾选"我已阅读并同意 CLA.md（贡献者许可协议）的全部条款"。未同意的 PR 不予合并。详见 CLA.md。';
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'CLA',
+              head_sha: sha,
+              status: 'completed',
+              conclusion,
+              output: { title, summary }
+            });
