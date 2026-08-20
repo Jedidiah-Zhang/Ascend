@@ -29,6 +29,7 @@ from ascend.world_tree import world_tree as _default_wt, Event, AffectedParty, W
 from ascend.config import (
     TILE_MAP_SIZE,
     GAME_DAY,
+    GAME_HOUR,
     TEMP_PERTURB_SCALE, HUMIDITY_PERTURB_SCALE, WIND_PERTURB_SCALE,
     SUNSHINE_PERTURB_SCALE,
     DIURNAL_TO_SEASONAL_RATIO,
@@ -109,6 +110,23 @@ def _chunk_seed(world_seed: int, cx: int, cy: int) -> int:
     同一世界种子 + 同一 chunk 坐标 → 同一种子，保证确定性。
     """
     return (world_seed * 1_000_003 + cx) * 1_000_003 + cy
+
+
+@dataclass(frozen=True, slots=True)
+class DaySummary:
+    """单日解析天气摘要（地形状态结算器采样契约，见 get_day_summary）。
+
+    Attributes:
+        day: 游戏日（1-based）。
+        mean_temp: 采样均温 (°C)。
+        rain_mm: 当日雨量合计（mm；采样强度 × 采样间隔时长）。
+        snow_mm: 当日雪量合计（mm；采样强度 × 采样间隔时长）。
+    """
+
+    day: int
+    mean_temp: float
+    rain_mm: float
+    snow_mm: float
 
 
 def precip_type_for(temperature: float) -> str:
@@ -632,6 +650,63 @@ class WeatherEngine:
             params, _, _, _ = self._compute_params(field, time, ctx)
             return params
 
+    def get_day_summary(
+        self, cx: int, cy: int, day: int,
+        samples_per_day: int = 4,
+    ) -> "DaySummary | None":
+        """单日解析天气摘要 — 地形状态结算器的采样契约。
+
+        每日固定采样时刻（均匀 4 点，默认）对解析场取样，按
+        precip_type_for 分雨/雪合计降水量、均温取采样均值。
+        场为解析量 → 任意过去日精确、确定性（同 seed 同输入同输出）。
+
+        Args:
+            cx: chunk X 坐标。
+            cy: chunk Y 坐标。
+            day: 游戏日（1-based；day 1 = tick [0, GAME_DAY)）。
+            samples_per_day: 每日采样点数（须整除 GAME_DAY）。
+
+        Returns:
+            DaySummary；chunk 未注册返回 None（调用方跳过该日）。
+
+        Raises:
+            ValueError: 采样点数不整除 GAME_DAY 或 day < 1。
+        """
+        if day < 1:
+            raise ValueError(f"day 须 >= 1，实际 {day}")
+        if GAME_DAY % samples_per_day != 0:
+            raise ValueError(
+                f"samples_per_day 须整除 GAME_DAY({GAME_DAY})，"
+                f"实际 {samples_per_day}"
+            )
+        t0 = (day - 1) * GAME_DAY
+        step = GAME_DAY // samples_per_day
+        step_hours = step / GAME_HOUR
+        temps: list[float] = []
+        rain_mm = 0.0
+        snow_mm = 0.0
+        with self._query_lock:
+            field = self._fields.get((cx, cy))
+            if field is None:
+                return None
+            for k in range(samples_per_day):
+                tick = t0 + k * step
+                ctx = self._tick_context(tick)
+                params, _, _, _ = self._compute_params(field, tick, ctx)
+                temps.append(params.temperature)
+                if params.rainfall > 0:
+                    mm = params.rainfall * step_hours
+                    if precip_type_for(params.temperature) == "snow":
+                        snow_mm += mm
+                    else:
+                        rain_mm += mm
+        return DaySummary(
+            day=day,
+            mean_temp=sum(temps) / len(temps),
+            rain_mm=rain_mm,
+            snow_mm=snow_mm,
+        )
+
     def get_weather_report(self, cx: int, cy: int) -> (
             "tuple[WeatherParams, float, float, float, float, float] | None"):
         """一次计算返回当前时刻的完整天气报告（网络 handler 专用）。
@@ -955,10 +1030,12 @@ class WeatherEngine:
                 precip_type=precip_type_for(temp) if temp is not None else "rain",
                 intensity=float(region.intensity),
                 time_of_day=tod,
+                chunks=region.chunks,
             ))
         else:
             self._publish(cx, cy, now, PrecipitationStop(
                 time_of_day=tod,
+                chunks=region.chunks,
             ))
 
     def _publish(

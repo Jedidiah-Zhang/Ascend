@@ -43,7 +43,7 @@ from ascend.config import (
 # 打包环境源码缺失：退化为 CONTINENT_GEN_VERSION（发布时递增）。
 _GEN_SOURCE_FILES: tuple[str, ...] = (
     "continent.py", "hydrology.py", "streamlines.py", "climate.py", "noise.py",
-    "_hydrology.c", "_streamlines.c", "_perlin.c",
+    "_hydrology.c", "_streamlines.c", "_perlin.c", "_state.c",
 )
 
 _HERE = os.path.dirname(os.path.abspath(__file__))

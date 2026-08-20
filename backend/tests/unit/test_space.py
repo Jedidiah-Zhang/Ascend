@@ -34,14 +34,15 @@ from ascend.space import (
     ChunkData,
     TILE_MAP_SIZE,
     TerrainType,
-    TerrainProps,
-    get_terrain_props,
+    TerrainDef,
+    get_terrain_def,
     is_passable,
     is_buildable,
     movement_cost,
     fertility,
     TileGrid,
 )
+from ascend.space.state_defs import STATE_TYPES, StateConfig, StateParams, state_keys
 
 
 # ══════════════════════════════════════════════════════════
@@ -662,13 +663,14 @@ class TestChunkData:
 class TestTerrainType:
     """地形类型和属性查询测试。"""
 
-    def test_all_types_have_props(self):
-        """每个 TerrainType 都有对应的 TerrainProps。"""
+    def test_all_types_have_defs(self):
+        """每个 TerrainType 都有对应的 TerrainDef（注册表驱动）。"""
         for t in TerrainType:
-            props = get_terrain_props(t)
-            assert isinstance(props, TerrainProps)
-            assert isinstance(props.label, str)
-            assert len(props.label) > 0
+            defn = get_terrain_def(t)
+            assert isinstance(defn, TerrainDef)
+            assert isinstance(defn.label, str)
+            assert len(defn.label) > 0
+            assert defn.value == int(t)
 
     def test_passable(self):
         """可行走性查询正确。"""
@@ -747,23 +749,39 @@ class TestTileGrid:
         g.set(0, 0, TerrainType.DEEP_WATER)
         g.set(5, 5, TerrainType.ROCK)
         g.set(100, 100, TerrainType.MARSH)
+        g.set_state("snow", 3, 3, 18)
+        g.set_state("ice", 4, 4, 7)
 
         blob = g.to_bytes()
-        expected_len = 4 + TILE_MAP_SIZE * TILE_MAP_SIZE * (2 + 4 + 4)
+        expected_len = (
+            4
+            + TILE_MAP_SIZE * TILE_MAP_SIZE * (2 + 4 + 4)
+            + TILE_MAP_SIZE * TILE_MAP_SIZE * len(STATE_TYPES)
+        )
         assert len(blob) == expected_len
         # 显式小端：版本头 + 首个地形 uint16 LE
-        assert blob[0:4] == struct.pack("<I", 1)
+        assert blob[0:4] == struct.pack("<I", 2)
         assert blob[4:6] == struct.pack("<H", int(TerrainType.DEEP_WATER))
 
         g2 = TileGrid.from_bytes(blob)
         assert g2.get(0, 0) == TerrainType.DEEP_WATER
         assert g2.get(5, 5) == TerrainType.ROCK
         assert g2.get(100, 100) == TerrainType.MARSH
+        assert g2.get_state("snow", 3, 3) == 18
+        assert g2.get_state("ice", 4, 4) == 7
 
     def test_from_bytes_wrong_size(self):
         """长度错误的 BLOB 应抛出 ValueError。"""
         with pytest.raises(ValueError):
-            TileGrid.from_bytes(b"\x01\x00\x00\x00" + b"\x00" * 100)
+            TileGrid.from_bytes(b"\x02\x00\x00\x00" + b"\x00" * 100)
+
+    def test_from_bytes_old_version_rejected(self):
+        """旧版（v1）BLOB 明确拒绝——无向后兼容，零迁移路径。"""
+        # 构造 v1 尺寸的合法 blob（版本头 1 + 地形 + 高程×2）
+        old_len = 4 + TILE_MAP_SIZE * TILE_MAP_SIZE * (2 + 4 + 4)
+        old = b"\x01\x00\x00\x00" + b"\x00" * (old_len - 4)
+        with pytest.raises(ValueError, match="不支持 TileGrid 版本"):
+            TileGrid.from_bytes(old)
 
     def test_create_from_list(self):
         """从正确长度的列表构造（非 array 分支）。"""
@@ -828,6 +846,75 @@ class TestTileGrid:
 
         g2.set(0, 0, TerrainType.SAND)
         assert g1 == g2
+
+    # ── 状态层 ──────────────────────────────────────────
+
+    def test_state_defaults_zero(self):
+        """默认创建的状态层全为 0（注册表驱动，含全部状态）。"""
+        g = TileGrid()
+        for key in state_keys():
+            assert g.get_state(key, 0, 0) == 0
+            assert g.get_state(key, 199, 199) == 0
+
+    def test_state_set_get(self):
+        """状态单点读写正确，且不影响其他状态与地形。"""
+        g = TileGrid()
+        g.set_state("snow", 10, 20, 42)
+        assert g.get_state("snow", 10, 20) == 42
+        assert g.get_state("moisture", 10, 20) == 0
+        assert g.get(10, 20) == TerrainType.GRASSLAND
+
+    def test_state_clamp_bounds(self):
+        """状态写入 clamp 到注册表 bounds。"""
+        g = TileGrid()
+        g.set_state("moisture", 0, 0, 999)   # bounds (0,100)
+        assert g.get_state("moisture", 0, 0) == 100
+        g.set_state("moisture", 0, 0, -5)
+        assert g.get_state("moisture", 0, 0) == 0
+        g.set_state("snow", 0, 0, 300)       # bounds (0,255)
+        assert g.get_state("snow", 0, 0) == 255
+
+    def test_state_unknown_key(self):
+        """未知状态 key 抛 KeyError（fail fast）。"""
+        g = TileGrid()
+        with pytest.raises(KeyError):
+            g.get_state("nope", 0, 0)
+        with pytest.raises(KeyError):
+            g.set_state("nope", 0, 0, 1)
+        with pytest.raises(KeyError):
+            g.state_raw("nope")
+
+    def test_state_raw_shared_memory(self):
+        """state_raw 返回零拷贝引用——批量涂抹直接写底层数组。"""
+        g = TileGrid()
+        raw = g.state_raw("moisture")
+        raw[5] = 77
+        assert g.get_state("moisture", 5, 0) == 77
+
+    def test_state_roundtrip_preserves_states(self):
+        """序列化往返保留状态值（持久化语义）。"""
+        g = TileGrid()
+        raw = g.state_raw("snow")
+        raw[1234] = 60
+        raw[39999] = 255
+        g.state_raw("ice")[0] = 3
+        g2 = TileGrid.from_bytes(g.to_bytes())
+        assert g2.get_state("snow", 1234 % 200, 1234 // 200) == 60
+        assert g2.get_state("snow", 199, 199) == 255
+        assert g2.get_state("ice", 0, 0) == 3
+        assert g2 == g
+
+    def test_state_array_len_mismatch(self):
+        """状态数组长度与 200×200 不匹配抛 ValueError。"""
+        from array import array
+        with pytest.raises(ValueError, match="状态"):
+            TileGrid(states={"snow": array("B", [0]) * 100})
+
+    def test_state_provided_list(self):
+        """从列表构造状态数组（非 array 分支）。"""
+        g = TileGrid(states={"moisture": [7] * (TILE_MAP_SIZE * TILE_MAP_SIZE)})
+        assert g.get_state("moisture", 50, 50) == 7
+        assert g.get_state("snow", 50, 50) == 0
 
     def test_equality_different_type(self):
         """与非 TileGrid 比较返回 NotImplemented（不抛异常）。"""
@@ -1237,6 +1324,43 @@ class TestTileGenerator:
                     total += 1
 
         assert total > 0, "应采到至少一个 tile"
+
+    def test_classify_bands_gap_free_under_peak_shift(self):
+        """海拔带无缝隙：peak 偏移 >0 时 [2000, 2000+delta) 仍归 ROCK。
+
+        回归：ROCK 带 hi 曾固定 2000，与 PEAK lo 的偏移键不共享——
+        偏移后 [2000, 2000+delta) 无带覆盖落入 fallback SAND
+        （ALPINE 群系 2000-2600m 山地变沙漠）。修复：ROCK hi 共享
+        peak_threshold_delta 偏移键。
+        """
+        from ascend.space.biome import TerrainBias
+        from ascend.space.tile_gen import TileGenerator
+
+        gen = object.__new__(TileGenerator)
+        bias = TerrainBias(
+            sand_cap_delta=0.0, fertile_shift=0.0,
+            rock_threshold_delta=-200.0, peak_threshold_delta=600.0,
+            marsh_tendency=0.0,
+        )
+        for elev in (2000, 2200, 2500):
+            assert gen._classify(elev, bias) is TerrainType.ROCK, (
+                f"elev={elev} 应归 ROCK（无缝隙）"
+            )
+        assert gen._classify(2600, bias) is TerrainType.MOUNTAIN_PEAK
+
+    def test_classify_band_edge_exact(self):
+        """带边界语义：elev == 带界归上带（[lo, hi) 半开）。"""
+        from ascend.space.biome import TerrainBias
+        from ascend.space.tile_gen import TileGenerator
+
+        gen = object.__new__(TileGenerator)
+        bias = TerrainBias()
+        assert gen._classify(0.0, bias) is TerrainType.SAND
+        assert gen._classify(10.0, bias) is TerrainType.GRASSLAND
+        assert gen._classify(600.0, bias) is TerrainType.ROCK
+        assert gen._classify(2000.0, bias) is TerrainType.MOUNTAIN_PEAK
+        assert gen._classify(-100.0, bias) is TerrainType.SHALLOW_WATER
+        assert gen._classify(-101.0, bias) is TerrainType.DEEP_WATER
 
     def test_get_chunk_climate_consistent(self):
         """get_chunk_climate 对同一 chunk 返回的值一致。"""

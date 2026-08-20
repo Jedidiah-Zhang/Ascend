@@ -40,12 +40,15 @@ class RegionEvent:
         cells: 区域包含的 chunk 中心（世界坐标 m 列表）。
         center_chunk: 区域质心所在 chunk (cx, cy)。
         intensity: 质心处降雨强度 (mm/h)，stop 时为 0。
+        chunks: 区域包含的 chunk 坐标集合（排序元组）——状态引擎
+            批量涂抹与前端区域渲染的契约字段。
     """
 
     kind: str
     cells: list[tuple[float, float]]
     center_chunk: tuple[int, int]
     intensity: float = 0.0
+    chunks: tuple[tuple[int, int], ...] = ()
 
 
 class RegionTracker:
@@ -231,4 +234,5 @@ class RegionTracker:
             cells=cells,
             center_chunk=(center_cx, center_cy),
             intensity=intensity,
+            chunks=tuple(sorted(region)),
         )

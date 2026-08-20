@@ -92,8 +92,11 @@ func _drain_chunk_requests() -> Array:
 	return out
 
 
-## 构造与后端 BLOB 布局一致的 tiles_b64（4B header + uint16 LE terrain + float32 LE elevation + slope）。
-func _make_tiles_b64(terr: PackedInt32Array, elev: PackedFloat32Array, version: int = 1) -> String:
+## 构造与后端 BLOB 布局一致的 tiles_b64（4B header + uint16 LE terrain +
+## float32 LE elevation + slope + states 段（moisture/snow/ice；可传非零值
+## 覆盖——默认全 0，顺序 = 后端 STATE_TYPES 注册顺序））。
+func _make_tiles_b64(terr: PackedInt32Array, elev: PackedFloat32Array,
+		version: int = 2, states: PackedByteArray = PackedByteArray()) -> String:
 	var raw := PackedByteArray()
 	raw.resize(4)
 	raw.encode_u32(0, version)  # 版本头（与后端 tile_grid._TILEGRID_VERSION 契约）
@@ -110,6 +113,12 @@ func _make_tiles_b64(terr: PackedInt32Array, elev: PackedFloat32Array, version: 
 		tmp.resize(4)
 		tmp.encode_float(0, e)
 		raw.append_array(tmp)
+	# 状态段：moisture/snow/ice（默认全 0）。段数与顺序 = 后端
+	# state_defs.STATE_TYPES 注册表契约（增删状态须同步本测试）
+	raw.resize(raw.size() + CS * CS * 3)
+	if states.size() > 0:
+		for i in states.size():
+			raw[raw.size() - states.size() + i] = states[i]
 	return Marshalls.raw_to_base64(raw)
 
 
@@ -556,18 +565,27 @@ func test_tile_response_marks_received() -> void:
 	var terr := PackedInt32Array()
 	terr.resize(CS * CS)
 	terr.fill(2)
+	# 非零状态段：首 tile 湿润 100，末 tile 覆雪 200（验证分段解码）
+	var states := PackedByteArray()
+	states.resize(CS * CS * 3)
+	states[0] = 100
+	states[states.size() - 1] = 200
 
 	main._handle_response({
 		"type": "response",
 		"request_type": "get_chunks",
 		"payload": {
-			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev)}],
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, 2, states)}],
 			"include_tiles": true,
 		},
 	})
 
 	assert_eq(main._stream_machine.get_state(key), main.ChunkState.BUILT,
 		"完整数据到达且材质就绪应立即构建（BUILT）")
+	var decoded: Dictionary = main._chunks[key]["states"]
+	assert_eq(decoded["moisture"][0], 100, "moisture 段首 tile 解码")
+	assert_eq(decoded["snow"][0], 0, "snow 段与 moisture 段分段正确")
+	assert_eq(decoded["ice"][CS * CS - 1], 200, "ice 段末 tile 解码")
 
 
 func test_tile_response_rejects_version_mismatch() -> void:
@@ -594,7 +612,7 @@ func test_tile_response_rejects_version_mismatch() -> void:
 		"type": "response",
 		"request_type": "get_chunks",
 		"payload": {
-			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, 2)}],
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, 3)}],
 			"include_tiles": true,
 		},
 	})

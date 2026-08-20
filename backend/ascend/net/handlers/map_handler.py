@@ -22,14 +22,18 @@ _DEFAULT_TILE_POOL = ThreadPoolExecutor(
 
 
 def make_map_handlers(gen, tile_gen=None, chunk_store=None,
-                      weather_engine=None, tile_pool=None):
+                      chunk_services=None, tile_pool=None):
     """为给定的 WorldGenerator 创建地图相关的请求处理程序。
 
     Args:
         gen: WorldGenerator 实例。
         tile_gen: TileGenerator 实例（可选），提供时支持 include_tiles。
         chunk_store: ChunkStore 实例，LRU 缓存 + SQLite 持久化。
-        weather_engine: WeatherEngine 实例（可选），动态生成 chunk 时自动注册天气。
+        chunk_services: ChunkServiceRegistry（可选）——统一广播
+            register/on_tiles_ready（weather/状态/生态/基因引擎）。
+            恢复路径：register 后立即 on_tiles_ready（tiles 已就绪）；
+            生成路径：register（tiles 生成中）→ 异步生成 → on_tiles_ready。
+            新增引擎不改本函数——装配方 registry.add(service)。
         tile_pool: tile 生成线程池（可选）；None 用模块级默认池。
             生产路径由 GameEngine 注入自有池子并负责其关闭。
 
@@ -40,9 +44,10 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
     def _generate_tiles(chunk):
         """在独立线程中生成 chunk 的 TileGrid（原子操作）。"""
         if chunk.has_tiles:
-            return
+            return chunk
         grid = tile_gen.generate_chunk_for(chunk)
         chunk.generate_tiles(grid)
+        return chunk
 
     def handle_get_chunks(msg: dict) -> dict:
         """处理 "get_chunks" 请求。
@@ -95,17 +100,19 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
                     coord_to_chunk[coord] = chunk
                     continue
 
-                saved_grid = chunk_store.load_tiles(*coord)
-                if saved_grid is not None:
+                saved = chunk_store.load_tiles_with_day(*coord)
+                if saved is not None:
+                    saved_grid, settled_day = saved
                     chunk = gen.generate_chunk(*coord)
                     chunk.restore_tiles(saved_grid)
+                    chunk.settled_day = settled_day
                     coord_to_chunk[coord] = chunk
                     chunk_store.put(chunk)
-                    if weather_engine is not None:
-                        weather_engine.register_chunk(
-                            chunk.cx, chunk.cy, chunk.annual_baseline,
-                            chunk.climate_zone, chunk.sea_level_temp,
-                        )
+                    if chunk_services is not None:
+                        # 时序契约：tiles 已就绪——注册后立即就绪
+                        # （恢复路径；生成路径在 tile 完成后就绪）
+                        chunk_services.register(chunk)
+                        chunk_services.on_tiles_ready(chunk.cx, chunk.cy)
                     continue
 
             missing.append(coord)
@@ -116,11 +123,9 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
                 coord_to_chunk[(c.cx, c.cy)] = c
                 if chunk_store is not None:
                     chunk_store.put(c)
-                if weather_engine is not None:
-                    weather_engine.register_chunk(
-                        c.cx, c.cy, c.annual_baseline,
-                        c.climate_zone, c.sea_level_temp,
-                    )
+                if chunk_services is not None:
+                    # 时序契约：tiles 尚未生成——注册先行，就绪后广播
+                    chunk_services.register(c)
 
         ordered = [coord_to_chunk[c] for c in coord_tuples]
 
@@ -132,7 +137,12 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
                     pool.submit(_generate_tiles, c) for c in tiles_needed
                 ]
                 for future in as_completed(futures):
-                    future.result()
+                    chunk = future.result()
+                    # 时序契约：tile 就绪后广播 on_tiles_ready——状态
+                    # 引擎结算缺口（缺失天气的 chunk 安全空转——结算器
+                    # 按未注册日跳过）
+                    if chunk_services is not None:
+                        chunk_services.on_tiles_ready(chunk.cx, chunk.cy)
 
         result_chunks = []
         for c in ordered:

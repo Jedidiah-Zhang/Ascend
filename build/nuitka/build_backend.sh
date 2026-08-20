@@ -34,9 +34,10 @@ while IFS= read -r line; do
 done < "$ROOT/build/nuitka/excludes.txt"
 
 # C 加速模块（ctypes 加载）：先确保 .so 为最新（缺失/过期自动重编译）。
+# tile_state 模块级 load_c_extension → 一并编译 _state.c（地形状态内核）。
 cd "$ROOT/backend"
 PYTHONPATH="$ROOT/backend" "$VENV_PY" -c \
-  "from ascend.space import noise, hydrology, streamlines; print('C 扩展就绪')"
+  "from ascend.space import noise, hydrology, streamlines; from ascend.space.tile_state import _N_STATES; print('C 扩展就绪')"
 cd "$ROOT"
 
 rm -rf "$OUT_DIR"

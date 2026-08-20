@@ -199,8 +199,9 @@ class TestWeatherEventContracts:
         ),
         PrecipitationStart: dict(
             precip_type="rain", intensity=2.5, time_of_day=36000,
+            chunks=[[0, 0], [1, 1]],
         ),
-        PrecipitationStop: dict(time_of_day=36000),
+        PrecipitationStop: dict(time_of_day=36000, chunks=[[0, 0]]),
         SeasonChange: dict(season=1, time_of_day=36000),
         Sunrise: dict(time_of_day=36000, daylight_hours=10.5),
         Sunset: dict(time_of_day=36000, daylight_hours=10.5),

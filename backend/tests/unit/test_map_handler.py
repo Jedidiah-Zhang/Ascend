@@ -297,3 +297,52 @@ class TestMapHandlers:
 
         assert r1["payload"]["chunks"][0]["tiles_b64"] == \
             r2["payload"]["chunks"][0]["tiles_b64"], "重复请求应返回一致数据"
+
+
+class TestMapHandlersWithStateEngine:
+    """include_tiles + tile_state_engine 组合（Issue #37 装配契约）。
+
+    回归：_generate_tiles 无返回值时 future.result() 为 None，
+    on_tiles_ready(None.cx) 崩溃（reviewer 实测）；注册-生成-就绪
+    时序必须闭环。
+    """
+
+    def test_include_tiles_with_state_engine_ready(self, gen, continent):
+        """注入状态引擎：tile 生成后就绪并结算，chunk 状态可查。"""
+        from ascend.space import TileGenerator
+        from ascend.space.tile_state import TileStateEngine
+        from ascend.time import WorldClock
+        from ascend.weather.weather_engine import WeatherEngine, WeatherParams
+        from ascend.space.climate import ClimateZone
+
+        clock = WorldClock()
+        weather = WeatherEngine(clock, seed=42)
+        engine = TileStateEngine(clock, weather)
+        tile_gen = TileGenerator(seed=42, continent=continent)
+        from ascend.space.chunk_services import (
+            ChunkServiceRegistry, WeatherChunkService, TileStateChunkService,
+        )
+        registry = ChunkServiceRegistry([
+            WeatherChunkService(weather), TileStateChunkService(engine),
+        ])
+        handlers = make_map_handlers(
+            gen, tile_gen=tile_gen, chunk_services=registry,
+        )
+        handle = handlers["get_chunks"]
+
+        coord = (3, -2)
+        msg = {
+            "type": "request",
+            "request_type": "get_chunks",
+            "seq": 20,
+            "payload": {"chunks": [list(coord)], "include_tiles": True},
+        }
+
+        response = handle(msg)
+        chunks = response["payload"]["chunks"]
+        assert len(chunks) == 1 and "tiles_b64" in chunks[0], "BLOB 返回"
+        assert (coord[0], coord[1]) in engine._chunks, "就绪后已注册并持有网格"
+        chunk, grid = engine._chunks[(coord[0], coord[1])]
+        assert grid is not None, "快照网格非 None（动态生成后回写）"
+        agg = engine.aggregates(coord[0], coord[1])
+        assert set(agg) == {"water_frozen", "mean_snow", "mean_moisture"}

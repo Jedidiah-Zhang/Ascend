@@ -68,20 +68,29 @@ class SunshineChange(WorldEvent):
 
 @dataclass
 class PrecipitationStart(WorldEvent):
-    """降水开始。precip_type: rain|snow，由当前温度判定。"""
+    """降水开始。precip_type: rain|snow，由当前温度判定。
+
+    chunks: 区域涉及的 chunk 坐标（必填）——状态引擎按此批量涂抹，
+    前端区域高亮亦可用。坐标 = 区域连通域 chunk 集合。
+    """
 
     event_type: ClassVar[str] = "precipitation_start"
     precip_type: str
     intensity: float
     time_of_day: int
+    chunks: tuple[tuple[int, int], ...]
 
 
 @dataclass
 class PrecipitationStop(WorldEvent):
-    """降水停止（区域降水事件结束）。"""
+    """降水停止（区域降水事件结束）。
+
+    chunks: 区域涉及的 chunk 坐标（必填，与 start 同集合）。
+    """
 
     event_type: ClassVar[str] = "precipitation_stop"
     time_of_day: int
+    chunks: tuple[tuple[int, int], ...]
 
 
 @dataclass

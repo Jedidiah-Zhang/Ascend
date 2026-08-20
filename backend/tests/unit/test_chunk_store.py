@@ -377,8 +377,13 @@ class TestChunkStorePersistence:
         assert len(blob) < len(raw) / 2, "压缩后应显著小于明文"
         assert zlib.decompress(blob[2:]) == raw
 
-        # 旧版明文（无前缀）仍可读
+        # 旧版明文（无前缀、无 settled_day 列）仍可读：先删列建旧表
         con = sqlite3.connect(db_path)
+        con.execute("DROP TABLE chunk_tiles")
+        con.execute(
+            "CREATE TABLE chunk_tiles (cx INTEGER, cy INTEGER, "
+            "tiles BLOB NOT NULL, PRIMARY KEY (cx, cy))"
+        )
         con.execute(
             "INSERT OR REPLACE INTO chunk_tiles VALUES (9, 9, ?)",
             (sqlite3.Binary(raw),),
@@ -390,6 +395,8 @@ class TestChunkStorePersistence:
             grid = store2.load_tiles(9, 9)
             assert grid is not None and grid.to_bytes() == raw, "旧明文兼容"
             assert store2._persisted_coords >= {(9, 9)}, "旧行进入已落盘集合"
+            saved = store2.load_tiles_with_day(9, 9)
+            assert saved is not None and saved[1] == 0, "旧库补列默认 0"
         finally:
             store2.close()
 

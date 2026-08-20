@@ -14,6 +14,10 @@ from ascend.game import GameEngine
 # GameEngine 默认端口 9081，确保与 test_net.py 的 19081 不冲突
 GAME_ENGINE_PORT = 9081
 
+# 原始初始区块生成（模块 import 时捕获——_patch_fast_worldgen 会
+# 整体替换成 no-op，集成测试需借真实实现 + 缩小半径）
+_REAL_GENERATE_INITIAL = GameEngine._generate_initial_chunks
+
 
 def _patch_fast_worldgen(monkeypatch):
     """快路径世界生成：小大陆 + 跳过初始区块，避免真实生成耗时。
@@ -644,3 +648,109 @@ class TestSavePulseEndToEnd:
             assert grid == TileGrid(), "内容一致（确定性生成）"
         finally:
             engine2.stop()
+
+
+class TestTerrainStatePersistence:
+    """地形状态层集成（Issue #37）：settled_day 随存档持久化、
+    LRU 淘汰后重载续算、不重放历史。"""
+
+    def _start_world(self, engine, name=None, seed=7):
+        import uuid
+        engine.start_service()
+        world_id = engine.save_manager.create_world(
+            name or f"状态世界-{uuid.uuid4().hex[:6]}", seed=seed,
+        ).world_id
+        engine.load_world(world_id=world_id)
+        return world_id
+
+    def _patch_single_chunk(self, monkeypatch):
+        """初始生成只出出生点 1 个 chunk（真实生成路径，radius=0）。
+
+        _patch_fast_worldgen 把 _generate_initial_chunks 整体替换成
+        no-op（快路径），此处恢复真实实现并借模块级常量缩小半径。
+        """
+        from ascend.game import GameEngine as GE
+        monkeypatch.setattr("ascend.game.INITIAL_CHUNK_RADIUS", 0)
+        monkeypatch.setattr(
+            GE, "_generate_initial_chunks",
+            lambda self, continent: _REAL_GENERATE_INITIAL(self, continent),
+        )
+
+    def test_settled_day_persists_across_restart(self, monkeypatch):
+        """装配结算到 epoch day 1 → 快进到 day 5 → 重启后 settled_day=5。"""
+        from ascend.config import GAME_DAY
+
+        _patch_fast_worldgen(monkeypatch)
+        self._patch_single_chunk(monkeypatch)
+
+        engine1 = GameEngine(seed=42)
+        try:
+            world_id = self._start_world(engine1)
+            assert len(engine1.chunk_store) == 1
+            (cx, cy), chunk = next(iter(engine1.chunk_store.items()))
+            assert chunk.settled_day == 1, "装配即结算到 epoch day 1"
+
+            # skip 快进 4 天（真实日历发布 day_change，skipped=3）→ 缺口结算
+            engine1.clock.skip(4 * GAME_DAY)
+            assert chunk.settled_day == 5, "快进补结算到 day 5"
+            assert engine1.chunk_store.flush() >= 1, "settled_day 落盘"
+        finally:
+            engine1.stop()
+
+        # 重启（新进程）：库中 settled_day 随 chunk 持久化，不重放历史
+        engine2 = GameEngine(seed=42)
+        try:
+            engine2.start_service()
+            engine2.load_world(world_id=world_id)
+            saved = engine2.chunk_store.load_tiles_with_day(cx, cy)
+            assert saved is not None, "库中保留 engine1 的 chunk"
+            assert saved[1] == 5, "读档恢复结算日，不重放历史"
+        finally:
+            engine2.stop()
+
+    def test_lru_evict_then_reload_continues(self, monkeypatch):
+        """LRU 淘汰注销 → map 请求重载 → 续算缺口到当前日。"""
+        from ascend.config import GAME_DAY
+
+        _patch_fast_worldgen(monkeypatch)
+        self._patch_single_chunk(monkeypatch)
+
+        engine = GameEngine(seed=42)
+        try:
+            self._start_world(engine)
+            assert len(engine.chunk_store) == 1
+            (cx, cy), chunk = next(iter(engine.chunk_store.items()))
+            assert chunk.settled_day == 1
+
+            # skip 快进 2 天（真实日历）→ 结算到 day 3
+            engine.clock.skip(2 * GAME_DAY)
+            assert chunk.settled_day == 3
+
+            # 缩小 max_size 强制淘汰出生点 chunk（落盘 + 引擎注销）
+            engine.chunk_store._max_size = 1
+            from ascend.space import BiomeType, ClimateZone, WeatherParams
+            from ascend.space.chunk import ChunkData
+            filler = ChunkData(
+                cx=cx + 5, cy=cy,
+                biome=BiomeType.TEMPERATE_MIXED_FOREST,
+                climate_zone=ClimateZone.TEMPERATE_FOREST,
+                annual_baseline=WeatherParams(15.0, 800.0, 12.0, 100.0, 60.0, 5.0),
+            )
+            engine.chunk_store.put(filler)
+            assert (cx, cy) not in engine.chunk_store, "LRU 已淘汰"
+            assert engine.tile_state_engine._chunks == {}, "引擎同步注销"
+
+            # map 请求重载 → 恢复路径续算到当前日（不重放 [1,3)）
+            engine.clock.skip(1 * GAME_DAY)  # 现在 day 4
+            response = engine.dispatcher._handlers["get_chunks"]({
+                "type": "request", "request_type": "get_chunks",
+                "seq": 1,
+                "payload": {"chunks": [[cx, cy]]},
+            })
+            assert response is not None
+            assert (cx, cy) in engine.chunk_store, "重载入缓存"
+            reloaded = engine.chunk_store.get(cx, cy)
+            assert reloaded.settled_day == 4, "重载续算到当前日"
+            assert reloaded.settled_day == 4, "不重放历史（起点=持久化结算日）"
+        finally:
+            engine.stop()

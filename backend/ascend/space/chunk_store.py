@@ -105,8 +105,22 @@ class ChunkStore:
             "CREATE TABLE IF NOT EXISTS chunk_tiles ("
             "cx INTEGER, cy INTEGER, "
             "tiles BLOB NOT NULL, "
+            "settled_day INTEGER NOT NULL DEFAULT 0, "
             "PRIMARY KEY (cx, cy))"
         )
+# 旧库无 settled_day 列（TileGrid v1 时期建表）：就地补列（旧行默认
+# 0 = 未结算）。注意：v1 期 BLOB 无状态段，from_bytes 按版本拒绝——
+# 旧存档的 chunk_tiles 数据无法解码（设计取舍：无向后兼容，见
+# tile_grid._TILEGRID_VERSION 文档），settled_day=0 仅对 v2 数据生效。
+        cols = {
+            r["name"]
+            for r in self._db.execute("PRAGMA table_info(chunk_tiles)").fetchall()
+        }
+        if "settled_day" not in cols:
+            self._db.execute(
+                "ALTER TABLE chunk_tiles ADD COLUMN "
+                "settled_day INTEGER NOT NULL DEFAULT 0"
+            )
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_chunk_tiles_coord ON chunk_tiles(cx, cy)")
         # 已落盘坐标集合：只增不删（库中行无删除路径）、启动时从库
         # 重建，与库必然一致。落盘判定 = dirty or 坐标不在集合。
@@ -222,12 +236,44 @@ class ChunkStore:
 
     # ── SQLite 持久化 ───────────────────────────────────
 
+    def load_tiles_with_day(self, cx: int, cy: int) -> "tuple[TileGrid, int] | None":
+        """从 SQLite 加载已持久化的 TileGrid 及其状态结算日。
+
+        Args:
+            cx, cy: chunk 坐标。
+
+        Returns:
+            (TileGrid, settled_day)；无记录返回 None。settled_day=0
+            表示旧库/未结算记录（状态全 0，按全新处理）。
+        """
+        with self._lock:
+            row = self._db.execute(
+                "SELECT tiles, settled_day FROM chunk_tiles "
+                "WHERE cx = ? AND cy = ?", (cx, cy),
+            ).fetchone()
+        if row is None:
+            return None
+        blob = bytes(row["tiles"])
+        if blob[:2] == _BLOB_ZLIB:
+            blob = zlib.decompress(blob[2:])
+        try:
+            grid = TileGrid.from_bytes(blob)
+        except ValueError as exc:
+            # v1 存档（无状态段）加载失败是硬性不兼容——给出明确
+            # 中文提示而非让上层崩溃/泛化"处理失败"
+            raise RuntimeError(
+                f"chunk ({cx},{cy}) 数据无法解码（{exc}）——"
+                f"旧版存档与当前版本不兼容，无法加载该区块"
+            ) from exc
+        return grid, int(row["settled_day"])
+
     def load_tiles(self, cx: int, cy: int) -> TileGrid | None:
         """从 SQLite 加载已持久化的 TileGrid。
 
         库中行 = 已加载 chunk（含玩家改动）。BLOB 为 zlib 压缩格式，
         旧版明文（无前缀）自动兼容读取。调用方应以
-        ChunkData.restore_tiles 恢复网格。
+        ChunkData.restore_tiles 恢复网格。需要结算日的调用方用
+        load_tiles_with_day。
 
         Args:
             cx, cy: chunk 坐标。
@@ -235,16 +281,8 @@ class ChunkStore:
         Returns:
             反序列化的 TileGrid，无记录返回 None。
         """
-        with self._lock:
-            row = self._db.execute(
-                "SELECT tiles FROM chunk_tiles WHERE cx = ? AND cy = ?", (cx, cy)
-            ).fetchone()
-        if row is None:
-            return None
-        blob = bytes(row["tiles"])
-        if blob[:2] == _BLOB_ZLIB:
-            blob = zlib.decompress(blob[2:])
-        return TileGrid.from_bytes(blob)
+        loaded = self.load_tiles_with_day(cx, cy)
+        return loaded[0] if loaded is not None else None
 
     def contains_tiles(self, cx: int, cy: int) -> bool:
         """检查 SQLite 中是否有已持久化的 tile 数据。
@@ -261,12 +299,14 @@ class ChunkStore:
             ).fetchone()
         return row is not None
 
-    def _save_tiles(self, cx: int, cy: int, grid: TileGrid) -> None:
+    def _save_tiles(
+        self, cx: int, cy: int, grid: TileGrid, settled_day: int = 0,
+    ) -> None:
         """将单个 chunk 的 TileGrid 写入 SQLite（zlib 压缩，INSERT OR REPLACE）。"""
         blob = _BLOB_ZLIB + zlib.compress(grid.to_bytes(), zlib.Z_DEFAULT_COMPRESSION)
         self._db.execute(
-            "INSERT OR REPLACE INTO chunk_tiles VALUES (?, ?, ?)",
-            (cx, cy, sqlite3.Binary(blob)),
+            "INSERT OR REPLACE INTO chunk_tiles VALUES (?, ?, ?, ?)",
+            (cx, cy, sqlite3.Binary(blob), int(settled_day)),
         )
 
     def _persist(self, chunk: ChunkData) -> None:
@@ -285,7 +325,9 @@ class ChunkStore:
             raise RuntimeError(
                 f"脏 chunk 无网格（不变量破坏）: ({chunk.cx}, {chunk.cy})"
             )
-        self._save_tiles(chunk.cx, chunk.cy, grid)
+        self._save_tiles(
+            chunk.cx, chunk.cy, grid, settled_day=chunk.settled_day,
+        )
         chunk.dirty = False
         self._persisted_coords.add((chunk.cx, chunk.cy))
 

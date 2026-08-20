@@ -39,9 +39,9 @@ from .biome import (
 from .chunk import ChunkData, TILE_MAP_SIZE
 from .generator import WorldGenerator
 from .terrain import (
-    TerrainType, TerrainProps,
-    get_terrain_props, is_passable, is_buildable,
-    movement_cost, fertility,
+    TerrainType, TerrainDef, TERRAIN_DEFS,
+    get_terrain_def, is_passable, is_buildable,
+    movement_cost, fertility, state_params,
 )
 from .tile_grid import TileGrid
 from .tile_gen import TileGenerator
@@ -85,12 +85,14 @@ __all__ = [
     "TILE_MAP_SIZE",
     # 第二层：详细地形
     "TerrainType",
-    "TerrainProps",
-    "get_terrain_props",
+    "TerrainDef",
+    "TERRAIN_DEFS",
+    "get_terrain_def",
     "is_passable",
     "is_buildable",
     "movement_cost",
     "fertility",
+    "state_params",
     "TileGrid",
     "TileGenerator",
     "ChunkStore",

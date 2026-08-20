@@ -34,7 +34,7 @@ fi
 
 # 1. C 加速模块 → .dll（交叉编译，Windows 加载用）
 cd "$ROOT/backend/ascend/space"
-for c in _perlin _hydrology _streamlines; do
+for c in _perlin _hydrology _streamlines _state; do
   if [ ! -f "$c.dll" ] || [ "$c.c" -nt "$c.dll" ]; then
     echo "编译 $c.dll ..."
     wine "$MINGW_GCC" -O3 -funroll-loops -shared -fPIC -o "$c.dll" "$c.c" -lm 2>/dev/null

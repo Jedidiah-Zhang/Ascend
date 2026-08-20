@@ -29,11 +29,17 @@ const UNLOAD_BUFFER: int = 1
 const MAX_PENDING: int = 3
 
 ## tile 二进制 BLOB 布局（与后端 ascend/space/tile_grid.py to_bytes 契约同步）：
-## 4B 版本头 + uint16 LE 地形 + float32 LE 高程 + float32 LE 坡度
-const _TILE_BLOB_VERSION: int = 1
+## 4B 版本头 + uint16 LE 地形 + float32 LE 高程 + float32 LE 坡度 +
+## 状态段（uint8 LE，各 40KB；顺序 = 后端 STATE_TYPES 注册顺序）
+const _TILE_BLOB_VERSION: int = 2
 const _TILE_BLOB_HEADER: int = 4
 const _TILE_BLOB_TERRAIN: int = CHUNK_SIZE * CHUNK_SIZE * 2
 const _TILE_BLOB_ELEV: int = CHUNK_SIZE * CHUNK_SIZE * 4
+## 状态段按 BLOB 版本强关联（后端 STATE_TYPES 增删状态必须 bump 版本，
+## 前端解码按版本查表，防止分段错位）：v1 无状态段；v2 = moisture/snow/ice
+const _STATE_NAMES_BY_VERSION: Dictionary = {
+	2: ["moisture", "snow", "ice"],
+}
 
 ## 玩家移动上报节流间隔（秒）
 const MOVE_REPORT_INTERVAL: float = 0.2
@@ -73,6 +79,18 @@ static func _world_to_chunk(wx: float, wz: float) -> Vector2i:
 static func _tile_index(tx: int, tz: int) -> int:
 	"""chunk 内 tile 行优先索引（与后端 tile 数组布局一致）。"""
 	return tz * CHUNK_SIZE + tx
+
+
+static func _state_names_for_version(version: int) -> Array:
+	"""按 BLOB 版本取状态名序（未知版本返回空——版本漂移已先行拒绝）。"""
+	var names: Array = _STATE_NAMES_BY_VERSION.get(version, [])
+	return names
+
+
+static func _tile_blob_state_bytes() -> int:
+	"""当前契约版本的状态段总字节数（各状态 40KB）。"""
+	var names: Array = _state_names_for_version(_TILE_BLOB_VERSION)
+	return names.size() * CHUNK_SIZE * CHUNK_SIZE
 
 
 static func _decode_u16_array(raw: PackedByteArray) -> PackedInt32Array:
@@ -959,7 +977,7 @@ func _handle_response(message: Dictionary) -> void:
 
 				# 完整版响应：解码 tile 数据 → RECEIVED → 立即尝试构建
 				var tiles_raw: PackedByteArray = Marshalls.base64_to_raw(str(chunk.get("tiles_b64", "")))
-				var expected: int = _TILE_BLOB_HEADER + _TILE_BLOB_TERRAIN + _TILE_BLOB_ELEV * 2
+				var expected: int = _TILE_BLOB_HEADER + _TILE_BLOB_TERRAIN + _TILE_BLOB_ELEV * 2 + _tile_blob_state_bytes()
 				if tiles_raw.size() != expected:
 					# 数据损坏：重新入队完整请求
 					_stream_machine.on_full_response(key, false)
@@ -981,9 +999,21 @@ func _handle_response(message: Dictionary) -> void:
 						_TILE_BLOB_HEADER + _TILE_BLOB_TERRAIN + _TILE_BLOB_ELEV))
 				var slope: PackedFloat32Array = _decode_f32_array(
 					tiles_raw.slice(_TILE_BLOB_HEADER + _TILE_BLOB_TERRAIN + _TILE_BLOB_ELEV, expected))
+				var states: Dictionary = {}
+				var state_names: Array = _state_names_for_version(
+					tiles_raw.decode_u32(0),
+				)
+				var states_raw: PackedByteArray = tiles_raw.slice(
+					_TILE_BLOB_HEADER + _TILE_BLOB_TERRAIN + _TILE_BLOB_ELEV * 2, expected)
+				var seg: int = CHUNK_SIZE * CHUNK_SIZE
+				for i in state_names.size():
+					states[state_names[i]] = states_raw.slice(
+						i * seg, (i + 1) * seg,
+					)
 				chunk["terrain"] = terr
 				chunk["elevation"] = elev
 				chunk["slope"] = slope
+				chunk["states"] = states
 				# 提交后台构建；随后立即轮询结果（同步注入的构建器此时已完成）
 				_try_build_received_chunk(key)
 				_poll_build_results()

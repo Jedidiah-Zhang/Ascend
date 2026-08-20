@@ -30,7 +30,8 @@ GOLDEN_SEED = 20260806
 # 2026-08-15 缓存头部新增生成环境指纹字段（格式版本归 1；世界数值不变）后重新固化一次
 # 2026-08-18 黄金 hash 纳入真实 TileGenerator 输出后重新固化一次
 # 2026-08-18 侵蚀基准面=海平面（海底不参与侵蚀/沉积）后重新固化一次
-GOLDEN_HASH = "aa9c2c13d6500de1fe493180d4bd136427623cbaa6af828c625d2bc0955ea57d"
+# 2026-08-19 TileGrid 序列化升级 v2（状态层数组追加，全 0 初始）后重新固化一次
+GOLDEN_HASH = "0f477ed730b64fc560573c485e19b6013bc033877493d947d09e70bd66966944"
 
 
 def _pipeline_digest(seed: int) -> str:

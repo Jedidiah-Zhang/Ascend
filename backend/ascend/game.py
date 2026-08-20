@@ -60,6 +60,11 @@ from ascend.net.handlers.preview_handler import make_preview_handlers
 from ascend.space import WorldGenerator, TileGenerator
 from ascend.space.generator import compute_gen_fingerprint
 from ascend.space.chunk_store import ChunkStore
+from ascend.space.chunk_services import (
+    ChunkServiceRegistry,
+    WeatherChunkService,
+    TileStateChunkService,
+)
 from ascend.entity import EntityManager, PlayerService
 from ascend.weather import WeatherEngine
 from ascend.terminal import CommandExecutor
@@ -125,6 +130,7 @@ class GameEngine:
         self.tile_generator: TileGenerator | None = None
         self.birth_chunk: tuple[int, int] | None = None
         self.chunk_store: ChunkStore | None = None
+        self.chunk_services: ChunkServiceRegistry | None = None
         # 存档
         self.save_manager: SaveManager | None = None
         self.world_id: str | None = None      # 当前存档位（None=无存档模式）
@@ -420,11 +426,24 @@ class GameEngine:
         self._world_stack.push(
             self._unset("weather_engine", self.weather_engine.shutdown)
         )
+        # 5c. 地形状态引擎（三通道驱动；chunk 接入统一走
+        # chunk_services 注册器——新增引擎 = registry.add(service)，
+        # 生命周期广播（register/on_tiles_ready/unregister）零改动）
+        from ascend.space.tile_state import TileStateEngine
+        self.tile_state_engine = TileStateEngine(
+            self.clock, self.weather_engine, wt=world_tree,
+        )
+        self._world_stack.push(
+            self._unset("tile_state_engine", self.tile_state_engine.shutdown)
+        )
+        self.chunk_services = ChunkServiceRegistry([
+            WeatherChunkService(self.weather_engine),
+            TileStateChunkService(self.tile_state_engine),
+        ])
         for (cx, cy), chunk in self.chunk_store.items():
-            self.weather_engine.register_chunk(
-                cx, cy, chunk.annual_baseline, chunk.climate_zone,
-                chunk.sea_level_temp,
-            )
+            self.chunk_services.register(chunk)
+            # tile 已在第 4 步生成/恢复完毕——就绪即结算（时序契约）
+            self.chunk_services.on_tiles_ready(cx, cy)
         logger.info("天气引擎已接入 %d 个 chunk", len(self.chunk_store))
 
         # 8. 终端指令执行器
@@ -598,9 +617,9 @@ class GameEngine:
         logger.info("游戏引擎已停止")
 
     def _on_chunk_evicted(self, cx: int, cy: int) -> None:
-        """ChunkStore LRU 淘汰时注销天气数据。"""
-        if self.weather_engine:
-            self.weather_engine.unregister_chunk(cx, cy)
+        """ChunkStore LRU 淘汰时注销全部 chunk 服务（注册器统一广播）。"""
+        if self.chunk_services:
+            self.chunk_services.unregister(cx, cy)
 
     # ── 出生点与初始区块 ──────────────────────────────────
 
@@ -698,9 +717,11 @@ class GameEngine:
 
         # 层2 TileGrid：存档优先，未持久化才生成（每个 chunk 独立，无需加锁）
         def _build_tiles(chunk):
-            saved_grid = self.chunk_store.load_tiles(chunk.cx, chunk.cy)
-            if saved_grid is not None:
+            saved = self.chunk_store.load_tiles_with_day(chunk.cx, chunk.cy)
+            if saved is not None:
+                saved_grid, settled_day = saved
                 chunk.restore_tiles(saved_grid)
+                chunk.settled_day = settled_day
             else:
                 grid = self.tile_generator.generate_chunk_for(chunk)
                 chunk.generate_tiles(grid)
@@ -750,7 +771,7 @@ class GameEngine:
         handlers.update(make_map_handlers(
             self.world_gen, tile_gen=self.tile_generator,
             chunk_store=self.chunk_store,
-            weather_engine=self.weather_engine,
+            chunk_services=self.chunk_services,
             tile_pool=self._tile_pool,
         ))
         handlers.update(make_weather_handler(self.weather_engine, self.i18n))

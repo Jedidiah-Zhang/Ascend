@@ -4,6 +4,9 @@
 按海拔带分类为 TerrainType。群系通过 TerrainBias 偏移海拔阈值，
 保证 chunk 边界连续（隶属度混合）。
 
+海拔带数据在 terrain.TERRAIN_DEFS（每地形一 AltitudeBand，含
+priority 与 bias 偏移键）——加地形/调带不碰本模块。
+
 用法:
     from ascend.space.tile_gen import TileGenerator
     from ascend.space.continent import ContinentGenerator
@@ -16,7 +19,12 @@
     grid = tile_gen.generate_chunk_for(chunk_data)
 """
 
-from .terrain import TerrainType
+from .terrain import (
+    TERRAIN_DEFS,
+    WATER_TYPES,
+    AltitudeBand,
+    TerrainType,
+)
 from .tile_grid import TileGrid, TILE_MAP_SIZE
 from .noise import PerlinNoise
 from .climate import LAPSE_RATE
@@ -24,16 +32,31 @@ from .biome import TerrainBias, biome_membership, get_template
 
 
 from ascend.config import (
-    BASE_SAND_CAP as _BASE_SAND_CAP,
-    BASE_FERTILE_LO as _BASE_FERTILE_LO,
-    BASE_FERTILE_HI as _BASE_FERTILE_HI,
-    BASE_GRASSLAND_CAP as _BASE_GRASSLAND_CAP,
-    BASE_ROCK_THRESHOLD as _BASE_ROCK_THRESHOLD,
-    BASE_PEAK_THRESHOLD as _BASE_PEAK_THRESHOLD,
     STEEP_GRADIENT as _STEEP_GRADIENT,
     MOISTURE_TILE_FREQUENCY as _MOISTURE_FREQ,
     TERRAIN_NOISE_FREQUENCY as _TERRAIN_NOISE_FREQ,
     TERRAIN_NOISE_AMPLITUDE as _TERRAIN_NOISE_AMP,
+)
+
+
+# ── 分类带（注册表派生，模块级一次性构建） ──────────────────
+# 每个声明了 altitude 的地形一条带，按 priority 降序；重叠时高者胜。
+# 无带命中返回 fallback 地形（SAND，全表唯一）。
+
+_BANDS: list[tuple[AltitudeBand, TerrainType]] = sorted(
+    (
+        (defn.altitude, TerrainType[name])
+        for name, defn in TERRAIN_DEFS.items()
+        if defn.altitude is not None
+    ),
+    key=lambda item: item[0].priority,
+    reverse=True,
+)
+
+_FALLBACK_TERRAIN: TerrainType = next(
+    TerrainType[name]
+    for name, defn in TERRAIN_DEFS.items()
+    if defn.fallback
 )
 
 
@@ -261,7 +284,7 @@ class TileGenerator:
         elev: float,
         bias: TerrainBias,
     ) -> TerrainType:
-        """根据海拔、群系偏移分类 tile 地形。
+        """根据海拔、群系偏移分类 tile 地形（注册表海拔带驱动）。
 
         水体（河流/湖泊）由后续步骤叠加覆盖——不在此处判定。
         STEEP_SLOPE 不在此处判定——由坡度计算后重分类。
@@ -273,37 +296,16 @@ class TileGenerator:
         Returns:
             TerrainType。
         """
-        # 海洋（海拔 < 0 = 水体）
-        if elev < -100:
-            return TerrainType.DEEP_WATER
-        if elev < 0:
-            return TerrainType.SHALLOW_WATER
-
-        # 应用群系偏移后的阈值
-        sand_cap = _BASE_SAND_CAP + bias.sand_cap_delta
-        fertile_lo = _BASE_FERTILE_LO + bias.fertile_shift
-        fertile_hi = _BASE_FERTILE_HI + bias.fertile_shift
-        grassland_cap = _BASE_GRASSLAND_CAP
-        rock_threshold = _BASE_ROCK_THRESHOLD + bias.rock_threshold_delta
-        peak_threshold = _BASE_PEAK_THRESHOLD + bias.peak_threshold_delta
-
-        # 海滩/海岸
-        if elev < sand_cap:
-            return TerrainType.SAND
-
-        # 按海拔带分类（偏移后）
-        if elev > peak_threshold:
-            return TerrainType.MOUNTAIN_PEAK
-        if elev > rock_threshold:
-            return TerrainType.ROCK
-        if fertile_lo <= elev <= fertile_hi:
-            return TerrainType.FERTILE_SOIL
-        if elev > grassland_cap:
-            return TerrainType.ROCK
-        if elev > sand_cap:
-            return TerrainType.GRASSLAND
-
-        return TerrainType.SAND
+        for band, terrain in _BANDS:
+            lo = band.lo if band.lo is not None else float("-inf")
+            hi = band.hi if band.hi is not None else float("inf")
+            if band.lo_delta:
+                lo += getattr(bias, band.lo_delta, 0.0)
+            if band.hi_delta:
+                hi += getattr(bias, band.hi_delta, 0.0)
+            if lo <= elev < hi:
+                return terrain
+        return _FALLBACK_TERRAIN
 
 
 # ── 坡度计算与陡坡重分类 ──────────────────────────────────
@@ -347,14 +349,11 @@ def _compute_slopes(grid: TileGrid, source: list[float] | None = None) -> None:
             grid.set_slope(x, y, max_slope)
 
 
-_WATER_TYPES = frozenset({TerrainType.DEEP_WATER, TerrainType.SHALLOW_WATER})
-
-
 def _reclassify_steep(grid: TileGrid) -> None:
     """将局部梯度超过阈值的 tile 重分类为 STEEP_SLOPE。
 
-    仅对非水体、非沙滩、非山巅的陆地 tile 生效。
-    山巅（MOUNTAIN_PEAK）保留最高优先级，不降级为陡坡。
+    仅对非水体、非豁免地形（SAND/MOUNTAIN_PEAK，注册表
+    no_steep_reclass 声明）的陆地 tile 生效。
     """
     size = grid.size
     for y in range(size):
@@ -363,9 +362,9 @@ def _reclassify_steep(grid: TileGrid) -> None:
             if slope <= _STEEP_GRADIENT:
                 continue
             terrain = grid.get(x, y)
-            if terrain in _WATER_TYPES:
+            if terrain in WATER_TYPES:
                 continue
-            if terrain in (TerrainType.SAND, TerrainType.MOUNTAIN_PEAK):
+            if TERRAIN_DEFS[terrain.name].no_steep_reclass:
                 continue
             grid.set(x, y, TerrainType.STEEP_SLOPE)
 
