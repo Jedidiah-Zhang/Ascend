@@ -12,6 +12,12 @@
 
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import Mapping
+
+from ascend.data import load_content, split_ns_id
+from ascend.i18n import get_default
+
+_I18N = get_default()
 
 
 class ClimateZone(IntEnum):
@@ -27,25 +33,27 @@ class ClimateZone(IntEnum):
       温度 ≥5    → TEMPERATE_FOREST
       否则（-5≤T<5）→ SUBARCTIC_TAIGA / POLAR_TUNDRA（按降雨）
 
-    Attributes:
-        label: 中文名称。
+    枚举值 = 持久化/协议契约（0..7，不可改，只能追加）；显示名与
+    模板数据在 data/climate.json（label_key 经 i18n 惰性解析）。
     """
 
-    EQUATORIAL_RAINFOREST = (0, "热带雨林")
-    TROPICAL_SAVANNA = (1, "热带草原")
-    DESERT = (2, "沙漠")
-    STEPPE = (3, "草原")
-    TEMPERATE_FOREST = (4, "温带森林")
-    SUBARCTIC_TAIGA = (5, "亚寒带针叶林")
-    POLAR_TUNDRA = (6, "极地苔原")
-    ALPINE = (7, "高山")
+    EQUATORIAL_RAINFOREST = 0
+    TROPICAL_SAVANNA = 1
+    DESERT = 2
+    STEPPE = 3
+    TEMPERATE_FOREST = 4
+    SUBARCTIC_TAIGA = 5
+    POLAR_TUNDRA = 6
+    ALPINE = 7
 
-    def __new__(cls, value: int, label: str) -> "ClimateZone":
-        """重写 __new__ 以支持双参数 (value, label)。"""
-        obj = int.__new__(cls, value)
-        obj._value_ = value
-        obj.label = label
-        return obj
+    def __init__(self, value: int) -> None:
+        """数据加载后由 loader 填充 label_key（i18n 键）。"""
+        self.label_key: str = ""
+
+    @property
+    def label(self) -> str:
+        """本地化显示名（label_key 经 i18n 惰性解析，随语言切换）。"""
+        return _I18N.t(self.label_key) if self.label_key else self.name
 
     def __repr__(self) -> str:
         return f"ClimateZone.{self.name}"
@@ -94,66 +102,60 @@ class ClimateTemplate:
     display_color: str = "#888888"
 
 
-# ── 8 档气候模板注册表 ──────────────────────────────────────
+# ── 8 档气候模板注册表（数据驱动，data/climate.json）──────────
 
-_CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = {
-    ClimateZone.EQUATORIAL_RAINFOREST: ClimateTemplate(
-        climate=ClimateZone.EQUATORIAL_RAINFOREST,
-        humidity_range=(75.0, 95.0),
-        wind_speed_range=(0.0, 6.0),
-        seasonality=SeasonalityMode.NONE,
-        display_color="#1a6b3a",
-    ),
-    ClimateZone.TROPICAL_SAVANNA: ClimateTemplate(
-        climate=ClimateZone.TROPICAL_SAVANNA,
-        humidity_range=(40.0, 75.0),
-        wind_speed_range=(1.0, 8.0),
-        seasonality=SeasonalityMode.MONSOON,
-        display_color="#c4a43e",
-    ),
-    ClimateZone.DESERT: ClimateTemplate(
-        climate=ClimateZone.DESERT,
-        humidity_range=(5.0, 30.0),
-        wind_speed_range=(2.0, 15.0),
-        seasonality=SeasonalityMode.NONE,
-        display_color="#e6c878",
-    ),
-    ClimateZone.STEPPE: ClimateTemplate(
-        climate=ClimateZone.STEPPE,
-        humidity_range=(20.0, 50.0),
-        wind_speed_range=(2.0, 12.0),
-        seasonality=SeasonalityMode.FOUR_SEASON,
-        display_color="#b8a060",
-    ),
-    ClimateZone.TEMPERATE_FOREST: ClimateTemplate(
-        climate=ClimateZone.TEMPERATE_FOREST,
-        humidity_range=(45.0, 80.0),
-        wind_speed_range=(0.0, 12.0),
-        seasonality=SeasonalityMode.FOUR_SEASON,
-        display_color="#4a7c3f",
-    ),
-    ClimateZone.SUBARCTIC_TAIGA: ClimateTemplate(
-        climate=ClimateZone.SUBARCTIC_TAIGA,
-        humidity_range=(40.0, 75.0),
-        wind_speed_range=(2.0, 15.0),
-        seasonality=SeasonalityMode.POLAR,
-        display_color="#3a6a8a",
-    ),
-    ClimateZone.POLAR_TUNDRA: ClimateTemplate(
-        climate=ClimateZone.POLAR_TUNDRA,
-        humidity_range=(30.0, 70.0),
-        wind_speed_range=(2.0, 20.0),
-        seasonality=SeasonalityMode.POLAR,
-        display_color="#d8d8e8",
-    ),
-    ClimateZone.ALPINE: ClimateTemplate(
-        climate=ClimateZone.ALPINE,
-        humidity_range=(30.0, 70.0),
-        wind_speed_range=(3.0, 25.0),
-        seasonality=SeasonalityMode.ALPINE,
-        display_color="#b0b0c0",
-    ),
+_SEASONALITY_BY_NAME: Mapping[str, SeasonalityMode] = {
+    m.name.lower(): m for m in SeasonalityMode
 }
+
+
+def _parse_climate_template(ns_id: str, raw: Mapping) -> tuple[ClimateTemplate, str]:
+    """单行 JSON → (ClimateTemplate, label_key)（不就地修改枚举成员）。
+
+    校验枚举一致性、seasonality 合法；label_key 由调用方在全部校验
+    通过后统一填充，避免解析中途失败留下半修改的枚举状态。
+    """
+    zone = ClimateZone[split_ns_id(ns_id)[1].upper()]
+    if int(raw["value"]) != zone.value:
+        raise ValueError(
+            f"{ns_id}: 数据 value {raw['value']} 与枚举 {zone.value} 不一致"
+        )
+    if "label_key" not in raw:
+        raise ValueError(f"{ns_id}: 缺少必需字段 label_key")
+    label_key = str(raw["label_key"])
+    seasonality = _SEASONALITY_BY_NAME.get(str(raw.get("seasonality", "none")))
+    if seasonality is None:
+        raise ValueError(f"{ns_id}: 非法 seasonality {raw.get('seasonality')!r}")
+    tmpl = ClimateTemplate(
+        climate=zone,
+        humidity_range=tuple(float(x) for x in raw["humidity_range"]),
+        wind_speed_range=tuple(float(x) for x in raw["wind_speed_range"]),
+        seasonality=seasonality,
+        display_color=str(raw.get("display_color", "#888888")),
+    )
+    return tmpl, label_key
+
+
+def _build_climate_templates(doc: Mapping) -> dict[ClimateZone, ClimateTemplate]:
+    """data/climate.json → 注册表。先全量校验，通过后统一填充 label_key。"""
+    raw_map = doc.get("climate")
+    if not isinstance(raw_map, Mapping) or not raw_map:
+        raise ValueError("data/climate.json: 缺少 climate 注册表")
+    parsed: list[tuple[ClimateTemplate, str]] = [
+        _parse_climate_template(ns_id, raw) for ns_id, raw in raw_map.items()
+    ]
+    templates = {tmpl.climate: tmpl for tmpl, _ in parsed}
+    missing = set(ClimateZone) - set(templates)
+    if missing:
+        raise ValueError(f"data/climate.json: 缺气候档 {[z.name for z in missing]}")
+    for tmpl, label_key in parsed:
+        tmpl.climate.label_key = label_key
+    return templates
+
+
+_CLIMATE_TEMPLATES: dict[ClimateZone, ClimateTemplate] = _build_climate_templates(
+    load_content("climate")
+)
 
 
 def get_climate_template(climate: ClimateZone) -> ClimateTemplate:

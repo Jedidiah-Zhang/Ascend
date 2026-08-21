@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "world": {
+    "BIRTH_ELEV_MIN": 0.0,
+    "BIRTH_ELEV_MAX": 50.0,
+    "CONTINENT_WIDTH_KM": 100.0,
+    "CONTINENT_HEIGHT_KM": 60.0,
+    "CONTINENT_SAMPLE_RESOLUTION_M": 100.0,
+    "CONTINENT_LAND_RATIO": 0.55,
+    "ELEVATION_SCALE_FACTOR": 4000.0,
+    "EROSION_ITERATIONS": 10,
+    "EROSION_ERODIBILITY": 0.01,
+    "EROSION_TOLERANCE": 0.05,
+    "EROSION_MIN_ITERATIONS": 3,
+    "RIVER_FLOW_THRESHOLD": 500.0,
+    "RIVER_MIN_LENGTH": 20,
+    "RIVER_WIDTH_THRESHOLD": 20.0,
+    "RIVER_WIDTH_MIN": 2.0,
+    "RIVER_WIDTH_MAX": 80.0,
+    "LAKE_MIN_PIXELS": 5,
+    "LAKE_DEEP_AREA_KM2": 1.0,
+    "LAKE_DEEP_DEPTH_M": 3.0,
+    "LAKE_WETLAND_DEPTH_MAX": 2.0,
+    "RAINSHADOW_DECAY_KM": 4.0,
+    "RAINSHADOW_SECONDARY_WEIGHT": 0.2,
+    "RAINSHADOW_MIN_FACTOR": 0.15,
+    "CONTINENTALITY_K": 3.0,
+    "CONTINENTALITY_D0_KM": 200.0,
+    "NOISE_FREQ_DERIVED": 0.005,
+    "TERRAIN_NOISE_FREQUENCY": 0.005,
+    "TERRAIN_NOISE_OCTAVES": 4,
+    "TERRAIN_NOISE_AMPLITUDE": 50.0,
+    "CONTINENT_NOISE_OCTAVES": 5,
+    "CONTINENT_OUTLINE_OCTAVES": 2,
+    "CONTINENT_BLEND_WEIGHT": 0.7,
+    "TERRAIN_BLEND_WEIGHT": 0.3,
+    "CENTER_BIAS_WEIGHT": 0.12,
+    "SEA_LEVEL_ELEV": 0.0,
+    "OCEAN_COLD_CUTOFF": 5.0,
+    "OCEAN_WARM_CUTOFF": 20.0,
+    "OCEAN_DEEP_THRESHOLD": -100.0,
+    "CLIMATE_CALIB_RAINFALL_REF": 100.0,
+    "CLIMATE_CALIB_TEMP_MIN": -12.0,
+    "CLIMATE_CALIB_TEMP_MAX": 30.0,
+    "CLIMATE_CALIB_HOT_THRESHOLD": 20.0,
+    "CLIMATE_CALIB_COLD_RANGE": [
+      -5.0,
+      5.0
+    ],
+    "CLIMATE_CALIB_HOT_RAINFALL_TARGET": 1500.0,
+    "CLIMATE_CALIB_HOT_STRETCH_PARAM": [
+      200.0,
+      1600.0
+    ],
+    "CLIMATE_CALIB_COLD_RAINFALL_TARGET": 500.0,
+    "CLIMATE_CALIB_COLD_STRETCH_PARAM": [
+      300.0,
+      300.0
+    ],
+    "ELEVATION_TARGET_P99": 2500.0
+  },
+  "climate": {
+    "LAPSE_RATE": 9.0,
+    "RAINFALL_MIN": 50.0,
+    "RAINFALL_MAX": 3500.0,
+    "ALPINE_ALTITUDE": 2000.0,
+    "POLAR_TEMP": -5.0,
+    "DESERT_RAINFALL": 200.0,
+    "STEPPE_RAINFALL": 600.0,
+    "STEPPE_MIN_TEMP": 5.0,
+    "TROPICAL_TEMP": 20.0,
+    "TEMPERATE_TEMP": 5.0,
+    "RAINFOREST_RAINFALL": 1500.0,
+    "TAIGA_RAINFALL": 400.0,
+    "PARAM_BOUNDS": {
+      "temperature": [
+        -30.0,
+        50.0
+      ],
+      "rainfall": [
+        0.0,
+        5000.0
+      ],
+      "sunshine": [
+        0.0,
+        24.0
+      ],
+      "altitude": [
+        -500.0,
+        5000.0
+      ],
+      "humidity": [
+        0.0,
+        100.0
+      ],
+      "wind_speed": [
+        0.0,
+        50.0
+      ]
+    }
+  },
+  "weather": {
+    "WEATHER_FIELD_GRID_SIZE": 1000.0,
+    "WEATHER_FIELD_TILE_NOISE_WAVELENGTH": 10.0,
+    "WEATHER_FIELD_TILE_NOISE_SCALE": 0.06,
+    "TEXTURE_WAVELENGTH_TEMP": 7500.0,
+    "TEXTURE_WAVELENGTH_WIND": 2500.0,
+    "TEXTURE_WAVELENGTH_PRECIP": 1500.0,
+    "TEXTURE_OCTAVES": 4,
+    "TEXTURE_PERSISTENCE": 0.5,
+    "TEXTURE_LACUNARITY": 2.0,
+    "TEXTURE_DRIFT_RATE": 1e-05,
+    "FEATURE_BLOCK_SIZE": 16000.0,
+    "FEATURE_MAX_RADIUS": 6000.0,
+    "CLIMATE_PROXY_TEMP_WAVELENGTH": 100000.0,
+    "CLIMATE_PROXY_RAIN_WAVELENGTH": 60000.0,
+    "CLIMATE_PROXY_OCTAVES": 3,
+    "SEASONS_PER_YEAR": 4,
+    "SEASON_LENGTH_DAYS": 90,
+    "DIURNAL_PEAK_HOUR": 14,
+    "DIURNAL_TROUGH_HOUR": 2,
+    "SUNRISE_HOUR": 6,
+    "SUNSET_HOUR": 18,
+    "OBLIQUITY_DEG": 23.44,
+    "TEMP_PERTURB_SCALE": 5.0,
+    "HUMIDITY_PERTURB_SCALE": 15.0,
+    "WIND_PERTURB_SCALE": 4.0,
+    "SUNSHINE_PERTURB_SCALE": 1.5,
+    "DIURNAL_TO_SEASONAL_RATIO": 0.5,
+    "HUMIDITY_DIURNAL_SCALE": 0.8,
+    "HUMIDITY_SEASONAL_SCALE": 0.4,
+    "PRECIP_SIGNAL_MIN": 0.2,
+    "PRECIP_SIGNAL_MAX": 1.2,
+    "PRECIP_THRESHOLD_DRY": 0.55,
+    "PRECIP_THRESHOLD_WET": 0.25,
+    "PRECIP_ANNUAL_DRY": 50.0,
+    "PRECIP_ANNUAL_WET": 3500.0,
+    "PRECIP_INTENSITY_SCALE": 2.0,
+    "TEMP_TIER_BOUNDARIES": [
+      -10.0,
+      -3.0,
+      5.0,
+      13.0,
+      20.0,
+      25.0,
+      30.0,
+      36.0,
+      43.0
+    ],
+    "HUMIDITY_TIER_BOUNDARIES": [
+      25.0,
+      50.0,
+      72.0,
+      88.0
+    ],
+    "WIND_TIER_BOUNDARIES": [
+      1.5,
+      4.0,
+      8.0,
+      14.0,
+      23.0
+    ],
+    "SUNSHINE_TIER_BOUNDARIES": [
+      1.5,
+      4.5,
+      8.0,
+      12.0,
+      15.5
+    ],
+    "SUNLIGHT_INTENSITY_TIER_BOUNDARIES": [
+      0.01,
+      0.25,
+      0.55,
+      0.8
+    ],
+    "TEMP_BOUNDS": [
+      -30.0,
+      50.0
+    ],
+    "HUMIDITY_BOUNDS": [
+      0.0,
+      100.0
+    ],
+    "WIND_BOUNDS": [
+      0.0,
+      50.0
+    ],
+    "SUNSHINE_BOUNDS": [
+      0.0,
+      24.0
+    ],
+    "RAIN_INTENSITY_BOUNDS": [
+      0.0,
+      100.0
+    ],
+    "LATITUDE_T_MIN": -5.0,
+    "LATITUDE_T_MAX": 35.0,
+    "LATITUDE_MIN": 0.0,
+    "LATITUDE_MAX": 80.0,
+    "SEASONAL_AMP_T_MIN": -5.0,
+    "SEASONAL_AMP_T_MAX": 35.0,
+    "SEASONAL_AMP_MAX": 28.0,
+    "SEASONAL_AMP_MIN": 2.0,
+    "SEASONAL_AMP_R_REF": 2000.0,
+    "SEASONAL_AMP_R_BONUS": 4.0,
+    "SEASONAL_AMP_BOUNDS": [
+      1.0,
+      30.0
+    ]
+  },
+  "tile": {
+    "STEEP_GRADIENT": 1.0
+  }
+}

@@ -1,16 +1,22 @@
 """集中配置 — 所有可调参数的单一定义源。
 
 按领域组织，各模块通过 `from ascend.config import XXX` 引用。
-命令行参数 / 配置文件覆盖在未来版本中实现。
+
+**内容参数（World / Climate / Weather / Tile）的有效值来自
+`data/world.json`**（改内容只改数据文件、不用改代码，也为未来 Mod
+提供数据层修改入口；本文件中的赋值仅为类型声明与兜底默认）。修改
+内容参数请改 `data/world.json`，配置文件于模块末尾加载并覆盖。
+Server / Time / Storage / UI 为引擎/基础设施常量，仅在本文件定义。
 
 类别:
-    Server    — 网络与连接
-    Time      — 时间常量
-    World     — 世界生成
-    Climate   — 气候判定阈值
-    Weather   — 天气参数
-    Storage   — 持久化与缓存
-    UI        — 终端与调试
+    Server    — 网络与连接（代码）
+    Time      — 时间常量（代码）
+    World     — 世界生成（数据，data/world.json）
+    Climate   — 气候判定阈值（数据，data/world.json）
+    Weather   — 天气参数（数据，data/world.json）
+    Tile      — 瓦片生成阈值（数据，data/world.json）
+    Storage   — 持久化与缓存（代码）
+    UI        — 终端与调试（代码）
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -280,14 +286,6 @@ SEASONAL_AMP_BOUNDS: tuple[float, float] = (1.0, 30.0)
 # Tile — 瓦片生成阈值
 # ═══════════════════════════════════════════════════════════════
 
-# 基线地形分类阈值（温带落叶林基线，bias=0）
-BASE_SAND_CAP: float = 10.0             # SAND 海拔上限 (m)
-BASE_FERTILE_LO: float = 100.0          # FERTILE_SOIL 下限 (m)
-BASE_FERTILE_HI: float = 300.0          # FERTILE_SOIL 上限 (m)
-BASE_GRASSLAND_CAP: float = 600.0       # GRASSLAND 上限 (m)
-BASE_ROCK_THRESHOLD: float = 600.0      # ROCK 起始海拔 (m)
-BASE_PEAK_THRESHOLD: float = 2000.0     # MOUNTAIN_PEAK 起始海拔 (m)
-
 STEEP_GRADIENT: float = 1.0             # 陡坡梯度阈值 (m/m)
 
 # ═══════════════════════════════════════════════════════════════
@@ -371,3 +369,67 @@ CONTINENT_GEN_CONSTANT_NAMES: tuple[str, ...] = (
 # 发布时若生成算法/相关常量变化，递增此值——打包指纹随之变化。
 # 开发环境指纹含源码哈希，日常无需维护；仅进发布清单（build/README.md）。
 CONTINENT_GEN_VERSION: int = 1
+
+# ═══════════════════════════════════════════════════════════════
+# Content 覆盖 — 从 data/world.json 加载内容参数（Mod 第 1 层）
+# ═══════════════════════════════════════════════════════════════
+# 在全部常量定义之后执行：覆盖 World/Climate/Weather/Tile 内容参数，
+# 保留本模块常量名与类型（35+ 处 `from config import X` 与 C 注入零改动）。
+# 派生值（MOISTURE_TILE_FREQUENCY / SEASON_LENGTH / TICK_DT 等）不在
+# 数据文件中，保持代码计算。加载失败（未知键/类型不匹配）import 期 fail fast。
+
+from ascend.data import load_content as _load_content
+
+
+def _coerce_content(name: str, value: object, existing: object) -> object:
+    """把 JSON 值按既有常量类型转换；不匹配则报错（fail fast）。"""
+    if isinstance(existing, bool):
+        if not isinstance(value, bool):
+            raise ValueError(f"config 内容 {name}: 需要 bool，got {value!r}")
+        return value
+    if isinstance(existing, int):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"config 内容 {name}: 需要 int，got {value!r}")
+        return value
+    if isinstance(existing, float):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError(f"config 内容 {name}: 需要 float，got {value!r}")
+        return float(value)
+    if isinstance(existing, str):
+        if not isinstance(value, str):
+            raise ValueError(f"config 内容 {name}: 需要 str，got {value!r}")
+        return value
+    if isinstance(existing, tuple):
+        if not isinstance(value, list):
+            raise ValueError(f"config 内容 {name}: 需要数组，got {value!r}")
+        return tuple(value)
+    if isinstance(existing, dict):
+        if not isinstance(value, dict):
+            raise ValueError(f"config 内容 {name}: 需要对象，got {value!r}")
+        return {
+            k: (_coerce_content(f"{name}.{k}", v, existing[k])
+                if k in existing else v)
+            for k, v in value.items()
+        }
+    raise TypeError(f"config 内容 {name}: 不支持的类型 {type(existing)}")
+
+
+def _apply_content(doc: dict) -> None:
+    """把 data/world.json 的内容常量覆盖到模块全局。"""
+    for section, values in doc.items():
+        if section == "version":
+            continue
+        if not isinstance(values, dict):
+            raise ValueError(f"data/world.json: 段 {section!r} 必须是对象")
+        for name, value in values.items():
+            if name not in globals():
+                raise ValueError(f"data/world.json: 未知配置键 {name}（{section}）")
+            existing = globals()[name]
+            if callable(existing):
+                raise ValueError(
+                    f"data/world.json: 键 {name} 与函数/类同名，拒绝覆盖"
+                )
+            globals()[name] = _coerce_content(name, value, existing)
+
+
+_apply_content(_load_content("world"))

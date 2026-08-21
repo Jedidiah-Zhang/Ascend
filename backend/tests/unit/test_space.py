@@ -668,8 +668,8 @@ class TestTerrainType:
         for t in TerrainType:
             defn = get_terrain_def(t)
             assert isinstance(defn, TerrainDef)
-            assert isinstance(defn.label, str)
-            assert len(defn.label) > 0
+            assert isinstance(defn.label_key, str)
+            assert len(defn.label_key) > 0
             assert defn.value == int(t)
 
     def test_passable(self):

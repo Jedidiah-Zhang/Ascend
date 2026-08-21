@@ -18,6 +18,7 @@ import math
 import random
 import threading
 from dataclasses import dataclass
+from typing import Mapping
 
 from ascend.config import (
     GAME_DAY,
@@ -29,6 +30,7 @@ from ascend.config import (
     CLIMATE_PROXY_RAIN_WAVELENGTH,
     CLIMATE_PROXY_OCTAVES,
 )
+from ascend.data import load_content, split_ns_id
 from ascend.log import get_logger
 from ascend.space import PerlinNoise, ClimateZone, classify
 
@@ -83,92 +85,99 @@ class FeatureConfig:
     stop_event_cls: type = None
 
 
-# ── 注册表：添加新特征类型只需在此加一行 ─────────────────────────
+# ── 注册表：数据驱动（data/weather.json），新增特征类型 = 数据加一项 ──
+# 数据键 = 命名空间 id（ascend:cold_snap 等）；运行时 type_name = local 部分
+# （"cold_snap"，代码/事件/终端指令的字面标识）。事件类经代码侧映射。
 
-FEATURE_TYPES: dict[str, FeatureConfig] = {
-    T_COLD_SNAP: FeatureConfig(
-        type_name=T_COLD_SNAP,
-        effect=EFFECT_TEMPERATURE,
-        rates={
-            ClimateZone.EQUATORIAL_RAINFOREST: 0.0,
-            ClimateZone.TROPICAL_SAVANNA: 0.0,
-            ClimateZone.DESERT: 0.0,
-            ClimateZone.STEPPE: 0.3,
-            ClimateZone.TEMPERATE_FOREST: 1.0,
-            ClimateZone.SUBARCTIC_TAIGA: 2.0,
-            ClimateZone.POLAR_TUNDRA: 2.0,
-            ClimateZone.ALPINE: 1.5,
-        },
-        mean_duration=3 * GAME_DAY,  # 3 天
-        base_intensity=-15.0,
-        radius_range=(3000.0, 6000.0),
-        speed_range=(0.3, 1.2),
-        start_event_cls=ColdSnapStart,
-        stop_event_cls=ColdSnapStop,
-    ),
-    T_HEAT_WAVE: FeatureConfig(
-        type_name=T_HEAT_WAVE,
-        effect=EFFECT_TEMPERATURE,
-        rates={
-            ClimateZone.EQUATORIAL_RAINFOREST: 0.0,
-            ClimateZone.TROPICAL_SAVANNA: 1.0,
-            ClimateZone.DESERT: 2.0,
-            ClimateZone.STEPPE: 1.5,
-            ClimateZone.TEMPERATE_FOREST: 0.5,
-            ClimateZone.SUBARCTIC_TAIGA: 0.0,
-            ClimateZone.POLAR_TUNDRA: 0.0,
-            ClimateZone.ALPINE: 0.2,
-        },
-        mean_duration=5 * GAME_DAY,  # 5 天
-        base_intensity=15.0,
-        radius_range=(3000.0, 6000.0),
-        speed_range=(0.3, 1.2),
-        start_event_cls=HeatWaveStart,
-        stop_event_cls=HeatWaveStop,
-    ),
-    T_STORM: FeatureConfig(
-        type_name=T_STORM,
-        effect=EFFECT_MULTIPLIER,
-        rates={
-            ClimateZone.EQUATORIAL_RAINFOREST: 1.5,
-            ClimateZone.TROPICAL_SAVANNA: 2.0,
-            ClimateZone.DESERT: 0.1,
-            ClimateZone.STEPPE: 0.5,
-            ClimateZone.TEMPERATE_FOREST: 1.0,
-            ClimateZone.SUBARCTIC_TAIGA: 0.5,
-            ClimateZone.POLAR_TUNDRA: 0.3,
-            ClimateZone.ALPINE: 1.0,
-        },
-        mean_duration=6 * GAME_HOUR,  # 6 小时
-        base_intensity=3.0,
-        radius_range=(1500.0, 3000.0),
-        speed_range=(2.0, 5.0),
-        precip_boost=1.0,
-        start_event_cls=StormStart,
-        stop_event_cls=StormStop,
-    ),
-    T_FRONT: FeatureConfig(
-        type_name=T_FRONT,
-        effect=EFFECT_PRECIP,
-        rates={
-            ClimateZone.EQUATORIAL_RAINFOREST: 6.0,
-            ClimateZone.TROPICAL_SAVANNA: 4.0,
-            ClimateZone.DESERT: 0.5,
-            ClimateZone.STEPPE: 2.0,
-            ClimateZone.TEMPERATE_FOREST: 3.0,
-            ClimateZone.SUBARCTIC_TAIGA: 2.0,
-            ClimateZone.POLAR_TUNDRA: 1.0,
-            ClimateZone.ALPINE: 2.0,
-        },
-        mean_duration=10 * GAME_HOUR,  # 10 小时
-        base_intensity=1.0,
-        radius_range=(2000.0, 4000.0),  # 带宽（半宽 ×2）
-        speed_range=(3.0, 8.0),
-        precip_boost=1.0,
-        start_event_cls=None,
-        stop_event_cls=None,
-    ),
+_EVENT_CLASSES: dict[str, type] = {
+    "cold_snap_start": ColdSnapStart,
+    "cold_snap_stop": ColdSnapStop,
+    "heat_wave_start": HeatWaveStart,
+    "heat_wave_stop": HeatWaveStop,
+    "storm_start": StormStart,
+    "storm_stop": StormStop,
 }
+
+_ALLOWED_EFFECTS = frozenset({EFFECT_TEMPERATURE, EFFECT_MULTIPLIER, EFFECT_PRECIP})
+
+
+def _parse_duration(raw: Mapping) -> int:
+    """mean_duration：{"days": n} / {"hours": n} → tick。"""
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"mean_duration 必须是对象，got {raw!r}")
+    if "days" in raw:
+        return int(raw["days"]) * GAME_DAY
+    if "hours" in raw:
+        return int(raw["hours"]) * GAME_HOUR
+    raise ValueError(f"mean_duration 需含 days 或 hours，got {raw!r}")
+
+
+def _parse_rates(raw: Mapping) -> dict[ClimateZone, float]:
+    """rates：命名空间 id 键 → ClimateZone；未知键报错，缺省档填 0.0。"""
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"rates 必须是对象，got {raw!r}")
+    rates: dict[ClimateZone, float] = {
+        ClimateZone[split_ns_id(str(k))[1].upper()]: float(v)
+        for k, v in raw.items()
+    }
+    for zone in ClimateZone:
+        rates.setdefault(zone, 0.0)  # 未声明的气候档 = 永不发生
+    return rates
+
+
+def _parse_event_class(raw: object, field: str) -> type | None:
+    """事件类：字符串 id → 类（经 _EVENT_CLASSES）；null → None。"""
+    if raw is None:
+        return None
+    if raw not in _EVENT_CLASSES:
+        raise ValueError(f"未知事件类 {raw!r}（{field}）")
+    return _EVENT_CLASSES[raw]
+
+
+def _parse_feature_config(ns_id: str, raw: Mapping) -> FeatureConfig:
+    """单行 JSON → FeatureConfig（type_name = local 部分，非空校验）。"""
+    ns, local = split_ns_id(ns_id)
+    if not local:
+        raise ValueError(f"注册表键 local 部分为空: {ns_id!r}")
+    effect = str(raw.get("effect", ""))
+    if effect not in _ALLOWED_EFFECTS:
+        raise ValueError(f"{ns_id}: 非法 effect {effect!r}")
+    events = raw.get("events", {})
+    return FeatureConfig(
+        type_name=local,
+        effect=effect,
+        rates=_parse_rates(raw["rates"]),
+        mean_duration=_parse_duration(raw.get("mean_duration", {"days": 1})),
+        base_intensity=float(raw["base_intensity"]),
+        radius_range=tuple(float(x) for x in raw["radius_range"]),
+        speed_range=tuple(float(x) for x in raw["speed_range"]),
+        precip_boost=float(raw.get("precip_boost", 0.0)),
+        start_event_cls=_parse_event_class(
+            events.get("start") if isinstance(events, Mapping) else None, "start",
+        ),
+        stop_event_cls=_parse_event_class(
+            events.get("stop") if isinstance(events, Mapping) else None, "stop",
+        ),
+    )
+
+
+def _build_feature_types(doc: Mapping) -> dict[str, FeatureConfig]:
+    """data/weather.json → FEATURE_TYPES。校验 import 期 fail fast。"""
+    raw_map = doc.get("features")
+    if not isinstance(raw_map, Mapping) or not raw_map:
+        raise ValueError("data/weather.json: 缺少 features 注册表")
+    configs: dict[str, FeatureConfig] = {}
+    for ns_id, raw in raw_map.items():
+        cfg = _parse_feature_config(ns_id, raw)
+        if cfg.type_name in configs:
+            raise ValueError(f"特征 local 名重复（运行时 type_name 须唯一）: {cfg.type_name}")
+        configs[cfg.type_name] = cfg
+    return configs
+
+
+FEATURE_TYPES: dict[str, FeatureConfig] = _build_feature_types(
+    load_content("weather")
+)
 
 
 @dataclass(slots=True)

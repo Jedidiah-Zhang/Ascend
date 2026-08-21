@@ -649,13 +649,15 @@ class TestVisualOutput:
             backend/tests/unit/test_continent.py::TestVisualOutput -v -s
     """
 
-    # 输出目录相对于项目根
-    _OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "visual", "output")
+    # 输出目录：tools/visual/output（tools/visual/ 已 gitignore）
+    _OUTPUT_DIR = os.path.join(
+        os.path.dirname(__file__), "..", "..", "tools", "visual", "output",
+    )
 
     def test_visual_01_outline(self):
         """步骤1：大陆轮廓 → visual/output/01_continent_outline.png"""
         from ascend.space.continent import ContinentData
-        from tests.visual.render import render_mask
+        from tools.visual.render import render_mask
 
         data = _get_data(seed=CANONICAL_SEED)
         mask = data.land_mask
@@ -669,7 +671,7 @@ class TestVisualOutput:
     def test_visual_02_elevation(self):
         """步骤2：基础海拔场 → visual/output/02_elevation.png（高度带色谱）"""
         from ascend.space.continent import ContinentData
-        from tests.visual.render import render_elevation
+        from tools.visual.render import render_elevation
 
         data = _get_data(seed=CANONICAL_SEED)
         out_path = os.path.join(self._OUTPUT_DIR, "02_elevation.png")
@@ -682,7 +684,7 @@ class TestVisualOutput:
     def test_visual_03_temperature(self):
         """步骤3：温度场 → visual/output/03_temperature.png"""
         from ascend.space.continent import ContinentData
-        from tests.visual.render import render_temperature
+        from tools.visual.render import render_temperature
 
         data = _get_data(seed=CANONICAL_SEED)
         w, h = data.grid_width, data.grid_height
@@ -694,7 +696,7 @@ class TestVisualOutput:
     def test_visual_04_rainfall(self):
         """步骤4：年降雨量 → visual/output/04_rainfall.png"""
         from ascend.space.continent import ContinentData
-        from tests.visual.render import render_rainfall
+        from tools.visual.render import render_rainfall
 
         data = _get_data(seed=CANONICAL_SEED)
         w, h = data.grid_width, data.grid_height
@@ -706,7 +708,7 @@ class TestVisualOutput:
     def test_visual_05_climate(self):
         """步骤5：气候带 → visual/output/05_climate.png"""
         from ascend.space.continent import ContinentData
-        from tests.visual.render import render_blocks
+        from tools.visual.render import render_blocks
 
         data = _get_data(seed=CANONICAL_SEED)
         w, h = data.grid_width, data.grid_height
@@ -724,7 +726,7 @@ class TestVisualOutput:
     def test_visual_06_water_bodies(self):
         """步骤6：全部水体（湖泊 + RK4 流线河流）→ visual/output/06_water_bodies.png"""
         from ascend.space.continent import ContinentData
-        from tests.visual.render import render_elevation_with_rivers, render_overlay_lines
+        from tools.visual.render import render_elevation_with_rivers, render_overlay_lines
 
         data = _get_data(seed=CANONICAL_SEED)
         w, h = data.grid_width, data.grid_height
@@ -773,7 +775,7 @@ class TestVisualOutput:
         from ascend.space.continent import ContinentGenerator
         from ascend.space.tile_gen import TileGenerator
         from ascend.space.terrain import TerrainType
-        from tests.visual.render import render_elevation
+        from tools.visual.render import render_elevation
 
         cont = ContinentGenerator(seed=CANONICAL_SEED).generate()
         gen = TileGenerator(seed=CANONICAL_SEED, continent=cont)
@@ -805,7 +807,7 @@ class TestVisualOutput:
         from ascend.space.continent import ContinentGenerator
         from ascend.space.tile_gen import TileGenerator
         from ascend.space.terrain import TerrainType
-        from tests.visual.render import render_elevation
+        from tools.visual.render import render_elevation
 
         cont = ContinentGenerator(seed=CANONICAL_SEED).generate()
         gen = TileGenerator(seed=CANONICAL_SEED, continent=cont)
@@ -856,7 +858,7 @@ def _render_elevation_with_lines(
     title: str = "",
 ) -> None:
     """渲染海拔底图并在其上叠加折线（内存合成，无中间文件）。"""
-    from tests.visual.render import _elevation_to_rgb
+    from tools.visual.render import _elevation_to_rgb
     from PIL import Image, ImageDraw
 
     pixels = [_elevation_to_rgb(e) for e in dem]

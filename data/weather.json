@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "features": {
+    "ascend:cold_snap": {
+      "effect": "temperature",
+      "rates": {
+        "ascend:equatorial_rainforest": 0.0,
+        "ascend:tropical_savanna": 0.0,
+        "ascend:desert": 0.0,
+        "ascend:steppe": 0.3,
+        "ascend:temperate_forest": 1.0,
+        "ascend:subarctic_taiga": 2.0,
+        "ascend:polar_tundra": 2.0,
+        "ascend:alpine": 1.5
+      },
+      "mean_duration": {"days": 3},
+      "base_intensity": -15.0,
+      "radius_range": [3000.0, 6000.0],
+      "speed_range": [0.3, 1.2],
+      "events": {"start": "cold_snap_start", "stop": "cold_snap_stop"}
+    },
+    "ascend:heat_wave": {
+      "effect": "temperature",
+      "rates": {
+        "ascend:equatorial_rainforest": 0.0,
+        "ascend:tropical_savanna": 1.0,
+        "ascend:desert": 2.0,
+        "ascend:steppe": 1.5,
+        "ascend:temperate_forest": 0.5,
+        "ascend:subarctic_taiga": 0.0,
+        "ascend:polar_tundra": 0.0,
+        "ascend:alpine": 0.2
+      },
+      "mean_duration": {"days": 5},
+      "base_intensity": 15.0,
+      "radius_range": [3000.0, 6000.0],
+      "speed_range": [0.3, 1.2],
+      "events": {"start": "heat_wave_start", "stop": "heat_wave_stop"}
+    },
+    "ascend:storm": {
+      "effect": "multiplier",
+      "rates": {
+        "ascend:equatorial_rainforest": 1.5,
+        "ascend:tropical_savanna": 2.0,
+        "ascend:desert": 0.1,
+        "ascend:steppe": 0.5,
+        "ascend:temperate_forest": 1.0,
+        "ascend:subarctic_taiga": 0.5,
+        "ascend:polar_tundra": 0.3,
+        "ascend:alpine": 1.0
+      },
+      "mean_duration": {"hours": 6},
+      "base_intensity": 3.0,
+      "radius_range": [1500.0, 3000.0],
+      "speed_range": [2.0, 5.0],
+      "precip_boost": 1.0,
+      "events": {"start": "storm_start", "stop": "storm_stop"}
+    },
+    "ascend:front": {
+      "effect": "precip",
+      "rates": {
+        "ascend:equatorial_rainforest": 6.0,
+        "ascend:tropical_savanna": 4.0,
+        "ascend:desert": 0.5,
+        "ascend:steppe": 2.0,
+        "ascend:temperate_forest": 3.0,
+        "ascend:subarctic_taiga": 2.0,
+        "ascend:polar_tundra": 1.0,
+        "ascend:alpine": 2.0
+      },
+      "mean_duration": {"hours": 10},
+      "base_intensity": 1.0,
+      "radius_range": [2000.0, 4000.0],
+      "speed_range": [3.0, 8.0],
+      "precip_boost": 1.0,
+      "events": {"start": null, "stop": null}
+    }
+  }
+}

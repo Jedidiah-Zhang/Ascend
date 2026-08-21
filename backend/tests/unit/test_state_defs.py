@@ -5,7 +5,7 @@ Coverage: state_defs.py 全部公开接口 + terrain.TERRAIN_DEFS 参数完整�
 
 import pytest
 
-from ascend.space.terrain import TERRAIN_DEFS, TerrainType, state_params
+from ascend.space.terrain import TERRAIN_DEFS, TerrainType, get_terrain_def, state_params
 from ascend.space.state_defs import (
     STATE_TYPES,
     COVERAGE_SPECS,
@@ -73,7 +73,7 @@ class TestTerrainStateParams:
     def test_matrix_covers_all_terrains_and_states(self):
         """矩阵完整：每 TerrainType × 每状态必声明（None 或参数）。"""
         for terrain in TerrainType:
-            states = TERRAIN_DEFS[terrain.name].states
+            states = get_terrain_def(terrain).states
             for key in state_keys():
                 assert key in states, f"{terrain.name} 漏声明 {key}"
 

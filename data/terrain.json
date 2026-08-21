@@ -1,0 +1,196 @@
+{
+  "version": 1,
+  "terrain": {
+    "ascend:grassland": {
+      "value": 0,
+      "label_key": "terrain.grassland",
+      "movement_cost": 1.0,
+      "fertility": 0.5,
+      "states": {
+        "moisture": {
+          "deposit": 1.6,
+          "drain": 0.1,
+          "melt": 0.02
+        },
+        "snow": {
+          "deposit": 1.0,
+          "melt": 0.15
+        },
+        "ice": null
+      },
+      "altitude": {
+        "lo": 10.0,
+        "hi": 600.0,
+        "priority": 7,
+        "lo_delta": "sand_cap_delta"
+      }
+    },
+    "ascend:sand": {
+      "value": 1,
+      "label_key": "terrain.sand",
+      "movement_cost": 1.2,
+      "fertility": 0.2,
+      "states": {
+        "moisture": null,
+        "snow": {
+          "deposit": 1.0,
+          "melt": 0.15
+        },
+        "ice": null
+      },
+      "altitude": {
+        "lo": 0.0,
+        "hi": 10.0,
+        "priority": 6,
+        "hi_delta": "sand_cap_delta"
+      },
+      "no_steep_reclass": true,
+      "fallback": true
+    },
+    "ascend:fertile_soil": {
+      "value": 2,
+      "label_key": "terrain.fertile_soil",
+      "fertility": 1.0,
+      "states": {
+        "moisture": {
+          "deposit": 1.6,
+          "drain": 0.1,
+          "melt": 0.02
+        },
+        "snow": {
+          "deposit": 1.0,
+          "melt": 0.15
+        },
+        "ice": null
+      },
+      "altitude": {
+        "lo": 100.0,
+        "hi": 300.0,
+        "priority": 8,
+        "lo_delta": "fertile_shift",
+        "hi_delta": "fertile_shift"
+      }
+    },
+    "ascend:rock": {
+      "value": 3,
+      "label_key": "terrain.rock",
+      "buildable": false,
+      "movement_cost": 1.5,
+      "states": {
+        "moisture": null,
+        "snow": {
+          "deposit": 1.0,
+          "melt": 0.15
+        },
+        "ice": null
+      },
+      "altitude": {
+        "lo": 600.0,
+        "hi": 2000.0,
+        "priority": 9,
+        "lo_delta": "rock_threshold_delta",
+        "hi_delta": "peak_threshold_delta"
+      }
+    },
+    "ascend:steep_slope": {
+      "value": 4,
+      "label_key": "terrain.steep_slope",
+      "buildable": false,
+      "movement_cost": 2.0,
+      "states": {
+        "moisture": null,
+        "snow": {
+          "deposit": 1.0,
+          "melt": 0.15
+        },
+        "ice": null
+      }
+    },
+    "ascend:mountain_peak": {
+      "value": 5,
+      "label_key": "terrain.mountain_peak",
+      "passable": false,
+      "buildable": false,
+      "movement_cost": "inf",
+      "states": {
+        "moisture": null,
+        "snow": {
+          "deposit": 1.0,
+          "melt": 0.15
+        },
+        "ice": null
+      },
+      "altitude": {
+        "lo": 2000.0,
+        "priority": 10,
+        "lo_delta": "peak_threshold_delta"
+      },
+      "no_steep_reclass": true
+    },
+    "ascend:shallow_water": {
+      "value": 6,
+      "label_key": "terrain.shallow_water",
+      "buildable": false,
+      "movement_cost": 2.5,
+      "states": {
+        "moisture": null,
+        "snow": {
+          "deposit": 1.0,
+          "melt": 0.15
+        },
+        "ice": {
+          "freeze": 1.5,
+          "melt": 0.8
+        }
+      },
+      "water": true,
+      "altitude": {
+        "lo": -100.0,
+        "hi": 0.0,
+        "priority": 2
+      }
+    },
+    "ascend:deep_water": {
+      "value": 7,
+      "label_key": "terrain.deep_water",
+      "passable": false,
+      "buildable": false,
+      "movement_cost": "inf",
+      "states": {
+        "moisture": null,
+        "snow": {
+          "deposit": 1.0,
+          "melt": 0.15
+        },
+        "ice": {
+          "freeze": 1.5,
+          "melt": 0.8
+        }
+      },
+      "water": true,
+      "altitude": {
+        "hi": -100.0,
+        "priority": 1
+      }
+    },
+    "ascend:marsh": {
+      "value": 8,
+      "label_key": "terrain.marsh",
+      "buildable": false,
+      "movement_cost": 2.0,
+      "fertility": 0.4,
+      "states": {
+        "moisture": {
+          "deposit": 1.6,
+          "drain": 0.03,
+          "melt": 0.02
+        },
+        "snow": {
+          "deposit": 1.0,
+          "melt": 0.15
+        },
+        "ice": null
+      }
+    }
+  }
+}

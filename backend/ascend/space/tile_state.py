@@ -29,7 +29,7 @@ from typing import Callable
 
 from ._cext import load_c_extension
 from .state_defs import STATE_TYPES, state_keys
-from .terrain import TERRAIN_DEFS, TerrainType
+from .terrain import TERRAIN_DEFS, TerrainType, terrain_by_id
 from .tile_grid import TileGrid
 
 # ── C 扩展加载（与 _hydrology.so / _streamlines.so 共用加载器） ──
@@ -735,8 +735,8 @@ class TileStateEngine:
 
 
 _WATER_PARAMS: dict = {
-    TerrainType[name]: defn.states["ice"]
-    for name, defn in TERRAIN_DEFS.items()
+    terrain_by_id(ns_id): defn.states["ice"]
+    for ns_id, defn in TERRAIN_DEFS.items()
     if defn.states["ice"] is not None
 }
 

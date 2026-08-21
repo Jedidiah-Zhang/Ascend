@@ -24,6 +24,8 @@ from .terrain import (
     WATER_TYPES,
     AltitudeBand,
     TerrainType,
+    terrain_by_id,
+    terrain_ns_id,
 )
 from .tile_grid import TileGrid, TILE_MAP_SIZE
 from .noise import PerlinNoise
@@ -45,8 +47,8 @@ from ascend.config import (
 
 _BANDS: list[tuple[AltitudeBand, TerrainType]] = sorted(
     (
-        (defn.altitude, TerrainType[name])
-        for name, defn in TERRAIN_DEFS.items()
+        (defn.altitude, terrain_by_id(ns_id))
+        for ns_id, defn in TERRAIN_DEFS.items()
         if defn.altitude is not None
     ),
     key=lambda item: item[0].priority,
@@ -54,8 +56,8 @@ _BANDS: list[tuple[AltitudeBand, TerrainType]] = sorted(
 )
 
 _FALLBACK_TERRAIN: TerrainType = next(
-    TerrainType[name]
-    for name, defn in TERRAIN_DEFS.items()
+    terrain_by_id(ns_id)
+    for ns_id, defn in TERRAIN_DEFS.items()
     if defn.fallback
 )
 
@@ -364,7 +366,7 @@ def _reclassify_steep(grid: TileGrid) -> None:
             terrain = grid.get(x, y)
             if terrain in WATER_TYPES:
                 continue
-            if TERRAIN_DEFS[terrain.name].no_steep_reclass:
+            if TERRAIN_DEFS[terrain_ns_id(terrain)].no_steep_reclass:
                 continue
             grid.set(x, y, TerrainType.STEEP_SLOPE)
 

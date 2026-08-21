@@ -1,0 +1,660 @@
+{
+  "version": 1,
+  "biome": {
+    "ascend:tropical_monsoon_forest": {
+      "value": 0,
+      "label_key": "biome.tropical_monsoon_forest",
+      "climate": "ascend:equatorial_rainforest",
+      "water_ratio": 0.1,
+      "mountain_ratio": 0.03,
+      "tree_density": 0.7,
+      "terrain_bias": {
+        "sand_cap_delta": -20.0,
+        "fertile_shift": 0.0,
+        "rock_threshold_delta": -50.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.1
+      },
+      "creature_weights": {
+        "monkey": 0.15,
+        "parrot": 0.15,
+        "jaguar": 0.05,
+        "tree_frog": 0.15,
+        "insect": 0.3,
+        "canopy_deer": 0.2
+      },
+      "resource_weights": {
+        "hardwood": 0.25,
+        "fruit": 0.2,
+        "herb": 0.2,
+        "vine": 0.15,
+        "resin": 0.1,
+        "shallow_mineral": 0.1
+      },
+      "ocean": false
+    },
+    "ascend:tropical_rainforest": {
+      "value": 1,
+      "label_key": "biome.tropical_rainforest",
+      "climate": "ascend:equatorial_rainforest",
+      "water_ratio": 0.12,
+      "mountain_ratio": 0.03,
+      "tree_density": 0.95,
+      "terrain_bias": {
+        "sand_cap_delta": -30.0,
+        "fertile_shift": -50.0,
+        "rock_threshold_delta": -50.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.2
+      },
+      "creature_weights": {
+        "monkey": 0.2,
+        "parrot": 0.2,
+        "jaguar": 0.05,
+        "tree_frog": 0.2,
+        "insect": 0.25,
+        "sloth": 0.1
+      },
+      "resource_weights": {
+        "hardwood": 0.3,
+        "fruit": 0.25,
+        "herb": 0.2,
+        "vine": 0.1,
+        "resin": 0.1,
+        "shallow_mineral": 0.05
+      },
+      "ocean": false
+    },
+    "ascend:tropical_savanna": {
+      "value": 2,
+      "label_key": "biome.tropical_savanna",
+      "climate": "ascend:tropical_savanna",
+      "water_ratio": 0.05,
+      "mountain_ratio": 0.05,
+      "tree_density": 0.2,
+      "terrain_bias": {
+        "sand_cap_delta": 20.0,
+        "fertile_shift": 0.0,
+        "rock_threshold_delta": -50.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.0
+      },
+      "creature_weights": {
+        "zebra": 0.2,
+        "antelope": 0.2,
+        "lion": 0.05,
+        "elephant": 0.05,
+        "bird": 0.2,
+        "insect": 0.3
+      },
+      "resource_weights": {
+        "softwood": 0.15,
+        "grass_fiber": 0.35,
+        "herb": 0.2,
+        "stone": 0.15,
+        "shallow_mineral": 0.15
+      },
+      "ocean": false
+    },
+    "ascend:tropical_woodland": {
+      "value": 3,
+      "label_key": "biome.tropical_woodland",
+      "climate": "ascend:tropical_savanna",
+      "water_ratio": 0.06,
+      "mountain_ratio": 0.04,
+      "tree_density": 0.45,
+      "terrain_bias": {
+        "sand_cap_delta": 0.0,
+        "fertile_shift": -30.0,
+        "rock_threshold_delta": -50.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.05
+      },
+      "creature_weights": {
+        "antelope": 0.2,
+        "deer": 0.15,
+        "lion": 0.05,
+        "bird": 0.2,
+        "insect": 0.2,
+        "monkey": 0.1,
+        "rodent": 0.1
+      },
+      "resource_weights": {
+        "softwood": 0.3,
+        "hardwood": 0.1,
+        "grass_fiber": 0.25,
+        "herb": 0.2,
+        "stone": 0.1,
+        "shallow_mineral": 0.05
+      },
+      "ocean": false
+    },
+    "ascend:sandy_desert": {
+      "value": 4,
+      "label_key": "biome.sandy_desert",
+      "climate": "ascend:desert",
+      "water_ratio": 0.01,
+      "mountain_ratio": 0.08,
+      "tree_density": 0.02,
+      "terrain_bias": {
+        "sand_cap_delta": 60.0,
+        "fertile_shift": 80.0,
+        "rock_threshold_delta": -100.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.0
+      },
+      "creature_weights": {
+        "lizard": 0.3,
+        "rodent": 0.25,
+        "nocturnal_predator": 0.1,
+        "venomous_insect": 0.2,
+        "bird": 0.1,
+        "snake": 0.05
+      },
+      "resource_weights": {
+        "sand": 0.4,
+        "exposed_mineral": 0.15,
+        "succulent": 0.15,
+        "oasis_water": 0.05,
+        "stone": 0.25
+      },
+      "ocean": false
+    },
+    "ascend:rocky_desert": {
+      "value": 5,
+      "label_key": "biome.rocky_desert",
+      "climate": "ascend:desert",
+      "water_ratio": 0.01,
+      "mountain_ratio": 0.14,
+      "tree_density": 0.03,
+      "terrain_bias": {
+        "sand_cap_delta": -20.0,
+        "fertile_shift": 120.0,
+        "rock_threshold_delta": -300.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.0
+      },
+      "creature_weights": {
+        "rodent": 0.3,
+        "lizard": 0.15,
+        "nocturnal_predator": 0.15,
+        "venomous_insect": 0.1,
+        "snake": 0.15,
+        "eagle": 0.05,
+        "hyrax": 0.1
+      },
+      "resource_weights": {
+        "exposed_mineral": 0.4,
+        "stone": 0.25,
+        "succulent": 0.1,
+        "sand": 0.1,
+        "shallow_mineral": 0.15
+      },
+      "ocean": false
+    },
+    "ascend:short_grass_steppe": {
+      "value": 6,
+      "label_key": "biome.short_grass_steppe",
+      "climate": "ascend:steppe",
+      "water_ratio": 0.02,
+      "mountain_ratio": 0.08,
+      "tree_density": 0.1,
+      "terrain_bias": {
+        "sand_cap_delta": 30.0,
+        "fertile_shift": 50.0,
+        "rock_threshold_delta": -100.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.0
+      },
+      "creature_weights": {
+        "rodent": 0.25,
+        "antelope": 0.1,
+        "nocturnal_predator": 0.15,
+        "bird": 0.15,
+        "insect": 0.2,
+        "snake": 0.15
+      },
+      "resource_weights": {
+        "exposed_mineral": 0.3,
+        "fiber": 0.25,
+        "succulent": 0.15,
+        "shallow_mineral": 0.1,
+        "stone": 0.2
+      },
+      "ocean": false
+    },
+    "ascend:tall_grass_steppe": {
+      "value": 7,
+      "label_key": "biome.tall_grass_steppe",
+      "climate": "ascend:steppe",
+      "water_ratio": 0.04,
+      "mountain_ratio": 0.06,
+      "tree_density": 0.18,
+      "terrain_bias": {
+        "sand_cap_delta": 10.0,
+        "fertile_shift": 0.0,
+        "rock_threshold_delta": -50.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.05
+      },
+      "creature_weights": {
+        "antelope": 0.25,
+        "rodent": 0.15,
+        "horse": 0.1,
+        "nocturnal_predator": 0.05,
+        "bird": 0.2,
+        "insect": 0.2,
+        "fox": 0.05
+      },
+      "resource_weights": {
+        "grass_fiber": 0.4,
+        "herb": 0.2,
+        "exposed_mineral": 0.15,
+        "shallow_mineral": 0.1,
+        "stone": 0.1,
+        "sod": 0.05
+      },
+      "ocean": false
+    },
+    "ascend:temperate_mixed_forest": {
+      "value": 8,
+      "label_key": "biome.temperate_mixed_forest",
+      "climate": "ascend:temperate_forest",
+      "water_ratio": 0.1,
+      "mountain_ratio": 0.08,
+      "tree_density": 0.65,
+      "terrain_bias": {
+        "sand_cap_delta": 0.0,
+        "fertile_shift": 0.0,
+        "rock_threshold_delta": -150.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.1
+      },
+      "creature_weights": {
+        "moose": 0.2,
+        "wolf": 0.15,
+        "bear": 0.1,
+        "hare": 0.2,
+        "lynx": 0.1,
+        "bird": 0.15,
+        "insect": 0.1
+      },
+      "resource_weights": {
+        "softwood": 0.4,
+        "resin": 0.2,
+        "berry": 0.15,
+        "fungus": 0.1,
+        "shallow_mineral": 0.1,
+        "hardwood": 0.05
+      },
+      "ocean": false
+    },
+    "ascend:temperate_deciduous_forest": {
+      "value": 9,
+      "label_key": "biome.temperate_deciduous_forest",
+      "climate": "ascend:temperate_forest",
+      "water_ratio": 0.08,
+      "mountain_ratio": 0.05,
+      "tree_density": 0.7,
+      "terrain_bias": {
+        "sand_cap_delta": 0.0,
+        "fertile_shift": 0.0,
+        "rock_threshold_delta": 0.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.05
+      },
+      "creature_weights": {
+        "deer": 0.3,
+        "rabbit": 0.2,
+        "wolf": 0.1,
+        "bear": 0.05,
+        "bird": 0.25,
+        "insect": 0.1
+      },
+      "resource_weights": {
+        "hardwood": 0.35,
+        "softwood": 0.25,
+        "berry": 0.15,
+        "herb": 0.1,
+        "fungus": 0.1,
+        "shallow_mineral": 0.05
+      },
+      "ocean": false
+    },
+    "ascend:boreal_wetland": {
+      "value": 10,
+      "label_key": "biome.boreal_wetland",
+      "climate": "ascend:subarctic_taiga",
+      "water_ratio": 0.22,
+      "mountain_ratio": 0.05,
+      "tree_density": 0.45,
+      "terrain_bias": {
+        "sand_cap_delta": 0.0,
+        "fertile_shift": 0.0,
+        "rock_threshold_delta": -50.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.6
+      },
+      "creature_weights": {
+        "moose": 0.25,
+        "crane": 0.15,
+        "beaver": 0.1,
+        "hare": 0.15,
+        "wolf": 0.1,
+        "bird": 0.15,
+        "insect": 0.1
+      },
+      "resource_weights": {
+        "softwood": 0.25,
+        "peat": 0.2,
+        "moss": 0.2,
+        "berry": 0.1,
+        "fungus": 0.1,
+        "shallow_mineral": 0.1,
+        "herb": 0.05
+      },
+      "ocean": false
+    },
+    "ascend:boreal_forest": {
+      "value": 11,
+      "label_key": "biome.boreal_forest",
+      "climate": "ascend:subarctic_taiga",
+      "water_ratio": 0.08,
+      "mountain_ratio": 0.1,
+      "tree_density": 0.6,
+      "terrain_bias": {
+        "sand_cap_delta": 0.0,
+        "fertile_shift": 0.0,
+        "rock_threshold_delta": -100.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.1
+      },
+      "creature_weights": {
+        "moose": 0.2,
+        "wolf": 0.15,
+        "bear": 0.1,
+        "hare": 0.2,
+        "lynx": 0.05,
+        "bird": 0.2,
+        "insect": 0.1
+      },
+      "resource_weights": {
+        "softwood": 0.45,
+        "resin": 0.2,
+        "berry": 0.15,
+        "fungus": 0.1,
+        "shallow_mineral": 0.1
+      },
+      "ocean": false
+    },
+    "ascend:polar_barren": {
+      "value": 12,
+      "label_key": "biome.polar_barren",
+      "climate": "ascend:polar_tundra",
+      "water_ratio": 0.05,
+      "mountain_ratio": 0.15,
+      "tree_density": 0.0,
+      "terrain_bias": {
+        "sand_cap_delta": 40.0,
+        "fertile_shift": 150.0,
+        "rock_threshold_delta": -300.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.0
+      },
+      "creature_weights": {
+        "polar_bear": 0.1,
+        "seal": 0.1,
+        "arctic_bird": 0.15,
+        "lemming": 0.2
+      },
+      "resource_weights": {
+        "ice_core": 0.2,
+        "exposed_mineral": 0.35,
+        "stone": 0.25,
+        "lichen": 0.1,
+        "ice": 0.1
+      },
+      "ocean": false
+    },
+    "ascend:tundra": {
+      "value": 13,
+      "label_key": "biome.tundra",
+      "climate": "ascend:polar_tundra",
+      "water_ratio": 0.05,
+      "mountain_ratio": 0.1,
+      "tree_density": 0.05,
+      "terrain_bias": {
+        "sand_cap_delta": 20.0,
+        "fertile_shift": 80.0,
+        "rock_threshold_delta": -200.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.1
+      },
+      "creature_weights": {
+        "caribou": 0.25,
+        "arctic_fox": 0.15,
+        "hare": 0.2,
+        "seal": 0.1,
+        "bird": 0.2,
+        "insect": 0.1
+      },
+      "resource_weights": {
+        "lichen": 0.35,
+        "berry": 0.2,
+        "moss": 0.2,
+        "shallow_mineral": 0.15,
+        "ice": 0.1
+      },
+      "ocean": false
+    },
+    "ascend:alpine_meadow": {
+      "value": 14,
+      "label_key": "biome.alpine_meadow",
+      "climate": "ascend:alpine",
+      "water_ratio": 0.05,
+      "mountain_ratio": 0.3,
+      "tree_density": 0.15,
+      "terrain_bias": {
+        "sand_cap_delta": 0.0,
+        "fertile_shift": 0.0,
+        "rock_threshold_delta": -200.0,
+        "peak_threshold_delta": 600.0,
+        "marsh_tendency": 0.05
+      },
+      "creature_weights": {
+        "ibex": 0.25,
+        "marmot": 0.2,
+        "eagle": 0.15,
+        "hare": 0.2,
+        "insect": 0.2
+      },
+      "resource_weights": {
+        "exposed_mineral": 0.3,
+        "herb": 0.25,
+        "stone": 0.25,
+        "shallow_mineral": 0.15,
+        "ice": 0.05
+      },
+      "ocean": false
+    },
+    "ascend:alpine_barren": {
+      "value": 15,
+      "label_key": "biome.alpine_barren",
+      "climate": "ascend:alpine",
+      "water_ratio": 0.03,
+      "mountain_ratio": 0.6,
+      "tree_density": 0.02,
+      "terrain_bias": {
+        "sand_cap_delta": 0.0,
+        "fertile_shift": 100.0,
+        "rock_threshold_delta": -400.0,
+        "peak_threshold_delta": 200.0,
+        "marsh_tendency": 0.0
+      },
+      "creature_weights": {
+        "snow_leopard": 0.1,
+        "eagle": 0.2,
+        "marmot": 0.15,
+        "ibex": 0.1
+      },
+      "resource_weights": {
+        "exposed_mineral": 0.45,
+        "stone": 0.35,
+        "shallow_mineral": 0.15,
+        "ice": 0.05
+      },
+      "ocean": false
+    },
+    "ascend:warm_ocean": {
+      "value": 16,
+      "label_key": "biome.warm_ocean",
+      "climate": "ascend:equatorial_rainforest",
+      "water_ratio": 1.0,
+      "mountain_ratio": 0.0,
+      "tree_density": 0.0,
+      "terrain_bias": {
+        "sand_cap_delta": 0.0,
+        "fertile_shift": 0.0,
+        "rock_threshold_delta": 0.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.0
+      },
+      "creature_weights": {
+        "tropical_fish": 0.35,
+        "reef_fish": 0.25,
+        "shark": 0.05,
+        "coral": 0.2,
+        "turtle": 0.1,
+        "dolphin": 0.05
+      },
+      "resource_weights": {
+        "fish": 0.4,
+        "coral": 0.25,
+        "salt": 0.2,
+        "pearl": 0.05,
+        "kelp": 0.1
+      },
+      "ocean": true
+    },
+    "ascend:temperate_ocean": {
+      "value": 17,
+      "label_key": "biome.temperate_ocean",
+      "climate": "ascend:temperate_forest",
+      "water_ratio": 1.0,
+      "mountain_ratio": 0.0,
+      "tree_density": 0.0,
+      "terrain_bias": {
+        "sand_cap_delta": 0.0,
+        "fertile_shift": 0.0,
+        "rock_threshold_delta": 0.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.0
+      },
+      "creature_weights": {
+        "temperate_fish": 0.3,
+        "squid": 0.15,
+        "whale": 0.05,
+        "seal": 0.1,
+        "seabird": 0.2,
+        "crab": 0.2
+      },
+      "resource_weights": {
+        "fish": 0.35,
+        "kelp": 0.25,
+        "salt": 0.2,
+        "oil": 0.1,
+        "shellfish": 0.1
+      },
+      "ocean": true
+    },
+    "ascend:cold_ocean": {
+      "value": 18,
+      "label_key": "biome.cold_ocean",
+      "climate": "ascend:polar_tundra",
+      "water_ratio": 1.0,
+      "mountain_ratio": 0.0,
+      "tree_density": 0.0,
+      "terrain_bias": {
+        "sand_cap_delta": 0.0,
+        "fertile_shift": 0.0,
+        "rock_threshold_delta": 0.0,
+        "peak_threshold_delta": 0.0,
+        "marsh_tendency": 0.0
+      },
+      "creature_weights": {
+        "cold_fish": 0.3,
+        "krill": 0.25,
+        "whale": 0.1,
+        "penguin": 0.15,
+        "seal": 0.15,
+        "polar_bear": 0.05
+      },
+      "resource_weights": {
+        "fish": 0.3,
+        "oil": 0.2,
+        "salt": 0.2,
+        "krill": 0.2,
+        "ice_core": 0.1
+      },
+      "ocean": true
+    }
+  },
+  "subdiv": {
+    "ascend:equatorial_rainforest": {
+      "dimension": "rainfall",
+      "low": "ascend:tropical_monsoon_forest",
+      "high": "ascend:tropical_rainforest",
+      "value_min": 1500.0,
+      "value_max": 2200.0
+    },
+    "ascend:tropical_savanna": {
+      "dimension": "rainfall",
+      "low": "ascend:tropical_savanna",
+      "high": "ascend:tropical_woodland",
+      "value_min": 600.0,
+      "value_max": 1500.0
+    },
+    "ascend:desert": {
+      "dimension": "moisture",
+      "low": "ascend:sandy_desert",
+      "high": "ascend:rocky_desert",
+      "value_min": -1.0,
+      "value_max": 1.0
+    },
+    "ascend:steppe": {
+      "dimension": "rainfall",
+      "low": "ascend:short_grass_steppe",
+      "high": "ascend:tall_grass_steppe",
+      "value_min": 200.0,
+      "value_max": 600.0
+    },
+    "ascend:temperate_forest": {
+      "dimension": "temperature",
+      "low": "ascend:temperate_mixed_forest",
+      "high": "ascend:temperate_deciduous_forest",
+      "value_min": 5.0,
+      "value_max": 20.0
+    },
+    "ascend:subarctic_taiga": {
+      "dimension": "altitude",
+      "low": "ascend:boreal_wetland",
+      "high": "ascend:boreal_forest",
+      "value_min": 0.0,
+      "value_max": 800.0
+    },
+    "ascend:polar_tundra": {
+      "dimension": "temperature",
+      "low": "ascend:polar_barren",
+      "high": "ascend:tundra",
+      "value_min": -14.0,
+      "value_max": 0.0
+    },
+    "ascend:alpine": {
+      "dimension": "altitude",
+      "low": "ascend:alpine_meadow",
+      "high": "ascend:alpine_barren",
+      "value_min": 2000.0,
+      "value_max": 2600.0
+    }
+  }
+}

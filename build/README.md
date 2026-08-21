@@ -18,7 +18,8 @@ bash build/build_release.sh linux     # 或单平台
 ```
 
 流程：同步语言文件（repo 根 `lang/*.json` → `frontend/lang/`，进 PCK）→
-导出前端 → 编译后端 → 组装舞台目录 → 冒烟测试（协议级握手）→ 打归档。
+导出前端 → 编译后端 → 组装舞台目录（`data/`、`lang/` 配送到舞台根）→
+冒烟测试（协议级握手 + 内容数据检查）→ 打归档。
 产物：`build/dist/release/ascend-linux.tar.gz`、`ascend-windows.zip`。
 
 发布：`git tag v<版本> && bash build/ci/publish_release.sh`（版本化命名上传
@@ -44,8 +45,8 @@ bash build/build_backend_release.sh linux     # 后端 server 包
 bash build/build_backend_release.sh windows   # 或 windows
 ```
 
-流程：编译后端（Nuitka）→ 组装 server-only 舞台目录（含 `server/lang/`，
-后端 i18n 按模块相对路径解析）→ 冒烟 → 归档。
+流程：编译后端（Nuitka）→ 组装 server-only 舞台目录（`data/`、`lang/`
+配送到舞台根，后端按模块相对路径解析）→ 冒烟 → 归档。
 产物：`build/dist/release/ascend-server-linux.tar.gz`、`ascend-server-windows.zip`。
 
 ## 发行布局
@@ -56,9 +57,16 @@ Ascend-<平台>/
 ├── ascend.pck            # 游戏资源包（前端为双文件模式，embed_pck=false）
 ├── server/               # 后端 standalone 目录（二进制 + 依赖库）
 │   └── server[.exe]
+├── data/                 # 世界内容数据（JSON：地形/群系/气候/天气/世界生成参数；后端启动即需）
+├── lang/                 # 后端 i18n 语言文件
 ├── .ascend_token         # （运行时由后端生成）
 └── README.txt
 ```
+
+`data/` 与 `lang/` 的落位按后端模块相对路径解析（Nuitka standalone 下
+`__file__` 含包前缀，`ascend/<mod>.py` 上三级 = 舞台根 → `STAGE/data`、
+`STAGE/lang`）；`data.py`/`i18n.py` 内置 `server/<dir>` 回退，两种配送
+布局均兼容。
 
 后端为 **standalone 目录模式**（非 onefile）：onefile 在 Linux 上会 fork
 出子进程（bootstrap 监督进程 + 真实服务），前端按 PID 无法可靠终止、
@@ -108,8 +116,9 @@ push tag v* ──► [ubuntu-latest]  Linux 后端 ──┐
   `bash build/ci/check_version.sh --tag v<版本>` 对账（CI 的 check-version job 自动执行）
 - **本地永远只有最新版**：中间产物构建前清空；产物固定名每次覆盖；
   历史版本归档只存在于 GitHub Releases（或制品库），不进工作区
-- 打包数据文件仅：C 加速模块 `.so`/`.dll` + `schema.sqlite.sql`；
-  **`.c` 源码不随包分发**（打包环境无 gcc，编译兜底无意义，且避免源码暴露）
+- 打包数据文件仅：C 加速模块 `.so`/`.dll` + `schema.sqlite.sql` + `data/*.json`
+  + `lang/*.json`（舞台根配送，见上）；**`.c` 源码不随包分发**（打包环境
+  无 gcc，编译兜底无意义，且避免源码暴露）
 - AI 模型层（torch/LLM 等）不进编译，作为侧车进程运行，与编译后的后端走现有 TCP/IPC
 - 签名证书、密钥绝不进 git
 

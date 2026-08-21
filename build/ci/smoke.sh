@@ -36,6 +36,18 @@ LOGF="$TMP/server.log"
 PID=""
 ok=""
 
+# 内容数据配送检查：后端 import 期强依赖 data/（缺则整个服务起不来）。
+# 主位置 STAGE/data（舞台根，见 data.py 双布局回退），回退 server/data。
+if [ ! -d "$STAGE/data" ] && [ ! -d "$STAGE/server/data" ]; then
+  echo "    [冒烟] 失败：缺少内容数据目录（STAGE/data 或 STAGE/server/data）" >&2
+  exit 1
+fi
+# 语言文件配送检查（i18n 解析目标为舞台根 lang，回退 server/lang）
+if [ ! -d "$STAGE/lang" ] && [ ! -d "$STAGE/server/lang" ]; then
+  echo "    [冒烟] 失败：缺少语言目录（STAGE/lang 或 STAGE/server/lang）" >&2
+  exit 1
+fi
+
 cleanup() {
   [ -n "$PID" ] && kill "$PID" 2>/dev/null || true
   # 兜底：精确匹配本舞台目录的产物进程（路径含 stage 目录，不误伤其它实例）

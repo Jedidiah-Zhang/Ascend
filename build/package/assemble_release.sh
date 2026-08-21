@@ -73,8 +73,12 @@ mkdir -p "$STAGE"
 cp "$EXPORTS_DIR/$GAME_EXE" "$STAGE/"
 cp "$EXPORTS_DIR/ascend.pck" "$STAGE/"
 cp -r "$SERVER_SRC" "$STAGE/"
-# 后端 i18n 按模块相对路径解析（ascend/i18n.py 上三级 → server/lang）
-cp -r "$ROOT/lang" "$STAGE/server/lang"
+# 后端 i18n 按模块相对路径解析：Nuitka standalone 下 __file__ 含包前缀，
+# ascend/i18n.py 上三级 = 舞台根 → lang 配送到 STAGE/lang
+cp -r "$ROOT/lang" "$STAGE/lang"
+# 后端内容数据（第 1 层数据驱动，import 期强依赖；ascend/data.py 上三级
+# = 舞台根 → data 配送到 STAGE/data；data.py 内置 server/data 回退）
+cp -r "$ROOT/data" "$STAGE/data"
 
 cat > "$STAGE/README.txt" <<EOF
 Ascend $VERSION ($PLATFORM)

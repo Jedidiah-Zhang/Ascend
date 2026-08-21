@@ -11,8 +11,40 @@ import json
 import re
 from pathlib import Path
 
-# 语言文件目录（项目根 /lang）
-LANG_DIR = Path(__file__).parent.parent.parent / "lang"
+
+def _resolve_content_dir(dirname: str, here: Path | None = None) -> Path:
+    """按模块位置解析内容目录（与 data.py 同源约定，双布局回退）。
+
+    开发：`backend/ascend/i18n.py` 上三级 → 仓库根 → `根/lang`。
+    发布（Nuitka standalone）：`__file__` 含包前缀，上三级 → 舞台根
+    `STAGE`；语言文件配送到 `STAGE/lang`（主）或 `STAGE/server/lang`（回退）。
+
+    Args:
+        dirname: 内容目录名（"lang"/"data"）。
+        here: 模块文件路径（测试注入模拟布局用；None = 本模块 __file__）。
+    """
+    here = (here or Path(__file__)).resolve()
+    primary = here.parent.parent.parent / dirname
+    if primary.is_dir():
+        return primary
+    fallback = here.parent.parent / dirname
+    return fallback if fallback.is_dir() else primary
+
+
+# 语言文件目录（开发=仓库根/lang；发布=舞台根或 server/ 内 lang）
+LANG_DIR = _resolve_content_dir("lang")
+
+# 进程共享实例：game.py 与 biome/climate 的 label 解析共用它，
+# set_lang 切换全局生效（I18n() 默认实例亦指向它，见 get_default）。
+_DEFAULT: "I18n | None" = None
+
+
+def get_default() -> "I18n":
+    """进程级共享 I18n 实例（惰性创建；游戏与枚举 label 共用）。"""
+    global _DEFAULT
+    if _DEFAULT is None:
+        _DEFAULT = I18n()
+    return _DEFAULT
 
 
 class I18n:
@@ -26,6 +58,9 @@ class I18n:
 
     def __init__(self, lang: str = "zh_CN") -> None:
         """初始化并加载指定语言的翻译表。
+
+        注：直接构造会产生独立实例（不参与全局语言切换）；需要
+        跟随游戏 `lang` 指令切换的共享实例，请用 `get_default()`。
 
         Args:
             lang: 语言代码，对应 lang/ 下的 JSON 文件名（不含扩展名）。

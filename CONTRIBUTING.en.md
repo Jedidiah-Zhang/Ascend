@@ -44,6 +44,22 @@ When developing a new module, follow this fixed order:
 3. **Write tests first**: encode expected behavior
 4. **Implement**: write code until tests pass
 
+## World Content Data (JSON)
+
+Tunable content (terrain, biome, climate, weather, world-gen parameters) lives
+as JSON in `data/` (`terrain.json`/`climate.json`/`biome.json`/`weather.json`/
+`world.json`) — **change content by editing the data file, no code changes**.
+Conventions:
+
+- Keys are namespaced ids (e.g. `ascend:grassland`); `value` is explicit,
+  unique, and contiguous 0..n-1 — **published values are immutable, append-only**
+  (renumbering breaks saves/caches)
+- Display names store only `label_key` (e.g. `terrain.grassland`); text lives in
+  `lang/*.json` (zh/en stay in sync, verified by a test)
+- Adding content = append an entry to the data file (`value` next + `label_key`);
+  import-time validation plus tests guard the contracts; packaging ships `data/`
+  and `lang/` automatically
+
 ## Testing
 
 ### Backend (Python / pytest)

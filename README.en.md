@@ -69,6 +69,7 @@ The system consists of three parts:
 backend/   Python backend (core logic)
 frontend/  Godot frontend
 build/     Build & packaging
+data/      World content data (JSON: terrain/biome/climate/weather/world-gen params)
 docs/             Design documents
 lang/             Localization resources
 requirements.txt  Python dependencies

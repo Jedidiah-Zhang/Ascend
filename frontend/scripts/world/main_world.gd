@@ -14,6 +14,7 @@ extends Node2D
 
 const Config = preload("res://scripts/config.gd")
 const TerrainTileBuilder = preload("res://scripts/world/terrain_tile_builder.gd")
+
 const StateDisplayChaser = preload("res://scripts/world/state_display_chaser.gd")
 
 # ── 相机常量（CameraRig 同源；测试引用，保留在此） ────────

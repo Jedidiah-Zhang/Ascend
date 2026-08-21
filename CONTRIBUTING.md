@@ -44,6 +44,19 @@ Ascend 兼具双重身份：
 3. **写测试**：先写测试定义预期行为
 4. **再写代码**：实现直至测试通过
 
+## 世界内容数据（JSON）
+
+地形、群系、气候、天气、世界生成参数等"可调内容"以 JSON 存在 `data/`
+（`terrain.json`/`climate.json`/`biome.json`/`weather.json`/`world.json`），
+**改内容只改数据文件、不用改代码**。约定：
+
+- 键为命名空间 id（如 `ascend:grassland`）；`value` 显式声明、唯一且连续
+  0..n-1，**已发布值不可改、只追加**（改序号会破坏存档/缓存）
+- 显示名只存 `label_key`（如 `terrain.grassland`），文案在 `lang/*.json`
+  （中英两文件同步，有对账测试）
+- 加内容 = 数据文件加一项（`value` 追加 + `label_key`）；import 期校验 +
+  测试兜底契约；发行自动携带 `data/` 与 `lang/`
+
 ## 测试
 
 ### 后端（Python / pytest）

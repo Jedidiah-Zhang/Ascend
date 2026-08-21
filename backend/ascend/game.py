@@ -69,7 +69,7 @@ from ascend.entity import EntityManager, PlayerService
 from ascend.weather import WeatherEngine
 from ascend.terminal import CommandExecutor
 from ascend.time import WorldClock, GameCalendar
-from ascend.i18n import I18n
+from ascend.i18n import I18n, get_default
 from ascend.lifecycle import LifecycleStack
 from ascend.world_tree import world_tree, Event, AffectedParty, WorldEvent
 from ascend.save import SaveManager, collect_state, aligned_time, apply_clock, apply_player
@@ -122,7 +122,7 @@ class GameEngine:
         self.event_bridge: EventBridge | None = None
         self.clock: WorldClock = WorldClock()
         self.calendar: GameCalendar | None = None  # start() 时创建（世界存在才需要日历）
-        self.i18n: I18n = I18n()
+        self.i18n: I18n = get_default()  # 进程共享实例：set_lang 全局生效（枚举 label 亦跟随）
         self._executor: CommandExecutor | None = None
         self.entity_manager: EntityManager | None = None
         self.player_service: PlayerService | None = None

@@ -10,8 +10,13 @@
 
 from dataclasses import dataclass, field
 from enum import IntEnum
+from typing import Mapping
 
+from ascend.data import load_content, split_ns_id
+from ascend.i18n import get_default
 from .climate import ClimateZone, classify
+
+_I18N = get_default()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -52,68 +57,48 @@ class BiomeType(IntEnum):
     """群系类型 — 16 陆地（8 气候档 × 2 子型）+ 3 海洋。
 
     陆地群系按气候档细分，每档 2 个子型，细分维度用连续场。
-    值从 0 开始连续编号，uint16 足以容纳。
+    值从 0 开始连续编号（0..18），uint16 足以容纳。
+
+    枚举值 = 持久化/协议契约（不可改，只能追加）；显示名与模板数据
+    在 data/biome.json（label_key 经 i18n 惰性解析）。
     """
 
-    # 档 0 EQUATORIAL_RAINFOREST — 细分维度 rainfall
-    TROPICAL_MONSOON_FOREST = (0, "热带季雨林")
-    TROPICAL_RAINFOREST = (1, "热带雨林")
+    TROPICAL_MONSOON_FOREST = 0
+    TROPICAL_RAINFOREST = 1
+    TROPICAL_SAVANNA = 2
+    TROPICAL_WOODLAND = 3
+    SANDY_DESERT = 4
+    ROCKY_DESERT = 5
+    SHORT_GRASS_STEPPE = 6
+    TALL_GRASS_STEPPE = 7
+    TEMPERATE_MIXED_FOREST = 8
+    TEMPERATE_DECIDUOUS_FOREST = 9
+    BOREAL_WETLAND = 10
+    BOREAL_FOREST = 11
+    POLAR_BARREN = 12
+    TUNDRA = 13
+    ALPINE_MEADOW = 14
+    ALPINE_BARREN = 15
+    WARM_OCEAN = 16
+    TEMPERATE_OCEAN = 17
+    COLD_OCEAN = 18
 
-    # 档 1 TROPICAL_SAVANNA — 细分维度 rainfall
-    TROPICAL_SAVANNA = (2, "热带草原")
-    TROPICAL_WOODLAND = (3, "热带疏林")
+    def __init__(self, value: int) -> None:
+        """数据加载后由 loader 填充 label_key（i18n 键）。"""
+        self.label_key: str = ""
 
-    # 档 2 DESERT — 细分维度 moisture_noise
-    SANDY_DESERT = (4, "沙质沙漠")
-    ROCKY_DESERT = (5, "砾石戈壁")
-
-    # 档 3 STEPPE — 细分维度 rainfall
-    SHORT_GRASS_STEPPE = (6, "矮草草原")
-    TALL_GRASS_STEPPE = (7, "高草草原")
-
-    # 档 4 TEMPERATE_FOREST — 细分维度 temperature
-    TEMPERATE_MIXED_FOREST = (8, "温带混交林")
-    TEMPERATE_DECIDUOUS_FOREST = (9, "温带落叶林")
-
-    # 档 5 SUBARCTIC_TAIGA — 细分维度 altitude
-    BOREAL_WETLAND = (10, "北方湿地")
-    BOREAL_FOREST = (11, "北方针叶林")
-
-    # 档 6 POLAR_TUNDRA — 细分维度 temperature
-    POLAR_BARREN = (12, "极地荒原")
-    TUNDRA = (13, "苔原")
-
-    # 档 7 ALPINE — 细分维度 altitude
-    ALPINE_MEADOW = (14, "高山草甸")
-    ALPINE_BARREN = (15, "高山裸岩")
-
-    # 海洋
-    WARM_OCEAN = (16, "暖水海洋")
-    TEMPERATE_OCEAN = (17, "温带海洋")
-    COLD_OCEAN = (18, "冷水海洋")
-
-    def __new__(cls, value: int, label: str) -> "BiomeType":
-        """重写 __new__ 以支持双参数 (value, label)。"""
-        obj = int.__new__(cls, value)
-        obj._value_ = value
-        obj.label = label
-        return obj
+    @property
+    def label(self) -> str:
+        """本地化显示名（label_key 经 i18n 惰性解析，随语言切换）。"""
+        return _I18N.t(self.label_key) if self.label_key else self.name
 
     @property
     def is_ocean(self) -> bool:
-        """是否为海洋群系。"""
+        """是否为海洋群系（由 data 的 ocean 标志派生）。"""
         return self in _OCEAN_BIOMES
 
     def __repr__(self) -> str:
         return f"BiomeType.{self.name}"
-
-
-# 海洋群系集合 — is_ocean 判定依据，新增群系时无需关心编号顺序
-_OCEAN_BIOMES: frozenset["BiomeType"] = frozenset({
-    BiomeType.WARM_OCEAN,
-    BiomeType.TEMPERATE_OCEAN,
-    BiomeType.COLD_OCEAN,
-})
 
 
 # ═══════════════════════════════════════════════════════════
@@ -158,383 +143,83 @@ class BiomeTemplate:
         )
 
 
+def _ns_local(ns_id: str) -> str:
+    """命名空间 id 的 local 部分（大写，枚举成员名；非法格式 fail fast）。"""
+    return split_ns_id(ns_id)[1].upper()
+
+
+def _parse_biome_template(ns_id: str, raw: Mapping) -> tuple[BiomeTemplate, str]:
+    """单行 JSON → (BiomeTemplate, label_key)（不就地修改枚举成员）。
+
+    校验枚举一致性、必需字段；label_key 由调用方在全部校验通过后统一填充，
+    避免解析中途失败留下半修改的模块级枚举状态。
+    """
+    biome = BiomeType[_ns_local(ns_id)]
+    if int(raw["value"]) != biome.value:
+        raise ValueError(
+            f"{ns_id}: 数据 value {raw['value']} 与枚举 {biome.value} 不一致"
+        )
+    if "label_key" not in raw:
+        raise ValueError(f"{ns_id}: 缺少必需字段 label_key")
+    label_key = str(raw["label_key"])
+    climate = ClimateZone[_ns_local(str(raw["climate"]))]
+    bias_raw = raw.get("terrain_bias", {})
+    if not isinstance(bias_raw, Mapping):
+        raise ValueError(f"{ns_id}: terrain_bias 必须是对象")
+    tmpl = BiomeTemplate(
+        biome_type=biome,
+        climate_zone=climate,
+        water_ratio=float(raw.get("water_ratio", 0.05)),
+        mountain_ratio=float(raw.get("mountain_ratio", 0.05)),
+        tree_density=float(raw.get("tree_density", 0.5)),
+        terrain_bias=TerrainBias(**{k: float(v) for k, v in bias_raw.items()}),
+        creature_weights={
+            str(k): float(v) for k, v in raw.get("creature_weights", {}).items()
+        },
+        resource_weights={
+            str(k): float(v) for k, v in raw.get("resource_weights", {}).items()
+        },
+    )
+    return tmpl, label_key
+
+
+def _build_biome_templates(doc: Mapping) -> dict[BiomeType, BiomeTemplate]:
+    """data/biome.json → 群系模板注册表，并派生 _OCEAN_BIOMES。
+
+    先全量校验/解析，全部通过后才统一填充枚举 label_key（原子性）。
+    """
+    raw_map = doc.get("biome")
+    if not isinstance(raw_map, Mapping) or not raw_map:
+        raise ValueError("data/biome.json: 缺少 biome 注册表")
+    parsed: list[tuple[BiomeTemplate, str]] = []
+    oceans: list[BiomeType] = []
+    for ns_id, raw in raw_map.items():
+        tmpl, label_key = _parse_biome_template(ns_id, raw)
+        parsed.append((tmpl, label_key))
+        if raw.get("ocean"):
+            oceans.append(tmpl.biome_type)
+    templates = {tmpl.biome_type: tmpl for tmpl, _ in parsed}
+    missing = set(BiomeType) - set(templates)
+    if missing:
+        raise ValueError(f"data/biome.json: 缺群系 {[b.name for b in missing]}")
+    # 全部校验通过后统一填充（避免半修改状态）
+    for tmpl, label_key in parsed:
+        tmpl.biome_type.label_key = label_key
+    global _OCEAN_BIOMES
+    _OCEAN_BIOMES = frozenset(oceans)
+    return templates
+
+
 # ═══════════════════════════════════════════════════════════
 # 群系模板注册表
 # ═══════════════════════════════════════════════════════════
 
-_BIOME_TEMPLATES: dict[BiomeType, BiomeTemplate] = {
-    # ── 档 0 EQUATORIAL_RAINFOREST ──────────────────────────
-    BiomeType.TROPICAL_MONSOON_FOREST: BiomeTemplate(
-        biome_type=BiomeType.TROPICAL_MONSOON_FOREST,
-        climate_zone=ClimateZone.EQUATORIAL_RAINFOREST,
-        water_ratio=0.10,
-        mountain_ratio=0.03,
-        tree_density=0.70,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=-20.0, fertile_shift=0.0,
-            rock_threshold_delta=-50.0, marsh_tendency=0.10,
-        ),
-        creature_weights={
-            "monkey": 0.15, "parrot": 0.15, "jaguar": 0.05,
-            "tree_frog": 0.15, "insect": 0.30, "canopy_deer": 0.20,
-        },
-        resource_weights={
-            "hardwood": 0.25, "fruit": 0.20, "herb": 0.20,
-            "vine": 0.15, "resin": 0.10, "shallow_mineral": 0.10,
-        },
-    ),
-    BiomeType.TROPICAL_RAINFOREST: BiomeTemplate(
-        biome_type=BiomeType.TROPICAL_RAINFOREST,
-        climate_zone=ClimateZone.EQUATORIAL_RAINFOREST,
-        water_ratio=0.12,
-        mountain_ratio=0.03,
-        tree_density=0.95,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=-30.0, fertile_shift=-50.0,
-            rock_threshold_delta=-50.0, marsh_tendency=0.20,
-        ),
-        creature_weights={
-            "monkey": 0.20, "parrot": 0.20, "jaguar": 0.05,
-            "tree_frog": 0.20, "insect": 0.25, "sloth": 0.10,
-        },
-        resource_weights={
-            "hardwood": 0.30, "fruit": 0.25, "herb": 0.20,
-            "vine": 0.10, "resin": 0.10, "shallow_mineral": 0.05,
-        },
-    ),
+_BIOME_TEMPLATES: dict[BiomeType, BiomeTemplate] = _build_biome_templates(
+    load_content("biome")
+)
 
-    # ── 档 1 TROPICAL_SAVANNA ───────────────────────────────
-    BiomeType.TROPICAL_SAVANNA: BiomeTemplate(
-        biome_type=BiomeType.TROPICAL_SAVANNA,
-        climate_zone=ClimateZone.TROPICAL_SAVANNA,
-        water_ratio=0.05,
-        mountain_ratio=0.05,
-        tree_density=0.20,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=20.0, fertile_shift=0.0,
-            rock_threshold_delta=-50.0, marsh_tendency=0.0,
-        ),
-        creature_weights={
-            "zebra": 0.20, "antelope": 0.20, "lion": 0.05,
-            "elephant": 0.05, "bird": 0.20, "insect": 0.30,
-        },
-        resource_weights={
-            "softwood": 0.15, "grass_fiber": 0.35, "herb": 0.20,
-            "stone": 0.15, "shallow_mineral": 0.15,
-        },
-    ),
-    BiomeType.TROPICAL_WOODLAND: BiomeTemplate(
-        biome_type=BiomeType.TROPICAL_WOODLAND,
-        climate_zone=ClimateZone.TROPICAL_SAVANNA,
-        water_ratio=0.06,
-        mountain_ratio=0.04,
-        tree_density=0.45,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=0.0, fertile_shift=-30.0,
-            rock_threshold_delta=-50.0, marsh_tendency=0.05,
-        ),
-        creature_weights={
-            "antelope": 0.20, "deer": 0.15, "lion": 0.05,
-            "bird": 0.20, "insect": 0.20, "monkey": 0.10, "rodent": 0.10,
-        },
-        resource_weights={
-            "softwood": 0.30, "hardwood": 0.10, "grass_fiber": 0.25,
-            "herb": 0.20, "stone": 0.10, "shallow_mineral": 0.05,
-        },
-    ),
-
-    # ── 档 2 DESERT ─────────────────────────────────────────
-    BiomeType.SANDY_DESERT: BiomeTemplate(
-        biome_type=BiomeType.SANDY_DESERT,
-        climate_zone=ClimateZone.DESERT,
-        water_ratio=0.01,
-        mountain_ratio=0.08,
-        tree_density=0.02,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=60.0, fertile_shift=80.0,
-            rock_threshold_delta=-100.0, marsh_tendency=0.0,
-        ),
-        creature_weights={
-            "lizard": 0.30, "rodent": 0.25, "nocturnal_predator": 0.10,
-            "venomous_insect": 0.20, "bird": 0.10, "snake": 0.05,
-        },
-        resource_weights={
-            "sand": 0.40, "exposed_mineral": 0.15, "succulent": 0.15,
-            "oasis_water": 0.05, "stone": 0.25,
-        },
-    ),
-    BiomeType.ROCKY_DESERT: BiomeTemplate(
-        biome_type=BiomeType.ROCKY_DESERT,
-        climate_zone=ClimateZone.DESERT,
-        water_ratio=0.01,
-        mountain_ratio=0.14,
-        tree_density=0.03,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=-20.0, fertile_shift=120.0,
-            rock_threshold_delta=-300.0, marsh_tendency=0.0,
-        ),
-        creature_weights={
-            "rodent": 0.30, "lizard": 0.15, "nocturnal_predator": 0.15,
-            "venomous_insect": 0.10, "snake": 0.15, "eagle": 0.05, "hyrax": 0.10,
-        },
-        resource_weights={
-            "exposed_mineral": 0.40, "stone": 0.25, "succulent": 0.10,
-            "sand": 0.10, "shallow_mineral": 0.15,
-        },
-    ),
-
-    # ── 档 3 STEPPE ─────────────────────────────────────────
-    BiomeType.SHORT_GRASS_STEPPE: BiomeTemplate(
-        biome_type=BiomeType.SHORT_GRASS_STEPPE,
-        climate_zone=ClimateZone.STEPPE,
-        water_ratio=0.02,
-        mountain_ratio=0.08,
-        tree_density=0.10,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=30.0, fertile_shift=50.0,
-            rock_threshold_delta=-100.0, marsh_tendency=0.0,
-        ),
-        creature_weights={
-            "rodent": 0.25, "antelope": 0.10, "nocturnal_predator": 0.15,
-            "bird": 0.15, "insect": 0.20, "snake": 0.15,
-        },
-        resource_weights={
-            "exposed_mineral": 0.30, "fiber": 0.25, "succulent": 0.15,
-            "shallow_mineral": 0.10, "stone": 0.20,
-        },
-    ),
-    BiomeType.TALL_GRASS_STEPPE: BiomeTemplate(
-        biome_type=BiomeType.TALL_GRASS_STEPPE,
-        climate_zone=ClimateZone.STEPPE,
-        water_ratio=0.04,
-        mountain_ratio=0.06,
-        tree_density=0.18,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=10.0, fertile_shift=0.0,
-            rock_threshold_delta=-50.0, marsh_tendency=0.05,
-        ),
-        creature_weights={
-            "antelope": 0.25, "rodent": 0.15, "horse": 0.10,
-            "nocturnal_predator": 0.05, "bird": 0.20, "insect": 0.20, "fox": 0.05,
-        },
-        resource_weights={
-            "grass_fiber": 0.40, "herb": 0.20, "exposed_mineral": 0.15,
-            "shallow_mineral": 0.10, "stone": 0.10, "sod": 0.05,
-        },
-    ),
-
-    # ── 档 4 TEMPERATE_FOREST ───────────────────────────────
-    BiomeType.TEMPERATE_MIXED_FOREST: BiomeTemplate(
-        biome_type=BiomeType.TEMPERATE_MIXED_FOREST,
-        climate_zone=ClimateZone.TEMPERATE_FOREST,
-        water_ratio=0.10,
-        mountain_ratio=0.08,
-        tree_density=0.65,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=0.0, fertile_shift=0.0,
-            rock_threshold_delta=-150.0, marsh_tendency=0.10,
-        ),
-        creature_weights={
-            "moose": 0.20, "wolf": 0.15, "bear": 0.10,
-            "hare": 0.20, "lynx": 0.10, "bird": 0.15, "insect": 0.10,
-        },
-        resource_weights={
-            "softwood": 0.40, "resin": 0.20, "berry": 0.15,
-            "fungus": 0.10, "shallow_mineral": 0.10, "hardwood": 0.05,
-        },
-    ),
-    BiomeType.TEMPERATE_DECIDUOUS_FOREST: BiomeTemplate(
-        biome_type=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
-        climate_zone=ClimateZone.TEMPERATE_FOREST,
-        water_ratio=0.08,
-        mountain_ratio=0.05,
-        tree_density=0.70,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=0.0, fertile_shift=0.0,
-            rock_threshold_delta=0.0, marsh_tendency=0.05,
-        ),
-        creature_weights={
-            "deer": 0.30, "rabbit": 0.20, "wolf": 0.10,
-            "bear": 0.05, "bird": 0.25, "insect": 0.10,
-        },
-        resource_weights={
-            "hardwood": 0.35, "softwood": 0.25, "berry": 0.15,
-            "herb": 0.10, "fungus": 0.10, "shallow_mineral": 0.05,
-        },
-    ),
-
-    # ── 档 5 SUBARCTIC_TAIGA ────────────────────────────────
-    BiomeType.BOREAL_WETLAND: BiomeTemplate(
-        biome_type=BiomeType.BOREAL_WETLAND,
-        climate_zone=ClimateZone.SUBARCTIC_TAIGA,
-        water_ratio=0.22,
-        mountain_ratio=0.05,
-        tree_density=0.45,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=0.0, fertile_shift=0.0,
-            rock_threshold_delta=-50.0, marsh_tendency=0.60,
-        ),
-        creature_weights={
-            "moose": 0.25, "crane": 0.15, "beaver": 0.10,
-            "hare": 0.15, "wolf": 0.10, "bird": 0.15, "insect": 0.10,
-        },
-        resource_weights={
-            "softwood": 0.25, "peat": 0.20, "moss": 0.20,
-            "berry": 0.10, "fungus": 0.10, "shallow_mineral": 0.10, "herb": 0.05,
-        },
-    ),
-    BiomeType.BOREAL_FOREST: BiomeTemplate(
-        biome_type=BiomeType.BOREAL_FOREST,
-        climate_zone=ClimateZone.SUBARCTIC_TAIGA,
-        water_ratio=0.08,
-        mountain_ratio=0.10,
-        tree_density=0.60,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=0.0, fertile_shift=0.0,
-            rock_threshold_delta=-100.0, marsh_tendency=0.10,
-        ),
-        creature_weights={
-            "moose": 0.20, "wolf": 0.15, "bear": 0.10,
-            "hare": 0.20, "lynx": 0.05, "bird": 0.20, "insect": 0.10,
-        },
-        resource_weights={
-            "softwood": 0.45, "resin": 0.20, "berry": 0.15,
-            "fungus": 0.10, "shallow_mineral": 0.10,
-        },
-    ),
-
-    # ── 档 6 POLAR_TUNDRA ───────────────────────────────────
-    BiomeType.POLAR_BARREN: BiomeTemplate(
-        biome_type=BiomeType.POLAR_BARREN,
-        climate_zone=ClimateZone.POLAR_TUNDRA,
-        water_ratio=0.05,
-        mountain_ratio=0.15,
-        tree_density=0.00,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=40.0, fertile_shift=150.0,
-            rock_threshold_delta=-300.0, marsh_tendency=0.0,
-        ),
-        creature_weights={
-            "polar_bear": 0.10, "seal": 0.10, "arctic_bird": 0.15,
-            "lemming": 0.20,
-        },
-        resource_weights={
-            "ice_core": 0.20, "exposed_mineral": 0.35,
-            "stone": 0.25, "lichen": 0.10, "ice": 0.10,
-        },
-    ),
-    BiomeType.TUNDRA: BiomeTemplate(
-        biome_type=BiomeType.TUNDRA,
-        climate_zone=ClimateZone.POLAR_TUNDRA,
-        water_ratio=0.05,
-        mountain_ratio=0.10,
-        tree_density=0.05,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=20.0, fertile_shift=80.0,
-            rock_threshold_delta=-200.0, marsh_tendency=0.10,
-        ),
-        creature_weights={
-            "caribou": 0.25, "arctic_fox": 0.15, "hare": 0.20,
-            "seal": 0.10, "bird": 0.20, "insect": 0.10,
-        },
-        resource_weights={
-            "lichen": 0.35, "berry": 0.20, "moss": 0.20,
-            "shallow_mineral": 0.15, "ice": 0.10,
-        },
-    ),
-
-    # ── 档 7 ALPINE ─────────────────────────────────────────
-    BiomeType.ALPINE_MEADOW: BiomeTemplate(
-        biome_type=BiomeType.ALPINE_MEADOW,
-        climate_zone=ClimateZone.ALPINE,
-        water_ratio=0.05,
-        mountain_ratio=0.30,
-        tree_density=0.15,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=0.0, fertile_shift=0.0,
-            rock_threshold_delta=-200.0, peak_threshold_delta=600.0,
-            marsh_tendency=0.05,
-        ),
-        creature_weights={
-            "ibex": 0.25, "marmot": 0.20, "eagle": 0.15,
-            "hare": 0.20, "insect": 0.20,
-        },
-        resource_weights={
-            "exposed_mineral": 0.30, "herb": 0.25, "stone": 0.25,
-            "shallow_mineral": 0.15, "ice": 0.05,
-        },
-    ),
-    BiomeType.ALPINE_BARREN: BiomeTemplate(
-        biome_type=BiomeType.ALPINE_BARREN,
-        climate_zone=ClimateZone.ALPINE,
-        water_ratio=0.03,
-        mountain_ratio=0.60,
-        tree_density=0.02,
-        terrain_bias=TerrainBias(
-            sand_cap_delta=0.0, fertile_shift=100.0,
-            rock_threshold_delta=-400.0, peak_threshold_delta=200.0,
-            marsh_tendency=0.0,
-        ),
-        creature_weights={
-            "snow_leopard": 0.10, "eagle": 0.20,
-            "marmot": 0.15, "ibex": 0.10,
-        },
-        resource_weights={
-            "exposed_mineral": 0.45, "stone": 0.35,
-            "shallow_mineral": 0.15, "ice": 0.05,
-        },
-    ),
-
-    # ── 海洋群系 ───────────────────────────────────────────
-    BiomeType.WARM_OCEAN: BiomeTemplate(
-        biome_type=BiomeType.WARM_OCEAN,
-        climate_zone=ClimateZone.EQUATORIAL_RAINFOREST,
-        water_ratio=1.0,
-        mountain_ratio=0.0,
-        tree_density=0.0,
-        terrain_bias=TerrainBias(),
-        creature_weights={
-            "tropical_fish": 0.35, "reef_fish": 0.25, "shark": 0.05,
-            "coral": 0.20, "turtle": 0.10, "dolphin": 0.05,
-        },
-        resource_weights={
-            "fish": 0.40, "coral": 0.25, "salt": 0.20, "pearl": 0.05,
-            "kelp": 0.10,
-        },
-    ),
-    BiomeType.TEMPERATE_OCEAN: BiomeTemplate(
-        biome_type=BiomeType.TEMPERATE_OCEAN,
-        climate_zone=ClimateZone.TEMPERATE_FOREST,
-        water_ratio=1.0,
-        mountain_ratio=0.0,
-        tree_density=0.0,
-        terrain_bias=TerrainBias(),
-        creature_weights={
-            "temperate_fish": 0.30, "squid": 0.15, "whale": 0.05,
-            "seal": 0.10, "seabird": 0.20, "crab": 0.20,
-        },
-        resource_weights={
-            "fish": 0.35, "kelp": 0.25, "salt": 0.20, "oil": 0.10,
-            "shellfish": 0.10,
-        },
-    ),
-    BiomeType.COLD_OCEAN: BiomeTemplate(
-        biome_type=BiomeType.COLD_OCEAN,
-        climate_zone=ClimateZone.POLAR_TUNDRA,
-        water_ratio=1.0,
-        mountain_ratio=0.0,
-        tree_density=0.0,
-        terrain_bias=TerrainBias(),
-        creature_weights={
-            "cold_fish": 0.30, "krill": 0.25, "whale": 0.10,
-            "penguin": 0.15, "seal": 0.15, "polar_bear": 0.05,
-        },
-        resource_weights={
-            "fish": 0.30, "oil": 0.20, "salt": 0.20,
-            "krill": 0.20, "ice_core": 0.10,
-        },
-    ),
-}
+# 海洋群系集合 — 由 data ocean 标志派生（is_ocean 判定依据），
+# 在 _build_biome_templates 内赋值（见函数体 global 声明）
 
 
 # ═══════════════════════════════════════════════════════════
@@ -566,69 +251,42 @@ class _SubdivConfig:
         high: 高端子型（维度值大→此子型）。
         value_min: 该档维度值域下限（归一化用）。
         value_max: 该档维度值域上限（归一化用）。
-        split: 分界点（归一化后 [0,1]，默认 0.5 即中点）。
     """
     dimension: str
     low: BiomeType
     high: BiomeType
     value_min: float
     value_max: float
-    split: float = 0.5
 
 
 # 8 档气候 → 细分配置
 # value_min/value_max 基于大陆场该档内实际分布的 P50 校准，
 # 使归一化中点对准实际中位数 → 两子型比例均衡。
-_SUBDIV_CONFIGS: dict[ClimateZone, _SubdivConfig] = {
-    ClimateZone.EQUATORIAL_RAINFOREST: _SubdivConfig(
-        dimension=_SUBDIV_RAINFALL,
-        low=BiomeType.TROPICAL_MONSOON_FOREST,
-        high=BiomeType.TROPICAL_RAINFOREST,
-        value_min=1500.0, value_max=2200.0,
-    ),
-    ClimateZone.TROPICAL_SAVANNA: _SubdivConfig(
-        dimension=_SUBDIV_RAINFALL,
-        low=BiomeType.TROPICAL_SAVANNA,
-        high=BiomeType.TROPICAL_WOODLAND,
-        value_min=600.0, value_max=1500.0,
-    ),
-    ClimateZone.DESERT: _SubdivConfig(
-        dimension=_SUBDIV_MOISTURE,
-        low=BiomeType.SANDY_DESERT,
-        high=BiomeType.ROCKY_DESERT,
-        value_min=-1.0, value_max=1.0,
-    ),
-    ClimateZone.STEPPE: _SubdivConfig(
-        dimension=_SUBDIV_RAINFALL,
-        low=BiomeType.SHORT_GRASS_STEPPE,
-        high=BiomeType.TALL_GRASS_STEPPE,
-        value_min=200.0, value_max=600.0,
-    ),
-    ClimateZone.TEMPERATE_FOREST: _SubdivConfig(
-        dimension=_SUBDIV_TEMPERATURE,
-        low=BiomeType.TEMPERATE_MIXED_FOREST,
-        high=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
-        value_min=5.0, value_max=20.0,
-    ),
-    ClimateZone.SUBARCTIC_TAIGA: _SubdivConfig(
-        dimension=_SUBDIV_ALTITUDE,
-        low=BiomeType.BOREAL_WETLAND,
-        high=BiomeType.BOREAL_FOREST,
-        value_min=0.0, value_max=800.0,
-    ),
-    ClimateZone.POLAR_TUNDRA: _SubdivConfig(
-        dimension=_SUBDIV_TEMPERATURE,
-        low=BiomeType.POLAR_BARREN,
-        high=BiomeType.TUNDRA,
-        value_min=-14.0, value_max=0.0,
-    ),
-    ClimateZone.ALPINE: _SubdivConfig(
-        dimension=_SUBDIV_ALTITUDE,
-        low=BiomeType.ALPINE_MEADOW,
-        high=BiomeType.ALPINE_BARREN,
-        value_min=2000.0, value_max=2600.0,
-    ),
-}
+
+def _build_subdiv_configs(doc: Mapping) -> dict[ClimateZone, _SubdivConfig]:
+    """data/biome.json 的 subdiv 段 → 每气候档细分配置。"""
+    raw_map = doc.get("subdiv")
+    if not isinstance(raw_map, Mapping) or not raw_map:
+        raise ValueError("data/biome.json: 缺少 subdiv 配置")
+    configs: dict[ClimateZone, _SubdivConfig] = {}
+    for clim_ns, raw in raw_map.items():
+        zone = ClimateZone[_ns_local(clim_ns)]
+        configs[zone] = _SubdivConfig(
+            dimension=str(raw["dimension"]),
+            low=BiomeType[_ns_local(str(raw["low"]))],
+            high=BiomeType[_ns_local(str(raw["high"]))],
+            value_min=float(raw["value_min"]),
+            value_max=float(raw["value_max"]),
+        )
+    missing = set(ClimateZone) - set(configs)
+    if missing:
+        raise ValueError(f"data/biome.json: 缺细分配置 {[z.name for z in missing]}")
+    return configs
+
+
+_SUBDIV_CONFIGS: dict[ClimateZone, _SubdivConfig] = _build_subdiv_configs(
+    load_content("biome")
+)
 
 
 # ═══════════════════════════════════════════════════════════

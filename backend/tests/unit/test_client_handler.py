@@ -6,6 +6,7 @@
 """
 
 import socket
+import threading
 import time
 
 from ascend.net.client_handler import ClientHandler
@@ -24,10 +25,14 @@ def _make_handler(server_sock: socket.socket) -> ClientHandler:
     return handler
 
 
-def _wait_closed(handler: ClientHandler, timeout: float = 3.0) -> None:
-    """等待 handler 关闭底层 socket（fileno() == -1）。"""
+def _wait_closed(
+    handler: ClientHandler, thread: threading.Thread, timeout: float = 3.0,
+) -> None:
+    """等待 socket 关闭（fileno()==-1）且指定线程退出（消除竞态窗口）。"""
     deadline = time.monotonic() + timeout
-    while handler.sock.fileno() != -1 and time.monotonic() < deadline:
+    while (
+        handler.sock.fileno() != -1 or thread.is_alive()
+    ) and time.monotonic() < deadline:
         time.sleep(0.01)
 
 
@@ -40,7 +45,7 @@ class TestDisconnectCleanup:
         handler = _make_handler(server_sock)
         try:
             client_sock.close()
-            _wait_closed(handler)
+            _wait_closed(handler, handler._recv_thread)
             assert handler.sock.fileno() == -1, "EOF 断开后 socket 应被显式关闭"
             assert not handler._recv_thread.is_alive(), "接收线程应已退出"
         finally:
@@ -65,7 +70,7 @@ class TestDisconnectCleanup:
             # SEND_QUEUE_LIMIT=1024 帧的队列上限，不触发 send() 的主动断开）
             for _ in range(1000):
                 handler.send(b"x" * 4096)
-            _wait_closed(handler)
+            _wait_closed(handler, handler._send_thread)
             assert handler.sock.fileno() == -1, "发送失败后 socket 应被显式关闭"
             assert not handler._send_thread.is_alive(), "发送线程应已退出"
         finally:

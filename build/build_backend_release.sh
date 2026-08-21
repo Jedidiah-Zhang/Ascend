@@ -56,8 +56,11 @@ echo "==> [2/3] 组装 + 冒烟 $PLATFORM ..."
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp -r "$SERVER_SRC" "$STAGE/server"
-# 后端 i18n 按模块相对路径解析（ascend/i18n.py 上三级 → server/lang）
-cp -r "$ROOT/lang" "$STAGE/server/lang"
+# 后端 i18n 按模块相对路径解析：Nuitka standalone 下 __file__ 含包前缀，
+# ascend/i18n.py 上三级 = 舞台根 → lang 配送到 STAGE/lang
+cp -r "$ROOT/lang" "$STAGE/lang"
+# 后端内容数据（第 1 层数据驱动，import 期强依赖；→ STAGE/data）
+cp -r "$ROOT/data" "$STAGE/data"
 
 cat > "$STAGE/README.txt" <<EOF
 Ascend 后端服务器 $VERSION ($PLATFORM) — 研究平台

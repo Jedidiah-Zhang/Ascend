@@ -69,6 +69,7 @@ Ascend 试图填补该交叉领域的空白：以可复现、可干预的因果�
 backend/   Python 后端（核心逻辑）
 frontend/  Godot 前端
 build/     构建与打包
+data/      世界内容数据（JSON：地形/群系/气候/天气/世界生成参数）
 docs/             设计文档
 lang/             多语言资源
 requirements.txt  Python 依赖
