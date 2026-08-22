@@ -12,9 +12,9 @@ var cached_count: int = 0
 var pending_count: int = 0
 
 
-## 构造函数：设置分区标签为"区块"。
+## 构造函数：设置分区标签翻译键。
 func _init() -> void:
-	label = "区块"
+	label_key = "debug.section.chunk"
 
 
 ## 缓存世界脚本引用，供 process_section 拉取区块统计。
@@ -45,6 +45,7 @@ func process_section(_delta: float) -> void:
 ##     两行 PackedStringArray（加载缓存行 + 待发送行）。
 func get_lines() -> PackedStringArray:
 	return PackedStringArray([
-		"已加载: %d  缓存: %d" % [loaded_count, cached_count],
-		"待发送: %d" % pending_count,
+		TranslationServer.tr("debug.chunk_stats").format({
+			"loaded": loaded_count, "cached": cached_count}),
+		TranslationServer.tr("debug.chunk_pending").format({"count": pending_count}),
 	])

@@ -11,9 +11,9 @@ var minute: int = 0
 var _has_data: bool = false
 
 
-## 构造函数：设置分区标签为"时间"。
+## 构造函数：设置分区标签翻译键。
 func _init() -> void:
-	label = "时间"
+	label_key = "debug.section.time"
 
 
 ## 响应 minute_change 事件刷新时间显示：天数取自 data.day，
@@ -40,5 +40,6 @@ func get_lines() -> PackedStringArray:
 	if not _has_data:
 		return PackedStringArray(["—"])
 	return PackedStringArray([
-		"第 %d 天 %02d:%02d" % [day, hour, minute],
+		TranslationServer.tr("ui.format.game_time").format({
+			"day": day, "clock": "%02d:%02d" % [hour, minute]}),
 	])

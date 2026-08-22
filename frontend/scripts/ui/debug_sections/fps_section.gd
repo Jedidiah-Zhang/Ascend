@@ -26,9 +26,9 @@ var _prev_real_msec: int = 0
 var _world: Node = null
 
 
-## 构造函数：设置分区标签为"性能"。
+## 构造函数：设置分区标签翻译键。
 func _init() -> void:
-	label = "性能"
+	label_key = "debug.section.performance"
 
 
 ## 缓存世界脚本引用，供 process_section 拉取各环节耗时。
@@ -85,9 +85,11 @@ func update_msp_t() -> void:
 ## Returns:
 ##     三行 PackedStringArray（FPS/TPS 行、MSPT/网络行、流式行）。
 func get_lines() -> PackedStringArray:
-	var fps := Engine.get_frames_per_second()
+	var fps: int = Engine.get_frames_per_second()
 	return PackedStringArray([
-		"FPS: %d  TPS: %.1f" % [fps, tps],
-		"MSPT: %.2f ms  网络: %dμs" % [_mspt_ema, _conn_us],
-		"流式: %dμs" % _stream_us,
+		TranslationServer.tr("debug.fps_line").format({
+			"fps": fps, "tps": "%.1f" % tps}),
+		TranslationServer.tr("debug.mspt_line").format({
+			"mspt": "%.2f" % _mspt_ema, "conn": _conn_us}),
+		TranslationServer.tr("debug.stream_line").format({"value": _stream_us}),
 	])

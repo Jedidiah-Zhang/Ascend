@@ -70,7 +70,7 @@ func _draw() -> void:
 	if _font == null or _lines.is_empty():
 		return
 
-	var header_text := "── 事件日志 ──"
+	var header_text: String = "── %s ──" % tr("event_log.header")
 	var bg_x: float = size.x - PANEL_WIDTH
 	var bg_h: float = (_lines.size() + 1) * LINE_HEIGHT + PADDING * 2
 
@@ -125,7 +125,7 @@ func on_world_event(event_type: String, payload: Dictionary) -> void:
 			var day: int = int(data.get("day", 0))
 			if day != _current_game_day:
 				_current_game_day = day
-				push_event("[%s] ── 第%d天 ──" % [ts, day])
+				push_event("[%s] ── %s ──" % [ts, tr("event_log.day_separator").format({"day": day})])
 
 		"temperature_change", "humidity_change", "wind_change", "sunshine_change", \
 		"precipitation_start", "precipitation_stop":
@@ -143,7 +143,7 @@ func _on_debug_toggled(shown: bool) -> void:
 
 
 ## 格式化天气事件并推送：事件区块超出玩家视野半径时忽略，
-## 按类型生成中文描述（温度 / 湿度 / 风速 / 日照 / 降雨起止）。
+## 按类型生成本地化描述（温度 / 湿度 / 风速 / 日照 / 降雨起止）。
 ##
 ## Args:
 ##     event_type: 天气事件类型。
@@ -163,20 +163,25 @@ func _push_weather_event(event_type: String, payload: Dictionary, data: Dictiona
 	var body: String
 	match event_type:
 		"temperature_change":
-			body = "温度 %.1f°C" % data.get("temperature", 0.0)
+			body = tr("event_log.temperature").format({"value": "%.1f" % float(data.get("temperature", 0.0))})
 		"humidity_change":
-			body = "湿度 %.0f%%" % data.get("humidity", 0.0)
+			body = tr("event_log.humidity").format({"value": "%.0f" % float(data.get("humidity", 0.0))})
 		"wind_change":
-			body = "风速 %.1f m/s" % data.get("wind_speed", 0.0)
+			body = tr("event_log.wind").format({"value": "%.1f" % float(data.get("wind_speed", 0.0))})
 		"sunshine_change":
-			body = "日照 %.1fh" % data.get("sunshine", 0.0)
+			body = tr("event_log.sunshine").format({"value": "%.1f" % float(data.get("sunshine", 0.0))})
 		"precipitation_start":
-			body = "%s %.1fmm/h" % [data.get("precip_type", ""), data.get("intensity", 0.0)]
+			var precip_type: String = String(data.get("precip_type", ""))
+			body = tr("weather.intensity").format({
+				"type": tr("weather." + precip_type),
+				"intensity": "%.1f" % float(data.get("intensity", 0.0)),
+			})
 		"precipitation_stop":
-			body = "雨停"
+			body = tr("event.rain_stop")
 		_:
 			return
-	push_event("[%s] [区块 %d,%d] %s" % [ts, cx, cy, body])
+	push_event("[%s] %s" % [ts, tr("event_log.chunk_event").format({
+		"cx": cx, "cy": cy, "body": body})])
 
 
 ## 判断事件区块是否在玩家视野半径 VIEW_RADIUS 内。

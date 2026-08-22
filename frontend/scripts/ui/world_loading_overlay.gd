@@ -39,8 +39,8 @@ const COMPLETION_HOLD_SEC: float = 0.45
 
 ## 等宽字体（懒加载）
 var _font: Font = null
-## 当前阶段文案
-var _text: String = "正在生成世界..."
+## 当前阶段文案（未收到阶段广播前显示生成兜底文案）
+var _text: String = ""
 ## 已见生成阶段的最大索引（-1 = 未收到阶段）
 var _stage_index: int = -1
 ## 平滑补间推进器（与 world_loading 同款逻辑，见 progress_lerp.gd）
@@ -57,8 +57,10 @@ func set_text(text: String) -> void:
 	queue_redraw()
 
 
-## 当前阶段文案（测试用）。
+## 当前阶段文案（测试用）；未设置时返回生成兜底文案。
 func get_text() -> String:
+	if _text.is_empty():
+		return tr("ui.loading.generating_world")
 	return _text
 
 
@@ -140,12 +142,13 @@ func _draw() -> void:
 	draw_rect(Rect2(bar_pos, Vector2(BAR_W, BAR_H)), PROGRESS_TRACK_COLOR)
 	draw_rect(Rect2(bar_pos, Vector2(BAR_W * _lerp.display_ratio, BAR_H)), PROGRESS_FILL_COLOR)
 
-	# 阶段文案（进度条上方）
-	var text_w: float = _font.get_string_size(_text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
+	# 阶段文案（进度条上方；未设置时显示生成兜底文案）
+	var text: String = get_text()
+	var text_w: float = _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
 	draw_string(
 		_font,
 		Vector2((vsize.x - text_w) * 0.5, vsize.y * TEXT_CENTER_Y_RATIO),
-		_text,
+		text,
 		HORIZONTAL_ALIGNMENT_LEFT,
 		-1,
 		FONT_SIZE,

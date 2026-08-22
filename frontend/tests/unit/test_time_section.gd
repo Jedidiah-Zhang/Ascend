@@ -3,7 +3,7 @@ extends GutTest
 
 func test_init_sets_label() -> void:
 	var section: TimeSection = TimeSection.new()
-	assert_eq(section.label, "时间")
+	assert_eq(section.label_key, "debug.section.time")
 
 
 func test_no_data_shows_dash() -> void:

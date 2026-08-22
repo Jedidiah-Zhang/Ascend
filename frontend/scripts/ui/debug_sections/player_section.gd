@@ -17,9 +17,9 @@ var chunk: Vector2i = Vector2i.ZERO
 var elevation: float = 0.0
 
 
-## 构造函数：设置分区标签为"玩家"。
+## 构造函数：设置分区标签翻译键。
 func _init() -> void:
-	label = "玩家"
+	label_key = "debug.section.player"
 
 
 ## 缓存世界脚本引用，供 process_section 拉取玩家信息。
@@ -52,6 +52,7 @@ func process_section(_delta: float) -> void:
 ##     两行 PackedStringArray（坐标行 + 海拔行）。
 func get_lines() -> PackedStringArray:
 	return PackedStringArray([
-		"坐标: (%d, %d)  |  区块: (%d, %d)" % [int(world_pos.x), int(world_pos.y), chunk.x, chunk.y],
-		"海拔: %d m" % int(elevation),
+		TranslationServer.tr("debug.player_coords").format({
+			"x": int(world_pos.x), "y": int(world_pos.y), "cx": chunk.x, "cy": chunk.y}),
+		TranslationServer.tr("debug.player_elevation").format({"value": int(elevation)}),
 	])

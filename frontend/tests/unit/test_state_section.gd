@@ -8,7 +8,7 @@ extends GutTest
 
 func test_init_sets_label() -> void:
 	var section: StateSection = StateSection.new()
-	assert_eq(section.label, "状态追赶")
+	assert_eq(section.label_key, "debug.section.state")
 
 
 func test_default_values() -> void:

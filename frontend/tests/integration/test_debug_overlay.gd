@@ -101,8 +101,8 @@ class TestSection extends DebugSection:
 	var last_event: String = ""
 	var last_response: String = ""
 
-	func _init(p_label: String) -> void:
-		label = p_label
+	func _init(p_label_key: String) -> void:
+		label_key = p_label_key
 
 	func process_section(_delta: float) -> void:
 		process_calls += 1

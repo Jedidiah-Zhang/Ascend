@@ -3,7 +3,7 @@ extends GutTest
 
 func test_init_sets_label() -> void:
 	var section: ElevationSection = ElevationSection.new()
-	assert_eq(section.label, "地形")
+	assert_eq(section.label_key, "debug.section.elevation")
 
 
 func test_no_data_shows_dash() -> void:

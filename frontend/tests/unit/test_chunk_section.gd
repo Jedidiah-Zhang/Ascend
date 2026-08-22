@@ -3,7 +3,7 @@ extends GutTest
 
 func test_init_sets_label() -> void:
 	var section: ChunkSection = ChunkSection.new()
-	assert_eq(section.label, "区块")
+	assert_eq(section.label_key, "debug.section.chunk")
 
 
 func test_default_counts_are_zero() -> void:

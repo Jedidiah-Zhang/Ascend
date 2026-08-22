@@ -3,7 +3,7 @@ extends GutTest
 
 func test_init_sets_label() -> void:
 	var section: MemorySection = MemorySection.new()
-	assert_eq(section.label, "内存")
+	assert_eq(section.label_key, "debug.section.memory")
 
 
 func test_get_lines_returns_two_lines() -> void:

@@ -15,9 +15,9 @@ var boost_remaining: float = 0.0
 var chase_chunks: int = 0
 
 
-## 构造函数：设置分区标签为"状态追赶"。
+## 构造函数：设置分区标签翻译键。
 func _init() -> void:
-	label = "状态追赶"
+	label_key = "debug.section.state"
 
 
 ## 缓存世界脚本引用，供 process_section 拉取追赶统计。
@@ -48,10 +48,11 @@ func process_section(_delta: float) -> void:
 func get_lines() -> PackedStringArray:
 	var boost_line: String
 	if boost_mult > 1.0:
-		boost_line = "加速 ×%.1f（%.0fs）" % [boost_mult, boost_remaining]
+		boost_line = TranslationServer.tr("debug.state_boost").format({
+			"mult": "%.1f" % boost_mult, "seconds": "%.0f" % boost_remaining})
 	else:
-		boost_line = "加速 无"
+		boost_line = TranslationServer.tr("debug.state_boost_idle")
 	return PackedStringArray([
 		boost_line,
-		"追赶: %d 块" % chase_chunks,
+		TranslationServer.tr("debug.state_chasing").format({"count": chase_chunks}),
 	])

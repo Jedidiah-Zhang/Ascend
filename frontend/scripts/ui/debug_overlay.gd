@@ -102,7 +102,7 @@ func _draw() -> void:
 		var lines: PackedStringArray = section.get_lines()
 		if lines.is_empty():
 			continue
-		sections_data.append({"label": section.label, "lines": lines})
+		sections_data.append({"label": tr(section.label_key), "lines": lines})
 
 	if sections_data.is_empty():
 		return
@@ -160,24 +160,24 @@ func add_section(section: DebugSection) -> void:
 	_sections.append(section)
 
 
-## 按标签从渲染列表移除分区。
+## 按标签翻译键从渲染列表移除分区。
 ##
 ## Args:
-##     label: 要移除的分区标签。
-func remove_section(label: String) -> void:
-	_sections = _sections.filter(func(s: DebugSection): return s.label != label)
+##     label_key: 要移除的分区标签翻译键。
+func remove_section(label_key: String) -> void:
+	_sections = _sections.filter(func(s: DebugSection): return s.label_key != label_key)
 
 
-## 按标签查找已注册分区。
+## 按标签翻译键查找已注册分区。
 ##
 ## Args:
-##     label: 分区标签。
+##     label_key: 分区标签翻译键。
 ##
 ## Returns:
 ##     匹配的分区实例；未找到返回 null。
-func get_section(label: String) -> DebugSection:
+func get_section(label_key: String) -> DebugSection:
 	for s: DebugSection in _sections:
-		if s.label == label:
+		if s.label_key == label_key:
 			return s
 	return null
 

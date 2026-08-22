@@ -3,7 +3,7 @@ extends GutTest
 
 func test_init_sets_label() -> void:
 	var section: CameraSection = CameraSection.new()
-	assert_eq(section.label, "相机")
+	assert_eq(section.label_key, "debug.section.camera")
 
 
 func test_default_state_shows_origin() -> void:

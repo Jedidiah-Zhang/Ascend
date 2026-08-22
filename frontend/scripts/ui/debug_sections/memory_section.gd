@@ -5,9 +5,9 @@ class_name MemorySection
 extends "res://scripts/ui/debug_section.gd"
 
 
-## 构造函数：设置分区标签为"内存"。
+## 构造函数：设置分区标签翻译键。
 func _init() -> void:
-	label = "内存"
+	label_key = "debug.section.memory"
 
 
 ## 生成内存分区文本行：从 Performance 单例读取静态内存/视频内存
@@ -20,6 +20,7 @@ func get_lines() -> PackedStringArray:
 	var video_mem := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0
 	var node_count := Performance.get_monitor(Performance.OBJECT_NODE_COUNT)
 	return PackedStringArray([
-		"静态: %.1f MB  |  视频: %.1f MB" % [static_mem, video_mem],
-		"节点数: %d" % node_count,
+		TranslationServer.tr("debug.memory_line").format({
+			"static": "%.1f" % static_mem, "video": "%.1f" % video_mem}),
+		TranslationServer.tr("debug.node_count").format({"count": node_count}),
 	])

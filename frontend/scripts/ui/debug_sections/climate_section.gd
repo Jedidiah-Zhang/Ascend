@@ -8,9 +8,11 @@ class_name ClimateSection
 extends "res://scripts/ui/debug_sections/tile_polling_section.gd"
 
 
-const CLIMATE_LABELS: Array[String] = [
-	"热带雨林", "热带草原", "沙漠", "草原",
-	"温带森林", "亚寒带针叶林", "极地苔原", "高山",
+## 气候带 → 翻译键（顺序与后端 ClimateZone 编码一致；文案见 lang/*.json ui.map.climate_*）
+const CLIMATE_LABEL_KEYS: Array[String] = [
+	"ui.map.climate_rainforest", "ui.map.climate_savanna", "ui.map.climate_desert",
+	"ui.map.climate_grassland", "ui.map.climate_temperate_forest",
+	"ui.map.climate_taiga", "ui.map.climate_tundra", "ui.map.climate_alpine",
 ]
 
 
@@ -30,9 +32,9 @@ var _has_humidity: bool = false
 var climate_zone: int = -1
 
 
-## 构造函数：设置分区标签为"气候"。
+## 构造函数：设置分区标签翻译键。
 func _init() -> void:
-	label = "气候"
+	label_key = "debug.section.climate"
 
 
 ## 查询当前 tile 的基线气候数据：从世界脚本 get_debug_climate_at 拉取
@@ -71,10 +73,11 @@ func _poll(world_pos: Vector2) -> bool:
 ## Returns:
 ##     两行 PackedStringArray（温湿度行 + 气候带行）。
 func get_lines() -> PackedStringArray:
-	var temp_str := "%.1f°C" % temperature if _has_temp else "—"
-	var humid_str := "%.0f%%" % humidity if _has_humidity else "—"
-	var zone_str := CLIMATE_LABELS[climate_zone] if climate_zone >= 0 and climate_zone < CLIMATE_LABELS.size() else "—"
+	var temp_str: String = "%.1f°C" % temperature if _has_temp else "—"
+	var humid_str: String = "%.0f%%" % humidity if _has_humidity else "—"
+	var zone_str: String = TranslationServer.tr(
+		CLIMATE_LABEL_KEYS[climate_zone]) if climate_zone >= 0 and climate_zone < CLIMATE_LABEL_KEYS.size() else "—"
 	return PackedStringArray([
-		"年均温: %s  |  年均湿度: %s" % [temp_str, humid_str],
-		"气候: %s" % zone_str,
+		TranslationServer.tr("debug.climate_summary").format({"temp": temp_str, "hum": humid_str}),
+		TranslationServer.tr("debug.climate_zone").format({"name": zone_str}),
 	])

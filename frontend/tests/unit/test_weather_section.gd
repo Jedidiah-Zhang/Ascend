@@ -3,21 +3,21 @@ extends GutTest
 
 func test_init_sets_label() -> void:
 	var section: WeatherSection = WeatherSection.new()
-	assert_eq(section.label, "天气")
+	assert_eq(section.label_key, "debug.section.weather")
 
 
-func test_initial_state_is_sunny() -> void:
+func test_initial_state_is_empty() -> void:
 	var section: WeatherSection = WeatherSection.new()
-	assert_eq(section.current_weather, "晴")
+	assert_eq(section.current_weather, "", "未收到数据前天气描述为空")
 	var lines: PackedStringArray = section.get_lines()
 	assert_eq(lines.size(), 1)
-	assert_string_contains(lines[0], "天气: 晴")
+	assert_string_contains(lines[0], "—")
 
 
 func test_on_world_response_ignores_other_requests() -> void:
 	var section: WeatherSection = WeatherSection.new()
 	section.on_world_response("get_entity", {"data": "ignored"})
-	assert_eq(section.current_weather, "晴", "无关响应不应修改天气")
+	assert_eq(section.current_weather, "", "无关响应不应修改天气")
 
 
 func test_apply_weather_data_updates_all_fields() -> void:
@@ -77,4 +77,4 @@ func test_get_lines_after_weather_update() -> void:
 func test_empty_weather_array_does_not_crash() -> void:
 	var section: WeatherSection = WeatherSection.new()
 	section.on_world_response("get_weather", {"weathers": []})
-	assert_eq(section.current_weather, "晴")
+	assert_eq(section.current_weather, "")

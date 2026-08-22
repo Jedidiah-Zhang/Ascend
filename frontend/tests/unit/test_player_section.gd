@@ -3,7 +3,7 @@ extends GutTest
 
 func test_init_sets_label() -> void:
 	var section: PlayerSection = PlayerSection.new()
-	assert_eq(section.label, "玩家")
+	assert_eq(section.label_key, "debug.section.player")
 
 
 func test_default_state() -> void:

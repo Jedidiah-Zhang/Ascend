@@ -14,9 +14,9 @@ var position: Vector2 = Vector2.ZERO
 var _camera_display: String = ""
 
 
-## 构造函数：设置分区标签为"相机"。
+## 构造函数：设置分区标签翻译键。
 func _init() -> void:
-	label = "相机"
+	label_key = "debug.section.camera"
 
 
 ## 缓存世界脚本引用，供 process_section 拉取相机数据。
@@ -48,6 +48,7 @@ func process_section(_delta: float) -> void:
 ##     两行 PackedStringArray（位置行 + 视野行）。
 func get_lines() -> PackedStringArray:
 	return PackedStringArray([
-		"位置: (%d, %d)" % [int(position.x), int(position.y)],
+		TranslationServer.tr("debug.camera_position").format({
+			"x": int(position.x), "y": int(position.y)}),
 		_camera_display if not _camera_display.is_empty() else "—",
 	])

@@ -19,7 +19,6 @@ extends Control
 
 class_name TerminalWidget
 
-const Config = preload("res://scripts/config.gd")
 
 
 # ── 信号 ────────────────────────────────────────────────────
@@ -94,9 +93,9 @@ func _ready() -> void:
 	_font = FontUtils.get_mono_font()
 	_font_height = FONT_SIZE + 2
 	hide()
-	register_command("clear", _cmd_clear, "clear - 清空终端输出")
-	_write_output("Ascend 调试终端")
-	_write_output("输入 help 查看指令列表，/ 切换终端")
+	register_command("clear", _cmd_clear, "clear - %s" % tr("console.help_clear"))
+	_write_output(tr("console.welcome"))
+	_write_output(tr("console.hint"))
 	if not _settings().debug_mode_changed.is_connected(_on_debug_mode_changed):
 		_settings().debug_mode_changed.connect(_on_debug_mode_changed)
 
@@ -436,7 +435,7 @@ func _cmd_clear(_args: PackedStringArray) -> String:
 
 func _show_local_help() -> void:
 	"""显示本地指令帮助，远程指令帮助由后端响应追加。"""
-	_write_output("--- 本地指令 ---")
+	_write_output("--- %s ---" % tr("console.local_commands"))
 	var names: Array = _local_commands.keys()
 	names.sort()
 	for cmd_name: String in names:
@@ -444,7 +443,7 @@ func _show_local_help() -> void:
 		if help_text.is_empty():
 			help_text = cmd_name
 		_write_output("  " + help_text)
-	_write_output("--- 远程指令 ---")
+	_write_output("--- %s ---" % tr("console.remote_commands"))
 
 
 # ── 辅助函数 ────────────────────────────────────────────────

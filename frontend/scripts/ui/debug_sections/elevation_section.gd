@@ -17,9 +17,9 @@ var slope_value: float = 0.0
 var _has_data: bool = false
 
 
-## 构造函数：设置分区标签为"地形"。
+## 构造函数：设置分区标签翻译键。
 func _init() -> void:
-	label = "地形"
+	label_key = "debug.section.elevation"
 
 
 ## 查询当前 tile 的地形数据：从世界脚本 get_debug_terrain_at 拉取
@@ -53,8 +53,9 @@ func _poll(world_pos: Vector2) -> bool:
 ## Returns:
 ##     单行 PackedStringArray（占位或数据行）。
 func get_lines() -> PackedStringArray:
-	if not _has_data:
-		return PackedStringArray(["海拔: —  |  坡度: —"])
+	var elevation_str: String = str(elevation_value) if _has_data else "—"
+	var slope_str: String = "%.1f°" % slope_value if _has_data else "—"
 	return PackedStringArray([
-		"海拔: %d  |  坡度: %.1f°" % [elevation_value, slope_value],
+		TranslationServer.tr("debug.terrain_summary").format({
+			"elevation": elevation_str, "slope": slope_str}),
 	])

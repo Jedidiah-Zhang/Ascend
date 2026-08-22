@@ -3,7 +3,7 @@ extends GutTest
 
 func test_init_sets_label() -> void:
 	var section: FPSSection = FPSSection.new()
-	assert_eq(section.label, "性能")
+	assert_eq(section.label_key, "debug.section.performance")
 
 
 func test_get_lines_format_is_stable() -> void:

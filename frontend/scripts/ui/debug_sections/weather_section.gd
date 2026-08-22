@@ -8,8 +8,8 @@ class_name WeatherSection
 extends "res://scripts/ui/debug_section.gd"
 
 
-## 当前天气描述（降水）
-var current_weather: String = "晴"
+## 当前天气描述（后端返回的本地化文案；未收到数据时为空）
+var current_weather: String = ""
 
 var temperature: float = 0.0
 var temp_tier: int = -1
@@ -36,9 +36,9 @@ var light_tier: int = -1
 var _has_intensity: bool = false
 
 
-## 构造函数：设置分区标签为"天气"。
+## 构造函数：设置分区标签翻译键。
 func _init() -> void:
-	label = "天气"
+	label_key = "debug.section.weather"
 
 
 ## 响应 get_weather 响应：取 weathers 数组首个条目交给 _apply_weather_data
@@ -98,7 +98,8 @@ func _apply_weather_data(data: Dictionary) -> void:
 ##     按可用字段数量生成的 PackedStringArray。
 func get_lines() -> PackedStringArray:
 	var lines: PackedStringArray = []
-	lines.append("天气: %s" % current_weather)
+	var weather_name: String = current_weather if not current_weather.is_empty() else "—"
+	lines.append(TranslationServer.tr("debug.weather_label").format({"name": weather_name}))
 
 	var meteo: PackedStringArray = []
 	if _has_temp:
@@ -111,19 +112,21 @@ func get_lines() -> PackedStringArray:
 		lines.append("  ".join(meteo))
 
 	if _has_sun:
-		lines.append("日照 %.1fh(L%d)" % [sunshine, sun_tier])
+		lines.append(TranslationServer.tr("debug.weather_sunshine").format({
+			"hours": "%.1f" % sunshine, "level": sun_tier}))
 
 	var sun_parts: PackedStringArray = []
 	if _has_intensity:
-		sun_parts.append("光照 %.2f(L%d)" % [sunshine_intensity, light_tier])
+		sun_parts.append(TranslationServer.tr("debug.weather_light").format({
+			"intensity": "%.2f" % sunshine_intensity, "level": light_tier}))
 	if _has_daylight_info:
 		var sr_h: int = int(sunrise)
 		var sr_m: int = int((sunrise - sr_h) * 60)
 		var ss_h: int = int(sunset)
 		var ss_m: int = int((sunset - ss_h) * 60)
-		sun_parts.append("日出 %s → 日落 %s" % [
-			SaveInfoFormatter.hhmm_string(sr_h, sr_m),
-			SaveInfoFormatter.hhmm_string(ss_h, ss_m)])
+		sun_parts.append(TranslationServer.tr("debug.weather_sun_times").format({
+			"sunrise": SaveInfoFormatter.hhmm_string(sr_h, sr_m),
+			"sunset": SaveInfoFormatter.hhmm_string(ss_h, ss_m)}))
 	if not sun_parts.is_empty():
 		lines.append("  ".join(sun_parts))
 

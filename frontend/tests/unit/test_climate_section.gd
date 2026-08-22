@@ -3,7 +3,7 @@ extends GutTest
 
 func test_init_sets_label() -> void:
 	var section: ClimateSection = ClimateSection.new()
-	assert_eq(section.label, "气候")
+	assert_eq(section.label_key, "debug.section.climate")
 
 
 func test_no_data_shows_dashes() -> void:

@@ -12,7 +12,6 @@
 """
 extends Node2D
 
-const Config = preload("res://scripts/config.gd")
 const TerrainTileBuilder = preload("res://scripts/world/terrain_tile_builder.gd")
 
 const StateDisplayChaser = preload("res://scripts/world/state_display_chaser.gd")
@@ -620,7 +619,7 @@ func get_debug_camera_info() -> Dictionary:
 		return {}
 	return {
 		"position": _camera_focus,
-		"camera_display": "缩放: %.1fx" % _camera_zoom.x,
+		"camera_display": tr("debug.camera_zoom").format({"zoom": "%.1f" % _camera_zoom.x}),
 	}
 
 
@@ -1126,11 +1125,12 @@ func _handle_event(message: Dictionary) -> void:
 		_camera_focus = _world_to_screen(_player_pos)
 		_apply_camera_transform()
 		if _event_log:
-			_event_log.push_event("[%s] 传送至 (%.0f, %.0f)" % [
+			_event_log.push_event("[%s] %s" % [
 				SaveInfoFormatter.hhmm_string(
 					int(payload.get("game_hour", 0)),
 					int(payload.get("game_minute", 0))),
-				tx, tz])
+				tr("event_log.teleported").format({
+					"x": "%.0f" % tx, "y": "%.0f" % tz})])
 		return
 
 	# 天气事件 → 显示值追赶加速（初雪/暴雪"快下快铺"，见 StateDisplayChaser）
@@ -1266,7 +1266,7 @@ func _handle_response(message: Dictionary) -> void:
 		"player_interact":
 			# 显式"未实现"标记（后端占位 handler）：功能缺口可见
 			if not payload.get("implemented", true) and _event_log:
-				_event_log.push_event("交互功能尚未实现")
+				_event_log.push_event(tr("event_log.interact_unimplemented"))
 		"terminal_cmd":
 			if _terminal:
 				_terminal.write(payload.get("output", ""))

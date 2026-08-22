@@ -19,8 +19,8 @@ extends RefCounted
 
 # ── 属性 ────────────────────────────────────────────────────
 
-## 分区标签，显示为彩色标题行
-var label: String = ""
+## 分区标签翻译键（渲染时由 DebugOverlay 统一翻译，见 lang/*.json debug.section.*）
+var label_key: String = ""
 
 ## 是否启用，设为 false 时 DebugOverlay 跳过该分区
 var enabled: bool = true
