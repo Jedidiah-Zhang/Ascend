@@ -19,7 +19,8 @@
 import base64
 import json
 import os
-from typing import Callable
+from dataclasses import dataclass
+from typing import Callable, Optional
 
 from ascend.log import get_logger
 
@@ -31,8 +32,65 @@ logger = get_logger(__name__)
 # 快照血缘（时间线分叉）元数据：{live_origin, snapshots: {file: {parent, game_time, saved_at, seq}}}
 LINEAGE_FILE: str = "lineage.json"
 
+# 血缘文档字段（扁平键即协议契约，勿改名；改动须同步 manager/handler/前端）
+LIVE_ORIGIN_KEY: str = "live_origin"
+SNAPSHOTS_KEY: str = "snapshots"
+PARENT_KEY: str = "parent"
+GAME_TIME_KEY: str = "game_time"
+SAVED_AT_KEY: str = "saved_at"
+SEQ_KEY: str = "seq"
+
 # 调用方注入的世界密钥提供者：world_id → 密钥（不可用时返回 None）
 KeysProvider = Callable[[str], "SaveKeys | None"]
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotEntry:
+    """快照血缘条目 — 单个快照的父子关系与时间线排序信息。
+
+    Attributes:
+        parent: 创建时活目录来源（回滚目标快照文件名；"" = 世界初始）。
+        game_time: 创建时刻的世界时间（tick）。
+        saved_at: 创建时刻的墙钟时间（展示用）。
+        seq: 世界内单调递增的权威排序键（创建顺序；不受游戏时间
+            倒退影响，时间线/编号/串链排序的唯一事实来源）。
+    """
+
+    parent: str
+    game_time: int
+    saved_at: float
+    seq: int
+
+    def to_dict(self) -> dict:
+        """序列化为血缘 JSON 条目（字段顺序即文件格式）。"""
+        return {
+            PARENT_KEY: self.parent,
+            GAME_TIME_KEY: self.game_time,
+            SAVED_AT_KEY: self.saved_at,
+            SEQ_KEY: self.seq,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: object) -> Optional["SnapshotEntry"]:
+        """从血缘 JSON 条目解析（字段缺失/类型不符返回 None）。
+
+        Args:
+            raw: 血缘文件中的条目对象。
+        """
+        if not isinstance(raw, dict):
+            return None
+        entry = raw
+        if not all(isinstance(entry.get(k), t) for k, t in (
+            (PARENT_KEY, str), (GAME_TIME_KEY, int),
+            (SAVED_AT_KEY, (int, float)), (SEQ_KEY, int),
+        )):
+            return None
+        return cls(
+            parent=entry[PARENT_KEY],
+            game_time=entry[GAME_TIME_KEY],
+            saved_at=float(entry[SAVED_AT_KEY]),
+            seq=entry[SEQ_KEY],
+        )
 
 
 def _b64(data: bytes) -> str:
@@ -138,14 +196,14 @@ class LineageStore:
             （初始世界无快照 / 不可验签按空处理，反向对账由 load
             另行把关）。seq 是唯一的权威排序键，其余时间字段仅作展示。
         """
-        default: dict = {"live_origin": "", "snapshots": {}}
+        default: dict = {LIVE_ORIGIN_KEY: "", SNAPSHOTS_KEY: {}}
         data = self.load(world_id)
         if data is None:
             return default
-        data.setdefault("live_origin", "")
-        data.setdefault("snapshots", {})
-        if not isinstance(data["snapshots"], dict):
-            data["snapshots"] = {}
+        data.setdefault(LIVE_ORIGIN_KEY, "")
+        data.setdefault(SNAPSHOTS_KEY, {})
+        if not isinstance(data[SNAPSHOTS_KEY], dict):
+            data[SNAPSHOTS_KEY] = {}
         return data
 
     def write(self, world_id: str, lineage: dict) -> bool:
@@ -189,20 +247,39 @@ class LineageStore:
         """
         lineage = self.get(world_id)
         seqs = [
-            int(entry["seq"]) for entry in lineage["snapshots"].values()
-            if isinstance(entry, dict) and "seq" in entry
+            entry.seq for entry in (
+                parse_snapshot_entries(lineage[SNAPSHOTS_KEY]).values())
         ]
-        lineage["snapshots"][filename] = {
-            "parent": lineage.get("live_origin", ""),
-            "game_time": int(game_time),
-            "saved_at": float(saved_at),
-            "seq": (max(seqs) + 1) if seqs else 0,
-        }
-        lineage["live_origin"] = filename
+        lineage[SNAPSHOTS_KEY][filename] = SnapshotEntry(
+            parent=str(lineage.get(LIVE_ORIGIN_KEY, "")),
+            game_time=int(game_time),
+            saved_at=float(saved_at),
+            seq=(max(seqs) + 1) if seqs else 0,
+        ).to_dict()
+        lineage[LIVE_ORIGIN_KEY] = filename
         return self.write(world_id, lineage)
 
     def set_live_origin(self, world_id: str, snapshot_file: str) -> None:
         """记录活目录来源：回滚后调用，标记当前时间点从该快照派生。"""
         lineage = self.get(world_id)
-        lineage["live_origin"] = snapshot_file
+        lineage[LIVE_ORIGIN_KEY] = snapshot_file
         self.write(world_id, lineage)
+
+
+def parse_snapshot_entries(snapshots: object) -> dict[str, SnapshotEntry]:
+    """解析血缘的 snapshots 段为键入条目对象（非法条目跳过）。
+
+    Args:
+        snapshots: 血缘文件中的 snapshots 段（任何值）。
+
+    Returns:
+        {filename: SnapshotEntry}；空/损坏时为空字典。
+    """
+    entries: dict[str, SnapshotEntry] = {}
+    if not isinstance(snapshots, dict):
+        return entries
+    for filename, raw in snapshots.items():
+        entry = SnapshotEntry.from_dict(raw)
+        if entry is not None:
+            entries[str(filename)] = entry
+    return entries

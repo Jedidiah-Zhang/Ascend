@@ -6,7 +6,7 @@
 states 行，引用本模块的 StateParams 模板或自定义）。
 演化/涂抹/结算算法在 tile_state.py（统一内核由注册表驱动）。
 
-增删状态 = STATE_TYPES 加/减一行 + bump TileGrid._TILEGRID_VERSION
+增删状态 = STATE_TYPES 加/减一行 + bump TileGrid.TILE_GRID_VERSION
 + 前端 STATE_KEYS 同步——序列化/涂抹/结算代码由注册表驱动，零改动。
 加一个地形 = terrain.TERRAIN_DEFS 加一行（含 states 行），零算法改动。
 """

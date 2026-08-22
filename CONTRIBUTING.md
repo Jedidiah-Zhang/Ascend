@@ -54,6 +54,10 @@ Ascend 兼具双重身份：
   0..n-1，**已发布值不可改、只追加**（改序号会破坏存档/缓存）
 - 显示名只存 `label_key`（如 `terrain.grassland`），文案在 `lang/*.json`
   （中英两文件同步，有对账测试）
+- **豁免（仅适用于键值型注册表）**：`weather.json` 的 `features` 为
+  "效果条目"注册表——运行时以命名空间 id 的 local 部分（`type_name`，
+  如 `cold_snap`）为标识，不参与 `value` 连续编码，也不含 `label_key`
+  （无界面显示名；文案走事件键，如 `weather.intensity`）
 - 加内容 = 数据文件加一项（`value` 追加 + `label_key`）；import 期校验 +
   测试兜底契约；发行自动携带 `data/` 与 `lang/`
 

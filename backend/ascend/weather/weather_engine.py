@@ -19,269 +19,40 @@ import math
 import threading
 from dataclasses import dataclass
 
+from ascend.config import (DIURNAL_TO_SEASONAL_RATIO, GAME_DAY, GAME_HOUR,
+                           GAME_YEAR)
+from ascend.config import HUMIDITY_BOUNDS as _HUMIDITY_BOUNDS
+from ascend.config import (HUMIDITY_DIURNAL_SCALE, HUMIDITY_PERTURB_SCALE,
+                           HUMIDITY_SEASONAL_SCALE)
+from ascend.config import SUNSHINE_BOUNDS as _SUNSHINE_BOUNDS
+from ascend.config import SUNSHINE_PERTURB_SCALE
+from ascend.config import TEMP_BOUNDS as _TEMP_BOUNDS
+from ascend.config import TEMP_PERTURB_SCALE, TILE_MAP_SIZE
+from ascend.config import WIND_BOUNDS as _WIND_BOUNDS
+from ascend.config import WIND_PERTURB_SCALE
 from ascend.log import get_logger
-from ascend.space import (
-    WeatherParams, ClimateZone, SeasonalityMode, get_climate_template, clamp,
-)
+from ascend.space import (ClimateZone, WeatherParams, clamp,
+                          get_climate_template)
 from ascend.time import WorldClock
-from ascend.world_tree import world_tree as _default_wt, Event, AffectedParty, WorldEvent, SubscriptionScope
+from ascend.world_tree import (AffectedParty, Event, SubscriptionScope,
+                               WorldEvent)
+from ascend.world_tree import world_tree as _default_wt
 
-from ascend.config import (
-    TILE_MAP_SIZE,
-    GAME_DAY,
-    GAME_HOUR,
-    TEMP_PERTURB_SCALE, HUMIDITY_PERTURB_SCALE, WIND_PERTURB_SCALE,
-    SUNSHINE_PERTURB_SCALE,
-    DIURNAL_TO_SEASONAL_RATIO,
-    HUMIDITY_DIURNAL_SCALE, HUMIDITY_SEASONAL_SCALE,
-    TEMP_TIER_BOUNDARIES,
-    HUMIDITY_TIER_BOUNDARIES,
-    WIND_TIER_BOUNDARIES,
-    SUNSHINE_TIER_BOUNDARIES,
-    SUNLIGHT_INTENSITY_TIER_BOUNDARIES,
-    TEMP_BOUNDS as _TEMP_BOUNDS,
-    HUMIDITY_BOUNDS as _HUMIDITY_BOUNDS,
-    WIND_BOUNDS as _WIND_BOUNDS,
-    SUNSHINE_BOUNDS as _SUNSHINE_BOUNDS,
-    RAIN_INTENSITY_BOUNDS as _RAIN_INTENSITY_BOUNDS,
-    LATITUDE_T_MIN as _LATITUDE_T_MIN,
-    LATITUDE_T_MAX as _LATITUDE_T_MAX,
-    LATITUDE_MIN as _LATITUDE_MIN,
-    LATITUDE_MAX as _LATITUDE_MAX,
-    SEASONAL_AMP_T_MIN as _SEASONAL_AMP_T_MIN,
-    SEASONAL_AMP_T_MAX as _SEASONAL_AMP_T_MAX,
-    SEASONAL_AMP_MAX as _SEASONAL_AMP_MAX,
-    SEASONAL_AMP_MIN as _SEASONAL_AMP_MIN,
-    SEASONAL_AMP_R_REF as _SEASONAL_AMP_R_REF,
-    SEASONAL_AMP_R_BONUS as _SEASONAL_AMP_R_BONUS,
-    SEASONAL_AMP_BOUNDS as _SEASONAL_AMP_BOUNDS,
-    PRECIP_SIGNAL_MAX,
-    PRECIP_THRESHOLD_DRY, PRECIP_THRESHOLD_WET,
-    PRECIP_ANNUAL_DRY, PRECIP_ANNUAL_WET,
-    PRECIP_INTENSITY_SCALE,
-    GAME_YEAR,
-)
-
-from .diurnal import (
-    sunrise_hour, sunset_hour, hour_of_game_time, diurnal_phase,
-    _solar_declination, sunrise_azimuth,
-)
-from .events import (
-    HumidityChange, PrecipitationStart, PrecipitationStop, SeasonChange,
-    SunshineChange, Sunrise, Sunset, TemperatureChange, WindChange,
-)
-from .season import season_of, season_phase, day_of_season
+from .derive import (DaySummary, classify_humidity, classify_sunshine,
+                     classify_temperature, classify_wind, derive_latitude,
+                     derive_seasonal_amp, precip_type_for)
+from .diurnal import (_solar_declination, diurnal_phase, hour_of_game_time,
+                      sunrise_azimuth, sunrise_hour, sunset_hour)
+from .events import (HumidityChange, PrecipitationStart, PrecipitationStop,
+                     SeasonChange, Sunrise, Sunset, SunshineChange,
+                     TemperatureChange, WindChange)
+from .field import (CH_HUMIDITY, CH_TEMPERATURE, CH_WIND, UnifiedWeatherField,
+                    calibrate_precip)
+from .region_tracker import RegionEvent, RegionTracker
+from .season import season_of, season_phase
 from .weather_field import WeatherField
-from .field import (
-    UnifiedWeatherField, CH_PRECIPITATION, CH_TEMPERATURE,
-    CH_HUMIDITY, CH_WIND, calibrate_precip,
-)
-from .region_tracker import RegionTracker, RegionEvent
 
 logger = get_logger(__name__)
-
-# SeasonalityMode → 湿度季节曲线 sharpness（0=余弦，>0=tanh 阶梯）
-_SEASONALITY_HUMIDITY_SHARPNESS: dict[SeasonalityMode, float] = {
-    SeasonalityMode.NONE: 0.0,
-    SeasonalityMode.MONSOON: 2.5,
-    SeasonalityMode.FOUR_SEASON: 0.0,
-    SeasonalityMode.POLAR: 0.0,
-    SeasonalityMode.ALPINE: 0.0,
-}
-
-# 气候带 → 基准降雨强度 (mm/h)（降水信号超阈放大基准）
-_MEAN_INTENSITY: dict[ClimateZone, float] = {
-    ClimateZone.EQUATORIAL_RAINFOREST: 10.0,
-    ClimateZone.TROPICAL_SAVANNA:      8.0,
-    ClimateZone.DESERT:                2.0,
-    ClimateZone.STEPPE:                4.0,
-    ClimateZone.TEMPERATE_FOREST:      5.0,
-    ClimateZone.SUBARCTIC_TAIGA:       3.0,
-    ClimateZone.POLAR_TUNDRA:          2.0,
-    ClimateZone.ALPINE:                3.0,
-}
-
-
-# ── 分级函数 ────────────────────────────────────────────────
-
-def _chunk_seed(world_seed: int, cx: int, cy: int) -> int:
-    """chunk 坐标 → 确定性 RNG 种子（调试特征核派生用）。
-
-    同一世界种子 + 同一 chunk 坐标 → 同一种子，保证确定性。
-    """
-    return (world_seed * 1_000_003 + cx) * 1_000_003 + cy
-
-
-@dataclass(frozen=True, slots=True)
-class DaySummary:
-    """单日解析天气摘要（地形状态结算器采样契约，见 get_day_summary）。
-
-    Attributes:
-        day: 游戏日（1-based）。
-        mean_temp: 采样均温 (°C)。
-        rain_mm: 当日雨量合计（mm；采样强度 × 采样间隔时长）。
-        snow_mm: 当日雪量合计（mm；采样强度 × 采样间隔时长）。
-    """
-
-    day: int
-    mean_temp: float
-    rain_mm: float
-    snow_mm: float
-
-
-def precip_type_for(temperature: float) -> str:
-    """降水类型判定 — 事件侧与查询侧（weather_handler）共用的单一实现。
-
-    冰点阈值 0°C：<=0 为雪、>0 为雨。统一先 round(1) 再判定，
-    保证事件广播与 UI 显示文案一致。
-    """
-    return "snow" if round(temperature, 1) <= 0 else "rain"
-
-
-def _classify(value: float, boundaries: tuple[float, ...]) -> int:
-    """按阈值返回等级索引（0-based）。
-
-    Args:
-        value: 待分类的数值。
-        boundaries: 阈值升序元组。
-
-    Returns:
-        int，value < boundaries[i] 的最小 i，或在边界外返回 len(boundaries)。
-    """
-    for i, limit in enumerate(boundaries):
-        if value < limit:
-            return i
-    return len(boundaries)
-
-
-def classify_temperature(temp: float,
-                         boundaries: tuple[float, ...]
-                         = TEMP_TIER_BOUNDARIES) -> int:
-    """温度 → 等级索引。
-
-    Args:
-        temp: 温度 (°C)。
-        boundaries: 可选自定义阈值，默认用全局配置。
-                    用于不同物种/场景的分级调整。
-
-    Returns:
-        int，等级索引（0=最冷，len(boundaries)=最热）。
-    """
-    return _classify(temp, boundaries)
-
-
-def classify_humidity(hum: float,
-                      boundaries: tuple[float, ...]
-                      = HUMIDITY_TIER_BOUNDARIES) -> int:
-    """湿度 → 等级索引。
-
-    Args:
-        hum: 相对湿度 (%)。
-        boundaries: 可选自定义阈值，默认用全局配置。
-
-    Returns:
-        int，等级索引（0=最干燥，len(boundaries)=最潮湿）。
-    """
-    return _classify(hum, boundaries)
-
-
-def classify_wind(speed: float,
-                  boundaries: tuple[float, ...]
-                  = WIND_TIER_BOUNDARIES) -> int:
-    """风速 → 等级索引。
-
-    Args:
-        speed: 风速 (m/s)。
-        boundaries: 可选自定义阈值，默认用全局配置。
-
-    Returns:
-        int，等级索引（0=无风，len(boundaries)=最大风力）。
-    """
-    return _classify(speed, boundaries)
-
-
-def classify_sunshine(sun: float,
-                      boundaries: tuple[float, ...]
-                      = SUNSHINE_TIER_BOUNDARIES) -> int:
-    """日照时长 → 等级索引。
-
-    Args:
-        sun: 日照时长 (小时/天)。
-        boundaries: 可选自定义阈值，默认用全局配置。
-
-    Returns:
-        int，等级索引（0=最短，len(boundaries)=最长）。
-    """
-    return _classify(sun, boundaries)
-
-
-def classify_sunlight_intensity(intensity: float,
-                                boundaries: tuple[float, ...]
-                                = SUNLIGHT_INTENSITY_TIER_BOUNDARIES) -> int:
-    """日照强度 (0~1) → 等级索引。
-
-    Args:
-        intensity: 归一化日照强度，0=黑夜 1=正午烈日。
-        boundaries: 可选自定义阈值，默认用全局配置。
-
-    Returns:
-        int，等级索引（0=最暗，len(boundaries)=最亮）。
-    """
-    return _classify(intensity, boundaries)
-
-
-# ── 基线派生 ────────────────────────────────────────────────
-
-def _derive_seasonal_amp(temperature: float, rainfall: float) -> float:
-    """从年均温 + 年降雨连续推导季节温度振幅 (°C)。
-
-    年均温越低 → 振幅越大（极地 ~28, 赤道 ~2）；
-    干旱区（低降雨）大陆性气候 → 振幅偏大（+最多 4°C）；
-    高降雨区海洋调节 → 振幅偏小（-最多 2°C）。
-
-    保证空间连续：相邻 chunk 的 baseline 温度/降雨接近 →
-    seasonal_amp 接近，无气候带边界跳变。
-
-    Args:
-        temperature: 年均温度 (°C)。
-        rainfall: 年降雨量 (mm/年)。
-
-    Returns:
-        季节温度振幅 (°C)，钳制在 [1, 30]。
-    """
-    t_ratio = (temperature - _SEASONAL_AMP_T_MIN) / (
-        _SEASONAL_AMP_T_MAX - _SEASONAL_AMP_T_MIN
-    )
-    base_amp = _SEASONAL_AMP_MAX - t_ratio * (
-        _SEASONAL_AMP_MAX - _SEASONAL_AMP_MIN
-    )
-    rain_factor = clamp(
-        (_SEASONAL_AMP_R_REF - rainfall) / _SEASONAL_AMP_R_REF,
-        -0.5, 1.0,
-    )
-    rain_bonus = rain_factor * _SEASONAL_AMP_R_BONUS
-    return clamp(base_amp + rain_bonus, *_SEASONAL_AMP_BOUNDS)
-
-
-def _derive_latitude(sea_level_temp: float) -> float:
-    """从海平面温度连续推导纬度 (°)。
-
-    海平面温度是连续场（纬度噪声推导），不受海拔/气候档位离散判定影响，
-    保证气候带交界处纬度连续 → 日照季节振幅 + 日出/日落时刻无跳变。
-
-    线性映射：sea_temp=-5（极地）→ lat=80，sea_temp=35（赤道）→ lat=0。
-
-    Args:
-        sea_level_temp: 海平面年均温度 (°C)。
-
-    Returns:
-        纬度 (°)，范围 [0, 80]。
-    """
-    t_ratio = (sea_level_temp - _LATITUDE_T_MIN) / (
-        _LATITUDE_T_MAX - _LATITUDE_T_MIN
-    )
-    lat = _LATITUDE_MAX - t_ratio * (_LATITUDE_MAX - _LATITUDE_MIN)
-    return clamp(lat, _LATITUDE_MIN, _LATITUDE_MAX)
 
 
 @dataclass(slots=True)
@@ -291,13 +62,14 @@ class _ChunkWeatherBaseline:
     Attributes:
         altitude/sunshine/temperature/humidity/wind_speed/rainfall:
             年均基线值（rainfall 为 mm/年，降水校准输入）。
-        mean_intensity: 气候带基准降雨强度 (mm/h)。
-        seasonal_amp: 季节温度振幅 (°C)，从年均温+年降雨连续推导（_derive_seasonal_amp），
+        mean_intensity: 气候带基准降雨强度 (mm/h)（来自模板的数据契约）。
+        seasonal_amp: 季节温度振幅 (°C)，从年均温+年降雨连续推导（derive_seasonal_amp），
             保证气候带交界处无跳变。
         diurnal_amp: 昼夜温度振幅 (°C)，= seasonal_amp × DIURNAL_TO_SEASONAL_RATIO。
         humidity_seasonal_amp: 季节湿度振幅 (pp)，= seasonal_amp × HUMIDITY_SEASONAL_SCALE。
         humidity_diurnal_amp: 昼夜湿度振幅 (pp)，= diurnal_amp × HUMIDITY_DIURNAL_SCALE。
-        seasonality: 季节性模式（决定湿度曲线形状 — 余弦 vs 季风阶梯）。
+        humidity_sharpness: 湿度季节曲线 sharpness（0=余弦，>0=tanh 阶梯；
+            来自模板数据契约，季风档 2.5）。
         latitude: 纬度 (°)，用于日出/日落时间计算 + 日照时长计算。
     """
 
@@ -312,7 +84,7 @@ class _ChunkWeatherBaseline:
     diurnal_amp: float
     humidity_seasonal_amp: float
     humidity_diurnal_amp: float
-    seasonality: SeasonalityMode
+    humidity_sharpness: float
     latitude: float
 
 
@@ -403,13 +175,13 @@ class WeatherEngine:
                 用于连续推导纬度（日照季节振幅 + 日出/日落）。
         """
         tmpl = get_climate_template(climate)
-        seasonal_amp = _derive_seasonal_amp(
+        seasonal_amp = derive_seasonal_amp(
             baseline.temperature, baseline.rainfall,
         )
         diurnal_amp = seasonal_amp * DIURNAL_TO_SEASONAL_RATIO
         humidity_seasonal_amp = seasonal_amp * HUMIDITY_SEASONAL_SCALE
         humidity_diurnal_amp = diurnal_amp * HUMIDITY_DIURNAL_SCALE
-        latitude = _derive_latitude(sea_level_temp)
+        latitude = derive_latitude(sea_level_temp)
         bl = _ChunkWeatherBaseline(
             altitude=baseline.altitude,
             sunshine=baseline.sunshine,
@@ -417,12 +189,12 @@ class WeatherEngine:
             humidity=baseline.humidity,
             wind_speed=baseline.wind_speed,
             rainfall=baseline.rainfall,
-            mean_intensity=_MEAN_INTENSITY.get(climate, 5.0),
+            mean_intensity=tmpl.mean_precip_intensity,
             seasonal_amp=seasonal_amp,
             diurnal_amp=diurnal_amp,
             humidity_seasonal_amp=humidity_seasonal_amp,
             humidity_diurnal_amp=humidity_diurnal_amp,
-            seasonality=tmpl.seasonality,
+            humidity_sharpness=tmpl.humidity_sharpness,
             latitude=latitude,
         )
         key = (cx, cy)
@@ -541,7 +313,7 @@ class WeatherEngine:
         """解析算 chunk 在 now 时刻的天气。
 
         温度 = baseline + 季节偏移 + 昼夜偏移 + 场扰动
-        湿度 = baseline + 季节偏移（受 SeasonalityMode 影响）+ 昼夜偏移（逆温）+ 场扰动
+        湿度 = baseline + 季节偏移（受模板 humidity_sharpness 影响）+ 昼夜偏移（逆温）+ 场扰动
         风速 = baseline + 场扰动，再 × 特征核倍率
         日照 = 天文日照时长(daylight_hours) + 场扰动
         降雨强度 = 场降水信号 + 气候带校准阈值判定（calibrate_precip）
@@ -565,7 +337,7 @@ class WeatherEngine:
         # 季节/昼夜偏移 — 余弦基预计算（tick 级复用），只做 per-chunk amplitude 乘法
         season_temp = bl.seasonal_amp * season_cos
         diurnal_temp = bl.diurnal_amp * diurnal_cos
-        sharpness = _SEASONALITY_HUMIDITY_SHARPNESS.get(bl.seasonality, 0.0)
+        sharpness = bl.humidity_sharpness
         if sharpness > 0:
             season_hum = bl.humidity_seasonal_amp * math.tanh(season_cos * sharpness)
         else:
@@ -997,10 +769,7 @@ class WeatherEngine:
         # 解析核：从出生段重查（b:{bx}:{by}:{seg}:{idx}）
         parts = core_id.split(":")
         bx, by, seg, idx = int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
-        segs = self._field.features._timelines.get((bx, by))
-        if segs is None:
-            return None
-        cores = segs.get(seg)
+        cores = self._field.features.segment_snapshot(bx, by, seg)
         if cores is None or idx >= len(cores):
             return None
         return cores[idx]

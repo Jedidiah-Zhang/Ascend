@@ -8,10 +8,10 @@ Mixin，依赖宿主 CommandExecutor 提供的:
 同名特征核（与自然特征同代码路径，事件由引擎自动发布）。
 """
 
-from ascend.weather.weather_engine import (
-    classify_temperature, classify_humidity, classify_wind,
-    classify_sunshine, classify_sunlight_intensity, precip_type_for,
-)
+from ascend.weather.derive import (classify_humidity,
+                                   classify_sunlight_intensity,
+                                   classify_sunshine, classify_temperature,
+                                   classify_wind, precip_type_for)
 from ascend.weather.features import FEATURE_TYPES
 
 from .result import CommandResult

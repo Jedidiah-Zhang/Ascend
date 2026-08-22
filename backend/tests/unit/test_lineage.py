@@ -11,7 +11,10 @@ import os
 import pytest
 
 from ascend.save.crypto import SaveKeys
-from ascend.save.lineage import LineageStore, LINEAGE_FILE
+from ascend.save.lineage import (
+    LineageStore, LINEAGE_FILE, SNAPSHOTS_KEY, SnapshotEntry,
+    parse_snapshot_entries,
+)
 
 
 @pytest.fixture()

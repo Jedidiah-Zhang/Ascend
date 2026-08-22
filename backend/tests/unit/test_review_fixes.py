@@ -83,11 +83,13 @@ class TestBuildAtomicity:
                     "value": 4, "label_key": "climate.temperate_forest",
                     "humidity_range": [45.0, 80.0], "wind_speed_range": [0.0, 12.0],
                     "seasonality": "four_season", "display_color": "#4a7c3f",
+                    "mean_precip_intensity": 5.0, "humidity_sharpness": 0.0,
                 },
                 "ascend:desert": {
                     "value": 2, "label_key": "climate.desert",
                     "humidity_range": [5.0, 30.0], "wind_speed_range": [2.0, 15.0],
                     "seasonality": "none", "display_color": "#e6c878",
+                    "mean_precip_intensity": 2.0, "humidity_sharpness": 0.0,
                 },
             },
         }

@@ -44,6 +44,8 @@ def _climate_mini(zone: dict) -> dict:
                 "wind_speed_range": [0.0, 12.0],
                 "seasonality": "four_season",
                 "display_color": "#4a7c3f",
+                "mean_precip_intensity": 5.0,
+                "humidity_sharpness": 0.0,
             },
             "ascend:desert": {
                 "value": 2,
@@ -52,6 +54,8 @@ def _climate_mini(zone: dict) -> dict:
                 "wind_speed_range": [2.0, 15.0],
                 "seasonality": "none",
                 "display_color": "#e6c878",
+                "mean_precip_intensity": 2.0,
+                "humidity_sharpness": 0.0,
             },
             **zone,
         },
@@ -75,11 +79,41 @@ class TestClimateData:
         values = sorted(z.value for z in ClimateZone)
         assert values == list(range(8))
 
+    def test_seasonality_sharpness_pair_resolved(self):
+        """季节曲线系数与模式绑定：仅季风（monsoon）为阶梯曲线（2.5），
+        其余 0.0（标准余弦）——数据两字段语义一致，防双轨漂移。"""
+        from ascend.space import SeasonalityMode
+        for zone in ClimateZone:
+            tmpl = get_climate_template(zone)
+            expected: float = 2.5 if tmpl.seasonality ==                 SeasonalityMode.MONSOON else 0.0
+            assert tmpl.humidity_sharpness == expected,                 f"{zone.name}: sharpness={tmpl.humidity_sharpness} " \
+                f"seasonality={tmpl.seasonality.name}"
+
     def test_seasonality_resolved(self):
         assert get_climate_template(ClimateZone.TEMPERATE_FOREST).seasonality \
             == SeasonalityMode.FOUR_SEASON
         assert get_climate_template(ClimateZone.TROPICAL_SAVANNA).seasonality \
             == SeasonalityMode.MONSOON
+
+    def test_mean_intensity_and_sharpness_loaded(self):
+        """数据驱动：降雨基准与湿季曲线系数由 data/climate.json 显式声明。"""
+        tmpl = get_climate_template(ClimateZone.TROPICAL_SAVANNA)
+        assert tmpl.mean_precip_intensity == 8.0
+        assert tmpl.humidity_sharpness == 2.5
+        assert get_climate_template(ClimateZone.TEMPERATE_FOREST).mean_precip_intensity == 5.0
+        assert get_climate_template(ClimateZone.TEMPERATE_FOREST).humidity_sharpness == 0.0
+
+    def test_missing_mean_precip_intensity_rejected(self):
+        doc = _climate_mini({})
+        del doc["climate"]["ascend:temperate_forest"]["mean_precip_intensity"]
+        with pytest.raises(ValueError, match="mean_precip_intensity"):
+            _build_climate_templates(doc)
+
+    def test_missing_humidity_sharpness_rejected(self):
+        doc = _climate_mini({})
+        del doc["climate"]["ascend:temperate_forest"]["humidity_sharpness"]
+        with pytest.raises(ValueError, match="humidity_sharpness"):
+            _build_climate_templates(doc)
 
     def test_label_resolves_via_i18n(self):
         """label 由 label_key 经 i18n 解析（非硬编码中文）。"""

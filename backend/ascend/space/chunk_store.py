@@ -111,7 +111,7 @@ class ChunkStore:
 # 旧库无 settled_day 列（TileGrid v1 时期建表）：就地补列（旧行默认
 # 0 = 未结算）。注意：v1 期 BLOB 无状态段，from_bytes 按版本拒绝——
 # 旧存档的 chunk_tiles 数据无法解码（设计取舍：无向后兼容，见
-# tile_grid._TILEGRID_VERSION 文档），settled_day=0 仅对 v2 数据生效。
+# tile_grid.TILE_GRID_VERSION 文档），settled_day=0 仅对 v2 数据生效。
         cols = {
             r["name"]
             for r in self._db.execute("PRAGMA table_info(chunk_tiles)").fetchall()

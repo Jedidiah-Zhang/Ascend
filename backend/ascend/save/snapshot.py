@@ -42,8 +42,9 @@ from typing import TYPE_CHECKING
 
 from ascend.log import get_logger
 
-from .crypto import SaveKeys, SaveCryptoError
-from .manifest import Manifest, SaveFormatError, MANIFEST_NAME
+from .crypto import SaveCryptoError, SaveKeys
+from .lineage import PARENT_KEY, SNAPSHOTS_KEY
+from .manifest import MANIFEST_NAME, Manifest, SaveFormatError
 
 if TYPE_CHECKING:
     from .lineage import LineageStore
@@ -73,7 +74,7 @@ QUIT_SNAPSHOT_KEEP: int = 3
 # 不随快照打包——快照依赖世界内 lineage 提供父子上下文。
 # chunks.db 语义：已加载 chunk 全量落盘（含确定性生成的 clean chunk，
 # 见 ChunkStore 模块说明）——chunks.db 本身即动态数据，随快照链走）
-_SNAPSHOT_ENTRIES: tuple[str, ...] = (
+SNAPSHOT_ENTRIES: tuple[str, ...] = (
     MANIFEST_NAME, STATE_FILE, ENTITIES_FILE, CHUNKS_DB, EVENTS_DB,
 )
 
@@ -120,7 +121,7 @@ class SnapshotStore:
         """从目录内 manifest.json 读取世界种子（快照解锁派生输入）。
 
         活目录与物化目录（materialize/rebase 的临时目录）均含
-        manifest.json（_SNAPSHOT_ENTRIES 打包项），故本方法对两类
+        manifest.json（SNAPSHOT_ENTRIES 打包项），故本方法对两类
         目录通用。
 
         Raises:
@@ -158,7 +159,7 @@ class SnapshotStore:
         """
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for entry in _SNAPSHOT_ENTRIES:
+            for entry in SNAPSHOT_ENTRIES:
                 src = os.path.join(wdir, entry)
                 if os.path.isfile(src):
                     zf.write(src, entry)
@@ -301,14 +302,14 @@ class SnapshotStore:
         """
         if lineage is None:
             lineage = self._lineage.get(world_id)
-        snaps = lineage.get("snapshots", {})
+        snaps = lineage.get(SNAPSHOTS_KEY, {})
         cur = str(parent)
         seen: set[str] = set()
         while cur and cur in snaps and cur not in seen:
             if self.snapshot_kind(cur) == "manual":
                 return cur
             seen.add(cur)
-            cur = str(snaps[cur].get("parent", ""))
+            cur = str(snaps[cur].get(PARENT_KEY, ""))
         return None
 
     @staticmethod
@@ -370,7 +371,7 @@ class SnapshotStore:
              DB 页图 {库名: payload})。
         """
         files = [MANIFEST_NAME]
-        for name in _SNAPSHOT_ENTRIES:
+        for name in SNAPSHOT_ENTRIES:
             if name in (MANIFEST_NAME, CHUNKS_DB, EVENTS_DB):
                 continue
             if self.file_differ(
@@ -538,7 +539,7 @@ class SnapshotStore:
             if os.path.isfile(p):
                 os.remove(p)
         for info in zf.infolist():
-            if info.is_dir() or info.filename not in _SNAPSHOT_ENTRIES:
+            if info.is_dir() or info.filename not in SNAPSHOT_ENTRIES:
                 continue
             target = os.path.join(tmp_dir, os.path.basename(info.filename))
             with zf.open(info) as src, open(target, "wb") as dst:
@@ -594,7 +595,7 @@ class SnapshotStore:
     def apply_delta(self, tmp_dir: str, zf: zipfile.ZipFile) -> None:
         """把增量快照合并进已物化的基座目录。
 
-        文件级条目（_SNAPSHOT_ENTRIES）直接替换；"<库名>.pages"
+        文件级条目（SNAPSHOT_ENTRIES）直接替换；"<库名>.pages"
         页图条目按页覆写基座文件（基座缺失 = 从无到有，页图自
         含全文件，直接创建）；未知条目跳过（宽容，同全量解包）。
         """
@@ -602,7 +603,7 @@ class SnapshotStore:
             if info.is_dir():
                 continue
             name = info.filename
-            if name in _SNAPSHOT_ENTRIES:
+            if name in SNAPSHOT_ENTRIES:
                 target = os.path.join(tmp_dir, os.path.basename(name))
                 with zf.open(info) as src, open(target, "wb") as dst:
                     shutil.copyfileobj(src, dst)
@@ -627,7 +628,7 @@ class SnapshotStore:
             target_dir: 输出目录（须已存在；内容被重建/合并）。
         """
         lineage = self._lineage.get(world_id)
-        snaps = lineage.get("snapshots", {})
+        snaps = lineage.get(SNAPSHOTS_KEY, {})
         base = os.path.basename(snapshot_path)
         chain: list[str] = []
         seen: set[str] = set()
@@ -635,7 +636,7 @@ class SnapshotStore:
         while cur in snaps and cur not in seen:
             chain.append(cur)
             seen.add(cur)
-            cur = str(snaps[cur].get("parent", ""))
+            cur = str(snaps[cur].get(PARENT_KEY, ""))
         if cur not in ("", base):
             # parent 链悬空（血缘缺失/异常）：单节点物化，
             # 由增量节点的基座缺失报错兜底
@@ -682,7 +683,7 @@ class SnapshotStore:
         }
         if not removed_manuals:
             return
-        snaps = lineage.get("snapshots", {})
+        snaps = lineage.get(SNAPSHOTS_KEY, {})
         affected: dict[str, list[str]] = {}
         for name in snaps:
             if name in removed:
@@ -733,7 +734,7 @@ class SnapshotStore:
         self, world_id: str, lineage: dict, anchor_tmp: str, name: str,
     ) -> None:
         """单个后代重基座：还原内容 → 对新锚点重写增量（或无 → 全量）。"""
-        snaps = lineage.get("snapshots", {})
+        snaps = lineage.get(SNAPSHOTS_KEY, {})
         path = os.path.join(self._snapshot_dir(world_id), name)
         content_tmp = os.path.join(self._root, f".rebase-{uuid.uuid4().hex}")
         os.makedirs(content_tmp, exist_ok=True)
@@ -748,7 +749,7 @@ class SnapshotStore:
             finally:
                 zf.close()
             new_anchor = self.anchor_of(
-                world_id, snaps[name].get("parent", ""), lineage,
+                world_id, snaps[name].get(PARENT_KEY, ""), lineage,
             )
             if new_anchor is None:
                 # 无存活手动祖先：成为新的全量基座

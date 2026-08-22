@@ -23,9 +23,11 @@ layers 请求时补算气候（跳过侵蚀/水文），采样分辨率 1000m
 
 import math
 
+from ascend.config import CONTINENT_LAND_RATIO
 from ascend.log import get_logger
 from ascend.net.protocol import make_response
-from ascend.save.manifest import SEED_MAX, SIZE_KM_MIN, SIZE_KM_MAX, LAND_RATIO_MAX
+from ascend.save.manifest import (LAND_RATIO_MAX, SEED_MAX, SIZE_KM_MAX,
+                                  SIZE_KM_MIN)
 from ascend.space.continent import ContinentGenerator
 
 logger = get_logger(__name__)
@@ -54,7 +56,7 @@ def _parse_preview_payload(msg: dict) -> tuple[int, float, float | None, float |
     seed = int(payload.get("seed", 0) or 0)
     if not (1 <= seed <= SEED_MAX):
         raise ValueError(f"seed 越界: {seed}")
-    land_ratio = float(payload.get("land_ratio", 0.55))
+    land_ratio = float(payload.get("land_ratio", CONTINENT_LAND_RATIO))
     if not math.isfinite(land_ratio) or not (0.0 < land_ratio <= LAND_RATIO_MAX):
         raise ValueError(f"land_ratio 越界: {land_ratio}")
 

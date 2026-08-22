@@ -28,27 +28,21 @@
 """
 
 from .atmosphere import TextureField
-from .features import (
-    FeatureField, FeatureCore, FeatureConfig, ClimateProxy,
-    FEATURE_TYPES, T_FRONT, T_STORM, T_COLD_SNAP, T_HEAT_WAVE,
-)
-from .field import (
-    UnifiedWeatherField,
-    CH_PRECIPITATION, CH_TEMPERATURE, CH_HUMIDITY, CH_WIND,
-    calibrate_precip, precip_threshold,
-)
-from .events import (
-    TemperatureChange, HumidityChange, WindChange, SunshineChange,
-    PrecipitationStart, PrecipitationStop, SeasonChange, Sunrise, Sunset,
-    ColdSnapStart, ColdSnapStop, HeatWaveStart, HeatWaveStop,
-    StormStart, StormStop,
-)
-from .region_tracker import RegionTracker, RegionEvent
-from .weather_engine import (
-    WeatherEngine, classify_temperature, classify_humidity,
-    classify_wind, classify_sunshine, classify_sunlight_intensity,
-)
+from .derive import (classify_humidity, classify_sunlight_intensity,
+                     classify_sunshine, classify_temperature, classify_wind,
+                     precip_type_for)
+from .events import (ColdSnapStart, ColdSnapStop, HeatWaveStart, HeatWaveStop,
+                     HumidityChange, PrecipitationStart, PrecipitationStop,
+                     SeasonChange, StormStart, StormStop, Sunrise, Sunset,
+                     SunshineChange, TemperatureChange, WindChange)
+from .features import (FEATURE_TYPES, T_COLD_SNAP, T_FRONT, T_HEAT_WAVE,
+                       T_STORM, ClimateProxy, FeatureConfig, FeatureCore,
+                       FeatureField)
+from .field import (CH_HUMIDITY, CH_PRECIPITATION, CH_TEMPERATURE, CH_WIND,
+                    UnifiedWeatherField, calibrate_precip, precip_threshold)
+from .region_tracker import RegionEvent, RegionTracker
 from .season import Season
+from .weather_engine import WeatherEngine
 from .weather_field import WeatherField
 
 __all__ = [
@@ -92,6 +86,7 @@ __all__ = [
     "classify_wind",
     "classify_sunshine",
     "classify_sunlight_intensity",
+    "precip_type_for",
     "calibrate_precip",
     "precip_threshold",
 ]

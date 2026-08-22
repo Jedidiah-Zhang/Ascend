@@ -12,6 +12,7 @@ import pytest
 
 from ascend.net import GameServer, EventBridge, encode_message, decode_message, read_frame, PROTOCOL_VERSION
 from ascend.net.client_handler import SEND_QUEUE_LIMIT
+from ascend.space.tile_grid import TILE_GRID_VERSION
 from ascend.world_tree.tree import WorldTree
 from ascend.world_tree.event import Event
 from ascend.log import setup_logging, get_logger
@@ -69,13 +70,18 @@ def send_frame(sock: socket.socket, message: dict) -> None:
     sock.sendall(frame)
 
 
-def handshake(sock: socket.socket, server, protocol_version: int = PROTOCOL_VERSION) -> dict:
+def handshake(
+    sock: socket.socket, server,
+    protocol_version: int = PROTOCOL_VERSION,
+    tile_blob_version: int = TILE_GRID_VERSION,
+) -> dict:
     """执行完整握手（hello → hello_ack），返回服务器响应。
 
     Args:
         sock: 已连接的客户端 socket。
         server: 测试服务器（提供 token）。
         protocol_version: 发送的协议版本（可传错误值测拒绝路径）。
+        tile_blob_version: 上报的 tile BLOB 数据版本（低于服务端会被拒）。
 
     Returns:
         握手响应消息（hello_ack 或 error）。
@@ -83,7 +89,11 @@ def handshake(sock: socket.socket, server, protocol_version: int = PROTOCOL_VERS
     send_frame(sock, {
         "type": "hello",
         "seq": 1,
-        "payload": {"token": server.token, "protocol_version": protocol_version},
+        "payload": {
+            "token": server.token,
+            "protocol_version": protocol_version,
+            "tile_blob_version": tile_blob_version,
+        },
     })
     return recv_frame(sock)
 
@@ -178,6 +188,17 @@ class TestHandshake:
     def test_hello_wrong_version_rejected(self, server, client_socket) -> None:
         """版本不兼容 → error(hello) 响应后断开。"""
         resp = handshake(client_socket, server, protocol_version=0x99)
+        assert resp is not None
+        assert resp["type"] == "error"
+        assert resp["request_type"] == "hello"
+        time.sleep(0.3)
+        assert server.client_count == 0
+
+    def test_hello_wrong_blob_version_rejected(self, server, client_socket) -> None:
+        """tile BLOB 版本低于服务端 → error(hello) 响应后断开。"""
+        resp = handshake(
+            client_socket, server, tile_blob_version=TILE_GRID_VERSION - 1,
+        )
         assert resp is not None
         assert resp["type"] == "error"
         assert resp["request_type"] == "hello"

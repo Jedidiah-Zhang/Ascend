@@ -10,9 +10,10 @@ from array import array
 from dataclasses import dataclass, field
 from typing import Union
 
-from .climate import ClimateZone
-from ascend.config import CONTINENT_SAMPLE_RESOLUTION_M
+from ascend.config import CONTINENT_LAND_RATIO, CONTINENT_SAMPLE_RESOLUTION_M
 from ascend.log import get_logger
+
+from .climate import ClimateZone
 
 logger = get_logger(__name__)
 
@@ -31,7 +32,7 @@ class ContinentParams:
     width_km: float = 100.0
     height_km: float = 60.0
     sample_resolution: float = 100.0
-    land_ratio: float = 0.55
+    land_ratio: float = CONTINENT_LAND_RATIO
 
     def __repr__(self) -> str:
         return (
@@ -66,7 +67,7 @@ class ContinentData:
     seed: int
     # 生成参数快照（land_ratio）：缓存校验用——大陆是 (seed, land_ratio)
     # 的确定性函数，同 seed 不同 land_ratio 必须重新生成。
-    land_ratio: float = 0.55
+    land_ratio: float = CONTINENT_LAND_RATIO
 
     # 生成环境指纹（config 常量 + 生成管线源码摘要）：由 generator
     # 写入缓存时填充；仅用于加载时漂移诊断（告警/查询），不参与

@@ -644,6 +644,23 @@ class TestFeatureField:
             again = FeatureField(seed=42).cores_overlapping(0, 0, 2000, 2000, t)
             assert c.core_id in {x.core_id for x in again}
 
+    def test_segment_snapshot_missing_returns_none(self):
+        """只读查询：段未生成返回 None（不触发惰性生成）。"""
+        from ascend.weather.features import FeatureField
+        f = FeatureField(seed=42)
+        assert f.segment_snapshot(0, 0, 0) is None, "未生成段应返回 None"
+
+    def test_segment_snapshot_returns_copy(self):
+        """已生成段返回副本：修改副本不影响内部时间线。"""
+        from ascend.weather.features import FeatureField
+        f = FeatureField(seed=42)
+        cores = f._segment(0, 0, 0)
+        snap = f.segment_snapshot(0, 0, 0)
+        assert snap is not None and len(snap) == len(cores)
+        snap.clear()
+        assert len(f.segment_snapshot(0, 0, 0)) == len(cores), "内部时间线不应被改动"
+
+
     def test_inject_core_immediate_effect(self):
         """注入核立即满强度（no_ramp），采样与自然核同路径。"""
         from ascend.weather.features import FeatureField
@@ -854,17 +871,17 @@ class TestSeasonalAmplitude:
 
     def test_cold_high_amp(self):
         """低温 → 大振幅。"""
-        from ascend.weather.weather_engine import _derive_seasonal_amp
+        from ascend.weather.derive import derive_seasonal_amp as _derive_seasonal_amp
         assert _derive_seasonal_amp(-5.0, 800.0) > 25.0
 
     def test_hot_low_amp(self):
         """高温 → 小振幅。"""
-        from ascend.weather.weather_engine import _derive_seasonal_amp
+        from ascend.weather.derive import derive_seasonal_amp as _derive_seasonal_amp
         assert _derive_seasonal_amp(30.0, 2000.0) < 8.0
 
     def test_monotonic_in_temperature(self):
         """固定降雨，振幅随温度升高而递减。"""
-        from ascend.weather.weather_engine import _derive_seasonal_amp
+        from ascend.weather.derive import derive_seasonal_amp as _derive_seasonal_amp
         rainfall = 800.0
         prev = _derive_seasonal_amp(-5.0, rainfall)
         for t in (0.0, 5.0, 12.0, 20.0, 28.0, 35.0):
@@ -874,14 +891,14 @@ class TestSeasonalAmplitude:
 
     def test_dry_higher_amp(self):
         """固定温度，干旱区（低降雨）振幅大于湿润区。"""
-        from ascend.weather.weather_engine import _derive_seasonal_amp
+        from ascend.weather.derive import derive_seasonal_amp as _derive_seasonal_amp
         dry = _derive_seasonal_amp(15.0, 200.0)
         wet = _derive_seasonal_amp(15.0, 2000.0)
         assert dry > wet
 
     def test_bounded(self):
         """振幅恒在 [1, 30]。"""
-        from ascend.weather.weather_engine import _derive_seasonal_amp
+        from ascend.weather.derive import derive_seasonal_amp as _derive_seasonal_amp
         for t in (-10.0, -5.0, 0.0, 15.0, 35.0, 50.0):
             for r in (0.0, 200.0, 1000.0, 3000.0, 5000.0):
                 amp = _derive_seasonal_amp(t, r)
@@ -889,21 +906,21 @@ class TestSeasonalAmplitude:
 
     def test_continuous_at_climate_boundary(self):
         """气候带交界处（年均温相同）振幅连续，无跳变。"""
-        from ascend.weather.weather_engine import _derive_seasonal_amp
+        from ascend.weather.derive import derive_seasonal_amp as _derive_seasonal_amp
         amp_temperate = _derive_seasonal_amp(5.0, 1000.0)
         amp_subarctic = _derive_seasonal_amp(5.0, 800.0)
         assert abs(amp_temperate - amp_subarctic) < 1.0
 
     def test_no_discrete_jump_across_boundary(self):
         """温带→亚寒带交界，T从4.9→5.1（跨边界），振幅变化微小。"""
-        from ascend.weather.weather_engine import _derive_seasonal_amp
+        from ascend.weather.derive import derive_seasonal_amp as _derive_seasonal_amp
         amp_below = _derive_seasonal_amp(4.9, 800.0)
         amp_above = _derive_seasonal_amp(5.1, 800.0)
         assert abs(amp_above - amp_below) < 0.5
 
     def test_tropical_savanna_to_desert_continuous(self):
         """热带草原→沙漠交界，R从201→199（跨R=200阈值），振幅变化微小。"""
-        from ascend.weather.weather_engine import _derive_seasonal_amp
+        from ascend.weather.derive import derive_seasonal_amp as _derive_seasonal_amp
         amp_savanna = _derive_seasonal_amp(22.0, 201.0)
         amp_desert = _derive_seasonal_amp(22.0, 199.0)
         assert abs(amp_desert - amp_savanna) < 0.1
@@ -1267,34 +1284,34 @@ class TestWeatherEngine:
 
     def test_derive_latitude_equator(self):
         """年均温 35°C → 纬度≈0（赤道）。"""
-        from ascend.weather.weather_engine import _derive_latitude
+        from ascend.weather.derive import derive_latitude as _derive_latitude
         assert _derive_latitude(35.0) == pytest.approx(0.0, abs=2.0)
 
     def test_derive_latitude_polar(self):
         """年均温 -5°C → 纬度≈80（极地边缘）。"""
-        from ascend.weather.weather_engine import _derive_latitude
+        from ascend.weather.derive import derive_latitude as _derive_latitude
         assert _derive_latitude(-5.0) == pytest.approx(80.0, abs=2.0)
 
     def test_derive_latitude_monotonic(self):
         """温度越高 → 纬度越低。"""
-        from ascend.weather.weather_engine import _derive_latitude
+        from ascend.weather.derive import derive_latitude as _derive_latitude
         assert _derive_latitude(0.0) > _derive_latitude(20.0)
 
     def test_derive_seasonal_amp_polar_large(self):
         """低温（-5°C）→ 季节振幅 > 20°C。"""
-        from ascend.weather.weather_engine import _derive_seasonal_amp
+        from ascend.weather.derive import derive_seasonal_amp as _derive_seasonal_amp
         amp = _derive_seasonal_amp(-5.0, 500.0)
         assert amp > 20.0
 
     def test_derive_seasonal_amp_equatorial_small(self):
         """高温（35°C）→ 季节振幅 < 5°C。"""
-        from ascend.weather.weather_engine import _derive_seasonal_amp
+        from ascend.weather.derive import derive_seasonal_amp as _derive_seasonal_amp
         amp = _derive_seasonal_amp(35.0, 2000.0)
         assert amp < 5.0
 
     def test_derive_seasonal_amp_dry_larger(self):
         """干旱区振幅 > 同温湿润区（大陆性气候）。"""
-        from ascend.weather.weather_engine import _derive_seasonal_amp
+        from ascend.weather.derive import derive_seasonal_amp as _derive_seasonal_amp
         amp_dry = _derive_seasonal_amp(15.0, 200.0)
         amp_wet = _derive_seasonal_amp(15.0, 2000.0)
         assert amp_dry > amp_wet
@@ -1341,7 +1358,7 @@ class TestTierClassification:
     """等级分类函数测试。"""
 
     def test_classify_temperature_bounds(self):
-        from ascend.weather.weather_engine import classify_temperature
+        from ascend.weather.derive import classify_temperature
         assert classify_temperature(-30.0) == 0
         assert classify_temperature(-10.0) == 1
         assert classify_temperature(-3.1) == 1
@@ -1363,7 +1380,7 @@ class TestTierClassification:
         assert classify_temperature(60.0) == 9
 
     def test_classify_humidity_bounds(self):
-        from ascend.weather.weather_engine import classify_humidity
+        from ascend.weather.derive import classify_humidity
         assert classify_humidity(0.0) == 0
         assert classify_humidity(24.9) == 0
         assert classify_humidity(25.0) == 1
@@ -1376,7 +1393,7 @@ class TestTierClassification:
         assert classify_humidity(100.0) == 4
 
     def test_classify_wind_bounds(self):
-        from ascend.weather.weather_engine import classify_wind
+        from ascend.weather.derive import classify_wind
         assert classify_wind(0.0) == 0
         assert classify_wind(1.4) == 0
         assert classify_wind(1.5) == 1
@@ -1391,7 +1408,7 @@ class TestTierClassification:
         assert classify_wind(60.0) == 5
 
     def test_classify_sunshine_bounds(self):
-        from ascend.weather.weather_engine import classify_sunshine
+        from ascend.weather.derive import classify_sunshine
         assert classify_sunshine(0.0) == 0
         assert classify_sunshine(1.4) == 0
         assert classify_sunshine(1.5) == 1
@@ -1413,7 +1430,7 @@ class TestSunlightIntensity:
     """日照强度等级分类测试。"""
 
     def test_classify_sunlight_intensity_bounds(self):
-        from ascend.weather.weather_engine import classify_sunlight_intensity
+        from ascend.weather.derive import classify_sunlight_intensity
         assert classify_sunlight_intensity(0.0) == 0
         assert classify_sunlight_intensity(0.009) == 0
         assert classify_sunlight_intensity(0.01) == 1

@@ -15,7 +15,7 @@ from .terrain import TerrainType
 from .state_defs import STATE_TYPES, state_keys
 from ascend.config import TILE_MAP_SIZE
 
-_TILEGRID_VERSION: int = 2
+TILE_GRID_VERSION: int = 2
 _BYTES_TERRAIN: int = TILE_MAP_SIZE * TILE_MAP_SIZE * 2
 _BYTES_ELEV: int = TILE_MAP_SIZE * TILE_MAP_SIZE * 4
 
@@ -23,7 +23,7 @@ _BYTES_ELEV: int = TILE_MAP_SIZE * TILE_MAP_SIZE * 4
 def _state_bytes() -> int:
     """状态段总字节数（按 STATE_TYPES 注册顺序，B=1 字节/格）。
 
-    增删状态（bump _TILEGRID_VERSION）后此值自动跟随注册表。
+    增删状态（bump TILE_GRID_VERSION）后此值自动跟随注册表。
     """
     total = 0
     for cfg in STATE_TYPES.values():
@@ -246,7 +246,7 @@ class TileGrid:
               160KB elevation(float32 LE) + 160KB slope(float32 LE) +
               状态数组段（按 STATE_TYPES 注册顺序，各 40KB uint8）。
         """
-        header = struct.pack("<I", _TILEGRID_VERSION)
+        header = struct.pack("<I", TILE_GRID_VERSION)
         if sys.byteorder != "little":
             # 大端机器上显式转小端，保证网络/持久化字节序稳定
             terrain_le = array("H", self._data)
@@ -293,7 +293,7 @@ class TileGrid:
         if len(data) < 4:
             raise ValueError("数据过短，缺少版本头")
         version = struct.unpack("<I", data[:4])[0]
-        if version != _TILEGRID_VERSION:
+        if version != TILE_GRID_VERSION:
             raise ValueError(f"不支持 TileGrid 版本: {version}")
         expected = 4 + _BYTES_TERRAIN + _BYTES_ELEV * 2 + _state_bytes()
         if len(data) != expected:

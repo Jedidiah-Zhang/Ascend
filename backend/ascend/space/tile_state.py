@@ -14,18 +14,18 @@ to_bytes 已含状态数组，存档自动继承）。
 """
 
 import ctypes
+import threading
 from bisect import bisect_right
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import Callable, ClassVar
 
-import threading
 from ascend.config import GAME_DAY
 from ascend.log import get_logger
-from ascend.weather.weather_engine import precip_type_for
-from ascend.world_tree import Event, WorldEvent, world_tree as _default_wt
-from typing import Callable
+from ascend.weather.derive import precip_type_for
+from ascend.world_tree import Event, WorldEvent
+from ascend.world_tree import world_tree as _default_wt
 
 from ._cext import load_c_extension
 from .state_defs import STATE_TYPES, state_keys

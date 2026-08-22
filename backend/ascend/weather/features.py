@@ -20,24 +20,16 @@ import threading
 from dataclasses import dataclass
 from typing import Mapping
 
-from ascend.config import (
-    GAME_DAY,
-    GAME_HOUR,
-    GAME_YEAR,
-    FEATURE_BLOCK_SIZE,
-    FEATURE_MAX_RADIUS,
-    CLIMATE_PROXY_TEMP_WAVELENGTH,
-    CLIMATE_PROXY_RAIN_WAVELENGTH,
-    CLIMATE_PROXY_OCTAVES,
-)
+from ascend.config import (CLIMATE_PROXY_OCTAVES,
+                           CLIMATE_PROXY_RAIN_WAVELENGTH,
+                           CLIMATE_PROXY_TEMP_WAVELENGTH, FEATURE_BLOCK_SIZE,
+                           FEATURE_MAX_RADIUS, GAME_DAY, GAME_HOUR, GAME_YEAR)
 from ascend.data import load_content, split_ns_id
 from ascend.log import get_logger
-from ascend.space import PerlinNoise, ClimateZone, classify
+from ascend.space import ClimateZone, PerlinNoise, classify
 
-from .events import (
-    ColdSnapStart, ColdSnapStop, HeatWaveStart, HeatWaveStop,
-    StormStart, StormStop,
-)
+from .events import (ColdSnapStart, ColdSnapStop, HeatWaveStart, HeatWaveStop,
+                     StormStart, StormStop)
 
 logger = get_logger(__name__)
 
@@ -389,6 +381,22 @@ class FeatureField:
             cores = self._gen_segment(bx, by, seg_idx)
             segs[seg_idx] = cores
             return cores
+
+    def segment_snapshot(self, bx: int, by: int, seg_idx: int) -> list[FeatureCore] | None:
+        """只读查询某块段已有核列表；段未生成返回 None（不触发惰性生成）。
+
+        Args:
+            bx, by: 空间块坐标。
+            seg_idx: 段索引（非负）。
+
+        Returns:
+            核列表副本；块或段不存在时返回 None。
+        """
+        with self._lock:
+            segs = self._timelines.get((bx, by))
+            if segs is None or seg_idx not in segs:
+                return None
+            return list(segs[seg_idx])
 
     def _gen_segment(self, bx: int, by: int, seg_idx: int) -> list[FeatureCore]:
         """确定性生成一个块段内的全部特征核。

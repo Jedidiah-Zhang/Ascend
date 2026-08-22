@@ -47,15 +47,15 @@ import uuid
 from ascend.config import SAVE_ROOT
 from ascend.log import get_logger
 
-from .crypto import SaveKeys, SaveCryptoError
+from .crypto import SaveCryptoError, SaveKeys
 from .io import atomic_write
-from .lineage import LineageStore, LINEAGE_FILE, parse_lineage_raw
-from .manifest import Manifest, SaveFormatError, MANIFEST_NAME, SEED_MAX
-from .snapshot import (
-    SnapshotStore, _SNAPSHOT_ENTRIES, AUTO_SNAPSHOT_KEEP,
-    CHUNKS_DB, ENTITIES_FILE, EVENTS_DB, QUIT_SNAPSHOT_KEEP,
-    SNAPSHOT_DIR, SNAPSHOT_SUFFIX, STATE_FILE,
-)
+from .lineage import (LINEAGE_FILE, LIVE_ORIGIN_KEY, PARENT_KEY, SNAPSHOTS_KEY,
+                      LineageStore, SnapshotEntry, parse_lineage_raw,
+                      parse_snapshot_entries)
+from .manifest import MANIFEST_NAME, SEED_MAX, Manifest, SaveFormatError
+from .snapshot import (AUTO_SNAPSHOT_KEEP, CHUNKS_DB, ENTITIES_FILE, EVENTS_DB,
+                       QUIT_SNAPSHOT_KEEP, SNAPSHOT_DIR, SNAPSHOT_ENTRIES,
+                       SNAPSHOT_SUFFIX, STATE_FILE, SnapshotStore)
 
 logger = get_logger(__name__)
 
@@ -78,7 +78,7 @@ EXTRACT_PENDING_SUFFIX: str = ".json"
 # 存档位活目录中的规范文件集合（导出/复制只拷这些，排除 WAL/临时文件；
 # 含 continent.bin——同 seed 确定性产物，随档复制保证副本首次加载秒开；
 # lineage.json 随档复制，保证副本的时间线上下文完整）
-_LIVE_ENTRIES: tuple[str, ...] = _SNAPSHOT_ENTRIES + (CONTINENT_FILE, LINEAGE_FILE)
+_LIVE_ENTRIES: tuple[str, ...] = SNAPSHOT_ENTRIES + (CONTINENT_FILE, LINEAGE_FILE)
 
 
 class SaveManager:
@@ -478,7 +478,7 @@ class SaveManager:
         uniq = uuid.uuid4().hex[:6]
         filename = f"@{stamp}-{uniq}-{suffix}{SNAPSHOT_SUFFIX}"
         path = os.path.join(self.snapshot_dir(world_id), filename)
-        parent = self.snapshot_lineage(world_id).get("live_origin", "")
+        parent = self.snapshot_lineage(world_id).get(LIVE_ORIGIN_KEY, "")
         if base_same_as_live:
             # 空增量特例：仅当锚点 == 直接父节点（刚写入的 manual，
             # 其内容必 == 活目录）时成立；血缘写失败等异常态下
@@ -577,10 +577,10 @@ class SaveManager:
             （调用方按普通新建处理）。
         """
         lineage = self.snapshot_lineage(world_id)
-        origin = lineage.get("live_origin", "")
+        origin = lineage.get(LIVE_ORIGIN_KEY, "")
         if not origin or self._snap.snapshot_kind(origin) != "auto":
             return None
-        entries = lineage.get("snapshots", {})
+        entries = lineage.get(SNAPSHOTS_KEY, {})
         if origin not in entries:
             logger.warning("auto 节点无血缘条目，退回普通新建: %s/%s", world_id, origin)
             return None
@@ -594,18 +594,22 @@ class SaveManager:
         filename = f"@{stamp}-{uniq}-{suffix}{SNAPSHOT_SUFFIX}"
         path = os.path.join(self.snapshot_dir(world_id), filename)
         # 锚点规则：晋升节点锚定原记录的手动祖先（增量写/回退全量）
-        self._snap.write_snapshot(
-            world_id, path, str(entries[origin].get("parent", "")),
-        )
+        prev = SnapshotEntry.from_dict(entries[origin])
+        if prev is None:
+            logger.warning("auto 节点血缘条目损坏，退回普通新建: %s/%s", world_id, origin)
+            return None
+        self._snap.write_snapshot(world_id, path, prev.parent)
 
         if game_time is None:
             game_time = self._state_game_time(world_id)
-        entry = dict(entries[origin])
-        entry["game_time"] = int(game_time)
-        entry["saved_at"] = _real_time.time()
-        entries[filename] = entry
+        entries[filename] = SnapshotEntry(
+            parent=prev.parent,
+            game_time=int(game_time),
+            saved_at=_real_time.time(),
+            seq=prev.seq,
+        ).to_dict()
         entries.pop(origin, None)
-        lineage["live_origin"] = filename
+        lineage[LIVE_ORIGIN_KEY] = filename
         if not self._write_lineage(world_id, lineage):
             # 血缘未落盘：保留旧 auto 记录（条目仍指向它，状态一致），
             # 跳过删除与保留策略——新文件留待下次对账清理
@@ -654,7 +658,7 @@ class SaveManager:
         self._validate_world_id(world_id)
         lineage = self.snapshot_lineage(world_id)
         filename = os.path.basename(str(filename))
-        if filename not in lineage.get("snapshots", {}):
+        if filename not in lineage.get(SNAPSHOTS_KEY, {}):
             raise SaveFormatError(f"快照不在血缘中: {filename}")
         if self._snap.snapshot_kind(filename) != "auto":
             raise SaveFormatError(f"仅 auto 记录可刷新冻结: {filename}")
@@ -662,14 +666,18 @@ class SaveManager:
         if not os.path.isfile(path):
             raise SaveFormatError(f"快照文件缺失: {filename}")
         # 原地重写：锚点规则增量写（锚定节点的手动祖先，位置不变）
-        self._snap.write_snapshot(
-            world_id, path, str(lineage["snapshots"][filename].get("parent", "")),
-        )
+        prev = SnapshotEntry.from_dict(lineage[SNAPSHOTS_KEY][filename])
+        if prev is None:
+            raise SaveFormatError(f"快照血缘条目损坏: {filename}")
+        self._snap.write_snapshot(world_id, path, prev.parent)
         if game_time is None:
             game_time = self._state_game_time(world_id)
-        entry = lineage["snapshots"][filename]
-        entry["game_time"] = int(game_time)
-        entry["saved_at"] = _real_time.time()
+        lineage[SNAPSHOTS_KEY][filename] = SnapshotEntry(
+            parent=prev.parent,
+            game_time=int(game_time),
+            saved_at=_real_time.time(),
+            seq=prev.seq,
+        ).to_dict()
         self._write_lineage(world_id, lineage)
         logger.info("刷新快照: %s %s", world_id, filename)
 
@@ -703,7 +711,7 @@ class SaveManager:
         if world_id is not None:
             self._validate_world_id(world_id)
             lineage = self.snapshot_lineage(world_id)
-            origin = lineage.get("live_origin", "")
+            origin = lineage.get(LIVE_ORIGIN_KEY, "")
             if origin and self._snap.snapshot_kind(origin) == "auto":
                 # 冻结离开的当前记录（auto 是滚动记录：原地刷新，不新建）；
                 # 异常态（文件缺失等）降级继续，不阻断回滚
@@ -758,7 +766,7 @@ class SaveManager:
         """
         self._validate_world_id(world_id)
         lineage = self.snapshot_lineage(world_id)
-        snaps = lineage.get("snapshots", {})
+        snaps = lineage.get(SNAPSHOTS_KEY, {})
         removed = {os.path.basename(str(f)) for f in files} & set(snaps)
         if not removed:
             return []
@@ -767,19 +775,19 @@ class SaveManager:
         def nearest_survivor(name: str) -> str:
             """沿 parent 链上溯到最近存活祖先（防环；悬空父链视为初始）。"""
             seen: set[str] = set()
-            cur = str(snaps[name].get("parent", ""))
+            cur = str(snaps[name].get(PARENT_KEY, ""))
             while cur in snaps and cur not in surviving:
                 if cur in seen:
                     return ""
                 seen.add(cur)
-                cur = str(snaps[cur].get("parent", ""))
+                cur = str(snaps[cur].get(PARENT_KEY, ""))
             return cur if cur in surviving else ""
 
         for name, entry in snaps.items():
-            if name not in removed and entry.get("parent") in removed:
-                entry["parent"] = nearest_survivor(name)
-        if lineage.get("live_origin", "") in removed:
-            lineage["live_origin"] = nearest_survivor(lineage["live_origin"])
+            if name not in removed and entry.get(PARENT_KEY) in removed:
+                entry[PARENT_KEY] = nearest_survivor(name)
+        if lineage.get(LIVE_ORIGIN_KEY, "") in removed:
+            lineage[LIVE_ORIGIN_KEY] = nearest_survivor(lineage[LIVE_ORIGIN_KEY])
 
         # 增量链重基座：被删手动锚点的存活后代改锚定最近存活手动
         # 祖先（须在文件删除前执行——旧链仍可物化）
@@ -818,13 +826,13 @@ class SaveManager:
         """
         self._validate_world_id(world_id)
         lineage = self.snapshot_lineage(world_id)
-        snaps = lineage.get("snapshots", {})
+        snaps = lineage.get(SNAPSHOTS_KEY, {})
         filename = os.path.basename(str(filename))
         if filename not in snaps:
             return []
         children: dict[str, list[str]] = {}
         for name, entry in snaps.items():
-            parent = str(entry.get("parent", ""))
+            parent = str(entry.get(PARENT_KEY, ""))
             if parent in snaps:
                 children.setdefault(parent, []).append(name)
         removed: list[str] = []
@@ -874,7 +882,7 @@ class SaveManager:
                 "血缘缺失或验签失败，跳过快照淘汰（宁缺勿删）: %s", world_id,
             )
             return 0
-        live_origin = lineage.get("live_origin", "")
+        live_origin = lineage.get(LIVE_ORIGIN_KEY, "")
         to_delete: list[str] = []
 
         # 1. 血缘孤儿条目清理（文件已不存在）
@@ -882,7 +890,7 @@ class SaveManager:
             on_disk = set(os.listdir(sdir))
         else:
             on_disk = set()
-        for name in lineage.get("snapshots", {}):
+        for name in lineage.get(SNAPSHOTS_KEY, {}):
             if name not in on_disk and name != live_origin:
                 to_delete.append(name)
 
@@ -890,7 +898,7 @@ class SaveManager:
         #     直接删除（不产生血缘变更；live_origin 文件永不误删）。
         #     血缘已在上方验签把关（不可验签时提前返回），known
         #     可信：不会把有主文件当幽灵
-        known = set(lineage.get("snapshots", {}))
+        known = set(lineage.get(SNAPSHOTS_KEY, {}))
         for name in on_disk:
             if SNAPSHOT_SUFFIX + ".tmp-" in name:
                 # 快照原子写入中途崩溃残留的临时文件（永不有效）
@@ -915,9 +923,9 @@ class SaveManager:
         # 2. 按来源分组保留策略（组内按血缘 seq = 创建顺序；
         #    文件名同秒内排序任意，不能作时间序依据）
         lineage_by_name: dict[str, int] = {}
-        for name, entry in lineage.get("snapshots", {}).items():
-            if isinstance(entry, dict):
-                lineage_by_name[name] = int(entry.get("seq", -1))
+        for name, entry in parse_snapshot_entries(
+            lineage.get(SNAPSHOTS_KEY, {})).items():
+            lineage_by_name[name] = entry.seq
         groups: dict[str, list[tuple[str, int]]] = {}
         if os.path.isdir(sdir):
             for name in sorted(os.listdir(sdir)):
@@ -1259,9 +1267,9 @@ class SaveManager:
             return
         lineage = self._lineage.get(world_id)
         changed = False
-        for fname, entry in src["snapshots"].items():
-            if fname not in lineage["snapshots"]:
-                lineage["snapshots"][fname] = entry
+        for fname, entry in src[SNAPSHOTS_KEY].items():
+            if fname not in lineage[SNAPSHOTS_KEY]:
+                lineage[SNAPSHOTS_KEY][fname] = entry
                 changed = True
         if changed:
             self._lineage.write(world_id, lineage)

@@ -8,14 +8,13 @@ MAX_WEATHER_QUERY_CHUNKS（防超大请求卡游戏线程）。
 """
 
 from ascend.config import MAX_WEATHER_QUERY_CHUNKS
-from ascend.net.handlers import parse_coord as _parse_coord
-from ascend.weather.weather_engine import (
-    classify_temperature, classify_humidity, classify_wind, classify_sunshine,
-    classify_sunlight_intensity, precip_type_for,
-)
-
 from ascend.log import get_logger
+from ascend.net.handlers import parse_coord as _parse_coord
 from ascend.net.protocol import make_response
+from ascend.weather.derive import (classify_humidity,
+                                   classify_sunlight_intensity,
+                                   classify_sunshine, classify_temperature,
+                                   classify_wind, precip_type_for)
 
 logger = get_logger(__name__)
 

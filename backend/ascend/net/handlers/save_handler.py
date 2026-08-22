@@ -20,6 +20,9 @@ run_server --world-id/--snapshot 拉起世界进程完成（进程模型）。
 
 from ascend.log import get_logger
 from ascend.net.protocol import make_response
+from ascend.save.lineage import (GAME_TIME_KEY, LIVE_ORIGIN_KEY, PARENT_KEY,
+                                 SEQ_KEY, SNAPSHOTS_KEY,
+                                 parse_snapshot_entries)
 
 logger = get_logger(__name__)
 
@@ -59,13 +62,14 @@ def make_save_handlers(save_manager, game_engine=None):
         snapshots: list[dict] = []
         for w in worlds:
             lineage = save_manager.snapshot_lineage(w["world_id"])
-            w["live_origin"] = lineage.get("live_origin", "")
+            w[LIVE_ORIGIN_KEY] = lineage.get(LIVE_ORIGIN_KEY, "")
+            entries = parse_snapshot_entries(lineage.get(SNAPSHOTS_KEY, {}))
             for s in save_manager.list_snapshots(w["world_id"]):
                 s["world_id"] = w["world_id"]
-                entry = lineage.get("snapshots", {}).get(s["file"], {})
-                s["parent"] = str(entry.get("parent", ""))
-                s["game_time"] = int(entry.get("game_time", 0))
-                s["seq"] = int(entry.get("seq", 0))
+                entry = entries.get(s["file"])
+                s[PARENT_KEY] = entry.parent if entry else ""
+                s[GAME_TIME_KEY] = entry.game_time if entry else 0
+                s[SEQ_KEY] = entry.seq if entry else 0
                 snapshots.append(s)
         current_world_id = ""
         if game_engine is not None:
@@ -181,7 +185,7 @@ def make_save_handlers(save_manager, game_engine=None):
             raise ValueError("缺少 snapshot")
         save_manager.get_manifest(world_id)  # 校验目标存在性
         lineage = save_manager.snapshot_lineage(world_id)
-        if snapshot not in lineage.get("snapshots", {}):
+        if snapshot not in lineage.get(SNAPSHOTS_KEY, {}):
             raise ValueError(f"快照不存在: {snapshot}")
         if recursive:
             deleted = save_manager.remove_snapshot_branch(world_id, snapshot)

@@ -2,8 +2,9 @@
 
 设计要点：
   - 气候档位是**纯静态判定**（年均温 + 年降雨 + 海拔），不依赖季节模块。
-  - 气候是季节系统的**输入**（ClimateTemplate 携带 seasonality 字段，
-    供 WeatherEngine 选择湿度季节曲线形状）。
+  - 气候是季节系统的**输入**（ClimateTemplate 携带 seasonality 字段与
+    湿度季节曲线系数 humidity_sharpness；引擎取后者算曲线形状，
+    seasonality 为模式元数据，契约测试绑定两者一致）。
   - 温雨由大陆 C 模型物理计算并缓存为 chunk 级值，tile 级仅海拔和
     moisture 噪声变化，避免 chunk 边界跳变。
 
@@ -91,7 +92,8 @@ class ClimateTemplate:
         climate: 对应的 ClimateZone。
         humidity_range: 相对湿度区间 (%)。
         wind_speed_range: 风速区间 (m/s)。
-        seasonality: 季节性模式，供 WeatherEngine 选择湿度季节曲线形状。
+        seasonality: 季节性模式（元数据；引擎实际取 humidity_sharpness
+            决定曲线形状——指数与模式绑定，契约测试防双轨漂移）。
         display_color: UI 显示色（hex），在此统一定义供渲染层引用。
     """
 
@@ -100,6 +102,8 @@ class ClimateTemplate:
     wind_speed_range: tuple[float, float]
     seasonality: SeasonalityMode = SeasonalityMode.NONE
     display_color: str = "#888888"
+    mean_precip_intensity: float = 5.0
+    humidity_sharpness: float = 0.0
 
 
 # ── 8 档气候模板注册表（数据驱动，data/climate.json）──────────
@@ -126,12 +130,18 @@ def _parse_climate_template(ns_id: str, raw: Mapping) -> tuple[ClimateTemplate, 
     seasonality = _SEASONALITY_BY_NAME.get(str(raw.get("seasonality", "none")))
     if seasonality is None:
         raise ValueError(f"{ns_id}: 非法 seasonality {raw.get('seasonality')!r}")
+    if "mean_precip_intensity" not in raw:
+        raise ValueError(f"{ns_id}: 缺少必需字段 mean_precip_intensity")
+    if "humidity_sharpness" not in raw:
+        raise ValueError(f"{ns_id}: 缺少必需字段 humidity_sharpness")
     tmpl = ClimateTemplate(
         climate=zone,
         humidity_range=tuple(float(x) for x in raw["humidity_range"]),
         wind_speed_range=tuple(float(x) for x in raw["wind_speed_range"]),
         seasonality=seasonality,
         display_color=str(raw.get("display_color", "#888888")),
+        mean_precip_intensity=float(raw["mean_precip_intensity"]),
+        humidity_sharpness=float(raw["humidity_sharpness"]),
     )
     return tmpl, label_key
 
