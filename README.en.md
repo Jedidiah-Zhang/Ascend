@@ -36,7 +36,7 @@ Every game system exists primarily to provide structured, retrievable, traceable
 
 Most existing world model research trains in environments with opaque, non-intervenable causal structure, lacking traceability. On the other side, procedural generation, physical causal simulation, and structured event logging are mature technologies—but rarely have they been deliberately designed for "world model training."
 
-Ascend fills this gap: a reproducible, intervenable causal world produces spatiotemporal sequences to train a world model; the trained model in turn replaces the NPC's LLM decision layer—forming a closed loop of **world generation → data production → model training → feedback to decision**.
+Ascend fills this gap: a reproducible, intervenable causal world produces spatiotemporal sequences to train a world model; the world model in turn feeds the NPC decision layer (behavior emerges from "need-based rewards + world-model imaginative evaluation", with no LLM)—forming a closed loop of **world generation → data production → model training → feedback to decision**.
 
 ---
 
@@ -59,7 +59,7 @@ The system consists of three parts:
 
 **① World Generation Layer** — A procedurally generated causal space that runs and evolves independently. Provides a perception interface (numerical quantities → semantic labels) to NPCs as decision input. State changes are recorded via the event causality graph (WorldTree), both supporting NPC perception and constituting spatiotemporal training samples for the world model. (The event bus/archive is implemented; causal edge relations are declared by publishers at publish time, and current publish paths do not set relation fields, see `docs/研究方案与理论.md`)
 
-**② NPC Decision Layer** — Perceives the world, combines personality parameters and memory, outputs actions. LLM is invoked on-demand driven by saliency scoring; the five-layer architecture (role / goal / motivation / skill / execution) in the design docs is a game-side detail, see `docs/心智系统/`. The world model is trained offline on causality graphs and spatiotemporal sequences; once trained, it can replace the LLM decision layer. (**Not implemented**—no NPC/LLM code exists, see `docs/心智系统/`)
+**② NPC Decision Layer** — Perceives the world, combines personality parameters and memory, outputs actions. Behavior emerges from a learned policy driven by the needs layer (physiological/survival needs = deterministic reward function) and the world model (imaginative evaluation), with no LLM and no hand-written behavior rules; the policy network has fixed weights and a controllable random stream, making behavior fully intervenable and reproducible. The five-layer architecture in the design docs is a game-side detail, see `docs/心智系统/AI原生NPC/设计.md`; research-side argumentation is in `docs/研究理论/因果理论验证/`. (**Not implemented**—no NPC/policy code exists)
 
 **③ Action Interface Layer** — Defines the contract for NPC-selectable actions. The decision layer selects from the action set, executes via the interface, and writes back to the world, which then continues evolving.
 
