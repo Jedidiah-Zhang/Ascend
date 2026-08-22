@@ -17,7 +17,6 @@
 class_name HandshakePolicy
 extends RefCounted
 
-const Config = preload("res://scripts/config.gd")
 const HandshakeClass = preload("res://scripts/net/handshake.gd")
 
 

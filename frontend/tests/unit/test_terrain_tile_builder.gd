@@ -8,7 +8,6 @@ TerrainType 枚举（9 地形）对齐。
 extends GutTest
 
 const TerrainTileBuilder = preload("res://scripts/world/terrain_tile_builder.gd")
-const Config = preload("res://scripts/config.gd")
 const CS: int = Config.TILE_MAP_SIZE
 
 

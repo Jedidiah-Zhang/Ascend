@@ -8,7 +8,6 @@ CanvasModulate 引用，状态（游戏时间/日出日落/日照强度）由调
 class_name LightingController
 extends RefCounted
 
-const Config = preload("res://scripts/config.gd")
 
 
 ## 太阳高度角渐入上界：0→0.35 间平滑过渡，消除亮度跳变

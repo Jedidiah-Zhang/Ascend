@@ -1,7 +1,6 @@
 extends GutTest
 
 const BackendProcess = preload("res://scripts/net/backend_process.gd")
-const Config = preload("res://scripts/config.gd")
 const DEV_PY_REL: String = ".venv/bin/python"
 const RUN_SERVER_REL: String = "backend/run_server.py"
 

@@ -11,7 +11,6 @@
 class_name StateLayerManager
 extends RefCounted
 
-const Config = preload("res://scripts/config.gd")
 
 const CHUNK_SIZE: int = Config.TILE_MAP_SIZE
 const TILE_PIXEL_SIZE: int = Config.TILE_PIXEL_SIZE

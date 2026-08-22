@@ -37,7 +37,6 @@ restart_backend 为异步状态机（WAIT_STOP → RESET → SPAWN），不阻�
 
 extends Node
 
-const Config = preload("res://scripts/config.gd")
 const FrameCodecClass = preload("res://scripts/utils/frame_codec.gd")
 const BackendProcessClass = preload("res://scripts/net/backend_process.gd")
 const TcpTransportClass = preload("res://scripts/net/tcp_transport.gd")

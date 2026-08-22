@@ -11,7 +11,6 @@
 class_name SaveInfoFormatter
 extends RefCounted
 
-const Config = preload("res://scripts/config.gd")
 
 
 static func hhmm_string(hour: int, minute: int) -> String:

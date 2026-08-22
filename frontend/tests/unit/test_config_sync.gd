@@ -2,7 +2,6 @@ extends GutTest
 ## 前后端共享常量一致性（CI 层）：读后端 Python 源文件文本比对，
 ## 防止任一端单独改动协议/端口/消息大小导致握手失败或断连。
 
-const Config = preload("res://scripts/config.gd")
 
 
 func _backend_source(rel: String) -> String:

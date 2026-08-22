@@ -1,6 +1,5 @@
 extends GutTest
 
-const Config = preload("res://scripts/config.gd")
 const SETTINGS_SCRIPT: String = "res://scripts/autoload/settings.gd"
 const TEST_PATH: String = "user://test_terminal_widget_settings.cfg"
 

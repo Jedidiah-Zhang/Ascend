@@ -19,7 +19,6 @@
 class_name TcpTransport
 extends RefCounted
 
-const Config = preload("res://scripts/config.gd")
 const FrameCodecClass = preload("res://scripts/utils/frame_codec.gd")
 
 

@@ -2,7 +2,6 @@ extends GutTest
 
 const HandshakePolicy = preload("res://scripts/net/handshake_policy.gd")
 const HandshakeClass = preload("res://scripts/net/handshake.gd")
-const Config = preload("res://scripts/config.gd")
 
 
 var _policy: HandshakePolicy = null

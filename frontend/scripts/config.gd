@@ -2,6 +2,8 @@
 
 与 Python 端 ascend/config.py 保持相同的值，两边需同步更新。
 """
+class_name Config
+
 extends RefCounted
 
 # ═══════════════════════════════════════════════════════════

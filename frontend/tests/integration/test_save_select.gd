@@ -197,7 +197,7 @@ func test_row_click_toggles_expansion() -> void:
 	# 展开后下方行下移
 	var y0: float = sel._row_display_y(0, sel.HEADER_H)
 	var y1: float = sel._row_display_y(1, sel.HEADER_H)
-	assert_eq(y1 - y0, sel.ROW_H + sel.ROW_GAP + sel.TL_INLINE_H + sel.TL_GAP,
+	assert_eq(y1 - y0, sel.ROW_H + sel.ROW_GAP + SnapshotTimelinePainter.INLINE_H + SnapshotTimelinePainter.GAP,
 		"展开行下方的行应整体下移")
 
 	# 再次点击收起
@@ -220,7 +220,7 @@ func test_expanding_second_row_collapses_first() -> void:
 	assert_eq(sel._expanded_row, 0)
 	# 行 1 已被展开行下移 TL_INLINE_H + TL_GAP
 	ev.position = Vector2(60, sel.HEADER_H + 20 + sel.ROW_H + sel.ROW_GAP \
-		+ sel.TL_INLINE_H + sel.TL_GAP)
+		+ SnapshotTimelinePainter.INLINE_H + SnapshotTimelinePainter.GAP)
 	sel._input(ev)
 	assert_eq(sel._expanded_row, 1, "应切换到第二行")
 
@@ -341,7 +341,7 @@ func test_zoom_fits_and_clamps() -> void:
 	# 反复放大到上限
 	for i in range(30):
 		sel._input(wheel)
-	assert_eq(sel._tl_zoom, sel.TL_ZOOM_MAX, "放大应钳制在上限")
+	assert_eq(sel._tl_zoom, SnapshotTimelinePainter.ZOOM_MAX, "放大应钳制在上限")
 	# 反复缩小到下限
 	var wheel_down := InputEventMouseButton.new()
 	wheel_down.button_index = MOUSE_BUTTON_WHEEL_DOWN
@@ -349,7 +349,7 @@ func test_zoom_fits_and_clamps() -> void:
 	wheel_down.position = sel._tl_body_rect.get_center()
 	for i in range(40):
 		sel._input(wheel_down)
-	assert_eq(sel._tl_zoom, sel.TL_ZOOM_MIN, "缩小应钳制在下限")
+	assert_eq(sel._tl_zoom, SnapshotTimelinePainter.ZOOM_MIN, "缩小应钳制在下限")
 
 
 func test_wheel_over_legend_scrolls_list() -> void:

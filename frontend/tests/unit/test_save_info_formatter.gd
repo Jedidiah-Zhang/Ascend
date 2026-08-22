@@ -5,7 +5,6 @@
 
 extends GutTest
 
-const Config = preload("res://scripts/config.gd")
 
 
 # ── 游戏内时间 ────────────────────────────────────────────

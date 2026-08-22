@@ -9,7 +9,6 @@
 class_name PawnManager
 extends RefCounted
 
-const Config = preload("res://scripts/config.gd")
 const PawnRenderer = preload("res://scripts/world/pawn_renderer.gd")
 
 const TILE_PIXEL_SIZE: int = Config.TILE_PIXEL_SIZE

@@ -2,7 +2,6 @@ extends GutTest
 
 const TcpTransport = preload("res://scripts/net/tcp_transport.gd")
 const FrameCodecClass = preload("res://scripts/utils/frame_codec.gd")
-const Config = preload("res://scripts/config.gd")
 
 
 # ── 测试替身（StreamPeerTCP 接口子集） ─────────────────────

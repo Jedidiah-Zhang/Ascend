@@ -70,27 +70,6 @@ const ACTIONS: Array = [
 
 # ── 时间线视图常量 ─────────────────────────────────────────
 
-const TL_INLINE_H: float = 230.0
-const TL_GAP: float = 10.0
-const TL_HEADER_H: float = 26.0
-const TL_H_STEP: float = 110.0
-const TL_V_STEP: float = 54.0
-const TL_NODE_R: float = 12.0
-const TL_LIVE_COLOR: Color = Color(0.85, 0.72, 0.30)
-const TL_LIVE_HOVER_COLOR: Color = Color(0.98, 0.88, 0.50)
-const TL_NODE_COLOR: Color = Color(0.32, 0.55, 0.85)
-const TL_NODE_HOVER_COLOR: Color = Color(0.45, 0.70, 0.95)
-const TL_AUTO_COLOR: Color = Color(0.38, 0.48, 0.60)
-const TL_AUTO_HOVER_COLOR: Color = Color(0.52, 0.64, 0.78)
-## 选中节点亮环色（选中后出现操作面板）
-const TL_SELECT_COLOR: Color = Color(1.0, 1.0, 1.0, 0.9)
-const TL_EDGE_COLOR: Color = Color(0.55, 0.60, 0.72, 0.85)
-const TL_HINT_COLOR: Color = Color(0.55, 0.62, 0.75)
-const TL_BG_COLOR: Color = Color(0.07, 0.09, 0.14, 0.95)
-const TL_LEGEND_W: float = 250.0
-const TL_LEGEND_ROW_H: float = 18.0
-const TL_ZOOM_MIN: float = 0.35
-const TL_ZOOM_MAX: float = 2.5
 
 
 # ── 属性 ──────────────────────────────────────────────────
@@ -136,6 +115,8 @@ func _launch_backend_default(args: PackedStringArray) -> void:
 
 # ── 时间线视图状态（行内展开） ────────────────────────────
 
+## 时间线视图绘制器（纯绘制/几何/命中；交互决策保留在本文件）
+var _tl_painter: SnapshotTimelinePainter = SnapshotTimelinePainter.new()
 ## 展开时间线的行索引（-1 = 全部收起）
 var _expanded_row: int = -1
 ## 时间线节点: [{id, depth, slot, is_live, suffix, ...}]
@@ -343,7 +324,7 @@ func _draw() -> void:
 	var list_bottom: float = view_size.y - FOOTER_H
 	var list_rect := Rect2(MARGIN, list_top, view_size.x - MARGIN * 2, list_bottom - list_top)
 	var total_h: float = _worlds.size() * (ROW_H + ROW_GAP) \
-		+ (TL_INLINE_H + TL_GAP if _expanded_row >= 0 else 0.0)
+		+ (SnapshotTimelinePainter.INLINE_H + SnapshotTimelinePainter.GAP if _expanded_row >= 0 else 0.0)
 	_max_scroll = maxf(0.0, (total_h - (list_bottom - list_top)) / (ROW_H + ROW_GAP))
 	_scroll = clampf(_scroll, 0.0, _max_scroll)
 
@@ -386,12 +367,12 @@ func _draw() -> void:
 
 
 func _row_display_y(index: int, list_top: float) -> float:
-	"""行显示纵坐标：展开行下方行整体下移 TL_INLINE_H + TL_GAP。"""
+	"""行显示纵坐标：展开行下方行整体下移时间线高度（裁到列表底部）。"""
 	var y: float = list_top - _scroll * (ROW_H + ROW_GAP)
 	for i in range(index):
 		y += ROW_H + ROW_GAP
 		if i == _expanded_row:
-			y += TL_INLINE_H + TL_GAP
+			y += SnapshotTimelinePainter.INLINE_H + SnapshotTimelinePainter.GAP
 	return y
 
 
@@ -545,17 +526,11 @@ func _input(event: InputEvent) -> void:
 
 
 func _handle_tree_wheel(dir: float, pos: Vector2) -> void:
-	"""树区滚轮：图例列滚动列表，树区缩放（以光标为锚）。"""
-	if _tl_legend_rect.has_point(pos):
-		_tl_legend_scroll += dir
-		return
-	var factor: float = 1.15 if dir < 0.0 else 1.0 / 1.15
-	var old_zoom: float = _tl_zoom
-	_tl_zoom = clampf(_tl_zoom * factor, TL_ZOOM_MIN, TL_ZOOM_MAX)
-	if _tl_zoom != old_zoom and _tl_body_rect.has_point(pos):
-		# 保持光标下的树点不动
-		var rel: Vector2 = pos - _tl_body_rect.position
-		_tl_pan = rel - (rel - _tl_pan) * (_tl_zoom / old_zoom)
+	"""树区滚轮：图例列滚动列表，树区缩放（以光标为锚）——委托绘制器。"""
+	_tl_painter.wheel(dir, pos)
+	_tl_zoom = _tl_painter.zoom
+	_tl_pan = _tl_painter.pan
+	_tl_legend_scroll = _tl_painter.legend_scroll
 
 
 ## 根据光标位置更新悬停状态（_hover_row / _hover_action / _tl_hover_id），按优先级：输入弹层按钮 → 操作面板按钮 → 返回/新建 → 时间线节点与图例行 → 行操作按钮 → 行主体。
@@ -730,31 +705,19 @@ func _toggle_timeline(row: int) -> void:
 		if suffix == "manual" or suffix == "auto":
 			numbered.append(s)
 	_tl_sorted_ids = TimelineLayout.save_order_ids(numbered)
-	_fit_timeline_zoom()
+	_tl_painter.set_tree(_tl_nodes, _tl_edges, _tl_sorted_ids)
+	_tl_painter.setup(self, _font, w, _current_world_id,
+		_tl_zoom, _tl_pan, _tl_legend_scroll, _tl_hover_id, _panel_node_id)
+	_tl_painter.fit_zoom()
+	_tl_zoom = _tl_painter.zoom
 	queue_redraw()
-
-
-func _fit_timeline_zoom() -> void:
-	"""展开时自动适配：长树缩小到视口（短树保持 1.0 上限）。"""
-	_tl_zoom = 1.0
-	if size.x <= 10.0:
-		return
-	var max_depth: float = 0.0
-	var max_slot: float = 0.0
-	for n in _tl_nodes:
-		max_depth = maxf(max_depth, float(n["depth"]))
-		max_slot = maxf(max_slot, float(n["slot"]))
-	var body_w: float = size.x - MARGIN * 2 - 28 - TL_LEGEND_W
-	var body_h: float = TL_INLINE_H - TL_HEADER_H - 8
-	var fit_w: float = body_w / maxf(1.0, (max_depth + 1) * TL_H_STEP)
-	var fit_h: float = body_h / maxf(1.0, (max_slot + 1) * TL_V_STEP)
-	_tl_zoom = clampf(minf(1.0, minf(fit_w, fit_h)), TL_ZOOM_MIN, 1.0)
 
 
 func _close_timeline() -> void:
 	"""收起时间线。"""
 	if _expanded_row < 0:
 		return
+	_tl_painter.reset()
 	_expanded_row = -1
 	_tl_nodes = []
 	_tl_edges = []
@@ -775,205 +738,42 @@ func _close_timeline() -> void:
 	queue_redraw()
 
 
-func _tl_node_pos(node: Dictionary) -> Vector2:
-	"""节点屏幕位置（深度→x，槽位→y，缩放作用于间距）。"""
-	return _tl_origin + Vector2(
-		node["depth"] * TL_H_STEP * _tl_zoom,
-		node["slot"] * TL_V_STEP * _tl_zoom,
-	)
-
-
 func _draw_inline_timeline(row_rect: Rect2) -> void:
-	"""在展开行下方绘制时间线分叉树（编号节点 + 右侧图例，无弹窗）。
+	"""在展开行下方绘制时间线分叉树（委托 SnapshotTimelinePainter 绘制器）。
 
-	节点圆圈只显示编号（绝不重叠），完整信息在右侧图例列表；
-	树区支持拖拽平移与滚轮缩放，图例区滚轮滚动。
-
-	面板高度 = min(TL_INLINE_H, 列表视口剩余空间)：展开行靠近底部时
-	面板裁剪到 list_bottom，节点/边/图例逐元素剔除出界部分——
-	内容永远不溢出列表区压到页脚（防护：面板背景与内容延伸至
-	窗口底边会覆盖状态栏/「新建游戏」按钮）。
+	绘制与几何/命中全部在绘制器内完成（纯 RefCounted，可单测）；
+	本函数只负责注入视图数据与交互状态，并把命中几何镜像回
+	_tl_* 成员（_click/_hover 命中判定与测试断言使用）。
 	"""
-	var avail_h: float = (size.y - FOOTER_H) - (row_rect.end.y + TL_GAP)
-	var panel_h: float = minf(TL_INLINE_H, avail_h)
-	if panel_h <= 0.0:
-		return
-	var tree_rect := Rect2(
-		row_rect.position.x, row_rect.end.y + TL_GAP,
-		row_rect.size.x, panel_h)
-	_tl_tree_rect = tree_rect
-	draw_rect(tree_rect, TL_BG_COLOR)
-	draw_rect(tree_rect, Color(1, 1, 1, 0.10), false, 1.0)
-
-	var w: Dictionary = _worlds[_expanded_row]
-	var title: String = tr("ui.saves.timeline")
-	if str(w.get("world_id", "")) == _current_world_id:
-		title += tr("ui.saves.last_entered")
-	draw_string(_font, tree_rect.position + Vector2(14, 18), title,
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 14, TITLE_COLOR)
-
-	# 右侧图例列
-	_tl_legend_rect = Rect2(tree_rect.end.x - TL_LEGEND_W, tree_rect.position.y,
-		TL_LEGEND_W, tree_rect.size.y)
-	draw_rect(_tl_legend_rect, Color(0, 0, 0, 0.25))
-	draw_string(_font, _tl_legend_rect.position + Vector2(10, 18), tr("ui.saves.snapshot_list"),
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, TITLE_COLOR)
-	var legend_body := Rect2(
-		_tl_legend_rect.position + Vector2(8, TL_HEADER_H),
-		Vector2(TL_LEGEND_W - 16, _tl_legend_rect.size.y - TL_HEADER_H))
-
-	# 树视口（图例左侧）
-	var body := Rect2(tree_rect.position + Vector2(14, TL_HEADER_H),
-		Vector2(tree_rect.size.x - 28 - TL_LEGEND_W, tree_rect.size.y - TL_HEADER_H - 8))
-	_tl_body_rect = body
-
-	# 编号：按保存顺序（saved_at 真实创建时刻，同秒游戏时间兜底）
-	_tl_numbers.clear()
-	for i in _tl_sorted_ids.size():
-		_tl_numbers[_tl_sorted_ids[i]] = i + 1
-
-	# 几何：缩放 + 平移（树小于视口时居中不可拖，大于时钳制可拖）
-	var max_depth: float = 0.0
-	var max_slot: float = 0.0
-	for n in _tl_nodes:
-		max_depth = maxf(max_depth, float(n["depth"]))
-		max_slot = maxf(max_slot, float(n["slot"]))
-	var tree_w: float = (max_depth + 1) * TL_H_STEP * _tl_zoom
-	var tree_h: float = (max_slot + 1) * TL_V_STEP * _tl_zoom
-	if tree_w >= body.size.x:
-		_tl_pan.x = clampf(_tl_pan.x, body.size.x - tree_w, 0.0)
-	else:
-		_tl_pan.x = (body.size.x - tree_w) * 0.5
-	if tree_h >= body.size.y:
-		_tl_pan.y = clampf(_tl_pan.y, body.size.y - tree_h, 0.0)
-	else:
-		_tl_pan.y = (body.size.y - tree_h) * 0.5
-	_tl_origin = body.position + _tl_pan
-
-	# 节点位置表 + 边（逐元素剔除面板可见区之外的元素）
-	var visible_rect: Rect2 = tree_rect.grow(TL_NODE_R)
-	var pos_map: Dictionary = {}
-	for n in _tl_nodes:
-		pos_map[n["id"]] = _tl_node_pos(n)
-	_tl_rects.clear()
-	for e in _tl_edges:
-		if not pos_map.has(e[0]) or not pos_map.has(e[1]):
-			continue
-		var a: Vector2 = pos_map[e[0]]
-		var b: Vector2 = pos_map[e[1]]
-		if not visible_rect.intersects(Rect2(a, b - a).abs()):
-			continue
-		var dir: Vector2 = (b - a).normalized()
-		draw_line(a + dir * TL_NODE_R, b - dir * TL_NODE_R,
-			TL_EDGE_COLOR, 2.0)
-
-	# 节点（圆圈 + 编号/星标）
-	for n in _tl_nodes:
-		var pos: Vector2 = pos_map[n["id"]]
-		if not visible_rect.has_point(pos):
-			continue
-		var hovered: bool = n["id"] == _tl_hover_id
-		var selected: bool = n["id"] == _panel_node_id
-		var fill: Color
-		if n["is_live"]:
-			fill = TL_LIVE_HOVER_COLOR if hovered else TL_LIVE_COLOR
-		elif str(n.get("suffix", "")) != "manual":
-			fill = TL_AUTO_HOVER_COLOR if hovered else TL_AUTO_COLOR
-		else:
-			fill = TL_NODE_HOVER_COLOR if hovered else TL_NODE_COLOR
-		draw_circle(pos, TL_NODE_R, fill)
-		draw_arc(pos, TL_NODE_R, 0.0, TAU, 32, Color(1, 1, 1, 0.35), 1.0)
-		if selected:
-			draw_arc(pos, TL_NODE_R + 3.0, 0.0, TAU, 32, TL_SELECT_COLOR, 2.0)
-		var glyph: String = "★" if n["is_live"] else str(_tl_numbers.get(n["id"], ""))
-		draw_string(_font, pos + Vector2(-12, 5), glyph,
-			HORIZONTAL_ALIGNMENT_CENTER, 24, 11, Color(0.05, 0.06, 0.10, 0.95))
-		if n["is_live"]:
-			draw_string(_font, pos + Vector2(-34, TL_NODE_R + 15), tr("ui.saves.current_point"),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, TL_LIVE_COLOR)
-			var gt: String = SaveInfoFormatter.game_time_string(
-				int(w.get("game_time", 0)))
-			draw_string(_font, pos + Vector2(-34, TL_NODE_R + 30), gt,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, TL_HINT_COLOR)
-		_tl_rects[n["id"]] = Rect2(pos - Vector2(30, 30), Vector2(60, 60))
-
-	# 图例（可滚动，全部节点可达；顺序 = 保存顺序编号）。
-	# LIVE 行仅当树中确实存在独立当前点（auto 来源时省略）
-	var legend_rows: Array = []
-	for n in _tl_nodes:
-		if n["id"] == TimelineLayout.LIVE_ID:
-			legend_rows.append(TimelineLayout.LIVE_ID)
-			break
-	legend_rows.append_array(_tl_sorted_ids)
-	var visible_rows: int = maxi(0, int(legend_body.size.y / TL_LEGEND_ROW_H))
-	_tl_legend_scroll = clampf(_tl_legend_scroll, 0.0,
-		maxf(0.0, legend_rows.size() - visible_rows))
-	_tl_legend_rects.clear()
-	for i in range(visible_rows):
-		var row_idx: int = i + int(_tl_legend_scroll)
-		if row_idx >= legend_rows.size():
-			break
-		var id: String = legend_rows[row_idx]
-		var row_rc := Rect2(legend_body.position.x,
-			legend_body.position.y + i * TL_LEGEND_ROW_H,
-			legend_body.size.x, TL_LEGEND_ROW_H - 2)
-		_tl_legend_rects[id] = row_rc
-		if id == _tl_hover_id:
-			draw_rect(row_rc, Color(1, 1, 1, 0.12))
-		# 当前时间点（LIVE 或当前 auto 记录）行显示 ★
-		var is_current: bool = false
-		for n in _tl_nodes:
-			if n["id"] == id and n["is_live"]:
-				is_current = true
-				break
-		var num: String = "★" if is_current \
-			else str(_tl_numbers.get(id, ""))
-		var text: String = "%s  %s" % [num, _tl_legend_text(id)]
-		draw_string(_font, row_rc.position + Vector2(4, 13), text,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, DIM_TEXT_COLOR)
-
-
-func _tl_legend_text(id: String) -> String:
-	"""图例行文本：来源标识 + 时间标签。"""
-	for n in _tl_nodes:
-		if n["id"] != id:
-			continue
-		if n["is_live"]:
-			return tr("ui.saves.current_point_line").format({				"time": SaveInfoFormatter.game_time_string(
-					int(_worlds[_expanded_row].get("game_time", 0))),
-			})
-		var prefix: String = tr("ui.saves.auto_prefix") \
-			if str(n.get("suffix", "")) != "manual" else ""
-		return prefix + _tl_node_label(n)
-	return ""
-
-
-func _tl_node_label(node: Dictionary) -> String:
-	"""快照节点标签：优先游戏时间，缺失时用真实保存时间。"""
-	var gt: int = int(node.get("time", 0))
-	if gt > 0:
-		return SaveInfoFormatter.game_time_string(gt)
-	return SaveInfoFormatter.datetime_string(float(node.get("saved_at", 0.0)))
+	_tl_painter.setup(self, _font, _worlds[_expanded_row], _current_world_id,
+		_tl_zoom, _tl_pan, _tl_legend_scroll, _tl_hover_id, _panel_node_id)
+	_tl_painter.layout(row_rect)
+	_tl_painter.paint()
+	_tl_tree_rect = _tl_painter.tree_rect
+	_tl_body_rect = _tl_painter.body_rect
+	_tl_legend_rect = _tl_painter.legend_rect
+	_tl_origin = _tl_painter.origin
+	_tl_rects = _tl_painter.node_rects
+	_tl_legend_rects = _tl_painter.legend_rects
+	_tl_numbers = _tl_painter.numbers
+	_tl_zoom = _tl_painter.zoom
+	_tl_pan = _tl_painter.pan
+	_tl_legend_scroll = _tl_painter.legend_scroll
 
 
 func _hit_timeline_node(pos: Vector2) -> String:
 	"""命中树视口内的节点，返回节点 id（未命中返回空串）。"""
-	if _expanded_row < 0 or not _tl_body_rect.has_point(pos):
-		return ""
-	for id in _tl_rects:
-		if _tl_rects[id].has_point(pos):
-			return id
-	return ""
+	return _tl_painter.hit_node(pos)
 
 
 func _hit_legend_row(pos: Vector2) -> String:
 	"""命中图例行，返回节点 id（未命中返回空串）。"""
-	if _expanded_row < 0 or not _tl_legend_rect.has_point(pos):
-		return ""
-	for id in _tl_legend_rects:
-		if _tl_legend_rects[id].has_point(pos):
-			return id
-	return ""
+	return _tl_painter.hit_legend(pos)
+
+
+func _tl_node_label(node: Dictionary) -> String:
+	"""快照节点标签（委托绘制器；面板标题/确认弹窗复用）。"""
+	return _tl_painter.node_label(node)
 
 
 ## 点击时间线节点：当前时间点（LIVE 或当前 auto 记录）直接进入世界；
@@ -1084,7 +884,7 @@ func _draw_action_panel() -> void:
 	draw_rect(panel_rect, PANEL_COLOR)
 	draw_rect(panel_rect, Color(1, 1, 1, 0.15), false, 1.0)
 	draw_string(_font, panel_rect.position + Vector2(pad, pad + 13), node_label,
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, TL_HINT_COLOR)
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, SnapshotTimelinePainter.HINT_COLOR)
 	_panel_rects.clear()
 	for i in items.size():
 		var item: Dictionary = items[i]

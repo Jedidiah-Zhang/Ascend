@@ -1,6 +1,5 @@
 extends GutTest
 
-const Config = preload("res://scripts/config.gd")
 
 
 func test_default_host_is_localhost() -> void:

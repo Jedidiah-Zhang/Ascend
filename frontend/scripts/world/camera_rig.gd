@@ -8,7 +8,6 @@ visible_radius（2D 屏幕对角线 → 世界 tile 半径，流式半径用）�
 class_name CameraRig
 extends RefCounted
 
-const Config = preload("res://scripts/config.gd")
 
 ## 相机常量（与 main_world.gd 原声明同源，见 Config）
 const CAMERA_ZOOM_DEFAULT: float = Config.CAMERA_ZOOM_DEFAULT

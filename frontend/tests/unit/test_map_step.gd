@@ -303,43 +303,97 @@ func test_view_same_index_ignored() -> void:
 	assert_eq(step._view_mode, "temp")
 
 
+## 预览视图定义（与 MapSetupStep.VIEWS 同构；调色板测试不构建步骤实例）
+const PREVIEW_VIEWS: Array = [
+	{"key": "elevation", "label_key": "ui.map.view_elevation", "field": "elevation"},
+	{"key": "temp", "label_key": "ui.map.view_temp", "field": "temperature"},
+	{"key": "rain", "label_key": "ui.map.view_rain", "field": "rainfall"},
+	{"key": "climate", "label_key": "ui.map.view_climate", "field": "climate"},
+]
+
+
 func test_info_line_ranges() -> void:
 	"""信息行：地形/温度/降雨显示数值范围，气候视图显示悬停提示。"""
-	var step: MapSetupStep = _make_step()
-	assert_eq(step._info_line(step.VIEWS[0], [-100, -50, 100, 200]), "海拔 -100~200m")
-	assert_eq(step._info_line(step.VIEWS[1], [5, 8, 22, 28]), "温度 5~28°C")
-	assert_eq(step._info_line(step.VIEWS[2], [100, 400, 900, 1800]), "降雨 100~1800mm")
-	assert_eq(step._info_line(step.VIEWS[3], [6, 6, 0, 1]), "移入地图查看气候")
+	var pal: MapPreviewPalette = MapPreviewPalette.new()
+	assert_eq(pal.info_line(PREVIEW_VIEWS[0], [-100, -50, 100, 200]), "海拔 -100~200m")
+	assert_eq(pal.info_line(PREVIEW_VIEWS[1], [5, 8, 22, 28]), "温度 5~28°C")
+	assert_eq(pal.info_line(PREVIEW_VIEWS[2], [100, 400, 900, 1800]), "降雨 100~1800mm")
+	assert_eq(pal.info_line(PREVIEW_VIEWS[3], [6, 6, 0, 1]), "移入地图查看气候")
 
 
 func test_info_line_hover_cell() -> void:
 	"""鼠标悬停格子：显示位置值；气候视图显示分类，海域显示海洋。"""
-	var step: MapSetupStep = _make_step()
-	step.on_preview_response(_full_preview_payload())
-	step._map_w = 2
-	step._map_h = 2
-	step._set_view_mode(1)  # 温度
-	step._hover_cell = Vector2i(1, 1)  # idx=3, 28°C
-	assert_eq(step._info_line(step.VIEWS[1], step._preview["temperature"]),
+	var pal: MapPreviewPalette = MapPreviewPalette.new()
+	pal.preview = _full_preview_payload()
+	pal.map_w = 2
+	pal.map_h = 2
+	pal.hover_cell = Vector2i(1, 1)  # idx=3, 28°C
+	assert_eq(pal.info_line(PREVIEW_VIEWS[1], pal.preview["temperature"]),
 		"温度 5~28°C    当前位置 28°C")
-	step._set_view_mode(3)  # 气候
-	step._hover_cell = Vector2i(0, 0)  # idx=0, 海拔 -100 海域
-	assert_eq(step._info_line(step.VIEWS[3], step._preview["climate"]), "当前位置 海洋")
-	step._hover_cell = Vector2i(1, 1)  # idx=3, 气候 1 = 热带草原
-	assert_eq(step._info_line(step.VIEWS[3], step._preview["climate"]), "当前位置 热带草原")
-	step._hover_cell = Vector2i(-1, -1)  # 移出地图 → 恢复悬停提示
-	assert_eq(step._info_line(step.VIEWS[3], step._preview["climate"]), "移入地图查看气候")
+	pal.hover_cell = Vector2i(0, 0)  # idx=0, 海拔 -100 海域
+	assert_eq(pal.info_line(PREVIEW_VIEWS[3], pal.preview["climate"]), "当前位置 海洋")
+	pal.hover_cell = Vector2i(1, 1)  # idx=3, 气候 1 = 热带草原
+	assert_eq(pal.info_line(PREVIEW_VIEWS[3], pal.preview["climate"]), "当前位置 热带草原")
+	pal.hover_cell = Vector2i(-1, -1)  # 移出地图 → 恢复悬停提示
+	assert_eq(pal.info_line(PREVIEW_VIEWS[3], pal.preview["climate"]), "移入地图查看气候")
 
 
 func test_hover_value_text_out_of_bounds() -> void:
 	"""鼠标格越界（数据异常/地图未生成）时返回空串。"""
-	var step: MapSetupStep = _make_step()
-	step._map_w = 2
-	step._map_h = 2
-	step._hover_cell = Vector2i(5, 5)
-	assert_eq(step._hover_value_text(step.VIEWS[0], [1, 2, 3, 4]), "")
-	step._hover_cell = Vector2i(-1, -1)
-	assert_eq(step._hover_value_text(step.VIEWS[0], [1, 2, 3, 4]), "")
+	var pal: MapPreviewPalette = MapPreviewPalette.new()
+	pal.map_w = 2
+	pal.map_h = 2
+	pal.hover_cell = Vector2i(5, 5)
+	assert_eq(pal.hover_value_text(PREVIEW_VIEWS[0], [1, 2, 3, 4]), "")
+	pal.hover_cell = Vector2i(-1, -1)
+	assert_eq(pal.hover_value_text(PREVIEW_VIEWS[0], [1, 2, 3, 4]), "")
+
+
+func test_field_range() -> void:
+	"""数值范围取整；空字段返回 [0, 0]。"""
+	var pal: MapPreviewPalette = MapPreviewPalette.new()
+	assert_eq(pal.field_range([5, 8, 22, 28]), [5, 28])
+	assert_eq(pal.field_range([100, 400, 900, 1800]), [100, 1800])
+	assert_eq(pal.field_range([]), [0, 0])
+
+
+func test_layer_colors_plausible() -> void:
+	"""各视图着色函数：地形按海拔分色、气候图层数值对应渐变色、气候档固定色。"""
+	var pal: MapPreviewPalette = MapPreviewPalette.new()
+	assert_ne(pal.layer_color(PREVIEW_VIEWS[0], 100.0, 0.0),
+		pal.layer_color(PREVIEW_VIEWS[0], 5000.0, 0.0), "地形按海拔分色")
+	assert_ne(pal.layer_color(PREVIEW_VIEWS[1], 100.0, -10.0),
+		pal.layer_color(PREVIEW_VIEWS[1], 100.0, 30.0), "温度高低色不同")
+	assert_ne(pal.layer_color(PREVIEW_VIEWS[2], 100.0, 50.0),
+		pal.layer_color(PREVIEW_VIEWS[2], 100.0, 2200.0), "降雨干湿色不同")
+	assert_eq(pal.layer_color(PREVIEW_VIEWS[3], 100.0, 0.0),
+		MapPreviewPalette.CLIMATE_ZONE_COLORS[0], "气候档位固定色")
+	assert_eq(pal.layer_color(PREVIEW_VIEWS[3], 100.0, 7.0),
+		MapPreviewPalette.CLIMATE_ZONE_COLORS[7])
+
+
+func test_cell_color_sea_branches() -> void:
+	"""海域着色：地形保留深度渐变、气候统一深蓝、温度/降雨显示海域数据。"""
+	var pal: MapPreviewPalette = MapPreviewPalette.new()
+	# 地形视图：海域 = 深度渐变（随深度变化，非恒定）
+	assert_ne(pal.cell_color(PREVIEW_VIEWS[0], -50.0, 0.0),
+		pal.cell_color(PREVIEW_VIEWS[0], -2000.0, 0.0), "地形海域按深度渐变")
+	# 气候视图：海域恒定深蓝（气候带仅陆地有意义）
+	assert_eq(pal.cell_color(PREVIEW_VIEWS[3], -100.0, 6), MapPreviewPalette.SEA_COLOR)
+	# 温度/降雨视图：海域用数值着色（海面温度/全域降雨场）
+	assert_eq(pal.cell_color(PREVIEW_VIEWS[1], -100.0, -10.0),
+		pal.layer_color(PREVIEW_VIEWS[1], 100.0, -10.0), "海域温度用数值着色")
+	assert_eq(pal.cell_color(PREVIEW_VIEWS[2], -100.0, 2200.0),
+		pal.layer_color(PREVIEW_VIEWS[2], 100.0, 2200.0), "海域降雨用数值着色")
+
+
+func test_cell_color_land_uses_layer() -> void:
+	"""陆地：任何视图都按图层数值着色。"""
+	var pal: MapPreviewPalette = MapPreviewPalette.new()
+	assert_eq(pal.cell_color(PREVIEW_VIEWS[1], 200.0, 25.0),
+		pal.layer_color(PREVIEW_VIEWS[1], 200.0, 25.0))
+	assert_eq(pal.cell_color(PREVIEW_VIEWS[3], 200.0, 4),
+		MapPreviewPalette.CLIMATE_ZONE_COLORS[4])
 
 
 func test_map_cell_at() -> void:
@@ -355,50 +409,3 @@ func test_map_cell_at() -> void:
 	assert_eq(step._map_cell_at(Vector2(140, 100)), Vector2i(-1, -1))
 	step._map_cell = 0.0  # 地图未绘制
 	assert_eq(step._map_cell_at(Vector2(100, 100)), Vector2i(-1, -1))
-
-
-func test_field_range() -> void:
-	"""数值范围取整；空字段返回 [0, 0]。"""
-	var step: MapSetupStep = _make_step()
-	assert_eq(step._field_range([5, 8, 22, 28]), [5, 28])
-	assert_eq(step._field_range([100, 400, 900, 1800]), [100, 1800])
-	assert_eq(step._field_range([]), [0, 0])
-
-
-func test_layer_colors_plausible() -> void:
-	"""各视图着色函数：地形按海拔分色、气候图层数值对应渐变色、气候档固定色。"""
-	var step: MapSetupStep = _make_step()
-	assert_ne(step._layer_color(step.VIEWS[0], 100.0, 0.0),
-		step._layer_color(step.VIEWS[0], 5000.0, 0.0), "地形按海拔分色")
-	assert_ne(step._layer_color(step.VIEWS[1], 100.0, -10.0),
-		step._layer_color(step.VIEWS[1], 100.0, 30.0), "温度高低色不同")
-	assert_ne(step._layer_color(step.VIEWS[2], 100.0, 50.0),
-		step._layer_color(step.VIEWS[2], 100.0, 2200.0), "降雨干湿色不同")
-	assert_eq(step._layer_color(step.VIEWS[3], 100.0, 0.0),
-		step.CLIMATE_ZONE_COLORS[0], "气候档位固定色")
-	assert_eq(step._layer_color(step.VIEWS[3], 100.0, 7.0),
-		step.CLIMATE_ZONE_COLORS[7])
-
-
-func test_cell_color_sea_branches() -> void:
-	"""海域着色：地形保留深度渐变、气候统一深蓝、温度/降雨显示海域数据。"""
-	var step: MapSetupStep = _make_step()
-	# 地形视图：海域 = 深度渐变（随深度变化，非恒定）
-	assert_ne(step._cell_color(step.VIEWS[0], -50.0, 0.0),
-		step._cell_color(step.VIEWS[0], -2000.0, 0.0), "地形海域按深度渐变")
-	# 气候视图：海域恒定深蓝（气候带仅陆地有意义）
-	assert_eq(step._cell_color(step.VIEWS[3], -100.0, 6), step.SEA_COLOR)
-	# 温度/降雨视图：海域用数值着色（海面温度/全域降雨场）
-	assert_eq(step._cell_color(step.VIEWS[1], -100.0, -10.0),
-		step._layer_color(step.VIEWS[1], 100.0, -10.0), "海域温度用数值着色")
-	assert_eq(step._cell_color(step.VIEWS[2], -100.0, 2200.0),
-		step._layer_color(step.VIEWS[2], 100.0, 2200.0), "海域降雨用数值着色")
-
-
-func test_cell_color_land_uses_layer() -> void:
-	"""陆地：任何视图都按图层数值着色。"""
-	var step: MapSetupStep = _make_step()
-	assert_eq(step._cell_color(step.VIEWS[1], 200.0, 25.0),
-		step._layer_color(step.VIEWS[1], 200.0, 25.0))
-	assert_eq(step._cell_color(step.VIEWS[3], 200.0, 4),
-		step.CLIMATE_ZONE_COLORS[4])

@@ -11,7 +11,6 @@ class_name FrameCodec
 extends RefCounted
 
 
-const Config = preload("res://scripts/config.gd")
 
 # 与后端 ascend/net/protocol.py 同步（唯一事实源 = config.gd，同 connection.gd）
 const PROTOCOL_VERSION: int = Config.PROTOCOL_VERSION

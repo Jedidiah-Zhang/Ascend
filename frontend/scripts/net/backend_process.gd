@@ -20,7 +20,6 @@
 class_name BackendProcess
 extends RefCounted
 
-const Config = preload("res://scripts/config.gd")
 
 
 # ── 信号（向门面汇报） ─────────────────────────────────────

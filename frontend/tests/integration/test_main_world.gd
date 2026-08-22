@@ -1,6 +1,5 @@
 extends GutTest
 
-const Config = preload("res://scripts/config.gd")
 const TerrainTileBuilder = preload("res://scripts/world/terrain_tile_builder.gd")
 const CS: int = Config.TILE_MAP_SIZE
 const Fakes = preload("res://tests/fakes/connection_layers.gd")

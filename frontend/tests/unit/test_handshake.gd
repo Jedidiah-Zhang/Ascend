@@ -2,7 +2,6 @@ extends GutTest
 
 const Handshake = preload("res://scripts/net/handshake.gd")
 const FrameCodecClass = preload("res://scripts/utils/frame_codec.gd")
-const Config = preload("res://scripts/config.gd")
 const TOKEN_PATH: String = "user://test_handshake_token"
 
 
