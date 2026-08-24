@@ -1,5 +1,7 @@
 # Contributing
 
+[中文](CONTRIBUTING.md) | English
+
 Welcome to **Ascend** — an AI-native simulation platform that constructs causal worlds bottom-up.
 
 This document is written for first-time contributors to this project, helping you understand the project's positioning, design principles, and the conventions for development, testing, committing, and releasing.
