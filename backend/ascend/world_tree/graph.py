@@ -6,52 +6,24 @@
 - co_participant: 多方共同参与
 - informed_by: 从他人处获知
 
-内部使用邻接表存储，正向邻接 from_id → [(to_id, relation_type)]，
-反向邻接 to_id → [(from_id, relation_type)] 用于加速反向查询。
+存储与遍历原语由 digraph.py 的 DirectedGraph 基类提供（事件层与
+变量层共用同一套实现）；本模块只保留事件语义的方法。
 """
 
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Callable
-from typing import TYPE_CHECKING
 
+from .digraph import DirectedGraph
 from .event import Event
 
-if TYPE_CHECKING:
-    from .archive import EventArchive
 
-
-class EventGraph:
+class EventGraph(DirectedGraph):
     """事件关系有向图。
 
     维护事件间的四种关系边，支持因果链追溯、结果查询、
     观测者查询和路径检测。
     """
-
-    def __init__(self) -> None:
-        """初始化空的邻接表和节点集。"""
-        self._forward: dict[str, list[tuple[str, str]]] = {}
-        self._reverse: dict[str, list[tuple[str, str]]] = {}
-        self._node_ids: set[str] = set()
-
-    @property
-    def node_count(self) -> int:
-        """图中节点总数。
-
-        Returns:
-            节点集中的节点数。
-        """
-        return len(self._node_ids)
-
-    def __repr__(self) -> str:
-        """返回图状态的摘要。
-
-        Returns:
-            节点数和边数的字符串表示。
-        """
-        edge_count = sum(len(edges) for edges in self._forward.values())
-        return f"EventGraph(nodes={len(self._node_ids)}, edges={edge_count})"
 
     # ── 写入 ──────────────────────────────────────────
 
@@ -76,73 +48,6 @@ class EventGraph:
             if participant_id != event.initiator_id:
                 self._node_ids.add(participant_id)
                 self.add_edge(event.id, participant_id, "co_participant")
-
-    def add_edge(self, from_id: str, to_id: str, relation_type: str) -> None:
-        """运行时追加关系边。
-
-        用于在事件发布后发现新的因果关系或传播关系。
-        同时注册涉及的节点。
-
-        Args:
-            from_id: 关系源事件 ID。
-            to_id: 关系目标事件 ID。
-            relation_type: 关系类型字符串。
-        """
-        self._node_ids.add(from_id)
-        self._node_ids.add(to_id)
-        self._forward.setdefault(from_id, []).append((to_id, relation_type))
-        self._reverse.setdefault(to_id, []).append((from_id, relation_type))
-
-    def warmup(self, edges: list[tuple[str, str, str]]) -> int:
-        """批量添加边，用于从归档恢复图结构。
-
-        启动时调用，将 SQLite event_edges 表中的边批量加载到
-        内存邻接表，加速重启后的因果追溯。
-
-        Args:
-            edges: (from_id, to_id, relation_type) 元组列表。
-
-        Returns:
-            成功添加的边数量。
-        """
-        for from_id, to_id, relation_type in edges:
-            self._node_ids.add(from_id)
-            self._node_ids.add(to_id)
-            self._forward.setdefault(from_id, []).append(
-                (to_id, relation_type)
-            )
-            self._reverse.setdefault(to_id, []).append(
-                (from_id, relation_type)
-            )
-        return len(edges)
-
-    # ── 删除 ──────────────────────────────────────────
-
-    def remove_nodes(self, event_ids: set[str]) -> None:
-        """批量移除节点及其关联边。
-
-        从节点集、正向邻接表和反向邻接表中移除指定节点。
-        不存在的 ID 静默忽略。重复调用幂等。
-
-        Args:
-            event_ids: 要移除的事件 ID 集合。
-        """
-        for eid in event_ids:
-            self._node_ids.discard(eid)
-
-            # 移除出边，同时清理目标节点的反向边
-            for to_id, _ in self._forward.pop(eid, []):
-                self._reverse[to_id] = [
-                    (f, r) for f, r in self._reverse.get(to_id, [])
-                    if f != eid
-                ]
-
-            # 移除入边，同时清理源节点的正向边
-            for from_id, _ in self._reverse.pop(eid, []):
-                self._forward[from_id] = [
-                    (t, r) for t, r in self._forward.get(from_id, [])
-                    if t != eid
-                ]
 
     # ── 查询 ──────────────────────────────────────────
 
@@ -215,43 +120,3 @@ class EventGraph:
         """
         return [f for f, r in self._reverse.get(physical_event_id, [])
                 if r == "observes"]
-
-    def has_path(self, from_id: str, to_id: str, max_depth: int = 20) -> bool:
-        """BFS 检查两事件之间是否存在有向路径。
-
-        Args:
-            from_id: 起点事件 ID。
-            to_id: 终点事件 ID。
-            max_depth: 最大搜索深度。
-
-        Returns:
-            存在路径时为 True。
-        """
-        if from_id == to_id:
-            return True
-        visited: set[str] = set()
-        queue: deque[tuple[str, int]] = deque([(from_id, 0)])
-        while queue:
-            node, depth = queue.popleft()
-            if node == to_id:
-                return True
-            if depth >= max_depth or node in visited:
-                continue
-            visited.add(node)
-            for next_id, _ in self._forward.get(node, []):
-                if next_id not in visited:
-                    queue.append((next_id, depth + 1))
-        return False
-
-    def get_related(self, event_id: str) -> list[tuple[str, str]]:
-        """返回与该事件有直接关系边的事件和关系类型。
-
-        Args:
-            event_id: 查询的事件 ID。
-
-        Returns:
-            (事件ID, 关系类型) 元组列表，包含出入两边。
-        """
-        outgoing = self._forward.get(event_id, [])
-        incoming = [(f, r) for f, r in self._reverse.get(event_id, [])]
-        return outgoing + incoming
