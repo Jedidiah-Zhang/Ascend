@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "comment": "天气感知派生组声明（研究侧规范）：指导代码如何写，不被生产代码引用。本片段只声明 derive.py 的 3 个方程：sea_level_temp/temperature/rainfall 为本片段的未建模根（外生）；latitude 与 seasonal_amp 是从可观测场反推的潜参数（inverse）；precip_type 为温度→降水类型的结构边（离散输出，L 退化为 0）。",
+  "variables": {
+    "sea_level_temp": {
+      "domain": "continuous",
+      "exogenous": true
+    },
+    "temperature": {
+      "domain": "continuous",
+      "exogenous": true
+    },
+    "rainfall": {
+      "domain": "continuous",
+      "exogenous": true,
+      "bounds": [0.0, 3500.0]
+    },
+    "precip_type": {
+      "domain": "discrete"
+    },
+    "latitude": {
+      "domain": "continuous",
+      "exogenous": true,
+      "bounds": [0.0, 80.0]
+    },
+    "seasonal_amp": {
+      "domain": "continuous",
+      "bounds": [1.0, 30.0]
+    }
+  },
+  "edges": [
+    {
+      "parent": "sea_level_temp",
+      "child": "latitude",
+      "role": "inverse",
+      "L": 2.0,
+      "equation": "derive_latitude"
+    },
+    {
+      "parent": "temperature",
+      "child": "precip_type",
+      "role": "structural",
+      "L": 0.0,
+      "equation": "precip_type_for"
+    },
+    {
+      "parent": "temperature",
+      "child": "seasonal_amp",
+      "role": "inverse",
+      "L": 0.65,
+      "equation": "derive_seasonal_amp"
+    },
+    {
+      "parent": "rainfall",
+      "child": "seasonal_amp",
+      "role": "inverse",
+      "L": 0.002,
+      "equation": "derive_seasonal_amp"
+    }
+  ]
+}
