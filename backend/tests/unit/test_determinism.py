@@ -31,7 +31,11 @@ GOLDEN_SEED = 20260806
 # 2026-08-18 黄金 hash 纳入真实 TileGenerator 输出后重新固化一次
 # 2026-08-18 侵蚀基准面=海平面（海底不参与侵蚀/沉积）后重新固化一次
 # 2026-08-19 TileGrid 序列化升级 v2（状态层数组追加，全 0 初始）后重新固化一次
-GOLDEN_HASH = "0f477ed730b64fc560573c485e19b6013bc033877493d947d09e70bd66966944"
+# 2026-08-25 大陆新增距水距离场（water_distance，多源 BFS，确定性）后重新固化一次
+# 2026-08-25 距水掩码海判定改与 is_land() 语义一致（not land_mask，消除 0.0 边界分歧）后重新固化一次
+# 2026-08-25 issue #42：TerrainType 9→8 材质纯净化 + tile_gen 层次分类重构 + BLOB v1 后重新固化一次
+# 2026-08-25 大陆缓存 seed 字段改 32B 大端（256-bit 全量序列化，世界数值不变）后重新固化一次
+GOLDEN_HASH = "eb7882e6c381349dc5e0897c1f0d5ea9be83d14ba2d007fb7566f1f3fe5f8336"
 
 
 def _pipeline_digest(seed: int) -> str:

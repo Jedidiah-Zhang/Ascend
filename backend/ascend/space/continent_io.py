@@ -18,7 +18,7 @@ from ascend.log import get_logger
 logger = get_logger(__name__)
 
 # 大陆缓存格式版本：仅标识当前二进制格式，不追溯历史版本——
-# 格式变更时保持 1 即可，任何版本字节不匹配的旧缓存一律
+# 格式变更时保持递增，任何版本字节不匹配的旧缓存一律
 # 反序列化失败 → 重新生成。生成算法/调参变化不使缓存失效
 # （每个存档的大陆在创建时定案），头部 gen_fingerprint 字段
 # 仅用于加载时的漂移诊断（告警 + continent status 查询）。
@@ -28,11 +28,13 @@ CONTINENT_CACHE_VERSION: int = 1
 # 布局（小端）:
 #   magic "ASCNT" + version u8
 #   gen_fingerprint  u32 字节长度 + utf-8 字节（生成环境指纹，诊断用）
-#   seed i64, grid_width i32, grid_height i32, cell_size f64
+#   seed 32B 大端（256-bit 世界种子，0..2**256-1 全量序列化）
+#   grid_width i32, grid_height i32, cell_size f64
 #   land_ratio f64
 #   land_mask      u32 n + n×u8        （布尔掩码按 0/1 字节）
 #   elevation      u32 n + n×f64
 #   river_width    u32 n + n×f64
+#   water_distance u32 n + n×f64       （v2 新增，距水距离场 m，0=水体）
 #   hydrology      u8 present
 #     lake_basins  u32 count; each: u32 cells_n + cells_n×i32 + f64×2
 #     flow_acc     u32 n + n×f64
@@ -59,8 +61,12 @@ def _w_i32(buf: io.BytesIO, v: int) -> None:
     buf.write(struct.pack("<i", v))
 
 
-def _w_i64(buf: io.BytesIO, v: int) -> None:
-    buf.write(struct.pack("<q", v))
+def _w_seed(buf: io.BytesIO, v: int) -> None:
+    """256-bit 世界种子（0..2**256-1）→ 32 字节大端。
+
+    `to_bytes(32)` 需 0 <= v < 2**256，与 manifest.SEED_MAX 契约一致。
+    """
+    buf.write(int(v).to_bytes(32, "big"))
 
 
 def _w_f64(buf: io.BytesIO, v: float) -> None:
@@ -123,8 +129,9 @@ class _Reader:
     def i32(self) -> int:
         return struct.unpack("<i", self._take(4))[0]
 
-    def i64(self) -> int:
-        return struct.unpack("<q", self._take(8))[0]
+    def seed(self) -> int:
+        """读取 32 字节大端 256-bit 世界种子。"""
+        return int.from_bytes(self._take(32), "big")
 
     def f64(self) -> float:
         return struct.unpack("<d", self._take(8))[0]
@@ -172,7 +179,7 @@ def serialize_continent(data: ContinentData) -> bytes:
     buf.write(_MAGIC)
     _w_u8(buf, CONTINENT_CACHE_VERSION)
     _w_str(buf, data.gen_fingerprint)
-    _w_i64(buf, int(data.seed))
+    _w_seed(buf, int(data.seed))
     _w_i32(buf, data.grid_width)
     _w_i32(buf, data.grid_height)
     _w_f64(buf, float(data.cell_size))
@@ -180,6 +187,7 @@ def serialize_continent(data: ContinentData) -> bytes:
     _w_land_mask(buf, data.land_mask)
     _w_f64_array(buf, data.elevation_field)
     _w_f64_array(buf, data.river_width)
+    _w_f64_array(buf, data.water_distance)
     h = data.hydrology
     _w_u8(buf, 1 if h is not None else 0)
     if h is not None:
@@ -247,7 +255,7 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
         if r.u8() != CONTINENT_CACHE_VERSION:
             return None
         gen_fingerprint = r.string()
-        seed = r.i64()
+        seed = r.seed()
         width = r.i32()
         height = r.i32()
         cell_size = r.f64()
@@ -258,7 +266,13 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
         land_mask = [v != 0 for v in r.i8_array()]
         elevation = r.f64_array()
         river_width = r.f64_array()
-        if len(land_mask) != n or len(elevation) != n or len(river_width) != n:
+        water_distance = r.f64_array()
+        if (
+            len(land_mask) != n
+            or len(elevation) != n
+            or len(river_width) != n
+            or len(water_distance) != n
+        ):
             return None
         hydrology = None
         if r.u8():
@@ -344,7 +358,8 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
             land_ratio=land_ratio,
             gen_fingerprint=gen_fingerprint,
             land_mask=land_mask, elevation_field=elevation,
-            river_width=river_width, hydrology=hydrology,
+            river_width=river_width, water_distance=water_distance,
+            hydrology=hydrology,
             subdiv_ranges=subdiv_ranges, _chunk_climate=chunk_climate,
         )
     except (struct.error, zlib.error, ValueError, IndexError) as exc:

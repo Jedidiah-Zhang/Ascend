@@ -40,13 +40,14 @@ const _TILE_BLOB_HEADER: int = 4
 const _TILE_BLOB_TERRAIN: int = CHUNK_SIZE * CHUNK_SIZE * 2
 const _TILE_BLOB_ELEV: int = CHUNK_SIZE * CHUNK_SIZE * 4
 ## 协商后的 tile 数据 BLOB 版本：握手时服务端在 hello_ack 下发其
-## _TILEGRID_VERSION（后端数据格式权威版本），前端以其解码/校验；
+## TILE_GRID_VERSION（后端数据格式权威版本），前端以其解码/校验；
 ## 握手前默认客户端已知版本 Config.TILE_BLOB_VERSION。
 var _blob_version: int = Config.TILE_BLOB_VERSION
 ## 状态段按 BLOB 版本强关联（后端 STATE_TYPES 增删状态必须 bump 版本，
-## 前端解码按版本查表，防止分段错位）：v1 无状态段；v2 = moisture/snow/ice
+## 前端解码按版本查表，防止分段错位）：v1 = moisture/snow/ice
+## （issue #42 材质 9→8 重排后重标 v1，格式不变）
 const _STATE_NAMES_BY_VERSION: Dictionary = {
-	2: ["moisture", "snow", "ice"],
+	1: ["moisture", "snow", "ice"],
 }
 
 ## 玩家移动上报节流间隔（秒）
@@ -763,13 +764,15 @@ func _mount_built_chunk(key: Vector2i, cells: Dictionary) -> void:
 		_water_parent.add_child(wml)
 		_fill_cells(wml, water_cells)
 
-	# 五信号层：崖壁 / 固定方向投影 / 装饰（密度+雪顶）/ 等高线调试层（可关）
+	# 五信号层：崖壁 / 固定方向投影 / 装饰（暂挂起）/ 等高线调试层（可关）
 	_mount_signal_layer(key, offset, cells, TerrainTileBuilder.LAYER_CLIFF,
 		_terrain_parent)
 	_mount_signal_layer(key, offset, cells, TerrainTileBuilder.LAYER_SHADOW,
 		_terrain_parent)
-	_mount_signal_layer(key, offset, cells, TerrainTileBuilder.LAYER_DECOR,
-		_terrain_parent)
+	# 装饰层暂不挂载：确定性哈希逐 tile 撒点无空间连贯性，灰褐色单格
+	# 散点呈"噪点"观感（待成簇/密度重构后再恢复，见 issue #42 讨论）
+	# _mount_signal_layer(key, offset, cells, TerrainTileBuilder.LAYER_DECOR,
+	# 	_terrain_parent)
 	if Config.CONTOUR_LAYER_ENABLED:
 		_mount_signal_layer(key, offset, cells, TerrainTileBuilder.LAYER_CONTOUR,
 			_terrain_parent)

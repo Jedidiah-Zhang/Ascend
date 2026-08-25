@@ -1,11 +1,25 @@
 """TileGenerator — 层2 详细地图 tile 生成器。
 
-对每个 200×200 chunk，从层1宏观场采样 + 叠加高频细节噪声，
-按海拔带分类为 TerrainType。群系通过 TerrainBias 偏移海拔阈值，
-保证 chunk 边界连续（隶属度混合）。
+对每个 200×200 chunk，从层1宏观场采样 + 叠加高频细节噪声（仅海拔
+存储），按 issue #42 层次分类判定地表材质。群系通过 TerrainBias
+偏移分类阈值，chunk 边界因隶属度混合而连续。
 
-海拔带数据在 terrain.TERRAIN_DEFS（每地形一 AltitudeBand，含
-priority 与 bias 偏移键）——加地形/调带不碰本模块。
+分类输入全为**低频连续场**（宏观海拔 / 面内坡度 / 距水距离 / 气候 /
+湿度），细节噪声**退出分类**——±50m 噪声不再产生窄带碎斑（SAND
+0–10m 旧带）与虚假陡坡。材质在连续场上逐 tile 判定，相邻 tile
+输入连续 → 区域自然连续。
+
+层次判定（顺序即优先级）：
+  1. 宏观海拔 < 0            → WATER（海洋；河/湖由 render 后叠加）
+  2. 海拔 > 岩线(bias) 或 坡度>裸岩 → ROCK
+  3. 寒带(temp<冻土线bias)：近水积水  → MARSH
+  4. 寒带非沼泽              → PERMAFROST
+  5. 干旱(rain<干旱阈值bias)：高/中海拔 → GRAVEL
+  6. 干旱低海拔              → SAND
+  7. 距水 < 沙滩带           → SAND
+  8. 距水 < 冲积带 且 低海拔  → FERTILE_SOIL
+  9. 距水 < 湿地带 且 湿度高  → MARSH
+  10. 默认                   → GRASS
 
 用法:
     from ascend.space.tile_gen import TileGenerator
@@ -19,14 +33,7 @@ priority 与 bias 偏移键）——加地形/调带不碰本模块。
     grid = tile_gen.generate_chunk_for(chunk_data)
 """
 
-from .terrain import (
-    TERRAIN_DEFS,
-    WATER_TYPES,
-    AltitudeBand,
-    TerrainType,
-    terrain_by_id,
-    terrain_ns_id,
-)
+from .terrain import TerrainType
 from .tile_grid import TileGrid, TILE_MAP_SIZE
 from .noise import PerlinNoise
 from .climate import LAPSE_RATE
@@ -34,40 +41,23 @@ from .biome import TerrainBias, biome_membership, get_template
 
 
 from ascend.config import (
-    STEEP_GRADIENT as _STEEP_GRADIENT,
     MOISTURE_TILE_FREQUENCY as _MOISTURE_FREQ,
     TERRAIN_NOISE_FREQUENCY as _TERRAIN_NOISE_FREQ,
     TERRAIN_NOISE_AMPLITUDE as _TERRAIN_NOISE_AMP,
-)
-
-
-# ── 分类带（注册表派生，模块级一次性构建） ──────────────────
-# 每个声明了 altitude 的地形一条带，按 priority 降序；重叠时高者胜。
-# 无带命中返回 fallback 地形（SAND，全表唯一）。
-
-_BANDS: list[tuple[AltitudeBand, TerrainType]] = sorted(
-    (
-        (defn.altitude, terrain_by_id(ns_id))
-        for ns_id, defn in TERRAIN_DEFS.items()
-        if defn.altitude is not None
-    ),
-    key=lambda item: item[0].priority,
-    reverse=True,
-)
-
-_FALLBACK_TERRAIN: TerrainType = next(
-    terrain_by_id(ns_id)
-    for ns_id, defn in TERRAIN_DEFS.items()
-    if defn.fallback
+    ROCK_LINE_ELEV as _ROCK_LINE_ELEV,
+    BARE_ROCK_SLOPE as _BARE_ROCK_SLOPE,
+    GRAVEL_ALT_BAND as _GRAVEL_ALT_BAND,
+    FERTILE_LOW_ELEV as _FERTILE_LOW_ELEV,
+    WETLAND_BAND_M as _WETLAND_BAND_M,
 )
 
 
 class TileGenerator:
     """详细地图地形生成器。
 
-    从 ContinentData 层1宏观场采样宏观海拔、河流宽度，
-    叠加高频细节噪声后按带分类地形。群系通过 TerrainBias
-    偏移分类阈值，chunk 边界因隶属度混合而连续。
+    从 ContinentData 层1宏观场采样宏观海拔、距水距离、河流宽度，
+    叠加高频细节噪声（仅海拔存储）后按层次规则分类材质。群系通过
+    TerrainBias 偏移分类阈值，chunk 边界因隶属度混合而连续。
     线程安全：每个实例持有独立 PerlinNoise，无共享可变状态。
     """
 
@@ -85,7 +75,7 @@ class TileGenerator:
         self._seed = seed
         self._continent = continent
         self._detail_noise = PerlinNoise(seed + 80000)
-        # moisture 噪声（沙漠细分用，tile 级连续采样）
+        # moisture 噪声（沙漠细分/沼泽判定用，tile 级连续采样）
         self._moisture_noise = PerlinNoise(seed + 700)
 
     def __repr__(self) -> str:
@@ -97,7 +87,7 @@ class TileGenerator:
         """生成一个 200×200 chunk 的详细地形。
 
         从 ContinentData 采样 chunk 中心气候属性计算群系隶属度，
-        tile 间仅海拔和 moisture 噪声变化，保证 chunk 边界连续。
+        tile 间仅海拔/距水/湿度等连续场变化，保证 chunk 边界连续。
 
         Args:
             cx: chunk X 坐标。
@@ -126,9 +116,10 @@ class TileGenerator:
         """内部生成逻辑。
 
         管线：
-          1. 宏观海拔 + 细节噪声 → 基础地形分类（群系 bias 偏移）
-          2. 叠加河流（蛇曲路径 + 河道雕刻）
-          3. 叠加湖泊（水面平整 + 湿地，复用步骤1的宏观海拔）
+          1. 采样宏观海拔场（分类/坡度输入，不含细节噪声）
+          2. 坡度（基于宏观海拔）
+          3. 逐 tile 层次分类（低频场输入） + 存储海拔（含细节噪声）
+          4. 叠加河流/湖泊（render 覆盖为 WATER）
 
         Args:
             cx, cy: chunk 坐标。
@@ -143,7 +134,7 @@ class TileGenerator:
         grid = TileGrid()
         cont = self._continent
 
-        # 批量采样细节噪声
+        # 批量采样细节噪声（仅海拔存储用）
         noise_field = self._detail_noise.octave_grid(
             world_x0 + 0.5, world_y0 + 0.5, size, size,
             frequency=_TERRAIN_NOISE_FREQ, octaves=4,
@@ -157,26 +148,38 @@ class TileGenerator:
             frequency=_MOISTURE_FREQ, octaves=4,
         )
 
-        # 预分配宏观海拔缓存（坡度计算用——避免 ±50m 细节噪声
-        # 产生虚假陡坡；有湖泊时同时供湖泊渲染复用）
+        # Pass 0: 宏观海拔场（分类/坡度输入；不含 ±50m 细节噪声——
+        # 噪声纹理不应产生虚假陡坡/裸岩；湖泊渲染复用）
         macro_elev_arr = [0.0] * (size * size)
+        for ty in range(size):
+            for tx in range(size):
+                idx = ty * size + tx
+                macro_elev_arr[idx] = cont.sample_altitude_bilinear(
+                    world_x0 + tx, world_y0 + ty,
+                )
+
+        # 坡度（基于宏观海拔）
+        _compute_slopes(grid, source=macro_elev_arr)
+        slope_arr = grid.slope_raw()
 
         hyd = cont.hydrology
         has_lakes = hyd is not None and hyd.lake_basins
 
-        # chunk 中心气候（整 chunk 复用，减少 40,000 次到 1 次）
+        # chunk 中心气候（整 chunk 复用）
         cc_temp, cc_rain, _, _ = self._continent.get_chunk_climate(cx, cy)
 
+        # Pass 1: 逐 tile 层次分类 + 海拔存储
         for ty in range(size):
             for tx in range(size):
                 idx = ty * size + tx
                 wx = world_x0 + tx
                 wy = world_y0 + ty
 
-                # 宏观海拔（双线性插值）
-                macro_elev = cont.sample_altitude_bilinear(wx, wy)
+                macro_elev = macro_elev_arr[idx]
+                slope = slope_arr[idx]
+                water_dist = cont.sample_water_distance_bilinear(wx, wy)
 
-                # 细节噪声（±50m，波长 200m → 自然过渡）
+                # 细节噪声（±50m，仅海拔存储——渲染崖壁/阴影/等高线）
                 detail = noise_field[idx] * _TERRAIN_NOISE_AMP
                 elev = macro_elev + detail
 
@@ -191,18 +194,13 @@ class TileGenerator:
                     subdiv_ranges=cont.subdiv_ranges,
                 )
 
-                # 地形分类（bias 偏移）
-                terrain = self._classify(elev, bias)
+                # 层次分类（低频连续场输入）
+                terrain = self._classify(
+                    macro_elev, slope, water_dist,
+                    cc_temp, cc_rain, moisture, bias,
+                )
                 grid.set(tx, ty, terrain)
                 grid.set_elevation(tx, ty, elev)
-
-                # 缓存宏观海拔（坡度计算 + 湖泊渲染复用）
-                macro_elev_arr[idx] = macro_elev
-
-        # 坡度计算 + STEEP_SLOPE 重分类（基于宏观海拔的局部梯度，
-        # 不含 ±50m 细节噪声——噪声纹理不应产生虚假陡坡）
-        _compute_slopes(grid, source=macro_elev_arr)
-        _reclassify_steep(grid)
 
         # 叠加水体（河流 + 湖泊）
         if hyd is not None:
@@ -259,62 +257,99 @@ class TileGenerator:
             return get_template(membership[0][0]).terrain_bias
 
         # 加权混合数值字段
-        sand_delta = 0.0
-        fertile_shift = 0.0
-        rock_delta = 0.0
-        peak_delta = 0.0
+        rock_line_delta = 0.0
+        arid_rainfall = 0.0
+        beach_band = 0.0
+        alluvial_band = 0.0
         marsh = 0.0
+        permafrost = 0.0
         for biome, weight in membership:
             b = get_template(biome).terrain_bias
-            sand_delta += b.sand_cap_delta * weight
-            fertile_shift += b.fertile_shift * weight
-            rock_delta += b.rock_threshold_delta * weight
-            peak_delta += b.peak_threshold_delta * weight
+            rock_line_delta += b.rock_line_delta * weight
+            arid_rainfall += b.arid_rainfall_mm * weight
+            beach_band += b.beach_band_m * weight
+            alluvial_band += b.alluvial_band_m * weight
             marsh += b.marsh_tendency * weight
+            permafrost += b.permafrost_temp_c * weight
         return TerrainBias(
-            sand_cap_delta=sand_delta,
-            fertile_shift=fertile_shift,
-            rock_threshold_delta=rock_delta,
-            peak_threshold_delta=peak_delta,
+            rock_line_delta=rock_line_delta,
+            arid_rainfall_mm=arid_rainfall,
+            beach_band_m=beach_band,
+            alluvial_band_m=alluvial_band,
             marsh_tendency=marsh,
+            permafrost_temp_c=permafrost,
         )
 
-    # ── 地形分类 ──────────────────────────────────────────
+    # ── 材质分类（层次判定，低频连续场输入） ───────────────
 
     def _classify(
         self,
-        elev: float,
+        macro_elev: float,
+        slope: float,
+        water_dist: float,
+        temp: float,
+        rain: float,
+        moisture: float,
         bias: TerrainBias,
     ) -> TerrainType:
-        """根据海拔、群系偏移分类 tile 地形（注册表海拔带驱动）。
+        """按层次规则判定 tile 地表材质（issue #42）。
 
-        水体（河流/湖泊）由后续步骤叠加覆盖——不在此处判定。
-        STEEP_SLOPE 不在此处判定——由坡度计算后重分类。
+        输入全为低频连续场（宏观海拔/坡度/距水/气候/湿度），无细节
+        噪声——相邻 tile 输入连续 → 材质区域连续，根治碎斑。
+        河/湖由后续 render 步骤覆盖为 WATER（不在此判定）。
 
         Args:
-            elev: 最终海拔 (m)。
+            macro_elev: 宏观海拔 (m)。
+            slope: 面内最大坡度 (m/m，基于宏观海拔)。
+            water_dist: 距最近水体距离 (m)。
+            temp: tile 年均温 (°C)。
+            rain: tile 年降雨 (mm)。
+            moisture: tile 湿度噪声 [-1, 1]。
             bias: 群系偏移参数。
 
         Returns:
             TerrainType。
         """
-        for band, terrain in _BANDS:
-            lo = band.lo if band.lo is not None else float("-inf")
-            hi = band.hi if band.hi is not None else float("inf")
-            if band.lo_delta:
-                lo += getattr(bias, band.lo_delta, 0.0)
-            if band.hi_delta:
-                hi += getattr(bias, band.hi_delta, 0.0)
-            if lo <= elev < hi:
-                return terrain
-        return _FALLBACK_TERRAIN
+        # 1. 海洋
+        if macro_elev < 0.0:
+            return TerrainType.WATER
+        # 2. 岩线 / 裸岩坡度 → ROCK
+        rock_line = _ROCK_LINE_ELEV + bias.rock_line_delta
+        if macro_elev > rock_line or slope > _BARE_ROCK_SLOPE:
+            return TerrainType.ROCK
+        # 3-4. 寒带（年均温 < 冻土线）：低洼积水 → 沼泽，否则冻土
+        if temp < bias.permafrost_temp_c:
+            # 寒带积水带取冲积带 ×2：冻土区融化水洼/湿地范围比温带冲积带
+            # 更宽（季节冻融漫溢）；×2 为经验系数，visual 调参期校准。
+            if (
+                water_dist < bias.alluvial_band_m * 2.0
+                and (moisture > 0.0 or bias.marsh_tendency > 0.3)
+            ):
+                return TerrainType.MARSH
+            return TerrainType.PERMAFROST
+        # 5-6. 干旱（年降雨 < 干旱阈值）：高/中海拔砾石，低海拔沙
+        if rain < bias.arid_rainfall_mm:
+            if macro_elev >= _GRAVEL_ALT_BAND[0]:
+                return TerrainType.GRAVEL
+            return TerrainType.SAND
+        # 7. 沙滩带
+        if water_dist < bias.beach_band_m:
+            return TerrainType.SAND
+        # 8. 冲积带（低海拔沃土）
+        if water_dist < bias.alluvial_band_m and macro_elev < _FERTILE_LOW_ELEV:
+            return TerrainType.FERTILE_SOIL
+        # 9. 湿地带（湿度高 → 沼泽）
+        if water_dist < _WETLAND_BAND_M and moisture + bias.marsh_tendency > 0.3:
+            return TerrainType.MARSH
+        # 10. 默认
+        return TerrainType.GRASSLAND
 
 
-# ── 坡度计算与陡坡重分类 ──────────────────────────────────
+# ── 坡度计算 ──────────────────────────────────────────────
 
 
 def _compute_slopes(grid: TileGrid, source: list[float] | None = None) -> None:
-    """计算每个 tile 的最大局部梯度（m/m），存入 grid._slope。
+    """计算每个 tile 的最大局部梯度 (m/m)，存入 grid._slope。
 
     对每个 tile，比较其高程与 8 邻域（chunk 内）的高程差，
     除以邻域距离（1 tile = 100m，对角 141.4m）得真实斜率，
@@ -349,26 +384,6 @@ def _compute_slopes(grid: TileGrid, source: list[float] | None = None) -> None:
                     if slope > max_slope:
                         max_slope = slope
             grid.set_slope(x, y, max_slope)
-
-
-def _reclassify_steep(grid: TileGrid) -> None:
-    """将局部梯度超过阈值的 tile 重分类为 STEEP_SLOPE。
-
-    仅对非水体、非豁免地形（SAND/MOUNTAIN_PEAK，注册表
-    no_steep_reclass 声明）的陆地 tile 生效。
-    """
-    size = grid.size
-    for y in range(size):
-        for x in range(size):
-            slope = grid.get_slope(x, y)
-            if slope <= _STEEP_GRADIENT:
-                continue
-            terrain = grid.get(x, y)
-            if terrain in WATER_TYPES:
-                continue
-            if TERRAIN_DEFS[terrain_ns_id(terrain)].no_steep_reclass:
-                continue
-            grid.set(x, y, TerrainType.STEEP_SLOPE)
 
 
 __all__ = ["TileGenerator"]

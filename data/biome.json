@@ -9,11 +9,12 @@
       "mountain_ratio": 0.03,
       "tree_density": 0.7,
       "terrain_bias": {
-        "sand_cap_delta": -20.0,
-        "fertile_shift": 0.0,
-        "rock_threshold_delta": -50.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.1
+        "rock_line_delta": -100,
+        "arid_rainfall_mm": 200,
+        "beach_band_m": 40,
+        "alluvial_band_m": 160,
+        "marsh_tendency": 0.15,
+        "permafrost_temp_c": -5
       },
       "creature_weights": {
         "monkey": 0.15,
@@ -41,11 +42,12 @@
       "mountain_ratio": 0.03,
       "tree_density": 0.95,
       "terrain_bias": {
-        "sand_cap_delta": -30.0,
-        "fertile_shift": -50.0,
-        "rock_threshold_delta": -50.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.2
+        "rock_line_delta": -100,
+        "arid_rainfall_mm": 150,
+        "beach_band_m": 30,
+        "alluvial_band_m": 200,
+        "marsh_tendency": 0.25,
+        "permafrost_temp_c": -5
       },
       "creature_weights": {
         "monkey": 0.2,
@@ -73,11 +75,12 @@
       "mountain_ratio": 0.05,
       "tree_density": 0.2,
       "terrain_bias": {
-        "sand_cap_delta": 20.0,
-        "fertile_shift": 0.0,
-        "rock_threshold_delta": -50.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.0
+        "rock_line_delta": -100,
+        "arid_rainfall_mm": 600,
+        "beach_band_m": 60,
+        "alluvial_band_m": 100,
+        "marsh_tendency": 0.05,
+        "permafrost_temp_c": -5
       },
       "creature_weights": {
         "zebra": 0.2,
@@ -104,11 +107,12 @@
       "mountain_ratio": 0.04,
       "tree_density": 0.45,
       "terrain_bias": {
-        "sand_cap_delta": 0.0,
-        "fertile_shift": -30.0,
-        "rock_threshold_delta": -50.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.05
+        "rock_line_delta": -100,
+        "arid_rainfall_mm": 450,
+        "beach_band_m": 40,
+        "alluvial_band_m": 120,
+        "marsh_tendency": 0.1,
+        "permafrost_temp_c": -5
       },
       "creature_weights": {
         "antelope": 0.2,
@@ -137,11 +141,12 @@
       "mountain_ratio": 0.08,
       "tree_density": 0.02,
       "terrain_bias": {
-        "sand_cap_delta": 60.0,
-        "fertile_shift": 80.0,
-        "rock_threshold_delta": -100.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.0
+        "rock_line_delta": -150,
+        "arid_rainfall_mm": 2000,
+        "beach_band_m": 150,
+        "alluvial_band_m": 50,
+        "marsh_tendency": 0.0,
+        "permafrost_temp_c": -5
       },
       "creature_weights": {
         "lizard": 0.3,
@@ -168,11 +173,12 @@
       "mountain_ratio": 0.14,
       "tree_density": 0.03,
       "terrain_bias": {
-        "sand_cap_delta": -20.0,
-        "fertile_shift": 120.0,
-        "rock_threshold_delta": -300.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.0
+        "rock_line_delta": -400,
+        "arid_rainfall_mm": 2000,
+        "beach_band_m": 40,
+        "alluvial_band_m": 40,
+        "marsh_tendency": 0.0,
+        "permafrost_temp_c": -5
       },
       "creature_weights": {
         "rodent": 0.3,
@@ -200,11 +206,12 @@
       "mountain_ratio": 0.08,
       "tree_density": 0.1,
       "terrain_bias": {
-        "sand_cap_delta": 30.0,
-        "fertile_shift": 50.0,
-        "rock_threshold_delta": -100.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.0
+        "rock_line_delta": -150,
+        "arid_rainfall_mm": 700,
+        "beach_band_m": 80,
+        "alluvial_band_m": 80,
+        "marsh_tendency": 0.0,
+        "permafrost_temp_c": -5
       },
       "creature_weights": {
         "rodent": 0.25,
@@ -231,11 +238,12 @@
       "mountain_ratio": 0.06,
       "tree_density": 0.18,
       "terrain_bias": {
-        "sand_cap_delta": 10.0,
-        "fertile_shift": 0.0,
-        "rock_threshold_delta": -50.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.05
+        "rock_line_delta": -100,
+        "arid_rainfall_mm": 500,
+        "beach_band_m": 50,
+        "alluvial_band_m": 100,
+        "marsh_tendency": 0.08,
+        "permafrost_temp_c": -5
       },
       "creature_weights": {
         "antelope": 0.25,
@@ -264,11 +272,12 @@
       "mountain_ratio": 0.08,
       "tree_density": 0.65,
       "terrain_bias": {
-        "sand_cap_delta": 0.0,
-        "fertile_shift": 0.0,
-        "rock_threshold_delta": -150.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.1
+        "rock_line_delta": -150,
+        "arid_rainfall_mm": 250,
+        "beach_band_m": 40,
+        "alluvial_band_m": 150,
+        "marsh_tendency": 0.12,
+        "permafrost_temp_c": -5
       },
       "creature_weights": {
         "moose": 0.2,
@@ -297,11 +306,12 @@
       "mountain_ratio": 0.05,
       "tree_density": 0.7,
       "terrain_bias": {
-        "sand_cap_delta": 0.0,
-        "fertile_shift": 0.0,
-        "rock_threshold_delta": 0.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.05
+        "rock_line_delta": 0,
+        "arid_rainfall_mm": 250,
+        "beach_band_m": 40,
+        "alluvial_band_m": 120,
+        "marsh_tendency": 0.05,
+        "permafrost_temp_c": -5
       },
       "creature_weights": {
         "deer": 0.3,
@@ -329,11 +339,12 @@
       "mountain_ratio": 0.05,
       "tree_density": 0.45,
       "terrain_bias": {
-        "sand_cap_delta": 0.0,
-        "fertile_shift": 0.0,
-        "rock_threshold_delta": -50.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.6
+        "rock_line_delta": -100,
+        "arid_rainfall_mm": 300,
+        "beach_band_m": 30,
+        "alluvial_band_m": 180,
+        "marsh_tendency": 0.6,
+        "permafrost_temp_c": -4
       },
       "creature_weights": {
         "moose": 0.25,
@@ -363,11 +374,12 @@
       "mountain_ratio": 0.1,
       "tree_density": 0.6,
       "terrain_bias": {
-        "sand_cap_delta": 0.0,
-        "fertile_shift": 0.0,
-        "rock_threshold_delta": -100.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.1
+        "rock_line_delta": -150,
+        "arid_rainfall_mm": 300,
+        "beach_band_m": 30,
+        "alluvial_band_m": 120,
+        "marsh_tendency": 0.15,
+        "permafrost_temp_c": -6
       },
       "creature_weights": {
         "moose": 0.2,
@@ -395,11 +407,12 @@
       "mountain_ratio": 0.15,
       "tree_density": 0.0,
       "terrain_bias": {
-        "sand_cap_delta": 40.0,
-        "fertile_shift": 150.0,
-        "rock_threshold_delta": -300.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.0
+        "rock_line_delta": -300,
+        "arid_rainfall_mm": 1500,
+        "beach_band_m": 40,
+        "alluvial_band_m": 60,
+        "marsh_tendency": 0.0,
+        "permafrost_temp_c": 2
       },
       "creature_weights": {
         "polar_bear": 0.1,
@@ -424,11 +437,12 @@
       "mountain_ratio": 0.1,
       "tree_density": 0.05,
       "terrain_bias": {
-        "sand_cap_delta": 20.0,
-        "fertile_shift": 80.0,
-        "rock_threshold_delta": -200.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.1
+        "rock_line_delta": -250,
+        "arid_rainfall_mm": 600,
+        "beach_band_m": 40,
+        "alluvial_band_m": 100,
+        "marsh_tendency": 0.15,
+        "permafrost_temp_c": 0
       },
       "creature_weights": {
         "caribou": 0.25,
@@ -455,11 +469,12 @@
       "mountain_ratio": 0.3,
       "tree_density": 0.15,
       "terrain_bias": {
-        "sand_cap_delta": 0.0,
-        "fertile_shift": 0.0,
-        "rock_threshold_delta": -200.0,
-        "peak_threshold_delta": 600.0,
-        "marsh_tendency": 0.05
+        "rock_line_delta": -250,
+        "arid_rainfall_mm": 300,
+        "beach_band_m": 30,
+        "alluvial_band_m": 100,
+        "marsh_tendency": 0.08,
+        "permafrost_temp_c": -3
       },
       "creature_weights": {
         "ibex": 0.25,
@@ -485,11 +500,12 @@
       "mountain_ratio": 0.6,
       "tree_density": 0.02,
       "terrain_bias": {
-        "sand_cap_delta": 0.0,
-        "fertile_shift": 100.0,
-        "rock_threshold_delta": -400.0,
-        "peak_threshold_delta": 200.0,
-        "marsh_tendency": 0.0
+        "rock_line_delta": -450,
+        "arid_rainfall_mm": 400,
+        "beach_band_m": 30,
+        "alluvial_band_m": 80,
+        "marsh_tendency": 0.0,
+        "permafrost_temp_c": 1
       },
       "creature_weights": {
         "snow_leopard": 0.1,
@@ -513,11 +529,12 @@
       "mountain_ratio": 0.0,
       "tree_density": 0.0,
       "terrain_bias": {
-        "sand_cap_delta": 0.0,
-        "fertile_shift": 0.0,
-        "rock_threshold_delta": 0.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.0
+        "rock_line_delta": 0.0,
+        "arid_rainfall_mm": 250.0,
+        "beach_band_m": 40.0,
+        "alluvial_band_m": 120.0,
+        "marsh_tendency": 0.0,
+        "permafrost_temp_c": -5.0
       },
       "creature_weights": {
         "tropical_fish": 0.35,
@@ -544,11 +561,12 @@
       "mountain_ratio": 0.0,
       "tree_density": 0.0,
       "terrain_bias": {
-        "sand_cap_delta": 0.0,
-        "fertile_shift": 0.0,
-        "rock_threshold_delta": 0.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.0
+        "rock_line_delta": 0.0,
+        "arid_rainfall_mm": 250.0,
+        "beach_band_m": 40.0,
+        "alluvial_band_m": 120.0,
+        "marsh_tendency": 0.0,
+        "permafrost_temp_c": -5.0
       },
       "creature_weights": {
         "temperate_fish": 0.3,
@@ -575,11 +593,12 @@
       "mountain_ratio": 0.0,
       "tree_density": 0.0,
       "terrain_bias": {
-        "sand_cap_delta": 0.0,
-        "fertile_shift": 0.0,
-        "rock_threshold_delta": 0.0,
-        "peak_threshold_delta": 0.0,
-        "marsh_tendency": 0.0
+        "rock_line_delta": 0.0,
+        "arid_rainfall_mm": 250.0,
+        "beach_band_m": 40.0,
+        "alluvial_band_m": 120.0,
+        "marsh_tendency": 0.0,
+        "permafrost_temp_c": -5.0
       },
       "creature_weights": {
         "cold_fish": 0.3,

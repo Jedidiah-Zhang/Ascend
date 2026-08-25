@@ -54,6 +54,7 @@ class ContinentData:
         land_mask: 行优先布尔数组，True=陆地。
         elevation_field: 行优先海拔数组 (m)，100m 分辨率。
         river_width: 河流+湖泊宽度场 (m)，100m 分辨率。
+        water_distance: 行优先距水距离场 (m)，0=水体本身（同分辨率）。
         hydrology: 水文数据（流向、累积、湖盆、流线河网）。
         subdiv_ranges: 群系细分值域 {ClimateZone: (P10, P90)}。
         _chunk_climate: chunk 级气候缓存，由 generate() 末尾填充。
@@ -79,6 +80,12 @@ class ContinentData:
         default_factory=lambda: array('d')
     )
     river_width: Union[list[float], "array[float]"] = field(
+        default_factory=lambda: array('d')
+    )
+    # 距水距离场 (m)：每格到最近水体（海/河/湖）的距离，0 = 水体本身。
+    # 多源 BFS 计算（water_distance.compute_water_distance），与海拔场
+    # 同分辨率同索引；供材质分布（沙滩/冲积/湿地）与生态查询使用。
+    water_distance: Union[list[float], "array[float]"] = field(
         default_factory=lambda: array('d')
     )
     hydrology: "HydrologyData | None" = None
@@ -215,6 +222,51 @@ class ContinentData:
         v10 = rw[y0 * gw + x1]
         v01 = rw[y1 * gw + x0]
         v11 = rw[y1 * gw + x1]
+        v0 = v00 + (v10 - v00) * tx
+        v1 = v01 + (v11 - v01) * tx
+        return v0 + (v1 - v0) * ty
+
+    def sample_water_distance_bilinear(
+        self, world_x: float, world_y: float,
+    ) -> float:
+        """双线性插值采样距水距离 (m)，消除 100m 网格的块状伪影。
+
+        语义：0 = 水体本身；正值 = 到最近水体的平面距离。越界（地图
+        界限外）返回 0——界限外统一视为海洋。距水场未生成（空）时
+        返回 0（调用方应保证生成后使用）。
+
+        Args:
+            world_x: 世界 tile X 坐标（米）。
+            world_y: 世界 tile Y 坐标（米）。
+
+        Returns:
+            插值后的距水距离 (m)；0 = 水体/越界/未生成。
+        """
+        if not self.water_distance:
+            return 0.0
+
+        # 坐标换算用 self.cell_size（本大陆实际格分辨率）而非全局常量
+        # ——与 sample_altitude_bilinear 的预存模式一致，但非 100m 分辨率
+        # 的大陆（测试用小尺寸）换算仍正确。
+        cell = float(self.cell_size)
+        gx = world_x / cell - 0.5
+        gy = world_y / cell - 0.5
+        x0 = int(gx)
+        y0 = int(gy)
+        x1, y1 = x0 + 1, y0 + 1
+
+        if (x0 < 0 or x1 >= self.grid_width or
+                y0 < 0 or y1 >= self.grid_height):
+            return 0.0  # 越界视为海洋（距水 0）
+
+        tx = gx - x0
+        ty = gy - y0
+        wd = self.water_distance
+        gw = self.grid_width
+        v00 = wd[y0 * gw + x0]
+        v10 = wd[y0 * gw + x1]
+        v01 = wd[y1 * gw + x0]
+        v11 = wd[y1 * gw + x1]
         v0 = v00 + (v10 - v00) * tx
         v1 = v01 + (v11 - v01) * tx
         return v0 + (v1 - v0) * ty

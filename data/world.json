@@ -18,8 +18,6 @@
     "RIVER_WIDTH_MIN": 2.0,
     "RIVER_WIDTH_MAX": 80.0,
     "LAKE_MIN_PIXELS": 5,
-    "LAKE_DEEP_AREA_KM2": 1.0,
-    "LAKE_DEEP_DEPTH_M": 3.0,
     "LAKE_WETLAND_DEPTH_MAX": 2.0,
     "RAINSHADOW_DECAY_KM": 4.0,
     "RAINSHADOW_SECONDARY_WEIGHT": 0.2,
@@ -207,8 +205,5 @@
       1.0,
       30.0
     ]
-  },
-  "tile": {
-    "STEEP_GRADIENT": 1.0
   }
 }

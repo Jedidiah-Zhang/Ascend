@@ -1,9 +1,11 @@
 """Tile 级湖泊渲染 — 在 200×200 chunk 内平整湖面并生成湿地过渡。
 
 层1 提供湖泊盆地（cell 列表 + 湖面高程），层2 负责细化：
-  1. 确定 chunk 内哪些 tile 属于湖泊（水面以下 → 水体）
+  1. 确定 chunk 内哪些 tile 属于湖泊（水面以下 → WATER，单一水体）
   2. 水面以上的边缘地带 → 湿地过渡（MARSH）
-  3. 根据湖面面积决定水深（大湖中心 = DEEP_WATER，边缘 = SHALLOW_WATER）
+
+深浅分级由 elevation 反推（issue #42 单 WATER；湖面高程在 basin
+数据，玩法阶段按需查询）。
 
 所有 chunk 共享同一个湖面高程（来自 LakeBasin.surface_elev），
 保证跨 chunk 水面平坦连续。
@@ -15,10 +17,19 @@
                       continent, seed)
 """
 
-from ascend.config import LAKE_DEEP_AREA_KM2, LAKE_DEEP_DEPTH_M, LAKE_WETLAND_DEPTH_MAX
+from ascend.config import LAKE_WETLAND_DEPTH_MAX
 from .randomness import cell_hash
 from .terrain import TerrainType
 from .tile_grid import TileGrid, TILE_MAP_SIZE
+
+# 不参与湿地 fringe 的材质（水体 + 非土壤岩岸：裸岩/砾石/冻土）。
+# 湖边岩壁保持 ROCK，不因季节性淹没概率变成沼泽。
+_NON_MARSH: frozenset = frozenset({
+    TerrainType.WATER,
+    TerrainType.ROCK,
+    TerrainType.GRAVEL,
+    TerrainType.PERMAFROST,
+})
 
 
 def render_lake_chunk(
@@ -76,7 +87,7 @@ def render_lake_chunk(
 
         # 在 chunk 内渲染此湖泊
         _flatten_lake_surface(tile_grid, world_x0, world_y0, surface,
-                              basin.area_km2, basin.cells, continent,
+                              basin.cells, continent,
                               macro_elev_grid)
         _generate_wetland_fringe(tile_grid, world_x0, world_y0, surface,
                                  basin.cells, continent, seed,
@@ -106,16 +117,14 @@ def _flatten_lake_surface(
     tile_grid: TileGrid,
     world_x0: int, world_y0: int,
     surface_elev: float,
-    area_km2: float,
     cells: list[int],
     continent,
     macro_elev_grid: list[float] | None = None,
 ) -> None:
     """将湖面以下的 tile 标记为水体（仅限湖盆地 cells 覆盖范围）。
 
-    深度判定：
-      - 大湖（>1km²）中央 → DEEP_WATER
-      - 小湖 / 边缘 → SHALLOW_WATER
+    湖面以下一律 WATER（issue #42 单 WATER，无深浅枚举；深浅由
+    elevation 反推——湖面高程在 basin 数据，玩法阶段按需查询）。
 
     只处理湖盆地格点覆盖的 tile——湖面只淹没湖盆地所在区域，
     不受周边更高湖面影响（如高山湖不会淹没整片低地 chunk）。
@@ -124,13 +133,11 @@ def _flatten_lake_surface(
         tile_grid: 地形网格。
         world_x0, world_y0: chunk 左上角世界 tile 坐标。
         surface_elev: 湖面海拔 (m)。
-        area_km2: 湖面面积 (km²)。
         cells: 湖盆地格点索引列表。
         continent: ContinentData（macro_elev_grid 提供时可省略）。
         macro_elev_grid: 预计算宏观海拔网格（行优先，200×200）。
     """
     size = tile_grid.size
-    has_deep_zone = area_km2 > LAKE_DEEP_AREA_KM2
     gw = continent.grid_width
 
     for tx, ty in _basin_tiles(cells, gw, world_x0, world_y0, size):
@@ -146,14 +153,7 @@ def _flatten_lake_surface(
             continue  # 高于湖面，不处理
 
         # 水面以下 → 水体
-        depth = surface_elev - macro_elev
-
-        if depth > LAKE_DEEP_DEPTH_M and has_deep_zone:
-            tile_grid.set(tx, ty, TerrainType.DEEP_WATER)
-        else:
-            current = tile_grid.get(tx, ty)
-            if current != TerrainType.DEEP_WATER:
-                tile_grid.set(tx, ty, TerrainType.SHALLOW_WATER)
+        tile_grid.set(tx, ty, TerrainType.WATER)
 
 
 def _generate_wetland_fringe(
@@ -204,10 +204,10 @@ def _generate_wetland_fringe(
             if not (0.0 < wetland_depth <= LAKE_WETLAND_DEPTH_MAX):
                 continue
 
-            # 只有非水体、非山地 tile 可以变为湿地
+            # 只有土壤类 tile 可以变为湿地——裸岩/砾石/冻土岩岸不沼泽
+            # （材质由低频场判定，湿地 fringe 只作用在土壤上）
             current = tile_grid.get(tx, ty)
-            if current in (TerrainType.DEEP_WATER, TerrainType.SHALLOW_WATER,
-                           TerrainType.MOUNTAIN_PEAK, TerrainType.STEEP_SLOPE):
+            if current in _NON_MARSH:
                 continue
 
             # 越接近湖面，越大概率是湿地（概率 = 1 - wetland_depth/2）

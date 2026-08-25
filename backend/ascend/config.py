@@ -81,8 +81,6 @@ RIVER_WIDTH_MAX: float = 80.0         # 最大河流宽度 (m)
 
 # 湖泊参数
 LAKE_MIN_PIXELS: int = 5              # 湖泊盆地最小像素
-LAKE_DEEP_AREA_KM2: float = 1.0       # 深水区面积阈值 (>1km²)
-LAKE_DEEP_DEPTH_M: float = 3.0        # 深水区深度阈值 (m)
 LAKE_WETLAND_DEPTH_MAX: float = 2.0   # 湿地边缘范围 (湖面以上 0-2m)
 
 # 雨影参数
@@ -286,7 +284,30 @@ SEASONAL_AMP_BOUNDS: tuple[float, float] = (1.0, 30.0)
 # Tile — 瓦片生成阈值
 # ═══════════════════════════════════════════════════════════════
 
-STEEP_GRADIENT: float = 1.0             # 陡坡梯度阈值 (m/m)
+# 地形材质分布阈值
+# 全部输入为低频连续场，不参与 layer1 大陆生成——不入指纹名单。
+# 距水距离带 (m)：按到最近水体（海/河/湖）的平面距离划分材质
+SAND_BEACH_BAND_M: float = 40.0         # 沙滩带：距水 < 此值 → SAND
+ALLUVIAL_BAND_M: float = 120.0          # 冲积带：距水 < 此值 且 低海拔 → FERTILE_SOIL
+WETLAND_BAND_M: float = 200.0           # 湿地带：距水 < 此值 且 湿度高 → MARSH
+# 岩线基准 (m)：海拔高于此 → ROCK（群系偏移；与 ALPINE_ALTITUDE 同尺度）
+ROCK_LINE_ELEV: float = 2000.0
+# 裸岩坡度阈值 (m/m)：面内坡度高于此 → ROCK（裸岩，无土被）
+BARE_ROCK_SLOPE: float = 0.6
+# 干旱降雨阈值 (mm/年)：低于此视为干旱群系（GRAVEL/SAND 判定入口；
+# 与 DESERT_RAINFALL 同尺度）
+ARID_RAINFALL_MM: float = 250.0
+# 干旱群系海拔区间 (m)：[lo, hi) 内 高/中海拔 → GRAVEL，低海拔 → SAND
+GRAVEL_ALT_BAND: tuple[float, float] = (200.0, 2000.0)
+# 冻土线 (°C)：年均温低于此 → PERMAFROST（寒带非岩非坡）
+PERMAFROST_TEMP_C: float = -5.0
+# 冲积沃土低海拔上限 (m)：距水 < 冲积带 且 海拔 < 此值 → FERTILE_SOIL
+FERTILE_LOW_ELEV: float = 400.0
+# 水体通行（实时按水深推导，无 depth 通道——水深 = −海拔）：
+# 水深 ≤ 此值可涉水通行，否则不可通行
+WATER_WADE_DEPTH_M: float = 2.0
+# 涉水移动成本倍率
+WATER_WADE_COST: float = 3.0
 
 # ═══════════════════════════════════════════════════════════════
 # Storage — 持久化与缓存
@@ -298,7 +319,7 @@ import tempfile as _tempfile
 _PROJECT_ROOT: str = _os.path.normpath(_os.path.join(_os.path.dirname(__file__), "..", ".."))
 
 # 无存档模式（测试/调试，world_id=None）的数据根：系统临时目录，
-# 调试数据不污染项目根（原有项目根 save/ 残留已删），随 /tmp 系统清理
+# 调试数据不污染项目根，随 /tmp 系统清理
 _DEV_DATA_ROOT: str = _os.path.join(_tempfile.gettempdir(), "ascend-dev")
 
 # ChunkStore
@@ -346,8 +367,7 @@ CONTINENT_GEN_CONSTANT_NAMES: tuple[str, ...] = (
     "EROSION_MIN_ITERATIONS",
     "RIVER_FLOW_THRESHOLD", "RIVER_MIN_LENGTH", "RIVER_WIDTH_THRESHOLD",
     "RIVER_WIDTH_MIN", "RIVER_WIDTH_MAX",
-    "LAKE_MIN_PIXELS", "LAKE_DEEP_AREA_KM2", "LAKE_DEEP_DEPTH_M",
-    "LAKE_WETLAND_DEPTH_MAX",
+    "LAKE_MIN_PIXELS", "LAKE_WETLAND_DEPTH_MAX",
     "RAINSHADOW_DECAY_KM", "RAINSHADOW_SECONDARY_WEIGHT", "RAINSHADOW_MIN_FACTOR",
     "CONTINENTALITY_K", "CONTINENTALITY_D0_KM",
     "NOISE_FREQ_DERIVED",

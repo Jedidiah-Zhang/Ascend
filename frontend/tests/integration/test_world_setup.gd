@@ -80,6 +80,25 @@ func test_ready_builds_map_step() -> void:
 	assert_eq(setup._current_step().step_id(), "map")
 
 
+func test_seed_input_injected_into_step() -> void:
+	"""种子输入框注入：world_setup._ready 必须把 LineEdit 交给步骤。
+
+	回归：此前容器创建了 _seed_input 却从未注入，步骤内 _seed_input
+	恒为 null，点击种子框 _open_seed_input 直接返回 false——输入框
+	永远打不开（无法输入自定义种子）。
+	"""
+	var pair: Array = _make_setup()
+	var setup: Control = pair[0]
+	assert_not_null(setup._seed_input, "容器应创建种子输入框")
+	assert_same(setup._current_step()._seed_input, setup._seed_input,
+		"步骤应持有容器注入的同一个 LineEdit")
+	var opened: bool = setup._current_step()._open_seed_input()
+	assert_true(opened, "注入后点击种子框应能打开输入框")
+	assert_true(setup._seed_input.visible, "输入框应可见")
+	assert_true(setup._seed_input.has_focus(), "输入框应获得焦点")
+	setup._current_step()._close_seed_input()
+
+
 func test_next_step_on_single_step_creates() -> void:
 	"""单步流程：下一步 = 创建世界（构造 save_create 载荷）。
 

@@ -91,7 +91,7 @@ class TestTerrainStateParams:
         assert state_params(TerrainType.MARSH, "moisture") is not None
         assert state_params(TerrainType.SAND, "moisture") is None
         assert state_params(TerrainType.ROCK, "moisture") is None
-        assert state_params(TerrainType.SHALLOW_WATER, "moisture") is None
+        assert state_params(TerrainType.WATER, "moisture") is None
 
     def test_snow_applicability(self):
         """覆雪适用性：陆地全有参（含岩石）；水面有参（冰上承载）。"""
@@ -102,12 +102,9 @@ class TestTerrainStateParams:
 
     def test_ice_only_water(self):
         """结冰仅水面有参。"""
-        assert state_params(TerrainType.SHALLOW_WATER, "ice") is not None
-        assert state_params(TerrainType.DEEP_WATER, "ice") is not None
+        assert state_params(TerrainType.WATER, "ice") is not None
         for terrain in TerrainType:
-            if terrain not in (
-                TerrainType.SHALLOW_WATER, TerrainType.DEEP_WATER,
-            ):
+            if terrain != TerrainType.WATER:
                 assert state_params(terrain, "ice") is None
 
     def test_marsh_drain_slower_than_grassland(self):

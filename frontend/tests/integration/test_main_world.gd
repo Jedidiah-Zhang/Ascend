@@ -96,10 +96,11 @@ func _drain_chunk_requests() -> Array:
 ## float32 LE elevation + slope + states 段（moisture/snow/ice；可传非零值
 ## 覆盖——默认全 0，顺序 = 后端 STATE_TYPES 注册顺序））。
 func _make_tiles_b64(terr: PackedInt32Array, elev: PackedFloat32Array,
-		version: int = 2, states: PackedByteArray = PackedByteArray()) -> String:
+		version: int = Config.TILE_BLOB_VERSION,
+		states: PackedByteArray = PackedByteArray()) -> String:
 	var raw := PackedByteArray()
 	raw.resize(4)
-	raw.encode_u32(0, version)  # 版本头（与后端 tile_grid._TILEGRID_VERSION 契约）
+	raw.encode_u32(0, version)  # 版本头（与后端 tile_grid.TILE_GRID_VERSION 契约）
 	for t in terr:
 		raw.append(t & 0xFF)
 		raw.append((t >> 8) & 0xFF)
@@ -437,7 +438,7 @@ func test_camera_zoom_clamped_by_configure() -> void:
 # ── 地形 tile 映射（TerrainTileBuilder） ────────────────────
 
 func test_terrain_mapping_length() -> void:
-	assert_eq(TerrainTileBuilder.TERRAIN_TO_TILE.size(), 9, "应有 9 种地形类型映射")
+	assert_eq(TerrainTileBuilder.TERRAIN_TO_TILE.size(), 8, "应有 8 种材质类型映射")
 
 
 func test_terrain_tile_set_builds_programmatic_atlas() -> void:
@@ -445,7 +446,7 @@ func test_terrain_tile_set_builds_programmatic_atlas() -> void:
 	assert_eq(ts.tile_size, Vector2i(16, 16), "tile 尺寸应为 16px")
 	assert_eq(ts.get_source_count(), 1, "应为单源占位 atlas")
 	var src: TileSetAtlasSource = ts.get_source(0)
-	assert_eq(src.get_tiles_count(), 9, "9 色块应各建一个 tile")
+	assert_eq(src.get_tiles_count(), 8, "8 色块应各建一个 tile")
 
 
 # ── Chunk 卸载 ──────────────────────────────────────────────
@@ -531,7 +532,7 @@ func test_tile_response_marks_received() -> void:
 		"type": "response",
 		"request_type": "get_chunks",
 		"payload": {
-			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, 2, states)}],
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, Config.TILE_BLOB_VERSION, states)}],
 			"include_tiles": true,
 		},
 	})
@@ -576,7 +577,8 @@ func test_signal_layers_mount_with_chunk() -> void:
 	assert_true(main._terrain_parent.has_node(NodePath("Chunk_0_0")), "地形层应挂载")
 	assert_true(main._terrain_parent.has_node(NodePath("Cliff_0_0")), "崖壁层应挂载")
 	assert_true(main._terrain_parent.has_node(NodePath("Shadow_0_0")), "投影层应挂载")
-	assert_true(main._terrain_parent.has_node(NodePath("Decor_0_0")), "装饰层应挂载")
+	assert_false(main._terrain_parent.has_node(NodePath("Decor_0_0")),
+		"装饰层暂不挂载（单格散点呈噪点观感，待成簇重构后恢复）")
 	assert_false(main._terrain_parent.has_node(NodePath("Contour_0_0")),
 		"等高线调试层默认关闭，不应挂载")
 
@@ -613,7 +615,7 @@ func test_full_response_seeds_state_chaser_and_mounts_layer() -> void:
 		"type": "response",
 		"request_type": "get_chunks",
 		"payload": {
-			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, 2, states)}],
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, Config.TILE_BLOB_VERSION, states)}],
 			"include_tiles": true,
 		},
 	})
@@ -681,7 +683,7 @@ func test_state_refresh_updates_truth_without_rebuild() -> void:
 		"type": "response",
 		"request_type": "get_chunks",
 		"payload": {
-			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, 2, states)}],
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, Config.TILE_BLOB_VERSION, states)}],
 			"include_tiles": true,
 		},
 	})
@@ -766,7 +768,7 @@ func test_refresh_response_dropped_after_unload() -> void:
 		"type": "response",
 		"request_type": "get_chunks",
 		"payload": {
-			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, 2, states)}],
+			"chunks": [{"cx": 0, "cy": 0, "tiles_b64": _make_tiles_b64(terr, elev, Config.TILE_BLOB_VERSION, states)}],
 			"include_tiles": true,
 		},
 	})

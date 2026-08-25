@@ -525,6 +525,74 @@ void hydrology_distance_to_ocean(
     free(queue);
 }
 
+/* ── water_distance（距水距离场，issue #42） ──────────────── */
+
+/* 多源 BFS（4 邻域）计算每个格到最近水体（海/河/湖）的平面距离 (m)。
+   water_mask: uint8 数组，非 0 = 水体源（距离 0）；其余格 = 到最近源的
+   步数 × cell_size。4 邻域沿海岸线走，不斜穿窄陆地（对角不视为直达）。
+   输出 dist_out[i] = 步数 × cell_size；无任何水体源时全 0。 */
+void hydrology_water_distance(
+    const unsigned char *water_mask, int w, int h, double cell_size,
+    double *dist_out)
+{
+    int n = w * h;
+    int *dist = (int *)malloc((size_t)n * sizeof(int));
+    int *queue = (int *)malloc((size_t)n * sizeof(int));
+    int head = 0, tail = 0;
+    int any = 0;
+
+    for (int i = 0; i < n; i++) {
+        if (water_mask[i]) {
+            dist[i] = 0;
+            queue[tail++] = i;
+            any = 1;
+        } else {
+            dist[i] = INT_MAX / 2;
+        }
+    }
+    if (!any) {
+        /* 全陆（无水体）：距离无意义，统一置 0 */
+        for (int i = 0; i < n; i++) dist_out[i] = 0.0;
+        free(dist);
+        free(queue);
+        return;
+    }
+
+    while (head < tail) {
+        int idx = queue[head++];
+        int x = idx % w;
+        int nd = dist[idx] + 1;
+
+        /* 左 */
+        if (x > 0) {
+            int ni = idx - 1;
+            if (nd < dist[ni]) { dist[ni] = nd; queue[tail++] = ni; }
+        }
+        /* 右 */
+        if (x + 1 < w) {
+            int ni = idx + 1;
+            if (nd < dist[ni]) { dist[ni] = nd; queue[tail++] = ni; }
+        }
+        /* 上 */
+        if (idx >= w) {
+            int ni = idx - w;
+            if (nd < dist[ni]) { dist[ni] = nd; queue[tail++] = ni; }
+        }
+        /* 下 */
+        if (idx < n - w) {
+            int ni = idx + w;
+            if (nd < dist[ni]) { dist[ni] = nd; queue[tail++] = ni; }
+        }
+    }
+
+    for (int i = 0; i < n; i++) {
+        dist_out[i] = (double)dist[i] * cell_size;
+    }
+
+    free(dist);
+    free(queue);
+}
+
 /* ── rain_shadow (omnidirectional moisture budget) ────────── */
 
 /* 投影排序条目：风向投影 + 原始索引 */

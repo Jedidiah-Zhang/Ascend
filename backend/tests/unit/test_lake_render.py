@@ -6,6 +6,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from ascend.config import TILE_MAP_SIZE
 from ascend.space.lake_render import render_lake_chunk
 from ascend.space.terrain import TerrainType
@@ -48,8 +50,7 @@ def test_lake_flattens_surface():
                       macro_elev_grid=macro)
     for ty in range(96, 104):
         for tx in range(96, 104):
-            assert grid.get(tx, ty) in (TerrainType.DEEP_WATER,
-                                        TerrainType.SHALLOW_WATER)
+            assert grid.get(tx, ty) == TerrainType.WATER
 
 
 def test_wetland_deterministic_same_seed():
@@ -77,3 +78,44 @@ def test_no_basins_returns_unchanged():
     for y in range(_SIZE):
         for x in range(_SIZE):
             assert grid.get(x, y) == TerrainType.GRASSLAND
+
+
+@pytest.mark.parametrize("material", [
+    TerrainType.ROCK, TerrainType.GRAVEL, TerrainType.PERMAFROST,
+])
+def test_wetland_skips_non_soil_shore(material):
+    """岩岸（裸岩/砾石/冻土）不被湿地 fringe 覆盖为 MARSH。
+
+    材质由低频场判定（issue #42 纯净化），湿地 fringe 只作用在土壤上。
+    """
+    grid, macro, basin, continent = _make_scene()
+    # 湿地候选环（elev=101）预分类为非土壤材质
+    for ty in range(95, 105):
+        for tx in range(95, 105):
+            if macro[ty * _SIZE + tx] == 101.0:
+                grid.set(tx, ty, material)
+    render_lake_chunk(grid, 0, 0, [basin], continent, seed=0,
+                      macro_elev_grid=macro)
+    # 岩岸保持材质，不变 MARSH
+    for ty in range(95, 105):
+        for tx in range(95, 105):
+            if macro[ty * _SIZE + tx] == 101.0:
+                assert grid.get(tx, ty) == material, \
+                    f"({tx},{ty}) {material.name} 岩岸被覆盖为 MARSH"
+    # 湖心仍为 WATER
+    for ty in range(96, 104):
+        for tx in range(96, 104):
+            assert grid.get(tx, ty) == TerrainType.WATER
+
+
+def test_wetland_skips_water_tiles():
+    """水体 tile 不被湿地 fringe 覆盖（保持 WATER）。"""
+    grid, macro, basin, continent = _make_scene()
+    for ty in range(96, 104):
+        for tx in range(96, 104):
+            grid.set(tx, ty, TerrainType.GRASSLAND)  # 先置陆地再渲染
+    render_lake_chunk(grid, 0, 0, [basin], continent, seed=0,
+                      macro_elev_grid=macro)
+    for ty in range(96, 104):
+        for tx in range(96, 104):
+            assert grid.get(tx, ty) == TerrainType.WATER

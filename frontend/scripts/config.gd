@@ -21,8 +21,9 @@ const HANDSHAKE_MAX_RETRIES: int = 5
 const MAX_MESSAGE_SIZE: int = 16 * 1024 * 1024  # 16 MiB
 const PROTOCOL_VERSION: int = 0x01  # 与后端 ascend/net/protocol.py 同步
 ## tile 数据 BLOB 版本（客户端已知/支持的版本；握手时上报，服务端以
-## 其 _TILEGRID_VERSION 裁决兼容性——见 handshake.gd / client_handler.py）
-const TILE_BLOB_VERSION: int = 2
+## 其 TILE_GRID_VERSION 裁决兼容性——见 handshake.gd / client_handler.py）
+## issue #42 材质 9→8 重排后重新标 v1（无历史版本）。
+const TILE_BLOB_VERSION: int = 1
 
 const VENV_PYTHON_REL: String = ".venv/bin/python"
 const BACKEND_SCRIPT_REL: String = "backend/run_server.py"
@@ -75,8 +76,6 @@ const PLAYER_2D_FAST_MULT: float = 3.0
 const CLIFF_ELEVATION_DIFF_M: float = 8.0
 ## 固定方向投影：光照方向固定（西北），东南侧高差 > 此值时铺半透明阴影贴片
 const SHADOW_ELEVATION_DIFF_M: float = 6.0
-## 雪线：MOUNTAIN_PEAK 且海拔 ≥ 此值 → 雪顶 sprite（对齐后端 ALPINE 2000m 阈值）
-const SNOWLINE_ELEVATION_M: float = 2000.0
 ## 等高线调试层：500m 间隔（500/1000/1500/2000 恰与 ALPINE 阈值对齐）
 const CONTOUR_INTERVAL_M: float = 500.0
 ## 装饰密度海拔档位（米）：低于档位 0 无装饰，之后逐档加密（见 TerrainTileBuilder）

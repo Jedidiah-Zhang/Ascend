@@ -24,26 +24,24 @@ from ascend.space.generator import WorldGenerator
 # ── 地形类型颜色 ──────────────────────────────────────────
 
 TERRAIN_COLORS: dict[int, tuple[int, int, int]] = {
-    int(TerrainType.DEEP_WATER): (26, 58, 92),
-    int(TerrainType.SHALLOW_WATER): (90, 160, 210),
+    int(TerrainType.WATER): (90, 160, 210),
     int(TerrainType.SAND): (232, 213, 163),
+    int(TerrainType.GRAVEL): (150, 148, 140),
     int(TerrainType.FERTILE_SOIL): (92, 61, 46),
     int(TerrainType.GRASSLAND): (126, 200, 80),
     int(TerrainType.ROCK): (139, 139, 139),
-    int(TerrainType.STEEP_SLOPE): (107, 107, 107),
-    int(TerrainType.MOUNTAIN_PEAK): (224, 224, 224),
+    int(TerrainType.PERMAFROST): (180, 176, 170),
     int(TerrainType.MARSH): (74, 107, 58),
 }
 
 TERRAIN_LABELS: dict[int, str] = {
-    int(TerrainType.DEEP_WATER): "深水",
-    int(TerrainType.SHALLOW_WATER): "浅水",
+    int(TerrainType.WATER): "水",
     int(TerrainType.SAND): "沙地",
+    int(TerrainType.GRAVEL): "砾石",
     int(TerrainType.FERTILE_SOIL): "沃土",
     int(TerrainType.GRASSLAND): "草地",
     int(TerrainType.ROCK): "岩石",
-    int(TerrainType.STEEP_SLOPE): "陡坡",
-    int(TerrainType.MOUNTAIN_PEAK): "山巅",
+    int(TerrainType.PERMAFROST): "冻土",
     int(TerrainType.MARSH): "沼泽",
 }
 

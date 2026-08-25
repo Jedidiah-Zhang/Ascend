@@ -90,7 +90,7 @@ def _make_grid(n: int = 200, terrain_fill=None) -> TileGrid:
     for i in range(n * n):
         if terrain_fill is None:
             t = [TerrainType.GRASSLAND, TerrainType.ROCK,
-                 TerrainType.SHALLOW_WATER, TerrainType.MARSH][i % 4]
+                 TerrainType.WATER, TerrainType.MARSH][i % 4]
             grid.raw_data()[i] = int(t)
         grid.slope_raw()[i] = (i % 7) * 0.1
     return grid
@@ -210,7 +210,7 @@ class TestKernelBehavior:
         grid = _make_grid()
         grid.raw_data()[0] = int(TerrainType.GRASSLAND)
         grid.raw_data()[1] = int(TerrainType.ROCK)
-        grid.raw_data()[2] = int(TerrainType.SHALLOW_WATER)
+        grid.raw_data()[2] = int(TerrainType.WATER)
         state_evolve(grid, precip=[[50.0], [0.0], [0.0]], temp=[15.0])
         raw = grid.state_raw("moisture")
         assert raw[0] > 0
@@ -222,7 +222,7 @@ class TestKernelBehavior:
         grid = _make_grid()
         state_evolve(grid, precip=[[0.0]] * 3, temp=[-10.0])
         raw = grid.state_raw("ice")
-        # 每 4 格一个 SHALLOW_WATER（i%4==2）
+        # 每 4 格一个 WATER（i%4==2）
         for i in range(64):
             if i % 4 == 2:
                 assert raw[i] > 0, f"水面 tile {i} 应结冰"

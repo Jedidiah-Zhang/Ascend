@@ -6,16 +6,17 @@
 等高线调试层，见视觉风格设计文档）全部在此类内以纯数据计算表达。
 
 层划分：
-  - terrain：陆地 terrain_id → terrain atlas 列索引（第一层级信号）
-  - water：浅水/深水 → water atlas 列索引（半透明水面，独立层）
+  - terrain：陆地材质 terrain_id → terrain atlas 列索引（第一层级信号）
+  - water：水体（单一 WATER）→ water atlas 列索引（半透明水面，独立层）
   - cliff：高侧边缘崖壁贴片（相邻 tile 海拔差 > 阈值）
   - shadow：固定方向投影（西北光照 → 东南侧低 tile 铺半透明阴影）
-  - decor：海拔越高装饰越密（确定性哈希，非随机）+ 雪线雪顶
+  - decor：海拔越高岩石装饰越密（确定性哈希，非随机）——雪顶不再硬编码
+    （issue #42：覆雪是动态状态，由雪状态自然形成，见状态层）
   - contour：等高线调试层（500m 间隔，默认关闭，挂调试面板）
 
 地形类型映射与后端 ascend/space/terrain.py 的 TerrainType 枚举对齐：
-0 GRASSLAND / 1 SAND / 2 FERTILE_SOIL / 3 ROCK / 4 STEEP_SLOPE /
-5 MOUNTAIN_PEAK / 6 SHALLOW_WATER / 7 DEEP_WATER / 8 MARSH。
+0 GRASSLAND / 1 SAND / 2 GRAVEL / 3 FERTILE_SOIL / 4 ROCK /
+5 PERMAFROST / 6 MARSH / 7 WATER。
 
 已知限制：信号只读本 chunk 数据，chunk 边界相邻 tile 的高差/等高线在接缝处
 可能不连续（跨 chunk 感知留待后续阶段）。自阶段 6 起支持邻居上下文：
@@ -30,12 +31,11 @@ extends RefCounted
 const CHUNK_SIZE: int = Config.TILE_MAP_SIZE
 const TILE_PIXEL_SIZE: int = Config.TILE_PIXEL_SIZE
 
-## terrain_id → terrain atlas 列索引（正俯视下 9 地形各一色块，见 TERRAIN_TILE_COLORS）
-const TERRAIN_TO_TILE: PackedInt32Array = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+## terrain_id → terrain atlas 列索引（正俯视下 8 材质各一色块，见 TERRAIN_TILE_COLORS）
+const TERRAIN_TO_TILE: PackedInt32Array = [0, 1, 2, 3, 4, 5, 6, 7]
 
-## 与后端 TerrainType 对齐的水域 id
-const SHALLOW_WATER_ID: int = 6
-const DEEP_WATER_ID: int = 7
+## 与后端 TerrainType 对齐的水域 id（单一 WATER）
+const WATER_ID: int = 7
 
 ## 层名（挂载方按此从 build_cells 返回取数组）
 const LAYER_TERRAIN: String = "terrain"
@@ -50,34 +50,30 @@ const LAYER_STATES: String = "states"
 ## 五信号阈值（Config 同源）
 const CLIFF_ELEVATION_DIFF_M: float = Config.CLIFF_ELEVATION_DIFF_M
 const SHADOW_ELEVATION_DIFF_M: float = Config.SHADOW_ELEVATION_DIFF_M
-const SNOWLINE_ELEVATION_M: float = Config.SNOWLINE_ELEVATION_M
 const CONTOUR_INTERVAL_M: float = Config.CONTOUR_INTERVAL_M
 const DECOR_ELEVATION_TIERS: Array[float] = Config.DECOR_ELEVATION_TIERS
 
 ## 装饰密度（百分比）：海拔档位 [<300, <1000, <2000, ≥2000]
 const DECOR_DENSITY_PERCENT: PackedInt32Array = [2, 5, 10, 16]
-## 装饰 atlas 列：0 砾石 / 1 岩石 / 2 大岩块 / 3 雪顶（MOUNTAIN_PEAK ≥ 雪线）
+## 装饰 atlas 列：0 砾石 / 1 岩石 / 2 大岩块（雪顶已移除——覆雪为动态状态）
 const DECOR_TILE_ROCKS: Array[int] = [0, 1, 2]
-const DECOR_TILE_SNOWCAP: int = 3
 
 ## 地形 atlas 占位纯色（terrain_id 顺序；像素资产未开始，渲染管线先用色块）
 ## 与旧 terrain_mesh_builder 时代的 _TERRAIN_FALLBACK_COLORS 主色调对齐
 const TERRAIN_TILE_COLORS: Array[Color] = [
 	Color(0.45, 0.62, 0.35),  # 0 GRASSLAND
 	Color(0.85, 0.78, 0.5),   # 1 SAND
-	Color(0.35, 0.45, 0.25),  # 2 FERTILE_SOIL
-	Color(0.45, 0.42, 0.38),  # 3 ROCK
-	Color(0.55, 0.5, 0.35),   # 4 STEEP_SLOPE
-	Color(0.5, 0.48, 0.45),   # 5 MOUNTAIN_PEAK
-	Color(0.2, 0.6, 0.9),     # 6 SHALLOW_WATER（半透明在水面层另设）
-	Color(0.05, 0.2, 0.6),    # 7 DEEP_WATER
-	Color(0.4, 0.55, 0.4),    # 8 MARSH
+	Color(0.6, 0.58, 0.55),   # 2 GRAVEL
+	Color(0.35, 0.45, 0.25),  # 3 FERTILE_SOIL
+	Color(0.45, 0.42, 0.38),  # 4 ROCK
+	Color(0.55, 0.5, 0.5),    # 5 PERMAFROST
+	Color(0.4, 0.55, 0.4),    # 6 MARSH
+	Color(0.2, 0.4, 0.7),     # 7 WATER（半透明在水面层另设）
 ]
 
-## 水面 atlas 占位纯色（半透明，浅水/深水）
+## 水面 atlas 占位纯色（半透明，单一 WATER）
 const WATER_TILE_COLORS: Array[Color] = [
-	Color(0.2, 0.6, 0.9, 0.6),   # 浅水
-	Color(0.05, 0.2, 0.6, 0.85), # 深水
+	Color(0.2, 0.6, 0.9, 0.7),
 ]
 
 ## 崖壁 atlas 占位纯色（暗岩边缘，单一样式；方向变体留待资产阶段）
@@ -90,12 +86,11 @@ const SHADOW_TILE_COLORS: Array[Color] = [
 	Color(0.05, 0.08, 0.12, 0.35),
 ]
 
-## 装饰 atlas 占位纯色：砾石 / 岩石 / 大岩块 / 雪顶
+## 装饰 atlas 占位纯色：砾石 / 岩石 / 大岩块
 const DECOR_TILE_COLORS: Array[Color] = [
 	Color(0.6, 0.58, 0.52, 1.0),
 	Color(0.5, 0.47, 0.42, 1.0),
 	Color(0.42, 0.38, 0.33, 1.0),
-	Color(0.95, 0.96, 0.98, 1.0),
 ]
 
 ## 等高线调试层 atlas 占位纯色（高对比亮色，调试期醒目）
@@ -159,10 +154,8 @@ static func build_cells(terrain: PackedInt32Array,
 			if terrain_id < 0 or terrain_id >= TERRAIN_TO_TILE.size():
 				continue
 			var cell_pos := Vector2i(x, z)
-			if terrain_id == SHALLOW_WATER_ID or terrain_id == DEEP_WATER_ID:
-				cells[LAYER_WATER].append([
-					cell_pos, 0, Vector2i(terrain_id - SHALLOW_WATER_ID, 0),
-				])
+			if terrain_id == WATER_ID:
+				cells[LAYER_WATER].append([cell_pos, 0, Vector2i(0, 0)])
 				continue
 			cells[LAYER_TERRAIN].append([
 				cell_pos, 0, Vector2i(TERRAIN_TO_TILE[terrain_id], 0),
@@ -174,7 +167,7 @@ static func build_cells(terrain: PackedInt32Array,
 				cells[LAYER_CLIFF].append([cell_pos, 0, Vector2i(0, 0)])
 			if _receives_shadow(terrain, elevation, x, z, idx, neighbors):
 				cells[LAYER_SHADOW].append([cell_pos, 0, Vector2i(0, 0)])
-			var decor := _decor_at(terrain_id, elev, x, z, idx)
+			var decor := _decor_at(elev, x, z, idx)
 			if decor >= 0:
 				cells[LAYER_DECOR].append([cell_pos, 0, Vector2i(decor, 0)])
 			if _on_contour(elevation, x, z, idx, neighbors):
@@ -275,18 +268,17 @@ static func _receives_shadow(terrain: PackedInt32Array, elevation: PackedFloat32
 	return false
 
 
-## 装饰判定：海拔越高越密（确定性哈希决定落点，非随机源——同 chunk 数据
-## 任何线程/任何次构建结果一致）；MOUNTAIN_PEAK 且海拔 ≥ 雪线 → 雪顶。
+## 装饰判定：海拔越高岩石装饰越密（确定性哈希决定落点，非随机源——
+## 同 chunk 数据任何线程/任何次构建结果一致）。雪顶已移除：覆雪由
+## 雪状态自然形成（状态层渲染），不做硬编码装饰。
 ## Returns:
 ##     decor atlas 列索引；无装饰返回 -1。
-static func _decor_at(terrain_id: int, elev: float, x: int, z: int, idx: int) -> int:
+static func _decor_at(elev: float, x: int, z: int, idx: int) -> int:
 	var tier: int = 3
 	for i in DECOR_ELEVATION_TIERS.size():
 		if elev < DECOR_ELEVATION_TIERS[i]:
 			tier = i
 			break
-	if terrain_id == 5 and elev >= SNOWLINE_ELEVATION_M:
-		return DECOR_TILE_SNOWCAP
 	var density: int = DECOR_DENSITY_PERCENT[tier]
 	if _decor_hash(x, z, idx) % 100 >= density:
 		return -1
@@ -323,7 +315,7 @@ static func _on_contour(elevation: PackedFloat32Array, x: int, z: int, idx: int,
 
 
 static func _is_water(terrain_id: int) -> bool:
-	return terrain_id == SHALLOW_WATER_ID or terrain_id == DEEP_WATER_ID
+	return terrain_id == WATER_ID
 
 
 ## 由色表生成程序化占位 atlas 纹理（TILE_PIXEL_SIZE 方 tile 横向排布，

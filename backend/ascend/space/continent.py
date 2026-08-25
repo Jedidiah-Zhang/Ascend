@@ -219,6 +219,20 @@ class ContinentGenerator:
             lake_basins=lake_basins,
         )
 
+        # Step 5b: 距水距离场 — 多源 BFS（海 + 河 + 湖），供材质分布/
+        # 生态等按"距水多远"的直觉分类使用（issue #42）。不单独广播
+        # 阶段（并入 width，毫秒级）。
+        # 海判定用 not land_mask（与 is_land() 的 e>0 语义一致，避免
+        # 恰为 0.0 的格两处判定不一致）；河/湖用 river_width>0。
+        from .water_distance import compute_water_distance
+        water_mask = [
+            not is_land or width_m > 0.0
+            for is_land, width_m in zip(land_mask, river_width)
+        ]
+        water_distance = compute_water_distance(
+            water_mask, w, h, self._params.sample_resolution,
+        )
+
         # Step 6: 兜底 — 保证 8 档气候覆盖（最后执行，不影响水文）
         self._inject_missing_climates(
             elevation, temp_field, rain_field, land_mask, climate_field, w, h,
@@ -252,6 +266,7 @@ class ContinentGenerator:
             land_mask=land_mask,
             elevation_field=array('d', elevation),
             river_width=array('d', river_width),
+            water_distance=water_distance,
             hydrology=hydrology,
             subdiv_ranges=subdiv_ranges,
             _chunk_climate=chunk_climate,

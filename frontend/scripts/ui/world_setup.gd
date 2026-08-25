@@ -128,9 +128,16 @@ func _ready() -> void:
 
 	_seed_input = LineEdit.new()
 	_seed_input.visible = false
-	_seed_input.max_length = 64
+	# 任意文本（不限长度）都映射为 256-bit 种子：合法 hex 直通，
+	# 其余 SHA-256 定案——长度与映射无关，不做截断
+	_seed_input.max_length = 0
 	_seed_input.text_submitted.connect(_on_seed_submitted)
 	add_child(_seed_input)
+	# 注入种子输入框给步骤（map_step._open_seed_input 依赖；未注入
+	# 时步骤内 _seed_input 为 null，输入框永不打开）
+	for step in _steps:
+		if step is SetupStep and step.has_method("set_seed_input"):
+			step.set_seed_input(_seed_input)
 	_current = 0
 	_steps[0].setup(_params)
 	_status_text = tr("ui.setup.step_progress").format({"current": 1, "total": _steps.size()})

@@ -2,6 +2,8 @@
 
 可调参数:
   - 种子：默认随机定案，可「随机」重新掷，或点击数值弹输入框手输
+    ——任意文本统一映射为 256-bit hex 种子（合法 hex 直通，其余
+    SHA-256 定案），输入即同规格
   - 大陆占比：自绘滑块拖拽，10%-90%（步进 1%）
   - 地图尺寸：三档（小 60×36 / 中 100×60 / 大 150×90 km），
     只影响世界规模不影响形状；尺寸改变生成范围，切换刷新预览
@@ -111,6 +113,11 @@ var _draft_request: Dictionary = {}
 var _editing_seed: bool = false
 ## 种子输入框（容器注入的 LineEdit，测试可留空）
 var _seed_input: LineEdit = null
+
+## 容器注入种子输入框（world_setup._ready 调用；未注入时点击种子框
+## 无法弹出输入框——_open_seed_input 对 null 直接返回 false）。
+func set_seed_input(input: LineEdit) -> void:
+	_seed_input = input
 ## 悬停命中: "random" / "seed" / "slider" / ""
 var _hover: String = ""
 ## 滑块拖拽中
@@ -240,9 +247,9 @@ func on_preview_response(payload: Dictionary) -> void:
 		return
 	_preview = payload
 	if _pending_seed.is_empty():
-		var seed: Variant = payload.get("seed")
-		if seed is String and not str(seed).is_empty():
-			_seed = str(seed)
+		var seed_val: Variant = payload.get("seed")
+		if seed_val is String and not str(seed_val).is_empty():
+			_seed = str(seed_val)
 
 
 func on_preview_failed() -> void:
@@ -631,11 +638,13 @@ func _display_seed() -> String:
 
 
 func on_seed_submitted(text: String) -> void:
-	"""容器 LineEdit 提交回调：解析 hex 种子并刷新预览。
+	"""容器 LineEdit 提交回调：hex 直通，任意文本确定性映射为 256-bit 种子。
 
-	契约：1..64 位 hex（无 0x 前缀，大小写均可），归一为小写。
-	空串提交 = 忽略（保留当前种子与预览）；随机掷种请用随机按钮。
-	非法输入同样忽略。
+	契约：
+	  - 空串提交 = 忽略（保留当前种子与预览）；随机掷种请用随机按钮
+	  - 1..64 位 hex（无 0x 前缀，大小写均可）→ 归一为小写直接使用
+	  - 其他任意文本 → SHA-256 映射为 64 字符小写 hex（确定性：
+	    同文本恒同种子可复现；规格与 manifest.SEED_MAX 契约一致）
 	"""
 	_close_seed_input()
 	var seed_text: String = text.strip_edges()
@@ -643,7 +652,18 @@ func on_seed_submitted(text: String) -> void:
 		return
 	if _is_valid_hex_seed(seed_text):
 		_seed = seed_text.to_lower()
-		_request_preview()
+	else:
+		_seed = _text_to_seed(seed_text)
+	_request_preview()
+
+
+static func _text_to_seed(text: String) -> String:
+	"""任意文本 → 256-bit hex 种子（SHA-256，64 字符小写）。
+
+	确定性映射：同文本恒同种子（可复现），与后端 seed 契约
+	（manifest.SEED_MAX = 2**256-1，协议层 hex 字符串）同规格。
+	"""
+	return text.sha256_text()
 
 
 static func _is_valid_hex_seed(text: String) -> bool:

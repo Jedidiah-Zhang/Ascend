@@ -13,21 +13,21 @@ from ascend.space.terrain import (
     TerrainType,
     get_terrain_def,
     terrain_by_id,
+    terrain_ns_id,
     _build_terrain_defs,
 )
 from ascend.space.state_defs import STATE_TYPES
 
 
 def _mini_doc(terrain: dict) -> dict:
-    """构造最小合法文档（单地形 + 完整状态矩阵 + fallback）。"""
+    """构造最小合法文档（单材质 + 完整状态矩阵）。"""
     return {
-        "version": 1,
+        "version": 2,
         "terrain": {
             "ascend:grassland": {
                 "value": 0,
                 "label_key": "terrain.grassland",
                 "states": {k: None for k in STATE_TYPES},
-                "fallback": True,
             },
             **terrain,
         },
@@ -42,14 +42,14 @@ class TestDataFile:
         assert (DATA_DIR / "terrain.json").exists()
         doc = load_content("terrain")
         assert isinstance(doc, dict)
-        assert doc["version"] == 1
+        assert doc["version"] == 2
 
-    def test_all_nine_terrains_loaded(self):
-        """首发 9 种地形齐全（命名空间 id 键）。"""
+    def test_all_eight_materials_loaded(self):
+        """8 种纯地表材质齐全（命名空间 id 键）。"""
         assert set(TERRAIN_DEFS) == {
-            "ascend:grassland", "ascend:sand", "ascend:fertile_soil",
-            "ascend:rock", "ascend:steep_slope", "ascend:mountain_peak",
-            "ascend:shallow_water", "ascend:deep_water", "ascend:marsh",
+            "ascend:grassland", "ascend:sand", "ascend:gravel",
+            "ascend:fertile_soil", "ascend:rock", "ascend:permafrost",
+            "ascend:marsh", "ascend:water",
         }
 
     def test_enum_matches_registry_order(self):
@@ -63,19 +63,13 @@ class TestDataFile:
         assert TerrainType.MARSH == terrain_by_id("ascend:marsh")
 
     def test_persistence_values_contiguous(self):
-        """契约：value 0..n-1 连续、唯一（新地形只能追加）。"""
+        """契约：value 0..n-1 连续、唯一（新材质只能追加）。"""
         values = sorted(d.value for d in TERRAIN_DEFS.values())
         assert values == list(range(len(TERRAIN_DEFS)))
 
-    def test_single_fallback(self):
-        """兜底地形全表唯一（ascend:sand）。"""
-        fallbacks = [ns for ns, d in TERRAIN_DEFS.items() if d.fallback]
-        assert fallbacks == ["ascend:sand"]
-
     def test_inf_cost_parsed(self):
         """JSON 用 "inf" 表示不可通行，解析为无穷。"""
-        assert TERRAIN_DEFS["ascend:mountain_peak"].movement_cost == float("inf")
-        assert TERRAIN_DEFS["ascend:deep_water"].movement_cost == float("inf")
+        assert TERRAIN_DEFS["ascend:water"].movement_cost == float("inf")
         assert TERRAIN_DEFS["ascend:grassland"].movement_cost == 1.0
 
     def test_missing_content_file(self):
@@ -153,21 +147,6 @@ class TestContractValidation:
         with pytest.raises(ValueError, match="未知状态"):
             _build_terrain_defs(doc)
 
-    def test_no_fallback_rejected(self):
-        doc = _mini_doc({})
-        doc["terrain"]["ascend:grassland"]["fallback"] = False
-        with pytest.raises(ValueError, match="fallback"):
-            _build_terrain_defs(doc)
-
-    def test_multiple_fallback_rejected(self):
-        doc = _mini_doc({
-            "ascend:sand": {"value": 1, "label_key": "terrain.sand",
-                            "fallback": True,
-                            "states": {k: None for k in STATE_TYPES}},
-        })
-        with pytest.raises(ValueError, match="唯一"):
-            _build_terrain_defs(doc)
-
     def test_missing_required_field_rejected(self):
         doc = _mini_doc({})
         del doc["terrain"]["ascend:grassland"]["value"]
@@ -177,6 +156,12 @@ class TestContractValidation:
     def test_missing_registry_rejected(self):
         with pytest.raises(ValueError, match="terrain 注册表"):
             _build_terrain_defs({"version": 1})
+
+    def test_water_flag_single(self):
+        """water 标志仅 WATER 一个（单一水体语义）。"""
+        water_types = [t.name for t in TerrainType
+                       if TERRAIN_DEFS[terrain_ns_id(t)].water]
+        assert water_types == ["WATER"]
 
     def test_unknown_state_in_parse(self):
         """state_params 对未知键 fail fast（沿用矩阵兜底）。"""

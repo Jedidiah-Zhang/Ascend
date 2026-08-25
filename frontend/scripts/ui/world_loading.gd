@@ -327,5 +327,17 @@ func _input(event: InputEvent) -> void:
 			_retry()
 			get_viewport().set_input_as_handled()
 		elif _menu_rect.has_point(event.position):
-			get_tree().change_scene_to_file(MAIN_MENU_SCENE)
-			get_viewport().set_input_as_handled()
+			_leave_to_main_menu()
+
+
+## 离开回主菜单：必须先标记输入已处理（本节点仍在树中），再切场景——
+## change_scene_to_file 会立即释放当前场景，之后 get_viewport() 返回 null
+## → set_input_as_handled 崩溃（回归：test_world_loading_error_menu）。
+func _leave_to_main_menu() -> void:
+	get_viewport().set_input_as_handled()
+	_change_to_menu_scene()
+
+
+## 切到主菜单场景（测试可覆写此钩子验证调用序，避免真实切场景打断测试）。
+func _change_to_menu_scene() -> void:
+	get_tree().change_scene_to_file(MAIN_MENU_SCENE)

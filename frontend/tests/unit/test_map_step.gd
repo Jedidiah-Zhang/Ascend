@@ -58,13 +58,34 @@ func test_seed_submitted_hex_normalized() -> void:
 	assert_eq(sent[sent.size() - 1]["payload"]["seed"], "a3f9")
 
 
-func test_seed_submitted_invalid_ignored() -> void:
-	"""非法 hex（0x 前缀/超长/非 hex 字符/空）忽略，保留当前种子。"""
-	for bad in ["0x2a", "zz", "g", "1.5", "-1"]:
-		var step: MapSetupStep = _make_step()
-		step.setup({"seed": "2a", "gen_params": {}})
-		step.on_seed_submitted(bad)
-		assert_eq(step.get_params()["seed"], "2a", "非法输入 %s 忽略" % bad)
+func test_seed_submitted_arbitrary_text_maps_to_256bit() -> void:
+	"""任意文本（非 hex）→ SHA-256 映射为 64 字符 hex 种子。
+
+	契约：合法 hex 直通；其余输入统一映射为 256-bit 规格种子
+	（与 manifest.SEED_MAX 一致），同文本恒同种子可复现。
+	"""
+	for seed_text in ["my world", "0x2a", "zz", "g", "1.5", "-1", "中文种子"]:
+		var pair: Array = _make_sender()
+		var step: MapSetupStep = pair[0]
+		var sent: Array = pair[1]
+		step.setup({"seed": "", "gen_params": {}})
+		step.on_preview_response({"seed": ""})  # 清在途，允许补发
+		step.on_seed_submitted(seed_text)
+		var seed: String = str(step.get_params()["seed"])
+		assert_eq(seed.length(), 64, "文本 %s 应映射为 64 字符 hex" % seed_text)
+		assert_eq(seed, seed.to_lower(), "映射结果小写")
+		assert_eq(seed, seed_text.sha256_text(), "映射 = SHA-256(文本)")
+		assert_eq(sent[sent.size() - 1]["payload"]["seed"], seed,
+			"预览请求携带映射后种子")
+
+
+func test_seed_text_mapping_deterministic() -> void:
+	"""同文本两次映射结果一致（可复现世界）。"""
+	var step: MapSetupStep = _make_step()
+	step.on_seed_submitted("fate word")
+	var first: String = str(step.get_params()["seed"])
+	step.on_seed_submitted("fate word")
+	assert_eq(str(step.get_params()["seed"]), first, "同文本恒同种子")
 
 
 func test_seed_submitted_empty_keeps_seed() -> void:

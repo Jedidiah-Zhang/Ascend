@@ -42,6 +42,7 @@ from .terrain import (
     TerrainType, TerrainDef, TERRAIN_DEFS,
     get_terrain_def, is_passable, is_buildable,
     movement_cost, fertility, state_params,
+    water_passability,
 )
 from .tile_grid import TileGrid
 from .tile_gen import TileGenerator
@@ -93,6 +94,7 @@ __all__ = [
     "movement_cost",
     "fertility",
     "state_params",
+    "water_passability",
     "TileGrid",
     "TileGenerator",
     "ChunkStore",

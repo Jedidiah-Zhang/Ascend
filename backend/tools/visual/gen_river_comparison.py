@@ -141,13 +141,12 @@ def main() -> None:
     terrain_colors = {
         TerrainType.GRASSLAND: (126, 200, 80),
         TerrainType.SAND: (232, 213, 163),
+        TerrainType.GRAVEL: (150, 148, 140),
         TerrainType.FERTILE_SOIL: (92, 61, 46),
         TerrainType.ROCK: (139, 139, 139),
-        TerrainType.STEEP_SLOPE: (107, 107, 107),
-        TerrainType.MOUNTAIN_PEAK: (224, 224, 224),
-        TerrainType.SHALLOW_WATER: (91, 158, 207),
-        TerrainType.DEEP_WATER: (26, 58, 92),
+        TerrainType.PERMAFROST: (180, 176, 170),
         TerrainType.MARSH: (74, 107, 58),
+        TerrainType.WATER: (91, 158, 207),
     }
     size = 200
     img3 = Image.new("RGB", (size, size))

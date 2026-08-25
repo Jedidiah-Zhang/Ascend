@@ -23,14 +23,16 @@ class TestWorldDataFile:
     def test_world_data_exists(self):
         doc = load_content("world")
         assert doc["version"] == 1
-        assert set(doc) == {"version", "world", "climate", "weather", "tile"}
+        # tile 段（曾含 STEEP_GRADIENT，issue #42 移除后无 tile 内容）不再存在
+        assert set(doc) == {"version", "world", "climate", "weather"}
 
     def test_content_values_applied(self):
         """内容常量有效值 = data/world.json（覆盖生效，list↔tuple 归一比较）。"""
         doc = load_content("world")
         flat = {
-            k: v for sec in ("world", "climate", "weather", "tile")
-            for k, v in doc[sec].items()
+            k: v for sec, values in doc.items()
+            if sec != "version"
+            for k, v in values.items()
         }
         for name, json_val in flat.items():
             assert getattr(c, name) == _norm(json_val), f"{name} 未被覆盖"

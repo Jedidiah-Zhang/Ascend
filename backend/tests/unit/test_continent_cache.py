@@ -48,6 +48,7 @@ class TestContinentSerialize:
         assert restored.land_mask == original.land_mask
         assert restored.elevation_field == original.elevation_field
         assert restored.river_width == original.river_width
+        assert restored.water_distance == original.water_distance
         assert restored.subdiv_ranges == original.subdiv_ranges
         assert restored._chunk_climate == original._chunk_climate
         h1, h2 = original.hydrology, restored.hydrology
@@ -73,6 +74,19 @@ class TestContinentSerialize:
                     assert (p1.x, p1.y, p1.flow, p1.strahler) == (
                         p2.x, p2.y, p2.flow, p2.strahler,
                     )
+
+    def test_roundtrip_256bit_seed(self):
+        """256-bit 种子（> int64 范围）往返不失真。
+
+        回归：世界种子为 256-bit 空间（manifest.SEED_MAX = 2**256-1），
+        seed 字段按 32 字节大端全量序列化，任意合法种子不溢出。
+        """
+        big_seed = 90716806870141588494432962298621886198264273751076786878364930858859894597832
+        assert big_seed > 2**63 - 1
+        original = _small_continent(seed=big_seed)
+        restored = deserialize_continent(serialize_continent(original))
+        assert restored is not None
+        assert restored.seed == big_seed
 
     def test_corrupted_bytes_returns_none(self):
         """损坏数据返回 None（调用方重新生成）。"""

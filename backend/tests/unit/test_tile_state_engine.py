@@ -19,7 +19,7 @@ from ascend.world_tree import Event, WorldTree
 
 def _make_grid(water: bool = False) -> TileGrid:
     """全 GRASSLAND 网格（可选含水面 tile）。"""
-    t = int(TerrainType.SHALLOW_WATER) if water else int(TerrainType.GRASSLAND)
+    t = int(TerrainType.WATER) if water else int(TerrainType.GRASSLAND)
     return TileGrid(data=[t] * 40000)
 
 

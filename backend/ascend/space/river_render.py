@@ -175,7 +175,8 @@ def _river_width(continent, wx: float, wy: float,
 def _river_radius(width: float) -> int:
     """河道宽度 (m) → 渲染半径 (tile，1 tile = 100m)。
 
-    宽 40m 河 → 1 tile 浅水；80m 河 → 2 tile（中心深水 + 边缘浅水）。
+    宽 40m 河 → 1 tile 水；80m 河 → 2 tile。深浅分级由 depth 场
+    派生（issue #42 单 WATER，无深浅枚举）。
     """
     return max(1, int(width / 50 + 0.5))
 
@@ -188,10 +189,10 @@ def _fill_circle(
 ) -> None:
     """以 (cx, cy) 为中心填充河道圆。
 
-    深水(中心)→浅水(边缘)→沃土(岸边)自然过渡。
+    半径内 → WATER；河岸外侧一环（radius < dist ≤ radius+1）→ 沃土
+    （窄河的低频距水场可能捕捉不到岸带，render 兜底；湖岸沃土过渡
+    由分类的距水带处理）。
     """
-    deep_radius = radius // 2
-
     for dy in range(-radius, radius + 1):
         for dx in range(-radius, radius + 1):
             nx, ny = cx + dx, cy + dy
@@ -200,16 +201,9 @@ def _fill_circle(
             dist = math.sqrt(dx * dx + dy * dy)
             if dist > radius + 1.0:
                 continue
-            current = tile_grid.get(nx, ny)
-            if deep_radius > 0 and dist <= deep_radius:
-                tile_grid.set(nx, ny, TerrainType.DEEP_WATER)
-            elif dist <= radius:
-                if current != TerrainType.DEEP_WATER:
-                    tile_grid.set(nx, ny, TerrainType.SHALLOW_WATER)
+            if dist <= radius:
+                tile_grid.set(nx, ny, TerrainType.WATER)
             else:  # radius < dist <= radius + 1.0 — 河岸沃土
-                if current not in (
-                    TerrainType.DEEP_WATER, TerrainType.SHALLOW_WATER,
-                    TerrainType.MOUNTAIN_PEAK, TerrainType.STEEP_SLOPE,
-                ):
+                if tile_grid.get(nx, ny) != TerrainType.WATER:
                     tile_grid.set(nx, ny, TerrainType.FERTILE_SOIL)
 __all__ = ["render_river_chunk"]

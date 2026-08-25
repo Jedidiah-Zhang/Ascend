@@ -2,7 +2,7 @@
 
 build_cells / make_placeholder_atlas / make_tile_set 均为纯计算（不触碰
 场景树与 RenderingServer），可直接实例化验证。层划分断言与后端
-TerrainType 枚举（9 地形）对齐。
+TerrainType 枚举（8 材质）对齐。
 """
 
 extends GutTest
@@ -36,28 +36,20 @@ func test_grassland_goes_to_terrain_layer() -> void:
 		"无水域 chunk 水面层应为空")
 
 
-func test_shallow_water_goes_to_water_layer() -> void:
+func test_water_goes_to_water_layer() -> void:
 	var cells: Dictionary = TerrainTileBuilder.build_cells(
-		_flat_terrain(TerrainTileBuilder.SHALLOW_WATER_ID), _flat_elevation(0.0))
+		_flat_terrain(TerrainTileBuilder.WATER_ID), _flat_elevation(0.0))
 	assert_eq(cells[TerrainTileBuilder.LAYER_TERRAIN].size(), 0,
-		"浅水不应进地形层")
+		"水体不应进地形层")
 	assert_eq(cells[TerrainTileBuilder.LAYER_WATER].size(), CS * CS,
-		"全浅水 chunk 应全部进水面层")
+		"全水 chunk 应全部进水面层")
 
 
-func test_deep_water_uses_water_atlas_column_1() -> void:
+func test_water_uses_water_atlas_column_0() -> void:
 	var cells: Dictionary = TerrainTileBuilder.build_cells(
-		_flat_terrain(TerrainTileBuilder.DEEP_WATER_ID), _flat_elevation(-5.0))
+		_flat_terrain(TerrainTileBuilder.WATER_ID), _flat_elevation(0.0))
 	var water: Array = cells[TerrainTileBuilder.LAYER_WATER]
-	assert_eq(water.size(), CS * CS)
-	assert_eq(water[0][2], Vector2i(1, 0), "深水应为水面 atlas 第 2 列")
-
-
-func test_shallow_water_uses_water_atlas_column_0() -> void:
-	var cells: Dictionary = TerrainTileBuilder.build_cells(
-		_flat_terrain(TerrainTileBuilder.SHALLOW_WATER_ID), _flat_elevation(0.0))
-	var water: Array = cells[TerrainTileBuilder.LAYER_WATER]
-	assert_eq(water[0][2], Vector2i(0, 0), "浅水应为水面 atlas 第 1 列")
+	assert_eq(water[0][2], Vector2i(0, 0), "水应为水面 atlas 第 1 列（单列）")
 
 
 func test_cell_shape_matches_set_cells_contract() -> void:
@@ -88,8 +80,8 @@ func test_cell_coords_row_major() -> void:
 
 
 func test_terrain_mapping_length_matches_backend() -> void:
-	"""9 地形映射与后端 TerrainType 枚举对齐（阶段 1 全部列索引 = terrain_id）。"""
-	assert_eq(TerrainTileBuilder.TERRAIN_TO_TILE.size(), 9)
+	"""8 材质映射与后端 TerrainType 枚举对齐（阶段 1 全部列索引 = terrain_id）。"""
+	assert_eq(TerrainTileBuilder.TERRAIN_TO_TILE.size(), 8)
 
 
 func test_short_terrain_array_pads_with_grassland() -> void:
@@ -198,36 +190,6 @@ func test_shadow_from_south_high_neighbor() -> void:
 	assert_eq(shadows.size(), CS, "北侧高地对南侧低地投影")
 
 
-func test_snowcap_on_peak_above_snowline() -> void:
-	"""MOUNTAIN_PEAK ≥ 2000m → 全部雪顶装饰（雪线概念）。"""
-	var terr := _flat_terrain(0)
-	var elev := _flat_elevation(10.0)
-	for x in CS:
-		for z in CS:
-			terr[z * CS + x] = 5  # MOUNTAIN_PEAK
-			elev[z * CS + x] = 2100.0
-	var cells: Dictionary = TerrainTileBuilder.build_cells(terr, elev)
-	var decor: Array = cells[TerrainTileBuilder.LAYER_DECOR]
-	assert_eq(decor.size(), CS * CS, "雪线以上峰区应全部有雪顶")
-	var first: Array = decor[0]
-	assert_eq(first[2], Vector2i(TerrainTileBuilder.DECOR_TILE_SNOWCAP, 0),
-		"应为雪顶 tile 列")
-
-
-func test_no_snowcap_below_snowline() -> void:
-	"""MOUNTAIN_PEAK 但海拔 < 2000m：无雪顶，按密度放岩石装饰。"""
-	var terr := _flat_terrain(0)
-	var elev := _flat_elevation(10.0)
-	for x in CS:
-		for z in CS:
-			terr[z * CS + x] = 5
-			elev[z * CS + x] = 1500.0
-	var cells: Dictionary = TerrainTileBuilder.build_cells(terr, elev)
-	for cell in cells[TerrainTileBuilder.LAYER_DECOR]:
-		assert_ne(cell[2], Vector2i(TerrainTileBuilder.DECOR_TILE_SNOWCAP, 0),
-			"雪线下峰区不应有雪顶")
-
-
 func test_contour_at_500m_crossing() -> void:
 	"""等高线：本 tile 与东邻居跨过 500m 档位 → 落在等高线上。"""
 	var elev := _flat_elevation(0.0)
@@ -244,7 +206,7 @@ func test_contour_at_500m_crossing() -> void:
 
 func test_water_tiles_excluded_from_signals() -> void:
 	"""水域 tile 不进五信号层（崖壁/投影/装饰均跳过水域）。"""
-	var terr := _flat_terrain(TerrainTileBuilder.SHALLOW_WATER_ID)
+	var terr := _flat_terrain(TerrainTileBuilder.WATER_ID)
 	var cells: Dictionary = TerrainTileBuilder.build_cells(terr, _flat_elevation(0.0))
 	assert_eq(cells[TerrainTileBuilder.LAYER_CLIFF].size(), 0)
 	assert_eq(cells[TerrainTileBuilder.LAYER_SHADOW].size(), 0)
@@ -276,7 +238,7 @@ func test_invalid_terrain_id_skipped() -> void:
 func test_placeholder_atlas_size() -> void:
 	var tex: ImageTexture = TerrainTileBuilder.make_placeholder_atlas(
 		TerrainTileBuilder.TERRAIN_TILE_COLORS)
-	assert_eq(tex.get_width(), 9 * 16, "9 列 × 16px 宽")
+	assert_eq(tex.get_width(), 8 * 16, "8 列 × 16px 宽")
 	assert_eq(tex.get_height(), 16, "16px 高")
 
 
@@ -297,10 +259,10 @@ func test_tile_set_single_source() -> void:
 	assert_eq(ts.get_source_count(), 1, "占位期单源 atlas")
 
 
-func test_tile_set_water_atlas_has_two_tiles() -> void:
+func test_tile_set_water_atlas_has_one_tile() -> void:
 	var ts: TileSet = TerrainTileBuilder.make_tile_set(TerrainTileBuilder.WATER_TILE_COLORS)
 	var src: TileSetAtlasSource = ts.get_source(0)
-	assert_eq(src.get_tiles_count(), 2, "浅水/深水两个 tile")
+	assert_eq(src.get_tiles_count(), 1, "单一 WATER 一个 tile")
 
 # ── 邻居上下文（chunk 接缝连续性） ─────────────────────────
 
@@ -388,7 +350,7 @@ func test_contour_continues_across_east_seam_with_neighbor() -> void:
 func test_cliff_skipped_when_neighbor_edge_is_water() -> void:
 	"""水域邻居不产生崖壁（与本地邻居语义一致）。"""
 	var elev := _flat_elevation(120.0)
-	var n_terr := _flat_terrain(TerrainTileBuilder.SHALLOW_WATER_ID)
+	var n_terr := _flat_terrain(TerrainTileBuilder.WATER_ID)
 	var n_elev := _flat_elevation(50.0)
 	var neighbors := {"west": _neighbor_edge("east", n_terr, n_elev)}
 	var cells: Dictionary = TerrainTileBuilder.build_cells(

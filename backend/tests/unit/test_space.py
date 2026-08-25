@@ -15,7 +15,7 @@ Coverage 目标:
 import struct
 
 import pytest
-from ascend.config import MOISTURE_TILE_FREQUENCY
+from ascend.config import MOISTURE_TILE_FREQUENCY, WATER_WADE_COST
 from ascend.space import (
     PerlinNoise,
     ClimateZone,
@@ -40,9 +40,11 @@ from ascend.space import (
     is_buildable,
     movement_cost,
     fertility,
+    water_passability,
     TileGrid,
 )
 from ascend.space.state_defs import STATE_TYPES, StateConfig, StateParams, state_keys
+from ascend.space.tile_grid import TILE_GRID_VERSION
 
 
 # ══════════════════════════════════════════════════════════
@@ -673,25 +675,25 @@ class TestTerrainType:
             assert defn.value == int(t)
 
     def test_passable(self):
-        """可行走性查询正确。"""
+        """可行走性查询正确（水面按水深实时推导，基线不可通行）。"""
         assert is_passable(TerrainType.GRASSLAND) is True
-        assert is_passable(TerrainType.MOUNTAIN_PEAK) is False
-        assert is_passable(TerrainType.DEEP_WATER) is False
-        assert is_passable(TerrainType.SHALLOW_WATER) is True
+        assert is_passable(TerrainType.GRAVEL) is True
+        assert is_passable(TerrainType.ROCK) is True
+        assert is_passable(TerrainType.WATER) is False
 
     def test_buildable(self):
         """可建造性查询正确。"""
         assert is_buildable(TerrainType.GRASSLAND) is True
         assert is_buildable(TerrainType.FERTILE_SOIL) is True
-        assert is_buildable(TerrainType.MOUNTAIN_PEAK) is False
+        assert is_buildable(TerrainType.GRAVEL) is False
         assert is_buildable(TerrainType.ROCK) is False
         assert is_buildable(TerrainType.MARSH) is False
 
     def test_movement_cost(self):
         """移动消耗查询正确。"""
         assert movement_cost(TerrainType.GRASSLAND) == 1.0
-        assert movement_cost(TerrainType.STEEP_SLOPE) == 2.0
-        assert movement_cost(TerrainType.DEEP_WATER) == float("inf")
+        assert movement_cost(TerrainType.GRAVEL) == 1.5
+        assert movement_cost(TerrainType.WATER) == float("inf")
 
     def test_fertility(self):
         """肥力查询正确。"""
@@ -700,10 +702,17 @@ class TestTerrainType:
         assert fertility(TerrainType.ROCK) == 0.0
         assert fertility(TerrainType.SAND) == 0.2
 
+    def test_water_passability_by_depth(self):
+        """水面通行按水深实时推导（浅水可涉水，深水不可）。"""
+        assert water_passability(TerrainType.GRASSLAND, 10.0) == (True, 1.0)
+        assert water_passability(TerrainType.WATER, -1.0) == (True, WATER_WADE_COST)
+        assert water_passability(TerrainType.WATER, -100.0) == (False, float("inf"))
+        assert water_passability(TerrainType.WATER, 5.0) == (True, WATER_WADE_COST)
+
     def test_int_enum(self):
         """TerrainType 是 IntEnum，可直接当 int 使用。"""
         assert TerrainType.GRASSLAND == 0
-        assert int(TerrainType.DEEP_WATER) == 7
+        assert int(TerrainType.WATER) == 7
         # 可存入 array
         from array import array
         a = array('H', [int(TerrainType.SAND)])
@@ -746,7 +755,7 @@ class TestTileGrid:
     def test_to_bytes_roundtrip(self):
         """to_bytes → from_bytes 往返无损（显式小端 BLOB 契约）。"""
         g = TileGrid()
-        g.set(0, 0, TerrainType.DEEP_WATER)
+        g.set(0, 0, TerrainType.WATER)
         g.set(5, 5, TerrainType.ROCK)
         g.set(100, 100, TerrainType.MARSH)
         g.set_state("snow", 3, 3, 18)
@@ -760,11 +769,11 @@ class TestTileGrid:
         )
         assert len(blob) == expected_len
         # 显式小端：版本头 + 首个地形 uint16 LE
-        assert blob[0:4] == struct.pack("<I", 2)
-        assert blob[4:6] == struct.pack("<H", int(TerrainType.DEEP_WATER))
+        assert blob[0:4] == struct.pack("<I", TILE_GRID_VERSION)
+        assert blob[4:6] == struct.pack("<H", int(TerrainType.WATER))
 
         g2 = TileGrid.from_bytes(blob)
-        assert g2.get(0, 0) == TerrainType.DEEP_WATER
+        assert g2.get(0, 0) == TerrainType.WATER
         assert g2.get(5, 5) == TerrainType.ROCK
         assert g2.get(100, 100) == TerrainType.MARSH
         assert g2.get_state("snow", 3, 3) == 18
@@ -775,13 +784,14 @@ class TestTileGrid:
         with pytest.raises(ValueError):
             TileGrid.from_bytes(b"\x02\x00\x00\x00" + b"\x00" * 100)
 
-    def test_from_bytes_old_version_rejected(self):
-        """旧版（v1）BLOB 明确拒绝——无向后兼容，零迁移路径。"""
-        # 构造 v1 尺寸的合法 blob（版本头 1 + 地形 + 高程×2）
-        old_len = 4 + TILE_MAP_SIZE * TILE_MAP_SIZE * (2 + 4 + 4)
-        old = b"\x01\x00\x00\x00" + b"\x00" * (old_len - 4)
+    def test_from_bytes_wrong_version_rejected(self):
+        """版本不符（其他格式/未来产物）明确拒绝——零迁移路径。"""
+        # 构造当前尺寸的合法 blob 但版本头不同
+        wrong_len = 4 + TILE_MAP_SIZE * TILE_MAP_SIZE * (2 + 4 + 4) \
+            + TILE_MAP_SIZE * TILE_MAP_SIZE * len(STATE_TYPES)
+        wrong = b"\x00\x00\x00\x00" + b"\x00" * (wrong_len - 4)
         with pytest.raises(ValueError, match="不支持 TileGrid 版本"):
-            TileGrid.from_bytes(old)
+            TileGrid.from_bytes(wrong)
 
     def test_create_from_list(self):
         """从正确长度的列表构造（非 array 分支）。"""
@@ -947,15 +957,15 @@ class TestTileGrid:
         assert isinstance(raw, array)
         assert len(raw) == TILE_MAP_SIZE * TILE_MAP_SIZE
         # 修改底层数组会影响 TileGrid
-        raw[0] = int(TerrainType.DEEP_WATER)
-        assert g.get(0, 0) == TerrainType.DEEP_WATER
+        raw[0] = int(TerrainType.WATER)
+        assert g.get(0, 0) == TerrainType.WATER
 
     def test_get_raw(self):
         """get_raw 按索引读取。"""
         g = TileGrid()
-        g.set(3, 5, TerrainType.MOUNTAIN_PEAK)
+        g.set(3, 5, TerrainType.ROCK)
         idx = 5 * TILE_MAP_SIZE + 3
-        assert g.get_raw(idx) == int(TerrainType.MOUNTAIN_PEAK)
+        assert g.get_raw(idx) == int(TerrainType.ROCK)
 
 
 # ══════════════════════════════════════════════════════════
@@ -1123,7 +1133,7 @@ class TestTileGenerator:
         grid = gen.generate_chunk(300, 300)  # 深海区
         water_count = sum(
             1 for y in range(200) for x in range(200)
-            if grid.get(x, y) in (TerrainType.DEEP_WATER, TerrainType.SHALLOW_WATER)
+            if grid.get(x, y) == TerrainType.WATER
         )
         assert water_count > 39000, f"深海 chunk 水体应 >97%，实际 {water_count/400}%"
 
@@ -1320,47 +1330,65 @@ class TestTileGenerator:
                         cc_temp, cc_rain, macro_elev, sea_temp, moisture,
                         subdiv_ranges=cont.subdiv_ranges,
                     )
-                    _ = gen._classify(elev, bias)
+                    _ = gen._classify(
+                        macro_elev, 0.1, 0.0, cc_temp, cc_rain, moisture, bias,
+                    )
                     total += 1
 
         assert total > 0, "应采到至少一个 tile"
 
-    def test_classify_bands_gap_free_under_peak_shift(self):
-        """海拔带无缝隙：peak 偏移 >0 时 [2000, 2000+delta) 仍归 ROCK。
-
-        回归：ROCK 带 hi 曾固定 2000，与 PEAK lo 的偏移键不共享——
-        偏移后 [2000, 2000+delta) 无带覆盖落入 fallback SAND
-        （ALPINE 群系 2000-2600m 山地变沙漠）。修复：ROCK hi 共享
-        peak_threshold_delta 偏移键。
-        """
-        from ascend.space.biome import TerrainBias
-        from ascend.space.tile_gen import TileGenerator
-
-        gen = object.__new__(TileGenerator)
-        bias = TerrainBias(
-            sand_cap_delta=0.0, fertile_shift=0.0,
-            rock_threshold_delta=-200.0, peak_threshold_delta=600.0,
-            marsh_tendency=0.0,
-        )
-        for elev in (2000, 2200, 2500):
-            assert gen._classify(elev, bias) is TerrainType.ROCK, (
-                f"elev={elev} 应归 ROCK（无缝隙）"
-            )
-        assert gen._classify(2600, bias) is TerrainType.MOUNTAIN_PEAK
-
-    def test_classify_band_edge_exact(self):
-        """带边界语义：elev == 带界归上带（[lo, hi) 半开）。"""
+    def test_classify_hierarchy_ocean_and_rock(self):
+        """层次分类：海洋 / 岩线 / 裸岩坡度 → ROCK。"""
         from ascend.space.biome import TerrainBias
         from ascend.space.tile_gen import TileGenerator
 
         gen = object.__new__(TileGenerator)
         bias = TerrainBias()
-        assert gen._classify(0.0, bias) is TerrainType.SAND
-        assert gen._classify(10.0, bias) is TerrainType.GRASSLAND
-        assert gen._classify(600.0, bias) is TerrainType.ROCK
-        assert gen._classify(2000.0, bias) is TerrainType.MOUNTAIN_PEAK
-        assert gen._classify(-100.0, bias) is TerrainType.SHALLOW_WATER
-        assert gen._classify(-101.0, bias) is TerrainType.DEEP_WATER
+        # 1. 宏观海拔 < 0 → WATER
+        assert gen._classify(-5.0, 0.1, 0.0, 15.0, 300.0, 0.0, bias) is TerrainType.WATER
+        # 2. 岩线（2000+0）以上 → ROCK
+        assert gen._classify(2100.0, 0.1, 0.0, 15.0, 300.0, 0.0, bias) is TerrainType.ROCK
+        # 3. 面内坡度 > 裸岩阈值（0.6）→ ROCK
+        assert gen._classify(500.0, 0.9, 0.0, 15.0, 300.0, 0.0, bias) is TerrainType.ROCK
+
+    def test_classify_cold_permafrost_marsh(self):
+        """寒带：低洼积水 → 沼泽，否则冻土。"""
+        from ascend.space.biome import TerrainBias
+        from ascend.space.tile_gen import TileGenerator
+
+        gen = object.__new__(TileGenerator)
+        bias = TerrainBias()
+        # 年均温 -10 < 冻土线 -5 → 寒带；湿度低（非积水）→ 冻土
+        assert gen._classify(100.0, 0.1, 0.0, -10.0, 300.0, -0.5, bias) is TerrainType.PERMAFROST
+        # 寒带 + 近水 + 湿度高 → 沼泽
+        assert gen._classify(100.0, 0.1, 0.0, -10.0, 300.0, 0.5, bias) is TerrainType.MARSH
+
+    def test_classify_arid_gravel_sand(self):
+        """干旱：高/中海拔砾石，低海拔沙。"""
+        from ascend.space.biome import TerrainBias
+        from ascend.space.tile_gen import TileGenerator
+
+        gen = object.__new__(TileGenerator)
+        bias = TerrainBias()
+        # 年降雨 100 < 干旱阈值 250 → 干旱
+        assert gen._classify(500.0, 0.1, 0.0, 15.0, 100.0, 0.0, bias) is TerrainType.GRAVEL
+        assert gen._classify(50.0, 0.1, 0.0, 15.0, 100.0, 0.0, bias) is TerrainType.SAND
+
+    def test_classify_bands_beach_alluvial_wetland(self):
+        """距水带：沙滩 → 冲积沃土 → 湿地沼泽 → 默认草地。"""
+        from ascend.space.biome import TerrainBias
+        from ascend.space.tile_gen import TileGenerator
+
+        gen = object.__new__(TileGenerator)
+        bias = TerrainBias()
+        # 距水 10 < 沙滩带 40 → SAND
+        assert gen._classify(50.0, 0.1, 10.0, 15.0, 300.0, 0.0, bias) is TerrainType.SAND
+        # 距水 60 < 冲积带 120 且 低海拔(<400) → FERTILE_SOIL
+        assert gen._classify(50.0, 0.1, 60.0, 15.0, 300.0, 0.0, bias) is TerrainType.FERTILE_SOIL
+        # 距水 150（超冲积带但 < 湿地带 200）且 湿度高 → MARSH
+        assert gen._classify(50.0, 0.1, 150.0, 15.0, 300.0, 0.6, bias) is TerrainType.MARSH
+        # 高海拔高距水 → 默认 GRASSLAND
+        assert gen._classify(500.0, 0.1, 500.0, 15.0, 300.0, 0.0, bias) is TerrainType.GRASSLAND
 
     def test_get_chunk_climate_consistent(self):
         """get_chunk_climate 对同一 chunk 返回的值一致。"""

@@ -15,7 +15,7 @@ from .terrain import TerrainType
 from .state_defs import STATE_TYPES, state_keys
 from ascend.config import TILE_MAP_SIZE
 
-TILE_GRID_VERSION: int = 2
+TILE_GRID_VERSION: int = 1
 _BYTES_TERRAIN: int = TILE_MAP_SIZE * TILE_MAP_SIZE * 2
 _BYTES_ELEV: int = TILE_MAP_SIZE * TILE_MAP_SIZE * 4
 

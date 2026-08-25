@@ -784,11 +784,11 @@ class TestVisualOutput:
         grid = gen.generate_chunk(cx, cy)
 
         type_to_elev = {
-            TerrainType.DEEP_WATER: -3000, TerrainType.SHALLOW_WATER: -500,
+            TerrainType.WATER: -500,
             TerrainType.SAND: 50, TerrainType.FERTILE_SOIL: 200,
             TerrainType.GRASSLAND: 400, TerrainType.MARSH: 100,
-            TerrainType.ROCK: 800, TerrainType.STEEP_SLOPE: 1400,
-            TerrainType.MOUNTAIN_PEAK: 2400,
+            TerrainType.GRAVEL: 1200, TerrainType.ROCK: 800,
+            TerrainType.PERMAFROST: 1400,
         }
         visual = [type_to_elev.get(grid.get(x, y), 0)
                   for y in range(200) for x in range(200)]
@@ -796,8 +796,7 @@ class TestVisualOutput:
         render_elevation(visual, 200, 200, out_path,
                          title=f"Tile Water ({cx},{cy})")
         water = sum(1 for y in range(200) for x in range(200)
-                    if grid.get(x, y) in (TerrainType.DEEP_WATER,
-                                          TerrainType.SHALLOW_WATER))
+                    if grid.get(x, y) == TerrainType.WATER)
         marsh = sum(1 for y in range(200) for x in range(200)
                     if grid.get(x, y) == TerrainType.MARSH)
         print(f"[visual] Tile水体已保存, water={water/400:.1f}%, marsh={marsh/400:.1f}%")
@@ -817,11 +816,11 @@ class TestVisualOutput:
         right = gen.generate_chunk(cx + 1, cy)
 
         type_to_elev = {
-            TerrainType.DEEP_WATER: -3000, TerrainType.SHALLOW_WATER: -500,
+            TerrainType.WATER: -500,
             TerrainType.SAND: 50, TerrainType.FERTILE_SOIL: 200,
             TerrainType.GRASSLAND: 400, TerrainType.MARSH: 100,
-            TerrainType.ROCK: 800, TerrainType.STEEP_SLOPE: 1400,
-            TerrainType.MOUNTAIN_PEAK: 2400,
+            TerrainType.GRAVEL: 1200, TerrainType.ROCK: 800,
+            TerrainType.PERMAFROST: 1400,
         }
 
         visual = []

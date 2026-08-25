@@ -14,6 +14,12 @@ from typing import Mapping
 
 from ascend.data import load_content, split_ns_id
 from ascend.i18n import get_default
+from ascend.config import (
+    ALLUVIAL_BAND_M as _ALLUVIAL_BAND_M,
+    ARID_RAINFALL_MM as _ARID_RAINFALL_MM,
+    PERMAFROST_TEMP_C as _PERMAFROST_TEMP_C,
+    SAND_BEACH_BAND_M as _SAND_BEACH_BAND_M,
+)
 from .climate import ClimateZone, classify
 
 _I18N = get_default()
@@ -26,26 +32,28 @@ _I18N = get_default()
 
 @dataclass(slots=True)
 class TerrainBias:
-    """群系对 tile 地形分类的偏移参数。
+    """群系对 tile 材质分类的偏移参数（issue #42 层次分类）。
 
-    基线 = TEMPERATE_DECIDUOUS_FOREST（全 0，用默认海拔带阈值）。
-    其他群系相对基线偏移。tile 生成时 bias = Σ weight_i × bias_i。
+    基线 = TEMPERATE_DECIDUOUS_FOREST（全默认 = config 阈值）。
+    其他群系相对基线偏移。tile 生成时 bias = Σ weight_i × bias_i
+    （数值字段加权平均）。材质分类输入全为低频连续场。
 
     Attributes:
-        sand_cap_delta: SAND 海拔上限偏移 (m)，+值=更多沙地。
-        fertile_shift: FERTILE_SOIL 海拔带整体平移 (m)，+值=上移(抑制沃土)。
-        rock_threshold_delta: ROCK 海拔阈值偏移 (m)，-值=更低海拔出岩石。
-            只影响 ROCK 阈值，不影响 STEEP/PEAK。
-        peak_threshold_delta: MOUNTAIN_PEAK 海拔阈值偏移 (m)，
-            +值=更高海拔才出雪顶（高山草甸用），-值=更低海拔出雪顶。
-        marsh_tendency: MARSH 倾向 [0,1]，湿地概率加成。
+        rock_line_delta: 岩线海拔偏移 (m)，+值=更高海拔才出岩石。
+        arid_rainfall_mm: 干旱降雨阈值 (mm/年)，低于此判干旱群系
+            （GRAVEL/SAND 入口）；+值=更易判干旱。
+        beach_band_m: 沙滩带宽 (m)，距水 < 此值 → SAND。
+        alluvial_band_m: 冲积带宽 (m)，距水 < 此值 且 低海拔 → FERTILE_SOIL。
+        marsh_tendency: 沼泽倾向 [0,1]，距水近 + 湿度 判 MARSH 的加成。
+        permafrost_temp_c: 冻土线温度 (°C)，年均温低于此 → PERMAFROST。
     """
 
-    sand_cap_delta: float = 0.0
-    fertile_shift: float = 0.0
-    rock_threshold_delta: float = 0.0
-    peak_threshold_delta: float = 0.0
+    rock_line_delta: float = 0.0
+    arid_rainfall_mm: float = _ARID_RAINFALL_MM
+    beach_band_m: float = _SAND_BEACH_BAND_M
+    alluvial_band_m: float = _ALLUVIAL_BAND_M
     marsh_tendency: float = 0.0
+    permafrost_temp_c: float = _PERMAFROST_TEMP_C
 
 
 # ═══════════════════════════════════════════════════════════
