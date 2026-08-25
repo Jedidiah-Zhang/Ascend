@@ -1,0 +1,14 @@
+name = "ascend-lean"
+version = "0.1.0"
+defaultTargets = ["ascend-lean"]
+
+[[lean_lib]]
+name = "AscendLean"
+
+[[lean_exe]]
+name = "ascend-lean"
+root = "Main"
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4.git"
