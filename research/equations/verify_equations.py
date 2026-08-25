@@ -3,6 +3,8 @@
 运行: .venv/bin/python research/equations/verify_equations.py [--fast]
 
 判据（预注册，05 篇总则风格）：
+  V0 Lean 生成物漂移：gen_lean --check 通过（GenDeclarationData.lean 与
+      equations.json + config.py 真值一致；issue #44 防漂移机制）；
   V1 声明加载 + 结构校验：schema.validate 无问题；
   V2 L_j 对账：声明 L 与 config 常量解析计算一致（容差 1e-12）；
      derive_latitude = (LATITUDE_MAX−LATITUDE_MIN)/(LATITUDE_T_MAX−LATITUDE_T_MIN)；
@@ -26,7 +28,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))                       # 供 import schema
 sys.path.insert(0, str(HERE.parents[1] / "backend"))  # 供 import ascend
 
-import schema  # noqa: E402
+import schema
+import gen_lean  # noqa: E402  V0 巡检用（同目录）
 
 from ascend.config import (  # noqa: E402
     LATITUDE_MAX, LATITUDE_MIN, LATITUDE_T_MAX, LATITUDE_T_MIN,
@@ -57,6 +60,12 @@ def main() -> int:
     rng = random.Random(20260826)
     n = 2_000 if args.fast else 20_000
     results: list[tuple[str, bool, str]] = []
+
+    # ── V0 Lean 生成物漂移巡检（issue #44）────────────
+    # 固定锚定默认单一事实来源 equations.json（生成物入库对应它，
+    # 不跟随 --json 的自定义路径，避免对拍临时片段误报入库产物漂移）。
+    ok0, detail0 = gen_lean.check()
+    results.append(("V0 Lean 生成物漂移", ok0, detail0))
 
     # ── V1 声明加载 + 结构校验 ────────────────────────
     graph = schema.load_declaration(args.json)
