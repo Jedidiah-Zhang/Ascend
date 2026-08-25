@@ -1,13 +1,9 @@
 name = "ascend-lean"
 version = "0.1.0"
-defaultTargets = ["ascend-lean"]
+defaultTargets = ["AscendLean"]
 
 [[lean_lib]]
 name = "AscendLean"
-
-[[lean_exe]]
-name = "ascend-lean"
-root = "Main"
 
 [[require]]
 name = "mathlib"

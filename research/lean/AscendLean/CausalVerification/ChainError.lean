@@ -1,7 +1,7 @@
 import Mathlib
 
 /-!
-# 可行性试写 — 链式误差传播（02 篇引理 2.1 链式特例）
+# 链式误差传播闭式（02 篇引理 2.1 的链式特例）
 
 e₀ = ε₀；e_{i+1} = ε_{i+1} + L_i · e_i
 闭式（统一形式）：e_{n+1} = Σ_{i=0..n+1} ε_i · (Π_{j=i..n} L_j)
@@ -14,7 +14,7 @@ e₀ = ε₀；e_{i+1} = ε_{i+1} + L_i · e_i
 open Finset
 open scoped BigOperators
 
-namespace AscendLean
+namespace AscendLean.CausalVerification
 
 /-- 两步链的直算（热身）：e₂ = ε₂ + L₁·ε₁ + L₁·L₀·ε₀ -/
 theorem chain_two (e ε L : ℕ → ℝ)
@@ -46,4 +46,4 @@ theorem chain_error_closed_form (n : ℕ) (e ε L : ℕ → ℝ)
         (Nat.lt_succ_iff.mp (Finset.mem_range.mp hi))]
       ring
 
-end AscendLean
+end AscendLean.CausalVerification

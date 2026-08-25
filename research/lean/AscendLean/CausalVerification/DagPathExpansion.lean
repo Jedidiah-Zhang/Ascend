@@ -23,7 +23,7 @@ import Mathlib
 open Finset
 open scoped BigOperators
 
-namespace AscendLean
+namespace AscendLean.CausalVerification
 
 /-! ## 第一部分：汇聚拓扑（X1, X2 → X3）的闭式 -/
 
@@ -358,4 +358,4 @@ theorem dag_converge_closed (L13 L23 : ℝ) (e ε : ℕ → ℝ)
   rw [convergeAdj_weight_03 L13 L23, convergeAdj_weight_13 L13 L23, convergeAdj_weight_23 L13 L23]
   ring
 
-end AscendLean
+end AscendLean.CausalVerification

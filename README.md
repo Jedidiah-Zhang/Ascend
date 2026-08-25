@@ -10,6 +10,7 @@
   <img src="https://img.shields.io/badge/Godot-4.x-478CBF?logo=godotengine&logoColor=white" alt="Godot">
   <img src="https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white" alt="SQLite">
   <img src="https://img.shields.io/badge/JSON-over%20TCP-000000?logo=json&logoColor=white" alt="JSON over TCP">
+  <img src="https://img.shields.io/badge/Lean-4.34%20%2B%20Mathlib-000000" alt="Lean + Mathlib">
   <img src="https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-EF9421" alt="License">
 </p>
 
@@ -162,13 +163,13 @@ WorldTree 的设计满足研究所需的可追踪性、可验证性、可复现�
 
 > **一个并不知道世界 Ground Truth 的智能体，如何通过自己的经历形成对世界的内部表征？**
 
-### 智能体不直接获得 Ground Truth
+#### 智能体不直接获得 Ground Truth
 
 第一阶段已获得由世界生成机制定义的 Ground Truth 因果结构 $G^*$ ，但智能体无法直接访问它。智能体能够获得的信息来自自己的观测 $o_1,o_2,\dots,o_t$ 以及自己的行动 $a_1,a_2,\dots,a_t$。
 因此，不同智能体即使处于同一个世界，也可能因为感知能力、初始条件、经历和个体特征不同，而形成不同的世界表征。
 第二阶段的具体认知与决策架构本身也是研究对象，而不是预先确定的工程实现。
 
-### 个体差异与基因
+#### 个体差异与基因
 
 玩家对基因的编辑不仅用于改变传统意义上的数值属性，而是用于改变个体与世界交互的初始条件。
 长期目标是研究：
@@ -200,7 +201,7 @@ NPC的认知、记忆、信念和行为应来自其自身的内部模型与经�
 
 ---
 
-### 目录结构
+## 目录结构
 
 ```
 backend/   Python 后端（核心逻辑）

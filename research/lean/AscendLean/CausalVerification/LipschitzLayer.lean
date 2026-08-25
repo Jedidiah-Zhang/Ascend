@@ -1,5 +1,5 @@
 import Mathlib
-import AscendLean.Theorem25
+import AscendLean.CausalVerification.DagPathExpansion
 
 /-!
 # Lipschitz 函数层 — 从"真实预测误差"到"路径和闭式"的完整闭环
@@ -14,7 +14,7 @@ import AscendLean.Theorem25
 - 路径和闭式（第 59-61 行）：
   `e_t = Σ_u ε_u · Σ_{paths u→t} Π L_{a,b}`，链情形退化回引理 2.1（第 59 行）。
 
-`Theorem25.lean` 已证明代数内核（`dag_path_expansion`：递推 ⟹ 闭式）。
+`DagPathExpansion.lean` 已证明代数内核（`dag_path_expansion`：递推 ⟹ 闭式）。
 本文件补上缺失的一环——**凭什么真实预测误差满足那个递推上界**：
 
 0. 记号：节点 = ℕ（拓扑序 = 自然数序）；真方程 `f i` / 模型方程 `fh i`
@@ -31,7 +31,7 @@ import AscendLean.Theorem25
 5. 干预情形：被干预节点两侧钉死同值（`X s = Xh s`）⟹ 该点误差为 0，
    复用 `do_intervention_zero`；`ε s = 0` 使闭式中干预源项消失
    （对应第 61 行 `Anc(t) \ S`）；
-6. 链特例 = 引理 2.1：单父链上实例化，路径和闭式退化回 Feasibility.lean
+6. 链特例 = 引理 2.1：单父链上实例化，路径和闭式退化回 ChainError.lean
    的 `Σ ε_j Π L_j` 形态。
 
 编码取舍（Lipschitz 的忠实版）：逐边 Lipschitz 采用**单父坐标**形式
@@ -44,7 +44,7 @@ import AscendLean.Theorem25
 open Finset
 open scoped BigOperators
 
-namespace AscendLean
+namespace AscendLean.CausalVerification
 
 /-! ## 第一节：望远镜引理（单坐标 Lipschitz ⟹ 多坐标贡献相加） -/
 
@@ -205,7 +205,7 @@ theorem error_recurrence_bound (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh ε e
 /-! ## 第四节：定理 2.5 完整式 — 组合路径和展开 -/
 
 /-- **定理 2.5 完整式**（02 篇第 51-61 行）：组合连接定理与
-    `Theorem25.dag_path_expansion`（递推 ⟹ 路径和闭式），得
+    `DagPathExpansion.dag_path_expansion`（递推 ⟹ 路径和闭式），得
     `|Xh t − X t| ≤ ε t + Σ_{u<t} ε u · W u t`
     ——对所有从误差源到 t 的有向路径求和，而非取最大。 -/
 theorem counterfactual_closed_form (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh ε e : ℕ → ℝ)
@@ -241,7 +241,7 @@ lemma recurrence_nonneg (ε e : ℕ → ℝ) (adj : ℕ → ℕ → ℝ)
     （自洽性只在 i ≠ s 处要求）；递推在其余节点照常成立，
     故对一切 i 有 `|Xh i − X i| ≤ e i`。
     钉死分支需要 e s ≥ 0：由 sup 范数界推出 ε ≥ 0，再由递推归纳出 e ≥ 0
-    （见 recurrence_nonneg）；与 Theorem25.do_intervention_zero 呼应：
+    （见 recurrence_nonneg）；与 DagPathExpansion.do_intervention_zero 呼应：
     ε s = 0 且入边断开 ⟹ e s = 0。 -/
 theorem error_recurrence_bound_do (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh ε e : ℕ → ℝ)
     (adj : ℕ → ℕ → ℝ)
@@ -266,7 +266,7 @@ theorem error_recurrence_bound_do (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh �
       (fun j hj => ih j hj) hadjnn
 
 /-- 干预节点的自洽性核对（02 篇第 53 行 `e_s = 0`（干预节点））：
-    一侧由递推 + ε s = 0 + 入边断开给出 e s = 0（复用 Theorem25.do_intervention_zero）；
+    一侧由递推 + ε s = 0 + 入边断开给出 e s = 0（复用 DagPathExpansion.do_intervention_zero）；
     另一侧由干预值钉死给出真实误差 |Xh s − X s| = 0。两侧一致。 -/
 theorem do_intervention_consistency (X Xh ε e : ℕ → ℝ)
     (adj : ℕ → ℕ → ℝ)
@@ -380,7 +380,7 @@ lemma pathWeight_chain_lt (L : ℕ → ℝ) (n : ℕ) :
       ring
 
 /-- 链式闭式的两种形态桥接：路径和退化形（ε_{n+1} 单列）
-    ⟺ Feasibility.lean 的统一形（空积 = 1 吸收末项，第 9 行）。 -/
+    ⟺ ChainError.lean 的统一形（空积 = 1 吸收末项，第 9 行）。 -/
 lemma chain_two_forms (ε L : ℕ → ℝ) (n : ℕ) :
     ε (n + 1) + ∑ u ∈ range (n + 1), ε u * ∏ j ∈ Icc u n, L j
       = ∑ i ∈ range (n + 2), ε i * ∏ j ∈ Icc i n, L j := by
@@ -399,7 +399,7 @@ lemma chain_two_forms (ε L : ℕ → ℝ) (n : ℕ) :
     单父链上，端到端误差
     `|Xh (n+1) − X (n+1)| ≤ Σ_{i<n+2} ε_i · Π_{j∈Icc i n} L_j`
     ——第 j 步误差 ε_j 经其后所有环节 `Π_{m>j} L_m` 放大后计入总和。
-    RHS 与 Feasibility.chain_error_closed_form 的闭式完全同形（对照成立）。
+    RHS 与 ChainError.chain_error_closed_form 的闭式完全同形（对照成立）。
     证明路线刻意经过路径和形式：泛型定理给 `Σ_u ε_u·W u (n+1)`，
     再用 pathWeight_chain_lt 把 W 退化为链乘积——展示"所有路径求和"
     在单父链上只剩一条路径（第 59 行）。 -/
@@ -433,7 +433,7 @@ theorem chain_error_propagation_bound (L : ℕ → ℝ) (f fh : ℕ → (ℕ →
         rwa [hip] at hp
       rw [chainAdj_ne L hij, heq]
       simp
-  -- 泛型递推在链上的形态（Feasibility 式递推 ⟹ 泛型递推）
+  -- 泛型递推在链上的形态（ChainError 式递推 ⟹ 泛型递推）
   have he : ∀ i, e i = ε i + ∑ j ∈ range i, chainAdj L j i * e j := by
     intro i
     cases i with
@@ -454,4 +454,4 @@ theorem chain_error_propagation_bound (L : ℕ → ℝ) (f fh : ℕ → (ℕ →
   rw [hps'] at hps
   rwa [chain_two_forms] at hps
 
-end AscendLean
+end AscendLean.CausalVerification
