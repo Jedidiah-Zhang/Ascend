@@ -72,7 +72,11 @@ from ascend.time import WorldClock, GameCalendar
 from ascend.i18n import I18n, get_default
 from ascend.lifecycle import LifecycleStack
 from ascend.world_tree import world_tree, Event, AffectedParty, WorldEvent
-from ascend.save import SaveManager, collect_state, aligned_time, apply_clock, apply_player
+from ascend.fate import derive
+from ascend.save import (
+    SaveManager, collect_state, aligned_time, apply_clock, apply_player,
+)
+from ascend.save.manifest import SEED_MAX, seed_to_hex
 
 logger = get_logger(__name__)
 
@@ -83,10 +87,13 @@ _NDY = (0, 0, 1, -1, 1, 1, -1, -1)
 
 @dataclass
 class WorldInitialized(WorldEvent):
-    """地图生成完毕、出生点确定、周边区块就绪后发布。"""
+    """地图生成完毕、出生点确定、周边区块就绪后发布。
+
+    seed 为协议层 hex 字符串（Godot JSON 仅 int64，256-bit 直传丢失）。
+    """
 
     event_type: ClassVar[str] = "world_initialized"
-    seed: int
+    seed: str
     birth_chunk: list
     loaded_chunks: int
     world_id: str = ""
@@ -333,7 +340,7 @@ class GameEngine:
         # 1. 种子（seed=0 仅在无存档模式启动时随机；存档世界在
         # create_world 时已定案——见 SaveManager.create_world）。
         if self.seed == 0 and self._manifest is None:
-            self.seed = random.randint(1, 2**31 - 1)
+            self.seed = random.randint(1, SEED_MAX)
         logger.info("游戏引擎启动: seed=%d world=%s", self.seed, self.world_id)
 
         # 2. 世界生成器 + 主动生成大陆宏观场（侵蚀+水文，首次约 5-30s，
@@ -690,7 +697,10 @@ class GameEngine:
                     break
         if not pool:
             raise RuntimeError(f"seed={seed}: 大陆无陆地 chunk，无法选取出生点")
-        return pool[random.randrange(len(pool))]
+        # 确定性选取（命运织机）：同 seed 同大陆 → 同出生点。
+        # 原全局 random.randrange 无种子，破坏同 seed 双跑复现
+        # （CRN 前提，见 docs/世界框架/随机系统/设计.md）。
+        return pool[derive(seed, "world", "birth_point") % len(pool)]
 
     def _generate_initial_chunks(self, continent) -> None:
         """预生成出生点周边 INITIAL_CHUNK_RADIUS 范围的详细 tile 层。
@@ -753,7 +763,7 @@ class GameEngine:
             weight=5,
             data=WorldInitialized(
                 world_id=self.world_id or "",
-                seed=self.seed,
+                seed=seed_to_hex(self.seed),
                 birth_chunk=list(bc),
                 loaded_chunks=len(self.chunk_store),
             ).as_dict(),

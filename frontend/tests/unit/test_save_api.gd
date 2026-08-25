@@ -16,21 +16,21 @@ func test_list_request_shape() -> void:
 
 
 func test_create_request_carries_name_and_seed() -> void:
-	var req: Dictionary = SaveApi.create_request("我的世界", 42)
+	var req: Dictionary = SaveApi.create_request("我的世界", "2a")
 	assert_eq(req["request_type"], SaveApi.CREATE)
 	assert_eq(req["payload"]["name"], "我的世界")
-	assert_eq(req["payload"]["seed"], 42)
+	assert_eq(req["payload"]["seed"], "2a")
 
 
 func test_create_request_default_random_seed() -> void:
 	var req: Dictionary = SaveApi.create_request("x")
-	assert_eq(req["payload"]["seed"], 0)
+	assert_eq(req["payload"]["seed"], "")
 
 
 func test_create_request_carries_gen_params() -> void:
 	"""调参产出（大陆占比）随创建请求下发（Issue #8）。"""
 	var req: Dictionary = SaveApi.create_request(
-		"调参世界", 42, {"land_ratio": 0.35})
+		"调参世界", "2a", {"land_ratio": 0.35})
 	assert_eq(req["payload"]["gen_params"], {"land_ratio": 0.35})
 
 
@@ -41,11 +41,11 @@ func test_create_request_default_gen_params_empty() -> void:
 
 func test_preview_request_shape() -> void:
 	"""地形预览请求（创建世界调参），默认 100×60 km，携带全部气候图层。"""
-	var req: Dictionary = SaveApi.preview_request(42, 0.55)
+	var req: Dictionary = SaveApi.preview_request("2a", 0.55)
 	assert_eq(req["type"], "request")
 	assert_eq(req["request_type"], SaveApi.MAP_PREVIEW)
 	assert_eq(req["payload"], {
-		"seed": 42, "land_ratio": 0.55,
+		"seed": "2a", "land_ratio": 0.55,
 		"width_km": 100.0, "height_km": 60.0,
 		"layers": ["temp", "rain", "climate"],
 	})
@@ -53,14 +53,14 @@ func test_preview_request_shape() -> void:
 
 func test_preview_request_custom_size() -> void:
 	"""预览请求携带尺寸：采样分辨率固定，网格随尺寸。"""
-	var req: Dictionary = SaveApi.preview_request(42, 0.55, 150.0, 90.0)
+	var req: Dictionary = SaveApi.preview_request("2a", 0.55, 150.0, 90.0)
 	assert_eq(req["payload"]["width_km"], 150.0)
 	assert_eq(req["payload"]["height_km"], 90.0)
 
 
 func test_preview_request_layers_override() -> void:
 	"""可显式指定图层子集（旧后端兼容 / 按需裁剪）。"""
-	var req: Dictionary = SaveApi.preview_request(42, 0.55, 100.0, 60.0, ["temp"])
+	var req: Dictionary = SaveApi.preview_request("2a", 0.55, 100.0, 60.0, ["temp"])
 	assert_eq(req["payload"]["layers"], ["temp"])
 
 
@@ -116,7 +116,7 @@ func test_parse_worlds_keeps_fields() -> void:
 		"worlds": [{
 			"world_id": "abc",
 			"name": "世界",
-			"seed": 7,
+			"seed": "7",
 			"game_time": 172800,
 			"play_duration_sec": 3600,
 			"snapshot_count": 2,
@@ -128,7 +128,7 @@ func test_parse_worlds_keeps_fields() -> void:
 	var w: Dictionary = worlds[0]
 	assert_eq(w["world_id"], "abc")
 	assert_eq(w["name"], "世界")
-	assert_eq(w["seed"], 7)
+	assert_eq(w["seed"], "7")
 	assert_eq(w["game_time"], 172800)
 	assert_eq(w["play_duration_sec"], 3600.0)
 	assert_eq(w["snapshot_count"], 2)

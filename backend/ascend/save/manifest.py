@@ -19,8 +19,12 @@ MANIFEST_NAME: str = "manifest.json"
 # map_preview 请求校验（preview_handler）、种子随机上限（create_world）
 # 全部引用此处——新增调参键时在此定义范围，前后端各自落地。
 
-# 种子范围：1 ~ 2**31-1（0 = 随机占位，创建时随机定案）
-SEED_MAX: int = 2**31 - 1
+# 种子范围：1 ~ 2**256-1（0 = 随机占位，创建时随机定案）。
+# 256-bit：世界空间 2^256，派生流碰撞抗性生日界 2^128
+# （设计文档: docs/世界框架/随机系统/设计.md）。
+# 协议层 seed 以 64 字符小写 hex 字符串传输（Godot JSON 仅 int64，
+# 整数直传会精度丢失）——见 seed_to_hex / parse_seed。
+SEED_MAX: int = 2**256 - 1
 # 陆地比例范围 (0, 1]：严格大于 0（无纯海洋世界）
 LAND_RATIO_MAX: float = 1.0
 # 地图尺寸范围 [20, 200] km（UI 档位 60/100/150 km，含余量）
@@ -30,6 +34,58 @@ SIZE_KM_MAX: float = 200.0
 
 class SaveFormatError(Exception):
     """存档格式错误（字段缺失、类型非法等）。"""
+
+
+def seed_to_hex(seed: int) -> str:
+    """世界种子 → 协议层 hex 字符串（小写，无 0x 前缀）。
+
+    Args:
+        seed: 世界种子（≥ 0）。
+
+    Returns:
+        如 "2a"（十进制 42）或 64 字符 256-bit 种子。
+    """
+    return hex(int(seed))[2:]
+
+
+def parse_seed(raw) -> int:
+    """解析协议层 seed 字段（hex 字符串或兼容 int）。
+
+    契约（设计文档）: "" / "0" / 缺省 / null = 0（随机占位，创建/预览
+    时随机定案）。严格无符号无前缀 hex——"0x"、"+"、"-" 前缀显式拒绝。
+
+    Args:
+        raw: 协议载荷中的 seed 字段。
+
+    Returns:
+        世界种子（0 = 随机占位；1..SEED_MAX 为有效种子）。
+
+    Raises:
+        ValueError: 非法 hex 字符串、bool、符号前缀或越界。
+    """
+    if isinstance(raw, bool):
+        raise ValueError("seed 必须为 hex 字符串或 int，不接受 bool")
+    if isinstance(raw, int):
+        seed = raw
+    elif raw is None:
+        return 0
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if text in ("", "0"):
+            return 0
+        if text[0] in "+-" or text[:2] in ("0x", "0X"):
+            # int(..., 16) 会接受符号与 0x 前缀——契约是严格无符号无
+            # 前缀 hex，显式拒绝
+            raise ValueError(f"seed 非法 hex: {text!r}")
+        try:
+            seed = int(text, 16)
+        except ValueError as exc:
+            raise ValueError(f"seed 非法 hex: {text!r}") from exc
+    else:
+        raise ValueError(f"seed 必须为 hex 字符串或 int，实际 {type(raw).__name__}")
+    if not (0 <= seed <= SEED_MAX):
+        raise ValueError(f"seed 越界: {seed}")
+    return seed
 
 
 @dataclass(slots=True)

@@ -800,18 +800,29 @@ class WeatherEngine:
                 intensity=float(region.intensity),
                 time_of_day=tod,
                 chunks=region.chunks,
-            ))
+            ), fate_path=f"weather/precip/{cx}/{cy}@{now}")
         else:
             self._publish(cx, cy, now, PrecipitationStop(
                 time_of_day=tod,
                 chunks=region.chunks,
-            ))
+            ), fate_path=f"weather/precip/{cx}/{cy}@{now}")
 
     def _publish(
         self, cx: int, cy: int, now: int,
         ev: WorldEvent,
+        *,
+        fate_path: str | None = None,
     ) -> None:
-        """发布天气事件。"""
+        """发布天气事件。
+
+        Args:
+            cx, cy: 事件所在 chunk 坐标。
+            now: 世界时间（tick）。
+            ev: 事件 data 契约。
+            fate_path: 随机性来源的 Loom of Fate 流身份（None = 事件
+                不直接消费随机流）。供研究溯源——天气事件的值域经
+                场派生链（seed + 坐标 + 时间）可完全回溯。
+        """
         self._wt.publish(Event(
             timestamp=now,
             location=(cx, cy, None, None),
@@ -820,4 +831,5 @@ class WeatherEngine:
             affected=[AffectedParty("world", "subject")],
             event_type=ev.event_type,
             data=ev.as_dict(),
+            fate_path=fate_path,
         ))

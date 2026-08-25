@@ -22,12 +22,15 @@ layers 请求时补算气候（跳过侵蚀/水文），采样分辨率 1000m
 """
 
 import math
+import random
 
 from ascend.config import CONTINENT_LAND_RATIO
 from ascend.log import get_logger
 from ascend.net.protocol import make_response
-from ascend.save.manifest import (LAND_RATIO_MAX, SEED_MAX, SIZE_KM_MAX,
-                                  SIZE_KM_MIN)
+from ascend.save.manifest import (
+    LAND_RATIO_MAX, SEED_MAX, SIZE_KM_MAX, SIZE_KM_MIN,
+    parse_seed, seed_to_hex,
+)
 from ascend.space.continent import ContinentGenerator
 
 logger = get_logger(__name__)
@@ -41,6 +44,8 @@ def _parse_preview_payload(msg: dict) -> tuple[int, float, float | None, float |
 
     参数范围与存档契约单源（manifest.SEED_MAX / LAND_RATIO_MAX /
     SIZE_KM_MIN / SIZE_KM_MAX）——预览与 save_create 校验一致。
+    seed 为协议层 hex 字符串（manifest.parse_seed 契约）；
+    "" / "0" = 随机占位（本处随机定案并随响应回传）。
 
     Returns:
         (seed, land_ratio, width_km, height_km, layers)——尺寸缺省时为
@@ -53,9 +58,11 @@ def _parse_preview_payload(msg: dict) -> tuple[int, float, float | None, float |
     payload = msg.get("payload", {})
     if not isinstance(payload, dict):
         raise ValueError("payload 必须为对象")
-    seed = int(payload.get("seed", 0) or 0)
-    if not (1 <= seed <= SEED_MAX):
-        raise ValueError(f"seed 越界: {seed}")
+    seed = parse_seed(payload.get("seed", ""))
+    if seed == 0:
+        # 随机占位：预览即定案（种子唯一随机源 = 后端，与命运织机
+        # "随机性全部可追溯"一致），响应回传 hex 种子供创建复用。
+        seed = random.randint(1, SEED_MAX)
     land_ratio = float(payload.get("land_ratio", CONTINENT_LAND_RATIO))
     if not math.isfinite(land_ratio) or not (0.0 < land_ratio <= LAND_RATIO_MAX):
         raise ValueError(f"land_ratio 越界: {land_ratio}")
@@ -91,7 +98,8 @@ def make_preview_handlers():
         seed, land_ratio, width_km, height_km, layers = _parse_preview_payload(msg)
         preview = ContinentGenerator(seed=seed).generate_preview(
             land_ratio, width_km, height_km, layers=layers)
-        preview["seed"] = seed
+        # 协议层 seed 一律 hex 字符串（Godot JSON 仅 int64，256-bit 直传丢失）
+        preview["seed"] = seed_to_hex(seed)
         preview["land_ratio"] = land_ratio
         if width_km is not None:
             preview["width_km"] = width_km

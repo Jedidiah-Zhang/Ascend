@@ -25,6 +25,7 @@ from ascend.config import (CLIMATE_PROXY_OCTAVES,
                            CLIMATE_PROXY_TEMP_WAVELENGTH, FEATURE_BLOCK_SIZE,
                            FEATURE_MAX_RADIUS, GAME_DAY, GAME_HOUR, GAME_YEAR)
 from ascend.data import load_content, split_ns_id
+from ascend.fate import derive
 from ascend.log import get_logger
 from ascend.space import ClimateZone, PerlinNoise, classify
 
@@ -218,14 +219,15 @@ def _block_of(x: float, y: float) -> tuple[int, int]:
             math.floor(y / FEATURE_BLOCK_SIZE))
 
 
-def _block_seed(world_seed: int, bx: int, by: int) -> int:
-    """块坐标 → 确定性种子。"""
-    return (world_seed * 1_000_003 + bx) * 1_000_003 + by
+def _segment_seed(world_seed: int, bx: int, by: int, seg_idx: int) -> int:
+    """块坐标 + 段索引 → 确定性种子（经 fate.derive 派生去相关）。
 
-
-def _segment_seed(block_seed: int, seg_idx: int) -> int:
-    """块种子 + 段索引 → 独立 RNG 种子（段间去相关）。"""
-    return (block_seed * 1_000_003 + seg_idx) * 1_000_003 + 0x9E3779B9
+    身份: ("weather", "feature", "block", bx, by, "segment", seg_idx)。
+    段间、块间、世界间均统计独立（设计文档 namespace 约定）。
+    """
+    return derive(
+        world_seed, "weather", "feature", "block", bx, by, "segment", seg_idx,
+    )
 
 
 class ClimateProxy:
@@ -257,8 +259,8 @@ class ClimateProxy:
             rain_wavelength: 降雨代理波长 (m)。
             octaves: 多八度层数。
         """
-        self._temp = PerlinNoise(seed + 910)
-        self._rain = PerlinNoise(seed + 911)
+        self._temp = PerlinNoise(derive(seed, "weather", "proxy", "temp"))
+        self._rain = PerlinNoise(derive(seed, "weather", "proxy", "rain"))
         self._temp_freq = 1.0 / temp_wavelength
         self._rain_freq = 1.0 / rain_wavelength
         self._octaves = octaves
@@ -414,7 +416,7 @@ class FeatureField:
         )
         if total_rate <= 0:
             return []
-        rng = random.Random(_segment_seed(_block_seed(self._seed, bx, by), seg_idx))
+        rng = random.Random(_segment_seed(self._seed, bx, by, seg_idx))
         seg_start = seg_idx * GAME_YEAR
         cores: list[FeatureCore] = []
         t = seg_start

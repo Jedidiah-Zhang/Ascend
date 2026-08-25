@@ -51,8 +51,8 @@ const BUTTON_GAP: float = 10.0
 
 var _steps: Array = []
 var _current: int = 0
-## 汇总的创建参数（跨步骤传递 + save_create 载荷）
-var _params: Dictionary = {"seed": 0, "gen_params": {}}
+## 汇总的创建参数（跨步骤传递 + save_create 载荷；seed = hex 字符串）
+var _params: Dictionary = {"seed": "", "gen_params": {}}
 var _font: Font = null
 
 ## 种子输入框（步骤注入）
@@ -128,7 +128,7 @@ func _ready() -> void:
 
 	_seed_input = LineEdit.new()
 	_seed_input.visible = false
-	_seed_input.max_length = 10
+	_seed_input.max_length = 64
 	_seed_input.text_submitted.connect(_on_seed_submitted)
 	add_child(_seed_input)
 	_current = 0
@@ -324,7 +324,7 @@ func _start_create() -> void:
 	_set_status(tr("ui.setup.creating_world"), STATUS_WAIT_COLOR)
 	var gen_params: Dictionary = _params.get("gen_params", {})
 	sender.call(SaveApi.create_request(
-		_default_save_name(), int(_params.get("seed", 0)), gen_params))
+		_default_save_name(), str(_params.get("seed", "")), gen_params))
 
 
 static func _default_save_name() -> String:

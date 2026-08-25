@@ -465,6 +465,30 @@ class TestWorldTreeTrim:
             bus._archive.close()  # type: ignore[union-attr]
             os.unlink(path)
 
+    def test_fate_path_default_none(self):
+        """Event.fate_path 默认 None（事件不消费随机流）。"""
+        ev = make_event(id="plain")
+        assert ev.fate_path is None
+
+    def test_fate_path_archive_round_trip(self):
+        """fate_path 归档写入/读回往返（有值与 None 两种形态）。"""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        bus = WorldTree(archive_path=path)
+        try:
+            with_fate = make_event(timestamp=1, id="ev_fate",
+                                   fate_path="weather/precip/3/-2@3912")
+            without_fate = make_event(timestamp=2, id="ev_plain")
+            bus.publish(with_fate)
+            bus.publish(without_fate)
+            bus._trim(10)  # 归档两者
+            assert bus.get_event_by_id("ev_fate").fate_path == \
+                "weather/precip/3/-2@3912"
+            assert bus.get_event_by_id("ev_plain").fate_path is None
+        finally:
+            bus._archive.close()  # type: ignore[union-attr]
+            os.unlink(path)
+
     def test_trim_removes_graph_nodes(self):
         """trim 事件体时同步移除图中对应节点。"""
         bus = WorldTree()

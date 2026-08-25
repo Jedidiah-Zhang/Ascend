@@ -243,23 +243,25 @@ class TestThresholdEvents:
         env.engine.register_chunk(_chunk(grid=grid))
         env.clock.skip(GAME_DAY)
         events = env.subscribe("state_threshold_crossed")
-        grid.state_raw("snow")[0] = 60  # 数据直写（模拟积雪）
+        # 数据直写（模拟积雪）：相对当前值 +60，对天气积累鲁棒
+        cur = grid.state_raw("snow")[0]
+        grid.state_raw("snow")[0] = cur + 60
         _publish(env.wt, "hour_change", env.clock.time)
         ups = [e for e in events if e.data["direction"] == "up"
                and e.data["state"] == "snow"]
         assert len(ups) == 1
         assert ups[0].data["threshold"] == 50
-        assert ups[0].data["value"] == 60
+        assert ups[0].data["value"] >= cur + 60, "事件值含发布时天气积累（只增）"
         assert ups[0].data["cx"] == 0 and ups[0].data["cy"] == 0
 
     def test_snow_down_crossing(self, env):
         """雪 max 降档 → down 事件。"""
         grid = _make_grid()
-        grid.state_raw("snow")[0] = 60
+        grid.state_raw("snow")[0] = 60  # 模拟积雪（天气叠加无妨）
         env.engine.register_chunk(_chunk(grid=grid))
         env.clock.skip(GAME_DAY)
         events = env.subscribe("state_threshold_crossed")
-        grid.state_raw("snow")[0] = 5  # 融化
+        grid.state_raw("snow")[0] = 0  # 融化到底（天气叠加后仍 < 15 最低档）
         _publish(env.wt, "hour_change", env.clock.time)
         downs = [e for e in events if e.data["direction"] == "down"
                  and e.data["state"] == "snow"]
@@ -337,7 +339,8 @@ class TestAggregates:
         assert a1 == a2
         grid.state_raw("snow")[:] = array("B", [99]) * 40000
         _publish(env.wt, "hour_change", env.clock.time)
-        assert env.engine.aggregates(0, 0)["mean_snow"] == 99
+        assert env.engine.aggregates(0, 0)["mean_snow"] >= 99, \
+            "缓存失效重算应反映写入值（天气积累只增不减）"
 
 
 class TestEventContract:

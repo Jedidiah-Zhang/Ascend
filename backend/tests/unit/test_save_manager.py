@@ -19,7 +19,7 @@ from ascend.save.manager import (
     STATE_FILE, CHUNKS_DB, ENTITIES_FILE, EVENTS_DB,
 )
 from ascend.save.snapshot import SnapshotStore
-from ascend.save.manifest import Manifest, SaveFormatError, MANIFEST_NAME
+from ascend.save.manifest import Manifest, SaveFormatError, MANIFEST_NAME, SEED_MAX
 from ascend.save.crypto import SaveCryptoError, SaveKeys
 
 
@@ -264,7 +264,7 @@ class TestSeedZero:
     def test_seed_zero_randomized_at_create(self, manager):
         """seed=0（随机占位）在创建时随机化，manifest 出生即一致。"""
         manifest = manager.create_world("随机种子", seed=0)
-        assert 1 <= manifest.seed <= 2**31 - 1
+        assert 1 <= manifest.seed <= SEED_MAX
         # 密钥混淆层与 manifest 身份一致：state 可正常读写
         manager.write_state(manifest.world_id, {"clock": {"time": 5}})
         assert manager.read_state(manifest.world_id)["clock"]["time"] == 5

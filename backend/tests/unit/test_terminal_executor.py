@@ -517,17 +517,21 @@ class TestWeatherSetRain:
             执行 set rain on → set rain off。
         Assert:
             front 特征核随之注入/移除，降雨强度随之变化。
+            自然降雨基线随种子派生变化——用相对断言（开启高于
+            基线，关闭回到基线），不依赖具体种子的纹理取值。
         """
+        baseline = weather_engine.get_weather(0, 0).rainfall
+
         r1 = executor_weather.execute("weather set rain on")
         assert r1.success is True
         assert (0, 0, "front") in weather_engine._field.features._injected
-        assert weather_engine.get_weather(0, 0).rainfall > 0
+        assert weather_engine.get_weather(0, 0).rainfall > baseline
         assert "开启" in r1.output
 
         r2 = executor_weather.execute("weather set rain off")
         assert r2.success is True
         assert (0, 0, "front") not in weather_engine._field.features._injected
-        assert weather_engine.get_weather(0, 0).rainfall == 0.0
+        assert weather_engine.get_weather(0, 0).rainfall == baseline
         assert "关闭" in r2.output
 
     def test_T26_rain_on_twice_noop(self, executor_weather):

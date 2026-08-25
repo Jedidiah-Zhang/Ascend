@@ -85,7 +85,7 @@ func update_msp_t() -> void:
 ## Returns:
 ##     三行 PackedStringArray（FPS/TPS 行、MSPT/网络行、流式行）。
 func get_lines() -> PackedStringArray:
-	var fps: int = Engine.get_frames_per_second()
+	var fps: int = int(Engine.get_frames_per_second())
 	return PackedStringArray([
 		TranslationServer.tr("debug.fps_line").format({
 			"fps": fps, "tps": "%.1f" % tps}),

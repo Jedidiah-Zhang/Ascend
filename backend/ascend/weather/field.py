@@ -30,6 +30,7 @@ from ascend.config import (
     PRECIP_ANNUAL_DRY, PRECIP_ANNUAL_WET,
     PRECIP_INTENSITY_SCALE,
 )
+from ascend.fate import derive
 from ascend.space import PerlinNoise, clamp
 
 from .atmosphere import (
@@ -138,7 +139,7 @@ class UnifiedWeatherField:
             seed=seed, climate_proxy=self._proxy,
         )
         # tile 级噪声（独立通道，极高频单八度）
-        self._tile_noise = PerlinNoise(seed + 920)
+        self._tile_noise = PerlinNoise(derive(seed, "weather", "tile_noise"))
         self._tile_freq = 1.0 / tile_noise_wavelength
 
     def __repr__(self) -> str:

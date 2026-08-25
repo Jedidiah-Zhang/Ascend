@@ -27,7 +27,7 @@ class StubStep:
 
 func _make_steps() -> Array:
 	return [
-		StubStep.new("map", {"seed": 7, "gen_params": {"land_ratio": 0.55}}),
+		StubStep.new("map", {"seed": "7", "gen_params": {"land_ratio": 0.55}}),
 		StubStep.new("colony", {"gen_params": {"colony_count": 3}}),
 	]
 
@@ -59,9 +59,9 @@ func test_build_steps_unique_ids() -> void:
 func test_merge_params_accumulates_in_order() -> void:
 	"""多步骤产出合并：后者覆盖同名键，gen_params 内键合并。"""
 	var merged: Dictionary = SetupFlow.merge_params(_make_steps(), {
-		"seed": 0, "gen_params": {},
+		"seed": "", "gen_params": {},
 	})
-	assert_eq(merged["seed"], 7)
+	assert_eq(merged["seed"], "7")
 	var gen: Dictionary = merged["gen_params"]
 	assert_eq(gen["land_ratio"], 0.55)
 	assert_eq(gen["colony_count"], 3)
@@ -70,22 +70,22 @@ func test_merge_params_accumulates_in_order() -> void:
 func test_merge_params_later_wins() -> void:
 	"""后步骤覆盖先步骤同名产出。"""
 	var steps: Array = [
-		StubStep.new("a", {"seed": 1}),
-		StubStep.new("b", {"seed": 2}),
+		StubStep.new("a", {"seed": "1"}),
+		StubStep.new("b", {"seed": "2"}),
 	]
-	assert_eq(SetupFlow.merge_params(steps, {})["seed"], 2)
+	assert_eq(SetupFlow.merge_params(steps, {})["seed"], "2")
 
 
 func test_merge_params_skips_non_step_entries() -> void:
 	var merged: Dictionary = SetupFlow.merge_params(
-		[StubStep.new("a", {"seed": 5}), null, "junk"], {})
-	assert_eq(merged["seed"], 5)
+		[StubStep.new("a", {"seed": "5"}), null, "junk"], {})
+	assert_eq(merged["seed"], "5")
 
 
 func test_merge_params_base_duplicated() -> void:
 	"""不修改传入的 base 字典。"""
-	var base := {"seed": 0, "gen_params": {}}
+	var base := {"seed": "", "gen_params": {}}
 	var merged: Dictionary = SetupFlow.merge_params(
-		[StubStep.new("a", {"seed": 9})], base)
-	assert_eq(merged["seed"], 9)
-	assert_eq(base["seed"], 0, "base 不得被原地修改")
+		[StubStep.new("a", {"seed": "9"})], base)
+	assert_eq(merged["seed"], "9")
+	assert_eq(base["seed"], "", "base 不得被原地修改")

@@ -42,7 +42,7 @@ SAMPLES: dict[type, dict] = {
         new_position=[4, 5, 0, 0], layer_id=0, x=100, y=102,
     ),
     PlayerTeleported: dict(x=120.5, y=88.0),
-    WorldInitialized: dict(seed=42, birth_chunk=[3, 5], loaded_chunks=9,
+    WorldInitialized: dict(seed="2a", birth_chunk=[3, 5], loaded_chunks=9,
                            world_id="w1"),
 }
 

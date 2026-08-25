@@ -115,6 +115,10 @@ class Event:
         caused_by: 上游因果事件 ID 列表。
         observes: 被观测的物理事件 ID（仅 observation 事件使用）。
         co_participants: 共同参与方 ID 列表。
+        fate_path: 本事件随机性来源的 Loom of Fate 流身份
+            （如 "weather/precip/3/-2@3912"；None = 事件不消费随机流）。
+            供研究溯源：反事实 abduction 只需记录流身份即可重算
+            噪声实现（见 docs/世界框架/随机系统/设计.md）。
         id: 事件唯一标识（UUID hex，自动生成）。
     """
     timestamp: int
@@ -131,6 +135,7 @@ class Event:
     caused_by: list[str] = field(default_factory=list)
     observes: str | None = None
     co_participants: list[str] = field(default_factory=list)
+    fate_path: str | None = None
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 

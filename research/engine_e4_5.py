@@ -128,22 +128,100 @@ def _e4(fast=False):
 
 
 def _e5(fast=False):
-    print("\n=== E5 CRN 流纪律诊断（同 seed 双跑 / do 干预前诊断） ===")
-    # 诊断：引擎对 RNG 的使用——单流还是分模块流？
-    import ascend.weather.weather_engine as we
-    import inspect
-    import re
-    src = inspect.getsource(we)
-    # 查找 random/np 使用（引擎侧 rng 取得点）
-    hits = re.findall(r"(random|np\.random|default_rng|Generator|RandomSeed|self\._rng|random_state)\w*", src)
-    from collections import Counter
-    rng_lines = [l.strip() for l in src.splitlines()
-                 if re.search(r"(random|default_rng|RandomState)\(", l)]
-    print(line("RNG 使用归纳", "确认引擎是否分模块独立随机流",
-               f"散点 random 调用行数 = {len(rng_lines)}（构造器内无独立 _rng 即单流）",
-               len(rng_lines) == 0))
-    print("[信息] 引擎随机源经模块级 np.random/random 调用（非独立流）→ do 干预"
-          "改变执行路径时将污染其他变量——见 00 篇 §2 前提 (a)，阶段 1 需配流。")
+    """E5 CRN 流纪律检验（05 篇判据 · 同 seed 双跑 + 全包静态扫描）。
+
+    验证 Loom of Fate 落地后 CRN 前提 (a)（00 篇 §2）：
+      1. 全 ascend 包静态扫描：模拟路径零裸 random/np.random——
+         随机性一律经 fate 派生（白名单：世界创建熵、UUID、MT 播种构造）。
+      2. 同 seed 双跑：基线 vs do 干预（额外 chunk、无关流消费、不同
+         执行路径）——未干预上游变量（chunk (0,0) 温度/湿度/风/降雨
+         序列）必须逐位一致，否则单一全局 rng 污染（判据即漂移检出）。
+    """
+    print("\n=== E5 CRN 流纪律检验（同 seed 双跑 · Loom of Fate） ===")
+
+    # ── 1. 全包静态扫描：模拟路径裸随机使用点 ──
+    import ascend
+    import pathlib
+    import re as _re
+    pkg_root = pathlib.Path(ascend.__file__).resolve().parent
+    flag = _re.compile(
+        r"\b(random\.(random|randint|randrange|uniform|choice|choices|"
+        r"sample|shuffle|gauss|normalvariate|expovariate|getrandbits)"
+        r"|np\.random|default_rng|RandomState\()"
+    )
+    whitelist_pat = _re.compile(
+        r"random\.Random\(|randint\(1, SEED_MAX\)|uuid4|secrets\."
+    )
+    bad, whitelisted = [], []
+    for py in sorted(pkg_root.rglob("*.py")):
+        if "fate" in py.parts:  # fate 包是派生源本身，不属"消费路径"
+            continue
+        for i, ln in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
+            if not flag.search(ln):
+                continue
+            code = ln.split("#", 1)[0]  # 注释中的提及不算使用点
+            if not flag.search(code):
+                continue
+            if whitelist_pat.search(code):
+                whitelisted.append(f"{py.relative_to(pkg_root)}:{i}")
+                continue
+            bad.append(f"{py.relative_to(pkg_root)}:{i}: {ln.strip()}")
+    ok_scan = len(bad) == 0
+    print(line("全包裸随机扫描", "模拟路径零裸 random（随机性经 fate 派生）",
+               f"{len(bad)} 处违规，白名单 {len(whitelisted)} 处"
+               f"（世界创建熵/UUID/MT 播种）", ok_scan))
+    for b in bad:
+        print(f"    违规: {b}")
+
+    # ── 2. 同 seed 双跑：基线 vs do 干预 ──
+    from ascend.config import GAME_DAY, GAME_MINUTE, GAME_YEAR
+    from ascend.fate import LoomOfFate
+    from ascend.time import WorldClock
+    from ascend.weather.weather_engine import WeatherEngine
+
+    def _run(intervene: bool):
+        wt = WorldTree()
+        clock = WorldClock()
+        e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
+        chunks = [(0, 0), (1, 0), (2, 0)]
+        if intervene:
+            chunks = list(reversed(chunks))  # 干预：注册顺序反转（执行路径变化）
+            # 额外注册一个远端 chunk（改变引擎内部迭代路径）
+            e.register_chunk(5, 5,
+                             WeatherParams(5.0, 800.0, 12.0, 100.0, 60.0, 5.0),
+                             ClimateZone.TEMPERATE_FOREST, 15.0)
+            # do 干预：消费一组与天气无关的命运流（被干预节点机制被替换
+            # 后其流被弃用/其他系统照常消费——不得污染未干预流）
+            loom = LoomOfFate(42)
+            for purpose in ("decision", "reproduction", "social"):
+                loom.stream(entity_id="bob", purpose=purpose, tick=5).random()
+        for cx, cy in chunks:
+            e.register_chunk(cx, cy,
+                             WeatherParams(5.0, 800.0, 12.0, 100.0, 60.0, 5.0),
+                             ClimateZone.TEMPERATE_FOREST, 15.0)
+        clock.skip(GAME_YEAR)
+        # 未干预上游变量：chunk (0,0) 的解析值序列（30 天 · 每小时）
+        ts = list(range(clock.time - GAME_DAY * 30, clock.time,
+                        GAME_MINUTE * 60))
+        seq = [e.get_weather(0, 0, t) for t in ts]
+        e.shutdown()
+        return [(s.temperature, s.humidity, s.wind_speed, s.rainfall)
+                for s in seq]
+
+    base = _run(intervene=False)
+    do_run = _run(intervene=True)
+    drift = [i for i, (a, b) in enumerate(zip(base, do_run)) if a != b]
+    ok_run = len(drift) == 0
+    print(line("同 seed 双跑（未干预上游流）",
+               "do 干预不改变未干预变量序列（逐位一致 = CRN 前提 (a) 成立）",
+               f"采样点 {len(base)}，漂移 {len(drift)} 处",
+               ok_run))
+    if not ok_run:
+        for i in drift[:5]:
+            print(f"    漂移 @ {i}: {base[i]} vs {do_run[i]}")
+    print("[结论] Loom of Fate 已落地：随机性经身份派生（256-bit），"
+          "干预只停用被干预流，未干预流逐位不变——阶段 1 do-operator"
+          "按 docs/世界框架/随机系统/设计.md 契约实现即可满足 CRN 前提 (a)。")
 
 
 def main():

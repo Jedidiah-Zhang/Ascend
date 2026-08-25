@@ -30,8 +30,10 @@ preview 响应用 on_preview_response(payload) 喂入——纯逻辑可单测。
 class_name MapSetupStep
 extends SetupStep
 
-## 种子上限（与后端存档契约 manifest.SEED_MAX 一致：0 = 随机占位）
-const MAX_SEED: int = 2147483647
+## 种子为协议层 hex 字符串（"" / "0" = 随机占位——后端预览时随机定案，
+## 响应 payload.seed 回传 hex；与后端存档契约 manifest.SEED_MAX 一致：
+## 256-bit → 64 字符小写 hex，见 docs/世界框架/随机系统/设计.md）
+const SEED_HEX_MAX_LEN: int = 64
 
 # ── 可调参数范围 ──────────────────────────────────────────
 
@@ -84,8 +86,8 @@ const SELECTED_COLOR: Color = Color(0.32, 0.55, 0.85)
 
 # ── 状态 ──────────────────────────────────────────────────
 
-## 当前种子（0 = 未定案；setup 时随机定案，保证预览有据可依）
-var _seed: int = 0
+## 当前种子（"" = 未定案/随机占位；后端预览响应回传后定案为 hex）
+var _seed: String = ""
 ## 目标陆地占比
 var _land_ratio: float = 0.55
 ## 地图尺寸档位索引（SIZE_OPTIONS）
@@ -98,6 +100,8 @@ var request_sender: Callable = _send_default
 var _preview: Dictionary = {}
 ## 预览请求已发出待响应（在途至多 1 个）
 var _preview_pending: bool = false
+## 在途请求发出时携带的种子（响应 seed 回写判定：仅占位才定案）
+var _pending_seed: String = ""
 ## 在途期间参数再次变化：响应到达后补发最新参数
 var _preview_dirty: bool = false
 ## 待发送的最新预览请求（_request_preview 时起草）
@@ -149,9 +153,11 @@ func title() -> String:
 
 
 func setup(params: Dictionary) -> void:
-	_seed = int(params.get("seed", 0))
-	if _seed <= 0:
-		_seed = randi_range(1, MAX_SEED)
+	# 种子 = 协议层 hex 字符串；"" / "0" 视为未定案（随机占位），
+	# 由后端预览时随机定案并回传（种子唯一随机源 = 后端）。
+	_seed = str(params.get("seed", ""))
+	if _seed == "0":
+		_seed = ""
 	var gen: Dictionary = params.get("gen_params", {})
 	var ratio: Variant = gen.get("land_ratio")
 	if ratio is float or ratio is int:
@@ -211,6 +217,7 @@ func _request_preview() -> void:
 
 func _send_preview() -> void:
 	_preview_pending = true
+	_pending_seed = _seed
 	request_sender.call(_draft_request)
 
 
@@ -222,11 +229,20 @@ func _on_request_done() -> void:
 
 
 func on_preview_response(payload: Dictionary) -> void:
-	"""后端 map_preview 响应：应用后补发变化后的最新参数。"""
+	"""后端 map_preview 响应：应用后补发变化后的最新参数。
+
+	种子定案：payload.seed 为后端回传的 hex 种子。仅在发出请求时
+	种子为占位（未定案）才用响应回写——手输/恢复的显式种子由
+	用户持有，在途旧响应不得覆盖（竞态防护）。
+	"""
 	_on_request_done()
 	if payload.is_empty():
 		return
 	_preview = payload
+	if _pending_seed.is_empty():
+		var seed: Variant = payload.get("seed")
+		if seed is String and not str(seed).is_empty():
+			_seed = str(seed)
 
 
 func on_preview_failed() -> void:
@@ -256,7 +272,7 @@ func _draw_params(canvas: Control, rect: Rect2, font: Font) -> void:
 	# 种子行
 	draw_label(canvas, font, rect.position + Vector2(0, 26), TranslationServer.tr("ui.map.seed"), LABEL_FONT_SIZE)
 	var seed_rect := Rect2(rect.position + Vector2(0, 40), Vector2(rect.size.x - 130.0, 34))
-	_draw_value_box(canvas, seed_rect, font, str(_seed), _hover == "seed")
+	_draw_value_box(canvas, seed_rect, font, _display_seed(), _hover == "seed")
 	var random_rect := Rect2(
 		rect.position + Vector2(rect.size.x - 118.0, 40), Vector2(112.0, 34))
 	_draw_button(canvas, random_rect, font, TranslationServer.tr("ui.common.random"), _hover == "random")
@@ -582,7 +598,8 @@ func _set_ratio_from_x(x: float) -> void:
 
 
 func _randomize_seed() -> void:
-	_seed = randi_range(1, MAX_SEED)
+	# 随机掷种：置回未定案占位，由后端预览时随机定案
+	_seed = ""
 	_request_preview()
 
 
@@ -590,7 +607,7 @@ func _open_seed_input() -> bool:
 	if _seed_input == null:
 		return false
 	_editing_seed = true
-	_seed_input.text = str(_seed)
+	_seed_input.text = _seed
 	_seed_input.visible = true
 	_seed_input.position = _seed_rect.position
 	_seed_input.size = _seed_rect.size
@@ -604,14 +621,39 @@ func _close_seed_input() -> void:
 		_seed_input.visible = false
 
 
+func _display_seed() -> String:
+	"""种子显示：未定案显示"随机"，长 hex 截断（内部保留完整值）。"""
+	if _seed.is_empty():
+		return TranslationServer.tr("ui.common.random")
+	if _seed.length() > 24:
+		return _seed.substr(0, 10) + "…" + _seed.substr(_seed.length() - 6)
+	return _seed
+
+
 func on_seed_submitted(text: String) -> void:
-	"""容器 LineEdit 提交回调：解析种子并刷新预览。"""
+	"""容器 LineEdit 提交回调：解析 hex 种子并刷新预览。
+
+	契约：1..64 位 hex（无 0x 前缀，大小写均可），归一为小写。
+	空串提交 = 忽略（保留当前种子与预览）；随机掷种请用随机按钮。
+	非法输入同样忽略。
+	"""
 	_close_seed_input()
 	var seed_text: String = text.strip_edges()
 	if seed_text.is_empty():
 		return
-	if seed_text.is_valid_int():
-		var value: int = int(seed_text)
-		if value > 0:
-			_seed = value
-			_request_preview()
+	if _is_valid_hex_seed(seed_text):
+		_seed = seed_text.to_lower()
+		_request_preview()
+
+
+static func _is_valid_hex_seed(text: String) -> bool:
+	"""1..64 位 hex 字符（无 0x 前缀）。"""
+	if text.length() == 0 or text.length() > SEED_HEX_MAX_LEN:
+		return false
+	for i in text.length():
+		var c: String = text[i]
+		if not ((c >= "0" and c <= "9") \
+				or (c >= "a" and c <= "f") \
+				or (c >= "A" and c <= "F")):
+			return false
+	return true

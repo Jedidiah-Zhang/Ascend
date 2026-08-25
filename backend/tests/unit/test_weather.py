@@ -1100,26 +1100,55 @@ class TestWeatherEngine:
         assert len(starts) >= 1
         assert starts[0].data["intensity"] > 0
         assert starts[0].data["precip_type"] in ("rain", "snow")
+        assert starts[0].fate_path == f"weather/precip/0/0@{starts[0].timestamp}"
         e.shutdown()
 
     def test_precip_stop_emitted_on_event_end(self):
-        """解除强制降雨 → 区域 precipitation_stop。"""
+        """解除强制降雨 → 区域 precipitation_stop。
+
+        位置选择对派生几何鲁棒：扫描定位"自然干燥"chunk（基座降水
+        信号 < 0.5），用最干旱校准（rain=50 → 阈 0.55）保证解除锋面
+        后信号必低于阈值——不依赖具体种子在固定坐标的纹理取值。
+        """
         from ascend.weather.weather_engine import WeatherEngine
+        from ascend.weather.field import CH_PRECIPITATION
         wt = WorldTree()
         events = []
         for t in ("precipitation_start", "precipitation_stop"):
             wt.subscribe(t, lambda e: events.append(e))
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-        e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        e.force_feature(0, 0, "front", True)
-        _publish_minute(wt, clock.time)
-        clock.skip(1)
-        _publish_minute(wt, clock.time)
+        e.register_chunk(0, 0, _make_baseline(rain=50.0), ClimateZone.TEMPERATE_FOREST, 15.0)
+        dry_chunk: tuple[int, int] | None = None
+        for cx in range(-4, 8):
+            for cy in range(-4, 8):
+                wx = (cx + 0.5) * TILE_MAP_SIZE
+                wy = (cy + 0.5) * TILE_MAP_SIZE
+                if e._field.sample(CH_PRECIPITATION, wx, wy, clock.time) < 0.5:
+                    dry_chunk = (cx, cy)
+                    break
+            if dry_chunk is not None:
+                break
+        assert dry_chunk is not None, "扫描范围内应存在自然干燥 chunk"
+        e.register_chunk(
+            dry_chunk[0], dry_chunk[1],
+            _make_baseline(rain=50.0), ClimateZone.TEMPERATE_FOREST, 15.0,
+        )
+        e.force_feature(dry_chunk[0], dry_chunk[1], "front", True)
+        # 锋面核位置/强度随种子派生漂移：轮询直到降雨启动
+        # （鲁棒断言，不依赖具体种子的核几何）
+        for _ in range(120):
+            _publish_minute(wt, clock.time)
+            clock.skip(1)
+            if any(ev.event_type == "precipitation_start" for ev in events):
+                break
         assert any(ev.event_type == "precipitation_start" for ev in events)
-        e.force_feature(0, 0, "front", False)
-        clock.skip(1)
-        _publish_minute(wt, clock.time)
+        e.force_feature(dry_chunk[0], dry_chunk[1], "front", False)
+        for _ in range(120):
+            clock.skip(1)
+            _publish_minute(wt, clock.time)
+            if any(ev.event_type == "precipitation_stop" for ev in events):
+                break
         stops = [ev for ev in events if ev.event_type == "precipitation_stop"]
         assert len(stops) >= 1
         e.shutdown()

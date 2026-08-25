@@ -8,6 +8,7 @@ import os
 import pytest
 
 from ascend.save.manager import SaveManager
+from ascend.save.manifest import SEED_MAX
 from ascend.net.handlers.save_handler import make_save_handlers
 
 
@@ -93,10 +94,10 @@ class TestSaveCreate:
 
     def test_creates_world(self, manager, handlers):
         """创建成功并返回 world_id。"""
-        resp = handlers["save_create"](_req("save_create", {"name": "新世界", "seed": 42}))
+        resp = handlers["save_create"](_req("save_create", {"name": "新世界", "seed": "2a"}))
         world_id = resp["payload"]["world_id"]
         assert world_id
-        assert manager.get_manifest(world_id).seed == 42
+        assert manager.get_manifest(world_id).seed == 0x2a
 
     def test_empty_name_rejected(self, handlers):
         """空名称拒绝。"""
@@ -111,14 +112,14 @@ class TestSaveCreate:
         """
         resp = handlers["save_create"](_req("save_create", {"name": "x"}))
         manifest = manager.get_manifest(resp["payload"]["world_id"])
-        assert 1 <= manifest.seed <= 2**31 - 1
+        assert 1 <= manifest.seed <= SEED_MAX
         manager.write_state(manifest.world_id, {"clock": {"time": 3}})
         assert manager.read_state(manifest.world_id)["clock"]["time"] == 3
 
     def test_create_with_gen_params(self, manager, handlers):
         """gen_params（大陆占比）随档定案写入 manifest（Issue #8）。"""
         resp = handlers["save_create"](_req("save_create", {
-            "name": "调参世界", "seed": 42,
+            "name": "调参世界", "seed": "2a",
             "gen_params": {"land_ratio": 0.35},
         }))
         manifest = manager.get_manifest(resp["payload"]["world_id"])
@@ -142,9 +143,9 @@ class TestSaveCreate:
 
     def test_duplicate_name_rejected(self, manager, handlers):
         """重名创建经协议层拒绝（错误信息含名称）。"""
-        handlers["save_create"](_req("save_create", {"name": "重名档", "seed": 1}))
+        handlers["save_create"](_req("save_create", {"name": "重名档", "seed": "1"}))
         with pytest.raises(ValueError, match="重名档"):
-            handlers["save_create"](_req("save_create", {"name": "重名档", "seed": 2}))
+            handlers["save_create"](_req("save_create", {"name": "重名档", "seed": "2"}))
 
     def test_duplicate_rename_rejected(self, manager, handlers):
         """重命名为已有名称经协议层拒绝。"""

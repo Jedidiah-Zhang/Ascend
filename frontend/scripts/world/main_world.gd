@@ -12,10 +12,6 @@
 """
 extends Node2D
 
-const TerrainTileBuilder = preload("res://scripts/world/terrain_tile_builder.gd")
-
-const StateDisplayChaser = preload("res://scripts/world/state_display_chaser.gd")
-
 # ── 相机常量（CameraRig 同源；测试引用，保留在此） ────────
 
 const CAMERA_ZOOM_DEFAULT: float = Config.CAMERA_ZOOM_DEFAULT

@@ -49,9 +49,9 @@ static func list_request() -> Dictionary:
 
 
 static func create_request(
-	save_name: String, world_seed: int = 0, gen_params: Dictionary = {},
+	save_name: String, world_seed: String = "", gen_params: Dictionary = {},
 ) -> Dictionary:
-	"""新建存档位请求（seed=0 后端随机）。
+	"""新建存档位请求（seed="" 后端随机；seed 为协议层 hex 字符串）。
 
 	gen_params 为创建世界流程的调参产出（Issue #8）：目前含
 	land_ratio（目标陆地比例），随档定案写入 manifest。
@@ -66,10 +66,13 @@ static func create_request(
 
 
 static func preview_request(
-	world_seed: int, land_ratio: float,
+	world_seed: String = "", land_ratio: float = 0.55,
 	width_km: float = 100.0, height_km: float = 60.0,
 	layers: Array = ["temp", "rain", "climate"]) -> Dictionary:
 	"""地图地形预览请求（创建世界调参，Issue #8）。
+
+	seed 为协议层 hex 字符串；"" / "0" = 随机占位——后端在预览时
+	随机定案，响应 payload.seed 回传 hex 种子（创建世界复用）。
 
 	采样分辨率固定 1000m：网格随尺寸缩放，地形变化率一致，
 	尺寸只影响生成范围。缺省 100×60。
@@ -148,7 +151,7 @@ static func export_request(world_id: String) -> Dictionary:
 const _WORLD_DEFAULTS: Dictionary = {
 	"world_id": "",
 	"name": "未命名存档",
-	"seed": 0,
+	"seed": "",
 	"birth_chunk": null,
 	"created_at": 0.0,
 	"last_played_at": 0.0,
@@ -177,6 +180,7 @@ static func parse_worlds(payload: Dictionary) -> Array:
 				w[key] = v
 		w["world_id"] = str(w["world_id"])
 		w["name"] = str(w["name"])
+		w["seed"] = str(w["seed"])
 		w["game_time"] = int(w["game_time"])
 		w["play_duration_sec"] = float(w["play_duration_sec"])
 		w["snapshot_count"] = int(w["snapshot_count"])

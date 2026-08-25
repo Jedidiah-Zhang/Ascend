@@ -64,8 +64,8 @@ static func datetime_string(unix_sec: float) -> String:
 	]
 
 
-static func seed_string(world_seed: int) -> String:
-	"""种子展示（0 = 随机）。"""
-	if world_seed == 0:
+static func seed_string(world_seed: String) -> String:
+	"""种子展示（协议层 hex 字符串；空 / "0" = 随机）。"""
+	if world_seed.is_empty() or world_seed == "0":
 		return TranslationServer.tr("ui.common.random")
-	return str(world_seed)
+	return world_seed

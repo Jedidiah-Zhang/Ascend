@@ -31,23 +31,88 @@ func before_each() -> void:
 	TranslationServer.set_locale("zh_CN")
 
 
-func test_setup_randomizes_seed_when_zero() -> void:
-	"""seed=0（未定案）在进入步骤时随机定案（预览必须有种子）。"""
+func test_setup_leaves_seed_pending_when_empty() -> void:
+	"""seed 空/0（未定案）保持占位——由后端预览响应回传 hex 定案。"""
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 0, "gen_params": {}})
-	assert_gt(step.get_params()["seed"], 0)
+	step.setup({"seed": "", "gen_params": {}})
+	assert_eq(step.get_params()["seed"], "", "未定案保持占位")
+	step.on_preview_response({"seed": "a3f9"})
+	assert_eq(step.get_params()["seed"], "a3f9", "预览响应回传 hex 种子定案")
 
 
 func test_setup_keeps_explicit_seed() -> void:
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 42, "gen_params": {}})
-	assert_eq(step.get_params()["seed"], 42)
+	step.setup({"seed": "2a", "gen_params": {}})
+	assert_eq(step.get_params()["seed"], "2a")
+
+
+func test_seed_submitted_hex_normalized() -> void:
+	"""手输种子：hex 校验通过并归一为小写，刷新预览。"""
+	var pair: Array = _make_sender()
+	var step: MapSetupStep = pair[0]
+	var sent: Array = pair[1]
+	step.setup({"seed": "2a", "gen_params": {}})
+	step.on_preview_response({"seed": "2a"})  # 清在途，允许补发
+	step.on_seed_submitted("A3F9")
+	assert_eq(step.get_params()["seed"], "a3f9", "hex 大小写归一")
+	assert_eq(sent[sent.size() - 1]["payload"]["seed"], "a3f9")
+
+
+func test_seed_submitted_invalid_ignored() -> void:
+	"""非法 hex（0x 前缀/超长/非 hex 字符/空）忽略，保留当前种子。"""
+	for bad in ["0x2a", "zz", "g", "1.5", "-1"]:
+		var step: MapSetupStep = _make_step()
+		step.setup({"seed": "2a", "gen_params": {}})
+		step.on_seed_submitted(bad)
+		assert_eq(step.get_params()["seed"], "2a", "非法输入 %s 忽略" % bad)
+
+
+func test_seed_submitted_empty_keeps_seed() -> void:
+	"""空串提交 = 不修改（占位语义由随机按钮负责）。"""
+	var step: MapSetupStep = _make_step()
+	step.setup({"seed": "2a", "gen_params": {}})
+	step.on_seed_submitted("")
+	assert_eq(step.get_params()["seed"], "2a")
+
+
+func test_inflight_response_does_not_override_explicit_seed() -> void:
+	"""竞态防护：在途旧响应（随机定案）不得覆盖用户手输的显式种子。
+
+	时序：占位预览 R1 在途 → 用户手输 "2a"（dirty 不发送）→ R1 响应
+	（携带随机 seed "b7e1"）到达并补发 R2("2a")——此时 _seed 必须
+	保持 "2a"，R2 响应（echo "2a"）到达后仍为 "2a"。
+	"""
+	var pair: Array = _make_sender()
+	var step: MapSetupStep = pair[0]
+	var sent: Array = pair[1]
+	step.setup({"seed": "", "gen_params": {}})  # R1("") 在途
+	assert_eq(sent.size(), 1)
+	step.on_seed_submitted("2a")  # 手输：dirty，不发送
+	assert_eq(step.get_params()["seed"], "2a")
+	step.on_preview_response({"seed": "b7e1"})  # R1 响应 + 补发 R2
+	assert_eq(sent.size(), 2, "响应后补发 R2")
+	assert_eq(step.get_params()["seed"], "2a", "旧响应不得覆盖显式种子")
+	assert_eq(sent[1]["payload"]["seed"], "2a", "R2 携带手输种子")
+	step.on_preview_response({"seed": "2a"})  # R2 响应（echo）
+	assert_eq(step.get_params()["seed"], "2a")
+
+
+func test_display_seed_truncates_long_hex() -> void:
+	"""64 字符 hex 显示截断（内部保留完整值）。"""
+	var step: MapSetupStep = _make_step()
+	step.setup({"seed": "", "gen_params": {}})
+	assert_eq(step._display_seed(), "随机", "未定案显示随机")
+	var long_hex: String = "a3f9" + "0".repeat(60)
+	step.setup({"seed": long_hex, "gen_params": {}})
+	assert_eq(step._display_seed(),
+		"a3f9" + "0".repeat(6) + "…" + "0".repeat(6), "长 hex 截断显示")
+	assert_eq(step.get_params()["seed"], long_hex, "内部保留完整值")
 
 
 func test_setup_restores_land_ratio() -> void:
 	"""返回本步骤时恢复此前调参的占比。"""
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 1, "gen_params": {"land_ratio": 0.35}})
+	step.setup({"seed": "1", "gen_params": {"land_ratio": 0.35}})
 	assert_eq(step.get_params()["gen_params"]["land_ratio"], 0.35)
 	assert_eq(step.get_params()["gen_params"]["width_km"], 100.0,
 		"未调参尺寸仍产出默认值")
@@ -55,7 +120,7 @@ func test_setup_restores_land_ratio() -> void:
 
 func test_setup_clamps_out_of_range_ratio() -> void:
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 1, "gen_params": {"land_ratio": 1.5}})
+	step.setup({"seed": "1", "gen_params": {"land_ratio": 1.5}})
 	var ratio: float = step.get_params()["gen_params"]["land_ratio"]
 	assert_lt(ratio, 0.91)
 
@@ -64,9 +129,9 @@ func test_setup_clamps_out_of_range_ratio() -> void:
 
 func test_get_params_shape() -> void:
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 5, "gen_params": {}})
+	step.setup({"seed": "5", "gen_params": {}})
 	var params: Dictionary = step.get_params()
-	assert_eq(params["seed"], 5)
+	assert_eq(params["seed"], "5")
 	assert_eq(params["gen_params"], {
 		"land_ratio": 0.55, "width_km": 100.0, "height_km": 60.0,
 	})
@@ -77,7 +142,7 @@ func test_get_params_shape() -> void:
 func test_setup_restores_size() -> void:
 	"""返回本步骤时恢复此前调参的尺寸档位。"""
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 1, "gen_params": {"width_km": 60.0, "height_km": 36.0}})
+	step.setup({"seed": "1", "gen_params": {"width_km": 60.0, "height_km": 36.0}})
 	assert_eq(step._size_index, 0, "小档应被恢复")
 	var gen: Dictionary = step.get_params()["gen_params"]
 	assert_eq(gen["width_km"], 60.0)
@@ -86,14 +151,14 @@ func test_setup_restores_size() -> void:
 
 func test_setup_defaults_to_medium() -> void:
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 1, "gen_params": {}})
+	step.setup({"seed": "1", "gen_params": {}})
 	assert_eq(step._size_index, 1, "未调参尺寸默认中档")
 
 
 func test_setup_partial_size_falls_back_to_default() -> void:
 	"""只调一项尺寸（不匹配任何档位）回退默认中档。"""
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 1, "gen_params": {"width_km": 60.0}})
+	step.setup({"seed": "1", "gen_params": {"width_km": 60.0}})
 	assert_eq(step._size_index, 1)
 
 
@@ -102,8 +167,8 @@ func test_set_size_refreshes_preview() -> void:
 	var pair: Array = _make_sender()
 	var step: MapSetupStep = pair[0]
 	var sent: Array = pair[1]
-	step.setup({"seed": 42, "gen_params": {}})
-	step.on_preview_response({"seed": 42})
+	step.setup({"seed": "2a", "gen_params": {}})
+	step.on_preview_response({"seed": "2a"})
 	var before: int = sent.size()
 	step._set_size(2)
 	assert_eq(step._size_index, 2)
@@ -115,7 +180,7 @@ func test_set_size_refreshes_preview() -> void:
 
 func test_set_size_same_index_ignored() -> void:
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 1, "gen_params": {}})
+	step.setup({"seed": "1", "gen_params": {}})
 	step._set_size(1)
 	assert_eq(step._size_index, 1)
 	step._set_size(99)
@@ -138,36 +203,41 @@ func test_setup_sends_preview_request() -> void:
 	var pair: Array = _make_sender()
 	var step: MapSetupStep = pair[0]
 	var sent: Array = pair[1]
-	step.setup({"seed": 42, "gen_params": {}})
+	step.setup({"seed": "2a", "gen_params": {}})
 	assert_eq(sent.size(), 1, "进入步骤即请求一次预览")
 	assert_eq(sent[0]["request_type"], SaveApi.MAP_PREVIEW)
 	assert_eq(sent[0]["payload"], {
-		"seed": 42, "land_ratio": 0.55,
+		"seed": "2a", "land_ratio": 0.55,
 		"width_km": 100.0, "height_km": 60.0,
 		"layers": ["temp", "rain", "climate"],
 	})
 
 
 func test_randomize_seed_sends_new_preview() -> void:
+	"""随机掷种：置回占位（seed=""），后端预览时随机定案。"""
 	var pair: Array = _make_sender()
 	var step: MapSetupStep = pair[0]
 	var sent: Array = pair[1]
-	step.setup({"seed": 42, "gen_params": {}})
-	step.on_preview_response({"seed": 42})
+	step.setup({"seed": "2a", "gen_params": {}})
+	step.on_preview_response({"seed": "2a"})
 	var before: int = sent.size()
 	step._randomize_seed()
 	assert_eq(sent.size(), before + 1)
-	assert_ne(sent[sent.size() - 1]["payload"]["seed"], 42)
+	assert_eq(sent[sent.size() - 1]["payload"]["seed"], "",
+		"随机掷种 = 发送占位，由后端定案")
+	assert_eq(step.get_params()["seed"], "", "定案前保持占位")
+	step.on_preview_response({"seed": "b7e1"})
+	assert_eq(step.get_params()["seed"], "b7e1", "响应后定案为新种子")
 
 
 func test_ratio_change_requests_preview() -> void:
 	var pair: Array = _make_sender()
 	var step: MapSetupStep = pair[0]
 	var sent: Array = pair[1]
-	step.setup({"seed": 42, "gen_params": {}})
+	step.setup({"seed": "2a", "gen_params": {}})
 	# 滑块 rect(100,100,200,24)：比例区宽 178，x=189 → 占比 0.50
 	step._slider_rect = Rect2(100.0, 100.0, 200.0, 24.0)
-	step.on_preview_response({"seed": 42})
+	step.on_preview_response({"seed": "2a"})
 	var before: int = sent.size()
 	step._set_ratio_from_x(189.0)
 	assert_eq(sent.size(), before + 1, "占比变化应刷新预览")
@@ -179,11 +249,11 @@ func test_same_ratio_no_duplicate_request() -> void:
 	var pair: Array = _make_sender()
 	var step: MapSetupStep = pair[0]
 	var sent: Array = pair[1]
-	step.setup({"seed": 42, "gen_params": {}})
+	step.setup({"seed": "2a", "gen_params": {}})
 	step._slider_rect = Rect2(100.0, 100.0, 200.0, 24.0)
-	step.on_preview_response({"seed": 42})
+	step.on_preview_response({"seed": "2a"})
 	step._set_ratio_from_x(189.0)
-	step.on_preview_response({"seed": 42})
+	step.on_preview_response({"seed": "2a"})
 	var after_first: int = sent.size()
 	step._set_ratio_from_x(189.0)  # 同值（取整后）不重复请求
 	assert_eq(sent.size(), after_first)
@@ -195,14 +265,14 @@ func test_inflight_changes_coalesced_and_resent() -> void:
 	var pair: Array = _make_sender()
 	var step: MapSetupStep = pair[0]
 	var sent: Array = pair[1]
-	step.setup({"seed": 42, "gen_params": {}})
+	step.setup({"seed": "2a", "gen_params": {}})
 	# 滑块 rect(100,100,200,24)：比例区宽 178，x=189 → 0.50，x=178 → 0.45
 	step._slider_rect = Rect2(100.0, 100.0, 200.0, 24.0)
 	step._set_ratio_from_x(189.0)  # 在途：标记脏不发送
 	step._set_ratio_from_x(178.0)  # 再次变化：仍不发送
 	assert_eq(sent.size(), 1, "在途期间不追加请求")
 	assert_true(step._preview_dirty)
-	step.on_preview_response({"seed": 42})
+	step.on_preview_response({"seed": "2a"})
 	assert_eq(sent.size(), 2, "响应后补发最新参数")
 	assert_eq(sent[1]["payload"]["land_ratio"], 0.45)
 
@@ -211,9 +281,9 @@ func test_inflight_changes_coalesced_and_resent() -> void:
 
 func test_preview_response_applied() -> void:
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 42, "gen_params": {}})
+	step.setup({"seed": "2a", "gen_params": {}})
 	var payload := {
-		"seed": 42, "land_ratio": 0.55,
+		"seed": "2a", "land_ratio": 0.55,
 		"width": 2, "height": 2,
 		"elevation": [-100, -50, 100, 200],
 		"land_percent": 0.5,
@@ -225,7 +295,7 @@ func test_preview_response_applied() -> void:
 
 func test_preview_failed_clears_pending() -> void:
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 42, "gen_params": {}})
+	step.setup({"seed": "2a", "gen_params": {}})
 	assert_true(step._preview_pending, "请求发出后处于等待态")
 	step.on_preview_failed()
 	assert_false(step._preview_pending)
@@ -236,7 +306,7 @@ func test_preview_failed_clears_pending() -> void:
 func _full_preview_payload() -> Dictionary:
 	"""含全部气候图层的 2×2 预览（地形 + 温度 + 降雨 + 气候带）。"""
 	return {
-		"seed": 42, "land_ratio": 0.55,
+		"seed": "2a", "land_ratio": 0.55,
 		"width": 2, "height": 2,
 		"elevation": [-100, -50, 100, 200],
 		"temperature": [5, 8, 22, 28],
@@ -248,7 +318,7 @@ func _full_preview_payload() -> Dictionary:
 
 func test_view_defaults_to_elevation() -> void:
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 42, "gen_params": {}})
+	step.setup({"seed": "2a", "gen_params": {}})
 	assert_eq(step._view_mode, "elevation", "进入步骤默认地形视图")
 	assert_eq(step._current_view()["key"], "elevation")
 
@@ -256,9 +326,9 @@ func test_view_defaults_to_elevation() -> void:
 func test_view_switch_requires_layer_data() -> void:
 	"""响应缺图层字段（旧后端）时切换被忽略，视图降级地形。"""
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 42, "gen_params": {}})
+	step.setup({"seed": "2a", "gen_params": {}})
 	step.on_preview_response({
-		"seed": 42, "width": 2, "height": 2,
+		"seed": "2a", "width": 2, "height": 2,
 		"elevation": [-100, -50, 100, 200],
 	})
 	step._set_view_mode(1)  # 温度（缺字段）
@@ -268,7 +338,7 @@ func test_view_switch_requires_layer_data() -> void:
 
 func test_view_switch_with_layers() -> void:
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 42, "gen_params": {}})
+	step.setup({"seed": "2a", "gen_params": {}})
 	step.on_preview_response(_full_preview_payload())
 	step._set_view_mode(2)  # 降雨
 	assert_eq(step._view_mode, "rain")
@@ -285,7 +355,7 @@ func test_view_switch_does_not_resend_request() -> void:
 	var pair: Array = _make_sender()
 	var step: MapSetupStep = pair[0]
 	var sent: Array = pair[1]
-	step.setup({"seed": 42, "gen_params": {}})
+	step.setup({"seed": "2a", "gen_params": {}})
 	step.on_preview_response(_full_preview_payload())
 	var before: int = sent.size()
 	step._set_view_mode(1)
@@ -296,7 +366,7 @@ func test_view_switch_does_not_resend_request() -> void:
 
 func test_view_same_index_ignored() -> void:
 	var step: MapSetupStep = _make_step()
-	step.setup({"seed": 42, "gen_params": {}})
+	step.setup({"seed": "2a", "gen_params": {}})
 	step.on_preview_response(_full_preview_payload())
 	step._set_view_mode(1)
 	step._set_view_mode(1)

@@ -23,6 +23,7 @@ from ascend.net.protocol import make_response
 from ascend.save.lineage import (GAME_TIME_KEY, LIVE_ORIGIN_KEY, PARENT_KEY,
                                  SEQ_KEY, SNAPSHOTS_KEY,
                                  parse_snapshot_entries)
+from ascend.save.manifest import parse_seed, seed_to_hex
 
 logger = get_logger(__name__)
 
@@ -59,6 +60,9 @@ def make_save_handlers(save_manager, game_engine=None):
         顶层 current_world_id = 引擎当前加载的世界（"最后进入"标注）。
         """
         worlds = save_manager.list_worlds()
+        for w in worlds:
+            # 协议层 seed 一律 hex 字符串（Godot JSON 仅 int64）
+            w["seed"] = seed_to_hex(w["seed"])
         snapshots: list[dict] = []
         for w in worlds:
             lineage = save_manager.snapshot_lineage(w["world_id"])
@@ -93,7 +97,7 @@ def make_save_handlers(save_manager, game_engine=None):
         name = str(payload.get("name", "")).strip()
         if not name:
             raise ValueError("存档名称不能为空")
-        seed = int(payload.get("seed", 0) or 0)
+        seed = parse_seed(payload.get("seed", ""))
         gen_params = payload.get("gen_params")
         if gen_params is not None and not isinstance(gen_params, dict):
             raise ValueError("gen_params 必须为对象")

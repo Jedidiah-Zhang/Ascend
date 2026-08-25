@@ -81,15 +81,20 @@ func test_ready_builds_map_step() -> void:
 
 
 func test_next_step_on_single_step_creates() -> void:
-	"""单步流程：下一步 = 创建世界（构造 save_create 载荷）。"""
+	"""单步流程：下一步 = 创建世界（构造 save_create 载荷）。
+
+	种子定案链：进入步骤发预览 → 后端回传 hex → 创建载荷携带。
+	"""
 	var pair: Array = _make_setup()
 	var setup: Control = pair[0]
 	var sent: Array = pair[3]
+	setup._current_step().on_preview_response(
+		{"seed": "a3f9", "land_ratio": 0.55, "elevation": [1, 2, 3, 4]})
 	setup._next_step()
 	assert_eq(sent.size(), 1, "最后一步点击应发出创建请求")
 	assert_eq(sent[0]["request_type"], SaveApi.CREATE)
 	assert_eq(sent[0]["payload"]["name"], setup._default_save_name())
-	assert_gt(int(sent[0]["payload"]["seed"]), 0, "随机种子已定案")
+	assert_eq(sent[0]["payload"]["seed"], "a3f9", "预览回传种子随创建载荷定案")
 
 
 func test_next_step_carries_ratio_in_gen_params() -> void:
@@ -97,9 +102,9 @@ func test_next_step_carries_ratio_in_gen_params() -> void:
 	var setup: Control = pair[0]
 	var sent: Array = pair[3]
 	var step: MapSetupStep = setup._current_step()
-	step.setup({"seed": 42, "gen_params": {"land_ratio": 0.35}})
+	step.setup({"seed": "2a", "gen_params": {"land_ratio": 0.35}})
 	setup._next_step()
-	assert_eq(sent[0]["payload"]["seed"], 42)
+	assert_eq(sent[0]["payload"]["seed"], "2a")
 	assert_eq(sent[0]["payload"]["gen_params"]["land_ratio"], 0.35)
 	assert_eq(sent[0]["payload"]["gen_params"]["width_km"], 100.0,
 		"尺寸未调参时产出默认档")
@@ -175,7 +180,7 @@ func test_preview_response_reaches_step() -> void:
 	var setup: Control = pair[0]
 	setup._current_step()._preview_pending = true
 	setup._current_step().on_preview_response(
-		{"seed": 42, "land_ratio": 0.55, "elevation": [1, 2, 3, 4]})
+		{"seed": "2a", "land_ratio": 0.55, "elevation": [1, 2, 3, 4]})
 	assert_false(setup._current_step()._preview_pending, "响应应送达步骤")
 	assert_eq(setup._current_step()._preview["elevation"], [1, 2, 3, 4])
 

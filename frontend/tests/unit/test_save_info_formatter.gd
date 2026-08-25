@@ -80,8 +80,9 @@ func test_datetime_format() -> void:
 # ── 种子 ──────────────────────────────────────────────────
 
 func test_seed_string_random() -> void:
-	assert_eq(SaveInfoFormatter.seed_string(0), "随机")
+	assert_eq(SaveInfoFormatter.seed_string(""), "随机")
+	assert_eq(SaveInfoFormatter.seed_string("0"), "随机")
 
 
 func test_seed_string_value() -> void:
-	assert_eq(SaveInfoFormatter.seed_string(12345), "12345")
+	assert_eq(SaveInfoFormatter.seed_string("3039"), "3039")

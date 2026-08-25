@@ -9,8 +9,6 @@
 class_name PawnManager
 extends RefCounted
 
-const PawnRenderer = preload("res://scripts/world/pawn_renderer.gd")
-
 const TILE_PIXEL_SIZE: int = Config.TILE_PIXEL_SIZE
 
 ## 实体 pawn 表：entity_id -> Node2D（含玩家外的生物/植物/建筑）

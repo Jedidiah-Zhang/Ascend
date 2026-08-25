@@ -77,7 +77,7 @@ class EventArchive:
     def _create_schema(self) -> None:
         """全新建库：执行 schema.sqlite.sql（全部 IF NOT EXISTS，幂等）。
 
-        失败直接抛出（无旧库兼容路径）。
+        失败直接抛出。
         """
         with open(_SCHEMA_PATH, encoding="utf-8") as f:
             ddl = f.read()
@@ -117,6 +117,7 @@ class EventArchive:
                 json.dumps(ev.caused_by, ensure_ascii=False),
                 ev.observes,
                 json.dumps(ev.co_participants, ensure_ascii=False),
+                ev.fate_path,
                 json.dumps(
                     [{"entity_id": a.entity_id, "role": a.role}
                      for a in ev.affected],
@@ -140,7 +141,7 @@ class EventArchive:
             with self._db:
                 self._db.executemany(
                     "INSERT OR IGNORE INTO events VALUES ("
-                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
                     ")",
                     event_rows,
                 )
@@ -446,6 +447,7 @@ class EventArchive:
             caused_by=json.loads(row["caused_by_json"]),
             observes=row["observes"],
             co_participants=json.loads(row["co_participants_json"]),
+            fate_path=row["fate_path"],
             affected=affected,
         )
 

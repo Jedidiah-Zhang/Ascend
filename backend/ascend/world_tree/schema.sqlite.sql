@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS events (
     caused_by_json TEXT DEFAULT '[]',
     observes TEXT,
     co_participants_json TEXT DEFAULT '[]',
+    fate_path TEXT,
     affected_json TEXT DEFAULT '[]'
 );
 
