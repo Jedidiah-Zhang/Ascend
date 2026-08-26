@@ -3,13 +3,13 @@ import Mathlib
 /-!
 # 定理 2.5 试点形式化 — 汇聚拓扑的路径和展开与"取最大"反例
 
-出处：`docs/研究理论/因果理论验证/02-误差传播与反事实.md` 定理 2.5（第 47-67 行）
+出处：`docs/研究理论/因果理论验证/02-误差传播与反事实.md` 定理 2.5（第 49-69 行）
 
-- 第 53 行：误差递推 `e_i = ε_i + Σ_{j ∈ Pa_G(i)} L_{j,i}·e_j`（干预节点 `e_s = 0`）；
-- 第 59-61 行：路径和展开
+- 第 55 行：误差递推 `e_i = ε_i + Σ_{j ∈ Pa_G(i)} L_{j,i}·e_j`（干预节点 `e_s = 0`）；
+- 第 61-63 行：路径和展开
   `e_t = Σ_{u ∈ Anc(t)\S} ε_u · Σ_{paths u→t} Π_{(a,b)∈path} L_{a,b}`
   —— 对所有路径**求和**，而非取最大（汇聚节点处多父误差相加；链情形退化回引理 2.1）；
-- 第 63 行：反例 `X1, X2 → X3`（`L = 1`，`ε₁ = ε₂ = 0.1`）：
+- 第 65 行：反例 `X1, X2 → X3`（`L = 1`，`ε₁ = ε₂ = 0.1`）：
   真实误差 `e₃ = ε₃ + 0.2`，单路径界只给 `ε₃ + 0.1 < e₃`。
 
 四个部分：
@@ -27,13 +27,13 @@ namespace AscendLean.CausalVerification
 
 /-! ## 第一部分：汇聚拓扑（X1, X2 → X3）的闭式 -/
 
-/-- 汇聚拓扑的节点：X1、X2 无父，X3 以两者为父（02 篇第 59-63 行） -/
+/-- 汇聚拓扑的节点：X1、X2 无父，X3 以两者为父（02 篇第 61-65 行） -/
 inductive ConvNode where
   | x1 | x2 | x3
 deriving DecidableEq, Repr
 
 /-- 汇聚闭式（试点 1）：`e₃ = ε₃ + L₁₃·ε₁ + L₂₃·ε₂`。
-递推（02 篇第 53 行）在 2 父 1 子处的路径和展开（第 59-61 行）：
+递推（02 篇第 55 行）在 2 父 1 子处的路径和展开（第 61-63 行）：
 X3 的误差 = 自身模型误差 + 每条父路径（X1→X3、X2→X3）贡献的**和**。 -/
 theorem converge_closed_form (e ε : ConvNode → ℝ) (L13 L23 : ℝ)
     (h1 : e ConvNode.x1 = ε ConvNode.x1)
@@ -42,7 +42,7 @@ theorem converge_closed_form (e ε : ConvNode → ℝ) (L13 L23 : ℝ)
     e ConvNode.x3 = ε ConvNode.x3 + L13 * ε ConvNode.x1 + L23 * ε ConvNode.x2 := by
   rw [h3, h1, h2]
 
-/-! ## 第二部分："取最大"不成立（02 篇第 63 行反例） -/
+/-! ## 第二部分："取最大"不成立（02 篇第 65 行反例） -/
 
 /-- "取最大"不成立的一般原理：两父误差均严格为正时，
 `ε₃ + max(ε₁, ε₂) < ε₃ + ε₁ + ε₂`，即取最大界严格小于求和界，
@@ -57,7 +57,7 @@ theorem max_bound_strictly_weaker {ε1 ε2 ε3 : ℝ} (h1 : 0 < ε1) (h2 : 0 < �
     linarith
 
 /-- 数值反例：`X1, X2 → X3`，`L₁₃ = L₂₃ = 1`，`ε₁ = ε₂ = 0.1`。
-真实误差 `e₃ = ε₃ + 0.2`（双父误差相加，02 篇第 63 行）；
+真实误差 `e₃ = ε₃ + 0.2`（双父误差相加，02 篇第 65 行）；
 "取最大"界只给 `ε₃ + max(0.1, 0.1) = ε₃ + 0.1 < e₃`（严格不等式）。 -/
 theorem converge_max_counterexample (ε3 : ℝ) :
     (ε3 + (1 : ℝ) * (0.1 : ℝ) + 1 * (0.1 : ℝ)) = ε3 + (0.2 : ℝ) ∧
@@ -68,7 +68,7 @@ theorem converge_max_counterexample (ε3 : ℝ) :
 
 /-- 反例的完整实例化：从汇聚闭式出发，`L = 1`、`ε₁ = ε₂ = 0.1` 时
 `e₃ = ε₃ + 0.2`，严格大于单路径（取最大）界 `ε₃ + max(ε₁, ε₂) = ε₃ + 0.1`，
-故"取最大"不成立（02 篇第 63 行）。 -/
+故"取最大"不成立（02 篇第 65 行）。 -/
 theorem converge_max_via_closed (e ε : ConvNode → ℝ)
     (h1 : e ConvNode.x1 = ε ConvNode.x1)
     (h2 : e ConvNode.x2 = ε ConvNode.x2)
@@ -88,7 +88,7 @@ theorem converge_max_via_closed (e ε : ConvNode → ℝ)
 
 /-- n 父汇聚的闭式（星形一般化）：`eₙ = εₙ + Σ_{i<n} L_i·ε_i`。
 父节点 `i < n` 无父（`e_i = ε_i`）；子节点 n 的误差为自身误差
-加上所有父贡献之和（02 篇第 53、59-61 行的 Star 特例）。 -/
+加上所有父贡献之和（02 篇第 55、61-63 行的 Star 特例）。 -/
 theorem star_closed_form (n : ℕ) (e ε L : ℕ → ℝ)
     (hleaf : ∀ i, i < n → e i = ε i)
     (hroot : e n = ε n + ∑ i ∈ range n, L i * e i) :
@@ -102,7 +102,7 @@ theorem star_closed_form (n : ℕ) (e ε L : ℕ → ℝ)
 /-! ## 第四部分：一般 DAG 的路径和展开（试点 4） -/
 
 /-- 路径权重和 `W u t`：从 u 到 t 的所有有向路径的权重和
-    `W u t = Σ_{paths u→t} Π_{(a,b)∈path} L_{a,b}`（02 篇第 61 行）；
+    `W u t = Σ_{paths u→t} Π_{(a,b)∈path} L_{a,b}`（02 篇第 63 行）；
     `u = t` 时记空路径权重 1（即"自身误差 ε_t 直接计入"）。
     实现：节点 = ℕ（拓扑序 = 自然数序，父索引 < 子索引）；
     带权邻接 `adj j i = L_{j,i}`（无边为 0）；沿终点 t 做 well-founded 递归
@@ -122,7 +122,7 @@ theorem pathWeight_eq (adj : ℕ → ℕ → ℝ) (u t : ℕ) :
   rw [pathWeight_eq]
   simp
 
-/-- `pathWeight` 的递归方程（u ≠ t 时沿入边展开，02 篇第 53 行递推的镜像） -/
+/-- `pathWeight` 的递归方程（u ≠ t 时沿入边展开，02 篇第 55 行递推的镜像） -/
 lemma pathWeight_rec (adj : ℕ → ℕ → ℝ) {u t : ℕ} (h : u ≠ t) :
     pathWeight adj u t = ∑ j ∈ range t, adj j t * pathWeight adj u j := by
   rw [pathWeight_eq]
@@ -239,11 +239,11 @@ lemma expansion_sum (adj : ℕ → ℕ → ℝ) (ε : ℕ → ℝ) (t : ℕ) :
             ring]
           ring
 
-/-- **一般 DAG 的路径和展开**（02 篇定理 2.5，第 53、59-61 行的代数内核）：
+/-- **一般 DAG 的路径和展开**（02 篇定理 2.5，第 55、61-63 行的代数内核）：
     节点 = ℕ（拓扑序 = 自然数序，父索引 < 子索引）；
     带权邻接 `adj j i = L_{j,i}`（无边为 0）；误差递推
-    `e i = ε i + Σ_{j < i} adj j i · e j`（第 53 行）；
-    闭式：`e t = ε t + Σ_{u < t} ε u · W u t`（第 59-61 行）——
+    `e i = ε i + Σ_{j < i} adj j i · e j`（第 55 行）；
+    闭式：`e t = ε t + Σ_{u < t} ε u · W u t`（第 61-63 行）——
     每个祖先 u 的误差经"从 u 到 t 的所有路径权重和"`W u t` 放大后**相加**（而非取最大）。
     干预节点 s 的编码：`ε s = 0` 且入边 `adj j s = 0`（递推给出 `e s = 0`，
     闭式中 s 的贡献项 `ε s · W s t` 自动消失，对应文档 `Σ_{u ∈ Anc(t) \ S}`）。 -/
@@ -269,7 +269,7 @@ theorem dag_path_expansion (adj : ℕ → ℕ → ℝ) (e ε : ℕ → ℝ)
       _ = ∑ u ∈ range t, ε u * pathWeight adj u t := by
             exact expansion_sum adj ε t
 
-/-- 干预节点的误差为 0（02 篇第 53 行 `e_s = 0`（干预节点））：
+/-- 干预节点的误差为 0（02 篇第 55 行 `e_s = 0`（干预节点））：
     干预后 s 的模型误差 `ε s = 0` 且入边全部断开（`adj j s = 0`，`j < s`），
     递推直接给出 `e s = 0`。 -/
 theorem do_intervention_zero (adj : ℕ → ℕ → ℝ) (e ε : ℕ → ℝ)
@@ -347,7 +347,7 @@ lemma convergeAdj_weight_03 (L13 L23 : ℝ) : pathWeight (convergeAdj L13 L23) 0
 
 /-- **闭环演示**：`dag_path_expansion` 在汇聚图（X1, X2 → X3）上的特例
     = 第一部分 `converge_closed_form`：`e₃ = ε₃ + L₁₃·ε₁ + L₂₃·ε₂`
-    （02 篇第 59-61 行：对祖先 {X1, X2} 的路径贡献求和）。
+    （02 篇第 61-63 行：对祖先 {X1, X2} 的路径贡献求和）。
     这验证了"路径和展开"定义在具体图上给出的正是递推的闭式。 -/
 theorem dag_converge_closed (L13 L23 : ℝ) (e ε : ℕ → ℝ)
     (hrec : ∀ i, e i = ε i + ∑ j ∈ range i, convergeAdj L13 L23 j i * e j) :

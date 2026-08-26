@@ -1,4 +1,4 @@
-import AscendLean.CausalVerification.ChainError
+import Mathlib
 
 /-!
 # 收缩链界（02 篇推论 2.2 / 推论 2.3）
@@ -13,6 +13,7 @@ import AscendLean.CausalVerification.ChainError
 与 `ChainError.lean` 的关系：那里证明了一般链式闭式（引理 2.1 的链式特例）；
 本文件取"等 Lipschitz、每步误差恒为 ε"的特化，退化为几何和，直接用
 Mathlib `Finset.geom_sum_eq` 得闭式；递推衔接见 `chainErr_recurrence`。
+两文件相互独立（无代码依赖），关系仅为数学内容的特化。
 
 符号约定：按文档语境取 0 < L（负 L 不在引擎场景内）；ε 为每步误差幅度，非负。
 -/
@@ -121,11 +122,12 @@ theorem contrib_decay_iff (τ : ℕ) (L δ₀ η : ℝ) (hL0 : 0 < L) (hδ : 0 <
       linarith
     exact (Real.log_le_log_iff hpow hη).mp h1
 
-/-- **推论 2.3 · 初始不确定性遗忘**（02 篇行 35-37，阈值形式）：
+/-- **推论 2.3 · 初始不确定性遗忘**（02 篇行 35-39，阈值形式）：
     0<L<1 时初值贡献衰减到 η 只需 τ ≥ log(δ₀/η)/log(1/L)。
     符号说明：0<L<1 ⇒ log L<0、log(1/L)=−log L>0，故此阈值分子分母同号为正。
-    文档行 37 字面写作 log(δ₀/η)/log L——分母为负使阈值为负、形同虚设，系笔误；
-    正确读法是除以 log(1/L)=|log L|（等价地 log(η/δ₀)/log L）。本形式化采用修正后的正阈值。 -/
+    历史注：文档原稿曾写作 log(δ₀/η)/log L——分母为负使阈值为负、形同虚设，
+    系笔误；已由本形式化发现并在文档修正为除以 log(1/L)=|log L|
+    （等价地 log(η/δ₀)/log L），即现行行 37 的正阈值。本定理采用修正后形式。 -/
 theorem forget_by_depth {τ : ℕ} {L δ₀ η : ℝ} (hL0 : 0 < L) (hLt : L < 1)
     (hδ : 0 < δ₀) (hη : 0 < η)
     (hτ : Real.log (δ₀ / η) / Real.log (1 / L) ≤ (τ : ℝ)) :
@@ -142,7 +144,8 @@ theorem forget_by_depth {τ : ℕ} {L δ₀ η : ℝ} (hL0 : 0 < L) (hLt : L < 1
   exact (div_le_iff_of_neg hsign).mp hτ'
 
 /-- 除法形式的完整刻画（收缩链 0<L<1）：等价于乘法形态的 iff 两端同除以负数 log L，
-    不等号同步翻转后形态不变——这正是文档行 37 笔误的根源。
+    不等号同步翻转后形态不变——这正是文档原稿行 37 笔误的根源
+    （该笔误已修正，见 `forget_by_depth` 历史注）。
     任务所述 `log L ≠ 0` 条件在 0<L<1 下自动成立（log L<0）；若 L>1 则方向翻转为
     τ ≤ log(η/δ₀)/log L，故本刻画按文档语境限定收缩链。 -/
 theorem forget_iff_depth {τ : ℕ} {L δ₀ η : ℝ} (hL0 : 0 < L) (hLt : L < 1)

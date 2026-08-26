@@ -2,9 +2,9 @@ name: Lean Action CI
 
 on:
   push:
-    paths: ["research/lean/**"]
+    paths: ["research/lean/**", "research/equations/**", "backend/ascend/config.py"]
   pull_request:
-    paths: ["research/lean/**"]
+    paths: ["research/lean/**", "research/equations/**", "backend/ascend/config.py"]
   workflow_dispatch:
 
 jobs:
@@ -13,6 +13,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+      # 声明数据漂移巡检（issue #44 防漂移①）：来源改动未重新生成 GenDeclarationData.lean 时
+      # lake build 不会变红，必须独立门禁。gen_lean.py 仅用 stdlib + ascend.config（stdlib-only）。
+      - name: 声明数据漂移巡检（gen_lean.py --check）
+        run: python3 research/equations/gen_lean.py --check
       - uses: leanprover/lean-action@v1
         with:
           lake-package-directory: research/lean

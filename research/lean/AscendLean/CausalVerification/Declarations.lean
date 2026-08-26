@@ -504,7 +504,7 @@ theorem precipTypeFor_snow_of_le {t₁ t₂ : ℝ} (hle : t₁ ≤ t₂)
 LipschitzLayer.error_recurrence_bound（02 篇定理 2.5 连接定理）要求假设
 `hlip : ∀ i j x y, j < i → (∀ k < i, k ≠ j → x k = y k) →
    |f i x − f i y| ≤ adj j i * |x j − y j|`
-（单父坐标 Lipschitz，02 篇第 53 行「L_{j,i} 关于父 j」）。
+（单父坐标 Lipschitz，02 篇第 55 行「L_{j,i} 关于父 j」）。
 
 本文件的供给关系：
 - sea_level_temp→latitude 边：取 adj 0 1 = L_lat = 2.0，

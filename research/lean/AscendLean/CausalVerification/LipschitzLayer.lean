@@ -8,11 +8,11 @@ import AscendLean.CausalVerification.DagPathExpansion
 
 - 引理 2.1（第 5-19 行）：Lipschitz 复合误差传播律，三步拆解在第 15 行：
   `|模型复合 Fh(x) − 真值复合 F(x)| ≤ |fh_ℓ(ẑ) − f_ℓ(ẑ)| + |f_ℓ(ẑ) − f_ℓ(z)| ≤ ε_ℓ + L_ℓ·|ẑ − z|`；
-- 定理 2.5 命题（第 51-57 行）：沿拓扑序递推
+- 定理 2.5 命题（第 53-59 行）：沿拓扑序递推
   `e_i = ε_i + Σ_{j ∈ Pa_G(i)} L_{j,i}·e_j` 给出 `|Xh_t^do − X_t^do| ≤ e_t`，
-  干预节点 `e_s = 0`（第 53 行）；
-- 路径和闭式（第 59-61 行）：
-  `e_t = Σ_u ε_u · Σ_{paths u→t} Π L_{a,b}`，链情形退化回引理 2.1（第 59 行）。
+  干预节点 `e_s = 0`（第 55 行）；
+- 路径和闭式（第 61-63 行）：
+  `e_t = Σ_u ε_u · Σ_{paths u→t} Π L_{a,b}`，链情形退化回引理 2.1（第 61 行）。
 
 `DagPathExpansion.lean` 已证明代数内核（`dag_path_expansion`：递推 ⟹ 闭式）。
 本文件补上缺失的一环——**凭什么真实预测误差满足那个递推上界**：
@@ -21,7 +21,7 @@ import AscendLean.CausalVerification.DagPathExpansion
    吃全部上游取值（`(ℕ → ℝ) → ℝ`）；轨迹自洽 `X i = f i X`、`Xh i = fh i Xh`
    （CRN：同一噪声实现下双方都是确定性的）。
 1. 望远镜引理：单坐标 Lipschitz ⟹ 多坐标同时变化时各坐标贡献相加
-   （02 篇第 53 行"L_{j,i} 关于父 j"的多父语义基础）；
+   （02 篇第 55 行"L_{j,i} 关于父 j"的多父语义基础）；
 2. 结构方程的局部性（`f i` 只依赖坐标 `< i`）+ 单坐标 Lipschitz
    ⟹ 无条件和式 Lipschitz（截断归约）；
 3. 连接定理（强归纳）：`|Xh i − X i| ≤ e i`，e 由递推定义——
@@ -30,7 +30,7 @@ import AscendLean.CausalVerification.DagPathExpansion
    `|Xh t − X t| ≤ ε t + Σ_{u<t} ε u · W u t`；
 5. 干预情形：被干预节点两侧钉死同值（`X s = Xh s`）⟹ 该点误差为 0，
    复用 `do_intervention_zero`；`ε s = 0` 使闭式中干预源项消失
-   （对应第 61 行 `Anc(t) \ S`）；
+   （对应第 63 行 `Anc(t) \ S`）；
 6. 链特例 = 引理 2.1：单父链上实例化，路径和闭式退化回 ChainError.lean
    的 `Σ ε_j Π L_j` 形态。
 
@@ -70,7 +70,7 @@ lemma pointUpd_of_ne {x : ℕ → ℝ} {n : ℕ} (v : ℝ) {k : ℕ} (h : k ≠ 
     （其余坐标不动时输出变化 ≤ `w j ×`该坐标变化），
     则两个在高坐标（≥ n）上一致的输入之间有
     `|g x − g y| ≤ Σ_{j<n} w j · |x j − y j|`——多坐标同时变化时各坐标贡献相加。
-    这是 02 篇第 53 行逐边常数 `L_{j,i}` 能按父求和的语义基础。
+    这是 02 篇第 55 行逐边常数 `L_{j,i}` 能按父求和的语义基础。
     证明：把第 m 个坐标单独换成 y 的取值，拆成"单坐标步 + 余下归纳"。 -/
 theorem lipschitz_telescope {g : (ℕ → ℝ) → ℝ} {w : ℕ → ℝ} :
     ∀ n : ℕ,
@@ -121,7 +121,7 @@ theorem lipschitz_telescope {g : (ℕ → ℝ) → ℝ} {w : ℕ → ℝ} :
 /-! ## 第二节：结构方程局部性 + 单坐标 Lipschitz ⟹ 无条件和式 Lipschitz -/
 
 /-- **无条件和式 Lipschitz**：真方程只读低坐标（局部性）+ 单父坐标 Lipschitz
-    （02 篇第 53 行的字面语义）⟹ 对任意两输入（无需任何一致性前提）
+    （02 篇第 55 行的字面语义）⟹ 对任意两输入（无需任何一致性前提）
     `|g x − g y| ≤ Σ_{j<n} w j · |x j − y j|`。
     证明：把两输入都截断到低 n 维（局部性保证方程值不变），
     截断后在高坐标上一致，套望远镜引理。 -/
@@ -181,10 +181,10 @@ theorem step_bound (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh ε e : ℕ → �
         refine add_le_add le_rfl (Finset.sum_le_sum fun j hj => ?_)
         exact mul_le_mul_of_nonneg_left (hsub j (Finset.mem_range.mp hj)) (hadjnn j i)
 
-/-- **连接定理**（02 篇定理 2.5 命题的第 51-57 行部分）：
+/-- **连接定理**（02 篇定理 2.5 命题的第 53-59 行部分）：
     真值轨迹 `X i = f i X` 与模型轨迹 `Xh i = fh i Xh`（CRN 同一噪声实现下双方确定性）
     满足逐节点模型误差 `‖fh i − f i‖_∞ ≤ ε i`、真方程局部性（只读低坐标）
-    与单父坐标 Lipschitz（第 53 行的 `L_{j,i}` 关于父 j）时，
+    与单父坐标 Lipschitz（第 55 行的 `L_{j,i}` 关于父 j）时，
     强归纳给出 `|Xh i − X i| ≤ e i`，其中 e 由递推
     `e i = ε i + Σ_{j<i} adj j i · e j` 定义。 -/
 theorem error_recurrence_bound (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh ε e : ℕ → ℝ) (adj : ℕ → ℕ → ℝ)
@@ -204,7 +204,7 @@ theorem error_recurrence_bound (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh ε e
 
 /-! ## 第四节：定理 2.5 完整式 — 组合路径和展开 -/
 
-/-- **定理 2.5 完整式**（02 篇第 51-61 行）：组合连接定理与
+/-- **定理 2.5 完整式**（02 篇第 53-63 行）：组合连接定理与
     `DagPathExpansion.dag_path_expansion`（递推 ⟹ 路径和闭式），得
     `|Xh t − X t| ≤ ε t + Σ_{u<t} ε u · W u t`
     ——对所有从误差源到 t 的有向路径求和，而非取最大。 -/
@@ -222,7 +222,7 @@ theorem counterfactual_closed_form (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh 
   have h1 := error_recurrence_bound f fh X Xh ε e adj hX hXh herr hloc hlip hadjnn he t
   rwa [dag_path_expansion adj e ε he t] at h1
 
-/-! ## 第五节：干预情形 — 被干预节点钉死同值（02 篇第 49、53 行） -/
+/-! ## 第五节：干预情形 — 被干预节点钉死同值（02 篇第 51、55 行） -/
 
 /-- 递推误差的非负性：ε ≥ 0（由 sup 范数界保证）+ Lipschitz 权重非负
     ⟹ e i ≥ 0。干预钉死分支需要它。 -/
@@ -265,7 +265,7 @@ theorem error_recurrence_bound_do (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh �
     exact step_bound f fh X Xh ε e adj i (hX i his) (hXh i his) herr hloc hlip
       (fun j hj => ih j hj) hadjnn
 
-/-- 干预节点的自洽性核对（02 篇第 53 行 `e_s = 0`（干预节点））：
+/-- 干预节点的自洽性核对（02 篇第 55 行 `e_s = 0`（干预节点））：
     一侧由递推 + ε s = 0 + 入边断开给出 e s = 0（复用 DagPathExpansion.do_intervention_zero）；
     另一侧由干预值钉死给出真实误差 |Xh s − X s| = 0。两侧一致。 -/
 theorem do_intervention_consistency (X Xh ε e : ℕ → ℝ)
@@ -279,13 +279,13 @@ theorem do_intervention_consistency (X Xh ε e : ℕ → ℝ)
   · rw [← hpin]
     simp
 
-/-- **定理 2.5 完整式（干预版）**（02 篇第 51-61 行）：do(X_s = x_s) 后
+/-- **定理 2.5 完整式（干预版）**（02 篇第 53-63 行）：do(X_s = x_s) 后
     `|Xh t^do − X t^do| ≤ ε t + Σ_{u<t} ε u · W u t`。
     注意本定理比文档假设更强：无需显式设 ε s = 0 或断开入边——
     钉死使 `|Xh s − X s| = 0 ≤ e s` 对任意 e s 成立。
     而在 do 设定下 ε s = 0 本来就自动成立（s 的方程两侧都不再被求值），
     此时闭式中干预源 u = s 的项消失（见 do_source_term_vanishes），
-    对应第 61 行求和限制在 `Anc(t) \ S`；
+    对应第 63 行求和限制在 `Anc(t) \ S`；
     e s = 0 的精确核对见 do_intervention_consistency。 -/
 theorem counterfactual_closed_form_do (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh ε e : ℕ → ℝ)
     (adj : ℕ → ℕ → ℝ)
@@ -303,7 +303,7 @@ theorem counterfactual_closed_form_do (f fh : ℕ → (ℕ → ℝ) → ℝ) (X 
     hadjnn he t
   rwa [dag_path_expansion adj e ε he t] at h1
 
-/-- 闭式中干预源项消失的形式化（02 篇第 61 行 `Anc(t) \ S` 的对应物）：
+/-- 闭式中干预源项消失的形式化（02 篇第 63 行 `Anc(t) \ S` 的对应物）：
     ε s = 0 时，无论路径权重 W s t 为何，u = s 的贡献恒为 0。 -/
 theorem do_source_term_vanishes (adj : ℕ → ℕ → ℝ) (ε : ℕ → ℝ)
     {s : ℕ} (hεs : ε s = 0) (t : ℕ) :
@@ -311,7 +311,7 @@ theorem do_source_term_vanishes (adj : ℕ → ℕ → ℝ) (ε : ℕ → ℝ)
   rw [hεs]
   ring
 
-/-! ## 第六节：链特例 = 引理 2.1（02 篇第 5-19 行；退化说明在第 59 行） -/
+/-! ## 第六节：链特例 = 引理 2.1（02 篇第 5-19 行；退化说明在第 61 行） -/
 
 /-- 链邻接：唯一父边 j → j+1，权重 L j（单父链，02 篇第 7 行
     X₁ → X₂ → … → X_{ℓ+1}）。 -/
@@ -354,7 +354,7 @@ lemma chain_rec_sum (L e : ℕ → ℝ) (i : ℕ) :
   · intro hc
     exact absurd (Finset.mem_range.mpr (by omega : i < i + 1)) hc
 
-/-- 链上的路径权重退化为乘积（02 篇第 59 行"链情形每节点单父"）：
+/-- 链上的路径权重退化为乘积（02 篇第 61 行"链情形每节点单父"）：
     u ≤ n 时从 u 到 n+1 只有唯一路径，`W u (n+1) = Π_{j ∈ Icc u n} L j`
     ——沿链逐段相乘，即引理 2.1 第 9 行的 `Π_{m=j+1}^{ℓ} L_m`。 -/
 lemma pathWeight_chain_lt (L : ℕ → ℝ) (n : ℕ) :
@@ -402,7 +402,7 @@ lemma chain_two_forms (ε L : ℕ → ℝ) (n : ℕ) :
     RHS 与 ChainError.chain_error_closed_form 的闭式完全同形（对照成立）。
     证明路线刻意经过路径和形式：泛型定理给 `Σ_u ε_u·W u (n+1)`，
     再用 pathWeight_chain_lt 把 W 退化为链乘积——展示"所有路径求和"
-    在单父链上只剩一条路径（第 59 行）。 -/
+    在单父链上只剩一条路径（第 61 行）。 -/
 theorem chain_error_propagation_bound (L : ℕ → ℝ) (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh ε e : ℕ → ℝ)
     (hL : ∀ i, 0 ≤ L i)
     (hX : ∀ i, X i = f i X) (hXh : ∀ i, Xh i = fh i Xh)
@@ -442,7 +442,7 @@ theorem chain_error_propagation_bound (L : ℕ → ℝ) (f fh : ℕ → (ℕ →
   -- 定理 2.5 完整式在链上的实例：路径和形式
   have hps := counterfactual_closed_form f fh X Xh ε e (chainAdj L) hX hXh herr hloc
     hlipgen hadjnn he (n + 1)
-  -- 路径权重退化为链乘积（第 59 行：链情形只剩一条路径）
+  -- 路径权重退化为链乘积（第 61 行：链情形只剩一条路径）
   have hps' : (∑ u ∈ range (n + 1), ε u * pathWeight (chainAdj L) u (n + 1))
       = (∑ u ∈ range (n + 1), ε u * ∏ j ∈ Icc u n, L j) := by
     apply Finset.sum_congr rfl
