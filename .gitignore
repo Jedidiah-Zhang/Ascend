@@ -38,6 +38,10 @@ backend/tools/visual/output/
 # 研究探针的可视化输出（运行期生成）
 research/figures/
 
+# Lean 项目（research/lean/）：构建缓存与依赖不提交
+research/lean/.lake/
+research/lean/lake-packages/
+
 # Godot 编辑器插件（开发工具，非游戏代码；GUT 本地手动安装后前端测试本地运行）
 frontend/addons/
 

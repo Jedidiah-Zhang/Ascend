@@ -45,12 +45,15 @@ class VariableSpec:
         domain: "continuous" 或 "discrete"。
         exogenous: 是否外生（无结构边入边）。
         bounds: 连续变量的值域 (min, max)，离散或未知为 None。
+        eps: 误差上限（设计预算，与变量同单位；定理 2.5 的 ε_i，
+            反事实误差界 Σ ε_u·W(u,t) 的输入）。None 表示未声明。
     """
 
     name: str
     domain: str = "continuous"
     exogenous: bool = False
     bounds: tuple[float, float] | None = None
+    eps: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +97,7 @@ class VariableGraph(DirectedGraph):
         domain: str = "continuous",
         exogenous: bool = False,
         bounds: tuple[float, float] | None = None,
+        eps: float | None = None,
     ) -> VariableSpec:
         """声明一个变量节点。
 
@@ -118,7 +122,7 @@ class VariableGraph(DirectedGraph):
         if name in self._variables:
             raise ValueError(f"变量重复声明: {name}")
         spec = VariableSpec(name=name, domain=domain,
-                            exogenous=exogenous, bounds=bounds)
+                            exogenous=exogenous, bounds=bounds, eps=eps)
         self._variables[name] = spec
         self._node_ids.add(name)
         return spec

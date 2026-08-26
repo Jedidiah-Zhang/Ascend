@@ -10,6 +10,7 @@
   <img src="https://img.shields.io/badge/Godot-4.x-478CBF?logo=godotengine&logoColor=white" alt="Godot">
   <img src="https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white" alt="SQLite">
   <img src="https://img.shields.io/badge/JSON-over%20TCP-000000?logo=json&logoColor=white" alt="JSON over TCP">
+  <img src="https://img.shields.io/badge/Lean-4.34%20%2B%20Mathlib-000000" alt="Lean + Mathlib">
   <img src="https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-EF9421" alt="License">
 </p>
 
@@ -161,13 +162,13 @@ The research question becomes:
 
 > **How does an agent that does not know the world's Ground Truth form an internal representation of the world through its own experience?**
 
-### Agents Do Not Receive Ground Truth Directly
+#### Agents Do Not Receive Ground Truth Directly
 
 Phase 1 yields the Ground Truth causal structure $G^*$ defined by the world's generative mechanisms, but agents cannot access it directly. The information available to an agent comes from its own observations $o_1,o_2,\dots,o_t$ and its own actions $a_1,a_2,\dots,a_t$.
 Therefore, even agents in the same world may form different world representations because their perception, initial conditions, experience, and individual traits differ.
 In Phase 2, the specific cognition and decision architecture itself is an object of study, not a predetermined engineering implementation.
 
-### Individual Differences and Genes
+#### Individual Differences and Genes
 
 The player's genetic editing is not for changing traditional numeric attributes, but for changing the initial conditions of an individual's interaction with the world.
 The long-term goal is to study:
@@ -199,7 +200,7 @@ Therefore, an NPC should be able to run independently even without a natural lan
 
 ---
 
-### Directory Structure
+## Directory Structure
 
 ```
 backend/   Python backend (core logic)
