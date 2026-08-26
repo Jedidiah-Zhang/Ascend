@@ -4,7 +4,7 @@ import AscendLean.CausalVerification.DagPathExpansion
 /-!
 # Lipschitz 函数层 — 从"真实预测误差"到"路径和闭式"的完整闭环
 
-出处：`docs/研究理论/因果理论验证/02-误差传播与反事实.md`
+出处：`docs/研究理论/世界基座/02-误差传播与反事实.md`
 
 - 引理 2.1（第 5-19 行）：Lipschitz 复合误差传播律，三步拆解在第 15 行：
   `|模型复合 Fh(x) − 真值复合 F(x)| ≤ |fh_ℓ(ẑ) − f_ℓ(ẑ)| + |f_ℓ(ẑ) − f_ℓ(z)| ≤ ε_ℓ + L_ℓ·|ẑ − z|`；

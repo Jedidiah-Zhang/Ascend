@@ -1,4 +1,4 @@
-"""探针 2 — 真实引擎天气验证（对应 docs/研究理论/因果理论验证/05-理论实验对照.md，E1–E3）。
+"""探针 2 — 真实引擎天气验证（对应 docs/研究理论/世界基座/05-理论实验对照.md，E1–E3）。
 
 运行: .venv/bin/python research/engine_weather.py [--exp E1 E2 E3] [--fast]
 - E1: Granger 边恢复（分钟粒度，含正/负功效校准）

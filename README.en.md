@@ -221,7 +221,8 @@ Full design documents live in `docs/`, organized by module:
 
 - [Game Overview and Worldview](docs/游戏综述与世界观.md)
 - [Research Plan and Theory](docs/研究方案与理论.md) — SCM, causal verification, sample complexity
-- [Research Theory · Causal Theory Verification](docs/研究理论/因果理论验证/) — theorems, derivations, probe experiment criteria and results
+- [Research Theory · World Foundation](docs/研究理论/世界基座/) — theorems, derivations, probe experiment criteria and results (phase 1)
+- [Research Theory · Counterfactual & Cognition](docs/研究理论/反事实与认知/) — interventions, replay, error budgets, cognitive learning (phase 2)
 - [World Framework](docs/世界框架/) — physics, time, ecology, event systems
 - [Living Individuals](docs/生命个体/) — personality, physiology, body
 - [Mind System](docs/心智系统/) — AI-native NPCs, goals, skills

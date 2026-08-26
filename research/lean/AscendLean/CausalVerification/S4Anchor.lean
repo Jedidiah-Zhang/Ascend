@@ -4,7 +4,7 @@ import AscendLean.CausalVerification.LipschitzLayer
 /-!
 # S4 探针数值锚点 — do 干预求和界的 Lean 证书对照
 
-出处：`docs/研究理论/因果理论验证/05-理论实验对照.md` S4 判据行 +
+出处：`docs/研究理论/世界基座/05-理论实验对照.md` S4 判据行 +
 `research/toy_scm.py::_s4`（拓扑 X₁, X₂ → X₃ → X₄，do(X₁)，CRN 对齐误差构造）。
 
 探针判据①（预注册）：CRN 误差 ≤ 求和界 `e₄ = ε₄ + L·ε₃ + L²·ε₂`。

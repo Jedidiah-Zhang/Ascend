@@ -14,7 +14,7 @@ research/lean/
 ├── lean-toolchain                   # Lean 版本锁定
 ├── lake-manifest.json               # 依赖锁定（Mathlib）
 └── AscendLean/
-    └── CausalVerification/          # ← 对应 docs/研究理论/因果理论验证/
+    └── CausalVerification/          # ← 对应 docs/研究理论/世界基座/（定理 2.5 等）
         ├── ChainError.lean          # 引理 2.1 链式误差传播闭式（试点）
         ├── Contraction.lean         # 推论 2.2 三档行为 + 推论 2.3 收缩链两律（外推饱和/初值遗忘）
         ├── DagPathExpansion.lean    # 定理 2.5 代数内核：递推 ⟹ 路径和展开 + 汇聚反例
