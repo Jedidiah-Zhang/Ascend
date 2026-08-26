@@ -48,6 +48,7 @@ def load_declaration(path: str | Path) -> VariableGraph:
             domain=spec.get("domain", "continuous"),
             exogenous=spec.get("exogenous", False),
             bounds=tuple(bounds) if bounds else None,
+            eps=spec.get("eps"),
         )
     for edge in data["edges"]:
         graph.declare_edge(

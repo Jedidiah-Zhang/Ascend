@@ -1,31 +1,37 @@
 {
   "version": 1,
-  "comment": "天气感知派生组声明（研究侧规范）：指导代码如何写，不被生产代码引用。本片段只声明 derive.py 的 3 个方程：sea_level_temp/temperature/rainfall 为本片段的未建模根（外生）；latitude 与 seasonal_amp 是从可观测场反推的潜参数（inverse）；precip_type 为温度→降水类型的结构边（离散输出，L 退化为 0）。",
+  "comment": "天气感知派生组声明（研究侧规范）：指导代码如何写，不被生产代码引用。本片段只声明 derive.py 的 3 个方程：sea_level_temp/temperature/rainfall 为本片段的未建模根（外生）；latitude 与 seasonal_amp 是从可观测场反推的潜参数（inverse）；precip_type 为温度→降水类型的结构边（离散输出，L 退化为 0）。eps 为误差上限（设计预算草案 v0，与变量同单位）：引擎是确定性纯函数，'偏差'实际来自简化近似层（场插值/采样/线性外推），ε 是这些近似层的预算承诺。来源锚点（由可感知性与实测推导，非拍脑袋）：temperature=0.05°C ← 雨雪雪线 round(1) 死区 0.1°C 的一半（保证雪线稳定判定），E4 探针实测线性近似残差 0.039 ≤ 0.05 支撑；rainfall=100mm/年 ← 气候档位边界最小间距 200mm（200/600/1500）的一半，避免档位误判；latitude=0.5° ← 日照时长 tier 间距 3.5h 的约 1/10（0.3h ≈ 1° 纬度），自身分摊 0.5°；seasonal_amp=0.1°C ← 昼夜振幅 = 0.5×amp 后进入每日温度，维持每日温度偏差 ≤0.05 预算；sea_level_temp=0.2°C ← 场插值层预算（C1 网格近似），由 latitude 总预算倒推分摊；precip_type=0（离散输出，L=0 不放大）。推导链（graph_check G3 判据 Σ ε_u·W(u,t) ≤ 5%×值域宽度）：latitude 界 = 2×0.2+0.5 = 0.9 ≤ 4.0；seasonal_amp 界 = 0.05×0.65+100×0.002+0.1 = 0.33 ≤ 1.45。待阶段 4 反事实判据定稿后收紧；探针实测超预算时按 05 篇预注册纪律回改声明。",
   "variables": {
     "sea_level_temp": {
       "domain": "continuous",
-      "exogenous": true
+      "exogenous": true,
+      "eps": 0.2
     },
     "temperature": {
       "domain": "continuous",
-      "exogenous": true
+      "exogenous": true,
+      "eps": 0.05
     },
     "rainfall": {
       "domain": "continuous",
       "exogenous": true,
-      "bounds": [0.0, 3500.0]
+      "bounds": [0.0, 3500.0],
+      "eps": 100.0
     },
     "precip_type": {
-      "domain": "discrete"
+      "domain": "discrete",
+      "eps": 0.0
     },
     "latitude": {
       "domain": "continuous",
       "exogenous": true,
-      "bounds": [0.0, 80.0]
+      "bounds": [0.0, 80.0],
+      "eps": 0.5
     },
     "seasonal_amp": {
       "domain": "continuous",
-      "bounds": [1.0, 30.0]
+      "bounds": [1.0, 30.0],
+      "eps": 0.1
     }
   },
   "edges": [
