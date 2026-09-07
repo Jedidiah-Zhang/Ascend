@@ -113,7 +113,7 @@ This lets researchers reproduce experiments, compare models, replay events, and 
 
 The system is planned as three interconnected layers:
 
-![Architecture layers](docs/diagrams/ascend-系统架构.层级图.svg)
+![Architecture layers](/docs/diagrams/ascend-system-architecture.svg)
 
 **① World Layer** — A programmatically generated, continuously evolving, verifiable causal world, including terrain, climate, hydrology, ecology, resources, time, and event systems. The world runs independently of agents and provides observations to agents through a restricted perception interface. World-state changes are recorded by the event system and WorldTree for debugging, reproduction, and causal research.
 
@@ -220,8 +220,10 @@ requirements.txt  Python dependencies
 Full design documents live in `docs/`, organized by module:
 
 - [Game Overview and Worldview](docs/游戏综述与世界观.md)
-- [Research Plan and Theory](docs/研究方案与理论.md) — SCM, causal verification, sample complexity
-- [Research Theory · Causal Theory Verification](docs/研究理论/因果理论验证/) — theorems, derivations, probe experiment criteria and results
+- [Research Overview](docs/研究理论/研究综述.md) — unified definitions, notation, and the three-phase research plan
+- [Research Theory · World Foundation](docs/研究理论/世界基座/) — causal-world specification, mathematical appendices, and implementation acceptance (phase 1)
+- [Research Theory · Counterfactual &amp; Cognition](docs/研究理论/反事实与认知/) — identifiability, intervention sampling, and causal-capability evaluation (phase 2)
+- [Research Theory · Multi-Agent](docs/研究理论/多智能体/) — joint interventions, strategic response, and macrostructure (phase 3)
 - [World Framework](docs/世界框架/) — physics, time, ecology, event systems
 - [Living Individuals](docs/生命个体/) — personality, physiology, body
 - [Mind System](docs/心智系统/) — AI-native NPCs, goals, skills

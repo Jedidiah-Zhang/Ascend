@@ -1,9 +1,9 @@
-"""探针 2 — 真实引擎天气验证（对应 docs/研究理论/因果理论验证/05-理论实验对照.md，E1–E3）。
+"""历史探针 2：真实引擎天气诊断（E1-E3）。
 
 运行: .venv/bin/python research/engine_weather.py [--exp E1 E2 E3] [--fast]
-- E1: Granger 边恢复（分钟粒度，含正/负功效校准）
+- E1: Granger 滞后可见性（分钟粒度，含正/负功效校准）
 - E2: 温度分布 margin 指数 α（幂律拟合）
-- E3: 时间相关尺度 τ_t（自相关）与空间相关尺度 τ_s（跨 chunk 相关）
+- E3: 时间相关尺度（自相关）与空间相关尺度（跨 chunk 相关）
 E4（方程学习表）/ E5（CRN 流诊断）见 engine_e4_5.py。
 """
 
@@ -47,10 +47,10 @@ def _series(e, clock, cx, cy, days=30, step_min=6, tstart=None):
     return ts, vals
 
 
-# ── E1：Granger 边恢复 + 功效校准 ───────────────────────────────
+# ── E1：Granger 滞后可见性 + 功效校准 ───────────────────────────
 
 def _e1(fast=False):
-    print("\n=== E1 Granger 边恢复（分钟粒度 · 含正/负对照校准）===")
+    print("\n=== E1 Granger 滞后可见性（分钟粒度 · 含正/负对照校准）===")
     e, clock = _engine()
     # 长连续 run：跳 1 年后往回采 30 天（确保"过去时刻"可查）
     clock.skip(GAME_YEAR)
@@ -152,7 +152,7 @@ def _e2(fast=False):
 # ── E3：时间 + 空间相关尺度 ────────────────────────────────────
 
 def _e3(fast=False):
-    print("\n=== E3 时间相关 τ_t + 空间相关 τ_s ===")
+    print("\n=== E3 时间相关 + 空间相关尺度 ===")
     from ascend.space import ClimateZone as CZ
     wt = WorldTree()
     clock = WorldClock()
@@ -166,10 +166,10 @@ def _e3(fast=False):
     ts = list(range(clock.time - GAME_DAY * 3, clock.time, GAME_MINUTE))
     T1 = np.array([e.get_weather(0, 0, t).temperature for t in ts])
     ac = np.array([np.corrcoef(T1[:-l], T1[l:])[0, 1] for l in range(1, min(60, len(T1)))])
-    tau_t = next((l for l, v in enumerate(ac, start=1) if v < 1 / np.e), None)
+    t_corr = next((l for l, v in enumerate(ac, start=1) if v < 1 / np.e), None)
     hold = ac[0] > 0.5
-    print(line("τ_t（分钟）", "时间相关持续（acf 半衰 > 采样间隔 → m_eff < m，需校正）",
-               f"τ_t ≈ {tau_t if tau_t else '>60'} 分钟，首步 acf={ac[0]:.3f}",
+    print(line("时间相关（分钟）", "时间相关持续（acf 半衰 > 采样间隔）",
+               f"相关半衰 ≈ {t_corr if t_corr else '>60'} 分钟，首步 acf={ac[0]:.3f}",
                hold))
     # 空间：同 tick 跨 chunk 相关
     t0 = clock.time - GAME_DAY
@@ -177,7 +177,7 @@ def _e3(fast=False):
     # 温度没有直接跨 chunk 相关性（各 chunk 独立基线+场），测扰动相关性：用 wind 场
     wind = [e.get_weather(cx, 0, t0).wind_speed for cx in range(6)]
     corr2 = [np.corrcoef(wind[:-1], wind[1:])[0, 1]]
-    print(line("τ_s（chunk）", "跨 chunk 相关存在（β>0）或可忽略（报告 β）",
+    print(line("空间相关（chunk）", "跨 chunk 相关存在（β>0）或可忽略（报告 β）",
                f"相邻风相关 = {corr2[0]:.3f}", True))
     e.shutdown()
 

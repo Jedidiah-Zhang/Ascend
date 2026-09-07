@@ -1,10 +1,7 @@
-"""探针 2 — E4：逐方程学习性表（E4 方程学习表 + E5 CRN 流诊断）。
+"""历史探针 2：E4 方程预测诊断 + E5 CRN 流诊断。
 
 运行: .venv/bin/python research/engine_e4_5.py [--fast]
-验证 05 篇 E4 判据：
-- 线性结构方程（温度/湿度/风/日照）线性回归残差 = 噪声方差（无结构）
-- 缺失父变量时残差有可预测性 → 完备性漏洞的直接检验
-- 阈值/分段方程（降水强度）需显式分段声明
+新框架下的适用范围见 05 篇，既有结果的证据状态见 06 篇。
 """
 
 from __future__ import annotations
@@ -130,7 +127,7 @@ def _e4(fast=False):
 def _e5(fast=False):
     """E5 CRN 流纪律检验（05 篇判据 · 同 seed 双跑 + 全包静态扫描）。
 
-    验证 Loom of Fate 落地后 CRN 前提 (a)（00 篇 §2）：
+    诊断 Loom of Fate 落地后的 CRN 地址纪律（00 篇 §3）：
       1. 全 ascend 包静态扫描：模拟路径零裸 random/np.random——
          随机性一律经 fate 派生（白名单：世界创建熵、UUID、MT 播种构造）。
       2. 同 seed 双跑：基线 vs do 干预（额外 chunk、无关流消费、不同

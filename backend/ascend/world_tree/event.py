@@ -117,8 +117,8 @@ class Event:
         co_participants: 共同参与方 ID 列表。
         fate_path: 本事件随机性来源的 Loom of Fate 流身份
             （如 "weather/precip/3/-2@3912"；None = 事件不消费随机流）。
-            供研究溯源：反事实 abduction 只需记录流身份即可重算
-            噪声实现（见 docs/世界框架/随机系统/设计.md）。
+            供研究溯源：外生随机实现由流身份派生，无需存值即可重算
+            （见 docs/世界框架/随机系统/设计.md）。
         id: 事件唯一标识（UUID hex，自动生成）。
     """
     timestamp: int
