@@ -698,8 +698,8 @@ class GameEngine:
         if not pool:
             raise RuntimeError(f"seed={seed}: 大陆无陆地 chunk，无法选取出生点")
         # 确定性选取（命运织机）：同 seed 同大陆 → 同出生点。
-        # 原全局 random.randrange 无种子，破坏同 seed 双跑复现
-        # （CRN 前提，见 docs/世界框架/随机系统/设计.md）。
+        # 随机地址由身份派生，同 seed 双跑可复现
+        # （CRN 地址纪律，见 docs/世界框架/随机系统/设计.md）。
         return pool[derive(seed, "world", "birth_point") % len(pool)]
 
     def _generate_initial_chunks(self, continent) -> None:

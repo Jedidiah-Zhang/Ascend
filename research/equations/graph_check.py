@@ -3,10 +3,11 @@
 运行: .venv/bin/python research/equations/graph_check.py [--json PATH]
 
 与 verify_equations.py（L1 自洽性）互补：本工具回答"设计是否合理"，
-判据全部来自已形式化的定理（02 篇 + Lean 证书）：
+判据全部来自 02 篇的已证明命题与 Lean 证书：
   - 推论 2.2/2.3（Contraction.lean）：环收缩性、收缩/发散两律
   - 命题 2.5（DagPathExpansion.lean / ExplicitPaths.lean）：路径权重和
     W(u,t) = Σ_{u→t 路径} Π L，反事实误差上界 ε_t + Σ_u ε_u·W(u,t)
+    （json 的 L 字段即文档的逐边 Lipschitz 常数 Λ_{u,v}）
   - S4 探针（06 篇）：多父节点必须按"求和"而非取最大
 
 判据（预注册，05 篇总则风格；阈值先定后跑，后续按实测校准）：

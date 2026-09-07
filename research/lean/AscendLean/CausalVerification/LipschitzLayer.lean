@@ -31,8 +31,8 @@ import AscendLean.CausalVerification.DagPathExpansion
 5. 干预情形：被干预节点两侧钉死同值（`X s = Xh s`）⟹ 该点误差为 0，
    复用 `do_intervention_zero`；`ε s = 0` 使闭式中干预源项消失
    （对应 `Anc(t) \ I`）；
-6. 链特例 = 命题 2.1：单父链上实例化，路径和闭式退化回 ChainError.lean
-   的 `Σ ε_j Π L_j` 形态。
+6. 链特例 = 命题 2.1：单父链上实例化，路径和闭式退化回命题 2.1 的
+    `Σ ε_j Π L_j` 形态。
 
 编码取舍（Lipschitz 的忠实版）：逐边 Lipschitz 采用**单父坐标**形式
 （改一个父坐标、界 `L_{j,i}`，即文档"L_{j,i} 关于父 j"的字面语义），
@@ -380,7 +380,7 @@ lemma pathWeight_chain_lt (L : ℕ → ℝ) (n : ℕ) :
       ring
 
 /-- 链式闭式的两种形态桥接：路径和退化形（ε_{n+1} 单列）
-    ⟺ ChainError.lean 的统一形（空积 = 1 吸收末项）。 -/
+    ⟺ 命题 2.1 的统一形（空积 = 1 吸收末项）。 -/
 lemma chain_two_forms (ε L : ℕ → ℝ) (n : ℕ) :
     ε (n + 1) + ∑ u ∈ range (n + 1), ε u * ∏ j ∈ Icc u n, L j
       = ∑ i ∈ range (n + 2), ε i * ∏ j ∈ Icc i n, L j := by
@@ -399,7 +399,7 @@ lemma chain_two_forms (ε L : ℕ → ℝ) (n : ℕ) :
     单父链上，端到端误差
     `|Xh (n+1) − X (n+1)| ≤ Σ_{i<n+2} ε_i · Π_{j∈Icc i n} L_j`
     ——第 j 步误差 ε_j 经其后所有环节 `Π_{m>j} L_m` 放大后计入总和。
-    RHS 与 ChainError.chain_error_closed_form 的闭式完全同形（对照成立）。
+    RHS 即命题 2.1 的链式闭式（对照成立）。
     证明路线刻意经过路径和形式：泛型定理给 `Σ_u ε_u·W u (n+1)`，
     再用 pathWeight_chain_lt 把 W 退化为链乘积——展示"所有路径求和"
     在单父链上只剩一条路径。 -/
@@ -433,7 +433,7 @@ theorem chain_error_propagation_bound (L : ℕ → ℝ) (f fh : ℕ → (ℕ →
         rwa [hip] at hp
       rw [chainAdj_ne L hij, heq]
       simp
-  -- 泛型递推在链上的形态（ChainError 式递推 ⟹ 泛型递推）
+  -- 泛型递推在链上的形态（命题 2.1 式递推 ⟹ 泛型递推）
   have he : ∀ i, e i = ε i + ∑ j ∈ range i, chainAdj L j i * e j := by
     intro i
     cases i with

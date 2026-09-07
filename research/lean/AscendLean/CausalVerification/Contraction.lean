@@ -10,8 +10,8 @@ import Mathlib
 - 推论 2.3：收缩链两条律，外推误差有上界 ε/(1−Λ) 且随 τ 单调上升；
   初值不确定性 b₀ 的贡献按 b₀·Λ^τ 衰减，遗忘到 η 只需对数深度。
 
-与 `ChainError.lean` 的关系：那里证明了一般链式闭式（命题 2.1 的链式特例）；
-本文件取"等 Lipschitz、每步误差恒为 ε"的特化，退化为几何和，直接用
+与 `LipschitzLayer.lean` 第六节（命题 2.1 的链式特例）的关系：那里给出一般
+链式闭式；本文件取"等 Lipschitz、每步误差恒为 ε"的特化，退化为几何和，直接用
 Mathlib `Finset.geom_sum_eq` 得闭式；递推衔接见 `chainErr_recurrence`。
 两文件相互独立（无代码依赖），关系仅为数学内容的特化。
 
@@ -36,7 +36,7 @@ theorem geom_sum_doc (L : ℝ) (hL : L ≠ 1) (τ : ℕ) :
 /-- **推论 2.2/2.3 的共同对象**：等 Lipschitz 链 τ 步累积误差 e_τ = Σ_{i∈range τ} ε·Λ^i。 -/
 def chainErr (ε L : ℝ) (τ : ℕ) : ℝ := ε * ∑ i ∈ range τ, L ^ i
 
-/-- 与 ChainError 的链式递推衔接：e_{τ+1} = ε + L·e_τ（命题 2.1 的等 Lipschitz 特化）。 -/
+/-- 与命题 2.1（LipschitzLayer.lean 第六节链特例）的递推衔接：e_{τ+1} = ε + L·e_τ（等 Lipschitz 特化）。 -/
 theorem chainErr_recurrence (ε L : ℝ) (τ : ℕ) :
     chainErr ε L (τ + 1) = ε + L * chainErr ε L τ := by
   rcases eq_or_ne L 1 with rfl | hL

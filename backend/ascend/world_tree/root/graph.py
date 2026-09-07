@@ -3,11 +3,11 @@
 节点 = 世界参数变量（连续/离散、外生/内生），边 = 结构方程
 `node = f(Pa)`。与事件层（graph.py 的 EventGraph，动态实例图）
 相对：本图声明一次、结构不变，事件层将来引用它作为"根"
-（研究方案 §6：事件因果边与父节点快照）。
+（第一阶段实施定义的研究日志要求：父节点快照与方程版本追踪）。
 
 边的角色（role）纪律是承重设计：
 - structural：正向因果结构边，构成真正的 SCM 因果子图
-  （do-operator / 误差递推 / 02 篇定理只作用在这上面）；
+  （do-operator / 误差递推 / 02 篇命题只作用在这上面）；
 - inverse：从可观测场反推/重建潜参数的公式（如
   derive_latitude），方向与真实因果相反，不进因果子图；
 - observable：可观测变换（如阈值分级），是同一变量的投影，
@@ -45,7 +45,7 @@ class VariableSpec:
         domain: "continuous" 或 "discrete"。
         exogenous: 是否外生（无结构边入边）。
         bounds: 连续变量的值域 (min, max)，离散或未知为 None。
-        eps: 误差上限（设计预算，与变量同单位；定理 2.5 的 ε_i，
+        eps: 误差上限（设计预算，与变量同单位；命题 2.5 的 ε_i，
             反事实误差界 Σ ε_u·W(u,t) 的输入）。None 表示未声明。
     """
 
@@ -62,7 +62,7 @@ class EdgeSpec:
 
     Attributes:
         role: 边角色（structural / inverse / observable）。
-        L: Lipschitz 常数估计（≥0；02 篇误差传播律的必填元数据）。
+        L: Lipschitz 常数估计（≥0；文档记 Λ_{u,v}，02 篇误差传播界的必填元数据）。
         equation: 方程引用（函数名或声明键），可选。
     """
 
@@ -285,7 +285,7 @@ class VariableGraph(DirectedGraph):
     def structural_dag(self) -> DirectedGraph:
         """仅含 structural 边的 SCM 因果子图。
 
-        do-operator / 误差递推 / 反事实（02 篇定理）只应作用在
+        do-operator / 误差递推 / 反事实（02 篇命题）只应作用在
         这个子图上；inverse 与 observable 边不参与。
 
         Returns:
