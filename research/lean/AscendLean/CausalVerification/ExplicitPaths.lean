@@ -2,10 +2,10 @@ import Mathlib
 import AscendLean.CausalVerification.DagPathExpansion
 
 /-!
-# 显式路径枚举 — W u t 的路径对象语义（02 篇第 63 行）
+# 显式路径枚举 — W u t 的路径对象语义（02 篇命题 2.5）
 
-出处：`docs/研究理论/世界基座/02-误差传播与反事实.md` 定理 2.5 第 61-63 行：
-`e_t = Σ_{u ∈ Anc(t)\S} ε_u · Σ_{paths u→t} Π_{(a,b)∈path} L_{a,b}`。
+出处：`docs/研究理论/世界基座/02-误差传播与反事实.md` 命题 2.5：
+`e_t = Σ_{u ∈ Anc(t)\I} ε_u · Σ_{paths u→t} Π_{(a,b)∈path} Λ_{a,b}`。
 `DagPathExpansion.pathWeight` 以递归给出了 W（语义等价但无显式路径对象）；
 本文件补上"具体路径"层并证明**枚举求和 = 递归 W**：
 
@@ -231,7 +231,7 @@ theorem enumSum_peel_gen (adj : ℕ → ℕ → ℝ) (u e : ℕ) :
 /-! ## 第五节：主定理 — 枚举求和 = 递归 W -/
 
 /-- **主定理**：显式路径枚举求和 = 递归定义的路径权重和 W
-    （02 篇第 63 行"对所有路径求和"的机器验证：两条定义严格相等）。 -/
+    （02 篇命题 2.5“对所有路径求和”的机器验证：两条定义严格相等）。 -/
 theorem pathEnumSum_eq_pathWeight (adj : ℕ → ℕ → ℝ) (u t : ℕ) :
     pathEnumSum adj u t = pathWeight adj u t := by
   revert u

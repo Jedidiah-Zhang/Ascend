@@ -2,11 +2,10 @@ import Mathlib
 import AscendLean.CausalVerification.LipschitzLayer
 
 /-!
-# SubSCM — 显式 do 干预结构（02 篇定理 2.5 干预情形的定义级编码）
+# SubSCM — 显式 do 干预结构（02 篇命题 2.5 干预情形的定义级编码）
 
-出处：`docs/研究理论/世界基座/02-误差传播与反事实.md` 定理 2.5
-（第 49-69 行：设定 do(X_s = x_s)、命题递推与路径和闭式）；
-干预的工程语义见 04 篇 §"与引擎实现的接口"（变量级 do：冻结/覆盖单变量求值器）。
+出处：`docs/研究理论/世界基座/02-误差传播与反事实.md` 命题 2.5；
+干预的工程语义见 `docs/研究理论/世界基座/04-世界验收协议.md`。
 
 `LipschitzLayer.lean` 第五节对干预的处理是**假设级**的：
 `hpin : X s = Xh s`（双方钉死同值）+ 自洽性只在 i ≠ s 处要求。
@@ -19,7 +18,7 @@ import AscendLean.CausalVerification.LipschitzLayer
    替换后 SCM 逐条继承原 SCM 的分析假设，干预点处模型误差归零；
 3. 主定理 `subSCM_counterfactual_bound`：从泛型
    `counterfactual_closed_form` 以 ε' = Function.update ε s 0 直接实例化——
-   干预源项 ε' s = 0（对应第 63 行求和限制在 Anc(t)\S，
+   干预源项 ε' s = 0（对应路径和限制在 Anc(t)\I，
    见 `subSCM_source_vanishes` 与清洁形式 `subSCM_counterfactual_bound_erase`）。
    接口沿用本库约定：递推上界以假设对 (e, he) 供给；
 4. 互证：接口等价（`encoded_hyps_of_subSCM` / `subSCM_selfcons_of_encoded`）、
@@ -37,8 +36,7 @@ namespace AscendLean.CausalVerification
 /-! ## 第一节：SubSCM 定义与基本方程 -/
 
 /-- **do(X_s := v) 后的子模型**（SubSCM）：把第 s 个结构方程替换为常数 v，
-    其余方程原样保留（02 篇第 53-55 行干预设定的结构方程编码；
-    04 篇"变量级 do：冻结/覆盖单变量求值器"）。
+    其余方程原样保留（02 篇命题 2.5 的结构方程编码）。
     换常数方程同时实现断入边：干预点取值与输入无关
     （`subSCM_const_indep`）。 -/
 def subSCM (f : ℕ → (ℕ → ℝ) → ℝ) (s : ℕ) (v : ℝ) : ℕ → (ℕ → ℝ) → ℝ :=
@@ -55,7 +53,7 @@ theorem subSCM_eq_orig (f : ℕ → (ℕ → ℝ) → ℝ) {s : ℕ} {v : ℝ} {
   simp [subSCM, h]
 
 /-- **断入边**：干预点的方程不读任何输入坐标
-    （02 篇第 55 行 `e_s = 0` 的结构来源：do 后 s 被钉死，父坐标失去影响）。 -/
+    （02 篇命题 2.5 中 `e_s = 0` 的结构来源：do 后 s 被钉死，父坐标失去影响）。 -/
 theorem subSCM_const_indep (f : ℕ → (ℕ → ℝ) → ℝ) (s : ℕ) (v : ℝ) (x y : ℕ → ℝ) :
     subSCM f s v s x = subSCM f s v s y := by
   rw [subSCM_eq_const, subSCM_eq_const]
@@ -130,7 +128,7 @@ theorem subSCM_lip {f : ℕ → (ℕ → ℝ) → ℝ} {adj : ℕ → ℕ → �
 
 /-! ## 第三节：主定理 — SubSCM 反事实误差界 -/
 
-/-- **SubSCM 反事实误差界**（02 篇定理 2.5 干预情形，第 51-63 行）：
+/-- **SubSCM 反事实误差界**（02 篇命题 2.5 干预情形）：
     do(X_s := v) 下双方同值（CRN + 同一 do 值），替换后 SCM 各自自洽，
     则对一切 t
     `|Xh t − X t| ≤ ε' t + Σ_{u<t} ε' u · W u t`，其中 ε' = Function.update ε s 0。
@@ -156,7 +154,7 @@ theorem subSCM_counterfactual_bound
     (Function.update ε s 0) e adj hX hXh (subSCM_err_update herr)
     (subSCM_loc hloc) (subSCM_lip hlip hadjnn) hadjnn he t
 
-/-- 干预源项消失（02 篇第 63 行求和限制在 `Anc(t)\S` 的对应物）：
+/-- 干预源项消失（02 篇路径和限制在 `Anc(t)\I` 的对应物）：
     ε' s = 0 ⟹ 闭式中 u = s 项恒为零，无论路径权重为何。 -/
 theorem subSCM_source_vanishes (ε : ℕ → ℝ) (adj : ℕ → ℕ → ℝ) (s t : ℕ) :
     Function.update ε s 0 s * pathWeight adj s t = 0 := by
@@ -164,7 +162,7 @@ theorem subSCM_source_vanishes (ε : ℕ → ℝ) (adj : ℕ → ℕ → ℝ) (s
   ring
 
 /-- **清洁形式**（t ≠ s）：界中 ε' 换回原 ε，且 u = s 项从求和中剔除——
-    02 篇第 63 行 `Σ_{u ∈ Anc(t)\S}` 的字面对应
+    02 篇 `Σ_{u ∈ Anc(t)\I}` 的字面对应
     （剔除集以 `filter (· ≠ s)` 编码；s ∉ range t 时该集合等于全集）。 -/
 theorem subSCM_counterfactual_bound_erase
     (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh ε e : ℕ → ℝ) (adj : ℕ → ℕ → ℝ)

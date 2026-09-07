@@ -1,7 +1,7 @@
-"""探针 2 — 真实引擎天气验证（对应 docs/研究理论/世界基座/05-理论实验对照.md，E1–E3）。
+"""历史探针 2：真实引擎天气诊断（E1-E3）。
 
 运行: .venv/bin/python research/engine_weather.py [--exp E1 E2 E3] [--fast]
-- E1: Granger 边恢复（分钟粒度，含正/负功效校准）
+- E1: Granger 滞后可见性（分钟粒度，含正/负功效校准）
 - E2: 温度分布 margin 指数 α（幂律拟合）
 - E3: 时间相关尺度 τ_t（自相关）与空间相关尺度 τ_s（跨 chunk 相关）
 E4（方程学习表）/ E5（CRN 流诊断）见 engine_e4_5.py。
@@ -47,10 +47,10 @@ def _series(e, clock, cx, cy, days=30, step_min=6, tstart=None):
     return ts, vals
 
 
-# ── E1：Granger 边恢复 + 功效校准 ───────────────────────────────
+# ── E1：Granger 滞后可见性 + 功效校准 ───────────────────────────
 
 def _e1(fast=False):
-    print("\n=== E1 Granger 边恢复（分钟粒度 · 含正/负对照校准）===")
+    print("\n=== E1 Granger 滞后可见性（分钟粒度 · 含正/负对照校准）===")
     e, clock = _engine()
     # 长连续 run：跳 1 年后往回采 30 天（确保"过去时刻"可查）
     clock.skip(GAME_YEAR)

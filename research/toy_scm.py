@@ -1,7 +1,7 @@
-"""探针 1 — 玩具 SCM 验证（对应 docs/研究理论/世界基座/05-理论实验对照.md，S1–S6）。
+"""历史探针 1：玩具 SCM（S1-S6）。
 
 运行: .venv/bin/python research/toy_scm.py [--exp ...] [--fast]
-判据预注册见 05 篇：上界判据 ≤；紧性判据构造对齐误差；斜率容差 ±15%（S3 ±2%）。
+新框架下的适用范围见 05 篇，既有结果的证据状态见 06 篇。
 """
 
 from __future__ import annotations
@@ -299,9 +299,13 @@ def _s5(fast=False):
     if m_pass is None:
         m_pass = int(n_c / p_min * 8.0)
     print(line("do-分层", f"每配置 n_c={n_c} 达 TV ≤ {eps}", f"TV = {tv_strat:.3f}", tv_strat <= eps))
-    ratio = m_pass / (2 * n_c)
-    print(line("被动 vs 分层", f"样本比 ≈ 1/p_min = 1e4（数量级 0.2–5×）",
-               f"{m_pass}/{2*n_c} = {ratio:.0f}", 0.2e4 <= ratio <= 5e4))
+    context_count = 2
+    expected_ratio = 1 / (context_count * p_min)
+    ratio = m_pass / (context_count * n_c)
+    print(line("被动 vs 分层",
+               f"总样本比 ≈ 1/(C*p_min) = {expected_ratio:.0f}（数量级 0.2–5×）",
+               f"{m_pass}/{context_count*n_c} = {ratio:.0f}",
+               0.2 * expected_ratio <= ratio <= 5 * expected_ratio))
 
 
 # ── S6：margin α 与阈值分类速率（Mammen–Tsybakov 验证） ───────────

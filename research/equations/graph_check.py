@@ -5,7 +5,7 @@
 与 verify_equations.py（L1 自洽性）互补：本工具回答"设计是否合理"，
 判据全部来自已形式化的定理（02 篇 + Lean 证书）：
   - 推论 2.2/2.3（Contraction.lean）：环收缩性、收缩/发散两律
-  - 定理 2.5（DagPathExpansion.lean / ExplicitPaths.lean）：路径权重和
+  - 命题 2.5（DagPathExpansion.lean / ExplicitPaths.lean）：路径权重和
     W(u,t) = Σ_{u→t 路径} Π L，反事实误差上界 ε_t + Σ_u ε_u·W(u,t)
   - S4 探针（06 篇）：多父节点必须按"求和"而非取最大
 
@@ -23,10 +23,10 @@
      长度"——收缩快的路径上深层上游误差可忽略（ε 可放宽，推论 2.2 记忆
      衰减的直接推论；报告型，无 PASS/FAIL）；
   G5 放大边定位：L>1 的边全部列出 + 以其为源的最大路径权重（报告型）；
-  G6 汇聚节点：入度 ≥2 的节点列出（求和语义节点，定理 2.5/S4；报告型）。
+  G6 汇聚节点：入度 ≥2 的节点列出（求和语义节点，命题 2.5/S4；报告型）。
 
 缺口报告（非判据，但阻止 L2 判定完整）：
-  - variables[*].eps 未声明：定理 2.5 的上界输入缺失，G3 无法计算。
+  - variables[*].eps 未声明：命题 2.5 的上界输入缺失，G3 无法计算。
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ def path_weights(
 ) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], int]]:
     """DAG 拓扑序 DP：W(u,t) = Σ_{u→t 路径} Π L 与最长路径深度。
 
-    多父求和（S4/定理 2.5 语义）；L=0 边贡献 0（离散边不放大误差）。
+    多父求和（S4/命题 2.5 语义）；L=0 边贡献 0（离散边不放大误差）。
     """
     order = graph.toposort()
     nodes = list(graph.variables)
@@ -186,7 +186,7 @@ def main() -> int:
         missing_eps = sorted(n for n, e in eps_map.items() if e is None)
         if missing_eps:
             gaps.append(
-                f"variables[*].eps 未声明: {missing_eps} — 定理 2.5 输入"
+                f"variables[*].eps 未声明: {missing_eps} — 命题 2.5 输入"
                 "缺失，G3 无法计算（ε_i 与 L_ij 成对才可算反事实界）")
             results.append(("G3 反事实误差界", False,
                             f"{len(missing_eps)} 个变量缺 eps，跳过"))
@@ -263,7 +263,7 @@ def main() -> int:
                 for c, ps in sinks)
             results.append((
                 "G6 汇聚节点", True,
-                f"{len(sinks)} 个多父节点，须按求和语义（定理 2.5/S4）: {txt}"))
+                f"{len(sinks)} 个多父节点，须按求和语义（命题 2.5/S4）: {txt}"))
         else:
             results.append(("G6 汇聚节点", True, "无多父节点"))
 
