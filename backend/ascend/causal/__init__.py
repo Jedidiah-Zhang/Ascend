@@ -1,5 +1,13 @@
 """因果机制声明、求值与快照接口。"""
 
+from .miracle import (
+    MIRACLE_REP_KINDS,
+    MIRACLE_TARGET_SPACES,
+    MiracleRecord,
+    MiracleTable,
+    NodeResolution,
+)
+from .miracle_engine import MiracleEvaluator, MiracleFrameExecutor
 from .registry import MechanismRegistry
 from .spec import (
     AccessPolicy,
@@ -34,4 +42,11 @@ __all__ = [
     "StateOwnership",
     "UpdateContract",
     "ValueDomain",
+    "MIRACLE_REP_KINDS",
+    "MIRACLE_TARGET_SPACES",
+    "MiracleRecord",
+    "MiracleTable",
+    "NodeResolution",
+    "MiracleEvaluator",
+    "MiracleFrameExecutor",
 ]

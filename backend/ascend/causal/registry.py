@@ -249,16 +249,46 @@ class MechanismRegistry:
         parent_values: Mapping[str, object],
         *,
         random_values: Mapping[str, object] | None = None,
+        parameter_values: Mapping[str, object] | None = None,
     ) -> object:
         """以显式父值和随机源值执行一个注册方程。
 
         target 语义为输出节点 ID（mechanism_id 查询仅为调试回退，
         两者当前无交集）。父值按节点声明值域校验，越界抛 ValueError；
         父集/随机源集与声明不一致抛 KeyError（fail-closed）。
+
+        Args:
+            parameter_values: 参数槽位覆盖映射（神迹系统的参数神迹），
+                按参数值域 fail-closed 校验；None = 使用声明默认值。
         """
         mechanism = self.mechanisms.get(target)
         if mechanism is None:
             mechanism = self.mechanism_for(target)
+        return self.evaluate_mechanism(
+            mechanism,
+            parent_values,
+            random_values=random_values,
+            parameter_values=parameter_values,
+        )
+
+    def evaluate_mechanism(
+        self,
+        mechanism: MechanismSpec,
+        parent_values: Mapping[str, object],
+        *,
+        random_values: Mapping[str, object] | None = None,
+        parameter_values: Mapping[str, object] | None = None,
+    ) -> object:
+        """以显式父值和随机源值执行一条结构方程（单一求值实现）。
+
+        神迹系统（mechanism 神迹）复用本入口执行替换机制：父集/随机
+        源集按替换机制自身声明校验；参数槽位可被 ``parameter_values``
+        覆盖（同样按参数值域 fail-closed）。
+        """
+        if mechanism.output not in self.nodes:
+            raise KeyError(
+                f"{mechanism.mechanism_id} 输出节点未声明: {mechanism.output}"
+            )
 
         expected_parents = {parent.parent for parent in mechanism.parents}
         actual_parents = set(parent_values)
@@ -287,7 +317,12 @@ class MechanismRegistry:
             kwargs[parent.argument] = value
         for binding in mechanism.parameters:
             parameter = self.parameters[binding.parameter]
-            kwargs[binding.argument] = parameter.value
+            if parameter_values is not None and binding.parameter in parameter_values:
+                value = parameter_values[binding.parameter]
+                self._require_parameter_value(parameter, value)
+            else:
+                value = parameter.value
+            kwargs[binding.argument] = value
         for binding in mechanism.random_sources:
             kwargs[binding.argument] = supplied_sources[binding.source]
 
@@ -298,6 +333,14 @@ class MechanismRegistry:
             mechanism.output,
         )
         return output
+
+    def require_node_value(self, node_id: str, value: object) -> None:
+        """校验值属于目标节点声明值域（fail-closed，供神迹系统复用）。"""
+        self._require_value(self.nodes[node_id].value, value, node_id)
+
+    def require_parameter_value(self, parameter_id: str, value: object) -> None:
+        """校验值属于参数声明值域（fail-closed，供神迹系统复用）。"""
+        self._require_parameter_value(self.parameters[parameter_id], value)
 
     def snapshot(self) -> dict[str, object]:
         """返回默认值已展开、可确定性序列化的声明快照。"""
@@ -632,12 +675,11 @@ class MechanismRegistry:
         return issues
 
     @staticmethod
-    def _validate_parameter_value(
-        parameter_id: str,
-        parameter: ParameterSpec,
+    def _parameter_value_issues(
+        parameter: ParameterSpec, value: object,
     ) -> list[str]:
-        """按声明类型校验参数当前值（bounds=None 时同样执行）。"""
-        value = parameter.value
+        """按声明类型校验参数值（bounds=None 时同样执行）。"""
+        parameter_id = parameter.parameter_id
         if parameter.value_type == "boolean":
             if not isinstance(value, bool):
                 return [
@@ -666,10 +708,19 @@ class MechanismRegistry:
             lo, hi = parameter.bounds
             if not lo <= value <= hi:
                 return [
-                    f"{parameter_id}: 参数当前值 {value!r} 超出 bounds "
+                    f"{parameter_id}: 参数值 {value!r} 超出 bounds "
                     f"[{lo}, {hi}]"
                 ]
         return []
+
+    @staticmethod
+    def _validate_parameter_value(
+        parameter_id: str,
+        parameter: ParameterSpec,
+    ) -> list[str]:
+        return MechanismRegistry._parameter_value_issues(
+            parameter, parameter.value
+        )
 
     @staticmethod
     def _validate_witnesses(mechanism: MechanismSpec) -> list[str]:
@@ -736,6 +787,13 @@ class MechanismRegistry:
                 raise ValueError(
                     f"{label}={value!r} 超出声明值域 [{lo}, {hi}]"
                 )
+
+    @staticmethod
+    def _require_parameter_value(parameter: ParameterSpec, value: object) -> None:
+        """按参数声明类型/bounds 校验覆盖值（fail-closed）。"""
+        issues = MechanismRegistry._parameter_value_issues(parameter, value)
+        if issues:
+            raise ValueError("; ".join(issues))
 
     @staticmethod
     def _node_snapshot(spec: NodeSpec) -> dict[str, object]:

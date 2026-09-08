@@ -27,6 +27,7 @@ from ascend.time.calendar import tick_to_hms
 
 from .continent_commands import ContinentCommandsMixin
 from .entity_commands import EntityCommandsMixin
+from .miracle_commands import MiracleCommandsMixin
 from .result import CommandResult
 from .time_commands import TimeCommandsMixin
 from .weather_commands import WeatherCommandsMixin
@@ -53,6 +54,7 @@ class ExecutorConfig:
             用于 continent status 漂移诊断。
         world_tree: WorldTree 实例（测试注入隔离），
             默认使用模块级单例。
+        miracle_table: 神迹表实例（do 指令组挂载点）。
     """
 
     weather_engine: object = None
@@ -62,6 +64,7 @@ class ExecutorConfig:
     continent_path: str | None = None
     gen_fingerprint_fn: object = None
     world_tree: object = None
+    miracle_table: object = None
 
 
 class CommandExecutor(
@@ -69,6 +72,7 @@ class CommandExecutor(
     WeatherCommandsMixin,
     EntityCommandsMixin,
     ContinentCommandsMixin,
+    MiracleCommandsMixin,
 ):
     """指令执行器。
 
@@ -116,6 +120,7 @@ class CommandExecutor(
         self._continent_path = config.continent_path
         self._gen_fingerprint_fn = config.gen_fingerprint_fn
         self._wt = config.world_tree if config.world_tree is not None else world_tree
+        self._miracle_table = config.miracle_table
         self._active_real_time: float = 0.0
 
         # 指令路由表：{cmd_name: handler_func(args) -> CommandResult}
@@ -127,6 +132,7 @@ class CommandExecutor(
             "entity":    self._h_entity,
             "continent": self._h_continent,
             "tp":        self._h_tp,
+            "do":        self._h_do,
             "lang":      self._h_lang,
             "events":    self._h_events,
             "?":         lambda a: CommandResult(success=True, output=self._cmd_help()),
@@ -448,6 +454,12 @@ class CommandExecutor(
             f"  entity birth <type> [x y]                {t('console.help_entity_birth')}",
             f"  entity death <id>                        {t('console.help_entity_death')}",
             f"  continent status | regen                   {t('console.help_continent')}",
+            f"  do                                        {t('console.help_do')}",
+            f"  do value <node> <value> [cx cy] [at T] [dur N]   {t('console.help_do_value')}",
+            f"  do mech <node> <mechanism_id> [cx cy] [at T] [dur N]   {t('console.help_do_mech')}",
+            f"  do param <parameter_id> <value> [at T]           {t('console.help_do_param')}",
+            f"  do clear <node|param|feature> <target> [cx cy]   {t('console.help_do_clear')}",
+            f"  do list                                          {t('console.help_do_list')}",
             f"  tp [x y]                                 {t('console.help_tp')}",
             f"  lang [code]                              {t('console.help_lang')}",
             f"  events [n]                               {t('console.help_events')}",

@@ -52,6 +52,7 @@ from ascend.net import GameServer, MessageDispatcher, EventBridge
 from ascend.net.protocol import make_response
 from ascend.net.handlers.map_handler import make_map_handlers
 from ascend.net.handlers.terminal_handler import make_terminal_handler
+from ascend.net.handlers.research_handler import make_research_handler
 from ascend.net.handlers.weather_handler import make_weather_handler
 from ascend.net.handlers.player_handler import make_player_handler
 from ascend.net.handlers.entity_handler import make_entity_handlers
@@ -429,7 +430,14 @@ class GameEngine:
         logger.info("玩家实体就绪: %r", self.player_service)
 
         # 5b. 天气引擎（接入已加载 chunk 的天气基线）
-        self.weather_engine = WeatherEngine(self.clock, seed=self.seed)
+        # 神迹系统挂载点：单一神迹表注入引擎/终端/研究 API（同源）
+        from ascend.causal import MiracleTable
+        from ascend.causal.world import ASCEND_MECHANISMS
+        self.miracle_table = MiracleTable(ASCEND_MECHANISMS)
+        self.weather_engine = WeatherEngine(
+            self.clock, seed=self.seed,
+            miracle_table=self.miracle_table,
+        )
         self._world_stack.push(
             self._unset("weather_engine", self.weather_engine.shutdown)
         )
@@ -464,6 +472,7 @@ class GameEngine:
                 entity_manager=self.entity_manager,
                 continent_path=continent_cache_path,
                 gen_fingerprint_fn=compute_gen_fingerprint,
+                miracle_table=self.miracle_table,
             ),
         )
         self._world_stack.push(self._unset("_executor"))
@@ -788,6 +797,7 @@ class GameEngine:
         handlers.update(make_player_handler(self.player_service))
         handlers.update(make_entity_handlers(self.entity_manager))
         handlers.update(make_terminal_handler(self._executor))
+        handlers.update(make_research_handler(self.miracle_table))
         # 占位 handler：尚未实现的功能返回显式"未实现"标记而非空成功
         # 响应——前端可感知功能缺口并提示，不让缺口被系统性掩盖。
         def _not_implemented(msg: dict) -> dict:
