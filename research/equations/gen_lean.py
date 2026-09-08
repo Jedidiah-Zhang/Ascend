@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""声明数据 → Lean 自动生成器（issue #44 防漂移机制）。
+"""生产注册表快照 → Lean 自动生成器（issue #44/#46 防漂移机制）。
 
-单一事实来源（research/equations/equations.json + backend/ascend/config.py
-常量真值）自动生成 research/lean/AscendLean/CausalVerification/GenDeclarationData.lean：
+生产注册表生成的 ``research/equations/equations.json`` 与 config 常量真值
+自动生成 research/lean/AscendLean/CausalVerification/GenDeclarationData.lean：
 
   数据段 —— config 两组推导常量、声明边表的 role/L、变量 bounds；
   对账段 —— 生成的数值与手写 Declarations.lean 实例逐一相等的定理，
@@ -34,6 +34,7 @@ import argparse
 import difflib
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -52,20 +53,34 @@ CONFIG_CONSTANTS = [
     "SEASONAL_AMP_R_REF", "SEASONAL_AMP_R_BONUS", "SEASONAL_AMP_BOUNDS",
 ]
 
+# 注册表节点 ID（完整 ID 消除旧声明中年均温/即时温度的同名歧义）
+SEA_LEVEL_TEMPERATURE = "weather.chunk.sea_level_temperature_c"
+SOLAR_LATITUDE_PROXY = "weather.chunk.solar_latitude_proxy_deg"
+ANNUAL_TEMPERATURE = "weather.chunk.annual_mean_temperature_c"
+ANNUAL_RAINFALL = "weather.chunk.annual_rainfall_mm_per_year"
+SEASONAL_TEMPERATURE_AMPLITUDE = \
+    "weather.chunk.seasonal_temperature_amplitude_c"
+INSTANT_TEMPERATURE = "weather.instant.temperature_c"
+INSTANT_PRECIPITATION_TYPE = "weather.instant.precipitation_type"
+
 # 已知边 → Lean def 名（未知边自动 camel 命名进数据段，但不产生对账定理——
 # 新增边需人工评估是否扩入第四节协议模板）
 EDGE_DEF_NAMES = {
-    ("sea_level_temp", "latitude"): "edgeSeaLevelTempLatitudeL",
-    ("temperature", "precip_type"): "edgeTemperaturePrecipTypeL",
-    ("temperature", "seasonal_amp"): "edgeTemperatureSeasonalAmpL",
-    ("rainfall", "seasonal_amp"): "edgeRainfallSeasonalAmpL",
+    (SEA_LEVEL_TEMPERATURE, SOLAR_LATITUDE_PROXY):
+        "edgeSeaLevelTempLatitudeL",
+    (INSTANT_TEMPERATURE, INSTANT_PRECIPITATION_TYPE):
+        "edgeTemperaturePrecipTypeL",
+    (ANNUAL_TEMPERATURE, SEASONAL_TEMPERATURE_AMPLITUDE):
+        "edgeTemperatureSeasonalAmpL",
+    (ANNUAL_RAINFALL, SEASONAL_TEMPERATURE_AMPLITUDE):
+        "edgeRainfallSeasonalAmpL",
 }
 
 # 有 bounds 的变量 → Lean def 名前缀（其余有界变量同样自动 camel 进数据段）
 VAR_DEF_NAMES = {
-    "latitude": "varLatitude",
-    "rainfall": "varRainfall",
-    "seasonal_amp": "varSeasonalAmp",
+    SOLAR_LATITUDE_PROXY: "varLatitude",
+    ANNUAL_RAINFALL: "varRainfall",
+    SEASONAL_TEMPERATURE_AMPLITUDE: "varSeasonalAmp",
 }
 
 
@@ -78,8 +93,8 @@ def fmt(x: float) -> str:
 
 
 def camel(s: str) -> str:
-    """snake_case → CamelCase（未知边/变量的 def 名回退方案）。"""
-    return "".join(p.capitalize() for p in s.split("_"))
+    """命名空间 ID → CamelCase（未知边/变量的 def 名回退方案）。"""
+    return "".join(p.capitalize() for p in re.split(r"[^A-Za-z0-9]+", s) if p)
 
 
 def short_hash(path: Path) -> str:
@@ -90,6 +105,10 @@ def short_hash(path: Path) -> str:
 def load_declaration(json_path: Path) -> dict:
     """读声明 JSON，缺必需键直接抛错（退出码 2 路径）。"""
     raw = json.loads(json_path.read_text(encoding="utf-8"))
+    if raw.get("schema_version") != 2:
+        raise ValueError(
+            f"不支持的注册表快照版本: {raw.get('schema_version')!r}"
+        )
     for key in ("variables", "edges"):
         if key not in raw:
             raise KeyError(f"{json_path} 缺少必需键 {key!r}")
@@ -147,7 +166,7 @@ def build_content(json_path: Path) -> tuple[str, dict]:
     add("")
     add("/-! AUTO-GENERATED — 本文件由工具生成，禁止手改。")
     add("")
-    add("生成器：research/equations/gen_lean.py（issue #44 防漂移机制）")
+    add("生成器：research/equations/gen_lean.py（issue #44/#46 防漂移机制）")
     add("生成命令：.venv/bin/python research/equations/gen_lean.py")
     add("巡检命令：.venv/bin/python research/equations/gen_lean.py --check")
     add("巡检接入：research/equations/verify_equations.py 主流程 V0 步")
@@ -157,7 +176,7 @@ def build_content(json_path: Path) -> tuple[str, dict]:
     add(f"- {rel(CONFIG_PY)}            sha256:{cfg_sha}")
     add("")
     add("防漂移三层闭环：")
-    add("① 来源改动 → 数据段字面量/本头指纹变化 → --check diff 非零退出；")
+    add("① 注册表快照/配置改动 → 数据段字面量/本头指纹变化 → --check 失败；")
     add("② 手改 Declarations.lean 实例 → 第四节对账定理失败 → lake build 红；")
     add("③ 边 L 与 config 解析斜率不一致 → 本文件新生成版本直接编译失败。")
     add("")
@@ -223,37 +242,41 @@ def build_content(json_path: Path) -> tuple[str, dict]:
     add("-- 协议耦合说明：本节模板引用 LatCfg/AmpCfg 的字段名，若手写侧重构字段，")
     add("-- 需同步修改 gen_lean.py 的对账模板。")
     add("")
-    add(f"-- 4.1 纬度斜率对账（V2 判据 sea_level_temp->latitude；声明 L={fmt(edges[('sea_level_temp', 'latitude')]['L'])}）")
+    latitude_edge = (SEA_LEVEL_TEMPERATURE, SOLAR_LATITUDE_PROXY)
+    temp_amp_edge = (ANNUAL_TEMPERATURE, SEASONAL_TEMPERATURE_AMPLITUDE)
+    rain_amp_edge = (ANNUAL_RAINFALL, SEASONAL_TEMPERATURE_AMPLITUDE)
+    precip_edge = (INSTANT_TEMPERATURE, INSTANT_PRECIPITATION_TYPE)
+    add(f"-- 4.1 纬度斜率对账（V2 判据；声明 L={fmt(edges[latitude_edge]['L'])}）")
     add("theorem gen_latitude_L_matches :")
     add("    (latitudeConfig.latMax - latitudeConfig.latMin)")
     add("      / (latitudeConfig.tMax - latitudeConfig.tMin)")
-    add(f"      = {EDGE_DEF_NAMES[('sea_level_temp', 'latitude')]} := by")
+    add(f"      = {EDGE_DEF_NAMES[latitude_edge]} := by")
     add(f"  show (({fmt(cfg['LATITUDE_MAX'])}:ℝ) - {fmt(cfg['LATITUDE_MIN'])})"
         f" / ({fmt(cfg['LATITUDE_T_MAX'])} - ({fmt(cfg['LATITUDE_T_MIN'])}))"
-        f" = {fmt(edges[('sea_level_temp', 'latitude')]['L'])}")
+        f" = {fmt(edges[latitude_edge]['L'])}")
     add("  norm_num")
     add("")
-    add(f"-- 4.2 振幅温度向斜率对账（V2 判据 temperature->seasonal_amp；声明 L={fmt(edges[('temperature', 'seasonal_amp')]['L'])}）")
+    add(f"-- 4.2 振幅温度向斜率对账（V2 判据；声明 L={fmt(edges[temp_amp_edge]['L'])}）")
     add("theorem gen_amp_L_temp_matches :")
     add("    (ampConfig.ampMax - ampConfig.ampMin)")
     add("      / (ampConfig.tMax - ampConfig.tMin)")
-    add(f"      = {EDGE_DEF_NAMES[('temperature', 'seasonal_amp')]} := by")
+    add(f"      = {EDGE_DEF_NAMES[temp_amp_edge]} := by")
     add(f"  show (({fmt(cfg['SEASONAL_AMP_MAX'])}:ℝ) - {fmt(cfg['SEASONAL_AMP_MIN'])})"
         f" / ({fmt(cfg['SEASONAL_AMP_T_MAX'])} - ({fmt(cfg['SEASONAL_AMP_T_MIN'])}))"
-        f" = {fmt(edges[('temperature', 'seasonal_amp')]['L'])}")
+        f" = {fmt(edges[temp_amp_edge]['L'])}")
     add("  norm_num")
     add("")
-    add(f"-- 4.3 振幅降雨向对账（V2 判据 rainfall->seasonal_amp；声明 L={fmt(edges[('rainfall', 'seasonal_amp')]['L'])}）")
+    add(f"-- 4.3 振幅降雨向对账（V2 判据；声明 L={fmt(edges[rain_amp_edge]['L'])}）")
     add("theorem gen_amp_L_rain_matches :")
     add("    ampConfig.rBonus / ampConfig.rRef")
-    add(f"      = {EDGE_DEF_NAMES[('rainfall', 'seasonal_amp')]} := by")
+    add(f"      = {EDGE_DEF_NAMES[rain_amp_edge]} := by")
     add(f"  show (({fmt(cfg['SEASONAL_AMP_R_BONUS'])}:ℝ)"
         f" / {fmt(cfg['SEASONAL_AMP_R_REF'])}"
-        f" = {fmt(edges[('rainfall', 'seasonal_amp')]['L'])})")
+        f" = {fmt(edges[rain_amp_edge]['L'])})")
     add("  norm_num")
     add("")
     add("-- 4.4 离散边退化对账（temperature->precip_type，01 篇 margin 条件处理）")
-    add(f"theorem gen_precip_edge_L_zero : {EDGE_DEF_NAMES[('temperature', 'precip_type')]} = 0 := by")
+    add(f"theorem gen_precip_edge_L_zero : {EDGE_DEF_NAMES[precip_edge]} = 0 := by")
     add("  rfl")
     add("")
     add("-- 4.5 纬度配置全字段对账：手写实例 ↔ config 真值 ↔ 声明 bounds 三方绑定")

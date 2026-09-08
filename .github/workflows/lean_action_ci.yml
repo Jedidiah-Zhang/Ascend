@@ -2,9 +2,25 @@ name: Lean Action CI
 
 on:
   push:
-    paths: ["research/lean/**", "research/equations/**", "backend/ascend/config.py"]
+    paths:
+      - "research/lean/**"
+      - "research/equations/**"
+      - "backend/ascend/causal/**"
+      - "backend/ascend/weather/derive.py"
+      - "backend/ascend/weather/mechanisms.py"
+      - "backend/ascend/space/climate.py"
+      - "backend/ascend/config.py"
+      - "data/world.json"
   pull_request:
-    paths: ["research/lean/**", "research/equations/**", "backend/ascend/config.py"]
+    paths:
+      - "research/lean/**"
+      - "research/equations/**"
+      - "backend/ascend/causal/**"
+      - "backend/ascend/weather/derive.py"
+      - "backend/ascend/weather/mechanisms.py"
+      - "backend/ascend/space/climate.py"
+      - "backend/ascend/config.py"
+      - "data/world.json"
   workflow_dispatch:
 
 jobs:
@@ -13,6 +29,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+      - name: 生产注册表快照漂移巡检
+        run: python3 research/equations/export_registry.py --check
       # 声明数据漂移巡检（issue #44 防漂移①）：来源改动未重新生成 GenDeclarationData.lean 时
       # lake build 不会变红，必须独立门禁。gen_lean.py 仅用 stdlib + ascend.config（stdlib-only）。
       - name: 声明数据漂移巡检（gen_lean.py --check）

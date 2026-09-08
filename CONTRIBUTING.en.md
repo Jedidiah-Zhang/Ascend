@@ -84,6 +84,22 @@ cd frontend && ./run_tests.sh unit
 
 GUT is not distributed with the repo (`frontend/addons/gut` only needs to be installed locally), so frontend tests run only locally.
 
+### Research declaration pipeline (drift gates)
+
+The single source of truth for research equations is the production mechanism registry
+(`backend/ascend/weather/mechanisms.py`; see `docs/研究理论/世界基座/07-机制注册表.md`).
+After modifying any registered equation, parameter, node declaration, or `data/world.json`,
+you must regenerate and commit both generated artifacts, or the CI drift gates will fail:
+
+```bash
+.venv/bin/python research/equations/export_registry.py          # registry → equations.json
+.venv/bin/python research/equations/gen_lean.py                 # equations.json → Lean data section
+.venv/bin/python research/equations/verify_equations.py --fast  # full reconciliation (V0–V3)
+.venv/bin/python research/equations/graph_check.py              # graph health checks (G0–G6)
+```
+
+`equations.json` and `GenDeclarationData.lean` are generated artifacts — never edit them by hand.
+
 ## Commit Conventions
 
 Follow the [Conventional Commits](https://www.conventionalcommits.org/) spec and write your commit descriptions in Chinese.

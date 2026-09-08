@@ -1,67 +1,924 @@
 {
-  "version": 1,
-  "comment": "天气感知派生组声明（研究侧规范）：指导代码如何写，不被生产代码引用。本片段只声明 derive.py 的 3 个方程：sea_level_temp/temperature/rainfall 为本片段的未建模根（外生）；latitude 与 seasonal_amp 是从可观测场反推的潜参数（inverse）；precip_type 为温度→降水类型的结构边（离散输出，L 退化为 0）。eps 为误差上限（设计预算草案 v0，与变量同单位）：引擎是确定性纯函数，'偏差'实际来自简化近似层（场插值/采样/线性外推），ε 是这些近似层的预算承诺。来源锚点（由可感知性与实测推导，非拍脑袋）：temperature=0.05°C ← 雨雪雪线 round(1) 死区 0.1°C 的一半（保证雪线稳定判定），E4 探针实测线性近似残差 0.039 ≤ 0.05 支撑；rainfall=100mm/年 ← 气候档位边界最小间距 200mm（200/600/1500）的一半，避免档位误判；latitude=0.5° ← 日照时长 tier 间距 3.5h 的约 1/10（0.3h ≈ 1° 纬度），自身分摊 0.5°；seasonal_amp=0.1°C ← 昼夜振幅 = 0.5×amp 后进入每日温度，维持每日温度偏差 ≤0.05 预算；sea_level_temp=0.2°C ← 场插值层预算（C1 网格近似），由 latitude 总预算倒推分摊；precip_type=0（离散输出，L=0 不放大）。推导链（graph_check G3 判据 Σ ε_u·W(u,t) ≤ 5%×值域宽度）：latitude 界 = 2×0.2+0.5 = 0.9 ≤ 4.0；seasonal_amp 界 = 0.05×0.65+100×0.002+0.1 = 0.33 ≤ 1.45。待阶段 4 反事实判据定稿后收紧；探针实测超预算时按 05 篇预注册纪律回改声明。",
-  "variables": {
-    "sea_level_temp": {
-      "domain": "continuous",
-      "exogenous": true,
-      "eps": 0.2
-    },
-    "temperature": {
-      "domain": "continuous",
-      "exogenous": true,
-      "eps": 0.05
-    },
-    "rainfall": {
-      "domain": "continuous",
-      "exogenous": true,
-      "bounds": [0.0, 3500.0],
-      "eps": 100.0
-    },
-    "precip_type": {
-      "domain": "discrete",
-      "eps": 0.0
-    },
-    "latitude": {
-      "domain": "continuous",
-      "exogenous": true,
-      "bounds": [0.0, 80.0],
-      "eps": 0.5
-    },
-    "seasonal_amp": {
-      "domain": "continuous",
-      "bounds": [1.0, 30.0],
-      "eps": 0.1
-    }
+  "comment": "AUTO-GENERATED from ascend.weather.mechanisms; do not edit by hand. variables/edges are the research graph projection.",
+  "declaration": {
+    "hash": "sha256:b1928d8cdc94df648b2aa70ef68f835417b64dd247437b29d3ee38884c728438",
+    "id": "ascend.weather.derived_slice",
+    "microstep_order": [
+      "weather.chunk_input",
+      "weather.chunk_derived",
+      "weather.instant_input",
+      "weather.instant_derived"
+    ],
+    "slice_boundary": "Chunk generation supplies annual fields; the not-yet-migrated instant temperature mechanism supplies weather.instant.temperature_c.",
+    "version": "1"
   },
   "edges": [
     {
-      "parent": "sea_level_temp",
-      "child": "latitude",
-      "role": "inverse",
-      "L": 2.0,
-      "equation": "derive_latitude"
-    },
-    {
-      "parent": "temperature",
-      "child": "precip_type",
-      "role": "structural",
-      "L": 0.0,
-      "equation": "precip_type_for"
-    },
-    {
-      "parent": "temperature",
-      "child": "seasonal_amp",
-      "role": "inverse",
       "L": 0.65,
-      "equation": "derive_seasonal_amp"
+      "analysis_role": "inverse",
+      "boundary_operator": "identity_same_chunk",
+      "child": "weather.chunk.seasonal_temperature_amplitude_c",
+      "equation": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+      "lag": 0,
+      "parent": "weather.chunk.annual_mean_temperature_c",
+      "role": "structural",
+      "source_microstep": "weather.chunk_input",
+      "spatial_offsets": [
+        [
+          0,
+          0
+        ]
+      ]
     },
     {
-      "parent": "rainfall",
-      "child": "seasonal_amp",
-      "role": "inverse",
       "L": 0.002,
-      "equation": "derive_seasonal_amp"
+      "analysis_role": "inverse",
+      "boundary_operator": "identity_same_chunk",
+      "child": "weather.chunk.seasonal_temperature_amplitude_c",
+      "equation": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+      "lag": 0,
+      "parent": "weather.chunk.annual_rainfall_mm_per_year",
+      "role": "structural",
+      "source_microstep": "weather.chunk_input",
+      "spatial_offsets": [
+        [
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "L": 2.0,
+      "analysis_role": "inverse",
+      "boundary_operator": "identity_same_chunk",
+      "child": "weather.chunk.solar_latitude_proxy_deg",
+      "equation": "weather.chunk.derive_solar_latitude_proxy.v1",
+      "lag": 0,
+      "parent": "weather.chunk.sea_level_temperature_c",
+      "role": "structural",
+      "source_microstep": "weather.chunk_input",
+      "spatial_offsets": [
+        [
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "L": 0.0,
+      "analysis_role": "forward",
+      "boundary_operator": "identity_same_chunk",
+      "child": "weather.instant.precipitation_type",
+      "equation": "weather.instant.classify_precipitation_type.v1",
+      "lag": 0,
+      "parent": "weather.instant.temperature_c",
+      "role": "structural",
+      "source_microstep": "weather.instant_input",
+      "spatial_offsets": [
+        [
+          0,
+          0
+        ]
+      ]
     }
-  ]
+  ],
+  "exogenous_sources": {},
+  "mechanisms": {
+    "weather.chunk.derive_seasonal_temperature_amplitude.v1": {
+      "boundary_cases": [
+        "rain_factor_below_-0.5:clamp_to_-0.5",
+        "rain_factor_above_1.0:clamp_to_1.0",
+        "amplitude_below_output_min:clamp_to_output_min",
+        "amplitude_above_output_max:clamp_to_output_max",
+        "finite_interior_inputs:continuous_formula"
+      ],
+      "equation": "clamp(cold_endpoint - (annual_temperature - input_temp_min) / (input_temp_max - input_temp_min) * (cold_endpoint - hot_endpoint) + clamp((rain_reference - annual_rainfall) / rain_reference, -0.5, 1.0) * rain_bonus_scale, output_min, output_max)",
+      "equation_version": "sha256:688049c3a084318512c08555d7005b312f2f2d06b3d3ea40df2d2417786b419e",
+      "function": "ascend.weather.mechanisms._derive_seasonal_amplitude_equation",
+      "output": "weather.chunk.seasonal_temperature_amplitude_c",
+      "parameters": [
+        {
+          "argument": "input_temp_min",
+          "parameter": "weather.parameter.seasonal_amplitude.input_min_c"
+        },
+        {
+          "argument": "input_temp_max",
+          "parameter": "weather.parameter.seasonal_amplitude.input_max_c"
+        },
+        {
+          "argument": "cold_endpoint",
+          "parameter": "weather.parameter.seasonal_amplitude.cold_endpoint_c"
+        },
+        {
+          "argument": "hot_endpoint",
+          "parameter": "weather.parameter.seasonal_amplitude.hot_endpoint_c"
+        },
+        {
+          "argument": "rain_reference",
+          "parameter": "weather.parameter.seasonal_amplitude.rain_reference_mm_per_year"
+        },
+        {
+          "argument": "rain_bonus_scale",
+          "parameter": "weather.parameter.seasonal_amplitude.rain_bonus_c"
+        },
+        {
+          "argument": "output_min",
+          "parameter": "weather.parameter.seasonal_amplitude.output_min_c"
+        },
+        {
+          "argument": "output_max",
+          "parameter": "weather.parameter.seasonal_amplitude.output_max_c"
+        }
+      ],
+      "parents": [
+        {
+          "aggregation": "identity",
+          "analysis_role": "inverse",
+          "argument": "annual_temperature",
+          "boundary_operator": "identity_same_chunk",
+          "broadcast": "same_instance",
+          "entity_relation": "same_chunk",
+          "guard": "always",
+          "lag": 0,
+          "lipschitz": 0.65,
+          "metric": "absolute_difference",
+          "parent": "weather.chunk.annual_mean_temperature_c",
+          "source_microstep": "weather.chunk_input",
+          "spatial_offsets": [
+            [
+              0,
+              0
+            ]
+          ],
+          "valid_domain": "temperature_in_-30_50_degC"
+        },
+        {
+          "aggregation": "identity",
+          "analysis_role": "inverse",
+          "argument": "annual_rainfall",
+          "boundary_operator": "identity_same_chunk",
+          "broadcast": "same_instance",
+          "entity_relation": "same_chunk",
+          "guard": "always",
+          "lag": 0,
+          "lipschitz": 0.002,
+          "metric": "absolute_difference",
+          "parent": "weather.chunk.annual_rainfall_mm_per_year",
+          "source_microstep": "weather.chunk_input",
+          "spatial_offsets": [
+            [
+              0,
+              0
+            ]
+          ],
+          "valid_domain": "annual_rainfall_in_0_5000_mm"
+        }
+      ],
+      "random_sources": [],
+      "resolved_version": "sha256:a102f9a229fc80cd5325b59151c0ae0ee5544026f6805ab4cc811307abc70541",
+      "source_dependencies": [
+        "ascend.mathutil.clamp"
+      ],
+      "witnesses": [
+        {
+          "equation_version": "sha256:688049c3a084318512c08555d7005b312f2f2d06b3d3ea40df2d2417786b419e",
+          "expected_outputs": [
+            27.15,
+            14.15
+          ],
+          "inputs_a": {
+            "weather.chunk.annual_mean_temperature_c": 0.0,
+            "weather.chunk.annual_rainfall_mm_per_year": 800.0
+          },
+          "inputs_b": {
+            "weather.chunk.annual_mean_temperature_c": 20.0,
+            "weather.chunk.annual_rainfall_mm_per_year": 800.0
+          },
+          "label": "annual_temperature_changes_amplitude",
+          "parent": "weather.chunk.annual_mean_temperature_c"
+        },
+        {
+          "equation_version": "sha256:688049c3a084318512c08555d7005b312f2f2d06b3d3ea40df2d2417786b419e",
+          "expected_outputs": [
+            18.6,
+            15.0
+          ],
+          "inputs_a": {
+            "weather.chunk.annual_mean_temperature_c": 15.0,
+            "weather.chunk.annual_rainfall_mm_per_year": 200.0
+          },
+          "inputs_b": {
+            "weather.chunk.annual_mean_temperature_c": 15.0,
+            "weather.chunk.annual_rainfall_mm_per_year": 2000.0
+          },
+          "label": "annual_rainfall_changes_amplitude",
+          "parent": "weather.chunk.annual_rainfall_mm_per_year"
+        }
+      ]
+    },
+    "weather.chunk.derive_solar_latitude_proxy.v1": {
+      "boundary_cases": [
+        "sea_level_temperature_at_or_below_input_min:output_max",
+        "sea_level_temperature_at_or_above_input_max:output_min",
+        "finite_interior_input:linear_interpolation"
+      ],
+      "equation": "clamp(output_max - (sea_level_temperature - input_min) / (input_max - input_min) * (output_max - output_min), output_min, output_max)",
+      "equation_version": "sha256:d19a58ec5326b62a5931450a7e6051604040d840ac99a37b42c35ba6a567c90a",
+      "function": "ascend.weather.mechanisms._derive_latitude_equation",
+      "output": "weather.chunk.solar_latitude_proxy_deg",
+      "parameters": [
+        {
+          "argument": "input_min",
+          "parameter": "weather.parameter.latitude.input_min_c"
+        },
+        {
+          "argument": "input_max",
+          "parameter": "weather.parameter.latitude.input_max_c"
+        },
+        {
+          "argument": "output_min",
+          "parameter": "weather.parameter.latitude.output_min_deg"
+        },
+        {
+          "argument": "output_max",
+          "parameter": "weather.parameter.latitude.output_max_deg"
+        }
+      ],
+      "parents": [
+        {
+          "aggregation": "identity",
+          "analysis_role": "inverse",
+          "argument": "sea_level_temperature",
+          "boundary_operator": "identity_same_chunk",
+          "broadcast": "same_instance",
+          "entity_relation": "same_chunk",
+          "guard": "always",
+          "lag": 0,
+          "lipschitz": 2.0,
+          "metric": "absolute_difference",
+          "parent": "weather.chunk.sea_level_temperature_c",
+          "source_microstep": "weather.chunk_input",
+          "spatial_offsets": [
+            [
+              0,
+              0
+            ]
+          ],
+          "valid_domain": "temperature_in_-30_50_degC"
+        }
+      ],
+      "random_sources": [],
+      "resolved_version": "sha256:630dae518c15d6769aa1e8f2926d62d9ae39ce6901a04936620aec73e6d75a6f",
+      "source_dependencies": [
+        "ascend.mathutil.clamp"
+      ],
+      "witnesses": [
+        {
+          "equation_version": "sha256:d19a58ec5326b62a5931450a7e6051604040d840ac99a37b42c35ba6a567c90a",
+          "expected_outputs": [
+            80.0,
+            0.0
+          ],
+          "inputs_a": {
+            "weather.chunk.sea_level_temperature_c": -5.0
+          },
+          "inputs_b": {
+            "weather.chunk.sea_level_temperature_c": 35.0
+          },
+          "label": "sea_level_temperature_changes_latitude",
+          "parent": "weather.chunk.sea_level_temperature_c"
+        }
+      ]
+    },
+    "weather.instant.classify_precipitation_type.v1": {
+      "boundary_cases": [
+        "rounded_temperature_at_or_below_0:snow",
+        "rounded_temperature_above_0:rain"
+      ],
+      "equation": "'snow' if round_half_even(instant_temperature, 1) <= 0 else 'rain'",
+      "equation_version": "sha256:a46be50823d1b757ec447c5fe7eb5d28ad2cced59bfec5f30ede6399f55a1e86",
+      "function": "ascend.weather.mechanisms._precipitation_type_equation",
+      "output": "weather.instant.precipitation_type",
+      "parameters": [],
+      "parents": [
+        {
+          "aggregation": "identity",
+          "analysis_role": "forward",
+          "argument": "instant_temperature",
+          "boundary_operator": "identity_same_chunk",
+          "broadcast": "same_instance",
+          "entity_relation": "same_chunk",
+          "guard": "always",
+          "lag": 0,
+          "lipschitz": 0.0,
+          "metric": "absolute_difference",
+          "parent": "weather.instant.temperature_c",
+          "source_microstep": "weather.instant_input",
+          "spatial_offsets": [
+            [
+              0,
+              0
+            ]
+          ],
+          "valid_domain": "temperature_in_-30_50_degC"
+        }
+      ],
+      "random_sources": [],
+      "resolved_version": "sha256:dd6faada438d30dae7eff68f749f15cd9d24f8cb7c7b259d5730bd31f67e5598",
+      "source_dependencies": [],
+      "witnesses": [
+        {
+          "equation_version": "sha256:a46be50823d1b757ec447c5fe7eb5d28ad2cced59bfec5f30ede6399f55a1e86",
+          "expected_outputs": [
+            "snow",
+            "rain"
+          ],
+          "inputs_a": {
+            "weather.instant.temperature_c": -1.0
+          },
+          "inputs_b": {
+            "weather.instant.temperature_c": 1.0
+          },
+          "label": "temperature_changes_precipitation_type",
+          "parent": "weather.instant.temperature_c"
+        }
+      ]
+    }
+  },
+  "nodes": {
+    "weather.chunk.annual_mean_temperature_c": {
+      "access": {
+        "interventions": [
+          "node",
+          "persistent",
+          "mechanism"
+        ],
+        "observation_protocols": [
+          "research.full.v1",
+          "agent.weather.v1"
+        ],
+        "research_trace": true
+      },
+      "instance_domain": {
+        "axes": [
+          "chunk_x",
+          "chunk_y"
+        ],
+        "creation": "chunk_registration",
+        "destruction": "chunk_unregistration",
+        "kind": "spatial_field"
+      },
+      "math": {
+        "error_budget": 0.05,
+        "metric": "absolute_difference",
+        "valid_domain": "finite_temperature_within_declared_bounds"
+      },
+      "origin": "slice_boundary",
+      "role": "persistent_state",
+      "state": {
+        "in_world_state": true,
+        "reconstruction": "not_applicable:persisted_chunk_generation_output"
+      },
+      "update": {
+        "merge_rule": "single_writer",
+        "microstep": "weather.chunk_input",
+        "schedule": "on_chunk_generation",
+        "when_not_updated": "retain_previous_value",
+        "writer": "space.world_generator"
+      },
+      "value": {
+        "bounds": [
+          -30.0,
+          50.0
+        ],
+        "choices": [],
+        "kind": "float",
+        "missing": "forbidden",
+        "quantization": "ieee754_binary64",
+        "unit": "degC"
+      }
+    },
+    "weather.chunk.annual_rainfall_mm_per_year": {
+      "access": {
+        "interventions": [
+          "node",
+          "persistent",
+          "mechanism"
+        ],
+        "observation_protocols": [
+          "research.full.v1",
+          "agent.weather.v1"
+        ],
+        "research_trace": true
+      },
+      "instance_domain": {
+        "axes": [
+          "chunk_x",
+          "chunk_y"
+        ],
+        "creation": "chunk_registration",
+        "destruction": "chunk_unregistration",
+        "kind": "spatial_field"
+      },
+      "math": {
+        "error_budget": 100.0,
+        "metric": "absolute_difference",
+        "valid_domain": "finite_nonnegative_annual_rainfall"
+      },
+      "origin": "slice_boundary",
+      "role": "persistent_state",
+      "state": {
+        "in_world_state": true,
+        "reconstruction": "not_applicable:persisted_chunk_generation_output"
+      },
+      "update": {
+        "merge_rule": "single_writer",
+        "microstep": "weather.chunk_input",
+        "schedule": "on_chunk_generation",
+        "when_not_updated": "retain_previous_value",
+        "writer": "space.world_generator"
+      },
+      "value": {
+        "bounds": [
+          0.0,
+          5000.0
+        ],
+        "choices": [],
+        "kind": "float",
+        "missing": "forbidden",
+        "quantization": "ieee754_binary64",
+        "unit": "mm_per_year"
+      }
+    },
+    "weather.chunk.sea_level_temperature_c": {
+      "access": {
+        "interventions": [
+          "node",
+          "persistent",
+          "mechanism"
+        ],
+        "observation_protocols": [
+          "research.full.v1",
+          "agent.weather.v1"
+        ],
+        "research_trace": true
+      },
+      "instance_domain": {
+        "axes": [
+          "chunk_x",
+          "chunk_y"
+        ],
+        "creation": "chunk_registration",
+        "destruction": "chunk_unregistration",
+        "kind": "spatial_field"
+      },
+      "math": {
+        "error_budget": 0.2,
+        "metric": "absolute_difference",
+        "valid_domain": "finite_temperature_within_declared_bounds"
+      },
+      "origin": "slice_boundary",
+      "role": "persistent_state",
+      "state": {
+        "in_world_state": true,
+        "reconstruction": "not_applicable:persisted_chunk_generation_output"
+      },
+      "update": {
+        "merge_rule": "single_writer",
+        "microstep": "weather.chunk_input",
+        "schedule": "on_chunk_generation",
+        "when_not_updated": "retain_previous_value",
+        "writer": "space.world_generator"
+      },
+      "value": {
+        "bounds": [
+          -30.0,
+          50.0
+        ],
+        "choices": [],
+        "kind": "float",
+        "missing": "forbidden",
+        "quantization": "ieee754_binary64",
+        "unit": "degC"
+      }
+    },
+    "weather.chunk.seasonal_temperature_amplitude_c": {
+      "access": {
+        "interventions": [
+          "node",
+          "persistent",
+          "mechanism"
+        ],
+        "observation_protocols": [
+          "research.full.v1",
+          "agent.weather.v1"
+        ],
+        "research_trace": true
+      },
+      "instance_domain": {
+        "axes": [
+          "chunk_x",
+          "chunk_y"
+        ],
+        "creation": "chunk_registration",
+        "destruction": "chunk_unregistration",
+        "kind": "spatial_field"
+      },
+      "math": {
+        "error_budget": 0.1,
+        "metric": "absolute_difference",
+        "valid_domain": "closed_interval_1_30_degC"
+      },
+      "origin": "mechanism",
+      "role": "mechanism_state",
+      "state": {
+        "in_world_state": false,
+        "reconstruction": "weather.chunk.derive_seasonal_temperature_amplitude.v1"
+      },
+      "update": {
+        "merge_rule": "single_writer",
+        "microstep": "weather.chunk_derived",
+        "schedule": "on_chunk_registration",
+        "when_not_updated": "recompute_on_demand",
+        "writer": "weather.chunk.derive_seasonal_temperature_amplitude.v1"
+      },
+      "value": {
+        "bounds": [
+          1.0,
+          30.0
+        ],
+        "choices": [],
+        "kind": "float",
+        "missing": "forbidden",
+        "quantization": "ieee754_binary64",
+        "unit": "degC"
+      }
+    },
+    "weather.chunk.solar_latitude_proxy_deg": {
+      "access": {
+        "interventions": [
+          "node",
+          "persistent",
+          "mechanism"
+        ],
+        "observation_protocols": [
+          "research.full.v1",
+          "agent.weather.v1"
+        ],
+        "research_trace": true
+      },
+      "instance_domain": {
+        "axes": [
+          "chunk_x",
+          "chunk_y"
+        ],
+        "creation": "chunk_registration",
+        "destruction": "chunk_unregistration",
+        "kind": "spatial_field"
+      },
+      "math": {
+        "error_budget": 0.5,
+        "metric": "absolute_difference",
+        "valid_domain": "closed_interval_0_80_degrees"
+      },
+      "origin": "mechanism",
+      "role": "mechanism_state",
+      "state": {
+        "in_world_state": false,
+        "reconstruction": "weather.chunk.derive_solar_latitude_proxy.v1"
+      },
+      "update": {
+        "merge_rule": "single_writer",
+        "microstep": "weather.chunk_derived",
+        "schedule": "on_chunk_registration",
+        "when_not_updated": "recompute_on_demand",
+        "writer": "weather.chunk.derive_solar_latitude_proxy.v1"
+      },
+      "value": {
+        "bounds": [
+          0.0,
+          80.0
+        ],
+        "choices": [],
+        "kind": "float",
+        "missing": "forbidden",
+        "quantization": "ieee754_binary64",
+        "unit": "degree_north"
+      }
+    },
+    "weather.instant.precipitation_type": {
+      "access": {
+        "interventions": [
+          "node",
+          "persistent",
+          "mechanism"
+        ],
+        "observation_protocols": [
+          "research.full.v1",
+          "agent.weather.v1"
+        ],
+        "research_trace": true
+      },
+      "instance_domain": {
+        "axes": [
+          "chunk_x",
+          "chunk_y"
+        ],
+        "creation": "chunk_registration",
+        "destruction": "chunk_unregistration",
+        "kind": "spatial_field"
+      },
+      "math": {
+        "error_budget": 0.0,
+        "metric": "discrete",
+        "valid_domain": "snow_or_rain"
+      },
+      "origin": "mechanism",
+      "role": "mechanism_state",
+      "state": {
+        "in_world_state": false,
+        "reconstruction": "weather.instant.classify_precipitation_type.v1"
+      },
+      "update": {
+        "merge_rule": "single_writer",
+        "microstep": "weather.instant_derived",
+        "schedule": "on_weather_evaluation",
+        "when_not_updated": "recompute_on_demand",
+        "writer": "weather.instant.classify_precipitation_type.v1"
+      },
+      "value": {
+        "bounds": null,
+        "choices": [
+          "snow",
+          "rain"
+        ],
+        "kind": "enum",
+        "missing": "forbidden",
+        "quantization": "round_half_even_to_0.1_degC_then_threshold_at_0",
+        "unit": "category"
+      }
+    },
+    "weather.instant.temperature_c": {
+      "access": {
+        "interventions": [
+          "node",
+          "persistent",
+          "mechanism"
+        ],
+        "observation_protocols": [
+          "research.full.v1",
+          "agent.weather.v1"
+        ],
+        "research_trace": true
+      },
+      "instance_domain": {
+        "axes": [
+          "chunk_x",
+          "chunk_y"
+        ],
+        "creation": "chunk_registration",
+        "destruction": "chunk_unregistration",
+        "kind": "spatial_field"
+      },
+      "math": {
+        "error_budget": 0.05,
+        "metric": "absolute_difference",
+        "valid_domain": "finite_temperature_within_declared_bounds"
+      },
+      "origin": "slice_boundary",
+      "role": "mechanism_state",
+      "state": {
+        "in_world_state": false,
+        "reconstruction": "outside_slice:weather.instant.temperature_equation"
+      },
+      "update": {
+        "merge_rule": "single_writer",
+        "microstep": "weather.instant_input",
+        "schedule": "on_weather_evaluation",
+        "when_not_updated": "recompute_on_demand",
+        "writer": "outside_slice:weather.instant.temperature_equation"
+      },
+      "value": {
+        "bounds": [
+          -30.0,
+          50.0
+        ],
+        "choices": [],
+        "kind": "float",
+        "missing": "forbidden",
+        "quantization": "ieee754_binary64",
+        "unit": "degC"
+      }
+    }
+  },
+  "parameters": {
+    "weather.parameter.latitude.input_max_c": {
+      "bounds": [
+        -273.15,
+        100.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.LATITUDE_T_MAX",
+      "unit": "degC",
+      "value": 35.0,
+      "value_type": "float",
+      "version": "sha256:dbb15cc1cf134da1d22f7d9046ef1bd4f5fc33a99588467bdf76a31979f594df"
+    },
+    "weather.parameter.latitude.input_min_c": {
+      "bounds": [
+        -273.15,
+        100.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.LATITUDE_T_MIN",
+      "unit": "degC",
+      "value": -5.0,
+      "value_type": "float",
+      "version": "sha256:10e3f7f5e25766c8b5d075b01b612ac42397d5ea7b15be8c9e7f909cae9f7260"
+    },
+    "weather.parameter.latitude.output_max_deg": {
+      "bounds": [
+        0.0,
+        90.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.LATITUDE_MAX",
+      "unit": "degree_north",
+      "value": 80.0,
+      "value_type": "float",
+      "version": "sha256:1df1c77936f0b5b54930c5c8fb7649420553d9470cf4711ab79f6892537cd764"
+    },
+    "weather.parameter.latitude.output_min_deg": {
+      "bounds": [
+        0.0,
+        90.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.LATITUDE_MIN",
+      "unit": "degree_north",
+      "value": 0.0,
+      "value_type": "float",
+      "version": "sha256:c521111477a725759f7aea99715d462793036525fcdffb033ee0fa4da99089ee"
+    },
+    "weather.parameter.seasonal_amplitude.cold_endpoint_c": {
+      "bounds": [
+        0.0,
+        100.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.SEASONAL_AMP_MAX",
+      "unit": "degC",
+      "value": 28.0,
+      "value_type": "float",
+      "version": "sha256:6a8b1bb16f99972532d85db68162d56743a48f2fe2ef3cc633684d2324e5c077"
+    },
+    "weather.parameter.seasonal_amplitude.hot_endpoint_c": {
+      "bounds": [
+        0.0,
+        100.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.SEASONAL_AMP_MIN",
+      "unit": "degC",
+      "value": 2.0,
+      "value_type": "float",
+      "version": "sha256:3a557de156c9afa4a31d32e4b868b2ba996c1030a5eeaab3b89fc36f85d7a096"
+    },
+    "weather.parameter.seasonal_amplitude.input_max_c": {
+      "bounds": [
+        -273.15,
+        100.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.SEASONAL_AMP_T_MAX",
+      "unit": "degC",
+      "value": 35.0,
+      "value_type": "float",
+      "version": "sha256:e8fcc37eca659bb4e93a8e361827bf087cb2731040d256c1ef594b42d1dd06cc"
+    },
+    "weather.parameter.seasonal_amplitude.input_min_c": {
+      "bounds": [
+        -273.15,
+        100.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.SEASONAL_AMP_T_MIN",
+      "unit": "degC",
+      "value": -5.0,
+      "value_type": "float",
+      "version": "sha256:bcd27aebd4feb88a4a52054fe7eeba2f80e474e96bdece972fadf9ebb844e404"
+    },
+    "weather.parameter.seasonal_amplitude.output_max_c": {
+      "bounds": [
+        0.0,
+        100.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.SEASONAL_AMP_BOUNDS[1]",
+      "unit": "degC",
+      "value": 30.0,
+      "value_type": "float",
+      "version": "sha256:67acbe2ef47ef5514c0ce985b033868ae6cf608b6b3889d880b152e223186cb5"
+    },
+    "weather.parameter.seasonal_amplitude.output_min_c": {
+      "bounds": [
+        0.0,
+        100.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.SEASONAL_AMP_BOUNDS[0]",
+      "unit": "degC",
+      "value": 1.0,
+      "value_type": "float",
+      "version": "sha256:aedfd67b8f3f327069a1a33b5d80672a9d223a4ea0328d6203dbceb5ac076a0c"
+    },
+    "weather.parameter.seasonal_amplitude.rain_bonus_c": {
+      "bounds": [
+        0.0,
+        100.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.SEASONAL_AMP_R_BONUS",
+      "unit": "degC",
+      "value": 4.0,
+      "value_type": "float",
+      "version": "sha256:8b3247a960fc74f436e316a0132676d350ca83ae021735e39c4676714f183432"
+    },
+    "weather.parameter.seasonal_amplitude.rain_reference_mm_per_year": {
+      "bounds": [
+        1.0,
+        100000.0
+      ],
+      "intervention_allowed": true,
+      "source": "data/world.json#weather.SEASONAL_AMP_R_REF",
+      "unit": "mm_per_year",
+      "value": 2000.0,
+      "value_type": "float",
+      "version": "sha256:7efe45b1c0e2188b10894131161e4d752a364d3d755c7b908d4c989941122ec1"
+    }
+  },
+  "schema_version": 2,
+  "variables": {
+    "weather.chunk.annual_mean_temperature_c": {
+      "bounds": [
+        -30.0,
+        50.0
+      ],
+      "domain": "continuous",
+      "eps": 0.05,
+      "exogenous": true
+    },
+    "weather.chunk.annual_rainfall_mm_per_year": {
+      "bounds": [
+        0.0,
+        5000.0
+      ],
+      "domain": "continuous",
+      "eps": 100.0,
+      "exogenous": true
+    },
+    "weather.chunk.sea_level_temperature_c": {
+      "bounds": [
+        -30.0,
+        50.0
+      ],
+      "domain": "continuous",
+      "eps": 0.2,
+      "exogenous": true
+    },
+    "weather.chunk.seasonal_temperature_amplitude_c": {
+      "bounds": [
+        1.0,
+        30.0
+      ],
+      "domain": "continuous",
+      "eps": 0.1,
+      "exogenous": false
+    },
+    "weather.chunk.solar_latitude_proxy_deg": {
+      "bounds": [
+        0.0,
+        80.0
+      ],
+      "domain": "continuous",
+      "eps": 0.5,
+      "exogenous": false
+    },
+    "weather.instant.precipitation_type": {
+      "bounds": null,
+      "domain": "discrete",
+      "eps": 0.0,
+      "exogenous": false
+    },
+    "weather.instant.temperature_c": {
+      "bounds": [
+        -30.0,
+        50.0
+      ],
+      "domain": "continuous",
+      "eps": 0.05,
+      "exogenous": true
+    }
+  },
+  "version": 2
 }

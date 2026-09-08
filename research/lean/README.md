@@ -44,8 +44,11 @@ lake build           # 构建并检查全部证明
 ```
 
 CI：`.github/workflows/lean_action_ci.yml` 在 push / PR 触及
-`research/lean/**`、`research/equations/**` 或 `backend/ascend/config.py`
-时自动运行声明数据漂移巡检（`gen_lean.py --check`）与 `lake build`。
+`research/lean/**`、`research/equations/**`、`backend/ascend/causal/**`、
+`backend/ascend/weather/derive.py`、`backend/ascend/weather/mechanisms.py`、
+`backend/ascend/space/climate.py`、`backend/ascend/config.py` 或
+`data/world.json` 时运行两级声明漂移巡检（`export_registry.py --check`
++ `gen_lean.py --check`）与 `lake build`。
 
 ## 文档映射
 
@@ -58,14 +61,18 @@ CI：`.github/workflows/lean_action_ci.yml` 在 push / PR 触及
 | 02 篇 §5                                                           | SpatialKernel.lean      | 空间核逐点 Lipschitz 界（绝对权重和放大）与 Σ\|w_σ\|<1 的严格收缩                     |
 | 00 篇 §2 + 04 篇 C2 + 第一阶段实施定义 §5                           | UnrolledDag.lean        | 时间展开无环：微步偏序 + 滞后父模板 ⟹ 任意有限窗口展开图无环（秩测度 + 良基）         |
 | 第一阶段实施定义 §7/§9 + 04 篇 W2                                   | InterventionTypes.lean  | 节点/持续/机制干预轨迹语义：persist(1)=nodeDo、干预不改过去、三类互异数值见证          |
-| research/equations/equations.json + backend/ascend/config.py、weather/derive.py、space/climate.py | Declarations.lean       | 声明层函数性质：clamp 引理库，derive_latitude / derive_seasonal_amp / precip_type_for 的界·单调·Lipschitz·常数最优性 + config 数值核对 |
-| research/equations/equations.json + backend/ascend/config.py        | GenDeclarationData.lean | gen_lean.py 自动生成的声明数据段 + 七条对账定理（防漂移，--check 巡检）               |
+| 生产机制注册表（backend/ascend/weather/mechanisms.py → equations.json）+ backend/ascend/config.py、weather/derive.py、space/climate.py | Declarations.lean       | 声明层函数性质：clamp 引理库，derive_latitude / derive_seasonal_amp / precip_type_for 的界·单调·Lipschitz·常数最优性 + config 数值核对 |
+| 生产机制注册表 → equations.json + backend/ascend/config.py        | GenDeclarationData.lean | gen_lean.py 自动生成的声明数据段 + 七条对账定理（防漂移，--check 巡检）               |
 | 01-样本复杂度 / 03-时空因果可见性 / 反事实与认知 01                 | （文献结果，不形式化）  |                                                                                       |
 
 配套验证管线见 `research/equations/`（声明层数值对照，Python 差分测试）；
 Lean 只证明数学性质，不检查引擎代码是否按声明实现（那是对拍测试的职责）。
 
+`equations.json` 为**生成物**（生产注册表 → `export_registry.py`，禁止手改），
+来源、切片与迁移流程见 `docs/研究理论/世界基座/07-机制注册表.md`。
+
 新方程接入流程演练（issue #45，零污染 dry-run）：复制 `equations.json`
 加演练边 → `gen_lean.py --json <副本> --out <临时 .lean>` 生成到仓库外
 → `lake env lean <临时 .lean>` 验证编译绿（新边自动 camel 命名进数据段，
-对账定理模板需人工评估是否扩展）。
+对账定理模板需人工评估是否扩展）。正式接入走注册表登记 + 重新生成
+（见 07 篇 §6），不直接手改 JSON。

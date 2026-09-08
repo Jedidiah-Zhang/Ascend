@@ -1,10 +1,10 @@
-"""声明层验证 — 引擎实现 vs 声明（research/equations/equations.json）。
+"""声明层验证 — 生产注册表、研究快照、Lean 与引擎实现对拍。
 
 运行: .venv/bin/python research/equations/verify_equations.py [--fast]
 
 判据（预注册，05 篇总则风格）：
-  V0 Lean 生成物漂移：gen_lean --check 通过（GenDeclarationData.lean 与
-      equations.json + config.py 真值一致；issue #44 防漂移机制）；
+  V0 注册表/Lean 生成物漂移：equations.json 与生产注册表一致，且
+      GenDeclarationData.lean 与 equations.json + config.py 真值一致；
   V1 声明加载 + 结构校验：schema.validate 无问题；
   V2 L_j 对账：声明 L 与 config 常量解析计算一致（容差 1e-12）；
      derive_latitude = (LATITUDE_MAX−LATITUDE_MIN)/(LATITUDE_T_MAX−LATITUDE_T_MIN)；
@@ -29,6 +29,7 @@ sys.path.insert(0, str(HERE))                       # 供 import schema
 sys.path.insert(0, str(HERE.parents[1] / "backend"))  # 供 import ascend
 
 import schema
+import export_registry  # noqa: E402  生产注册表 -> JSON 漂移巡检
 import gen_lean  # noqa: E402  V0 巡检用（同目录）
 
 from ascend.config import (  # noqa: E402
@@ -36,9 +37,19 @@ from ascend.config import (  # noqa: E402
     SEASONAL_AMP_MAX, SEASONAL_AMP_MIN,
     SEASONAL_AMP_R_BONUS, SEASONAL_AMP_R_REF,
     SEASONAL_AMP_T_MAX, SEASONAL_AMP_T_MIN,
+    TEMP_BOUNDS,
 )
 from ascend.weather.derive import (  # noqa: E402
     derive_latitude, derive_seasonal_amp, precip_type_for,
+)
+from ascend.weather.mechanisms import (  # noqa: E402
+    ANNUAL_RAINFALL,
+    ANNUAL_TEMPERATURE,
+    INSTANT_PRECIPITATION_TYPE,
+    INSTANT_TEMPERATURE,
+    SEASONAL_TEMPERATURE_AMPLITUDE,
+    SEA_LEVEL_TEMPERATURE,
+    SOLAR_LATITUDE_PROXY,
 )
 
 JSON_PATH = HERE / "equations.json"
@@ -61,11 +72,13 @@ def main() -> int:
     n = 2_000 if args.fast else 20_000
     results: list[tuple[str, bool, str]] = []
 
-    # ── V0 Lean 生成物漂移巡检（issue #44）────────────
+    # ── V0 生产注册表与生成物漂移巡检（issue #44/#46）─
     # 固定锚定默认单一事实来源 equations.json（生成物入库对应它，
     # 不跟随 --json 的自定义路径，避免对拍临时片段误报入库产物漂移）。
-    ok0, detail0 = gen_lean.check()
-    results.append(("V0 Lean 生成物漂移", ok0, detail0))
+    registry_ok, registry_detail = export_registry.check()
+    results.append(("V0 生产注册表快照漂移", registry_ok, registry_detail))
+    lean_ok, lean_detail = gen_lean.check()
+    results.append(("V0 Lean 生成物漂移", lean_ok, lean_detail))
 
     # ── V1 声明加载 + 结构校验 ────────────────────────
     graph = schema.load_declaration(args.json)
@@ -81,12 +94,12 @@ def main() -> int:
 
     # ── V2 L_j 对账 ──────────────────────────────────
     expected = {
-        ("sea_level_temp", "latitude"):
+        (SEA_LEVEL_TEMPERATURE, SOLAR_LATITUDE_PROXY):
             (LATITUDE_MAX - LATITUDE_MIN) / (LATITUDE_T_MAX - LATITUDE_T_MIN),
-        ("temperature", "seasonal_amp"):
+        (ANNUAL_TEMPERATURE, SEASONAL_TEMPERATURE_AMPLITUDE):
             (SEASONAL_AMP_MAX - SEASONAL_AMP_MIN)
             / (SEASONAL_AMP_T_MAX - SEASONAL_AMP_T_MIN),
-        ("rainfall", "seasonal_amp"):
+        (ANNUAL_RAINFALL, SEASONAL_TEMPERATURE_AMPLITUDE):
             SEASONAL_AMP_R_BONUS / SEASONAL_AMP_R_REF,
     }
     for (p, c), exp in expected.items():
@@ -98,9 +111,9 @@ def main() -> int:
         diff = abs(spec.L - exp)
         results.append((f"V2 L_j 对账 {p}->{c} (声明 {spec.L})",
                         diff <= TOL, f"解析值 {exp:.6g}，差 {diff:.2e}"))
-    precip_edge = graph.edge("temperature", "precip_type")
+    precip_edge = graph.edge(INSTANT_TEMPERATURE, INSTANT_PRECIPITATION_TYPE)
     precip_ok = precip_edge is not None and precip_edge.L == 0.0
-    results.append(("V2 L_j 对账 temperature->precip_type",
+    results.append(("V2 L_j 对账 instant temperature->precipitation type",
                     precip_ok,
                     "离散输出，L=0 不做解析对账（01 篇 margin 条件处理）"))
 
@@ -108,16 +121,16 @@ def main() -> int:
     def precip_ref(t: float) -> str:
         return "snow" if round(t, 1) <= 0 else "rain"
 
-    temps = [-40.0, -1.0, -0.5, -0.05, -0.049, 0.0, 0.049, 0.05,
-             0.5, 1.0, 40.0] + [rng.uniform(-40, 40) for _ in range(n)]
+    temps = [-30.0, -1.0, -0.5, -0.05, -0.049, 0.0, 0.049, 0.05,
+             0.5, 1.0, 50.0] + [rng.uniform(*TEMP_BOUNDS) for _ in range(n)]
     bad = [t for t in temps
            if precip_type_for(t) != precip_ref(t)
            or precip_type_for(t) not in ("snow", "rain")]
     results.append(("V3 precip_type_for 阈值语义 (round(1) ≤0 为雪)",
                     not bad, f"{len(temps)} 样本，反例 {len(bad)}"))
 
-    lat_samples = [-40.0, -5.0, 0.0, 10.0, 20.0, 30.0, 35.0, 40.0,
-                   60.0] + [rng.uniform(-40, 60) for _ in range(n)]
+    lat_samples = [-30.0, -5.0, 0.0, 10.0, 20.0, 30.0, 35.0, 40.0,
+                   50.0] + [rng.uniform(*TEMP_BOUNDS) for _ in range(n)]
     out_of_bounds = [t for t in lat_samples
                      if not (0.0 <= derive_latitude(t) <= 80.0)]
     monotonic = all(

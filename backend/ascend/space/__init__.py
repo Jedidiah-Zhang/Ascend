@@ -29,7 +29,7 @@ from .climate import (
     WeatherParams,
     classify,
     annual_baseline, sea_level_temperature, apply_lapse_rate,
-    rainfall_from_noise, get_climate_template, LAPSE_RATE, clamp,
+    rainfall_from_noise, get_climate_template, LAPSE_RATE,
 )
 from .biome import (
     BiomeType, BiomeTemplate, TerrainBias,
@@ -75,7 +75,6 @@ __all__ = [
     "apply_lapse_rate",
     "rainfall_from_noise",
     "LAPSE_RATE",
-    "clamp",
     "BiomeType",
     "BiomeTemplate",
     "TerrainBias",

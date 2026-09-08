@@ -31,7 +31,8 @@ from ascend.config import (
     PRECIP_INTENSITY_SCALE,
 )
 from ascend.fate import derive
-from ascend.space import PerlinNoise, clamp
+from ascend.mathutil import clamp
+from ascend.space import PerlinNoise
 
 from .atmosphere import (
     TextureField, CH_TEMPERATURE, CH_WIND, CH_PRECIP,

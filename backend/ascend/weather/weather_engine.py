@@ -31,7 +31,8 @@ from ascend.config import TEMP_PERTURB_SCALE, TILE_MAP_SIZE
 from ascend.config import WIND_BOUNDS as _WIND_BOUNDS
 from ascend.config import WIND_PERTURB_SCALE
 from ascend.log import get_logger
-from ascend.space import (ClimateZone, WeatherParams, clamp,
+from ascend.mathutil import clamp
+from ascend.space import (ClimateZone, WeatherParams,
                           get_climate_template)
 from ascend.time import WorldClock
 from ascend.world_tree import (AffectedParty, Event, SubscriptionScope,

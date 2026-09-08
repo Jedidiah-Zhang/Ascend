@@ -17,6 +17,7 @@ from typing import Mapping
 
 from ascend.data import load_content, split_ns_id
 from ascend.i18n import get_default
+from ascend.mathutil import clamp
 
 _I18N = get_default()
 
@@ -346,17 +347,3 @@ def annual_baseline(
         humidity=_derive(tmpl.humidity_range, humidity_noise, "humidity"),
         wind_speed=_derive(tmpl.wind_speed_range, wind_noise, "wind_speed"),
     )
-
-
-def clamp(value: float, lo: float, hi: float) -> float:
-    """将值钳制在 [lo, hi] 区间内。
-
-    Args:
-        value: 输入值。
-        lo: 下限。
-        hi: 上限。
-
-    Returns:
-        钳制后的值。
-    """
-    return max(lo, min(hi, value))

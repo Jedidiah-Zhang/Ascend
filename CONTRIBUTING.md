@@ -85,6 +85,22 @@ cd frontend && ./run_tests.sh unit
 
 GUT 不随仓库分发（`frontend/addons/gut` 只需在本地安装），因此前端测试仅在本地运行。
 
+### 研究声明管线
+
+研究方程的唯一事实源是生产机制注册表（`backend/ascend/weather/mechanisms.py`，
+详见 docs/研究理论/世界基座/07-机制注册表.md）。修改任何已登记方程、
+参数、节点声明或 `data/world.json` 后，必须重新生成并提交两个产物，
+否则 CI 漂移门禁会失败：
+
+```bash
+.venv/bin/python research/equations/export_registry.py          # 注册表 → equations.json
+.venv/bin/python research/equations/gen_lean.py                 # equations.json → Lean 数据段
+.venv/bin/python research/equations/verify_equations.py --fast  # 全链对拍（V0–V3）
+.venv/bin/python research/equations/graph_check.py              # 图健康巡检（G0–G6）
+```
+
+`equations.json` 与 `GenDeclarationData.lean` 均为生成物，禁止手改。
+
 ## 提交约定
 
 请遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范，并使用中文撰写提交描述。

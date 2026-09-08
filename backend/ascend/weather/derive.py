@@ -5,22 +5,33 @@
   - 降水类型判定（事件侧与查询侧共用的单一实现）
   - 季节振幅 / 纬度连续推导（保证气候带边界无跳变）
 
-阈值单一事实来源 = ascend.config 的 *_TIER_BOUNDARIES 与
-SEASONAL_AMP_*/LATITUDE_* 系列常量。
+公式单一事实来源：precip_type_for / derive_seasonal_amp /
+derive_latitude 委托 ascend.weather.mechanisms 注册表方程执行
+（参数值取自 ascend.config）。分级阈值事实来源 = ascend.config
+的 *_TIER_BOUNDARIES 系列常量。
+
+fail-closed 契约：三个注册表委托函数在输入越出声明值域时抛
+ValueError（不再静默钳制），与研究声明的值域语义一致。
 """
 
 from dataclasses import dataclass
+from typing import cast
 
-from ascend.config import (HUMIDITY_TIER_BOUNDARIES, LATITUDE_MAX,
-                           LATITUDE_MIN, LATITUDE_T_MAX, LATITUDE_T_MIN,
-                           SEASONAL_AMP_BOUNDS, SEASONAL_AMP_MAX,
-                           SEASONAL_AMP_MIN, SEASONAL_AMP_R_BONUS,
-                           SEASONAL_AMP_R_REF, SEASONAL_AMP_T_MAX,
-                           SEASONAL_AMP_T_MIN,
+from ascend.config import (HUMIDITY_TIER_BOUNDARIES,
                            SUNLIGHT_INTENSITY_TIER_BOUNDARIES,
                            SUNSHINE_TIER_BOUNDARIES, TEMP_TIER_BOUNDARIES,
                            WIND_TIER_BOUNDARIES)
-from ascend.space import clamp
+
+from .mechanisms import (
+    ANNUAL_RAINFALL,
+    ANNUAL_TEMPERATURE,
+    INSTANT_PRECIPITATION_TYPE,
+    INSTANT_TEMPERATURE,
+    SEASONAL_TEMPERATURE_AMPLITUDE,
+    SEA_LEVEL_TEMPERATURE,
+    SOLAR_LATITUDE_PROXY,
+    WEATHER_MECHANISMS,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,8 +62,14 @@ def precip_type_for(temperature: float) -> str:
 
     Returns:
         "snow" 或 "rain"。
+
+    Raises:
+        ValueError: temperature 越出声明值域 [-30, 50]（fail-closed）。
     """
-    return "snow" if round(temperature, 1) <= 0 else "rain"
+    return cast(str, WEATHER_MECHANISMS.evaluate(
+        INSTANT_PRECIPITATION_TYPE,
+        {INSTANT_TEMPERATURE: temperature},
+    ))
 
 
 def _classify(value: float, boundaries: tuple[float, ...]) -> int:
@@ -163,19 +180,17 @@ def derive_seasonal_amp(temperature: float, rainfall: float) -> float:
 
     Returns:
         季节温度振幅 (°C)，钳制在 [1, 30]。
+
+    Raises:
+        ValueError: 输入越出声明值域（fail-closed）。
     """
-    t_ratio = (temperature - SEASONAL_AMP_T_MIN) / (
-        SEASONAL_AMP_T_MAX - SEASONAL_AMP_T_MIN
-    )
-    base_amp = SEASONAL_AMP_MAX - t_ratio * (
-        SEASONAL_AMP_MAX - SEASONAL_AMP_MIN
-    )
-    rain_factor = clamp(
-        (SEASONAL_AMP_R_REF - rainfall) / SEASONAL_AMP_R_REF,
-        -0.5, 1.0,
-    )
-    rain_bonus = rain_factor * SEASONAL_AMP_R_BONUS
-    return clamp(base_amp + rain_bonus, *SEASONAL_AMP_BOUNDS)
+    return cast(float, WEATHER_MECHANISMS.evaluate(
+        SEASONAL_TEMPERATURE_AMPLITUDE,
+        {
+            ANNUAL_TEMPERATURE: temperature,
+            ANNUAL_RAINFALL: rainfall,
+        },
+    ))
 
 
 def derive_latitude(sea_level_temp: float) -> float:
@@ -191,9 +206,11 @@ def derive_latitude(sea_level_temp: float) -> float:
 
     Returns:
         纬度 (°)，范围 [0, 80]。
+
+    Raises:
+        ValueError: sea_level_temp 越出声明值域 [-30, 50]（fail-closed）。
     """
-    t_ratio = (sea_level_temp - LATITUDE_T_MIN) / (
-        LATITUDE_T_MAX - LATITUDE_T_MIN
-    )
-    lat = LATITUDE_MAX - t_ratio * (LATITUDE_MAX - LATITUDE_MIN)
-    return clamp(lat, LATITUDE_MIN, LATITUDE_MAX)
+    return cast(float, WEATHER_MECHANISMS.evaluate(
+        SOLAR_LATITUDE_PROXY,
+        {SEA_LEVEL_TEMPERATURE: sea_level_temp},
+    ))
