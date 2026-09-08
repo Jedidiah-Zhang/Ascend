@@ -36,6 +36,24 @@ _VALUE_KINDS = {"float", "integer", "enum", "boolean", "string"}
 _INTERVENTIONS = {"node", "persistent", "mechanism"}
 _ANALYSIS_ROLES = {"forward", "inverse", "observable"}
 
+# 快照文件依赖的机器无关锚点：仓库布局 backend/（源码模式才生成快照）。
+# 绝对路径会随检出位置变化 → equations.json 在 CI 与本地必然漂移，
+# 版本摘要与快照统一改成相对它的标签（如 ``ascend/config.py``、
+# ``../data/world.json``）；布局外文件退化为文件名。
+_ANCHOR = Path(__file__).resolve().parents[2]
+
+
+def _file_label(path: Path) -> str:
+    """文件依赖的确定性标签（相对仓库 backend/ 锚点的布局内相对路径）。
+
+    跨机器/检出位置稳定（如 ``ascend/space/_hydrology.c``、
+    ``../data/world.json``）；布局外文件退化为文件名。
+    """
+    try:
+        return str(path.resolve().relative_to(_ANCHOR))
+    except ValueError:
+        return Path(path).name
+
 
 def _canonical(value: object) -> str:
     return json.dumps(
@@ -104,7 +122,7 @@ def _source_version(
                     f"文件源码依赖不存在 {path}，拒绝生成无来源版本"
                 )
             sources.append({
-                "file": str(path),
+                "file": _file_label(path),
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             })
             continue
@@ -793,7 +811,7 @@ class MechanismRegistry:
             "equation": spec.equation,
             "function": _callable_name(spec.function),
             "source_dependencies": [
-                str(item) if isinstance(item, (str, os.PathLike))
+                _file_label(Path(item)) if isinstance(item, (str, os.PathLike))
                 else _callable_name(item)
                 for item in spec.source_dependencies
             ],

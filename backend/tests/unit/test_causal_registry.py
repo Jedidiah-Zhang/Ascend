@@ -527,3 +527,96 @@ class TestSourcelessPackagedBuild:
             mechanism_id: snapshot["equation_version"]
             for mechanism_id, snapshot in snapshots.items()
         }
+
+
+class TestSnapshotPortability:
+    """快照跨机器确定性：方程版本/快照不得含绝对路径。
+
+    CI 检出目录与本地不同（/home/runner vs /home/Jedidiah），
+    equations.json 曾因此漂移（CI run 34236383065）。
+    """
+
+    def test_source_dependency_labels_are_layout_relative(self):
+        snapshot = ASCEND_MECHANISMS.snapshot()["mechanisms"]
+        assert snapshot
+        for mechanism_id, mechanism in snapshot.items():
+            for dep in mechanism["source_dependencies"]:
+                assert not dep.startswith("/"), (
+                    f"{mechanism_id}: 依赖含绝对路径 {dep!r}"
+                )
+                if dep.startswith("file:"):
+                    raise AssertionError(mechanism_id)
+
+    def test_equation_versions_stable_across_checkout(self, monkeypatch,
+                                                       tmp_path):
+        """镜像另一检出位置（不同根、相同布局）→ 摘要不变。
+
+        文件依赖哈希 = 内容 + 相对 backend 锚点的标签（不含绝对路径），
+        callable 源码摘要在两处一致 → 版本跨机器确定。
+        """
+        import shutil
+        from dataclasses import replace
+        import ascend.causal.registry as registry
+        import ascend.space.mechanisms as space_mech
+        import ascend.weather.mechanisms as weather_mech
+        from ascend.causal.microsteps import MICROSTEP_ORDER
+        from ascend.causal import MechanismRegistry
+
+        before = {
+            mid: m["equation_version"]
+            for mid, m in ASCEND_MECHANISMS.snapshot()["mechanisms"].items()
+        }
+        backend_root = Path(__file__).parents[2]   # backend/
+        repo_root = Path(__file__).parents[3]      # 仓库根
+        mirror_backend = tmp_path / "ci-mirror" / "backend"
+        mirror_ascend = mirror_backend / "ascend"
+        mirror_data = tmp_path / "ci-mirror" / "data"
+        path_map: dict[str, Path] = {}
+        for relative in (
+            Path("ascend/space/_hydrology.c"),
+            Path("ascend/space/hydrology.py"),
+            Path("ascend/space/climate.py"),
+            Path("ascend/space/biome.py"),
+            Path("ascend/config.py"),
+        ):
+            target = mirror_ascend / relative.relative_to("ascend")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backend_root / relative, target)
+            path_map[str(backend_root / relative)] = target
+        mirror_data.mkdir(parents=True, exist_ok=True)
+        for data_name in ("world.json", "climate.json"):
+            shutil.copy2(repo_root / "data" / data_name,
+                         mirror_data / data_name)
+            path_map[str(repo_root / "data" / data_name)] = (
+                mirror_data / data_name
+            )
+
+        # spec 在 import 期已捕获原始路径 → 用镜像路径重建空间切片 spec。
+        moved_specs = []
+        for spec in space_mech.WORLD_GEN_MECHANISM_SPECS:
+            deps = tuple(
+                path_map.get(str(dep), dep) for dep in spec.source_dependencies
+            )
+            moved_specs.append(replace(spec, source_dependencies=deps))
+
+        monkeypatch.setattr(registry, "_ANCHOR", mirror_backend)
+        moved = MechanismRegistry(
+            schema_version=ASCEND_MECHANISMS.schema_version,
+            declaration_id=ASCEND_MECHANISMS.declaration_id,
+            declaration_version=ASCEND_MECHANISMS.declaration_version,
+            microstep_order=MICROSTEP_ORDER,
+            slice_boundary=ASCEND_MECHANISMS.slice_boundary,
+            nodes=weather_mech.WEATHER_NODES + space_mech.WORLD_GEN_NODES,
+            parameters=(
+                weather_mech.WEATHER_PARAMETERS
+                + space_mech.WORLD_GEN_PARAMETERS
+            ),
+            exogenous_sources=(),
+            mechanisms=tuple(moved_specs)
+            + weather_mech.WEATHER_MECHANISM_SPECS,
+        )
+        after = {
+            mid: m["equation_version"]
+            for mid, m in moved.snapshot()["mechanisms"].items()
+        }
+        assert after == before
