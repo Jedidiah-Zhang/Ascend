@@ -13,10 +13,11 @@
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Mapping
+from typing import Mapping, cast
 
 from ascend.data import load_content, split_ns_id
 from ascend.i18n import get_default
+from ascend.mathutil import clamp
 
 _I18N = get_default()
 
@@ -222,16 +223,26 @@ def sea_level_temperature(latitude_noise: float) -> float:
 
     实现本体在 _hydrology.c（hydrology_sea_level_temperature）：
     与生产链路（_hydrology.c compute_climate）同一公式、同一 clamp，
-    此处仅为 ctypes 绑定——单源 C，无 Python 侧双实现。
+    此处为 ctypes 绑定——单源 C，无 Python 侧双实现。
+    生产求值经机制注册表（world.gen.derive_sea_level_temperature.v1）。
 
     Args:
         latitude_noise: 纬度噪声值 [-1, 1]。
 
     Returns:
         海平面年均温度 (°C)。
+
+    Raises:
+        ValueError: 输入越出节点声明值域（fail-closed）。
     """
-    from .hydrology import sea_level_temperature_c
-    return sea_level_temperature_c(latitude_noise)
+    from ascend.causal.world import ASCEND_MECHANISMS
+
+    from .mechanisms import LATITUDE_NOISE, SEA_LEVEL_TEMPERATURE
+
+    return cast(float, ASCEND_MECHANISMS.evaluate(
+        SEA_LEVEL_TEMPERATURE,
+        {LATITUDE_NOISE: latitude_noise},
+    ))
 
 
 def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
@@ -240,6 +251,7 @@ def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
     实现本体在 _hydrology.c（hydrology_apply_lapse_rate），与场计算
     统一语义：直减率仅作用于陆地（altitude>0），海域返回海面温度
     本身——负海拔不再产生深度伪影；陆地 clamp [-20, 36]。
+    生产求值经机制注册表（world.gen.derive_annual_mean_temperature.v1）。
 
     Args:
         sea_level_temp: 海平面温度 (°C)。
@@ -247,9 +259,19 @@ def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
 
     Returns:
         实际温度 (°C)。
+
+    Raises:
+        ValueError: 输入越出节点声明值域（fail-closed）。
     """
-    from .hydrology import apply_lapse_rate_c
-    return apply_lapse_rate_c(sea_level_temp, altitude)
+    from ascend.causal.world import ASCEND_MECHANISMS
+
+    from .mechanisms import (ALTITUDE, ANNUAL_TEMPERATURE,
+                             SEA_LEVEL_TEMPERATURE)
+
+    return cast(float, ASCEND_MECHANISMS.evaluate(
+        ANNUAL_TEMPERATURE,
+        {SEA_LEVEL_TEMPERATURE: sea_level_temp, ALTITUDE: altitude},
+    ))
 
 
 def rainfall_from_noise(rainfall_noise: float) -> float:
@@ -257,15 +279,25 @@ def rainfall_from_noise(rainfall_noise: float) -> float:
 
     实现本体在 _hydrology.c（hydrology_rainfall_from_noise）：
     与生产链路同一公式、同一 clamp，此处仅为 ctypes 绑定。
+    生产求值经机制注册表（world.gen.derive_annual_rainfall.v1）。
 
     Args:
         rainfall_noise: 降雨噪声 [-1, 1]，-1=极干，+1=极湿。
 
     Returns:
         年降雨量 (mm)。
+
+    Raises:
+        ValueError: 输入越出节点声明值域（fail-closed）。
     """
-    from .hydrology import rainfall_from_noise_c
-    return rainfall_from_noise_c(rainfall_noise)
+    from ascend.causal.world import ASCEND_MECHANISMS
+
+    from .mechanisms import ANNUAL_RAINFALL, RAINFALL_NOISE
+
+    return cast(float, ASCEND_MECHANISMS.evaluate(
+        ANNUAL_RAINFALL,
+        {RAINFALL_NOISE: rainfall_noise},
+    ))
 
 
 def classify(
@@ -289,6 +321,7 @@ def classify(
     事实源在 ascend/config.py，由 hydrology 模块导入期注入 C
     （apply_config_climate_constants），C 侧无阈值副本；此处仅为
     ctypes 绑定——单源 C，无 Python 侧双实现。纯函数，线程安全。
+    生产求值经机制注册表（world.gen.classify_climate_zone.v1）。
 
     Args:
         mean_temp: 年均温度 (°C)。
@@ -297,9 +330,24 @@ def classify(
 
     Returns:
         对应的 ClimateZone。
+
+    Raises:
+        ValueError: 输入越出节点声明值域（fail-closed）。
     """
-    from .hydrology import classify_climate_c
-    return ClimateZone(classify_climate_c(mean_temp, annual_rainfall, altitude))
+    from ascend.causal.world import ASCEND_MECHANISMS
+
+    from .mechanisms import (ALTITUDE, ANNUAL_RAINFALL, ANNUAL_TEMPERATURE,
+                             CLIMATE_ZONE)
+
+    zone = ASCEND_MECHANISMS.evaluate(
+        CLIMATE_ZONE,
+        {
+            ANNUAL_TEMPERATURE: mean_temp,
+            ANNUAL_RAINFALL: annual_rainfall,
+            ALTITUDE: altitude,
+        },
+    )
+    return ClimateZone(int(zone))
 
 
 def annual_baseline(
@@ -317,6 +365,9 @@ def annual_baseline(
     从气候档位模板的区间表中用噪声插值。
     日照固定为 12.0（天文年均，季节变化由天气引擎单独处理）。
 
+    湿度/风速/日照经机制注册表求值（模板数据 data/climate.json），
+    温度经注册表直减率方程（apply_lapse_rate 委托同一注册表）。
+
     Args:
         altitude: 海拔 (m)。
         sea_level_temp: 海平面温度 (°C)。
@@ -328,35 +379,26 @@ def annual_baseline(
     Returns:
         年均基线 WeatherParams。
     """
+    from ascend.causal.world import ASCEND_MECHANISMS
+
+    from .mechanisms import (BASELINE_HUMIDITY, BASELINE_WIND_SPEED,
+                             CLIMATE_ZONE, HUMIDITY_NOISE, WIND_NOISE)
+
+    reg = ASCEND_MECHANISMS
     temperature = apply_lapse_rate(sea_level_temp, altitude)
-    tmpl = get_climate_template(climate)
-    bounds = _PARAM_BOUNDS
-
-    def _derive(lo_hi: tuple[float, float], noise: float, bound_key: str) -> float:
-        lo, hi = lo_hi
-        blo, bhi = bounds[bound_key]
-        value = lo + (noise + 1.0) * 0.5 * (hi - lo)
-        return clamp(value, blo, bhi)
-
+    zone = int(climate)
     return WeatherParams(
         temperature=temperature,
         rainfall=rainfall,
+        # 日照基线 = 常数 12h（天文年均）：不进入任何后续机制，属声明图外读出量
         sunshine=12.0,
         altitude=altitude,
-        humidity=_derive(tmpl.humidity_range, humidity_noise, "humidity"),
-        wind_speed=_derive(tmpl.wind_speed_range, wind_noise, "wind_speed"),
+        humidity=cast(float, reg.evaluate(
+            BASELINE_HUMIDITY,
+            {CLIMATE_ZONE: zone, HUMIDITY_NOISE: humidity_noise},
+        )),
+        wind_speed=cast(float, reg.evaluate(
+            BASELINE_WIND_SPEED,
+            {CLIMATE_ZONE: zone, WIND_NOISE: wind_noise},
+        )),
     )
-
-
-def clamp(value: float, lo: float, hi: float) -> float:
-    """将值钳制在 [lo, hi] 区间内。
-
-    Args:
-        value: 输入值。
-        lo: 下限。
-        hi: 上限。
-
-    Returns:
-        钳制后的值。
-    """
-    return max(lo, min(hi, value))

@@ -6,11 +6,13 @@ import AscendLean.CausalVerification.DagPathExpansion
 
 出处：`docs/研究理论/世界基座/02-误差传播与反事实.md`
 
+记号对照：代码内部名 `X`/`Xh` 表示真值/模型轨迹值，即 02 篇通用记法的节点值 `x`/`x̂`；正文公式按文档记号书写。
+
 - 命题 2.1：Lipschitz 复合误差传播律：
-  `|模型复合 Fh(x) − 真值复合 F(x)| ≤ |fh_ℓ(ẑ) − f_ℓ(ẑ)| + |f_ℓ(ẑ) − f_ℓ(z)| ≤ ε_ℓ + L_ℓ·|ẑ − z|`；
+  `|复合 f̂(x) − 复合 f(x)| ≤ |f̂_ℓ(ẑ) − f_ℓ(ẑ)| + |f_ℓ(ẑ) − f_ℓ(z)| ≤ ε_ℓ + L_ℓ·|ẑ − z|`；
 - 命题 2.5：沿拓扑序递推
-  `e_i = ε_i + Σ_{j ∈ Pa_G(i)} Λ_{j,i}·e_j` 给出 `|Xh_t^do − X_t^do| ≤ e_t`，
-  干预节点 `e_s = 0`；
+  `e_i = ε_i + Σ_{j ∈ Pa(i)} Λ_{j,i}·e_j` 给出节点输出误差 `|x̂_t − x_t| ≤ e_t`，
+  干预节点 `e_s = 0`（节点 do 断边）；
 - 路径和闭式：
   `e_t = Σ_u ε_u · Σ_{paths u→t} Π L_{a,b}`，链情形退化回命题 2.1。
 
@@ -236,10 +238,10 @@ lemma recurrence_nonneg (ε e : ℕ → ℝ) (adj : ℕ → ℕ → ℝ)
   refine add_nonneg (hεnn i) ?_
   exact Finset.sum_nonneg fun j hj => mul_nonneg (hadjnn j i) (ih j (Finset.mem_range.mp hj))
 
-/-- **干预情形的连接定理**：do(X_s = x_s) 后，被干预节点 s 双方钉死同一干预值
-    （CRN + 同一 do 值，`X s = Xh s`），其方程不再被求值
+/-- **干预情形的连接定理**：节点干预 do(x_s := v) 后（代码以 `X s = Xh s` 表示双方同值），
+    被干预节点 s 取同一干预值（CRN + 同一 do 值），其方程不再被求值
     （自洽性只在 i ≠ s 处要求）；递推在其余节点照常成立，
-    故对一切 i 有 `|Xh i − X i| ≤ e i`。
+    故对一切 i 有 `|x̂_i − x_i| ≤ e_i`（代码写法 `|Xh i − X i| ≤ e i`）。
     钉死分支需要 e s ≥ 0：由 sup 范数界推出 ε ≥ 0，再由递推归纳出 e ≥ 0
     （见 recurrence_nonneg）；与 DagPathExpansion.do_intervention_zero 呼应：
     ε s = 0 且入边断开 ⟹ e s = 0。 -/
@@ -279,8 +281,8 @@ theorem do_intervention_consistency (X Xh ε e : ℕ → ℝ)
   · rw [← hpin]
     simp
 
-/-- **命题 2.5 完整式（干预版）**：do(X_s = x_s) 后
-    `|Xh t^do − X t^do| ≤ ε t + Σ_{u<t} ε u · W u t`。
+/-- **命题 2.5 完整式（干预版）**：节点干预 do(x_s := v) 后
+    `|x̂_t − x_t| ≤ ε_t + Σ_{u<t} ε_u · W_{u,t}`（代码写法 `|Xh t − X t|`）。
     注意本定理比文档假设更强：无需显式设 ε s = 0 或断开入边——
     钉死使 `|Xh s − X s| = 0 ≤ e s` 对任意 e s 成立。
     而在 do 设定下 ε s = 0 本来就自动成立（s 的方程两侧都不再被求值），
@@ -314,7 +316,7 @@ theorem do_source_term_vanishes (adj : ℕ → ℕ → ℝ) (ε : ℕ → ℝ)
 /-! ## 第六节：链特例 = 命题 2.1 -/
 
 /-- 链邻接：唯一父边 j → j+1，权重 L j（单父链，02 篇
-    X₁ → X₂ → … → X_{ℓ+1}）。 -/
+    x₁ → x₂ → … → x_{ℓ+1}）。 -/
 def chainAdj (L : ℕ → ℝ) (j i : ℕ) : ℝ := if i = j + 1 then L j else 0
 
 lemma chainAdj_eq (L : ℕ → ℝ) (j i : ℕ) : chainAdj L j i = if i = j + 1 then L j else 0 := rfl
@@ -397,7 +399,7 @@ lemma chain_two_forms (ε L : ℕ → ℝ) (n : ℕ) :
 
 /-- **链特例主定理 = 命题 2.1**：
     单父链上，端到端误差
-    `|Xh (n+1) − X (n+1)| ≤ Σ_{i<n+2} ε_i · Π_{j∈Icc i n} L_j`
+    `|x̂_{n+1} − x_{n+1}| ≤ Σ_{i<n+2} ε_i · Π_{j∈Icc i n} L_j`
     ——第 j 步误差 ε_j 经其后所有环节 `Π_{m>j} L_m` 放大后计入总和。
     RHS 即命题 2.1 的链式闭式（对照成立）。
     证明路线刻意经过路径和形式：泛型定理给 `Σ_u ε_u·W u (n+1)`，

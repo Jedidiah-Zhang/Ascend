@@ -2121,3 +2121,64 @@ class TestWeatherQueryConcurrency:
         assert not errors
         assert all(not t.is_alive() for t in threads)
         e.shutdown()
+
+
+class TestRegistryProductionAudit:
+    """注册表-生产消费审计：已声明机制必须全部进入生产求值路径。
+
+    防回归：chunk 振幅族与区域降水校准若被改回内联公式（与注册表
+    分叉），以下测试立即失败（review 2026-09-08 发现的未消费机制）。
+    """
+
+    def test_register_chunk_amplitudes_flow_through_registry(self):
+        """register_chunk 落盘的振幅族 == 注册表链式求值结果。"""
+        from ascend.weather.weather_engine import WeatherEngine
+        from ascend.weather import mechanisms as m
+        from ascend.causal.world import ASCEND_MECHANISMS as reg
+
+        wt = WorldTree()
+        clock = WorldClock()
+        e = WeatherEngine(clock, seed=7, world_tree_arg=wt)
+        try:
+            e.register_chunk(0, 0, _make_baseline(temp=5.0, rain=1000.0),
+                             ClimateZone.TEMPERATE_FOREST, 10.0)
+            bl = e._fields[(0, 0)].baseline
+            seasonal = reg.evaluate(m.SEASONAL_TEMPERATURE_AMPLITUDE, {
+                m.ANNUAL_TEMPERATURE: bl.temperature,
+                m.ANNUAL_RAINFALL: bl.rainfall,
+            })
+            assert bl.seasonal_amp == pytest.approx(seasonal, abs=1e-12)
+            for got, node in (
+                (bl.diurnal_amp, m.DIURNAL_TEMPERATURE_AMPLITUDE),
+                (bl.humidity_seasonal_amp, m.SEASONAL_HUMIDITY_AMPLITUDE),
+                (bl.humidity_diurnal_amp, m.DIURNAL_HUMIDITY_AMPLITUDE),
+            ):
+                expected = reg.evaluate(node, {
+                    m.SEASONAL_TEMPERATURE_AMPLITUDE: seasonal,
+                })
+                assert got == pytest.approx(expected, abs=1e-12)
+        finally:
+            e.shutdown()
+
+    def test_calibrate_precip_matches_registry(self):
+        """区域事件路径降水校准 == 注册表方程（含显式阈值复用）。"""
+        from ascend.weather.field import calibrate_precip, precip_threshold
+        from ascend.weather import mechanisms as m
+        from ascend.causal.world import ASCEND_MECHANISMS as reg
+
+        for annual in (100.0, 800.0, 3500.0):
+            threshold = reg.evaluate(m.PRECIPITATION_THRESHOLD,
+                                     {m.ANNUAL_RAINFALL: annual})
+            assert precip_threshold(annual) == pytest.approx(threshold, abs=1e-12)
+            for signal in (0.1, 0.5, 1.0):
+                for intensity in (5.0, 10.0):
+                    expected = reg.evaluate(m.INSTANT_PRECIPITATION_INTENSITY, {
+                        m.FIELD_PRECIPITATION_SIGNAL: signal,
+                        m.PRECIPITATION_THRESHOLD: threshold,
+                        m.MEAN_PRECIP_INTENSITY: intensity,
+                    })
+                    got = calibrate_precip(signal, annual, intensity)
+                    assert got == pytest.approx(expected, abs=1e-12)
+                    got_th = calibrate_precip(signal, annual, intensity,
+                                              threshold=threshold)
+                    assert got_th == pytest.approx(expected, abs=1e-12)

@@ -7,6 +7,8 @@ import AscendLean.CausalVerification.LipschitzLayer
 出处：`docs/研究理论/世界基座/02-误差传播与反事实.md` 命题 2.5；
 干预的工程语义见 `docs/研究理论/世界基座/04-世界验收协议.md`。
 
+记号对照：公式按 02 篇的通用节点值记法书写（`x`/`x̂`）；Lean 代码内部变量名 `X`/`Xh` 表示真值/模型轨迹值。
+
 `LipschitzLayer.lean` 第五节对干预的处理是**假设级**的：
 `hpin : X s = Xh s`（双方钉死同值）+ 自洽性只在 i ≠ s 处要求。
 本文件把 do 提升为**定义级结构**：
@@ -35,7 +37,7 @@ namespace AscendLean.CausalVerification
 
 /-! ## 第一节：SubSCM 定义与基本方程 -/
 
-/-- **do(X_s := v) 后的子模型**（SubSCM）：把第 s 个结构方程替换为常数 v，
+/-- **节点干预 do(x_s := v) 的子模型**（SubSCM）：把第 s 个节点的生成方程替换为常数 v，
     其余方程原样保留（02 篇命题 2.5 的结构方程编码）。
     换常数方程同时实现断入边：干预点取值与输入无关
     （`subSCM_const_indep`）。 -/
@@ -53,7 +55,7 @@ theorem subSCM_eq_orig (f : ℕ → (ℕ → ℝ) → ℝ) {s : ℕ} {v : ℝ} {
   simp [subSCM, h]
 
 /-- **断入边**：干预点的方程不读任何输入坐标
-    （02 篇命题 2.5 中 `e_s = 0` 的结构来源：do 后 s 被钉死，父坐标失去影响）。 -/
+    （02 篇命题 2.5 中 `e_s = 0` 的结构来源：节点 do 后 s 被钉死，父坐标失去影响）。 -/
 theorem subSCM_const_indep (f : ℕ → (ℕ → ℝ) → ℝ) (s : ℕ) (v : ℝ) (x y : ℕ → ℝ) :
     subSCM f s v s x = subSCM f s v s y := by
   rw [subSCM_eq_const, subSCM_eq_const]
@@ -129,9 +131,9 @@ theorem subSCM_lip {f : ℕ → (ℕ → ℝ) → ℝ} {adj : ℕ → ℕ → �
 /-! ## 第三节：主定理 — SubSCM 反事实误差界 -/
 
 /-- **SubSCM 反事实误差界**（02 篇命题 2.5 干预情形）：
-    do(X_s := v) 下双方同值（CRN + 同一 do 值），替换后 SCM 各自自洽，
-    则对一切 t
-    `|Xh t − X t| ≤ ε' t + Σ_{u<t} ε' u · W u t`，其中 ε' = Function.update ε s 0。
+    节点干预 do(x_s := v) 下双方同值（CRN + 同一 do 值），替换后 SCM 各自自洽，
+    则对一切 t（代码写法 `|Xh t − X t|`）
+    `|x̂_t − x_t| ≤ ε'_t + Σ_{u<t} ε'_u · W_{u,t}`，其中 ε' = Function.update ε s 0。
     证明：以替换后 SCM 与 ε' 实例化泛型 `counterfactual_closed_form`
     （假设传递见第二节；干预点方程为常数使单坐标 Lipschitz 平凡成立）；
     e/he 沿本库约定以假设对供给。 -/

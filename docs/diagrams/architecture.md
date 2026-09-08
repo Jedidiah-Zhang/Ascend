@@ -26,6 +26,11 @@ graph TD
         ENT["EntityManager<br/>实体生灭/移动"]
     end
 
+    subgraph Causal["🧬 因果声明（causal/）"]
+        REG["MechanismRegistry<br/>机制注册表：C0/C1 构造期验收"]
+        SNAP["equations.json → Lean<br/>研究快照（自动生成）"]
+    end
+
     subgraph Net["📡 网络模块"]
         SRV["GameServer<br/>TCP服务端"]
         DISP["MessageDispatcher<br/>消息路由"]
@@ -35,6 +40,8 @@ graph TD
     WT_Tree --> WT_Archive
     CLK --> CAL
     GEN --> WEA
+    WEA -->|"机制登记（mechanisms.py）"| REG
+    REG -->|"export_registry.py 生成"| SNAP
 
     GameEngine --> WorldTree
     GameEngine --> Time

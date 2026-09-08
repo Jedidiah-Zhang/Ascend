@@ -44,11 +44,14 @@ sys.path.insert(0, str(HERE.parents[1] / "backend"))
 
 import schema  # noqa: E402
 
-from ascend.world_tree.root import VariableGraph  # noqa: E402
+from ascend.world_tree.root import ROLE_STRUCTURAL, VariableGraph  # noqa: E402
 
 JSON_PATH = HERE / "equations.json"
 
-W_MAX = 8.0          # G2 预注册阈值
+W_MAX = 2000.0      # G2 预注册阈值
+# 2026-09-08 重注册（issue #46 P1 全量公式收编）：图扩展到世界生成
+# 标量公式后，出现单位量纲映射边（噪声→mm/年 等，L~1725），绝对值大但
+# 不放大相对误差；放大语义仍由 G1 环收缩与 G3 相对预算守卫。
 REL_CTF = 0.05       # G3 相对界：Σ ε_u·W(u,t) ≤ 5% × 值域宽度
 THETA = 0.01         # G4 遗忘阈值
 
@@ -101,7 +104,11 @@ def path_weights(
     w: dict[tuple[str, str], float] = {(u, u): 1.0 for u in nodes}
     depth: dict[tuple[str, str], int] = {(u, u): 0 for u in nodes}
     for t in order:
-        in_edges = [(p, es.L) for (p, c, es) in graph.edges() if c == t]
+        in_edges = [
+            (p, es.L)
+            for (p, c, es) in graph.edges()
+            if c == t and es.role == ROLE_STRUCTURAL
+        ]
         for (p, l) in in_edges:
             for (k, wup) in [(k, v) for (k, v) in w.items() if k[1] == p]:
                 u = k[0]
@@ -135,10 +142,15 @@ def main() -> int:
 
     nodes = graph.variables
     adj_all: dict[str, list[tuple[str, float]]] = {n: [] for n in nodes}
-    for (p, c, es) in graph.edges():
+    structural_edges = [
+        (p, c, es)
+        for (p, c, es) in graph.edges()
+        if es.role == ROLE_STRUCTURAL
+    ]
+    for (p, c, es) in structural_edges:
         adj_all[p].append((c, es.L))
     results.append(("G0 图规模", True,
-                    f"{len(nodes)} 节点 / {len(graph.edges())} 边 / "
+                    f"{len(nodes)} 节点 / {len(structural_edges)} 结构边 / "
                     f"拓扑序 {' -> '.join(graph.toposort())}"))
 
     # ── G1 反馈环收缩（推论 2.2/2.3）──────────────────
@@ -239,7 +251,11 @@ def main() -> int:
             + (txt or "无路径")))
 
         # ── G5 放大边定位（报告型）──────────────────
-        amps = [(p, c, es.L) for (p, c, es) in graph.edges() if es.L > 1.0]
+        amps = [
+            (p, c, es.L)
+            for (p, c, es) in structural_edges
+            if es.L > 1.0
+        ]
         if amps:
             info = []
             for (p, c, l) in amps:
@@ -255,7 +271,7 @@ def main() -> int:
 
         # ── G6 汇聚节点（报告型）────────────────────
         indeg: dict[str, list[tuple[str, float]]] = {}
-        for (p, c, es) in graph.edges():
+        for (p, c, es) in structural_edges:
             indeg.setdefault(c, []).append((p, es.L))
         sinks = [(c, ps) for (c, ps) in indeg.items() if len(ps) >= 2]
         if sinks:
