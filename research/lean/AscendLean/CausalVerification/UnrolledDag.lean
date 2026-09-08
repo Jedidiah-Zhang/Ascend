@@ -1,40 +1,40 @@
 import Mathlib
 
 /-!
-# 时间展开无环 — 微步偏序与滞后父模板（C2 验收的理论内核）
+# 时间展开无环 — 阶段次序与滞后父模板（C2 验收的理论内核）
 
 出处：
-- `docs/研究理论/世界基座/00-假设与记号.md` §2（时间展开图 `G^unroll` 无环）
+- `docs/研究理论/工程符号体系.md` §3（时间展开图 `\mathcal G^unroll` 无环）
 - `docs/研究理论/世界基座/04-世界验收协议.md` C2（时间展开无环）
-- `docs/研究理论/第一阶段实施定义.md` §4/§5（微步偏序、空间父模板）
+- `docs/研究理论/第一阶段实施定义.md` §4/§5（阶段声明、空间父模板）
 
 声明层规则（第一阶段只接受满足以下规则的世界声明）：
 1. 跨逻辑帧边必须带滞后 λ ≥ 1；
-2. 同帧边只允许从父微步 r' 指向子微步 r，且 r' < r；
-3. 父、子微步都在合法范围 [0, R] 内（同一微步内的"边"被第一阶段排除）。
+2. 同帧边只允许从较早阶段 r' 指向较晚阶段 r，且 r' < r；
+3. 父、子阶段都在合法范围 [0, R] 内（同一阶段内的"边"被第一阶段排除）。
 
 本文件证明：在满足上述规则的世界声明下，任意窗口内的
 时间展开图无环——任意节点都不能沿有向边回到自身。
 
-编码：节点 = (模板, 逻辑帧, 微步)；无环性通过秩 (t, r) 的字典序证明：
+编码：节点按（分量模板, 逻辑帧, 更新阶段）索引；无环性通过秩 (t, r) 的字典序证明：
 每条边使秩严格上升，而秩空间经 `t·(R+1)+r` 编码进 ℕ 后良基。
 -/
 
 namespace AscendLean.CausalVerification
 
-/-- 时间展开图的节点：模板编号、逻辑帧、微步。 -/
+/-- 时间展开图的节点：模板编号、逻辑帧、更新阶段。 -/
 structure Node where
   v : ℕ
   t : ℕ
   r : ℕ
 deriving DecidableEq
 
-/-- 时间秩的字典序：先比逻辑帧，再比微步。 -/
+/-- 时间秩的字典序：先比逻辑帧，再比阶段。 -/
 inductive TimeLt : ℕ × ℕ → ℕ × ℕ → Prop
   | tick (t t' r r' : ℕ) (h : t < t') : TimeLt (t, r) (t', r')
   | step (t r r' : ℕ) (h : r < r') : TimeLt (t, r) (t, r')
 
-/-- 秩测度：在微步有界 R 时，(t, r) ↦ t·(R+1)+r 沿字典序严格递增。 -/
+/-- 秩测度：在阶段有界 R 时，(t, r) ↦ t·(R+1)+r 沿字典序严格递增。 -/
 def timeMeas (R : ℕ) (p : ℕ × ℕ) : ℕ := p.1 * (R + 1) + p.2
 
 theorem timeMeas_lt_of_timeLt {R : ℕ} {p q : ℕ × ℕ}
@@ -53,17 +53,17 @@ theorem timeMeas_lt_of_timeLt {R : ℕ} {p q : ℕ × ℕ}
   | step t r r' hr =>
       exact Nat.add_lt_add_left hr _
 
-/-- 单个父模板声明：父模板、滞后步数（0 = 同帧）、父微步。 -/
+/-- 单个父模板声明：父模板、滞后步数（0 = 同帧）、父阶段。 -/
 structure ParentSpec where
   par : ℕ
   lag : ℕ
   pr : ℕ
 deriving DecidableEq, Repr
 
-/-- 世界声明：模板 v 在微步 r 的方程所声明的全部父模板。 -/
+/-- 世界声明：模板 v 在阶段 r 的方程所声明的全部父模板。 -/
 abbrev Decl := ℕ → ℕ → Finset ParentSpec
 
-/-- 声明合法性：所有父、子微步都在 [0, R]；同帧父（lag = 0）必须来自更早微步。 -/
+/-- 声明合法性：所有父、子阶段都在 [0, R]；同帧父（lag = 0）必须来自更早阶段。 -/
 def WellFormed (R : ℕ) (D : Decl) : Prop :=
   ∀ (v r : ℕ) (spec : ParentSpec),
     spec ∈ D v r → r ≤ R ∧ spec.pr ≤ R ∧ (spec.lag = 0 → spec.pr < r)
@@ -78,7 +78,7 @@ def UnrollEdge (D : Decl) (p c : Node) : Prop :=
     spec.pr = p.r ∧
     ((spec.lag = 0 ∧ c.t = p.t) ∨ (1 ≤ spec.lag ∧ c.t = p.t + spec.lag))
 
-/-- 每条展开边都使时间秩严格上升，且两端微步合法。 -/
+/-- 每条展开边都使时间秩严格上升，且两端阶段合法。 -/
 theorem unrollEdge_timeLt {R : ℕ} {D : Decl} (hD : WellFormed R D) {p c : Node}
     (hE : UnrollEdge D p c) :
     TimeLt (p.t, p.r) (c.t, c.r) ∧ p.r ≤ R ∧ c.r ≤ R := by
