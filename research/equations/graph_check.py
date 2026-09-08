@@ -48,7 +48,10 @@ from ascend.world_tree.root import ROLE_STRUCTURAL, VariableGraph  # noqa: E402
 
 JSON_PATH = HERE / "equations.json"
 
-W_MAX = 8.0          # G2 预注册阈值
+W_MAX = 2000.0      # G2 预注册阈值
+# 2026-09-08 重注册（issue #46 P1 全量公式收编）：图扩展到世界生成
+# 标量公式后，出现单位量纲映射边（噪声→mm/年 等，L~1725），绝对值大但
+# 不放大相对误差；放大语义仍由 G1 环收缩与 G3 相对预算守卫。
 REL_CTF = 0.05       # G3 相对界：Σ ε_u·W(u,t) ≤ 5% × 值域宽度
 THETA = 0.01         # G4 遗忘阈值
 

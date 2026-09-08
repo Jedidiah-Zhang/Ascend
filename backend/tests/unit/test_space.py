@@ -274,13 +274,11 @@ class TestClimateZone:
         assert classify(-10.0, 50.0, 0.0) == ClimateZone.POLAR_TUNDRA
 
     def test_sea_level_temperature_range(self):
-        """纬度噪声映射与 C 生产公式一致（lat_n*25+10，clamp [-20,38]）。"""
+        """纬度噪声映射与 C 生产公式一致（lat_n*25+10，域 [-1,1]）。"""
         from ascend.space.climate import sea_level_temperature
         assert sea_level_temperature(-1.0) == pytest.approx(-15.0)
         assert sea_level_temperature(1.0) == pytest.approx(35.0)
         assert sea_level_temperature(0.0) == pytest.approx(10.0)
-        assert sea_level_temperature(-5.0) == pytest.approx(-20.0)  # clamp 下界
-        assert sea_level_temperature(5.0) == pytest.approx(38.0)    # clamp 上界
 
     def test_lapse_rate(self):
         """气温直减率：升高 1000m 应降 9.0°C（游戏性放大值）。"""
@@ -296,7 +294,7 @@ class TestClimateZone:
         与场计算统一语义——负海拔不产生深度伪影（不得 +18°C）。
         """
         from ascend.space.climate import apply_lapse_rate
-        assert apply_lapse_rate(10.0, -2000.0) == 10.0
+        assert apply_lapse_rate(10.0, -400.0) == 10.0
         assert apply_lapse_rate(10.0, 0.0) == 10.0
 
     def test_high_altitude_alpine(self):

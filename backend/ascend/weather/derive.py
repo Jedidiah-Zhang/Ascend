@@ -30,8 +30,14 @@ from .mechanisms import (
     SEASONAL_TEMPERATURE_AMPLITUDE,
     SEA_LEVEL_TEMPERATURE,
     SOLAR_LATITUDE_PROXY,
-    WEATHER_MECHANISMS,
 )
+
+
+def _registry():
+    """惰性导入全局注册表（避免 ascend.space ↔ ascend.weather 的 import 环）。"""
+    from ascend.causal.world import ASCEND_MECHANISMS
+
+    return ASCEND_MECHANISMS
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +72,7 @@ def precip_type_for(temperature: float) -> str:
     Raises:
         ValueError: temperature 越出声明值域 [-30, 50]（fail-closed）。
     """
-    return cast(str, WEATHER_MECHANISMS.evaluate(
+    return cast(str, _registry().evaluate(
         INSTANT_PRECIPITATION_TYPE,
         {INSTANT_TEMPERATURE: temperature},
     ))
@@ -184,7 +190,7 @@ def derive_seasonal_amp(temperature: float, rainfall: float) -> float:
     Raises:
         ValueError: 输入越出声明值域（fail-closed）。
     """
-    return cast(float, WEATHER_MECHANISMS.evaluate(
+    return cast(float, _registry().evaluate(
         SEASONAL_TEMPERATURE_AMPLITUDE,
         {
             ANNUAL_TEMPERATURE: temperature,
@@ -210,7 +216,7 @@ def derive_latitude(sea_level_temp: float) -> float:
     Raises:
         ValueError: sea_level_temp 越出声明值域 [-30, 50]（fail-closed）。
     """
-    return cast(float, WEATHER_MECHANISMS.evaluate(
+    return cast(float, _registry().evaluate(
         SOLAR_LATITUDE_PROXY,
         {SEA_LEVEL_TEMPERATURE: sea_level_temp},
     ))

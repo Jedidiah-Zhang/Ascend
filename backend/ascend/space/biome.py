@@ -20,7 +20,8 @@ from ascend.config import (
     PERMAFROST_TEMP_C as _PERMAFROST_TEMP_C,
     SAND_BEACH_BAND_M as _SAND_BEACH_BAND_M,
 )
-from .climate import ClimateZone, classify
+from .climate import ClimateZone
+from .hydrology import classify_climate_c
 
 _I18N = get_default()
 
@@ -346,7 +347,7 @@ def biome_membership(
             return [(BiomeType.COLD_OCEAN, 1.0)]
 
     # ── 陆地判定 ──────────────────────────────────────
-    climate = classify(mean_temp, annual_rainfall, altitude)
+    climate = ClimateZone(classify_climate_c(mean_temp, annual_rainfall, altitude))
     cfg = _SUBDIV_CONFIGS.get(climate)
     if cfg is None:
         return [(BiomeType.TEMPERATE_DECIDUOUS_FOREST, 1.0)]

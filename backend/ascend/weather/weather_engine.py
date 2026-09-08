@@ -20,18 +20,9 @@ import threading
 from dataclasses import dataclass
 
 from ascend.config import (DIURNAL_TO_SEASONAL_RATIO, GAME_DAY, GAME_HOUR,
-                           GAME_YEAR)
-from ascend.config import HUMIDITY_BOUNDS as _HUMIDITY_BOUNDS
-from ascend.config import (HUMIDITY_DIURNAL_SCALE, HUMIDITY_PERTURB_SCALE,
-                           HUMIDITY_SEASONAL_SCALE)
-from ascend.config import SUNSHINE_BOUNDS as _SUNSHINE_BOUNDS
-from ascend.config import SUNSHINE_PERTURB_SCALE
-from ascend.config import TEMP_BOUNDS as _TEMP_BOUNDS
-from ascend.config import TEMP_PERTURB_SCALE, TILE_MAP_SIZE
-from ascend.config import WIND_BOUNDS as _WIND_BOUNDS
-from ascend.config import WIND_PERTURB_SCALE
+                           GAME_YEAR, HUMIDITY_DIURNAL_SCALE,
+                           HUMIDITY_SEASONAL_SCALE, TILE_MAP_SIZE)
 from ascend.log import get_logger
-from ascend.mathutil import clamp
 from ascend.space import (ClimateZone, WeatherParams,
                           get_climate_template)
 from ascend.time import WorldClock
@@ -42,15 +33,13 @@ from ascend.world_tree import world_tree as _default_wt
 from .derive import (DaySummary, classify_humidity, classify_sunshine,
                      classify_temperature, classify_wind, derive_latitude,
                      derive_seasonal_amp, precip_type_for)
-from .diurnal import (_solar_declination, diurnal_phase, hour_of_game_time,
-                      sunrise_azimuth, sunrise_hour, sunset_hour)
+from .diurnal import sunrise_azimuth
 from .events import (HumidityChange, PrecipitationStart, PrecipitationStop,
                      SeasonChange, Sunrise, Sunset, SunshineChange,
                      TemperatureChange, WindChange)
-from .field import (CH_HUMIDITY, CH_TEMPERATURE, CH_WIND, UnifiedWeatherField,
-                    calibrate_precip)
+from .field import (CH_HUMIDITY, CH_TEMPERATURE, CH_WIND, UnifiedWeatherField)
+from . import mechanisms as _mechanisms
 from .region_tracker import RegionEvent, RegionTracker
-from .season import season_of, season_phase
 from .weather_field import WeatherField
 
 logger = get_logger(__name__)
@@ -87,6 +76,13 @@ class _ChunkWeatherBaseline:
     humidity_diurnal_amp: float
     humidity_sharpness: float
     latitude: float
+
+
+def _registry():
+    """惰性导入全局机制注册表（打破 ascend.space ↔ ascend.weather 的 import 环）。"""
+    from ascend.causal.world import ASCEND_MECHANISMS
+
+    return ASCEND_MECHANISMS
 
 
 class WeatherEngine:
@@ -247,7 +243,7 @@ class WeatherEngine:
         return time
 
     def _tick_context(self, now: int) -> dict:
-        """推导 tick 级共享计算上下文（对所有 chunk 相同）。
+        """推导 tick 级共享计算上下文（经机制注册表求值，对所有 chunk 相同）。
 
         get_weather 查询路径与 _on_minute_change 事件路径共用，
         保证两条路径的公式永远一致。
@@ -259,19 +255,22 @@ class WeatherEngine:
             dict，含 _compute_params 需要的全部 tick 级预计算值：
             season/hour/day_of_year_val/solar_decl/season_cos/diurnal_cos。
         """
-        day = now // GAME_DAY + 1
-        season = int(season_of(day))
-        hour = hour_of_game_time(now)  # 带小数小时，昼夜偏移需要精确时间
-        day_of_year_val = (now // GAME_DAY) % 360
-        # 季节/昼夜余弦基 — phase 对所有 chunk 相同，只有 amplitude 不同
-        season_cos = math.cos(season_phase(day))
-        diurnal_cos = math.cos(diurnal_phase(hour))
+        m = _mechanisms
+        reg = _registry()
+        day = reg.evaluate(m.DAY, {m.CLOCK_TICK: now})
+        hour = reg.evaluate(m.HOUR_OF_DAY, {m.CLOCK_TICK: now})
+        day_of_year_val = reg.evaluate(m.DAY_OF_YEAR, {m.CLOCK_TICK: now})
         return {
-            "season": season, "hour": hour,
+            "season": reg.evaluate(m.SEASON, {m.DAY: day}),
+            "hour": hour,
             "day_of_year_val": day_of_year_val,
-            "solar_decl": _solar_declination(day_of_year_val),
-            "season_cos": season_cos,
-            "diurnal_cos": diurnal_cos,
+            "solar_decl": reg.evaluate(
+                m.SOLAR_DECLINATION, {m.DAY_OF_YEAR: day_of_year_val},
+            ),
+            "season_cos": reg.evaluate(m.SEASON_PHASE_COS, {m.DAY: day}),
+            "diurnal_cos": reg.evaluate(
+                m.DIURNAL_PHASE_COS, {m.HOUR_OF_DAY: hour},
+            ),
         }
 
     def _sunlight_intensity(
@@ -333,17 +332,49 @@ class WeatherEngine:
         """
         season_cos = ctx["season_cos"]
         diurnal_cos = ctx["diurnal_cos"]
-        day_of_year_val = ctx["day_of_year_val"]
         bl = field.baseline
-        # 季节/昼夜偏移 — 余弦基预计算（tick 级复用），只做 per-chunk amplitude 乘法
-        season_temp = bl.seasonal_amp * season_cos
-        diurnal_temp = bl.diurnal_amp * diurnal_cos
-        sharpness = bl.humidity_sharpness
-        if sharpness > 0:
-            season_hum = bl.humidity_seasonal_amp * math.tanh(season_cos * sharpness)
-        else:
-            season_hum = bl.humidity_seasonal_amp * season_cos
-        diurnal_hum = bl.humidity_diurnal_amp * (-diurnal_cos)
+        m = _mechanisms
+        reg = _registry()
+        # 季节/昼夜/天文偏移 — 全部经注册表方程求值（唯一事实源）
+        season_temp = reg.evaluate(
+            m.SEASONAL_TEMPERATURE_OFFSET,
+            {
+                m.SEASONAL_TEMPERATURE_AMPLITUDE: bl.seasonal_amp,
+                m.SEASON_PHASE_COS: season_cos,
+            },
+        )
+        diurnal_temp = reg.evaluate(
+            m.DIURNAL_TEMPERATURE_OFFSET,
+            {
+                m.DIURNAL_TEMPERATURE_AMPLITUDE: bl.diurnal_amp,
+                m.DIURNAL_PHASE_COS: diurnal_cos,
+            },
+        )
+        season_hum = reg.evaluate(
+            m.SEASONAL_HUMIDITY_OFFSET,
+            {
+                m.SEASONAL_HUMIDITY_AMPLITUDE: bl.humidity_seasonal_amp,
+                m.SEASON_PHASE_COS: season_cos,
+                m.HUMIDITY_SHARPNESS: bl.humidity_sharpness,
+            },
+        )
+        diurnal_hum = reg.evaluate(
+            m.DIURNAL_HUMIDITY_OFFSET,
+            {
+                m.DIURNAL_HUMIDITY_AMPLITUDE: bl.humidity_diurnal_amp,
+                m.DIURNAL_PHASE_COS: diurnal_cos,
+            },
+        )
+        sr = reg.evaluate(
+            m.SUNRISE_HOUR,
+            {m.SOLAR_LATITUDE_PROXY: bl.latitude,
+             m.SOLAR_DECLINATION: ctx["solar_decl"]},
+        )
+        ss = reg.evaluate(
+            m.SUNSET_HOUR,
+            {m.SOLAR_LATITUDE_PROXY: bl.latitude,
+             m.SOLAR_DECLINATION: ctx["solar_decl"]},
+        )
         # 统一天气场采样 — chunk 中心（场为解析量，任意过去时刻精确）
         wx = (field.chunk_x + 0.5) * TILE_MAP_SIZE
         wy = (field.chunk_y + 0.5) * TILE_MAP_SIZE
@@ -353,39 +384,57 @@ class WeatherEngine:
         temp_perturb = self._field.sample(CH_TEMPERATURE, wx, wy, now, cores, drift)
         hum_perturb = self._field.sample(CH_HUMIDITY, wx, wy, now, cores, drift)
         wind_perturb = self._field.sample(CH_WIND, wx, wy, now, cores, drift)
-        # 合成并钳界
-        temperature = clamp(
-            bl.temperature + season_temp + diurnal_temp
-            + temp_perturb * TEMP_PERTURB_SCALE,
-            *_TEMP_BOUNDS,
+        # 即时合成（注册表方程 + 声明参数）
+        temperature = reg.evaluate(
+            m.INSTANT_TEMPERATURE,
+            {
+                m.ANNUAL_TEMPERATURE: bl.temperature,
+                m.SEASONAL_TEMPERATURE_OFFSET: season_temp,
+                m.DIURNAL_TEMPERATURE_OFFSET: diurnal_temp,
+                m.FIELD_TEMPERATURE_PERTURBATION: temp_perturb,
+            },
         )
-        humidity = clamp(
-            bl.humidity + season_hum + diurnal_hum
-            + hum_perturb * HUMIDITY_PERTURB_SCALE,
-            *_HUMIDITY_BOUNDS,
+        humidity = reg.evaluate(
+            m.INSTANT_HUMIDITY,
+            {
+                m.BASELINE_HUMIDITY: bl.humidity,
+                m.SEASONAL_HUMIDITY_OFFSET: season_hum,
+                m.DIURNAL_HUMIDITY_OFFSET: diurnal_hum,
+                m.FIELD_HUMIDITY_PERTURBATION: hum_perturb,
+            },
         )
-        wind_speed = clamp(
-            bl.wind_speed + wind_perturb * WIND_PERTURB_SCALE,
-            *_WIND_BOUNDS,
+        wind_speed = reg.evaluate(
+            m.INSTANT_WIND_SPEED,
+            {
+                m.BASELINE_WIND_SPEED: bl.wind_speed,
+                m.FIELD_WIND_PERTURBATION: wind_perturb,
+                m.FIELD_WIND_MULTIPLIER: self._field.wind_multiplier(
+                    wx, wy, now, cores, drift),
+            },
         )
-        wind_speed = clamp(
-            wind_speed * self._field.wind_multiplier(wx, wy, now, cores, drift),
-            *_WIND_BOUNDS,
+        threshold = reg.evaluate(
+            m.PRECIPITATION_THRESHOLD,
+            {m.ANNUAL_RAINFALL: bl.rainfall},
         )
-        # 日照：天文日照时长（用预计算赤纬，纬度不同仍需 per-chunk 算）
-        sr = sunrise_hour(day_of_year_val, bl.latitude,
-                          solar_decl=ctx["solar_decl"])
-        ss = sunset_hour(day_of_year_val, bl.latitude,
-                         solar_decl=ctx["solar_decl"])
-        daylight = ss - sr
-        sunshine = clamp(
-            daylight + hum_perturb * SUNSHINE_PERTURB_SCALE,
-            *_SUNSHINE_BOUNDS,
+        intensity = reg.evaluate(
+            m.INSTANT_PRECIPITATION_INTENSITY,
+            {
+                m.FIELD_PRECIPITATION_SIGNAL: self._field.precip_signal(
+                    wx, wy, now, cores, drift),
+                m.PRECIPITATION_THRESHOLD: threshold,
+                m.MEAN_PRECIP_INTENSITY: bl.mean_intensity,
+            },
         )
-        # 降雨：场降水信号 + 气候带校准阈值判定
-        signal = self._field.precip_signal(wx, wy, now, cores, drift)
-        intensity = calibrate_precip(
-            signal, bl.rainfall, bl.mean_intensity,
+        daylight = reg.evaluate(
+            m.DAYLIGHT_HOURS,
+            {m.SUNRISE_HOUR: sr, m.SUNSET_HOUR: ss},
+        )
+        sunshine = reg.evaluate(
+            m.INSTANT_SUNSHINE,
+            {
+                m.DAYLIGHT_HOURS: daylight,
+                m.FIELD_HUMIDITY_PERTURBATION: hum_perturb,
+            },
         )
         return WeatherParams(
             temperature=temperature, rainfall=intensity, sunshine=sunshine,

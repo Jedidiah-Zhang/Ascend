@@ -167,7 +167,7 @@ class MechanismSpec:
     parameters: tuple[ParameterBinding, ...]
     random_sources: tuple[RandomBinding, ...]
     boundary_cases: tuple[str, ...]
-    source_dependencies: tuple[Callable[..., object], ...] = field(
+    source_dependencies: tuple[object, ...] = field(
         repr=False,
         compare=False,
     )

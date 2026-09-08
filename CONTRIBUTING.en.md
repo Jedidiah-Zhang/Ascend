@@ -87,7 +87,8 @@ GUT is not distributed with the repo (`frontend/addons/gut` only needs to be ins
 ### Research declaration pipeline (drift gates)
 
 The single source of truth for research equations is the production mechanism registry
-(`backend/ascend/weather/mechanisms.py`; see `docs/研究理论/世界基座/07-机制注册表.md`).
+(declaration slices in `backend/ascend/weather|space/mechanisms.py`, assembled by
+`backend/ascend/causal/world.py`; see `docs/研究理论/世界基座/07-机制注册表.md`).
 After modifying any registered equation, parameter, node declaration, or `data/world.json`,
 you must regenerate and commit both generated artifacts, or the CI drift gates will fail:
 

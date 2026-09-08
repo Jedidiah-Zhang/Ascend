@@ -87,7 +87,7 @@ GUT 不随仓库分发（`frontend/addons/gut` 只需在本地安装），因此
 
 ### 研究声明管线
 
-研究方程的唯一事实源是生产机制注册表（`backend/ascend/weather/mechanisms.py`，
+研究方程的唯一事实源是生产机制注册表（声明片段在 `backend/ascend/weather|space/mechanisms.py`，由 `backend/ascend/causal/world.py` 组装，
 详见 docs/研究理论/世界基座/07-机制注册表.md）。修改任何已登记方程、
 参数、节点声明或 `data/world.json` 后，必须重新生成并提交两个产物，
 否则 CI 漂移门禁会失败：

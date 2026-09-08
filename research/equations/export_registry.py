@@ -15,12 +15,12 @@ DEFAULT_OUT = HERE / "equations.json"
 
 sys.path.insert(0, str(BACKEND))
 
-from ascend.weather.mechanisms import WEATHER_MECHANISMS  # noqa: E402
+from ascend.causal.world import ASCEND_MECHANISMS  # noqa: E402
 
 
 def content() -> str:
     """返回生产注册表的稳定 JSON 快照。"""
-    return WEATHER_MECHANISMS.to_json()
+    return ASCEND_MECHANISMS.to_json()
 
 
 def compare(path: Path = DEFAULT_OUT) -> tuple[bool, str, str | None]:
@@ -64,7 +64,7 @@ def main() -> int:
         return 0 if ok else 1
 
     output.write_text(content(), encoding="utf-8")
-    declaration = WEATHER_MECHANISMS.snapshot()["declaration"]
+    declaration = ASCEND_MECHANISMS.snapshot()["declaration"]
     print(f"[PASS] 生成 {output}")
     print(f"       声明 {declaration['id']}@{declaration['version']}")
     print(f"       摘要 {declaration['hash']}")

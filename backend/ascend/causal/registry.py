@@ -7,7 +7,9 @@ import hashlib
 import inspect
 import json
 import math
+import os
 import textwrap
+from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 
@@ -59,6 +61,17 @@ def _source_version(
 ) -> str:
     sources = []
     for item in (function, *dependencies):
+        if isinstance(item, (str, os.PathLike)):
+            path = Path(item)
+            if not path.is_file():
+                raise ValueError(
+                    f"文件源码依赖不存在 {path}，拒绝生成无来源版本"
+                )
+            sources.append({
+                "file": str(path),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            })
+            continue
         try:
             source = textwrap.dedent(inspect.getsource(item)).strip()
         except (OSError, TypeError) as exc:
@@ -375,6 +388,12 @@ class MechanismRegistry:
                 if parent.source_microstep not in microsteps:
                     issues.append(
                         f"{mechanism_id}: 父 {parent.parent} 的源微步未声明"
+                    )
+                elif parent.source_microstep != self.nodes[parent.parent].update.microstep:
+                    issues.append(
+                        f"{mechanism_id}: 父 {parent.parent} 的源微步 "
+                        f"{parent.source_microstep} != 父节点自身更新微步 "
+                        f"{self.nodes[parent.parent].update.microstep}"
                     )
                 if parent.lag < 0:
                     issues.append(f"{mechanism_id}: 父 {parent.parent} lag < 0")
@@ -736,7 +755,9 @@ class MechanismRegistry:
             "equation": spec.equation,
             "function": _callable_name(spec.function),
             "source_dependencies": [
-                _callable_name(item) for item in spec.source_dependencies
+                str(item) if isinstance(item, (str, os.PathLike))
+                else _callable_name(item)
+                for item in spec.source_dependencies
             ],
             "equation_version": equation_version,
             "resolved_version": resolved_version,

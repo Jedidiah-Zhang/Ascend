@@ -36,9 +36,9 @@ def load_declaration(path: str | Path) -> VariableGraph:
     """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     version = data.get("schema_version")
-    if version != 2 or data.get("version") != version:
+    if version != 3 or data.get("version") != version:
         raise ValueError(
-            f"不支持的声明版本: {version!r}（当前仅支持 2）")
+            f"不支持的声明版本: {version!r}（当前仅支持 3）")
     for key in (
         "declaration",
         "nodes",

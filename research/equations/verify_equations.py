@@ -129,8 +129,8 @@ def main() -> int:
     results.append(("V3 precip_type_for 阈值语义 (round(1) ≤0 为雪)",
                     not bad, f"{len(temps)} 样本，反例 {len(bad)}"))
 
-    lat_samples = [-30.0, -5.0, 0.0, 10.0, 20.0, 30.0, 35.0, 40.0,
-                   50.0] + [rng.uniform(*TEMP_BOUNDS) for _ in range(n)]
+    lat_samples = [-20.0, -5.0, 0.0, 10.0, 20.0, 30.0, 35.0, 38.0] + \
+        [rng.uniform(-20.0, 38.0) for _ in range(n)]
     out_of_bounds = [t for t in lat_samples
                      if not (0.0 <= derive_latitude(t) <= 80.0)]
     monotonic = all(

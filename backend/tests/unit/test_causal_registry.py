@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from ascend.causal import MechanismRegistry
+from ascend.causal.world import ASCEND_MECHANISMS
 from ascend.weather import derive
 from ascend.weather.mechanisms import (
     ANNUAL_RAINFALL,
@@ -16,7 +17,6 @@ from ascend.weather.mechanisms import (
     SEASONAL_TEMPERATURE_AMPLITUDE,
     SEA_LEVEL_TEMPERATURE,
     SOLAR_LATITUDE_PROXY,
-    WEATHER_MECHANISMS,
 )
 
 
@@ -33,17 +33,17 @@ EXPECTED_NODES = {
 
 def _rebuild_registry(**changes) -> MechanismRegistry:
     values = {
-        "schema_version": WEATHER_MECHANISMS.schema_version,
-        "declaration_id": WEATHER_MECHANISMS.declaration_id,
-        "declaration_version": WEATHER_MECHANISMS.declaration_version,
-        "microstep_order": WEATHER_MECHANISMS.microstep_order,
-        "slice_boundary": WEATHER_MECHANISMS.slice_boundary,
-        "nodes": tuple(WEATHER_MECHANISMS.nodes.values()),
-        "parameters": tuple(WEATHER_MECHANISMS.parameters.values()),
+        "schema_version": ASCEND_MECHANISMS.schema_version,
+        "declaration_id": ASCEND_MECHANISMS.declaration_id,
+        "declaration_version": ASCEND_MECHANISMS.declaration_version,
+        "microstep_order": ASCEND_MECHANISMS.microstep_order,
+        "slice_boundary": ASCEND_MECHANISMS.slice_boundary,
+        "nodes": tuple(ASCEND_MECHANISMS.nodes.values()),
+        "parameters": tuple(ASCEND_MECHANISMS.parameters.values()),
         "exogenous_sources": tuple(
-            WEATHER_MECHANISMS.exogenous_sources.values()
+            ASCEND_MECHANISMS.exogenous_sources.values()
         ),
-        "mechanisms": tuple(WEATHER_MECHANISMS.mechanisms.values()),
+        "mechanisms": tuple(ASCEND_MECHANISMS.mechanisms.values()),
     }
     values.update(changes)
     return MechanismRegistry(**values)
@@ -51,22 +51,22 @@ def _rebuild_registry(**changes) -> MechanismRegistry:
 
 class TestRegistryValidation:
     def test_weather_slice_passes_c0_and_c1(self):
-        assert WEATHER_MECHANISMS.validate_c0() == ()
-        assert WEATHER_MECHANISMS.validate_c1() == ()
-        assert set(WEATHER_MECHANISMS.nodes) == EXPECTED_NODES
+        assert ASCEND_MECHANISMS.validate_c0() == ()
+        assert ASCEND_MECHANISMS.validate_c1() == ()
+        assert EXPECTED_NODES <= set(ASCEND_MECHANISMS.nodes)
 
     def test_duplicate_node_is_rejected(self):
-        nodes = tuple(WEATHER_MECHANISMS.nodes.values())
+        nodes = tuple(ASCEND_MECHANISMS.nodes.values())
         with pytest.raises(ValueError, match="重复节点"):
             _rebuild_registry(nodes=nodes + (nodes[0],))
 
     def test_duplicate_parameter_is_rejected(self):
-        parameters = tuple(WEATHER_MECHANISMS.parameters.values())
+        parameters = tuple(ASCEND_MECHANISMS.parameters.values())
         with pytest.raises(ValueError, match="重复参数"):
             _rebuild_registry(parameters=parameters + (parameters[0],))
 
     def test_parameter_value_type_mismatch_is_rejected(self):
-        parameters = tuple(WEATHER_MECHANISMS.parameters.values())
+        parameters = tuple(ASCEND_MECHANISMS.parameters.values())
         for bad_value in ("abc", True):
             broken = tuple(
                 replace(item, value=bad_value) if item is parameters[0] else item
@@ -76,7 +76,7 @@ class TestRegistryValidation:
                 _rebuild_registry(parameters=broken)
 
     def test_parameter_bounds_inverted_is_rejected(self):
-        parameters = tuple(WEATHER_MECHANISMS.parameters.values())
+        parameters = tuple(ASCEND_MECHANISMS.parameters.values())
         broken = tuple(
             replace(item, bounds=(1.0, -1.0)) if item is parameters[0] else item
             for item in parameters
@@ -86,7 +86,7 @@ class TestRegistryValidation:
 
     def test_uninspectable_equation_source_is_rejected(self):
         """打包/动态环境无源码可读时拒绝生成无来源版本（fail-closed）。"""
-        mechanism = WEATHER_MECHANISMS.mechanism_for(SOLAR_LATITUDE_PROXY)
+        mechanism = ASCEND_MECHANISMS.mechanism_for(SOLAR_LATITUDE_PROXY)
         function = eval(  # noqa: S307  无源码路径的刻意构造
             "lambda sea_level_temperature, input_min, input_max, "
             "output_min, output_max: 0.0"
@@ -94,7 +94,7 @@ class TestRegistryValidation:
         broken = replace(mechanism, function=function)
         mechanisms = tuple(
             broken if item.mechanism_id == broken.mechanism_id else item
-            for item in WEATHER_MECHANISMS.mechanisms.values()
+            for item in ASCEND_MECHANISMS.mechanisms.values()
         )
         with pytest.raises(ValueError, match="拒绝生成无来源版本"):
             _rebuild_registry(mechanisms=mechanisms)
@@ -116,23 +116,23 @@ class TestRegistryValidation:
             _rebuild_registry(exogenous_sources=(source,))
 
     def test_mechanism_node_without_writer_is_rejected(self):
-        mechanisms = tuple(WEATHER_MECHANISMS.mechanisms.values())[1:]
+        mechanisms = tuple(ASCEND_MECHANISMS.mechanisms.values())[1:]
         with pytest.raises(ValueError, match="没有写者"):
             _rebuild_registry(mechanisms=mechanisms)
 
     def test_slice_boundary_node_with_writer_is_rejected(self):
         boundary = next(
-            item for item in WEATHER_MECHANISMS.nodes.values()
+            item for item in ASCEND_MECHANISMS.nodes.values()
             if item.origin == "slice_boundary"
         )
-        mechanisms = tuple(WEATHER_MECHANISMS.mechanisms.values())
+        mechanisms = tuple(ASCEND_MECHANISMS.mechanisms.values())
         first = mechanisms[0]
         forged = replace(first, output=boundary.node_id)
         with pytest.raises(ValueError, match="节点不是 mechanism origin"):
             _rebuild_registry(mechanisms=(forged, *mechanisms[1:]))
 
     def test_same_microstep_parent_is_rejected(self):
-        mechanism = WEATHER_MECHANISMS.mechanism_for(SOLAR_LATITUDE_PROXY)
+        mechanism = ASCEND_MECHANISMS.mechanism_for(SOLAR_LATITUDE_PROXY)
         parent = replace(
             mechanism.parents[0],
             source_microstep="weather.chunk_derived",
@@ -140,23 +140,23 @@ class TestRegistryValidation:
         broken = replace(mechanism, parents=(parent,))
         mechanisms = tuple(
             broken if item.mechanism_id == broken.mechanism_id else item
-            for item in WEATHER_MECHANISMS.mechanisms.values()
+            for item in ASCEND_MECHANISMS.mechanisms.values()
         )
-        with pytest.raises(ValueError, match="更早微步"):
+        with pytest.raises(ValueError, match="源微步"):
             _rebuild_registry(mechanisms=mechanisms)
 
     def test_callable_signature_drift_is_rejected(self):
-        mechanism = next(iter(WEATHER_MECHANISMS.mechanisms.values()))
+        mechanism = next(iter(ASCEND_MECHANISMS.mechanisms.values()))
         broken = replace(mechanism, function=lambda: 0.0)
         mechanisms = tuple(
             broken if item.mechanism_id == broken.mechanism_id else item
-            for item in WEATHER_MECHANISMS.mechanisms.values()
+            for item in ASCEND_MECHANISMS.mechanisms.values()
         )
         with pytest.raises(ValueError, match="函数签名"):
             _rebuild_registry(mechanisms=mechanisms)
 
     def test_stale_c1_witness_is_rejected(self):
-        mechanism = WEATHER_MECHANISMS.mechanism_for(
+        mechanism = ASCEND_MECHANISMS.mechanism_for(
             SOLAR_LATITUDE_PROXY
         )
         witness = replace(
@@ -166,32 +166,32 @@ class TestRegistryValidation:
         broken = replace(mechanism, witnesses=(witness,))
         mechanisms = tuple(
             broken if item.mechanism_id == broken.mechanism_id else item
-            for item in WEATHER_MECHANISMS.mechanisms.values()
+            for item in ASCEND_MECHANISMS.mechanisms.values()
         )
         with pytest.raises(ValueError, match="C1"):
             _rebuild_registry(mechanisms=mechanisms)
 
     def test_malformed_witness_shape_is_rejected(self):
-        mechanism = WEATHER_MECHANISMS.mechanism_for(SOLAR_LATITUDE_PROXY)
+        mechanism = ASCEND_MECHANISMS.mechanism_for(SOLAR_LATITUDE_PROXY)
         witness = replace(mechanism.witnesses[0], expected_outputs=(80.0,))
         broken = replace(mechanism, witnesses=(witness,))
         mechanisms = tuple(
             broken if item.mechanism_id == broken.mechanism_id else item
-            for item in WEATHER_MECHANISMS.mechanisms.values()
+            for item in ASCEND_MECHANISMS.mechanisms.values()
         )
         with pytest.raises(ValueError, match="恰为二元"):
             _rebuild_registry(mechanisms=mechanisms)
 
     def test_registry_is_immutable(self):
         with pytest.raises(AttributeError, match="不可变"):
-            WEATHER_MECHANISMS.microstep_order = ("x",)
+            ASCEND_MECHANISMS.microstep_order = ("x",)
         with pytest.raises(AttributeError, match="不可变"):
-            WEATHER_MECHANISMS.new_attr = 1
+            ASCEND_MECHANISMS.new_attr = 1
 
 
 class TestWeatherMechanisms:
     def test_each_parent_has_a_version_bound_witness(self):
-        snapshot = WEATHER_MECHANISMS.snapshot()
+        snapshot = ASCEND_MECHANISMS.snapshot()
         for mechanism in snapshot["mechanisms"].values():
             witnessed = {item["parent"] for item in mechanism["witnesses"]}
             parents = {item["parent"] for item in mechanism["parents"]}
@@ -202,7 +202,7 @@ class TestWeatherMechanisms:
             )
 
     def test_operational_edges_are_structural(self):
-        edges = WEATHER_MECHANISMS.snapshot()["edges"]
+        edges = ASCEND_MECHANISMS.snapshot()["edges"]
         assert edges
         assert all(edge["role"] == "structural" for edge in edges)
         inverse = {
@@ -217,36 +217,36 @@ class TestWeatherMechanisms:
         }
 
     def test_equations_match_independent_reference_values(self):
-        assert WEATHER_MECHANISMS.evaluate(
+        assert ASCEND_MECHANISMS.evaluate(
             SOLAR_LATITUDE_PROXY,
             {SEA_LEVEL_TEMPERATURE: -5.0},
         ) == pytest.approx(80.0)
-        assert WEATHER_MECHANISMS.evaluate(
+        assert ASCEND_MECHANISMS.evaluate(
             SOLAR_LATITUDE_PROXY,
             {SEA_LEVEL_TEMPERATURE: 35.0},
         ) == pytest.approx(0.0)
-        assert WEATHER_MECHANISMS.evaluate(
+        assert ASCEND_MECHANISMS.evaluate(
             SEASONAL_TEMPERATURE_AMPLITUDE,
             {ANNUAL_TEMPERATURE: 15.0, ANNUAL_RAINFALL: 200.0},
         ) == pytest.approx(18.6)
-        assert WEATHER_MECHANISMS.evaluate(
+        assert ASCEND_MECHANISMS.evaluate(
             SEASONAL_TEMPERATURE_AMPLITUDE,
             {ANNUAL_TEMPERATURE: 15.0, ANNUAL_RAINFALL: 2000.0},
         ) == pytest.approx(15.0)
-        assert WEATHER_MECHANISMS.evaluate(
+        assert ASCEND_MECHANISMS.evaluate(
             INSTANT_PRECIPITATION_TYPE,
             {INSTANT_TEMPERATURE: -0.049},
         ) == "snow"
-        assert WEATHER_MECHANISMS.evaluate(
+        assert ASCEND_MECHANISMS.evaluate(
             INSTANT_PRECIPITATION_TYPE,
             {INSTANT_TEMPERATURE: 0.051},
         ) == "rain"
 
     def test_evaluation_requires_exact_legal_parent_values(self):
         with pytest.raises(KeyError, match="父输入"):
-            WEATHER_MECHANISMS.evaluate(SOLAR_LATITUDE_PROXY, {})
+            ASCEND_MECHANISMS.evaluate(SOLAR_LATITUDE_PROXY, {})
         with pytest.raises(ValueError, match="值域"):
-            WEATHER_MECHANISMS.evaluate(
+            ASCEND_MECHANISMS.evaluate(
                 INSTANT_PRECIPITATION_TYPE,
                 {INSTANT_TEMPERATURE: 1000.0},
             )
@@ -255,7 +255,7 @@ class TestWeatherMechanisms:
         import math
         for bad in (True, False, math.nan, math.inf):
             with pytest.raises(ValueError, match="值域"):
-                WEATHER_MECHANISMS.evaluate(
+                ASCEND_MECHANISMS.evaluate(
                     SOLAR_LATITUDE_PROXY,
                     {SEA_LEVEL_TEMPERATURE: bad},
                 )
@@ -266,7 +266,7 @@ class TestWeatherMechanisms:
         with pytest.raises(ValueError):
             derive.derive_latitude(100.0)
         with pytest.raises(ValueError):
-            derive.derive_seasonal_amp(100.0, 800.0)
+            derive.derive_seasonal_amp(float("nan"), 800.0)
 
     @pytest.mark.parametrize(
         ("function_name", "output", "inputs", "expected"),
@@ -301,7 +301,7 @@ class TestWeatherMechanisms:
                 calls.append((target, parent_values))
                 return expected
 
-        monkeypatch.setattr(derive, "WEATHER_MECHANISMS", FakeRegistry())
+        monkeypatch.setattr(derive, "_registry", lambda: FakeRegistry())
         result = getattr(derive, function_name)(*inputs.values())
         assert result == expected
         assert calls == [(output, inputs)]
@@ -309,12 +309,12 @@ class TestWeatherMechanisms:
 
 class TestRegistrySnapshot:
     def test_snapshot_has_explicit_c0_sections_and_stable_hash(self):
-        snapshot = WEATHER_MECHANISMS.snapshot()
-        assert snapshot["schema_version"] == 2
-        assert snapshot["version"] == 2
+        snapshot = ASCEND_MECHANISMS.snapshot()
+        assert snapshot["schema_version"] == 3
+        assert snapshot["version"] == 3
         assert snapshot["declaration"]["hash"].startswith("sha256:")
-        assert snapshot == WEATHER_MECHANISMS.snapshot()
-        assert set(snapshot["nodes"]) == EXPECTED_NODES
+        assert snapshot == ASCEND_MECHANISMS.snapshot()
+        assert EXPECTED_NODES <= set(snapshot["nodes"])
         assert "parameters" in snapshot
         assert snapshot["exogenous_sources"] == {}
         for node in snapshot["nodes"].values():
@@ -338,4 +338,149 @@ class TestRegistrySnapshot:
         root = Path(__file__).resolve().parents[3]
         path = root / "research" / "equations" / "equations.json"
         committed = json.loads(path.read_text(encoding="utf-8"))
-        assert committed == WEATHER_MECHANISMS.snapshot()
+        assert committed == ASCEND_MECHANISMS.snapshot()
+
+
+class TestIndependentReferenceParity:
+    """独立参考实现（手写旧公式）与注册表链式求值逐节点对拍。"""
+
+    @staticmethod
+    def _reference_chain(now, bl, season_cos, diurnal_cos, decl, perturb,
+                         wind_perturb, hum_perturb, signal, multiplier):
+        import math
+        from ascend.config import (GAME_DAY, GAME_HOUR, HUMIDITY_BOUNDS,
+                                   HUMIDITY_PERTURB_SCALE,
+                                   SUNSHINE_BOUNDS, SUNSHINE_PERTURB_SCALE,
+                                   TEMP_BOUNDS, TEMP_PERTURB_SCALE,
+                                   WIND_BOUNDS, WIND_PERTURB_SCALE)
+        day = now // GAME_DAY + 1
+        doy = (now // GAME_DAY) % 360
+        hour = (now % GAME_DAY) / GAME_HOUR
+        season_temp = bl["seasonal_amp"] * season_cos
+        diurnal_temp = bl["diurnal_amp"] * diurnal_cos
+        if bl["sharpness"] > 0:
+            season_hum = bl["hum_seasonal_amp"] * math.tanh(
+                season_cos * bl["sharpness"])
+        else:
+            season_hum = bl["hum_seasonal_amp"] * season_cos
+        diurnal_hum = bl["hum_diurnal_amp"] * (-diurnal_cos)
+        lat = math.radians(bl["latitude"])
+        tp = max(-1.0, min(1.0, math.tan(lat) * math.tan(decl)))
+        half = math.degrees(math.acos(-tp)) / 15.0
+        sr = 12.0 - half
+        ss = 12.0 + half
+        daylight = ss - sr
+        temperature = min(max(
+            bl["temperature"] + season_temp + diurnal_temp
+            + perturb * TEMP_PERTURB_SCALE, TEMP_BOUNDS[0]), TEMP_BOUNDS[1])
+        humidity = min(max(
+            bl["humidity"] + season_hum + diurnal_hum
+            + hum_perturb * HUMIDITY_PERTURB_SCALE,
+            HUMIDITY_BOUNDS[0]), HUMIDITY_BOUNDS[1])
+        wind0 = min(max(bl["wind"] + wind_perturb * WIND_PERTURB_SCALE,
+                        WIND_BOUNDS[0]), WIND_BOUNDS[1])
+        wind = min(max(wind0 * multiplier, WIND_BOUNDS[0]), WIND_BOUNDS[1])
+        sunshine = min(max(
+            daylight + hum_perturb * SUNSHINE_PERTURB_SCALE,
+            SUNSHINE_BOUNDS[0]), SUNSHINE_BOUNDS[1])
+        return (day, doy, hour, season_temp, diurnal_temp, season_hum,
+                diurnal_hum, sr, ss, daylight, temperature, humidity, wind,
+                sunshine)
+
+    def test_registry_chain_matches_independent_reference(self):
+        import math
+        from ascend.config import GAME_DAY, GAME_HOUR
+        m = __import__("ascend.weather.mechanisms", fromlist=["x"])
+        reg = ASCEND_MECHANISMS
+        contexts = []
+        for tick in (0, 3600, 14 * GAME_HOUR, GAME_DAY * 46, GAME_DAY * 200):
+            day = reg.evaluate(m.DAY, {m.CLOCK_TICK: tick})
+            doy = reg.evaluate(m.DAY_OF_YEAR, {m.CLOCK_TICK: tick})
+            hour = reg.evaluate(m.HOUR_OF_DAY, {m.CLOCK_TICK: tick})
+            contexts.append((
+                tick,
+                reg.evaluate(m.SEASON_PHASE_COS, {m.DAY: day}),
+                reg.evaluate(m.DIURNAL_PHASE_COS, {m.HOUR_OF_DAY: hour}),
+                reg.evaluate(m.SOLAR_DECLINATION, {m.DAY_OF_YEAR: doy}),
+            ))
+        for bl in (
+            {"temperature": 20.0, "humidity": 60.0, "wind": 5.0,
+             "seasonal_amp": 12.0, "diurnal_amp": 6.0,
+             "hum_seasonal_amp": 4.8, "hum_diurnal_amp": 4.8,
+             "sharpness": 0.0, "latitude": 40.0},
+            {"temperature": -10.0, "humidity": 80.0, "wind": 2.0,
+             "seasonal_amp": 24.0, "diurnal_amp": 12.0,
+             "hum_seasonal_amp": 9.6, "hum_diurnal_amp": 9.6,
+             "sharpness": 2.5, "latitude": 75.0},
+        ):
+            for tick, season_cos, diurnal_cos, decl in contexts:
+                perturb = 0.3
+                wind_perturb = -0.4
+                hum_perturb = 0.2
+                signal = 0.6
+                multiplier = 1.4
+                ref = self._reference_chain(
+                    tick, bl, season_cos, diurnal_cos, decl, perturb,
+                    wind_perturb, hum_perturb, signal, multiplier,
+                )
+                reg_day = reg.evaluate(m.DAY, {m.CLOCK_TICK: tick})
+                reg_doy = reg.evaluate(m.DAY_OF_YEAR, {m.CLOCK_TICK: tick})
+                reg_hour = reg.evaluate(m.HOUR_OF_DAY, {m.CLOCK_TICK: tick})
+                season_temp = reg.evaluate(
+                    m.SEASONAL_TEMPERATURE_OFFSET,
+                    {m.SEASONAL_TEMPERATURE_AMPLITUDE: bl["seasonal_amp"],
+                     m.SEASON_PHASE_COS: season_cos})
+                diurnal_temp = reg.evaluate(
+                    m.DIURNAL_TEMPERATURE_OFFSET,
+                    {m.DIURNAL_TEMPERATURE_AMPLITUDE: bl["diurnal_amp"],
+                     m.DIURNAL_PHASE_COS: diurnal_cos})
+                season_hum = reg.evaluate(
+                    m.SEASONAL_HUMIDITY_OFFSET,
+                    {m.SEASONAL_HUMIDITY_AMPLITUDE: bl["hum_seasonal_amp"],
+                     m.SEASON_PHASE_COS: season_cos,
+                     m.HUMIDITY_SHARPNESS: bl["sharpness"]})
+                diurnal_hum = reg.evaluate(
+                    m.DIURNAL_HUMIDITY_OFFSET,
+                    {m.DIURNAL_HUMIDITY_AMPLITUDE: bl["hum_diurnal_amp"],
+                     m.DIURNAL_PHASE_COS: diurnal_cos})
+                sr = reg.evaluate(
+                    m.SUNRISE_HOUR,
+                    {m.SOLAR_LATITUDE_PROXY: bl["latitude"],
+                     m.SOLAR_DECLINATION: decl})
+                ss = reg.evaluate(
+                    m.SUNSET_HOUR,
+                    {m.SOLAR_LATITUDE_PROXY: bl["latitude"],
+                     m.SOLAR_DECLINATION: decl})
+                daylight = reg.evaluate(
+                    m.DAYLIGHT_HOURS, {m.SUNRISE_HOUR: sr, m.SUNSET_HOUR: ss})
+                temperature = reg.evaluate(
+                    m.INSTANT_TEMPERATURE,
+                    {m.ANNUAL_TEMPERATURE: bl["temperature"],
+                     m.SEASONAL_TEMPERATURE_OFFSET: season_temp,
+                     m.DIURNAL_TEMPERATURE_OFFSET: diurnal_temp,
+                     m.FIELD_TEMPERATURE_PERTURBATION: perturb})
+                humidity = reg.evaluate(
+                    m.INSTANT_HUMIDITY,
+                    {m.BASELINE_HUMIDITY: bl["humidity"],
+                     m.SEASONAL_HUMIDITY_OFFSET: season_hum,
+                     m.DIURNAL_HUMIDITY_OFFSET: diurnal_hum,
+                     m.FIELD_HUMIDITY_PERTURBATION: hum_perturb})
+                wind = reg.evaluate(
+                    m.INSTANT_WIND_SPEED,
+                    {m.BASELINE_WIND_SPEED: bl["wind"],
+                     m.FIELD_WIND_PERTURBATION: wind_perturb,
+                     m.FIELD_WIND_MULTIPLIER: multiplier})
+                sunshine = reg.evaluate(
+                    m.INSTANT_SUNSHINE,
+                    {m.DAYLIGHT_HOURS: daylight,
+                     m.FIELD_HUMIDITY_PERTURBATION: hum_perturb})
+                reg_values = (
+                    reg_day, reg_doy, reg_hour, season_temp, diurnal_temp,
+                    season_hum, diurnal_hum, sr, ss, daylight, temperature,
+                    humidity, wind, sunshine,
+                )
+                for got, want in zip(reg_values, ref):
+                    if isinstance(got, int):
+                        assert got == want
+                    else:
+                        assert got == pytest.approx(want, abs=1e-12)

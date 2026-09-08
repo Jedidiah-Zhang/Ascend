@@ -105,7 +105,7 @@ def short_hash(path: Path) -> str:
 def load_declaration(json_path: Path) -> dict:
     """读声明 JSON，缺必需键直接抛错（退出码 2 路径）。"""
     raw = json.loads(json_path.read_text(encoding="utf-8"))
-    if raw.get("schema_version") != 2:
+    if raw.get("schema_version") != 3:
         raise ValueError(
             f"不支持的注册表快照版本: {raw.get('schema_version')!r}"
         )
@@ -295,13 +295,11 @@ def build_content(json_path: Path) -> tuple[str, dict]:
     add("      ∧ ampConfig.bLo = varSeasonalAmpLo ∧ ampConfig.bHi = varSeasonalAmpHi := by")
     add("  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> rfl")
     add("")
-    add("-- 4.7 声明 bounds 良序（防 bounds 写反；rainfall 无手写镜像，仅自洽）")
+    add("-- 4.7 声明 bounds 良序（防 bounds 写反；仅覆盖有界声明变量）")
     add("theorem gen_bounds_wellformed :")
-    add("    varLatitudeLo ≤ varLatitudeHi ∧ varRainfallLo ≤ varRainfallHi")
-    add("      ∧ varSeasonalAmpLo ≤ varSeasonalAmpHi := by")
-    add("  refine ⟨?_, ?_, ?_⟩ <;>")
-    add("    norm_num [varLatitudeLo, varLatitudeHi,")
-    add("      varRainfallLo, varRainfallHi, varSeasonalAmpLo, varSeasonalAmpHi]")
+    add("    varLatitudeLo ≤ varLatitudeHi ∧ varSeasonalAmpLo ≤ varSeasonalAmpHi := by")
+    add("  refine ⟨?_, ?_⟩ <;>")
+    add("    norm_num [varLatitudeLo, varLatitudeHi, varSeasonalAmpLo, varSeasonalAmpHi]")
     add("")
     add("end AscendLean.GenDeclarationData")
     add("")
