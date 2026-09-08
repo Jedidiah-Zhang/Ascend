@@ -25,13 +25,8 @@ from ascend.config import (
     WEATHER_FIELD_TILE_NOISE_WAVELENGTH,
     WEATHER_FIELD_TILE_NOISE_SCALE,
     TEMP_PERTURB_SCALE,
-    PRECIP_SIGNAL_MAX,
-    PRECIP_THRESHOLD_DRY, PRECIP_THRESHOLD_WET,
-    PRECIP_ANNUAL_DRY, PRECIP_ANNUAL_WET,
-    PRECIP_INTENSITY_SCALE,
 )
 from ascend.fate import derive
-from ascend.mathutil import clamp
 from ascend.space import PerlinNoise
 
 from .atmosphere import (
@@ -49,25 +44,47 @@ CH_WIND = "wind"                  # 风扰动（归一化 [-1, 1]）
 
 
 # ── 降水校准（场信号 → 降雨强度）────────────────────────────
+#
+# 这两个函数是注册表方程的生产入口之一（区域事件路径由
+# region_tracker 消费；engine 查询路径直接 evaluate 同一机制）。
+# 实现只委托 `ascend.causal.world` 注册表 —— 与查询路径共用唯一
+# 事实源，杜绝双轨公式分叉。
+
+from .mechanisms import (
+    ANNUAL_RAINFALL,
+    FIELD_PRECIPITATION_SIGNAL,
+    INSTANT_PRECIPITATION_INTENSITY,
+    MEAN_PRECIP_INTENSITY,
+    PRECIPITATION_THRESHOLD,
+)
+
+
+def _registry():
+    """惰性导入全局注册表（避免 ascend.space ↔ ascend.weather 的 import 环）。"""
+    from ascend.causal.world import ASCEND_MECHANISMS
+
+    return ASCEND_MECHANISMS
+
 
 def precip_threshold(annual_rainfall: float) -> float:
-    """年降雨量 → 降水越阈水平（连续标定，无气候带边界跳变）。
+    """年降雨量 → 降水越阈水平（weather.chunk.precipitation_threshold）。
 
-    干旱气候带（~50mm/年）→ PRECIP_THRESHOLD_DRY（高阈，难下雨）；
-    湿润气候带（~3500mm/年）→ PRECIP_THRESHOLD_WET（低阈，常下雨）。
-    中间线性插值，钳制在 [WET, DRY]。
+    干旱气候带（~50mm/年）→ 高阈（难下雨）；湿润气候带（~3500mm/年）
+    → 低阈（常下雨）。中间线性插值，钳制在 [WET, DRY]。
 
     Args:
         annual_rainfall: 年降雨量 (mm/年)。
 
     Returns:
         越阈水平（信号 > 阈值 → 下雨）。
+
+    Raises:
+        ValueError: 输入越出节点声明值域（fail-closed）。
     """
-    t = (annual_rainfall - PRECIP_ANNUAL_DRY) / (
-        PRECIP_ANNUAL_WET - PRECIP_ANNUAL_DRY)
-    t = clamp(t, 0.0, 1.0)
-    return PRECIP_THRESHOLD_WET + (
-        PRECIP_THRESHOLD_DRY - PRECIP_THRESHOLD_WET) * (1.0 - t)
+    return _registry().evaluate(
+        PRECIPITATION_THRESHOLD,
+        {ANNUAL_RAINFALL: annual_rainfall},
+    )
 
 
 def calibrate_precip(
@@ -76,26 +93,33 @@ def calibrate_precip(
     mean_intensity: float = 5.0,
     threshold: float | None = None,
 ) -> float:
-    """降水信号 → 降雨强度 (mm/h)。
+    """降水信号 → 降雨强度 (mm/h)（weather.instant.precipitation_intensity）。
 
     信号 ≤ 阈值 → 0（不下雨）；超阈部分 × 强度放大系数 × 气候带
-    基准强度。信号钳制在 PRECIP_SIGNAL_MAX（防校准溢出）。
+    基准强度。信号钳制在信号上界（防校准溢出）。
 
     Args:
         signal: 场降水信号。
         annual_rainfall: 年降雨量 (mm/年)（阈值推导输入）。
         mean_intensity: 气候带基准降雨强度 (mm/h)。
-        threshold: 预计算越阈水平（复用避免重复推导）。
+        threshold: 预计算越阈水平（None = 按 annual_rainfall 推导）。
 
     Returns:
         降雨强度 (mm/h)，≥0。
+
+    Raises:
+        ValueError: 输入越出节点声明值域（fail-closed）。
     """
     if threshold is None:
         threshold = precip_threshold(annual_rainfall)
-    if signal <= threshold:
-        return 0.0
-    excess = min(signal, PRECIP_SIGNAL_MAX) - threshold
-    return excess * PRECIP_INTENSITY_SCALE * mean_intensity
+    return _registry().evaluate(
+        INSTANT_PRECIPITATION_INTENSITY,
+        {
+            FIELD_PRECIPITATION_SIGNAL: signal,
+            PRECIPITATION_THRESHOLD: threshold,
+            MEAN_PRECIP_INTENSITY: mean_intensity,
+        },
+    )
 
 
 class UnifiedWeatherField:

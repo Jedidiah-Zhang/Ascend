@@ -20,20 +20,26 @@ from ascend.weather.mechanisms import (
     WEATHER_PARAMETERS,
 )
 
-ASCEND_MECHANISMS = MechanismRegistry(
-    schema_version=3,
-    declaration_id="ascend.world.scalar_formulas",
-    declaration_version="1",
-    microstep_order=MICROSTEP_ORDER,
-    slice_boundary=(
-        "Unified weather field channels, continent/hydrology/tile algorithm "
-        "pipelines, and dynamic biome subdivision ranges remain outside this "
-        "slice; their outputs enter as declared boundary inputs."
-    ),
-    nodes=WEATHER_NODES + WORLD_GEN_NODES,
-    parameters=WEATHER_PARAMETERS + WORLD_GEN_PARAMETERS,
-    exogenous_sources=(),
-    mechanisms=WEATHER_MECHANISM_SPECS + WORLD_GEN_MECHANISM_SPECS,
-)
 
-__all__ = ["ASCEND_MECHANISMS", "MICROSTEP_ORDER"]
+def build_registry() -> MechanismRegistry:
+    """组装全局注册表（供打包布局回归测试重建；源码模式恒定不可变）。"""
+    return MechanismRegistry(
+        schema_version=3,
+        declaration_id="ascend.world.scalar_formulas",
+        declaration_version="1",
+        microstep_order=MICROSTEP_ORDER,
+        slice_boundary=(
+            "Unified weather field channels, continent/hydrology/tile algorithm "
+            "pipelines, and dynamic biome subdivision ranges remain outside this "
+            "slice; their outputs enter as declared boundary inputs."
+        ),
+        nodes=WEATHER_NODES + WORLD_GEN_NODES,
+        parameters=WEATHER_PARAMETERS + WORLD_GEN_PARAMETERS,
+        exogenous_sources=(),
+        mechanisms=WEATHER_MECHANISM_SPECS + WORLD_GEN_MECHANISM_SPECS,
+    )
+
+
+ASCEND_MECHANISMS = build_registry()
+
+__all__ = ["ASCEND_MECHANISMS", "MICROSTEP_ORDER", "build_registry"]

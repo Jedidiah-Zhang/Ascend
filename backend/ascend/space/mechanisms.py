@@ -127,9 +127,18 @@ def _parameter(
     value: float,
     unit: str,
     bounds: tuple[float, float],
-    source_name: str,
+    source_key: str,
 ) -> ParameterSpec:
-    source = f"data/world.json#world.{source_name}"
+    """声明环境参数；source_key 溯源到真实数据/代码来源。
+
+    Args:
+        source_key: 数据键形如 ``LAPSE_RATE``（data/world.json#climate.*
+            分区）；C 内嵌常量以 ``c:`` 前缀标注（code-only，无数据键）。
+    """
+    if source_key.startswith("c:"):
+        source = f"code-only:{source_key[2:]}（内嵌 _hydrology.c，由 C 文件哈希覆盖）"
+    else:
+        source = f"data/world.json#climate.{source_key}"
     return ParameterSpec(
         parameter_id=parameter_id,
         value_type="float",
@@ -518,10 +527,10 @@ _PARAMETERS = (
     _parameter(_P_TEMPERATE_TEMP, TEMPERATE_TEMP, "degC", (-273.15, 100.0), "TEMPERATE_TEMP"),
     _parameter(_P_RAINFOREST_RAINFALL, RAINFOREST_RAINFALL, "mm_per_year", (0.0, 1e6), "RAINFOREST_RAINFALL"),
     _parameter(_P_TAIGA_RAINFALL, TAIGA_RAINFALL, "mm_per_year", (0.0, 1e6), "TAIGA_RAINFALL"),
-    _parameter(_P_SEA_TEMP_SCALE, 25.0, "degC", (0.0, 1000.0), "sea_temperature_scale_c_baked_in_c"),
-    _parameter(_P_SEA_TEMP_OFFSET, 10.0, "degC", (-273.15, 1000.0), "sea_temperature_offset_c_baked_in_c"),
-    _parameter(_P_SEA_TEMP_MIN, -20.0, "degC", (-273.15, 1000.0), "sea_temperature_min_c_baked_in_c"),
-    _parameter(_P_SEA_TEMP_MAX, 38.0, "degC", (-273.15, 1000.0), "sea_temperature_max_c_baked_in_c"),
+    _parameter(_P_SEA_TEMP_SCALE, 25.0, "degC", (0.0, 1000.0), "c:sea_temperature_scale_c"),
+    _parameter(_P_SEA_TEMP_OFFSET, 10.0, "degC", (-273.15, 1000.0), "c:sea_temperature_offset_c"),
+    _parameter(_P_SEA_TEMP_MIN, -20.0, "degC", (-273.15, 1000.0), "c:sea_temperature_min_c"),
+    _parameter(_P_SEA_TEMP_MAX, 38.0, "degC", (-273.15, 1000.0), "c:sea_temperature_max_c"),
 )
 
 # ── 机制 ────────────────────────────────────────────────────────

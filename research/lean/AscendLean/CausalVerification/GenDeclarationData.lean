@@ -8,7 +8,7 @@ import AscendLean.CausalVerification.Declarations
 巡检接入：research/equations/verify_equations.py 主流程 V0 步
 
 来源与指纹（sha256 前 16 位）：
-- research/equations/equations.json   sha256:b301a50a28d456ba
+- research/equations/equations.json   sha256:e7cb9486925233a0
 - backend/ascend/config.py            sha256:023c2028c5d2d2e6
 
 防漂移三层闭环：

@@ -19,9 +19,8 @@ import math
 import threading
 from dataclasses import dataclass
 
-from ascend.config import (DIURNAL_TO_SEASONAL_RATIO, GAME_DAY, GAME_HOUR,
-                           GAME_YEAR, HUMIDITY_DIURNAL_SCALE,
-                           HUMIDITY_SEASONAL_SCALE, TILE_MAP_SIZE)
+from ascend.config import (GAME_DAY, GAME_HOUR,
+                           GAME_YEAR, TILE_MAP_SIZE)
 from ascend.log import get_logger
 from ascend.space import (ClimateZone, WeatherParams,
                           get_climate_template)
@@ -31,8 +30,9 @@ from ascend.world_tree import (AffectedParty, Event, SubscriptionScope,
 from ascend.world_tree import world_tree as _default_wt
 
 from .derive import (DaySummary, classify_humidity, classify_sunshine,
-                     classify_temperature, classify_wind, derive_latitude,
-                     derive_seasonal_amp, precip_type_for)
+                     classify_temperature, classify_wind, derive_diurnal_amp,
+                     derive_humidity_diurnal_amp, derive_humidity_seasonal_amp,
+                     derive_latitude, derive_seasonal_amp, precip_type_for)
 from .diurnal import sunrise_azimuth
 from .events import (HumidityChange, PrecipitationStart, PrecipitationStop,
                      SeasonChange, Sunrise, Sunset, SunshineChange,
@@ -55,9 +55,9 @@ class _ChunkWeatherBaseline:
         mean_intensity: 气候带基准降雨强度 (mm/h)（来自模板的数据契约）。
         seasonal_amp: 季节温度振幅 (°C)，从年均温+年降雨连续推导（derive_seasonal_amp），
             保证气候带交界处无跳变。
-        diurnal_amp: 昼夜温度振幅 (°C)，= seasonal_amp × DIURNAL_TO_SEASONAL_RATIO。
-        humidity_seasonal_amp: 季节湿度振幅 (pp)，= seasonal_amp × HUMIDITY_SEASONAL_SCALE。
-        humidity_diurnal_amp: 昼夜湿度振幅 (pp)，= diurnal_amp × HUMIDITY_DIURNAL_SCALE。
+        diurnal_amp: 昼夜温度振幅 (°C)，= seasonal_amp × RATIO（注册表方程）。
+        humidity_seasonal_amp: 季节湿度振幅 (pp)，= seasonal_amp × SCALE（注册表方程）。
+        humidity_diurnal_amp: 昼夜湿度振幅 (pp)，= seasonal_amp × RATIO × SCALE（注册表方程）。
         humidity_sharpness: 湿度季节曲线 sharpness（0=余弦，>0=tanh 阶梯；
             来自模板数据契约，季风档 2.5）。
         latitude: 纬度 (°)，用于日出/日落时间计算 + 日照时长计算。
@@ -175,9 +175,9 @@ class WeatherEngine:
         seasonal_amp = derive_seasonal_amp(
             baseline.temperature, baseline.rainfall,
         )
-        diurnal_amp = seasonal_amp * DIURNAL_TO_SEASONAL_RATIO
-        humidity_seasonal_amp = seasonal_amp * HUMIDITY_SEASONAL_SCALE
-        humidity_diurnal_amp = diurnal_amp * HUMIDITY_DIURNAL_SCALE
+        diurnal_amp = derive_diurnal_amp(seasonal_amp)
+        humidity_seasonal_amp = derive_humidity_seasonal_amp(seasonal_amp)
+        humidity_diurnal_amp = derive_humidity_diurnal_amp(seasonal_amp)
         latitude = derive_latitude(sea_level_temp)
         bl = _ChunkWeatherBaseline(
             altitude=baseline.altitude,
@@ -316,7 +316,8 @@ class WeatherEngine:
         湿度 = baseline + 季节偏移（受模板 humidity_sharpness 影响）+ 昼夜偏移（逆温）+ 场扰动
         风速 = baseline + 场扰动，再 × 特征核倍率
         日照 = 天文日照时长(daylight_hours) + 场扰动
-        降雨强度 = 场降水信号 + 气候带校准阈值判定（calibrate_precip）
+        降雨强度 = 场降水信号 + 降水越阈判定（weather.instant.
+        compose_precipitation_intensity.v1 注册表方程）
 
         Args:
             field: chunk 天气状态。

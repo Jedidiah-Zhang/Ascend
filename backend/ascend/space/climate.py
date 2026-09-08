@@ -231,6 +231,9 @@ def sea_level_temperature(latitude_noise: float) -> float:
 
     Returns:
         海平面年均温度 (°C)。
+
+    Raises:
+        ValueError: 输入越出节点声明值域（fail-closed）。
     """
     from ascend.causal.world import ASCEND_MECHANISMS
 
@@ -256,6 +259,9 @@ def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
 
     Returns:
         实际温度 (°C)。
+
+    Raises:
+        ValueError: 输入越出节点声明值域（fail-closed）。
     """
     from ascend.causal.world import ASCEND_MECHANISMS
 
@@ -280,6 +286,9 @@ def rainfall_from_noise(rainfall_noise: float) -> float:
 
     Returns:
         年降雨量 (mm)。
+
+    Raises:
+        ValueError: 输入越出节点声明值域（fail-closed）。
     """
     from ascend.causal.world import ASCEND_MECHANISMS
 
@@ -321,6 +330,9 @@ def classify(
 
     Returns:
         对应的 ClimateZone。
+
+    Raises:
+        ValueError: 输入越出节点声明值域（fail-closed）。
     """
     from ascend.causal.world import ASCEND_MECHANISMS
 

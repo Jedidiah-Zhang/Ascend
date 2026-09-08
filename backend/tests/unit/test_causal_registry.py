@@ -484,3 +484,46 @@ class TestIndependentReferenceParity:
                         assert got == want
                     else:
                         assert got == pytest.approx(want, abs=1e-12)
+
+
+class TestSourcelessPackagedBuild:
+    """打包（Nuitka standalone，无 .py/.c）布局下注册表构造回归测试。
+
+    发行物只有编译产物 + data/*.json + lang/*.json（.c 不分发）。
+    源码模式缺失来源应 fail-closed（见 test_uninspectable...）；
+    打包模式必须降级而非崩溃 —— 否则"进入世界"即崩（review 2026-09-08）。
+    """
+
+    def test_build_and_evaluate_in_sourceless_mode(self, monkeypatch):
+        monkeypatch.setenv("ASCEND_SOURCELESS", "1")
+        from ascend.causal.world import build_registry
+        from ascend.weather.field import precip_threshold
+
+        registry = build_registry()
+        assert len(registry.mechanisms) == len(ASCEND_MECHANISMS.mechanisms)
+        assert registry.evaluate(SOLAR_LATITUDE_PROXY,
+                                 {SEA_LEVEL_TEMPERATURE: 15.0}) == pytest.approx(
+            ASCEND_MECHANISMS.evaluate(SOLAR_LATITUDE_PROXY,
+                                       {SEA_LEVEL_TEMPERATURE: 15.0}))
+        assert precip_threshold(100.0) == pytest.approx(
+            0.5456521739130435, abs=1e-12)
+
+    def test_sourceless_versions_are_degraded_and_stable(self, monkeypatch):
+        monkeypatch.setenv("ASCEND_SOURCELESS", "1")
+        from ascend.causal.world import build_registry
+
+        registry = build_registry()
+        snapshots = registry.snapshot()["mechanisms"]
+        assert snapshots, "无机制快照"
+        for mechanism_id, snapshot in snapshots.items():
+            assert snapshot["equation_version"].startswith(
+                "sha256-packaged:"
+            ), mechanism_id
+        again = build_registry()
+        assert {
+            mechanism_id: snapshot["equation_version"]
+            for mechanism_id, snapshot in again.snapshot()["mechanisms"].items()
+        } == {
+            mechanism_id: snapshot["equation_version"]
+            for mechanism_id, snapshot in snapshots.items()
+        }

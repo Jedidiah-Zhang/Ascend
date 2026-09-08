@@ -25,8 +25,11 @@ from ascend.config import (HUMIDITY_TIER_BOUNDARIES,
 from .mechanisms import (
     ANNUAL_RAINFALL,
     ANNUAL_TEMPERATURE,
+    DIURNAL_HUMIDITY_AMPLITUDE,
+    DIURNAL_TEMPERATURE_AMPLITUDE,
     INSTANT_PRECIPITATION_TYPE,
     INSTANT_TEMPERATURE,
+    SEASONAL_HUMIDITY_AMPLITUDE,
     SEASONAL_TEMPERATURE_AMPLITUDE,
     SEA_LEVEL_TEMPERATURE,
     SOLAR_LATITUDE_PROXY,
@@ -196,6 +199,64 @@ def derive_seasonal_amp(temperature: float, rainfall: float) -> float:
             ANNUAL_TEMPERATURE: temperature,
             ANNUAL_RAINFALL: rainfall,
         },
+    ))
+
+
+def derive_diurnal_amp(seasonal_amp: float) -> float:
+    """昼夜温度振幅 = 季节振幅 × DIURNAL_TO_SEASONAL_RATIO（注册表方程）。
+
+    季节振幅由 :func:`derive_seasonal_amp` 产出；本函数与湿度振幅
+    委托各自 chunk 派生机制求值，保证 register_chunk 落盘的振幅族
+    与声明图一致（生产消费审计，见 test_weather）。
+
+    Args:
+        seasonal_amp: 季节温度振幅 (°C)。
+
+    Returns:
+        昼夜温度振幅 (°C)。
+
+    Raises:
+        ValueError: 输入越出声明值域（fail-closed）。
+    """
+    return cast(float, _registry().evaluate(
+        DIURNAL_TEMPERATURE_AMPLITUDE,
+        {SEASONAL_TEMPERATURE_AMPLITUDE: seasonal_amp},
+    ))
+
+
+def derive_humidity_seasonal_amp(seasonal_amp: float) -> float:
+    """季节湿度振幅 = 季节振幅 × HUMIDITY_SEASONAL_SCALE（注册表方程）。
+
+    Args:
+        seasonal_amp: 季节温度振幅 (°C)。
+
+    Returns:
+        季节湿度振幅 (pp)。
+
+    Raises:
+        ValueError: 输入越出声明值域（fail-closed）。
+    """
+    return cast(float, _registry().evaluate(
+        SEASONAL_HUMIDITY_AMPLITUDE,
+        {SEASONAL_TEMPERATURE_AMPLITUDE: seasonal_amp},
+    ))
+
+
+def derive_humidity_diurnal_amp(seasonal_amp: float) -> float:
+    """昼夜湿度振幅 = 季节振幅 × RATIO × HUMIDITY_DIURNAL_SCALE（注册表方程）。
+
+    Args:
+        seasonal_amp: 季节温度振幅 (°C)。
+
+    Returns:
+        昼夜湿度振幅 (pp)。
+
+    Raises:
+        ValueError: 输入越出声明值域（fail-closed）。
+    """
+    return cast(float, _registry().evaluate(
+        DIURNAL_HUMIDITY_AMPLITUDE,
+        {SEASONAL_TEMPERATURE_AMPLITUDE: seasonal_amp},
     ))
 
 

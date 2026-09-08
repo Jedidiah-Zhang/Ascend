@@ -55,10 +55,46 @@ def _callable_name(function: object) -> str:
     return f"{function.__module__}.{function.__qualname__}"
 
 
+def _sourceless() -> bool:
+    """当前是否处于打包（Nuitka standalone）运行模式。
+
+    打包分发不含 .py/.c（见 AGENTS.md 发行约定）：Nuitka 在每个编译
+    模块注入 ``__compiled__`` 全局，仓库源码模式恒为 None。打包模式
+    无法哈希方程源码与依赖文件，若按源码模式构造注册表会在"进入世界"
+    时崩溃 —— 因此打包模式下方程版本**降级**为按名称摘要的
+    "packaged" 版本（见 :func:`_source_version`），而非拒绝构造。
+    源码模式行为不变（缺失来源仍 fail-closed 抛 ValueError）。
+
+    ``ASCEND_SOURCELESS=1`` 环境变量仅供打包布局回归测试注入。
+    """
+    if os.environ.get("ASCEND_SOURCELESS") == "1":
+        return True
+    return bool(globals().get("__compiled__"))
+
+
 def _source_version(
     function: object,
     dependencies: tuple[object, ...],
 ) -> str:
+    """方程/依赖的版本摘要。
+
+    源码模式：可调用对象哈希去缩进源码文本，文件依赖哈希文件字节
+    （缺失即 ValueError —— fail-closed，防静默漂移）。
+    打包（无源码）模式：不触碰磁盘与源码，按来源**名称**生成带
+    ``sha256-packaged:`` 前缀的降级摘要 —— 该版本不再可比对源码，
+    仅标记"无来源构建"；注册表可构造、evaluate 语义不变。
+    """
+    if _sourceless():
+        names = []
+        for item in (function, *dependencies):
+            if isinstance(item, (str, os.PathLike)):
+                names.append(f"file:{Path(item).name}")
+            else:
+                names.append(f"callable:{_callable_name(item)}")
+        payload = _canonical({"sourceless_dependencies": sorted(names)})
+        return "sha256-packaged:" + hashlib.sha256(
+            payload.encode("utf-8")
+        ).hexdigest()
     sources = []
     for item in (function, *dependencies):
         if isinstance(item, (str, os.PathLike)):
@@ -282,8 +318,10 @@ class MechanismRegistry:
             "version": self.schema_version,
             "schema_version": self.schema_version,
             "comment": (
-                "AUTO-GENERATED from ascend.weather.mechanisms; "
-                "do not edit by hand. variables/edges are the research graph projection."
+                "AUTO-GENERATED from the ASCEND_MECHANISMS registry "
+                "(weather/mechanisms.py + space/mechanisms.py slices); "
+                "do not edit by hand. variables/edges are the research "
+                "graph projection."
             ),
             "declaration": declaration,
             "nodes": nodes,

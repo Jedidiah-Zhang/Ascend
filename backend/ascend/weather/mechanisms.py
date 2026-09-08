@@ -205,9 +205,21 @@ def _parameter(
     value: float,
     unit: str,
     bounds: tuple[float, float],
-    source_name: str,
+    source_key: str,
 ) -> ParameterSpec:
-    source = f"data/world.json#weather.{source_name}"
+    """声明环境参数；source_key 溯源到真实数据/代码来源。
+
+    Args:
+        source_key: 数据键形如 ``TEMP_PERTURB_SCALE``（data/world.json#
+            weather.* 分区）；代码常量以 ``code:`` 前缀、派生量以
+            ``expr:`` 前缀标注（无对应数据文件键）。
+    """
+    if source_key.startswith("code:"):
+        source = f"code-only:{source_key[5:]}（ascend.config 代码常量）"
+    elif source_key.startswith("expr:"):
+        source = f"derived:{source_key[5:]}"
+    else:
+        source = f"data/world.json#weather.{source_key}"
     return ParameterSpec(
         parameter_id=parameter_id,
         value_type="float",
@@ -1141,9 +1153,9 @@ _NODES = (
 _PLACEHOLDER_BOUNDS = (-1e12, 1e12)
 
 
-def _u(parameter_id, value, unit, source_name):
+def _u(parameter_id, value, unit, source_key):
     """无物理界参数（tick 数/维度数等正整数）。"""
-    return _parameter(parameter_id, value, unit, (0.0, 1e12), source_name)
+    return _parameter(parameter_id, value, unit, (0.0, 1e12), source_key)
 
 
 _PARAMETERS = (
@@ -1159,9 +1171,10 @@ _PARAMETERS = (
     _parameter(_P_AMP_R_BONUS, SEASONAL_AMP_R_BONUS, "degC", (0.0, 100.0), "SEASONAL_AMP_R_BONUS"),
     _parameter(_P_AMP_BOUND_MIN, SEASONAL_AMP_BOUNDS[0], "degC", (0.0, 100.0), "SEASONAL_AMP_BOUNDS[0]"),
     _parameter(_P_AMP_BOUND_MAX, SEASONAL_AMP_BOUNDS[1], "degC", (0.0, 100.0), "SEASONAL_AMP_BOUNDS[1]"),
-    _u(_P_GAME_DAY, GAME_DAY, "tick", "GAME_DAY"),
-    _u(_P_GAME_HOUR, GAME_HOUR, "tick", "GAME_HOUR"),
-    _u(_P_DAYS_PER_YEAR, SEASON_LENGTH_DAYS * SEASONS_PER_YEAR, "game_day", "SEASON_LENGTH_DAYS"),
+    _u(_P_GAME_DAY, GAME_DAY, "tick", "code:ascend.config.GAME_DAY"),
+    _u(_P_GAME_HOUR, GAME_HOUR, "tick", "code:ascend.config.GAME_HOUR"),
+    _u(_P_DAYS_PER_YEAR, SEASON_LENGTH_DAYS * SEASONS_PER_YEAR, "game_day",
+       "expr:SEASON_LENGTH_DAYS * SEASONS_PER_YEAR"),
     _u(_P_SEASON_LENGTH_DAYS, SEASON_LENGTH_DAYS, "game_day", "SEASON_LENGTH_DAYS"),
     _u(_P_SEASONS_PER_YEAR, SEASONS_PER_YEAR, "dimensionless", "SEASONS_PER_YEAR"),
     _u(_P_DIURNAL_PEAK_HOUR, DIURNAL_PEAK_HOUR, "hour", "DIURNAL_PEAK_HOUR"),
