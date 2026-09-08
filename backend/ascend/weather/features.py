@@ -182,7 +182,7 @@ class FeatureCore:
             注入核 = "inj:{cx}:{cy}:{type}"），事件身份跟踪用。
         type_name: 特征类型。
         born_tick: 出生 tick。
-        duration: 持续 tick 数。
+        duration: 持续 tick 数；None = 永不过期（强制注入核）。
         center_x/center_y: 出生时中心（世界坐标 m）。
         radius: 影响半径 (m)。
         magnitude: 强度系数（0.5-1.5，相对基准强度）。
@@ -193,7 +193,7 @@ class FeatureCore:
     core_id: str
     type_name: str
     born_tick: int
-    duration: int
+    duration: int | None
     center_x: float
     center_y: float
     radius: float
@@ -203,8 +203,15 @@ class FeatureCore:
     no_ramp: bool = False
 
     @property
-    def end_tick(self) -> int:
+    def end_tick(self) -> int | None:
+        """过期 tick；None = 永不过期。"""
+        if self.duration is None:
+            return None
         return self.born_tick + self.duration
+
+    def is_active(self, t: int) -> bool:
+        """t 时刻是否活跃（单一活跃判据，自然核与注入核共用）。"""
+        return self.born_tick <= t and (self.end_tick is None or t < self.end_tick)
 
     def center_at(self, t: int) -> tuple[float, float]:
         """核中心在 t 时刻的位置（沿移动矢量线性推进）。"""
@@ -479,7 +486,7 @@ class FeatureField:
     def inject_core(
         self, cx: int, cy: int, type_name: str,
         *, center_x: float, center_y: float, radius: float,
-        magnitude: float = 1.0, born_tick: int, duration: int,
+        magnitude: float = 1.0, born_tick: int, duration: int | None,
         vel_x: float = 0.0, vel_y: float = 0.0,
     ) -> FeatureCore:
         """注入一个特征核（终端调试指令用，与自然核同代码路径）。
@@ -494,7 +501,7 @@ class FeatureField:
             radius: 影响半径 (m)。
             magnitude: 强度系数（默认 1.0）。
             born_tick: 出生 tick。
-            duration: 持续 tick 数。
+            duration: 持续 tick 数；None = 永不过期（强制注入核）。
             vel_x, vel_y: 移动矢量（m/tick，默认静止）。
 
         Returns:
@@ -535,19 +542,6 @@ class FeatureField:
         with self._lock:
             return self._injected.pop((cx, cy, type_name), None) is not None
 
-    def has_injected(self, cx: int, cy: int, type_name: str) -> bool:
-        """查询注入核是否存在（force_feature no-op 判定用）。
-
-        Args:
-            cx, cy: 关联 chunk 坐标。
-            type_name: 特征类型。
-
-        Returns:
-            True=该注入核已存在。
-        """
-        with self._lock:
-            return (cx, cy, type_name) in self._injected
-
     def get_injected(
         self, cx: int, cy: int, type_name: str,
     ) -> "FeatureCore | None":
@@ -567,7 +561,7 @@ class FeatureField:
         """活跃注入核（按出生 tick 升序，供查询侧合并）。"""
         return [
             core for core in self._injected.values()
-            if core.born_tick <= t < core.end_tick
+            if core.is_active(t)
         ]
 
     def _cores_near(
@@ -595,7 +589,7 @@ class FeatureField:
             for dby in (-1, 0, 1):
                 for seg in segs:
                     for core in self._segment(bx + dbx, by + dby, seg):
-                        if not (core.born_tick <= t < core.end_tick):
+                        if not core.is_active(t):
                             continue
                         cx, cy = core.center_at(t)
                         if (cx - x) ** 2 + (cy - y) ** 2 <= radius_limit ** 2:
@@ -808,7 +802,7 @@ class FeatureField:
                     if seg is None:
                         continue
                     for core in self._segment(bx, by, seg):
-                        if not (core.born_tick <= t < core.end_tick):
+                        if not core.is_active(t):
                             continue
                         cx, cy = core.center_at(t)
                         # 圆与矩形相交（包围盒外扩半径做粗判定）

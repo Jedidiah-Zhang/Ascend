@@ -43,83 +43,10 @@ CH_HUMIDITY = "humidity"          # 湿度扰动（归一化 [-1, 1]）
 CH_WIND = "wind"                  # 风扰动（归一化 [-1, 1]）
 
 
-# ── 降水校准（场信号 → 降雨强度）────────────────────────────
-#
-# 这两个函数是注册表方程的生产入口之一（区域事件路径由
-# region_tracker 消费；engine 查询路径直接 evaluate 同一机制）。
-# 实现只委托 `ascend.causal.world` 注册表 —— 与查询路径共用唯一
-# 事实源，杜绝双轨公式分叉。
-
-from .mechanisms import (
-    ANNUAL_RAINFALL,
-    FIELD_PRECIPITATION_SIGNAL,
-    INSTANT_PRECIPITATION_INTENSITY,
-    MEAN_PRECIP_INTENSITY,
-    PRECIPITATION_THRESHOLD,
-)
-
-
-def _registry():
-    """惰性导入全局注册表（避免 ascend.space ↔ ascend.weather 的 import 环）。"""
-    from ascend.causal.world import ASCEND_MECHANISMS
-
-    return ASCEND_MECHANISMS
-
-
-def precip_threshold(annual_rainfall: float) -> float:
-    """年降雨量 → 降水越阈水平（weather.chunk.precipitation_threshold）。
-
-    干旱气候带（~50mm/年）→ 高阈（难下雨）；湿润气候带（~3500mm/年）
-    → 低阈（常下雨）。中间线性插值，钳制在 [WET, DRY]。
-
-    Args:
-        annual_rainfall: 年降雨量 (mm/年)。
-
-    Returns:
-        越阈水平（信号 > 阈值 → 下雨）。
-
-    Raises:
-        ValueError: 输入越出节点声明值域（fail-closed）。
-    """
-    return _registry().evaluate(
-        PRECIPITATION_THRESHOLD,
-        {ANNUAL_RAINFALL: annual_rainfall},
-    )
-
-
-def calibrate_precip(
-    signal: float,
-    annual_rainfall: float,
-    mean_intensity: float = 5.0,
-    threshold: float | None = None,
-) -> float:
-    """降水信号 → 降雨强度 (mm/h)（weather.instant.precipitation_intensity）。
-
-    信号 ≤ 阈值 → 0（不下雨）；超阈部分 × 强度放大系数 × 气候带
-    基准强度。信号钳制在信号上界（防校准溢出）。
-
-    Args:
-        signal: 场降水信号。
-        annual_rainfall: 年降雨量 (mm/年)（阈值推导输入）。
-        mean_intensity: 气候带基准降雨强度 (mm/h)。
-        threshold: 预计算越阈水平（None = 按 annual_rainfall 推导）。
-
-    Returns:
-        降雨强度 (mm/h)，≥0。
-
-    Raises:
-        ValueError: 输入越出节点声明值域（fail-closed）。
-    """
-    if threshold is None:
-        threshold = precip_threshold(annual_rainfall)
-    return _registry().evaluate(
-        INSTANT_PRECIPITATION_INTENSITY,
-        {
-            FIELD_PRECIPITATION_SIGNAL: signal,
-            PRECIPITATION_THRESHOLD: threshold,
-            MEAN_PRECIP_INTENSITY: mean_intensity,
-        },
-    )
+# 降水阈值/强度校准不在此处实现：唯一求值点是注册表节点
+# （weather.chunk.precipitation_threshold / weather.instant.precipitation_intensity），
+# 由 WeatherEngine.evaluate_node 统一求值（含干预覆盖），查询路径与
+# region_tracker 事件路径共用同一入口。
 
 
 class UnifiedWeatherField:

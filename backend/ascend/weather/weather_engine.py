@@ -19,9 +19,8 @@ import math
 import threading
 from dataclasses import dataclass
 
-from ascend.config import (GAME_DAY, GAME_HOUR,
-                           GAME_YEAR, TILE_MAP_SIZE)
-from ascend.causal import MiracleEvaluator, MiracleRecord, MiracleTable
+from ascend.config import (GAME_DAY, GAME_HOUR, TILE_MAP_SIZE)
+from ascend.causal import InterventionEvaluator, InterventionRecord, InterventionTable
 from ascend.log import get_logger
 from ascend.space import (ClimateZone, WeatherParams,
                           get_climate_template)
@@ -113,7 +112,7 @@ class WeatherEngine:
         *,
         seed: int = 0,
         world_tree_arg=None,
-        miracle_table: MiracleTable | None = None,
+        intervention_table: InterventionTable | None = None,
     ) -> None:
         """初始化天气引擎。
 
@@ -121,14 +120,14 @@ class WeatherEngine:
             clock: 世界时钟，用于读取当前 tick。
             seed: 统一天气场种子（纹理/特征/气候代理派生）。
             world_tree_arg: 可选的 WorldTree 实例（测试注入隔离）。
-            miracle_table: 神迹表（神迹系统挂载点）；None = 引擎
+            intervention_table: 干预表（干预执行器挂载点）；None = 引擎
                 惰性自建（无记录时行为与直通注册表一致）。
         """
         self._clock = clock
         self._seed = seed
         self._wt = world_tree_arg if world_tree_arg is not None else _default_wt
-        self._miracle_table = miracle_table
-        self._miracle_eval: MiracleEvaluator | None = None
+        self._intervention_table = intervention_table
+        self._intervention_eval: InterventionEvaluator | None = None
         # 查询/写入互斥：handler 线程查询（get_weather 系）与游戏线程
         # 推进（_on_minute_change / register / unregister）并发安全。
         # RLock：_publish 在锁内同步分发事件，防未来订阅者回调重入查询 API
@@ -137,7 +136,7 @@ class WeatherEngine:
         self._field = UnifiedWeatherField(seed=seed)
         self._fields: dict[tuple[int, int], WeatherField] = {}
         self._climates: dict[tuple[int, int], ClimateZone] = {}
-        self._tracker = RegionTracker(self._field)
+        self._tracker = RegionTracker(self._field, evaluate=self.evaluate_node)
         self._last_season: int | None = None
         self._scope = SubscriptionScope()
         self._scope.subscribe(self._wt, "minute_change", self._on_minute_change)
@@ -229,26 +228,66 @@ class WeatherEngine:
 
     # ── 公开：查询 API ──────────────────────────────────────────
 
-    @property
-    def miracle_table(self) -> MiracleTable:
-        """神迹表（神迹系统挂载点；无记录时求值等同直通注册表）。"""
-        _, table = self._miracle()
-        return table
+    def evaluate_node(
+        self,
+        node_id: str,
+        parent_values: dict,
+        *,
+        frame: int,
+        instance: tuple = (),
+    ) -> object:
+        """节点求值唯一入口（含干预覆盖）。
 
-    def _miracle(self) -> tuple[MiracleEvaluator, MiracleTable]:
-        """神迹系统挂载点：覆盖感知求值器 + 神迹表（惰性创建）。
+        引擎内所有注册表求值（tick 派生 / chunk 合成 / 降水阈值与强度）
+        都经本方法，``region_tracker`` 亦以本方法为注入回调——同一节点
+        在任何消费路径上只有一个求值点。``WIRED_NODES`` 声明与本方法的
+        调用点由漂移巡检锁死。
 
-        无神迹表时引擎自建（无记录 → 行为与直通注册表一致）。
+        Args:
+            node_id: 输出节点 ID。
+            parent_values: 父值（按调用方已解析的实例与帧提供）。
+            frame: 当前世界 tick。
+            instance: 实例坐标（全局分量用空元组）。
+        """
+        evaluator, _ = self._intervention()
+        return evaluator.evaluate(
+            node_id, parent_values, frame=frame, instance=instance,
+        )
+
+    def has_chunk(self, cx: int, cy: int) -> bool:
+        """chunk 是否已注册（干预执行器实例存在性校验用）。"""
+        with self._query_lock:
+            return (cx, cy) in self._fields
+
+    def instance_exists(self, node_id: str, instance: tuple) -> bool:
+        """干预实例存在性查询（注入干预表）。
+
+        当前空间实例域均为 2 轴 chunk 坐标；轴数不符一律返回 False
+        （fail-closed：干净拒绝，而非让回调抛 TypeError）。
+        """
+        if len(instance) != 2:
+            return False
+        return self.has_chunk(instance[0], instance[1])
+
+    def _intervention(self) -> tuple[InterventionEvaluator, InterventionTable]:
+        """干预执行器挂载点：覆盖感知求值器 + 干预表（惰性创建）。
+
+        无干预表时引擎自建（无记录 → 行为与直通注册表一致），并注入
+        时钟与实例存在性查询，使自建表与生产注入表行为一致。
         惰性初始化非原子：由游戏线程单线程驱动（server/dispatcher 同线程），
         首次调用仅在此线程发生，无需加锁。
         """
-        if self._miracle_eval is None:
-            if self._miracle_table is None:
-                self._miracle_table = MiracleTable(_registry())
-            self._miracle_eval = MiracleEvaluator(
-                _registry(), self._miracle_table
+        if self._intervention_eval is None:
+            if self._intervention_table is None:
+                self._intervention_table = InterventionTable(
+                    _registry(),
+                    now=lambda: self._clock.time,
+                    instance_exists=self.instance_exists,
+                )
+            self._intervention_eval = InterventionEvaluator(
+                _registry(), self._intervention_table
             )
-        return self._miracle_eval, self._miracle_table
+        return self._intervention_eval, self._intervention_table
 
     def _validate_time(self, time: "int | None") -> int:
         """校验并解析查询时刻。
@@ -283,28 +322,27 @@ class WeatherEngine:
             season/hour/day_of_year_val/solar_decl/season_cos/diurnal_cos。
         """
         m = _mechanisms
-        evaluator, _ = self._miracle()
-        day = evaluator.evaluate(m.DAY, {m.CLOCK_TICK: now},
+        day = self.evaluate_node(m.DAY, {m.CLOCK_TICK: now},
                                  frame=now, instance=())
-        hour = evaluator.evaluate(m.HOUR_OF_DAY, {m.CLOCK_TICK: now},
+        hour = self.evaluate_node(m.HOUR_OF_DAY, {m.CLOCK_TICK: now},
                                   frame=now, instance=())
-        day_of_year_val = evaluator.evaluate(
+        day_of_year_val = self.evaluate_node(
             m.DAY_OF_YEAR, {m.CLOCK_TICK: now}, frame=now, instance=(),
         )
         return {
-            "season": evaluator.evaluate(
+            "season": self.evaluate_node(
                 m.SEASON, {m.DAY: day}, frame=now, instance=(),
             ),
             "hour": hour,
             "day_of_year_val": day_of_year_val,
-            "solar_decl": evaluator.evaluate(
+            "solar_decl": self.evaluate_node(
                 m.SOLAR_DECLINATION, {m.DAY_OF_YEAR: day_of_year_val},
                 frame=now, instance=(),
             ),
-            "season_cos": evaluator.evaluate(
+            "season_cos": self.evaluate_node(
                 m.SEASON_PHASE_COS, {m.DAY: day}, frame=now, instance=(),
             ),
-            "diurnal_cos": evaluator.evaluate(
+            "diurnal_cos": self.evaluate_node(
                 m.DIURNAL_PHASE_COS, {m.HOUR_OF_DAY: hour},
                 frame=now, instance=(),
             ),
@@ -372,11 +410,10 @@ class WeatherEngine:
         diurnal_cos = ctx["diurnal_cos"]
         bl = field.baseline
         m = _mechanisms
-        evaluator, _ = self._miracle()
         instance = (field.chunk_x, field.chunk_y)
         # 季节/昼夜/天文偏移 — 全部经注册表方程求值（唯一事实源，
-        # 神迹系统按 (节点, chunk, tick) 覆盖）
-        season_temp = evaluator.evaluate(
+        # 干预执行器按 (节点, chunk, tick) 覆盖）
+        season_temp = self.evaluate_node(
             m.SEASONAL_TEMPERATURE_OFFSET,
             {
                 m.SEASONAL_TEMPERATURE_AMPLITUDE: bl.seasonal_amp,
@@ -384,7 +421,7 @@ class WeatherEngine:
             },
             frame=now, instance=instance,
         )
-        diurnal_temp = evaluator.evaluate(
+        diurnal_temp = self.evaluate_node(
             m.DIURNAL_TEMPERATURE_OFFSET,
             {
                 m.DIURNAL_TEMPERATURE_AMPLITUDE: bl.diurnal_amp,
@@ -392,7 +429,7 @@ class WeatherEngine:
             },
             frame=now, instance=instance,
         )
-        season_hum = evaluator.evaluate(
+        season_hum = self.evaluate_node(
             m.SEASONAL_HUMIDITY_OFFSET,
             {
                 m.SEASONAL_HUMIDITY_AMPLITUDE: bl.humidity_seasonal_amp,
@@ -401,7 +438,7 @@ class WeatherEngine:
             },
             frame=now, instance=instance,
         )
-        diurnal_hum = evaluator.evaluate(
+        diurnal_hum = self.evaluate_node(
             m.DIURNAL_HUMIDITY_OFFSET,
             {
                 m.DIURNAL_HUMIDITY_AMPLITUDE: bl.humidity_diurnal_amp,
@@ -409,13 +446,13 @@ class WeatherEngine:
             },
             frame=now, instance=instance,
         )
-        sr = evaluator.evaluate(
+        sr = self.evaluate_node(
             m.SUNRISE_HOUR,
             {m.SOLAR_LATITUDE_PROXY: bl.latitude,
              m.SOLAR_DECLINATION: ctx["solar_decl"]},
             frame=now, instance=instance,
         )
-        ss = evaluator.evaluate(
+        ss = self.evaluate_node(
             m.SUNSET_HOUR,
             {m.SOLAR_LATITUDE_PROXY: bl.latitude,
              m.SOLAR_DECLINATION: ctx["solar_decl"]},
@@ -430,8 +467,8 @@ class WeatherEngine:
         temp_perturb = self._field.sample(CH_TEMPERATURE, wx, wy, now, cores, drift)
         hum_perturb = self._field.sample(CH_HUMIDITY, wx, wy, now, cores, drift)
         wind_perturb = self._field.sample(CH_WIND, wx, wy, now, cores, drift)
-        # 即时合成（注册表方程 + 声明参数；神迹系统按 (节点, chunk, tick) 覆盖）
-        temperature = evaluator.evaluate(
+        # 即时合成（注册表方程 + 声明参数；干预执行器按 (节点, chunk, tick) 覆盖）
+        temperature = self.evaluate_node(
             m.INSTANT_TEMPERATURE,
             {
                 m.ANNUAL_TEMPERATURE: bl.temperature,
@@ -441,7 +478,7 @@ class WeatherEngine:
             },
             frame=now, instance=instance,
         )
-        humidity = evaluator.evaluate(
+        humidity = self.evaluate_node(
             m.INSTANT_HUMIDITY,
             {
                 m.BASELINE_HUMIDITY: bl.humidity,
@@ -451,7 +488,7 @@ class WeatherEngine:
             },
             frame=now, instance=instance,
         )
-        wind_speed = evaluator.evaluate(
+        wind_speed = self.evaluate_node(
             m.INSTANT_WIND_SPEED,
             {
                 m.BASELINE_WIND_SPEED: bl.wind_speed,
@@ -461,12 +498,12 @@ class WeatherEngine:
             },
             frame=now, instance=instance,
         )
-        threshold = evaluator.evaluate(
+        threshold = self.evaluate_node(
             m.PRECIPITATION_THRESHOLD,
             {m.ANNUAL_RAINFALL: bl.rainfall},
             frame=now, instance=instance,
         )
-        intensity = evaluator.evaluate(
+        intensity = self.evaluate_node(
             m.INSTANT_PRECIPITATION_INTENSITY,
             {
                 m.FIELD_PRECIPITATION_SIGNAL: self._field.precip_signal(
@@ -476,12 +513,12 @@ class WeatherEngine:
             },
             frame=now, instance=instance,
         )
-        daylight = evaluator.evaluate(
+        daylight = self.evaluate_node(
             m.DAYLIGHT_HOURS,
             {m.SUNRISE_HOUR: sr, m.SUNSET_HOUR: ss},
             frame=now, instance=instance,
         )
-        sunshine = evaluator.evaluate(
+        sunshine = self.evaluate_node(
             m.INSTANT_SUNSHINE,
             {
                 m.DAYLIGHT_HOURS: daylight,
@@ -652,12 +689,16 @@ class WeatherEngine:
     ) -> bool | None:
         """强制开启/关闭指定 chunk 的特征核（终端调试指令用）。
 
-        神迹系统接线：强制控制先登记 field_feature 神迹（目标/实例/
+        干预执行器接线：强制控制先登记 field_feature 干预（目标/实例/
         生效帧校验 + 历史），再执行特征核注入/移除（运行时状态桥接，
         P4 完整存档时随 W_t 序列化）。注入核与自然核同代码路径——
         查询与事件都走场合成，无特判。
         {type}_start/stop 事件由下一次 minute_change 的核身份
         差异跟踪自动发布。
+
+        **单一事实源 = 注入核**：no-op 判定与解除都只看核是否存在
+        （``get_injected``），记录仅作校验/历史；强制核 duration=None
+        与记录的"长期"语义一致，核不会先于记录过期。
 
         Args:
             cx: chunk X 坐标。
@@ -681,14 +722,14 @@ class WeatherEngine:
                 return None
             now = self._clock.time
             features = self._field.features
-            _, table = self._miracle()
+            _, table = self._intervention()
+            # 单一事实源 = 注入核本身（记录只做校验/历史/回溯），
+            # 因此核自然过期后 stop 仍可解除，do clear 后核也不会成为孤儿。
+            core = features.get_injected(cx, cy, type_name)
             if active:
-                active_now, _ = table.resolve_feature(
-                    type_name, (cx, cy), now,
-                )
-                if active_now:
+                if core is not None and core.is_active(now):
                     return False
-                table.commit(MiracleRecord(
+                table.commit(InterventionRecord(
                     target_space="field_feature",
                     target=type_name,
                     instance=(cx, cy),
@@ -696,7 +737,6 @@ class WeatherEngine:
                     value={"active": True},
                     frame_t0=now,
                     duration=None,
-                    applied_at=now,
                 ))
                 cfg = FEATURE_TYPES[type_name]
                 wx = (cx + 0.5) * TILE_MAP_SIZE
@@ -710,17 +750,14 @@ class WeatherEngine:
                     radius=cfg.radius_range[1],
                     magnitude=1.0,
                     born_tick=now,
-                    duration=10 * GAME_YEAR,
+                    duration=None,   # 与记录同语义：强制控制长期有效
                     vel_x=vel_x, vel_y=vel_y,
                 )
             else:
-                active_now, _ = table.resolve_feature(
-                    type_name, (cx, cy), now,
-                )
-                if not active_now:
+                if core is None:
                     return False
-                table.clear("field_feature", type_name, (cx, cy))
                 features.remove_injected(cx, cy, type_name)
+                table.clear("field_feature", type_name, (cx, cy))
         logger.info(
             "强制%s特征核 %s: chunk (%d,%d)",
             "激活" if active else "解除", type_name, cx, cy,

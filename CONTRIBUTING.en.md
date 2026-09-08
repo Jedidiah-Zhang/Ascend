@@ -101,6 +101,13 @@ you must regenerate and commit both generated artifacts, or the CI drift gates w
 
 `equations.json` and `GenDeclarationData.lean` are generated artifacts — never edit them by hand.
 
+**Intervention executor** (P2, `docs/研究理论/世界基座/08-干预执行器.md`): researcher
+interventions are registered in `InterventionTable` and replace the generated value at
+evaluation points. When adding an intervenable component, keep
+`causal/world.py::WIRED_NODES` in sync with the actual evaluation sites
+(`WeatherEngine.evaluate_node`), or the drift gate in
+`tests/unit/test_intervention_wiring.py` will fail.
+
 ## Commit Conventions
 
 Follow the [Conventional Commits](https://www.conventionalcommits.org/) spec and write your commit descriptions in Chinese.

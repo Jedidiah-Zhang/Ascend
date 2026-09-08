@@ -188,6 +188,19 @@ _ACCESS = AccessPolicy(
     research_trace=True,
     observation_protocols=("research.full.v1", "agent.weather.v1"),
 )
+# 边界/读出分量只可观测、不可干预（§7 读出分量保护，声明期即生效）
+_ACCESS_OBSERVED = AccessPolicy(
+    interventions=(),
+    research_trace=True,
+    observation_protocols=("research.full.v1", "agent.weather.v1"),
+)
+
+
+def _access_for(role: str, origin: str) -> AccessPolicy:
+    """按角色/来源派生干预权限声明（唯一派生处）。"""
+    if role == "readout" or origin == "slice_boundary":
+        return _ACCESS_OBSERVED
+    return _ACCESS
 
 
 def _parameter_version(parameter_id: str, value: float, source: str) -> str:
@@ -279,7 +292,7 @@ def _node(
             writer=writer,
             merge_rule="single_writer",
         ),
-        access=_ACCESS,
+        access=_access_for(role, origin),
         math=MathMetadata(
             error_budget=error_budget,
             metric="absolute_difference" if kind == "float" else "discrete",

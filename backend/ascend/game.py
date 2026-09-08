@@ -430,13 +430,20 @@ class GameEngine:
         logger.info("玩家实体就绪: %r", self.player_service)
 
         # 5b. 天气引擎（接入已加载 chunk 的天气基线）
-        # 神迹系统挂载点：单一神迹表注入引擎/终端/研究 API（同源）
-        from ascend.causal import MiracleTable
+        # 干预执行器挂载点：单一干预表注入引擎/终端/研究 API（同源）；
+        # 表自带时钟（applied_at 盖章 / 缺省帧）与实例存在性查询。
+        from ascend.causal import InterventionTable
         from ascend.causal.world import ASCEND_MECHANISMS
-        self.miracle_table = MiracleTable(ASCEND_MECHANISMS)
+        self.intervention_table = InterventionTable(
+            ASCEND_MECHANISMS,
+            now=lambda: self.clock.time,
+            instance_exists=lambda node, inst: (
+                self.weather_engine.instance_exists(node, inst)
+            ),
+        )
         self.weather_engine = WeatherEngine(
             self.clock, seed=self.seed,
-            miracle_table=self.miracle_table,
+            intervention_table=self.intervention_table,
         )
         self._world_stack.push(
             self._unset("weather_engine", self.weather_engine.shutdown)
@@ -472,7 +479,7 @@ class GameEngine:
                 entity_manager=self.entity_manager,
                 continent_path=continent_cache_path,
                 gen_fingerprint_fn=compute_gen_fingerprint,
-                miracle_table=self.miracle_table,
+                intervention_table=self.intervention_table,
             ),
         )
         self._world_stack.push(self._unset("_executor"))
@@ -797,7 +804,7 @@ class GameEngine:
         handlers.update(make_player_handler(self.player_service))
         handlers.update(make_entity_handlers(self.entity_manager))
         handlers.update(make_terminal_handler(self._executor))
-        handlers.update(make_research_handler(self.miracle_table))
+        handlers.update(make_research_handler(self.intervention_table, self.weather_engine))
         # 占位 handler：尚未实现的功能返回显式"未实现"标记而非空成功
         # 响应——前端可感知功能缺口并提示，不让缺口被系统性掩盖。
         def _not_implemented(msg: dict) -> dict:

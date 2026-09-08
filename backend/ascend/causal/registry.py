@@ -33,6 +33,8 @@ from .spec import (
 _NODE_ROLES = {"mechanism_state", "persistent_state", "readout"}
 _NODE_ORIGINS = {"slice_boundary", "mechanism"}
 _VALUE_KINDS = {"float", "integer", "enum", "boolean", "string"}
+# C1 见证评估的占位随机值（"其余一切不变"含随机源；见证只验证父依赖）
+_WITNESS_RANDOM_VALUE = 0.5
 _INTERVENTIONS = {"node", "persistent", "mechanism"}
 _ANALYSIS_ROLES = {"forward", "inverse", "observable"}
 
@@ -179,6 +181,7 @@ class MechanismRegistry:
         declaration_version: str,
         microstep_order: tuple[str, ...],
         slice_boundary: str,
+        wired_nodes: frozenset[str],
         nodes: tuple[NodeSpec, ...],
         parameters: tuple[ParameterSpec, ...],
         exogenous_sources: tuple[ExogenousSourceSpec, ...],
@@ -189,6 +192,9 @@ class MechanismRegistry:
         self.declaration_version = declaration_version
         self.microstep_order = tuple(microstep_order)
         self.slice_boundary = slice_boundary
+        # 求值点声明：当前引擎真正执行的生成节点集合（干预执行器可达性事实源）。
+        # 与 access.interventions 正交——前者是"引擎是否执行"，后者是"世界是否允许"。
+        self.wired_nodes = frozenset(wired_nodes)
 
         node_map = _index_unique(tuple(nodes), "node_id", "节点")
         parameter_map = _index_unique(tuple(parameters), "parameter_id", "参数")
@@ -213,6 +219,16 @@ class MechanismRegistry:
                 raise ValueError(f"节点存在多个写者: {mechanism.output}")
             output_map[mechanism.output] = mechanism
         self._by_output = MappingProxyType(output_map)
+
+        # 可达参数槽位（派生量，无独立声明）：被 wired 节点机制绑定的参数。
+        wired_parameters: set[str] = set()
+        for mechanism in mechanisms:
+            if mechanism.output not in self.wired_nodes:
+                continue
+            wired_parameters.update(
+                binding.parameter for binding in mechanism.parameters
+            )
+        self.wired_parameters = frozenset(wired_parameters)
 
         c0_issues = self._c0_issues()
         if c0_issues:
@@ -258,7 +274,7 @@ class MechanismRegistry:
         父集/随机源集与声明不一致抛 KeyError（fail-closed）。
 
         Args:
-            parameter_values: 参数槽位覆盖映射（神迹系统的参数神迹），
+            parameter_values: 参数槽位覆盖映射（参数干预），
                 按参数值域 fail-closed 校验；None = 使用声明默认值。
         """
         mechanism = self.mechanisms.get(target)
@@ -281,9 +297,9 @@ class MechanismRegistry:
     ) -> object:
         """以显式父值和随机源值执行一条结构方程（单一求值实现）。
 
-        神迹系统（mechanism 神迹）复用本入口执行替换机制：父集/随机
-        源集按替换机制自身声明校验；参数槽位可被 ``parameter_values``
-        覆盖（同样按参数值域 fail-closed）。
+        机制干预复用本入口执行替换机制：父集/随机源集按替换机制自身
+        声明校验；参数槽位可被 ``parameter_values`` 覆盖（同样按参数
+        值域 fail-closed）。
         """
         if mechanism.output not in self.nodes:
             raise KeyError(
@@ -335,11 +351,11 @@ class MechanismRegistry:
         return output
 
     def require_node_value(self, node_id: str, value: object) -> None:
-        """校验值属于目标节点声明值域（fail-closed，供神迹系统复用）。"""
+        """校验值属于目标节点声明值域（fail-closed，供干预执行器复用）。"""
         self._require_value(self.nodes[node_id].value, value, node_id)
 
     def require_parameter_value(self, parameter_id: str, value: object) -> None:
-        """校验值属于参数声明值域（fail-closed，供神迹系统复用）。"""
+        """校验值属于参数声明值域（fail-closed，供干预执行器复用）。"""
         self._require_parameter_value(self.parameters[parameter_id], value)
 
     def snapshot(self) -> dict[str, object]:
@@ -365,6 +381,7 @@ class MechanismRegistry:
             "version": self.declaration_version,
             "microstep_order": list(self.microstep_order),
             "slice_boundary": self.slice_boundary,
+            "wired_nodes": sorted(self.wired_nodes),
         }
         core = {
             "schema_version": self.schema_version,
@@ -422,11 +439,24 @@ class MechanismRegistry:
             name: index for index, name in enumerate(self.microstep_order)
         }
 
+        unknown_wired = sorted(self.wired_nodes - set(self.nodes))
+        if unknown_wired:
+            issues.append(f"wired_nodes 含未声明节点: {unknown_wired}")
+
         for node_id, node in self.nodes.items():
             if not node_id or node.role not in _NODE_ROLES:
                 issues.append(f"{node_id}: 非法节点 role={node.role!r}")
             if node.origin not in _NODE_ORIGINS:
                 issues.append(f"{node_id}: 非法 origin={node.origin!r}")
+            # 读出/边界分量不得声明干预权限（§7 读出分量保护，声明期不变量）
+            if (
+                (node.role == "readout" or node.origin == "slice_boundary")
+                and node.access.interventions
+            ):
+                issues.append(
+                    f"{node_id}: 读出/边界分量不得声明干预权限 "
+                    f"(interventions={node.access.interventions})"
+                )
             issues.extend(self._validate_instance(node_id, node.instance_domain))
             issues.extend(self._validate_domain(node_id, node.value))
             issues.extend(self._validate_state(node_id, node.state))
@@ -454,7 +484,7 @@ class MechanismRegistry:
                     if lo > hi:
                         issues.append(f"{parameter_id}: 参数 bounds 倒置")
             issues.extend(
-                self._validate_parameter_value(parameter_id, parameter)
+                self._parameter_value_issues(parameter, parameter.value)
             )
 
         for source_id, source in self.exogenous_sources.items():
@@ -581,8 +611,34 @@ class MechanismRegistry:
                     )
                     continue
                 try:
-                    first = self.evaluate(mechanism.output, inputs)
-                    second = self.evaluate(mechanism.output, alternate)
+                    # 随机上下文：见证可显式给定（避免父依赖在占位值处抵消的
+                    # 误拒），未给定时每个声明随机源取占位常数。
+                    declared_sources = {
+                        binding.source for binding in mechanism.random_sources
+                    }
+                    context = dict(witness.random_values)
+                    if (
+                        len(context) != len(witness.random_values)
+                        or set(context) - declared_sources
+                    ):
+                        issues.append(
+                            f"{mechanism.mechanism_id}/{witness.label}: "
+                            f"随机上下文必须逐源唯一且属于声明随机源: "
+                            f"{sorted(context)}"
+                        )
+                        continue
+                    random_values = {
+                        source: context.get(source, _WITNESS_RANDOM_VALUE)
+                        for source in declared_sources
+                    }
+                    first = self.evaluate(
+                        mechanism.output, inputs,
+                        random_values=random_values,
+                    )
+                    second = self.evaluate(
+                        mechanism.output, alternate,
+                        random_values=random_values,
+                    )
                 except (KeyError, TypeError, ValueError) as exc:
                     issues.append(
                         f"{mechanism.mechanism_id}/{witness.label}: {exc}"
@@ -712,15 +768,6 @@ class MechanismRegistry:
                     f"[{lo}, {hi}]"
                 ]
         return []
-
-    @staticmethod
-    def _validate_parameter_value(
-        parameter_id: str,
-        parameter: ParameterSpec,
-    ) -> list[str]:
-        return MechanismRegistry._parameter_value_issues(
-            parameter, parameter.value
-        )
 
     @staticmethod
     def _validate_witnesses(mechanism: MechanismSpec) -> list[str]:
@@ -862,6 +909,7 @@ class MechanismRegistry:
                 "inputs_a": first,
                 "inputs_b": second,
                 "expected_outputs": list(witness.expected_outputs),
+                "random_values": dict(witness.random_values),
                 "equation_version": equation_version,
             })
         return {

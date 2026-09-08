@@ -19,6 +19,33 @@ from ascend.weather.events import (
 )
 
 
+def _node_evaluate(node_id, parents, *, frame=0, instance=()):
+    """测试用节点求值入口（直连注册表；生产路径见 WeatherEngine.evaluate_node）。"""
+    from ascend.causal.world import ASCEND_MECHANISMS
+    return ASCEND_MECHANISMS.evaluate(node_id, parents)
+
+
+def _precip_threshold(annual_rainfall: float) -> float:
+    from ascend.weather import mechanisms as m
+    return _node_evaluate(
+        m.PRECIPITATION_THRESHOLD, {m.ANNUAL_RAINFALL: annual_rainfall},
+    )
+
+
+def _calibrate_precip(
+    signal: float, annual_rainfall: float, mean_intensity: float = 5.0,
+    threshold: float | None = None,
+) -> float:
+    from ascend.weather import mechanisms as m
+    if threshold is None:
+        threshold = _precip_threshold(annual_rainfall)
+    return _node_evaluate(m.INSTANT_PRECIPITATION_INTENSITY, {
+        m.FIELD_PRECIPITATION_SIGNAL: signal,
+        m.PRECIPITATION_THRESHOLD: threshold,
+        m.MEAN_PRECIP_INTENSITY: mean_intensity,
+    })
+
+
 def _publish_minute(wt, game_time):
     """发布 minute_change 事件驱动 WeatherEngine。"""
     from ascend.config import GAME_DAY, GAME_HOUR
@@ -563,39 +590,33 @@ class TestTextureField:
 
 
 class TestPrecipCalibration:
-    """降水信号 → 阈值/强度校准测试。"""
+    """降水信号 → 阈值/强度节点求值（唯一实现 = 注册表方程）。"""
 
     def test_threshold_dry_high_wet_low(self):
-        from ascend.weather.field import precip_threshold
-        assert precip_threshold(50.0) == pytest.approx(0.55)
-        assert precip_threshold(3500.0) == pytest.approx(0.25)
-        assert precip_threshold(800.0) < precip_threshold(100.0)
+        assert _precip_threshold(50.0) == pytest.approx(0.55)
+        assert _precip_threshold(3500.0) == pytest.approx(0.25)
+        assert _precip_threshold(800.0) < _precip_threshold(100.0)
 
     def test_threshold_clamped_outside_range(self):
-        from ascend.weather.field import precip_threshold
-        assert precip_threshold(0.0) == pytest.approx(0.55)
-        assert precip_threshold(100000.0) == pytest.approx(0.25)
+        assert _precip_threshold(0.0) == pytest.approx(0.55)
+        assert _precip_threshold(100000.0) == pytest.approx(0.25)
 
     def test_calibrate_below_threshold_zero(self):
-        from ascend.weather.field import calibrate_precip
-        assert calibrate_precip(0.1, 100.0, 5.0) == 0.0
+        assert _calibrate_precip(0.1, 100.0, 5.0) == 0.0
 
     def test_calibrate_above_threshold_scaled(self):
-        from ascend.weather.field import calibrate_precip
         # 阈值 0.25（湿润），信号 0.5 → 超阈 0.25 × 2 × 10 = 5.0
-        assert calibrate_precip(0.5, 3500.0, 10.0) == pytest.approx(5.0)
+        assert _calibrate_precip(0.5, 3500.0, 10.0) == pytest.approx(5.0)
 
     def test_calibrate_signal_capped(self):
-        from ascend.weather.field import calibrate_precip
         # 信号超 PRECIP_SIGNAL_MAX 时按饱和值计
-        assert calibrate_precip(5.0, 3500.0, 10.0) == \
-            calibrate_precip(1.2, 3500.0, 10.0)
+        assert _calibrate_precip(5.0, 3500.0, 10.0) == \
+            _calibrate_precip(1.2, 3500.0, 10.0)
 
     def test_calibrate_precomputed_threshold(self):
-        from ascend.weather.field import calibrate_precip, precip_threshold
-        th = precip_threshold(800.0)
-        assert calibrate_precip(0.6, 800.0, 5.0, threshold=th) == \
-            calibrate_precip(0.6, 800.0, 5.0)
+        th = _precip_threshold(800.0)
+        assert _calibrate_precip(0.6, 800.0, 5.0, threshold=th) == \
+            _calibrate_precip(0.6, 800.0, 5.0)
 
 
 # ── 特征场（FeatureField）────────────────────────────────────────
@@ -779,7 +800,9 @@ class TestRegionTracker:
 
     def _make_tracker(self):
         from ascend.weather import UnifiedWeatherField, RegionTracker
-        tr = RegionTracker(UnifiedWeatherField(seed=42))
+        tr = RegionTracker(
+            UnifiedWeatherField(seed=42), evaluate=_node_evaluate,
+        )
         for cx in range(-2, 3):
             for cy in range(-2, 3):
                 tr.set_chunk_baseline(cx, cy, 3000.0, 10.0)
@@ -835,7 +858,9 @@ class TestRegionTracker:
     def test_dry_climate_never_rains(self):
         """极干旱校准（高阈）→ 无区域事件。"""
         from ascend.weather import UnifiedWeatherField, RegionTracker
-        tr = RegionTracker(UnifiedWeatherField(seed=42))
+        tr = RegionTracker(
+            UnifiedWeatherField(seed=42), evaluate=_node_evaluate,
+        )
         tr.set_chunk_baseline(0, 0, 10.0, 2.0)
         events = tr.update(10000000)
         assert not any(e.kind == "start" for e in events)
@@ -2160,25 +2185,22 @@ class TestRegistryProductionAudit:
         finally:
             e.shutdown()
 
-    def test_calibrate_precip_matches_registry(self):
-        """区域事件路径降水校准 == 注册表方程（含显式阈值复用）。"""
-        from ascend.weather.field import calibrate_precip, precip_threshold
+    def test_region_tracker_uses_injected_evaluator(self):
+        """区域事件路径与查询路径共用注入的求值入口（无旁路公式）。"""
+        from ascend.weather import UnifiedWeatherField, RegionTracker
         from ascend.weather import mechanisms as m
         from ascend.causal.world import ASCEND_MECHANISMS as reg
 
-        for annual in (100.0, 800.0, 3500.0):
-            threshold = reg.evaluate(m.PRECIPITATION_THRESHOLD,
-                                     {m.ANNUAL_RAINFALL: annual})
-            assert precip_threshold(annual) == pytest.approx(threshold, abs=1e-12)
-            for signal in (0.1, 0.5, 1.0):
-                for intensity in (5.0, 10.0):
-                    expected = reg.evaluate(m.INSTANT_PRECIPITATION_INTENSITY, {
-                        m.FIELD_PRECIPITATION_SIGNAL: signal,
-                        m.PRECIPITATION_THRESHOLD: threshold,
-                        m.MEAN_PRECIP_INTENSITY: intensity,
-                    })
-                    got = calibrate_precip(signal, annual, intensity)
-                    assert got == pytest.approx(expected, abs=1e-12)
-                    got_th = calibrate_precip(signal, annual, intensity,
-                                              threshold=threshold)
-                    assert got_th == pytest.approx(expected, abs=1e-12)
+        calls: list[str] = []
+
+        def spy(node_id, parents, *, frame=0, instance=()):
+            calls.append(node_id)
+            return reg.evaluate(node_id, parents)
+
+        tr = RegionTracker(UnifiedWeatherField(seed=42), evaluate=spy)
+        tr.set_chunk_baseline(0, 0, 3000.0, 10.0)
+        tr.update(10000000)
+        assert m.PRECIPITATION_THRESHOLD in calls
+        # 出现区域时强度也经同一入口求值
+        if any(e.kind == "start" for e in tr.update(10000000 + 120)):
+            assert m.INSTANT_PRECIPITATION_INTENSITY in calls

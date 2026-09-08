@@ -1,13 +1,17 @@
 """因果机制声明、求值与快照接口。"""
 
-from .miracle import (
-    MIRACLE_REP_KINDS,
-    MIRACLE_TARGET_SPACES,
-    MiracleRecord,
-    MiracleTable,
+from .intervention import (
+    FOREVER,
+    INTERVENTION_REP_KINDS,
+    INTERVENTION_TARGET_SPACES,
+    SINGLE,
+    WINDOW,
+    InterventionRecord,
+    InterventionTable,
     NodeResolution,
+    default_duration,
 )
-from .miracle_engine import MiracleEvaluator, MiracleFrameExecutor
+from .intervention_engine import InterventionEvaluator, InterventionFrameExecutor
 from .registry import MechanismRegistry
 from .spec import (
     AccessPolicy,
@@ -42,11 +46,15 @@ __all__ = [
     "StateOwnership",
     "UpdateContract",
     "ValueDomain",
-    "MIRACLE_REP_KINDS",
-    "MIRACLE_TARGET_SPACES",
-    "MiracleRecord",
-    "MiracleTable",
+    "INTERVENTION_REP_KINDS",
+    "INTERVENTION_TARGET_SPACES",
+    "InterventionRecord",
+    "InterventionTable",
     "NodeResolution",
-    "MiracleEvaluator",
-    "MiracleFrameExecutor",
+    "InterventionEvaluator",
+    "InterventionFrameExecutor",
+    "FOREVER",
+    "SINGLE",
+    "WINDOW",
+    "default_duration",
 ]

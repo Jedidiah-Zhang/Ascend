@@ -101,6 +101,11 @@ GUT 不随仓库分发（`frontend/addons/gut` 只需在本地安装），因此
 
 `equations.json` 与 `GenDeclarationData.lean` 均为生成物，禁止手改。
 
+**干预执行器**（P2，docs/研究理论/世界基座/08-干预执行器.md）：研究者干预经
+`InterventionTable` 登记后在求值点替换生成；新增可干预分量时必须同步
+`causal/world.py::WIRED_NODES` 与实际求值点（`WeatherEngine.evaluate_node`），
+否则 `tests/unit/test_intervention_wiring.py` 的漂移巡检会失败。
+
 ## 提交约定
 
 请遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范，并使用中文撰写提交描述。

@@ -1,7 +1,7 @@
 {
   "comment": "AUTO-GENERATED from the ASCEND_MECHANISMS registry (weather/mechanisms.py + space/mechanisms.py slices); do not edit by hand. variables/edges are the research graph projection.",
   "declaration": {
-    "hash": "sha256:e703d1a4980eb19f2a46e9bf85cbaac5e9d74b7c67374468d73fa51a34e48cbb",
+    "hash": "sha256:056dd86d3dfbf5d2afee3d6d2906fba0c60db03fef2f8b0d2251fef759492965",
     "id": "ascend.world.scalar_formulas",
     "microstep_order": [
       "world.gen_input",
@@ -19,7 +19,29 @@
       "weather.instant_readout"
     ],
     "slice_boundary": "Unified weather field channels, continent/hydrology/tile algorithm pipelines, and dynamic biome subdivision ranges remain outside this slice; their outputs enter as declared boundary inputs.",
-    "version": "1"
+    "version": "1",
+    "wired_nodes": [
+      "weather.astronomy.daylight_hours",
+      "weather.astronomy.sunrise_hour",
+      "weather.astronomy.sunset_hour",
+      "weather.chunk.precipitation_threshold",
+      "weather.instant.precipitation_intensity_mm_per_hour",
+      "weather.instant.relative_humidity_percent",
+      "weather.instant.sunshine_hours_per_day",
+      "weather.instant.temperature_c",
+      "weather.instant.wind_speed_mps",
+      "weather.offset.diurnal_humidity_pp",
+      "weather.offset.diurnal_temperature_c",
+      "weather.offset.seasonal_humidity_pp",
+      "weather.offset.seasonal_temperature_c",
+      "weather.tick.day",
+      "weather.tick.day_of_year",
+      "weather.tick.diurnal_phase_cos",
+      "weather.tick.hour_of_day",
+      "weather.tick.season",
+      "weather.tick.season_phase_cos",
+      "weather.tick.solar_declination_rad"
+    ]
   },
   "edges": [
     {
@@ -1186,7 +1208,8 @@
             "weather.astronomy.sunset_hour": 18.0
           },
           "label": "sunrise_changes_daylight",
-          "parent": "weather.astronomy.sunrise_hour"
+          "parent": "weather.astronomy.sunrise_hour",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:a9f7c8aa9957b31903073a8b354ef580dc139796701f3c3ff541530c5e95a601",
@@ -1203,7 +1226,8 @@
             "weather.astronomy.sunset_hour": 20.0
           },
           "label": "sunset_changes_daylight",
-          "parent": "weather.astronomy.sunset_hour"
+          "parent": "weather.astronomy.sunset_hour",
+          "random_values": {}
         }
       ]
     },
@@ -1281,7 +1305,8 @@
             "weather.tick.solar_declination_rad": 0.4091
           },
           "label": "latitude_changes_sunrise",
-          "parent": "weather.chunk.solar_latitude_proxy_deg"
+          "parent": "weather.chunk.solar_latitude_proxy_deg",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:17e90070f75cc81641f908a85ee41b5159beb89d9f047b087473cdaabcb5335c",
@@ -1298,7 +1323,8 @@
             "weather.tick.solar_declination_rad": 0.4091
           },
           "label": "solar_declination_changes_sunrise",
-          "parent": "weather.tick.solar_declination_rad"
+          "parent": "weather.tick.solar_declination_rad",
+          "random_values": {}
         }
       ]
     },
@@ -1376,7 +1402,8 @@
             "weather.tick.solar_declination_rad": 0.4091
           },
           "label": "latitude_changes_sunset",
-          "parent": "weather.chunk.solar_latitude_proxy_deg"
+          "parent": "weather.chunk.solar_latitude_proxy_deg",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:7cda0d682b92382f16747133c02a308f27356f2e60161699e9b1fa87d73aaed4",
@@ -1393,7 +1420,8 @@
             "weather.tick.solar_declination_rad": 0.4091
           },
           "label": "solar_declination_changes_sunset",
-          "parent": "weather.tick.solar_declination_rad"
+          "parent": "weather.tick.solar_declination_rad",
+          "random_values": {}
         }
       ]
     },
@@ -1456,7 +1484,8 @@
             "weather.chunk.seasonal_temperature_amplitude_c": 20.0
           },
           "label": "seasonal_amplitude_changes_diurnal_humidity_amplitude",
-          "parent": "weather.chunk.seasonal_temperature_amplitude_c"
+          "parent": "weather.chunk.seasonal_temperature_amplitude_c",
+          "random_values": {}
         }
       ]
     },
@@ -1515,7 +1544,8 @@
             "weather.chunk.seasonal_temperature_amplitude_c": 20.0
           },
           "label": "seasonal_amplitude_changes_diurnal_amplitude",
-          "parent": "weather.chunk.seasonal_temperature_amplitude_c"
+          "parent": "weather.chunk.seasonal_temperature_amplitude_c",
+          "random_values": {}
         }
       ]
     },
@@ -1589,7 +1619,8 @@
             "weather.chunk.annual_rainfall_mm_per_year": 3500.0
           },
           "label": "annual_rainfall_changes_threshold",
-          "parent": "weather.chunk.annual_rainfall_mm_per_year"
+          "parent": "weather.chunk.annual_rainfall_mm_per_year",
+          "random_values": {}
         }
       ]
     },
@@ -1648,7 +1679,8 @@
             "weather.chunk.seasonal_temperature_amplitude_c": 20.0
           },
           "label": "seasonal_amplitude_changes_humidity_amplitude",
-          "parent": "weather.chunk.seasonal_temperature_amplitude_c"
+          "parent": "weather.chunk.seasonal_temperature_amplitude_c",
+          "random_values": {}
         }
       ]
     },
@@ -1763,7 +1795,8 @@
             "weather.chunk.annual_rainfall_mm_per_year": 800.0
           },
           "label": "annual_temperature_changes_amplitude",
-          "parent": "weather.chunk.annual_mean_temperature_c"
+          "parent": "weather.chunk.annual_mean_temperature_c",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:688049c3a084318512c08555d7005b312f2f2d06b3d3ea40df2d2417786b419e",
@@ -1780,7 +1813,8 @@
             "weather.chunk.annual_rainfall_mm_per_year": 2000.0
           },
           "label": "annual_rainfall_changes_amplitude",
-          "parent": "weather.chunk.annual_rainfall_mm_per_year"
+          "parent": "weather.chunk.annual_rainfall_mm_per_year",
+          "random_values": {}
         }
       ]
     },
@@ -1854,7 +1888,8 @@
             "weather.chunk.sea_level_temperature_c": 35.0
           },
           "label": "sea_level_temperature_changes_latitude",
-          "parent": "weather.chunk.sea_level_temperature_c"
+          "parent": "weather.chunk.sea_level_temperature_c",
+          "random_values": {}
         }
       ]
     },
@@ -1908,7 +1943,8 @@
             "weather.instant.temperature_c": 1.0
           },
           "label": "temperature_changes_precipitation_type",
-          "parent": "weather.instant.temperature_c"
+          "parent": "weather.instant.temperature_c",
+          "random_values": {}
         }
       ]
     },
@@ -2047,7 +2083,8 @@
             "weather.offset.seasonal_humidity_pp": 0.0
           },
           "label": "baseline_changes_instant_humidity",
-          "parent": "weather.chunk.baseline_humidity_percent"
+          "parent": "weather.chunk.baseline_humidity_percent",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
@@ -2068,7 +2105,8 @@
             "weather.offset.seasonal_humidity_pp": 5.0
           },
           "label": "seasonal_offset_changes_instant_humidity",
-          "parent": "weather.offset.seasonal_humidity_pp"
+          "parent": "weather.offset.seasonal_humidity_pp",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
@@ -2089,7 +2127,8 @@
             "weather.offset.seasonal_humidity_pp": 0.0
           },
           "label": "diurnal_offset_changes_instant_humidity",
-          "parent": "weather.offset.diurnal_humidity_pp"
+          "parent": "weather.offset.diurnal_humidity_pp",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
@@ -2110,7 +2149,8 @@
             "weather.offset.seasonal_humidity_pp": 0.0
           },
           "label": "perturbation_changes_instant_humidity",
-          "parent": "weather.field.humidity_perturbation"
+          "parent": "weather.field.humidity_perturbation",
+          "random_values": {}
         }
       ]
     },
@@ -2220,7 +2260,8 @@
             "weather.field.precipitation_signal": 1.0
           },
           "label": "signal_changes_precipitation_intensity",
-          "parent": "weather.field.precipitation_signal"
+          "parent": "weather.field.precipitation_signal",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:45cceac19385262ae7bd0b45884d29bd49df5e1bfc38e88a02402717ecb94174",
@@ -2239,7 +2280,8 @@
             "weather.field.precipitation_signal": 0.5
           },
           "label": "threshold_changes_precipitation_intensity",
-          "parent": "weather.chunk.precipitation_threshold"
+          "parent": "weather.chunk.precipitation_threshold",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:45cceac19385262ae7bd0b45884d29bd49df5e1bfc38e88a02402717ecb94174",
@@ -2258,7 +2300,8 @@
             "weather.field.precipitation_signal": 0.5
           },
           "label": "mean_intensity_changes_precipitation_intensity",
-          "parent": "weather.chunk.mean_precip_intensity_mm_per_hour"
+          "parent": "weather.chunk.mean_precip_intensity_mm_per_hour",
+          "random_values": {}
         }
       ]
     },
@@ -2351,7 +2394,8 @@
             "weather.field.humidity_perturbation": 0.0
           },
           "label": "daylight_changes_sunshine",
-          "parent": "weather.astronomy.daylight_hours"
+          "parent": "weather.astronomy.daylight_hours",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:9248df20bd195f319cccbd2ed4287a921a537d19070018227b0a6fc051c5d17d",
@@ -2368,7 +2412,8 @@
             "weather.field.humidity_perturbation": 1.0
           },
           "label": "perturbation_changes_sunshine",
-          "parent": "weather.field.humidity_perturbation"
+          "parent": "weather.field.humidity_perturbation",
+          "random_values": {}
         }
       ]
     },
@@ -2507,7 +2552,8 @@
             "weather.offset.seasonal_temperature_c": 0.0
           },
           "label": "annual_temperature_changes_instant_temperature",
-          "parent": "weather.chunk.annual_mean_temperature_c"
+          "parent": "weather.chunk.annual_mean_temperature_c",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
@@ -2528,7 +2574,8 @@
             "weather.offset.seasonal_temperature_c": 5.0
           },
           "label": "seasonal_offset_changes_instant_temperature",
-          "parent": "weather.offset.seasonal_temperature_c"
+          "parent": "weather.offset.seasonal_temperature_c",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
@@ -2549,7 +2596,8 @@
             "weather.offset.seasonal_temperature_c": 0.0
           },
           "label": "diurnal_offset_changes_instant_temperature",
-          "parent": "weather.offset.diurnal_temperature_c"
+          "parent": "weather.offset.diurnal_temperature_c",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
@@ -2570,7 +2618,8 @@
             "weather.offset.seasonal_temperature_c": 0.0
           },
           "label": "perturbation_changes_instant_temperature",
-          "parent": "weather.field.temperature_perturbation"
+          "parent": "weather.field.temperature_perturbation",
+          "random_values": {}
         }
       ]
     },
@@ -2686,7 +2735,8 @@
             "weather.field.wind_perturbation": 0.0
           },
           "label": "baseline_changes_instant_wind",
-          "parent": "weather.chunk.baseline_wind_speed_mps"
+          "parent": "weather.chunk.baseline_wind_speed_mps",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:2374a9e2f18ae7c87aca8f31b6a9bec73cfe430e9963702359fb092d4ce2c150",
@@ -2705,7 +2755,8 @@
             "weather.field.wind_perturbation": 1.0
           },
           "label": "perturbation_changes_instant_wind",
-          "parent": "weather.field.wind_perturbation"
+          "parent": "weather.field.wind_perturbation",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:2374a9e2f18ae7c87aca8f31b6a9bec73cfe430e9963702359fb092d4ce2c150",
@@ -2724,7 +2775,8 @@
             "weather.field.wind_perturbation": 0.0
           },
           "label": "multiplier_changes_instant_wind",
-          "parent": "weather.field.wind_multiplier"
+          "parent": "weather.field.wind_multiplier",
+          "random_values": {}
         }
       ]
     },
@@ -2801,7 +2853,8 @@
             "weather.tick.diurnal_phase_cos": 1.0
           },
           "label": "amplitude_changes_diurnal_humidity_offset",
-          "parent": "weather.chunk.diurnal_humidity_amplitude_pp"
+          "parent": "weather.chunk.diurnal_humidity_amplitude_pp",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:03f839622dae2e8457aaa21b6ee87264d4bdc65ca4af39a6a266fe4d00022758",
@@ -2818,7 +2871,8 @@
             "weather.tick.diurnal_phase_cos": 1.0
           },
           "label": "diurnal_phase_cos_changes_diurnal_humidity_offset",
-          "parent": "weather.tick.diurnal_phase_cos"
+          "parent": "weather.tick.diurnal_phase_cos",
+          "random_values": {}
         }
       ]
     },
@@ -2895,7 +2949,8 @@
             "weather.tick.diurnal_phase_cos": 1.0
           },
           "label": "amplitude_changes_diurnal_temperature_offset",
-          "parent": "weather.chunk.diurnal_temperature_amplitude_c"
+          "parent": "weather.chunk.diurnal_temperature_amplitude_c",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:5b340a300be9ed3fcbda35a0212e4be9d94405b89fede817265b2f3cc5c26e32",
@@ -2912,7 +2967,8 @@
             "weather.tick.diurnal_phase_cos": 1.0
           },
           "label": "diurnal_phase_cos_changes_diurnal_temperature_offset",
-          "parent": "weather.tick.diurnal_phase_cos"
+          "parent": "weather.tick.diurnal_phase_cos",
+          "random_values": {}
         }
       ]
     },
@@ -3013,7 +3069,8 @@
             "weather.tick.season_phase_cos": 1.0
           },
           "label": "amplitude_changes_seasonal_humidity_offset",
-          "parent": "weather.chunk.seasonal_humidity_amplitude_pp"
+          "parent": "weather.chunk.seasonal_humidity_amplitude_pp",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202",
@@ -3032,7 +3089,8 @@
             "weather.tick.season_phase_cos": 1.0
           },
           "label": "season_phase_cos_changes_seasonal_humidity_offset",
-          "parent": "weather.tick.season_phase_cos"
+          "parent": "weather.tick.season_phase_cos",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202",
@@ -3051,7 +3109,8 @@
             "weather.tick.season_phase_cos": 0.5
           },
           "label": "sharpness_changes_seasonal_humidity_offset",
-          "parent": "weather.chunk.humidity_sharpness"
+          "parent": "weather.chunk.humidity_sharpness",
+          "random_values": {}
         }
       ]
     },
@@ -3128,7 +3187,8 @@
             "weather.tick.season_phase_cos": 1.0
           },
           "label": "amplitude_changes_seasonal_temperature_offset",
-          "parent": "weather.chunk.seasonal_temperature_amplitude_c"
+          "parent": "weather.chunk.seasonal_temperature_amplitude_c",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:2f3688d219a99f31550fea8a0701cf1e418f9288da5f31788d85aa93428b97c0",
@@ -3145,7 +3205,8 @@
             "weather.tick.season_phase_cos": 1.0
           },
           "label": "season_phase_cos_changes_seasonal_temperature_offset",
-          "parent": "weather.tick.season_phase_cos"
+          "parent": "weather.tick.season_phase_cos",
+          "random_values": {}
         }
       ]
     },
@@ -3204,7 +3265,8 @@
             "world.clock.tick": 172800
           },
           "label": "tick_changes_day",
-          "parent": "world.clock.tick"
+          "parent": "world.clock.tick",
+          "random_values": {}
         }
       ]
     },
@@ -3267,7 +3329,8 @@
             "world.clock.tick": 172800
           },
           "label": "tick_changes_day_of_year",
-          "parent": "world.clock.tick"
+          "parent": "world.clock.tick",
+          "random_values": {}
         }
       ]
     },
@@ -3326,7 +3389,8 @@
             "weather.tick.hour_of_day": 2.0
           },
           "label": "hour_changes_diurnal_phase_cos",
-          "parent": "weather.tick.hour_of_day"
+          "parent": "weather.tick.hour_of_day",
+          "random_values": {}
         }
       ]
     },
@@ -3389,7 +3453,8 @@
             "world.clock.tick": 7200
           },
           "label": "tick_changes_hour",
-          "parent": "world.clock.tick"
+          "parent": "world.clock.tick",
+          "random_values": {}
         }
       ]
     },
@@ -3452,7 +3517,8 @@
             "weather.tick.day": 91
           },
           "label": "day_changes_season",
-          "parent": "weather.tick.day"
+          "parent": "weather.tick.day",
+          "random_values": {}
         }
       ]
     },
@@ -3515,7 +3581,8 @@
             "weather.tick.day": 136
           },
           "label": "day_changes_season_phase_cos",
-          "parent": "weather.tick.day"
+          "parent": "weather.tick.day",
+          "random_values": {}
         }
       ]
     },
@@ -3578,7 +3645,8 @@
             "weather.tick.day_of_year": 135
           },
           "label": "day_of_year_changes_declination",
-          "parent": "weather.tick.day_of_year"
+          "parent": "weather.tick.day_of_year",
+          "random_values": {}
         }
       ]
     },
@@ -3732,7 +3800,8 @@
             "world.gen.moisture_noise": 0.0
           },
           "label": "altitude_changes_biome_ocean_land",
-          "parent": "world.gen.altitude_m"
+          "parent": "world.gen.altitude_m",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:f5b5d5f4d9d934a88fd98fdb38d83e5a98d7ec9e09d6e18e7e9010a00eeca2e0",
@@ -3755,7 +3824,8 @@
             "world.gen.moisture_noise": 0.0
           },
           "label": "annual_rainfall_changes_biome",
-          "parent": "weather.chunk.annual_rainfall_mm_per_year"
+          "parent": "weather.chunk.annual_rainfall_mm_per_year",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:f5b5d5f4d9d934a88fd98fdb38d83e5a98d7ec9e09d6e18e7e9010a00eeca2e0",
@@ -3778,7 +3848,8 @@
             "world.gen.moisture_noise": 0.0
           },
           "label": "annual_temperature_changes_biome",
-          "parent": "weather.chunk.annual_mean_temperature_c"
+          "parent": "weather.chunk.annual_mean_temperature_c",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:f5b5d5f4d9d934a88fd98fdb38d83e5a98d7ec9e09d6e18e7e9010a00eeca2e0",
@@ -3801,7 +3872,8 @@
             "world.gen.moisture_noise": 0.0
           },
           "label": "sea_level_temperature_changes_ocean_biome",
-          "parent": "weather.chunk.sea_level_temperature_c"
+          "parent": "weather.chunk.sea_level_temperature_c",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:f5b5d5f4d9d934a88fd98fdb38d83e5a98d7ec9e09d6e18e7e9010a00eeca2e0",
@@ -3824,7 +3896,8 @@
             "world.gen.moisture_noise": 1.0
           },
           "label": "moisture_noise_changes_desert_biome",
-          "parent": "world.gen.moisture_noise"
+          "parent": "world.gen.moisture_noise",
+          "random_values": {}
         }
       ]
     },
@@ -3932,7 +4005,8 @@
             "world.gen.altitude_m": 3000.0
           },
           "label": "altitude_changes_climate_zone",
-          "parent": "world.gen.altitude_m"
+          "parent": "world.gen.altitude_m",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:34b946722a01ed3a25cd46e52031acff21fc0e21afa7f975bf03a9b03311214e",
@@ -3951,7 +4025,8 @@
             "world.gen.altitude_m": 100.0
           },
           "label": "annual_rainfall_changes_climate_zone",
-          "parent": "weather.chunk.annual_rainfall_mm_per_year"
+          "parent": "weather.chunk.annual_rainfall_mm_per_year",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:34b946722a01ed3a25cd46e52031acff21fc0e21afa7f975bf03a9b03311214e",
@@ -3970,7 +4045,8 @@
             "world.gen.altitude_m": 100.0
           },
           "label": "annual_temperature_changes_climate_zone",
-          "parent": "weather.chunk.annual_mean_temperature_c"
+          "parent": "weather.chunk.annual_mean_temperature_c",
+          "random_values": {}
         }
       ]
     },
@@ -4055,7 +4131,8 @@
             "world.gen.altitude_m": 0.0
           },
           "label": "sea_level_temperature_changes_annual_mean_temperature",
-          "parent": "weather.chunk.sea_level_temperature_c"
+          "parent": "weather.chunk.sea_level_temperature_c",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:4fd0b9908473bf54e56ccaa741c5bc0b582b5f46f6a57943f61cae6c6db71846",
@@ -4072,7 +4149,8 @@
             "world.gen.altitude_m": 1000.0
           },
           "label": "altitude_changes_annual_mean_temperature",
-          "parent": "world.gen.altitude_m"
+          "parent": "world.gen.altitude_m",
+          "random_values": {}
         }
       ]
     },
@@ -4133,7 +4211,8 @@
             "world.gen.rainfall_noise": 0.4
           },
           "label": "rainfall_noise_changes_annual_rainfall",
-          "parent": "world.gen.rainfall_noise"
+          "parent": "world.gen.rainfall_noise",
+          "random_values": {}
         }
       ]
     },
@@ -4218,7 +4297,8 @@
             "world.gen.humidity_noise": 1.0
           },
           "label": "humidity_noise_changes_baseline_humidity",
-          "parent": "world.gen.humidity_noise"
+          "parent": "world.gen.humidity_noise",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:4a96fb3058be0a95d653bb8f986d2ab191ff613489941ba114866cb559063d57",
@@ -4235,7 +4315,8 @@
             "world.gen.humidity_noise": 0.0
           },
           "label": "climate_zone_changes_baseline_humidity",
-          "parent": "world.gen.climate_zone"
+          "parent": "world.gen.climate_zone",
+          "random_values": {}
         }
       ]
     },
@@ -4320,7 +4401,8 @@
             "world.gen.wind_noise": 1.0
           },
           "label": "wind_noise_changes_baseline_wind_speed",
-          "parent": "world.gen.wind_noise"
+          "parent": "world.gen.wind_noise",
+          "random_values": {}
         },
         {
           "equation_version": "sha256:4267a66e128049500a752448c94005db85459be2da0faba48bfd9fe825982875",
@@ -4337,7 +4419,8 @@
             "world.gen.wind_noise": 0.0
           },
           "label": "climate_zone_changes_baseline_wind_speed",
-          "parent": "world.gen.climate_zone"
+          "parent": "world.gen.climate_zone",
+          "random_values": {}
         }
       ]
     },
@@ -4397,7 +4480,8 @@
             "world.gen.climate_zone": 1
           },
           "label": "climate_zone_changes_humidity_sharpness",
-          "parent": "world.gen.climate_zone"
+          "parent": "world.gen.climate_zone",
+          "random_values": {}
         }
       ]
     },
@@ -4457,7 +4541,8 @@
             "world.gen.climate_zone": 0
           },
           "label": "climate_zone_changes_mean_precip_intensity",
-          "parent": "world.gen.climate_zone"
+          "parent": "world.gen.climate_zone",
+          "random_values": {}
         }
       ]
     },
@@ -4518,7 +4603,8 @@
             "world.gen.latitude_noise": 0.4
           },
           "label": "latitude_noise_changes_sea_level_temperature",
-          "parent": "world.gen.latitude_noise"
+          "parent": "world.gen.latitude_noise",
+          "random_values": {}
         }
       ]
     }
@@ -5352,11 +5438,7 @@
     },
     "weather.field.humidity_perturbation": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"
@@ -5404,11 +5486,7 @@
     },
     "weather.field.precipitation_signal": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"
@@ -5456,11 +5534,7 @@
     },
     "weather.field.temperature_perturbation": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"
@@ -5508,11 +5582,7 @@
     },
     "weather.field.wind_multiplier": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"
@@ -5560,11 +5630,7 @@
     },
     "weather.field.wind_perturbation": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"
@@ -6474,11 +6540,7 @@
     },
     "world.clock.tick": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"
@@ -6520,11 +6582,7 @@
     },
     "world.gen.altitude_m": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"
@@ -6696,11 +6754,7 @@
     },
     "world.gen.humidity_noise": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"
@@ -6748,11 +6802,7 @@
     },
     "world.gen.latitude_noise": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"
@@ -6800,11 +6850,7 @@
     },
     "world.gen.moisture_noise": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"
@@ -6852,11 +6898,7 @@
     },
     "world.gen.rainfall_noise": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"
@@ -6904,11 +6946,7 @@
     },
     "world.gen.wind_noise": {
       "access": {
-        "interventions": [
-          "node",
-          "persistent",
-          "mechanism"
-        ],
+        "interventions": [],
         "observation_protocols": [
           "research.full.v1",
           "agent.weather.v1"

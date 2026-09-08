@@ -28,6 +28,7 @@ graph TD
 
     subgraph Causal["🧬 因果声明（causal/）"]
         REG["MechanismRegistry<br/>机制注册表：C0/C1 构造期验收"]
+        IVT["InterventionTable / InterventionEvaluator<br/>干预执行器：登记·校验·覆盖求值"]
         SNAP["equations.json → Lean<br/>研究快照（自动生成）"]
     end
 
@@ -41,6 +42,8 @@ graph TD
     CLK --> CAL
     GEN --> WEA
     WEA -->|"机制登记（mechanisms.py）"| REG
+    REG -->|"声明 + wired_nodes 可达性"| IVT
+    IVT -->|"覆盖求值（evaluate_node）"| WEA
     REG -->|"export_registry.py 生成"| SNAP
 
     GameEngine --> WorldTree

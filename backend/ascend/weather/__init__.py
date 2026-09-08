@@ -39,7 +39,7 @@ from .features import (FEATURE_TYPES, T_COLD_SNAP, T_FRONT, T_HEAT_WAVE,
                        T_STORM, ClimateProxy, FeatureConfig, FeatureCore,
                        FeatureField)
 from .field import (CH_HUMIDITY, CH_PRECIPITATION, CH_TEMPERATURE, CH_WIND,
-                    UnifiedWeatherField, calibrate_precip, precip_threshold)
+                    UnifiedWeatherField)
 from .region_tracker import RegionEvent, RegionTracker
 from .season import Season
 from .weather_engine import WeatherEngine
@@ -87,6 +87,4 @@ __all__ = [
     "classify_sunshine",
     "classify_sunlight_intensity",
     "precip_type_for",
-    "calibrate_precip",
-    "precip_threshold",
 ]
