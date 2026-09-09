@@ -21,7 +21,9 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from ascend.config import (GAME_DAY, GAME_HOUR, TILE_MAP_SIZE)
-from ascend.causal import InterventionEvaluator, InterventionRecord, InterventionTable
+from ascend.causal import (
+    InterventionEvaluator, InterventionRecord, InterventionTable, TraceLog,
+)
 from ascend.log import get_logger
 from ascend.space import (ClimateZone, WeatherParams,
                           get_climate_template)
@@ -129,6 +131,8 @@ class WeatherEngine:
         self._wt = world_tree_arg if world_tree_arg is not None else _default_wt
         self._intervention_table = intervention_table
         self._intervention_eval: InterventionEvaluator | None = None
+        # 研究 trace（默认关闭：未挂载 = 零开销；研究通道按需开启）
+        self._trace: TraceLog | None = None
         # 查询/写入互斥：handler 线程查询（get_weather 系）与游戏线程
         # 推进（_on_minute_change / register / unregister）并发安全。
         # RLock：_publish 在锁内同步分发事件，防未来订阅者回调重入查询 API
@@ -158,6 +162,29 @@ class WeatherEngine:
         """挂载的干预表（存档/研究 API 共用同一实例；未挂载时惰性自建）。"""
         _, table = self._intervention()
         return table
+
+    @property
+    def trace(self) -> TraceLog | None:
+        """挂载的研究日志（None = 未开启，求值零开销）。"""
+        return self._trace
+
+    def enable_trace(self, capacity: int = 4096) -> TraceLog:
+        """开启研究 trace（研究者通道；与玩法事件分库）。
+
+        开启后 ``evaluate_node`` 的每次求值都留下一条完整记录，
+        fail-closed：记录不完整即拒绝求值。重复调用返回同一实例。
+        """
+        if self._trace is None:
+            self._trace = TraceLog(_registry(), capacity=capacity)
+            self._intervention_eval = InterventionEvaluator(
+                _registry(), self._intervention_table, trace=self._trace,
+            )
+        return self._trace
+
+    def disable_trace(self) -> None:
+        """关闭研究 trace（已记录的内容保留在日志实例上）。"""
+        self._trace = None
+        self._intervention_eval = None
 
     # ── 完整世界状态（P4）：不可重算部分 ────────────────────────
 
@@ -330,7 +357,7 @@ class WeatherEngine:
                     instance_exists=self.instance_exists,
                 )
             self._intervention_eval = InterventionEvaluator(
-                _registry(), self._intervention_table
+                _registry(), self._intervention_table, trace=self._trace,
             )
         return self._intervention_eval, self._intervention_table
 

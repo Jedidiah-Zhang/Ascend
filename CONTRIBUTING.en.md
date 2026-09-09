@@ -108,6 +108,11 @@ evaluation points. When adding an intervenable component, keep
 (`WeatherEngine.evaluate_node`), or the drift gate in
 `tests/unit/test_intervention_wiring.py` will fail.
 
+**Research trace** (P3, `docs/研究理论/世界基座/10-研究trace.md`): the research log and
+gameplay events live in separate stores — new nodes/mechanisms are recorded automatically;
+never put trace fields into event payloads (a gate test enforces this); evaluation points
+must go through `InterventionEvaluator` (calling `registry.evaluate` directly skips tracing).
+
 **Complete save** (P4, `docs/研究理论/世界基座/09-完整存档.md`): when adding runtime
 state that cannot be recomputed from the world settings (researcher-applied quantities,
 markers that evolve with the mechanisms), update the `state.json.enc` payload and the

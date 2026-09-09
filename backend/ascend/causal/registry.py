@@ -11,7 +11,7 @@ import os
 import textwrap
 from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from .spec import (
     AccessPolicy,
@@ -29,6 +29,10 @@ from .spec import (
     UpdateContract,
     ValueDomain,
 )
+from .trace import RandomAddress, TraceLog, TraceRecord
+
+if TYPE_CHECKING:
+    from .intervention import NodeResolution
 
 _NODE_ROLES = {"mechanism_state", "persistent_state", "readout"}
 _NODE_ORIGINS = {"slice_boundary", "mechanism"}
@@ -150,6 +154,54 @@ def _plain(value: object) -> object:
     return value
 
 
+def _mechanism_versions(
+    spec: MechanismSpec,
+    parameters: Mapping[str, ParameterSpec],
+    sources: Mapping[str, ExogenousSourceSpec],
+) -> tuple[str, str]:
+    """机制的两个版本摘要：方程版本、方程+参数+边界组合版本。
+
+    构造期算一次（研究 trace 与快照共用），避免每次求值重算源码摘要。
+    构造期调用，因此显式接收参数/外生源映射而非注册表实例。
+    """
+    equation_version = _source_version(spec.function, spec.source_dependencies)
+    resolved_version = _digest({
+        "mechanism_id": spec.mechanism_id,
+        "output": spec.output,
+        "equation": spec.equation,
+        "equation_version": equation_version,
+        "parents": [_plain(item) for item in spec.parents],
+        "parameters": [
+            {
+                "binding": _plain(binding),
+                "spec": _parameter_plain(parameters[binding.parameter]),
+            }
+            for binding in spec.parameters
+        ],
+        "random_sources": [
+            {
+                "binding": _plain(binding),
+                "spec": _source_plain(sources[binding.source]),
+            }
+            for binding in spec.random_sources
+        ],
+        "boundary_cases": list(spec.boundary_cases),
+    })
+    return equation_version, resolved_version
+
+
+def _parameter_plain(spec: ParameterSpec) -> dict[str, object]:
+    data = _plain(spec)
+    del data["parameter_id"]
+    return data
+
+
+def _source_plain(spec: ExogenousSourceSpec) -> dict[str, object]:
+    data = _plain(spec)
+    del data["source_id"]
+    return data
+
+
 def _index_unique(items, attr: str, label: str) -> dict[str, object]:
     indexed: dict[str, object] = {}
     for item in items:
@@ -243,6 +295,13 @@ class MechanismRegistry:
         if c1_issues:
             raise ValueError("C1 结构最小性失败: " + "; ".join(c1_issues))
 
+        # 方程版本按机制预计算一次（构造期），供研究 trace 与快照共用：
+        # 求值点零开销引用，不存在"每次求值重算源码摘要"。
+        # 必须先于 snapshot()（快照读这份表）。
+        self._versions = MappingProxyType({
+            spec.output: _mechanism_versions(spec, parameter_map, source_map)
+            for spec in mechanism_map.values()
+        })
         # 世界设置的全量版本信息（存档 manifest 与状态文件的比对基准）。
         # declaration_hash 与 snapshot()["declaration"]["hash"] 同源同值：
         # 快照由同一 _digest 计算，二者不会漂移（有测试锁定）。
@@ -271,6 +330,24 @@ class MechanismRegistry:
         """重新执行全部 C1 见证并返回问题。"""
         return tuple(self._c1_issues())
 
+    def equation_version(self, node_id: str) -> str:
+        """节点生效方程的版本摘要（构造期预计算，按输出节点索引）。
+
+        Raises:
+            KeyError: 节点无注册机制。
+        """
+        return self._version(node_id, 0)
+
+    def resolved_version(self, node_id: str) -> str:
+        """节点"方程 + 参数 + 边界"的组合摘要（构造期预计算）。"""
+        return self._version(node_id, 1)
+
+    def _version(self, node_id: str, index: int) -> str:
+        try:
+            return self._versions[node_id][index]
+        except KeyError as exc:
+            raise KeyError(f"节点无注册机制: {node_id}") from exc
+
     def mechanism_for(self, output: str) -> MechanismSpec:
         """按输出节点取得其唯一结构方程。"""
         try:
@@ -285,6 +362,10 @@ class MechanismRegistry:
         *,
         random_values: Mapping[str, object] | None = None,
         parameter_values: Mapping[str, object] | None = None,
+        trace: TraceLog | None = None,
+        resolution: object | None = None,
+        frame: int = 0,
+        instance: tuple = (),
     ) -> object:
         """以显式父值和随机源值执行一个注册方程。
 
@@ -295,6 +376,9 @@ class MechanismRegistry:
         Args:
             parameter_values: 参数槽位覆盖映射（参数干预），
                 按参数值域 fail-closed 校验；None = 使用声明默认值。
+            trace: 研究日志；非 None 时记录本次求值（fail-closed）。
+            resolution: 干预解析结果（记录用）；None = 空解析。
+            frame, instance: 记录用的逻辑帧与实例坐标。
         """
         mechanism = self.mechanisms.get(target)
         if mechanism is None:
@@ -304,6 +388,10 @@ class MechanismRegistry:
             parent_values,
             random_values=random_values,
             parameter_values=parameter_values,
+            trace=trace,
+            resolution=resolution,
+            frame=frame,
+            instance=instance,
         )
 
     def evaluate_mechanism(
@@ -313,12 +401,23 @@ class MechanismRegistry:
         *,
         random_values: Mapping[str, object] | None = None,
         parameter_values: Mapping[str, object] | None = None,
+        trace: "TraceLog | None" = None,
+        resolution: object | None = None,
+        frame: int = 0,
+        instance: tuple = (),
     ) -> object:
         """以显式父值和随机源值执行一条结构方程（单一求值实现）。
 
         机制干预复用本入口执行替换机制：父集/随机源集按替换机制自身
         声明校验；参数槽位可被 ``parameter_values`` 覆盖（同样按参数
         值域 fail-closed）。
+
+        Args:
+            trace: 研究日志；非 None 时记录本次求值（fail-closed——
+                记录不完整会抛出，而不是静默放行）。
+            resolution: 干预解析结果（``NodeResolution``）；缺省为空解析
+                （无干预）。
+            frame, instance: 记录用的逻辑帧与实例坐标。
         """
         if mechanism.output not in self.nodes:
             raise KeyError(
@@ -346,6 +445,7 @@ class MechanismRegistry:
             )
 
         kwargs: dict[str, object] = {}
+        effective_parameters: dict[str, object] = {}
         for parent in mechanism.parents:
             value = parent_values[parent.parent]
             self._require_value(self.nodes[parent.parent].value, value, parent.parent)
@@ -358,6 +458,7 @@ class MechanismRegistry:
             else:
                 value = parameter.value
             kwargs[binding.argument] = value
+            effective_parameters[binding.parameter] = value
         for binding in mechanism.random_sources:
             kwargs[binding.argument] = supplied_sources[binding.source]
 
@@ -367,7 +468,89 @@ class MechanismRegistry:
             output,
             mechanism.output,
         )
+        if trace is not None:
+            if resolution is None:
+                # 惰性导入：干预模块反向依赖本模块，顶层导入会成环
+                from .intervention import NodeResolution
+                resolution = NodeResolution()
+            trace.record(self.build_trace_record(
+                resolution=resolution,
+                target=mechanism.output,
+                parent_values=parent_values,
+                frame=frame,
+                instance=instance,
+                mechanism=mechanism,
+                parameters=effective_parameters,
+                random_values=supplied_sources,
+                output=output,
+            ))
         return output
+
+    def build_trace_record(
+        self,
+        *,
+        resolution,
+        target: str,
+        parent_values: Mapping[str, object],
+        frame: int,
+        instance: tuple,
+        mechanism: MechanismSpec | None,
+        parameters: Mapping[str, object] | None,
+        random_values: Mapping[str, object] | None,
+        output: object,
+    ) -> TraceRecord:
+        """按求值过程组装一条 trace 记录（唯一组装点）。
+
+        随机地址按机制声明的随机源生成（源 ID + 帧 + 实例 + 抽取序号）；
+        生产声明当前不含外生源，因此地址集为空——接口就绪，登记源后自动生效。
+        ``mechanism=None`` 表示值覆盖：生成结果被替换，无方程可重算。
+        """
+        node = self.nodes[target]
+        bindings = mechanism.random_sources if mechanism is not None else ()
+        addresses = tuple(
+            RandomAddress(source=binding.source, frame=frame, instance=instance)
+            for binding in bindings
+        )
+        supplied = dict(random_values or {})
+        values = tuple(
+            (address, supplied[address.source])
+            for address in addresses
+            if address.source in supplied
+        )
+        record = resolution.record
+        return TraceRecord(
+            node_id=target,
+            frame=frame,
+            instance=instance,
+            microstep=node.update.microstep,
+            mechanism_id=mechanism.mechanism_id if mechanism is not None else "",
+            equation_version=(
+                self.equation_version(mechanism.output)
+                if mechanism is not None else ""
+            ),
+            resolved_version=(
+                self.resolved_version(mechanism.output)
+                if mechanism is not None else ""
+            ),
+            parents=tuple(sorted(parent_values.items())),
+            parameters=tuple(sorted((parameters or {}).items())),
+            random_addresses=addresses,
+            random_values=values,
+            intervention=(
+                self._intervention_plain(record) if record is not None else None
+            ),
+            rep=resolution.rep,
+            output=output,
+            boundary=(
+                mechanism.boundary_cases if mechanism is not None else ()
+            ),
+        )
+
+    @staticmethod
+    def _intervention_plain(record) -> dict[str, object]:
+        """干预记录 → 可序列化视图（惰性导入，避免与干预模块的环）。"""
+        from .intervention import InterventionTable
+        return InterventionTable.record_plain(record)
 
     def declaration_settings(self) -> dict[str, str]:
         """世界设置视图：声明 ID + 声明摘要 + 观测协议版本。
@@ -397,11 +580,11 @@ class MechanismRegistry:
             for node_id, spec in sorted(self.nodes.items())
         }
         parameters = {
-            parameter_id: self._parameter_snapshot(spec)
+            parameter_id: _parameter_plain(spec)
             for parameter_id, spec in sorted(self.parameters.items())
         }
         sources = {
-            source_id: self._source_snapshot(spec)
+            source_id: _source_plain(spec)
             for source_id, spec in sorted(self.exogenous_sources.items())
         }
         mechanisms = {
@@ -887,49 +1070,11 @@ class MechanismRegistry:
             "math": _plain(spec.math),
         }
 
-    @staticmethod
-    def _parameter_snapshot(spec: ParameterSpec) -> dict[str, object]:
-        data = _plain(spec)
-        del data["parameter_id"]
-        return data
-
-    @staticmethod
-    def _source_snapshot(spec: ExogenousSourceSpec) -> dict[str, object]:
-        data = _plain(spec)
-        del data["source_id"]
-        return data
-
     def _mechanism_snapshot(self, spec: MechanismSpec) -> dict[str, object]:
-        equation_version = _source_version(spec.function, spec.source_dependencies)
+        equation_version, resolved_version = self._versions[spec.output]
         parents = [_plain(item) for item in spec.parents]
         parameters = [_plain(item) for item in spec.parameters]
         random_sources = [_plain(item) for item in spec.random_sources]
-        resolved_version = _digest({
-            "mechanism_id": spec.mechanism_id,
-            "output": spec.output,
-            "equation": spec.equation,
-            "equation_version": equation_version,
-            "parents": parents,
-            "parameters": [
-                {
-                    "binding": _plain(binding),
-                    "spec": self._parameter_snapshot(
-                        self.parameters[binding.parameter]
-                    ),
-                }
-                for binding in spec.parameters
-            ],
-            "random_sources": [
-                {
-                    "binding": _plain(binding),
-                    "spec": self._source_snapshot(
-                        self.exogenous_sources[binding.source]
-                    ),
-                }
-                for binding in spec.random_sources
-            ],
-            "boundary_cases": list(spec.boundary_cases),
-        })
         witnesses = []
         for witness in spec.witnesses:
             first = dict(witness.inputs)

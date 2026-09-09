@@ -23,19 +23,29 @@ class InterventionEvaluator:
     Parameters:
         registry: 不可变机制注册表。
         table: 干预表；None = 直通注册表（零开销回退）。
+        trace: 研究日志；None = 不记录（零开销）。挂载后每次求值都留下
+            一条完整记录（fail-closed），值覆盖也如实记录"生成结果被替换"。
     """
 
     def __init__(
         self,
         registry: MechanismRegistry,
         table: InterventionTable | None = None,
+        *,
+        trace: TraceLog | None = None,
     ) -> None:
         self._registry = registry
         self._table = table
+        self._trace = trace
 
     @property
     def table(self) -> InterventionTable | None:
         return self._table
+
+    @property
+    def trace(self) -> TraceLog | None:
+        """挂载的研究日志（未挂载 = 不记录）。"""
+        return self._trace
 
     def evaluate(
         self,
@@ -58,15 +68,31 @@ class InterventionEvaluator:
             parameter_values: 参数槽位覆盖（干预表内联解析）。
         """
         table = self._table
+        trace = self._trace
         if table is None:
             return self._registry.evaluate(
                 target,
                 parent_values,
                 random_values=random_values,
                 parameter_values=parameter_values,
+                trace=trace,
+                frame=frame,
+                instance=instance,
             )
         resolution = table.resolve_node(target, instance, frame)
         if resolution.rep == "value":
+            if trace is not None:
+                trace.record(self._registry.build_trace_record(
+                    resolution=resolution,
+                    target=target,
+                    parent_values=parent_values,
+                    frame=frame,
+                    instance=instance,
+                    mechanism=None,
+                    parameters=None,
+                    random_values=None,
+                    output=resolution.value,
+                ))
             return resolution.value
         merged_parameters = self._parameter_overrides(
             table, target, resolution, frame, parameter_values
@@ -77,12 +103,20 @@ class InterventionEvaluator:
                 parent_values,
                 random_values=random_values,
                 parameter_values=merged_parameters,
+                trace=trace,
+                resolution=resolution,
+                frame=frame,
+                instance=instance,
             )
         return self._registry.evaluate(
             target,
             parent_values,
             random_values=random_values,
             parameter_values=merged_parameters,
+            trace=trace,
+            resolution=resolution,
+            frame=frame,
+            instance=instance,
         )
 
     def _parameter_overrides(

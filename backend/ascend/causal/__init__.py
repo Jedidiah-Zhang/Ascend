@@ -13,6 +13,7 @@ from .intervention import (
 )
 from .intervention_engine import InterventionEvaluator, InterventionFrameExecutor
 from .registry import MechanismRegistry
+from .trace import RandomAddress, TraceLog, TraceRecord
 from .spec import (
     AccessPolicy,
     DependencyWitness,
@@ -53,6 +54,9 @@ __all__ = [
     "NodeResolution",
     "InterventionEvaluator",
     "InterventionFrameExecutor",
+    "RandomAddress",
+    "TraceLog",
+    "TraceRecord",
     "FOREVER",
     "SINGLE",
     "WINDOW",

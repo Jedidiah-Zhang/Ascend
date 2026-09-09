@@ -133,15 +133,91 @@ def make_research_handler(
             },
         )
 
+    # ── 研究日志（P3）：与终端 trace 指令组同源同一实例 ──────────
+
+    def _trace_log():
+        """取挂载的研究日志；未挂载抛 ValueError（fail-closed）。"""
+        log = getattr(weather_engine, "trace", None) if weather_engine else None
+        if log is None:
+            raise ValueError("研究日志未挂载（缺少天气引擎或未开启）")
+        return log
+
+    def handle_trace_list(msg: dict) -> dict:
+        payload = msg.get("payload", {})
+        try:
+            log = _trace_log()
+            frame = _optional_int(payload, "frame")
+            node_id = payload.get("node_id")
+            if node_id is not None and not isinstance(node_id, str):
+                raise ValueError(f"node_id 必须为字符串: {node_id!r}")
+        except ValueError as exc:
+            return _fail("research_trace_list", str(exc))
+        records = log.records(frame=frame, node_id=node_id)
+        return make_response(
+            "research_trace_list",
+            {"success": True, "records": [r.plain() for r in records]},
+        )
+
+    def handle_trace_replay(msg: dict) -> dict:
+        payload = msg.get("payload", {})
+        try:
+            log = _trace_log()
+            frame = _optional_int(payload, "frame")
+            node_id = payload.get("node_id")
+            if not isinstance(node_id, str) or not node_id:
+                raise ValueError("research_trace_replay 需要 node_id")
+        except ValueError as exc:
+            return _fail("research_trace_replay", str(exc))
+        records = log.records(frame=frame, node_id=node_id)
+        if not records:
+            return _fail("research_trace_replay", f"无匹配记录: {node_id}")
+        entry = records[-1]
+        try:
+            replayed = log.replay(entry)
+        except (KeyError, ValueError) as exc:
+            return _fail("research_trace_replay", f"重算失败: {exc}")
+        return make_response(
+            "research_trace_replay",
+            {
+                "success": True,
+                "record": entry.plain(),
+                "replayed": replayed,
+                "consistent": replayed == entry.output,
+            },
+        )
+
+    def handle_trace_clear(_msg: dict) -> dict:
+        try:
+            log = _trace_log()
+        except ValueError as exc:
+            return _fail("research_trace_clear", str(exc))
+        return make_response(
+            "research_trace_clear",
+            {"success": True, "cleared": log.clear()},
+        )
+
     return {
         "research_do": handle_research_do,
         "research_do_clear": handle_research_do_clear,
         "research_do_list": handle_research_do_list,
+        "research_trace_list": handle_trace_list,
+        "research_trace_replay": handle_trace_replay,
+        "research_trace_clear": handle_trace_clear,
     }
 
 
 def _fail(request_type: str, error: str) -> dict:
     return make_response(request_type, {"success": False, "error": error})
+
+
+def _optional_int(payload: dict, key: str) -> int | None:
+    """解析可选整数字段；缺省 None，类型非法抛 ValueError。"""
+    raw = payload.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise ValueError(f"{key} 必须为整数: {raw!r}")
+    return raw
 
 
 def _as_instance(payload: dict) -> tuple:

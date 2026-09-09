@@ -30,6 +30,7 @@ from .entity_commands import EntityCommandsMixin
 from .intervention_commands import InterventionCommandsMixin
 from .result import CommandResult
 from .time_commands import TimeCommandsMixin
+from .trace_commands import TraceCommandsMixin
 from .weather_commands import WeatherCommandsMixin
 
 logger = get_logger(__name__)
@@ -73,6 +74,7 @@ class CommandExecutor(
     EntityCommandsMixin,
     ContinentCommandsMixin,
     InterventionCommandsMixin,
+    TraceCommandsMixin,
 ):
     """指令执行器。
 
@@ -133,6 +135,7 @@ class CommandExecutor(
             "continent": self._h_continent,
             "tp":        self._h_tp,
             "do":        self._h_do,
+            "trace":     self._h_trace,
             "lang":      self._h_lang,
             "events":    self._h_events,
             "?":         lambda a: CommandResult(success=True, output=self._cmd_help()),
