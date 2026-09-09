@@ -95,6 +95,10 @@ class Manifest:
     secrets_blob: 密钥混淆串（SaveKeys.protect 输出）。密钥不落盘为
         明文 key.json，而是加密后藏于此字段随档分发（混淆层，防直读；
         真实防线仍是 HMAC，见 crypto.py 威胁模型说明）。
+    mechanism_declaration: 世界设置中的机制声明版本（声明 ID + 全量摘要 +
+        观测协议版本，``MechanismRegistry.declaration_settings()``）；
+        None = 旧存档尚未记录（首次加载时补写）。读档前与当前注册表
+        比对，不一致拒绝加载（见 settings.validate_world_settings）。
     """
 
     name: str
@@ -111,6 +115,7 @@ class Manifest:
     # land_ratio（目标陆地比例 [0-1]）；未来新增群落/物种分布等。
     # 种子之外再生的不确定性来源，创建时定案，与 seed 同权重。
     gen_params: dict | None = None
+    mechanism_declaration: dict | None = None
 
     @property
     def dict(self) -> dict:
@@ -179,6 +184,11 @@ class Manifest:
                 Manifest._validate_gen_params(raw_gen_params)
                 if raw_gen_params else None
             )
+            raw_declaration = data.get("mechanism_declaration")
+            if raw_declaration is not None and not isinstance(
+                raw_declaration, dict,
+            ):
+                raise ValueError("mechanism_declaration 必须为对象")
             return Manifest(
                 name=str(data["name"]),
                 seed=int(data["seed"]),
@@ -191,6 +201,7 @@ class Manifest:
                 snapshot_count=int(data.get("snapshot_count", 0)),
                 secrets_blob=str(blob) if blob else None,
                 gen_params=gen_params,
+                mechanism_declaration=raw_declaration,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SaveFormatError(f"manifest 字段非法: {exc}") from exc

@@ -32,6 +32,11 @@ graph TD
         SNAP["equations.json → Lean<br/>研究快照（自动生成）"]
     end
 
+    subgraph Save["💾 存档（save/）"]
+        SM["SaveManager<br/>存档位·快照·血缘"]
+        SER["serializer / settings<br/>完整状态 W_t·世界设置校验"]
+    end
+
     subgraph Net["📡 网络模块"]
         SRV["GameServer<br/>TCP服务端"]
         DISP["MessageDispatcher<br/>消息路由"]
@@ -45,10 +50,15 @@ graph TD
     REG -->|"声明 + wired_nodes 可达性"| IVT
     IVT -->|"覆盖求值（evaluate_node）"| WEA
     REG -->|"export_registry.py 生成"| SNAP
+    IVT -->|"persist / restore（生效干预）"| SER
+    WEA -->|"persist_state / restore_state（注入核）"| SER
+    REG -->|"declaration_settings（世界设置比对）"| SER
+    SM --> SER
 
     GameEngine --> WorldTree
     GameEngine --> Time
     GameEngine --> Space
+    GameEngine --> Save
     GameEngine --> Net
 ```
 
@@ -273,6 +283,25 @@ classDiagram
         +add_active_time(dt)
     }
 
+    class SaveManager {
+        +create_world(name, seed, gen_params) Manifest
+        +write_state(world_id, state)
+        +read_state(world_id) dict
+        +create_snapshot(world_id, suffix) str
+        +enter_snapshot(snapshot, world_id) str
+    }
+
+    class Serializer {
+        +collect_state(clock, player, weather, archive_ts) dict
+        +apply_state(state, clock, player, weather, instance_loader) None
+        +require_state_version(state) int
+        +aligned_time(state) int
+    }
+
+    class WorldSettings {
+        +validate_world_settings(manifest, declaration) None
+    }
+
     GameEngine *-- WorldClock
     GameEngine *-- GameCalendar
     GameEngine *-- WorldGenerator
@@ -282,6 +311,7 @@ classDiagram
     GameEngine *-- GameServer
     GameEngine *-- MessageDispatcher
     GameEngine *-- CommandExecutor
+    GameEngine *-- SaveManager
 
     GameCalendar ..> WorldClock : 回调注入
     GameCalendar ..> WorldTree : 发布事件
@@ -291,4 +321,7 @@ classDiagram
     PlayerService ..> EntityManager : 实体生灭/移动
     PlayerService ..> WorldTree : player_teleported
     MessageDispatcher ..> GameServer : 收发消息
+    SaveManager ..> Serializer : 状态载荷
+    Serializer ..> WeatherEngine : persist_state / restore_state
+    Serializer ..> WorldSettings : 读档前声明比对
 ```

@@ -6,7 +6,11 @@
 
 生成：空间块（FEATURE_BLOCK_SIZE）内按段（1 游戏年）确定性派生——
 核属性全部由 (块坐标, 段索引) 派生的 RNG 决定，任意 (x, y, t) 可重算，
-解析量不存（存档只存 seed + 时钟）。
+自然核不落盘（存档只存 seed + 时钟 + 注入核）。
+
+例外：**注入核**（干预执行器 / 调试强制控制）不是解析量——它由研究者
+施加、无法由 seed 重算，因此随完整世界状态 W_t 落盘
+（``persist_injected`` / ``restore_injected``）。
 
 气候带判定：低频气候代理场（ClimateProxy，纯噪声近似），
 特征频率统计在统计层面正确，个别位置偏差可接受（文档注记）。
@@ -224,6 +228,23 @@ def _block_of(x: float, y: float) -> tuple[int, int]:
     """世界坐标 → 空间块坐标（floor 语义，负坐标正确）。"""
     return (math.floor(x / FEATURE_BLOCK_SIZE),
             math.floor(y / FEATURE_BLOCK_SIZE))
+
+
+def _require_int(value: object, label: str, *, minimum: int) -> int:
+    """整数且 ≥ minimum，否则 ValueError（存档载荷校验用）。"""
+    if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+        raise ValueError(f"注入核 {label} 必须为 ≥ {minimum} 的整数: {value!r}")
+    return value
+
+
+def _require_finite(value: object, label: str) -> float:
+    """有限数值，否则 ValueError（NaN 恒 False 的比较会绕过范围校验）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"注入核 {label} 必须为数值: {value!r}")
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError(f"注入核 {label} 必须为有限值: {value!r}")
+    return result
 
 
 def _segment_seed(world_seed: int, bx: int, by: int, seg_idx: int) -> int:
@@ -491,7 +512,8 @@ class FeatureField:
     ) -> FeatureCore:
         """注入一个特征核（终端调试指令用，与自然核同代码路径）。
 
-        注入核是运行时状态（非解析量，存档序列化不保存）；
+        注入核是运行时状态（非解析量，由研究者施加），随完整世界状态
+        W_t 落盘（``persist_injected`` / ``restore_injected``）；
         同 (cx, cy, type_name) 重复注入覆盖旧核。
 
         Args:
@@ -556,6 +578,121 @@ class FeatureField:
         """
         with self._lock:
             return self._injected.get((cx, cy, type_name))
+
+    # ── 注入核持久化（P4 完整存档：W_t 的不可重算部分）────────
+
+    def persist_injected(self) -> list[dict[str, object]]:
+        """注入核的确定性列表（存档载荷，按 chunk 坐标 + 类型排序）。
+
+        自然核时间线不落盘（由 seed 派生可重算）；注入核由研究者施加，
+        是 W_t 中必须携带的运行时状态。
+        """
+        with self._lock:
+            items = sorted(
+                self._injected.items(),
+                key=lambda item: (item[0][0], item[0][1], item[0][2]),
+            )
+            return [self._core_plain(cx, cy, core) for (cx, cy, _), core in items]
+
+    def restore_injected(self, payload) -> int:
+        """从存档载荷恢复注入核（读档路径，fail-closed）。
+
+        校验全部字段后**整体替换**现有注入核集合——存档是唯一事实源，
+        不把旧世界的残留核与新核混在一起。任一条非法即拒绝，不留半成品。
+
+        Args:
+            payload: ``persist_injected`` 输出的列表。
+
+        Returns:
+            实际恢复的核数。
+
+        Raises:
+            ValueError: 载荷非列表、字段缺失/多余/类型非法、类型未注册、
+                坐标非整数或 ``core_id`` 与身份不符。
+        """
+        if not isinstance(payload, (list, tuple)):
+            raise ValueError(f"注入核载荷必须为列表: {type(payload).__name__}")
+        restored: dict[tuple[int, int, str], FeatureCore] = {}
+        for item in payload:
+            key, core = self._core_from_plain(item)
+            if key in restored:
+                raise ValueError(f"注入核载荷含重复键: {key}")
+            restored[key] = core
+        with self._lock:
+            self._injected.clear()
+            self._injected.update(restored)
+        return len(restored)
+
+    @staticmethod
+    def _core_plain(cx: int, cy: int, core: FeatureCore) -> dict[str, object]:
+        """注入核 → 可序列化视图（坐标 + 全部核字段）。"""
+        return {
+            "chunk": [cx, cy],
+            "core_id": core.core_id,
+            "type_name": core.type_name,
+            "born_tick": core.born_tick,
+            "duration": core.duration,
+            "center_x": core.center_x,
+            "center_y": core.center_y,
+            "radius": core.radius,
+            "magnitude": core.magnitude,
+            "vel_x": core.vel_x,
+            "vel_y": core.vel_y,
+        }
+
+    @staticmethod
+    def _core_from_plain(item: object) -> tuple[tuple[int, int, str], FeatureCore]:
+        """存档视图 → 注入核（字段校验全部 fail-closed）。"""
+        if not isinstance(item, Mapping):
+            raise ValueError(f"注入核记录必须为映射: {item!r}")
+        known = {
+            "chunk", "core_id", "type_name", "born_tick", "duration",
+            "center_x", "center_y", "radius", "magnitude", "vel_x", "vel_y",
+        }
+        extra = sorted(set(item) - known)
+        if extra:
+            raise ValueError(f"注入核记录含未知字段: {extra}")
+        missing = sorted(known - set(item))
+        if missing:
+            raise ValueError(f"注入核记录缺少字段: {missing}")
+        chunk = item["chunk"]
+        if (
+            not isinstance(chunk, (list, tuple))
+            or len(chunk) != 2
+            or not all(
+                isinstance(axis, int) and not isinstance(axis, bool)
+                for axis in chunk
+            )
+        ):
+            raise ValueError(f"注入核 chunk 必须为整数 (cx, cy): {chunk!r}")
+        cx, cy = int(chunk[0]), int(chunk[1])
+        type_name = item["type_name"]
+        if type_name not in FEATURE_TYPES:
+            raise ValueError(f"注入核类型未注册: {type_name!r}")
+        core_id = item["core_id"]
+        expected_id = f"inj:{cx}:{cy}:{type_name}"
+        if core_id != expected_id:
+            raise ValueError(
+                f"注入核 core_id 与身份不符: {core_id!r} != {expected_id!r}"
+            )
+        born_tick = _require_int(item["born_tick"], "born_tick", minimum=0)
+        duration = item["duration"]
+        if duration is not None:
+            duration = _require_int(duration, "duration", minimum=1)
+        core = FeatureCore(
+            core_id=expected_id,
+            type_name=type_name,
+            born_tick=born_tick,
+            duration=duration,
+            center_x=_require_finite(item["center_x"], "center_x"),
+            center_y=_require_finite(item["center_y"], "center_y"),
+            radius=_require_finite(item["radius"], "radius"),
+            magnitude=_require_finite(item["magnitude"], "magnitude"),
+            vel_x=_require_finite(item["vel_x"], "vel_x"),
+            vel_y=_require_finite(item["vel_y"], "vel_y"),
+            no_ramp=True,
+        )
+        return (cx, cy, type_name), core
 
     def _active_injected(self, t: int) -> list[FeatureCore]:
         """活跃注入核（按出生 tick 升序，供查询侧合并）。"""

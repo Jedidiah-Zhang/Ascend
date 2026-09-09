@@ -108,6 +108,14 @@ evaluation points. When adding an intervenable component, keep
 (`WeatherEngine.evaluate_node`), or the drift gate in
 `tests/unit/test_intervention_wiring.py` will fail.
 
+**Complete save** (P4, `docs/研究理论/世界基座/09-完整存档.md`): when adding runtime
+state that cannot be recomputed from the world settings (researcher-applied quantities,
+markers that evolve with the mechanisms), update the `state.json.enc` payload and the
+restore path (`save/serializer.py` plus the subsystem's `persist_*` / `restore_*`) and
+add the W4 dual-run equality assertion. Recomputable analytic quantities must **not** be
+persisted. Bump `STATE_VERSION` when the payload format changes — old saves become
+unreadable by design; no migration is written.
+
 ## Commit Conventions
 
 Follow the [Conventional Commits](https://www.conventionalcommits.org/) spec and write your commit descriptions in Chinese.

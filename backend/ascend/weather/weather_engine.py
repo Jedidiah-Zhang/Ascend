@@ -18,6 +18,7 @@
 import math
 import threading
 from dataclasses import dataclass
+from typing import Mapping
 
 from ascend.config import (GAME_DAY, GAME_HOUR, TILE_MAP_SIZE)
 from ascend.causal import InterventionEvaluator, InterventionRecord, InterventionTable
@@ -151,6 +152,50 @@ class WeatherEngine:
     def field(self) -> UnifiedWeatherField:
         """统一天气场（调试/测试访问）。"""
         return self._field
+
+    @property
+    def intervention_table(self) -> InterventionTable:
+        """挂载的干预表（存档/研究 API 共用同一实例；未挂载时惰性自建）。"""
+        _, table = self._intervention()
+        return table
+
+    # ── 完整世界状态（P4）：不可重算部分 ────────────────────────
+
+    def persist_state(self) -> dict:
+        """天气侧 W_t 载荷：生效干预记录 + 注入特征核。
+
+        可重算量（统一天气场、气候代理、自然核时间线、区域跟踪器、
+        chunk 基线）一律不落盘——它们由 seed + 时钟 + 声明重建，
+        漏存它们不会改变轨迹，多存它们则掩盖"状态充分性"的真问题。
+        """
+        return {
+            "interventions": self.intervention_table.persist(),
+            "feature_cores": self._field.features.persist_injected(),
+        }
+
+    def restore_state(self, payload, *, instance_loader=None) -> None:
+        """从存档载荷恢复天气侧 W_t（fail-closed）。
+
+        干预记录逐条重走登记校验（``InterventionTable.restore``），
+        注入核逐条校验字段与身份（``FeatureField.restore_injected``）；
+        任一条非法即抛 ValueError，不留下半成品状态。
+
+        Args:
+            payload: ``persist_state`` 输出的载荷。
+            instance_loader: 可选实例装载器（读档时把被 LRU 淘汰的
+                目标 chunk 拉回来再校验），见 ``InterventionTable.restore``。
+        """
+        if not isinstance(payload, Mapping):
+            raise ValueError(
+                f"天气状态载荷必须为映射: {type(payload).__name__}"
+            )
+        self.intervention_table.restore(
+            payload.get("interventions") or [],
+            instance_loader=instance_loader,
+        )
+        self._field.features.restore_injected(
+            payload.get("feature_cores") or []
+        )
 
     def __repr__(self) -> str:
         return (
@@ -691,7 +736,7 @@ class WeatherEngine:
 
         干预执行器接线：强制控制先登记 field_feature 干预（目标/实例/
         生效帧校验 + 历史），再执行特征核注入/移除（运行时状态桥接，
-        P4 完整存档时随 W_t 序列化）。注入核与自然核同代码路径——
+        随 W_t 序列化，见 ``persist_state``）。注入核与自然核同代码路径——
         查询与事件都走场合成，无特判。
         {type}_start/stop 事件由下一次 minute_change 的核身份
         差异跟踪自动发布。

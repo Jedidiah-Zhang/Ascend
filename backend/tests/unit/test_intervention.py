@@ -525,6 +525,203 @@ class TestInterventionTableBasics:
         assert build().snapshot() == build().snapshot()
 
 
+# ── 持久化（P4 完整存档：干预表随 W_t 落盘）──────────────────
+
+class TestPersistRestore:
+    """persist/restore 往返与 fail-closed（存档不是绕过校验的后门）。"""
+
+    @staticmethod
+    def _registry(spatial: bool = False) -> MechanismRegistry:
+        """单节点注册表（替换机制必须是已登记机制，见下）。
+
+        生产不变式：机制替换的替换机制经 ``registry.mechanisms`` 解析，
+        因此存档只存机制 ID。本测试用"机制替换为恒等替换（同一 spec）"
+        构造——与生产 ``do mech`` 的现状一致（单写者约束下只能恒等替换）。
+
+        Args:
+            spatial: True = chunk 实例域（实例存在性校验路径）；
+                False = 全局单例（不校验实例存在性）。
+        """
+        nodes = (_global_node("x", microstep=_S1, bounds=(0.0, 300.0),
+                              spatial=spatial),)
+        return MechanismRegistry(
+            schema_version=3,
+            declaration_id="research.persist",
+            declaration_version="1",
+            microstep_order=_W2_STEPS,
+            slice_boundary="研究切片世界（持久化构造）",
+            wired_nodes=frozenset({"x"}),
+            nodes=nodes,
+            parameters=(),
+            exogenous_sources=(),
+            mechanisms=(
+                _mech(
+                    "w2.inc", "x", lambda x_prev: x_prev + 1,
+                    parents=(_parent("x", "x_prev", lag=1),),
+                    witnesses=(_witness("x", (("x", 1.0),), 2.0, (2.0, 3.0)),),
+                ),
+            ),
+        )
+
+    def _table(self, *, spatial: bool = False) -> InterventionTable:
+        registry = self._registry(spatial=spatial)
+        table = InterventionTable(registry, now=lambda: 100)
+        instance = (2, 3) if spatial else ()
+        table.commit(InterventionRecord(
+            target_space="node", target="x", instance=instance,
+            rep="value", value=10.0, frame_t0=1, duration=1,
+        ))
+        table.commit(InterventionRecord(
+            target_space="node", target="x", instance=instance,
+            rep="mechanism", mechanism=registry.mechanisms["w2.inc"],
+            frame_t0=2,
+        ))
+        return table
+
+    def test_round_trip_preserves_active_records_and_provenance(self):
+        source = self._table()
+        payload = source.persist()
+        target = InterventionTable(self._registry(), now=lambda: 999)
+        assert target.restore(payload) == 2
+        assert target.persist() == payload
+        assert target.snapshot() == source.snapshot()
+        assert target.history_plain() == source.history_plain()
+        # 登记时刻不被读档时刻改写
+        assert [rec.applied_at for rec in target.history] == [100, 100]
+        # 替换机制从注册表解析（不是存档里塞进来的对象）
+        assert target.resolve_node("x", (), 2).mechanism.mechanism_id == "w2.inc"
+
+    def test_persist_is_json_safe(self):
+        import json
+        payload = self._table().persist()
+        assert json.loads(json.dumps(payload)) == payload
+
+    def test_persist_keeps_only_active_records(self):
+        """被覆盖的历史不落盘（生效状态才是 W_t）。"""
+        table = InterventionTable(self._registry(), now=lambda: 0)
+        table.commit(InterventionRecord(
+            target_space="node", target="x", rep="value",
+            value=10.0, frame_t0=1, duration=1,
+        ))
+        table.commit(InterventionRecord(
+            target_space="node", target="x", rep="value",
+            value=20.0, frame_t0=1, duration=1,
+        ))
+        payload = table.persist()
+        assert len(payload) == 1 and payload[0]["value"] == 20.0
+        assert len(table.history) == 2, "历史仍在（研究溯源）"
+
+    def test_restore_rejects_unknown_field(self):
+        payload = self._table().persist()
+        payload[0]["ghost"] = 1
+        with pytest.raises(ValueError, match="未知字段"):
+            InterventionTable(self._registry()).restore(payload)
+
+    def test_restore_rejects_missing_field(self):
+        payload = self._table().persist()
+        del payload[0]["applied_at"]
+        with pytest.raises(ValueError, match="缺少字段"):
+            InterventionTable(self._registry()).restore(payload)
+
+    def test_restore_rejects_unwired_target(self):
+        """未接线目标的记录不得经存档复活（登记校验必然重跑）。"""
+        payload = self._table().persist()
+        payload[0]["target"] = "not_wired"
+        with pytest.raises(ValueError, match="未声明"):
+            InterventionTable(self._registry()).restore(payload)
+
+    def test_restore_rejects_unknown_mechanism(self):
+        payload = self._table().persist()
+        payload[1]["mechanism"] = "no.such.mechanism"
+        with pytest.raises(ValueError, match="未登记"):
+            InterventionTable(self._registry()).restore(payload)
+
+    def test_restore_rejects_out_of_domain_value(self):
+        payload = self._table().persist()
+        payload[0]["value"] = 1e12
+        with pytest.raises(ValueError, match="超出声明值域"):
+            InterventionTable(self._registry()).restore(payload)
+
+    def test_restore_rejects_bad_seq_and_applied_at(self):
+        payload = self._table().persist()
+        bad_seq = [dict(record) for record in payload]
+        bad_seq[0]["seq"] = 0
+        with pytest.raises(ValueError, match="seq"):
+            InterventionTable(self._registry()).restore(bad_seq)
+        bad_time = [dict(record) for record in payload]
+        bad_time[0]["applied_at"] = -1
+        with pytest.raises(ValueError, match="applied_at"):
+            InterventionTable(self._registry()).restore(bad_time)
+
+    def test_restore_is_all_or_nothing(self):
+        """任一记录非法 → 整体拒绝，合法记录也不落表。"""
+        payload = self._table().persist()
+        payload.append({"target_space": "node"})
+        table = InterventionTable(self._registry())
+        with pytest.raises(ValueError):
+            table.restore(payload)
+        assert table.persist() == []
+        assert table.history == ()
+
+    def test_restore_non_list_rejected(self):
+        with pytest.raises(ValueError, match="列表"):
+            InterventionTable(self._registry()).restore({"a": 1})
+
+    def test_restore_empty_payload_is_noop(self):
+        table = self._table()
+        before = table.persist()
+        assert table.restore([]) == 0
+        assert table.persist() == before
+
+    def test_restore_loader_materializes_missing_instance(self):
+        """读档装载器：目标实例被淘汰时先拉回来再校验（生产读档路径）。"""
+        payload = self._table(spatial=True).persist()
+        loaded: list[tuple] = []
+        # 实例存在性查询恒 False（模拟目标 chunk 被 LRU 淘汰）
+        table = InterventionTable(
+            self._registry(spatial=True),
+            instance_exists=lambda _node, _instance: False,
+        )
+
+        def loader(node_id: str, instance: tuple) -> bool:
+            loaded.append((node_id, instance))
+            return True
+
+        assert table.restore(payload, instance_loader=loader) == 2
+        assert loaded == [("x", (2, 3)), ("x", (2, 3))], \
+            "每条记录各自尝试装载目标实例（不去重，语义直白）"
+
+    def test_restore_loader_failure_still_rejects(self):
+        """装载器也拉不回来 → 仍然 fail-closed 拒绝。"""
+        payload = self._table(spatial=True).persist()
+        table = InterventionTable(
+            self._registry(spatial=True),
+            instance_exists=lambda _node, _instance: False,
+        )
+        with pytest.raises(ValueError, match="实例不存在"):
+            table.restore(payload, instance_loader=lambda _n, _i: False)
+        assert table.persist() == [], "拒绝时不得留下半成品"
+
+    def test_runtime_commit_does_not_use_loader(self):
+        """装载器只在 restore 期间生效：运行期登记不做隐式加载。"""
+        payload = self._table(spatial=True).persist()
+        calls: list[tuple] = []
+        table = InterventionTable(
+            self._registry(spatial=True),
+            instance_exists=lambda _node, _instance: False,
+        )
+        table.restore(
+            payload, instance_loader=lambda n, i: calls.append((n, i)) or True,
+        )
+        calls.clear()
+        with pytest.raises(ValueError, match="实例不存在"):
+            table.commit(InterventionRecord(
+                target_space="node", target="x", instance=(2, 3),
+                rep="value", value=1.0, frame_t0=0, duration=1,
+            ))
+        assert calls == [], "运行期不触发装载（无隐式加载）"
+
+
 # ── 执行前校验（§7 六条）────────────────────────────────────
 
 class TestValidation:

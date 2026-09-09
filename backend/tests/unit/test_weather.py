@@ -704,6 +704,98 @@ class TestFeatureField:
             f.inject_core(0, 0, "tornado", center_x=0.0, center_y=0.0,
                           radius=100.0, born_tick=0, duration=100)
 
+    # ── 注入核持久化（P4：W_t 的不可重算部分）──────────────────
+
+    def test_injected_cores_round_trip(self):
+        """persist_injected → restore_injected 逐字段一致。"""
+        from ascend.weather.features import FeatureField
+        source = FeatureField(seed=42)
+        source.inject_core(0, 0, "storm", center_x=100.0, center_y=200.0,
+                           radius=500.0, born_tick=10, duration=None)
+        source.inject_core(1, 2, "front", center_x=1.0, center_y=2.0,
+                           radius=300.0, born_tick=20, duration=50,
+                           vel_x=0.5, vel_y=0.3)
+        payload = source.persist_injected()
+
+        target = FeatureField(seed=42)
+        assert target.restore_injected(payload) == 2
+        assert target.persist_injected() == payload
+        core = target.get_injected(0, 0, "storm")
+        assert core.no_ramp is True and core.duration is None
+        assert target.get_injected(1, 2, "front").vel_x == 0.5
+
+    def test_restore_injected_replaces_existing_set(self):
+        """恢复是整体替换：残留注入核不得存活（存档是唯一事实源）。"""
+        from ascend.weather.features import FeatureField
+        source = FeatureField(seed=42)
+        source.inject_core(0, 0, "storm", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=0, duration=None)
+        target = FeatureField(seed=42)
+        target.inject_core(1, 1, "cold_snap", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=0, duration=None)
+        target.restore_injected(source.persist_injected())
+        assert target.get_injected(0, 0, "storm") is not None
+        assert target.get_injected(1, 1, "cold_snap") is None
+
+    @pytest.mark.parametrize("field_name,value", [
+        ("core_id", "inj:9:9:storm"),
+        ("type_name", "tsunami"),
+        ("chunk", [0, 0, 0]),
+        ("born_tick", -1),
+        ("duration", 0),
+        ("radius", float("nan")),
+        ("magnitude", float("inf")),
+    ])
+    def test_restore_injected_rejects_bad_field(self, field_name, value):
+        from ascend.weather.features import FeatureField
+        source = FeatureField(seed=42)
+        source.inject_core(0, 0, "storm", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=5, duration=None)
+        payload = source.persist_injected()
+        payload[0][field_name] = value
+        with pytest.raises(ValueError):
+            FeatureField(seed=42).restore_injected(payload)
+
+    def test_restore_injected_rejects_unknown_field(self):
+        from ascend.weather.features import FeatureField
+        source = FeatureField(seed=42)
+        source.inject_core(0, 0, "storm", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=5, duration=None)
+        payload = source.persist_injected()
+        payload[0]["ghost"] = 1
+        with pytest.raises(ValueError, match="未知字段"):
+            FeatureField(seed=42).restore_injected(payload)
+
+    def test_restore_injected_rejects_non_list(self):
+        from ascend.weather.features import FeatureField
+        with pytest.raises(ValueError, match="列表"):
+            FeatureField(seed=42).restore_injected({"a": 1})
+
+    def test_restore_injected_is_all_or_nothing(self):
+        """任一核非法 → 整体拒绝，已有注入核不被清空。"""
+        from ascend.weather.features import FeatureField
+        source = FeatureField(seed=42)
+        source.inject_core(0, 0, "storm", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=5, duration=None)
+        payload = source.persist_injected()
+        payload.append({"chunk": [1, 1]})       # 缺字段
+        target = FeatureField(seed=42)
+        target.inject_core(2, 2, "front", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=0, duration=None)
+        with pytest.raises(ValueError):
+            target.restore_injected(payload)
+        assert target.get_injected(2, 2, "front") is not None, \
+            "拒绝时必须保持原状，不留半成品"
+
+    def test_persist_injected_is_json_safe(self):
+        import json
+        from ascend.weather.features import FeatureField
+        f = FeatureField(seed=42)
+        f.inject_core(0, 0, "storm", center_x=1.0, center_y=2.0,
+                      radius=100.0, born_tick=5, duration=None)
+        payload = f.persist_injected()
+        assert json.loads(json.dumps(payload)) == payload
+
     def test_front_has_no_event_classes(self):
         """锋面是纯降水带（带形），无 start/stop 事件类。"""
         from ascend.weather.features import FEATURE_TYPES, T_FRONT

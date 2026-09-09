@@ -8,8 +8,15 @@ from .crypto import SaveKeys, SaveCryptoError
 from .manifest import Manifest, SaveFormatError, MANIFEST_NAME
 from .manager import SaveManager
 from .serializer import (
-    collect_state, apply_state, apply_clock, apply_player, aligned_time,
+    STATE_VERSION,
+    aligned_time,
+    apply_clock,
+    apply_player,
+    apply_state,
+    collect_state,
+    require_state_version,
 )
+from .settings import validate_world_settings
 
 __all__ = [
     "SaveKeys",
@@ -18,9 +25,12 @@ __all__ = [
     "SaveFormatError",
     "MANIFEST_NAME",
     "SaveManager",
+    "STATE_VERSION",
     "collect_state",
     "apply_state",
     "apply_clock",
     "apply_player",
     "aligned_time",
+    "require_state_version",
+    "validate_world_settings",
 ]

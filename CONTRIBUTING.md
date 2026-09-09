@@ -106,6 +106,12 @@ GUT 不随仓库分发（`frontend/addons/gut` 只需在本地安装），因此
 `causal/world.py::WIRED_NODES` 与实际求值点（`WeatherEngine.evaluate_node`），
 否则 `tests/unit/test_intervention_wiring.py` 的漂移巡检会失败。
 
+**完整存档**（P4，docs/研究理论/世界基座/09-完整存档.md）：新增"无法由世界
+设置重算"的运行时状态（研究者施加的量、随机制演化的标记）时，必须同步
+`state.json.enc` 载荷与恢复路径（`save/serializer.py` + 该子系统的
+`persist_*` / `restore_*`），并补 W4 双跑一致断言；可重算的解析量**不得**
+落盘。改动状态载荷格式时递增 `STATE_VERSION`（旧档即不可读，不写迁移）。
+
 ## 提交约定
 
 请遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范，并使用中文撰写提交描述。

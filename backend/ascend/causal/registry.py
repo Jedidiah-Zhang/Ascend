@@ -171,6 +171,12 @@ class MechanismRegistry:
 
     构造完成后所有属性只读：修改节点/参数/机制表会触发
     AttributeError，映射与规范数据类自身也不可变。
+
+    Attributes:
+        declaration_hash: 声明全量摘要（= ``snapshot()["declaration"]["hash"]``），
+            存档 manifest 记录它，读档时比对（不一致拒绝加载）。
+        observation_protocol_version: 全部节点观测协议集合的摘要（P4 世界
+            设置的一部分；当前无观测主体，仅作版本声明与漂移检测）。
     """
 
     def __init__(
@@ -236,6 +242,19 @@ class MechanismRegistry:
         c1_issues = self._c1_issues()
         if c1_issues:
             raise ValueError("C1 结构最小性失败: " + "; ".join(c1_issues))
+
+        # 世界设置的全量版本信息（存档 manifest 与状态文件的比对基准）。
+        # declaration_hash 与 snapshot()["declaration"]["hash"] 同源同值：
+        # 快照由同一 _digest 计算，二者不会漂移（有测试锁定）。
+        self.declaration_hash = self.snapshot()["declaration"]["hash"]
+        protocols = sorted({
+            protocol
+            for node in node_map.values()
+            for protocol in node.access.observation_protocols
+        })
+        self.observation_protocol_version = _digest({
+            "protocols": protocols,
+        })
         object.__setattr__(self, "_frozen", True)
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -349,6 +368,19 @@ class MechanismRegistry:
             mechanism.output,
         )
         return output
+
+    def declaration_settings(self) -> dict[str, str]:
+        """世界设置视图：声明 ID + 声明摘要 + 观测协议版本。
+
+        存档 manifest 记录本视图，读档时与之比对（``save/settings.py``）。
+        声明视图刻意不含节点/机制明细——摘要已经覆盖全部声明内容，
+        存档层不需要认识注册表内部结构。
+        """
+        return {
+            "declaration_id": self.declaration_id,
+            "declaration_hash": self.declaration_hash,
+            "observation_protocol_version": self.observation_protocol_version,
+        }
 
     def require_node_value(self, node_id: str, value: object) -> None:
         """校验值属于目标节点声明值域（fail-closed，供干预执行器复用）。"""
