@@ -106,6 +106,10 @@ GUT 不随仓库分发（`frontend/addons/gut` 只需在本地安装），因此
 `causal/world.py::WIRED_NODES` 与实际求值点（`WeatherEngine.evaluate_node`），
 否则 `tests/unit/test_intervention_wiring.py` 的漂移巡检会失败。
 
+**验收 runner**（P5，docs/研究理论/世界基座/11-验收runner.md）：改声明/引擎后跑
+`.venv/bin/python research/acceptance/run_acceptance.py`（C0–C2/W0–W5/I0–I1，任一
+判据失败即红）；改声明后还需 `run_acceptance.py --check` 巡检 Lean UnrolledDag 实例。
+
 **研究 trace**（P3，docs/研究理论/世界基座/10-研究trace.md）：研究日志与玩法
 事件分库——新增节点/机制自动被记录；**不要把 trace 字段写进事件载荷**（有门禁
 测试）；求值点必须经 `InterventionEvaluator`（直接调 `registry.evaluate`

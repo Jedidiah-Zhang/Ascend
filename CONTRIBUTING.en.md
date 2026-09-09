@@ -108,6 +108,11 @@ evaluation points. When adding an intervenable component, keep
 (`WeatherEngine.evaluate_node`), or the drift gate in
 `tests/unit/test_intervention_wiring.py` will fail.
 
+**Acceptance runner** (P5, `docs/研究理论/世界基座/11-验收runner.md`): after changing a
+declaration or engine path, run `.venv/bin/python research/acceptance/run_acceptance.py`
+(C0–C2/W0–W5/I0–I1; any failing criterion turns CI red). After changing a declaration, also
+run `run_acceptance.py --check` to detect Lean UnrolledDag instance drift.
+
 **Research trace** (P3, `docs/研究理论/世界基座/10-研究trace.md`): the research log and
 gameplay events live in separate stores — new nodes/mechanisms are recorded automatically;
 never put trace fields into event payloads (a gate test enforces this); evaluation points

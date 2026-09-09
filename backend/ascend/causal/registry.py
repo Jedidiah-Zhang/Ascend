@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 _NODE_ROLES = {"mechanism_state", "persistent_state", "readout"}
 _NODE_ORIGINS = {"slice_boundary", "mechanism"}
-_VALUE_KINDS = {"float", "integer", "enum", "boolean", "string"}
+_VALUE_KINDS = {"float", "integer", "enum", "boolean", "string", "tuple"}
 # C1 见证评估的占位随机值（"其余一切不变"含随机源；见证只验证父依赖）
 _WITNESS_RANDOM_VALUE = 0.5
 _INTERVENTIONS = {"node", "persistent", "mechanism"}
@@ -448,7 +448,22 @@ class MechanismRegistry:
         effective_parameters: dict[str, object] = {}
         for parent in mechanism.parents:
             value = parent_values[parent.parent]
-            self._require_value(self.nodes[parent.parent].value, value, parent.parent)
+            if len(parent.spatial_offsets) <= 1:
+                # 单偏移（或未声明偏移）：父值就是该分量在该实例的取值，
+                # 按声明值域校验
+                self._require_value(
+                    self.nodes[parent.parent].value, value, parent.parent,
+                )
+            else:
+                # 多偏移（空间父模板）：父值是各偏移处的分量取值元组，
+                # 值域描述的是**每格**取值，不校验聚合元组
+                if not isinstance(value, tuple) or len(value) != len(
+                    parent.spatial_offsets
+                ):
+                    raise ValueError(
+                        f"{parent.parent} 空间父模板需要 "
+                        f"{len(parent.spatial_offsets)} 元组值: {value!r}"
+                    )
             kwargs[parent.argument] = value
         for binding in mechanism.parameters:
             parameter = self.parameters[binding.parameter]
@@ -724,7 +739,12 @@ class MechanismRegistry:
             seen_parents: set[str] = set()
             for parent in mechanism.parents:
                 if parent.parent in seen_parents:
-                    issues.append(f"{mechanism_id}: 重复父模板 {parent.parent}")
+                    issues.append(
+                        f"{mechanism_id}: 重复父模板 {parent.parent}"
+                        f"（同一父的多个空间偏移写在同一父引用的 "
+                        f"spatial_offsets 里）"
+                    )
+                seen_parents.add(parent.parent)
                 seen_parents.add(parent.parent)
                 if parent.parent not in self.nodes:
                     issues.append(f"{mechanism_id}: 父节点未声明 {parent.parent}")
@@ -902,7 +922,7 @@ class MechanismRegistry:
             issues.append(f"{node_id}: enum choices 不能为空")
         if spec.kind != "enum" and spec.choices:
             issues.append(f"{node_id}: 非 enum 不应声明 choices")
-        if spec.kind in ("enum", "boolean", "string") and spec.bounds is not None:
+        if spec.kind in ("enum", "boolean", "string", "tuple") and spec.bounds is not None:
             issues.append(f"{node_id}: 非数值类型不应声明 bounds")
         return issues
 
@@ -1038,6 +1058,8 @@ class MechanismRegistry:
             "enum": value in spec.choices,
             "boolean": isinstance(value, bool),
             "string": isinstance(value, str),
+            # 空间聚合：同一父引用按多个空间偏移取到的值元组
+            "tuple": isinstance(value, tuple),
         }.get(spec.kind, False)
         if not valid_type:
             raise ValueError(f"{label}={value!r} 不属于声明值域 {spec.kind}")
