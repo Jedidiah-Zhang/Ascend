@@ -52,6 +52,7 @@ from ascend.net import GameServer, MessageDispatcher, EventBridge
 from ascend.net.protocol import make_response
 from ascend.net.handlers.map_handler import make_map_handlers
 from ascend.net.handlers.terminal_handler import make_terminal_handler
+from ascend.net.handlers.research_handler import make_research_handler
 from ascend.net.handlers.weather_handler import make_weather_handler
 from ascend.net.handlers.player_handler import make_player_handler
 from ascend.net.handlers.entity_handler import make_entity_handlers
@@ -74,7 +75,8 @@ from ascend.lifecycle import LifecycleStack
 from ascend.world_tree import world_tree, Event, AffectedParty, WorldEvent
 from ascend.fate import derive
 from ascend.save import (
-    SaveManager, collect_state, aligned_time, apply_clock, apply_player,
+    SaveManager, collect_state, aligned_time, apply_clock, apply_state,
+    require_state_version, validate_world_settings,
 )
 from ascend.save.manifest import SEED_MAX, seed_to_hex
 
@@ -320,13 +322,26 @@ class GameEngine:
             self._manifest = manifest
             self.world_id = world_id
             self.seed = manifest.seed
+            # 世界设置校验（fail-closed，先于昂贵的世界生成）：
+            # 声明版本不一致 = 这个世界的生成规律已经变了，用新公式
+            # 继续跑旧状态会得到"合法但不属于任何已声明世界"的轨迹。
+            from ascend.causal.world import ASCEND_MECHANISMS
+            validate_world_settings(
+                manifest, ASCEND_MECHANISMS.declaration_settings(),
+            )
             # state 文件存在才读档恢复；新世界首次进入尚无 state
             if os.path.isfile(self.save_manager.state_path(world_id)):
                 self._load_state = self.save_manager.read_state(world_id)
+                # 状态格式版本校验（无向后兼容：旧格式拒绝加载）
+                require_state_version(self._load_state)
         else:
             self.world_id = None
 
-        # 0b. 读档恢复时钟（须先于日历创建，避免虚假 day_change 事件）
+        # 0b. 读档时钟对齐 + 恢复（须先于日历创建与 chunk 注册）。
+        #     时钟必须在 chunk 服务注册（5c → on_tiles_ready → _now_day）
+        #     之前就位，否则地形状态结算会以 day 1 为"当前日"，把已结算
+        #     历史重放一遍并把 settled_day 回退。完整状态（玩家/干预表/
+        #     注入核）仍在天气引擎就绪后统一恢复，见 5d。
         if self._load_state is not None:
             self._load_state.setdefault("clock", {})["time"] = aligned_time(self._load_state)
             apply_clock(self._load_state, self.clock)
@@ -419,17 +434,30 @@ class GameEngine:
             ),
         )
         self._world_stack.push(self._unset("player_service"))
-        player_state = (
-            self._load_state.get("player", {}) if self._load_state else {}
-        )
-        if player_state.get("entity_id"):
-            apply_player(self._load_state, self.player_service)
+        if self._load_state is not None:
+            player_state = self._load_state.get("player") or {}
+            if not player_state.get("entity_id"):
+                self.player_service.birth()
         else:
             self.player_service.birth()
         logger.info("玩家实体就绪: %r", self.player_service)
 
         # 5b. 天气引擎（接入已加载 chunk 的天气基线）
-        self.weather_engine = WeatherEngine(self.clock, seed=self.seed)
+        # 干预执行器挂载点：单一干预表注入引擎/终端/研究 API（同源）；
+        # 表自带时钟（applied_at 盖章 / 缺省帧）与实例存在性查询。
+        from ascend.causal import InterventionTable
+        from ascend.causal.world import ASCEND_MECHANISMS
+        self.intervention_table = InterventionTable(
+            ASCEND_MECHANISMS,
+            now=lambda: self.clock.time,
+            instance_exists=lambda node, inst: (
+                self.weather_engine.instance_exists(node, inst)
+            ),
+        )
+        self.weather_engine = WeatherEngine(
+            self.clock, seed=self.seed,
+            intervention_table=self.intervention_table,
+        )
         self._world_stack.push(
             self._unset("weather_engine", self.weather_engine.shutdown)
         )
@@ -453,6 +481,23 @@ class GameEngine:
             self.chunk_services.on_tiles_ready(cx, cy)
         logger.info("天气引擎已接入 %d 个 chunk", len(self.chunk_store))
 
+        # 5d. 完整状态恢复（时钟 / 玩家 / 干预表 / 注入核一次到位）。
+        # 必须在 chunk 服务之后：干预表校验要用实例存在性查询与
+        # "把被 LRU 淘汰的目标 chunk 拉回来"的装载器；也必须早于
+        # 首个 minute_change（区域事件与特征核事件的身份跟踪）。
+        if self._load_state is not None:
+            apply_state(
+                self._load_state, self.clock, self.player_service,
+                self.weather_engine,
+                instance_loader=self._ensure_intervention_instance,
+            )
+            weather_state = self._load_state.get("weather") or {}
+            logger.info(
+                "存档状态已恢复: 干预 %d 条, 注入核 %d 个",
+                len(weather_state.get("interventions") or []),
+                len(weather_state.get("feature_cores") or []),
+            )
+
         # 8. 终端指令执行器
         from ascend.terminal.executor import ExecutorConfig
         self._executor = CommandExecutor(
@@ -464,6 +509,7 @@ class GameEngine:
                 entity_manager=self.entity_manager,
                 continent_path=continent_cache_path,
                 gen_fingerprint_fn=compute_gen_fingerprint,
+                intervention_table=self.intervention_table,
             ),
         )
         self._world_stack.push(self._unset("_executor"))
@@ -628,6 +674,66 @@ class GameEngine:
         if self.chunk_services:
             self.chunk_services.unregister(cx, cy)
 
+    def _ensure_intervention_instance(self, node_id: str, instance: tuple) -> bool:
+        """读档期实例装载器：把被 LRU 淘汰的干预目标 chunk 拉回来。
+
+        存档里的干预可能指向当前未加载的 chunk（世界运行中 LRU 淘汰过）。
+        读档恢复时按需加载并注册该 chunk，使干预校验能通过；加载失败
+        （坐标非法/越界/磁盘无数据）返回 False，由校验方 fail-closed 拒绝。
+
+        Args:
+            node_id: 目标节点 ID（本方法只按实例坐标定位，保留参数以
+                匹配 ``InterventionTable.restore`` 的装载器签名）。
+            instance: 实例坐标（chunk 节点为 (cx, cy)）。
+
+        Returns:
+            True = 实例当前可用。
+        """
+        if len(instance) != 2 or not all(
+            isinstance(axis, int) and not isinstance(axis, bool)
+            for axis in instance
+        ):
+            return False
+        cx, cy = int(instance[0]), int(instance[1])
+        if self.weather_engine.has_chunk(cx, cy):
+            return True
+        if (
+            self.world_gen is None
+            or self.chunk_services is None
+            or self.tile_generator is None
+        ):
+            return False
+        try:
+            chunk = self.chunk_store.get(cx, cy)
+            if chunk is None:
+                chunk = self.world_gen.generate_chunk(cx, cy)
+                # 与 _generate_initial_chunks 同规则：已持久化的 tile 优先
+                # （含玩家改动，不可再生），缺失才由 tile 生成器补
+                saved = self.chunk_store.load_tiles_with_day(cx, cy)
+                if saved is not None:
+                    grid, settled_day = saved
+                    chunk.restore_tiles(grid)
+                    chunk.settled_day = settled_day
+                else:
+                    chunk.generate_tiles(
+                        self.tile_generator.generate_chunk_for(chunk)
+                    )
+                self.chunk_store.put(chunk)
+            elif not chunk.has_tiles:
+                chunk.generate_tiles(
+                    self.tile_generator.generate_chunk_for(chunk)
+                )
+            self.chunk_services.register(chunk)
+            if chunk.has_tiles:
+                # tiles 就绪即结算（时序契约）：本 chunk 已在读档时钟
+                # 就位后装载，结算缺口落在正确的"当前日"
+                self.chunk_services.on_tiles_ready(cx, cy)
+            logger.info("读档按需加载干预目标 chunk (%d,%d)", cx, cy)
+        except Exception:
+            logger.exception("读档按需加载 chunk 失败: (%d,%d)", cx, cy)
+            return False
+        return self.weather_engine.has_chunk(cx, cy)
+
     # ── 出生点与初始区块 ──────────────────────────────────
 
     @staticmethod
@@ -788,6 +894,7 @@ class GameEngine:
         handlers.update(make_player_handler(self.player_service))
         handlers.update(make_entity_handlers(self.entity_manager))
         handlers.update(make_terminal_handler(self._executor))
+        handlers.update(make_research_handler(self.intervention_table, self.weather_engine))
         # 占位 handler：尚未实现的功能返回显式"未实现"标记而非空成功
         # 响应——前端可感知功能缺口并提示，不让缺口被系统性掩盖。
         def _not_implemented(msg: dict) -> dict:
@@ -812,12 +919,18 @@ class GameEngine:
             })
 
     def _persist_manifest(self) -> None:
-        """回写 manifest（出生点/游玩信息），存档选择页数据源。"""
+        """回写 manifest（出生点/游玩信息/世界设置），存档选择页数据源。"""
         if not self.world_id or not self.save_manager or not self._manifest:
             return
         manifest = self._manifest
         if self.birth_chunk:
             manifest.birth_chunk = self.birth_chunk
+        # 世界设置补写：旧存档首次加载时记录当前声明版本，使下一次
+        # 加载有可比对的事实（校验已在 _start_world 读档前完成）。
+        from ascend.causal.world import ASCEND_MECHANISMS
+        manifest.mechanism_declaration = (
+            ASCEND_MECHANISMS.declaration_settings()
+        )
         manifest.touch(
             self.save_manager.manifest_path(self.world_id),
             game_time=self.clock.time,

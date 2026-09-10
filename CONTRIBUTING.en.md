@@ -101,6 +101,31 @@ you must regenerate and commit both generated artifacts, or the CI drift gates w
 
 `equations.json` and `GenDeclarationData.lean` are generated artifacts — never edit them by hand.
 
+**Intervention executor** (P2, `docs/研究理论/世界基座/08-干预执行器.md`): researcher
+interventions are registered in `InterventionTable` and replace the generated value at
+evaluation points. When adding an intervenable component, keep
+`causal/world.py::WIRED_NODES` in sync with the actual evaluation sites
+(`WeatherEngine.evaluate_node`), or the drift gate in
+`tests/unit/test_intervention_wiring.py` will fail.
+
+**Acceptance runner** (P5, `docs/研究理论/世界基座/11-验收runner.md`): after changing a
+declaration or engine path, run `.venv/bin/python research/acceptance/run_acceptance.py`
+(C0–C2/W0–W5/I0–I1; any failing criterion turns CI red). After changing a declaration, also
+run `run_acceptance.py --check` to detect Lean UnrolledDag instance drift.
+
+**Research trace** (P3, `docs/研究理论/世界基座/10-研究trace.md`): the research log and
+gameplay events live in separate stores — new nodes/mechanisms are recorded automatically;
+never put trace fields into event payloads (a gate test enforces this); evaluation points
+must go through `InterventionEvaluator` (calling `registry.evaluate` directly skips tracing).
+
+**Complete save** (P4, `docs/研究理论/世界基座/09-完整存档.md`): when adding runtime
+state that cannot be recomputed from the world settings (researcher-applied quantities,
+markers that evolve with the mechanisms), update the `state.json.enc` payload and the
+restore path (`save/serializer.py` plus the subsystem's `persist_*` / `restore_*`) and
+add the W4 dual-run equality assertion. Recomputable analytic quantities must **not** be
+persisted. Bump `STATE_VERSION` when the payload format changes — old saves become
+unreadable by design; no migration is written.
+
 ## Commit Conventions
 
 Follow the [Conventional Commits](https://www.conventionalcommits.org/) spec and write your commit descriptions in Chinese.

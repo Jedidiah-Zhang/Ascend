@@ -11,7 +11,7 @@ import os
 import textwrap
 from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from .spec import (
     AccessPolicy,
@@ -29,10 +29,16 @@ from .spec import (
     UpdateContract,
     ValueDomain,
 )
+from .trace import RandomAddress, TraceLog, TraceRecord
+
+if TYPE_CHECKING:
+    from .intervention import NodeResolution
 
 _NODE_ROLES = {"mechanism_state", "persistent_state", "readout"}
 _NODE_ORIGINS = {"slice_boundary", "mechanism"}
-_VALUE_KINDS = {"float", "integer", "enum", "boolean", "string"}
+_VALUE_KINDS = {"float", "integer", "enum", "boolean", "string", "tuple"}
+# C1 见证评估的占位随机值（"其余一切不变"含随机源；见证只验证父依赖）
+_WITNESS_RANDOM_VALUE = 0.5
 _INTERVENTIONS = {"node", "persistent", "mechanism"}
 _ANALYSIS_ROLES = {"forward", "inverse", "observable"}
 
@@ -148,6 +154,54 @@ def _plain(value: object) -> object:
     return value
 
 
+def _mechanism_versions(
+    spec: MechanismSpec,
+    parameters: Mapping[str, ParameterSpec],
+    sources: Mapping[str, ExogenousSourceSpec],
+) -> tuple[str, str]:
+    """机制的两个版本摘要：方程版本、方程+参数+边界组合版本。
+
+    构造期算一次（研究 trace 与快照共用），避免每次求值重算源码摘要。
+    构造期调用，因此显式接收参数/外生源映射而非注册表实例。
+    """
+    equation_version = _source_version(spec.function, spec.source_dependencies)
+    resolved_version = _digest({
+        "mechanism_id": spec.mechanism_id,
+        "output": spec.output,
+        "equation": spec.equation,
+        "equation_version": equation_version,
+        "parents": [_plain(item) for item in spec.parents],
+        "parameters": [
+            {
+                "binding": _plain(binding),
+                "spec": _parameter_plain(parameters[binding.parameter]),
+            }
+            for binding in spec.parameters
+        ],
+        "random_sources": [
+            {
+                "binding": _plain(binding),
+                "spec": _source_plain(sources[binding.source]),
+            }
+            for binding in spec.random_sources
+        ],
+        "boundary_cases": list(spec.boundary_cases),
+    })
+    return equation_version, resolved_version
+
+
+def _parameter_plain(spec: ParameterSpec) -> dict[str, object]:
+    data = _plain(spec)
+    del data["parameter_id"]
+    return data
+
+
+def _source_plain(spec: ExogenousSourceSpec) -> dict[str, object]:
+    data = _plain(spec)
+    del data["source_id"]
+    return data
+
+
 def _index_unique(items, attr: str, label: str) -> dict[str, object]:
     indexed: dict[str, object] = {}
     for item in items:
@@ -169,6 +223,12 @@ class MechanismRegistry:
 
     构造完成后所有属性只读：修改节点/参数/机制表会触发
     AttributeError，映射与规范数据类自身也不可变。
+
+    Attributes:
+        declaration_hash: 声明全量摘要（= ``snapshot()["declaration"]["hash"]``），
+            存档 manifest 记录它，读档时比对（不一致拒绝加载）。
+        observation_protocol_version: 全部节点观测协议集合的摘要（P4 世界
+            设置的一部分；当前无观测主体，仅作版本声明与漂移检测）。
     """
 
     def __init__(
@@ -179,6 +239,7 @@ class MechanismRegistry:
         declaration_version: str,
         microstep_order: tuple[str, ...],
         slice_boundary: str,
+        wired_nodes: frozenset[str],
         nodes: tuple[NodeSpec, ...],
         parameters: tuple[ParameterSpec, ...],
         exogenous_sources: tuple[ExogenousSourceSpec, ...],
@@ -189,6 +250,9 @@ class MechanismRegistry:
         self.declaration_version = declaration_version
         self.microstep_order = tuple(microstep_order)
         self.slice_boundary = slice_boundary
+        # 求值点声明：当前引擎真正执行的生成节点集合（干预执行器可达性事实源）。
+        # 与 access.interventions 正交——前者是"引擎是否执行"，后者是"世界是否允许"。
+        self.wired_nodes = frozenset(wired_nodes)
 
         node_map = _index_unique(tuple(nodes), "node_id", "节点")
         parameter_map = _index_unique(tuple(parameters), "parameter_id", "参数")
@@ -214,12 +278,42 @@ class MechanismRegistry:
             output_map[mechanism.output] = mechanism
         self._by_output = MappingProxyType(output_map)
 
+        # 可达参数槽位（派生量，无独立声明）：被 wired 节点机制绑定的参数。
+        wired_parameters: set[str] = set()
+        for mechanism in mechanisms:
+            if mechanism.output not in self.wired_nodes:
+                continue
+            wired_parameters.update(
+                binding.parameter for binding in mechanism.parameters
+            )
+        self.wired_parameters = frozenset(wired_parameters)
+
         c0_issues = self._c0_issues()
         if c0_issues:
             raise ValueError("C0 声明不完整: " + "; ".join(c0_issues))
         c1_issues = self._c1_issues()
         if c1_issues:
             raise ValueError("C1 结构最小性失败: " + "; ".join(c1_issues))
+
+        # 方程版本按机制预计算一次（构造期），供研究 trace 与快照共用：
+        # 求值点零开销引用，不存在"每次求值重算源码摘要"。
+        # 必须先于 snapshot()（快照读这份表）。
+        self._versions = MappingProxyType({
+            spec.output: _mechanism_versions(spec, parameter_map, source_map)
+            for spec in mechanism_map.values()
+        })
+        # 世界设置的全量版本信息（存档 manifest 与状态文件的比对基准）。
+        # declaration_hash 与 snapshot()["declaration"]["hash"] 同源同值：
+        # 快照由同一 _digest 计算，二者不会漂移（有测试锁定）。
+        self.declaration_hash = self.snapshot()["declaration"]["hash"]
+        protocols = sorted({
+            protocol
+            for node in node_map.values()
+            for protocol in node.access.observation_protocols
+        })
+        self.observation_protocol_version = _digest({
+            "protocols": protocols,
+        })
         object.__setattr__(self, "_frozen", True)
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -236,6 +330,24 @@ class MechanismRegistry:
         """重新执行全部 C1 见证并返回问题。"""
         return tuple(self._c1_issues())
 
+    def equation_version(self, node_id: str) -> str:
+        """节点生效方程的版本摘要（构造期预计算，按输出节点索引）。
+
+        Raises:
+            KeyError: 节点无注册机制。
+        """
+        return self._version(node_id, 0)
+
+    def resolved_version(self, node_id: str) -> str:
+        """节点"方程 + 参数 + 边界"的组合摘要（构造期预计算）。"""
+        return self._version(node_id, 1)
+
+    def _version(self, node_id: str, index: int) -> str:
+        try:
+            return self._versions[node_id][index]
+        except KeyError as exc:
+            raise KeyError(f"节点无注册机制: {node_id}") from exc
+
     def mechanism_for(self, output: str) -> MechanismSpec:
         """按输出节点取得其唯一结构方程。"""
         try:
@@ -249,16 +361,68 @@ class MechanismRegistry:
         parent_values: Mapping[str, object],
         *,
         random_values: Mapping[str, object] | None = None,
+        parameter_values: Mapping[str, object] | None = None,
+        trace: TraceLog | None = None,
+        resolution: object | None = None,
+        frame: int = 0,
+        instance: tuple = (),
     ) -> object:
         """以显式父值和随机源值执行一个注册方程。
 
         target 语义为输出节点 ID（mechanism_id 查询仅为调试回退，
         两者当前无交集）。父值按节点声明值域校验，越界抛 ValueError；
         父集/随机源集与声明不一致抛 KeyError（fail-closed）。
+
+        Args:
+            parameter_values: 参数槽位覆盖映射（参数干预），
+                按参数值域 fail-closed 校验；None = 使用声明默认值。
+            trace: 研究日志；非 None 时记录本次求值（fail-closed）。
+            resolution: 干预解析结果（记录用）；None = 空解析。
+            frame, instance: 记录用的逻辑帧与实例坐标。
         """
         mechanism = self.mechanisms.get(target)
         if mechanism is None:
             mechanism = self.mechanism_for(target)
+        return self.evaluate_mechanism(
+            mechanism,
+            parent_values,
+            random_values=random_values,
+            parameter_values=parameter_values,
+            trace=trace,
+            resolution=resolution,
+            frame=frame,
+            instance=instance,
+        )
+
+    def evaluate_mechanism(
+        self,
+        mechanism: MechanismSpec,
+        parent_values: Mapping[str, object],
+        *,
+        random_values: Mapping[str, object] | None = None,
+        parameter_values: Mapping[str, object] | None = None,
+        trace: "TraceLog | None" = None,
+        resolution: object | None = None,
+        frame: int = 0,
+        instance: tuple = (),
+    ) -> object:
+        """以显式父值和随机源值执行一条结构方程（单一求值实现）。
+
+        机制干预复用本入口执行替换机制：父集/随机源集按替换机制自身
+        声明校验；参数槽位可被 ``parameter_values`` 覆盖（同样按参数
+        值域 fail-closed）。
+
+        Args:
+            trace: 研究日志；非 None 时记录本次求值（fail-closed——
+                记录不完整会抛出，而不是静默放行）。
+            resolution: 干预解析结果（``NodeResolution``）；缺省为空解析
+                （无干预）。
+            frame, instance: 记录用的逻辑帧与实例坐标。
+        """
+        if mechanism.output not in self.nodes:
+            raise KeyError(
+                f"{mechanism.mechanism_id} 输出节点未声明: {mechanism.output}"
+            )
 
         expected_parents = {parent.parent for parent in mechanism.parents}
         actual_parents = set(parent_values)
@@ -281,13 +445,35 @@ class MechanismRegistry:
             )
 
         kwargs: dict[str, object] = {}
+        effective_parameters: dict[str, object] = {}
         for parent in mechanism.parents:
             value = parent_values[parent.parent]
-            self._require_value(self.nodes[parent.parent].value, value, parent.parent)
+            if len(parent.spatial_offsets) <= 1:
+                # 单偏移（或未声明偏移）：父值就是该分量在该实例的取值，
+                # 按声明值域校验
+                self._require_value(
+                    self.nodes[parent.parent].value, value, parent.parent,
+                )
+            else:
+                # 多偏移（空间父模板）：父值是各偏移处的分量取值元组，
+                # 值域描述的是**每格**取值，不校验聚合元组
+                if not isinstance(value, tuple) or len(value) != len(
+                    parent.spatial_offsets
+                ):
+                    raise ValueError(
+                        f"{parent.parent} 空间父模板需要 "
+                        f"{len(parent.spatial_offsets)} 元组值: {value!r}"
+                    )
             kwargs[parent.argument] = value
         for binding in mechanism.parameters:
             parameter = self.parameters[binding.parameter]
-            kwargs[binding.argument] = parameter.value
+            if parameter_values is not None and binding.parameter in parameter_values:
+                value = parameter_values[binding.parameter]
+                self._require_parameter_value(parameter, value)
+            else:
+                value = parameter.value
+            kwargs[binding.argument] = value
+            effective_parameters[binding.parameter] = value
         for binding in mechanism.random_sources:
             kwargs[binding.argument] = supplied_sources[binding.source]
 
@@ -297,7 +483,110 @@ class MechanismRegistry:
             output,
             mechanism.output,
         )
+        if trace is not None:
+            if resolution is None:
+                # 惰性导入：干预模块反向依赖本模块，顶层导入会成环
+                from .intervention import NodeResolution
+                resolution = NodeResolution()
+            trace.record(self.build_trace_record(
+                resolution=resolution,
+                target=mechanism.output,
+                parent_values=parent_values,
+                frame=frame,
+                instance=instance,
+                mechanism=mechanism,
+                parameters=effective_parameters,
+                random_values=supplied_sources,
+                output=output,
+            ))
         return output
+
+    def build_trace_record(
+        self,
+        *,
+        resolution,
+        target: str,
+        parent_values: Mapping[str, object],
+        frame: int,
+        instance: tuple,
+        mechanism: MechanismSpec | None,
+        parameters: Mapping[str, object] | None,
+        random_values: Mapping[str, object] | None,
+        output: object,
+    ) -> TraceRecord:
+        """按求值过程组装一条 trace 记录（唯一组装点）。
+
+        随机地址按机制声明的随机源生成（源 ID + 帧 + 实例 + 抽取序号）；
+        生产声明当前不含外生源，因此地址集为空——接口就绪，登记源后自动生效。
+        ``mechanism=None`` 表示值覆盖：生成结果被替换，无方程可重算。
+        """
+        node = self.nodes[target]
+        bindings = mechanism.random_sources if mechanism is not None else ()
+        addresses = tuple(
+            RandomAddress(source=binding.source, frame=frame, instance=instance)
+            for binding in bindings
+        )
+        supplied = dict(random_values or {})
+        values = tuple(
+            (address, supplied[address.source])
+            for address in addresses
+            if address.source in supplied
+        )
+        record = resolution.record
+        return TraceRecord(
+            node_id=target,
+            frame=frame,
+            instance=instance,
+            microstep=node.update.microstep,
+            mechanism_id=mechanism.mechanism_id if mechanism is not None else "",
+            equation_version=(
+                self.equation_version(mechanism.output)
+                if mechanism is not None else ""
+            ),
+            resolved_version=(
+                self.resolved_version(mechanism.output)
+                if mechanism is not None else ""
+            ),
+            parents=tuple(sorted(parent_values.items())),
+            parameters=tuple(sorted((parameters or {}).items())),
+            random_addresses=addresses,
+            random_values=values,
+            intervention=(
+                self._intervention_plain(record) if record is not None else None
+            ),
+            rep=resolution.rep,
+            output=output,
+            boundary=(
+                mechanism.boundary_cases if mechanism is not None else ()
+            ),
+        )
+
+    @staticmethod
+    def _intervention_plain(record) -> dict[str, object]:
+        """干预记录 → 可序列化视图（惰性导入，避免与干预模块的环）。"""
+        from .intervention import InterventionTable
+        return InterventionTable.record_plain(record)
+
+    def declaration_settings(self) -> dict[str, str]:
+        """世界设置视图：声明 ID + 声明摘要 + 观测协议版本。
+
+        存档 manifest 记录本视图，读档时与之比对（``save/settings.py``）。
+        声明视图刻意不含节点/机制明细——摘要已经覆盖全部声明内容，
+        存档层不需要认识注册表内部结构。
+        """
+        return {
+            "declaration_id": self.declaration_id,
+            "declaration_hash": self.declaration_hash,
+            "observation_protocol_version": self.observation_protocol_version,
+        }
+
+    def require_node_value(self, node_id: str, value: object) -> None:
+        """校验值属于目标节点声明值域（fail-closed，供干预执行器复用）。"""
+        self._require_value(self.nodes[node_id].value, value, node_id)
+
+    def require_parameter_value(self, parameter_id: str, value: object) -> None:
+        """校验值属于参数声明值域（fail-closed，供干预执行器复用）。"""
+        self._require_parameter_value(self.parameters[parameter_id], value)
 
     def snapshot(self) -> dict[str, object]:
         """返回默认值已展开、可确定性序列化的声明快照。"""
@@ -306,11 +595,11 @@ class MechanismRegistry:
             for node_id, spec in sorted(self.nodes.items())
         }
         parameters = {
-            parameter_id: self._parameter_snapshot(spec)
+            parameter_id: _parameter_plain(spec)
             for parameter_id, spec in sorted(self.parameters.items())
         }
         sources = {
-            source_id: self._source_snapshot(spec)
+            source_id: _source_plain(spec)
             for source_id, spec in sorted(self.exogenous_sources.items())
         }
         mechanisms = {
@@ -322,6 +611,7 @@ class MechanismRegistry:
             "version": self.declaration_version,
             "microstep_order": list(self.microstep_order),
             "slice_boundary": self.slice_boundary,
+            "wired_nodes": sorted(self.wired_nodes),
         }
         core = {
             "schema_version": self.schema_version,
@@ -379,11 +669,24 @@ class MechanismRegistry:
             name: index for index, name in enumerate(self.microstep_order)
         }
 
+        unknown_wired = sorted(self.wired_nodes - set(self.nodes))
+        if unknown_wired:
+            issues.append(f"wired_nodes 含未声明节点: {unknown_wired}")
+
         for node_id, node in self.nodes.items():
             if not node_id or node.role not in _NODE_ROLES:
                 issues.append(f"{node_id}: 非法节点 role={node.role!r}")
             if node.origin not in _NODE_ORIGINS:
                 issues.append(f"{node_id}: 非法 origin={node.origin!r}")
+            # 读出/边界分量不得声明干预权限（§7 读出分量保护，声明期不变量）
+            if (
+                (node.role == "readout" or node.origin == "slice_boundary")
+                and node.access.interventions
+            ):
+                issues.append(
+                    f"{node_id}: 读出/边界分量不得声明干预权限 "
+                    f"(interventions={node.access.interventions})"
+                )
             issues.extend(self._validate_instance(node_id, node.instance_domain))
             issues.extend(self._validate_domain(node_id, node.value))
             issues.extend(self._validate_state(node_id, node.state))
@@ -411,7 +714,7 @@ class MechanismRegistry:
                     if lo > hi:
                         issues.append(f"{parameter_id}: 参数 bounds 倒置")
             issues.extend(
-                self._validate_parameter_value(parameter_id, parameter)
+                self._parameter_value_issues(parameter, parameter.value)
             )
 
         for source_id, source in self.exogenous_sources.items():
@@ -436,7 +739,11 @@ class MechanismRegistry:
             seen_parents: set[str] = set()
             for parent in mechanism.parents:
                 if parent.parent in seen_parents:
-                    issues.append(f"{mechanism_id}: 重复父模板 {parent.parent}")
+                    issues.append(
+                        f"{mechanism_id}: 重复父模板 {parent.parent}"
+                        f"（同一父的多个空间偏移写在同一父引用的 "
+                        f"spatial_offsets 里）"
+                    )
                 seen_parents.add(parent.parent)
                 if parent.parent not in self.nodes:
                     issues.append(f"{mechanism_id}: 父节点未声明 {parent.parent}")
@@ -538,8 +845,34 @@ class MechanismRegistry:
                     )
                     continue
                 try:
-                    first = self.evaluate(mechanism.output, inputs)
-                    second = self.evaluate(mechanism.output, alternate)
+                    # 随机上下文：见证可显式给定（避免父依赖在占位值处抵消的
+                    # 误拒），未给定时每个声明随机源取占位常数。
+                    declared_sources = {
+                        binding.source for binding in mechanism.random_sources
+                    }
+                    context = dict(witness.random_values)
+                    if (
+                        len(context) != len(witness.random_values)
+                        or set(context) - declared_sources
+                    ):
+                        issues.append(
+                            f"{mechanism.mechanism_id}/{witness.label}: "
+                            f"随机上下文必须逐源唯一且属于声明随机源: "
+                            f"{sorted(context)}"
+                        )
+                        continue
+                    random_values = {
+                        source: context.get(source, _WITNESS_RANDOM_VALUE)
+                        for source in declared_sources
+                    }
+                    first = self.evaluate(
+                        mechanism.output, inputs,
+                        random_values=random_values,
+                    )
+                    second = self.evaluate(
+                        mechanism.output, alternate,
+                        random_values=random_values,
+                    )
                 except (KeyError, TypeError, ValueError) as exc:
                     issues.append(
                         f"{mechanism.mechanism_id}/{witness.label}: {exc}"
@@ -588,7 +921,7 @@ class MechanismRegistry:
             issues.append(f"{node_id}: enum choices 不能为空")
         if spec.kind != "enum" and spec.choices:
             issues.append(f"{node_id}: 非 enum 不应声明 choices")
-        if spec.kind in ("enum", "boolean", "string") and spec.bounds is not None:
+        if spec.kind in ("enum", "boolean", "string", "tuple") and spec.bounds is not None:
             issues.append(f"{node_id}: 非数值类型不应声明 bounds")
         return issues
 
@@ -632,12 +965,11 @@ class MechanismRegistry:
         return issues
 
     @staticmethod
-    def _validate_parameter_value(
-        parameter_id: str,
-        parameter: ParameterSpec,
+    def _parameter_value_issues(
+        parameter: ParameterSpec, value: object,
     ) -> list[str]:
-        """按声明类型校验参数当前值（bounds=None 时同样执行）。"""
-        value = parameter.value
+        """按声明类型校验参数值（bounds=None 时同样执行）。"""
+        parameter_id = parameter.parameter_id
         if parameter.value_type == "boolean":
             if not isinstance(value, bool):
                 return [
@@ -666,7 +998,7 @@ class MechanismRegistry:
             lo, hi = parameter.bounds
             if not lo <= value <= hi:
                 return [
-                    f"{parameter_id}: 参数当前值 {value!r} 超出 bounds "
+                    f"{parameter_id}: 参数值 {value!r} 超出 bounds "
                     f"[{lo}, {hi}]"
                 ]
         return []
@@ -725,6 +1057,8 @@ class MechanismRegistry:
             "enum": value in spec.choices,
             "boolean": isinstance(value, bool),
             "string": isinstance(value, str),
+            # 空间聚合：同一父引用按多个空间偏移取到的值元组
+            "tuple": isinstance(value, tuple),
         }.get(spec.kind, False)
         if not valid_type:
             raise ValueError(f"{label}={value!r} 不属于声明值域 {spec.kind}")
@@ -736,6 +1070,13 @@ class MechanismRegistry:
                 raise ValueError(
                     f"{label}={value!r} 超出声明值域 [{lo}, {hi}]"
                 )
+
+    @staticmethod
+    def _require_parameter_value(parameter: ParameterSpec, value: object) -> None:
+        """按参数声明类型/bounds 校验覆盖值（fail-closed）。"""
+        issues = MechanismRegistry._parameter_value_issues(parameter, value)
+        if issues:
+            raise ValueError("; ".join(issues))
 
     @staticmethod
     def _node_snapshot(spec: NodeSpec) -> dict[str, object]:
@@ -750,49 +1091,11 @@ class MechanismRegistry:
             "math": _plain(spec.math),
         }
 
-    @staticmethod
-    def _parameter_snapshot(spec: ParameterSpec) -> dict[str, object]:
-        data = _plain(spec)
-        del data["parameter_id"]
-        return data
-
-    @staticmethod
-    def _source_snapshot(spec: ExogenousSourceSpec) -> dict[str, object]:
-        data = _plain(spec)
-        del data["source_id"]
-        return data
-
     def _mechanism_snapshot(self, spec: MechanismSpec) -> dict[str, object]:
-        equation_version = _source_version(spec.function, spec.source_dependencies)
+        equation_version, resolved_version = self._versions[spec.output]
         parents = [_plain(item) for item in spec.parents]
         parameters = [_plain(item) for item in spec.parameters]
         random_sources = [_plain(item) for item in spec.random_sources]
-        resolved_version = _digest({
-            "mechanism_id": spec.mechanism_id,
-            "output": spec.output,
-            "equation": spec.equation,
-            "equation_version": equation_version,
-            "parents": parents,
-            "parameters": [
-                {
-                    "binding": _plain(binding),
-                    "spec": self._parameter_snapshot(
-                        self.parameters[binding.parameter]
-                    ),
-                }
-                for binding in spec.parameters
-            ],
-            "random_sources": [
-                {
-                    "binding": _plain(binding),
-                    "spec": self._source_snapshot(
-                        self.exogenous_sources[binding.source]
-                    ),
-                }
-                for binding in spec.random_sources
-            ],
-            "boundary_cases": list(spec.boundary_cases),
-        })
         witnesses = []
         for witness in spec.witnesses:
             first = dict(witness.inputs)
@@ -804,6 +1107,7 @@ class MechanismRegistry:
                 "inputs_a": first,
                 "inputs_b": second,
                 "expected_outputs": list(witness.expected_outputs),
+                "random_values": dict(witness.random_values),
                 "equation_version": equation_version,
             })
         return {

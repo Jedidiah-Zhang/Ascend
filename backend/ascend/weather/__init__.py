@@ -14,7 +14,8 @@
   - API 查询：get_weather(cx, cy, time) 获取任意位置当前/过去时刻的精确值
 
 场为解析量（seed + 时间可完全重算），不存状态——存档只存 manifest.seed
-+ 时钟，读档可复现。
++ 时钟，读档可复现；研究者施加的干预与强制注入核不可重算，随完整世界
+状态 W_t 落盘（``WeatherEngine.persist_state`` / ``restore_state``）。
 
 用法:
     from ascend.weather import WeatherEngine, Season
@@ -39,7 +40,7 @@ from .features import (FEATURE_TYPES, T_COLD_SNAP, T_FRONT, T_HEAT_WAVE,
                        T_STORM, ClimateProxy, FeatureConfig, FeatureCore,
                        FeatureField)
 from .field import (CH_HUMIDITY, CH_PRECIPITATION, CH_TEMPERATURE, CH_WIND,
-                    UnifiedWeatherField, calibrate_precip, precip_threshold)
+                    UnifiedWeatherField)
 from .region_tracker import RegionEvent, RegionTracker
 from .season import Season
 from .weather_engine import WeatherEngine
@@ -87,6 +88,4 @@ __all__ = [
     "classify_sunshine",
     "classify_sunlight_intensity",
     "precip_type_for",
-    "calibrate_precip",
-    "precip_threshold",
 ]

@@ -9,6 +9,7 @@ import time
 import pytest
 
 from ascend.game import GameEngine
+from ascend.save import STATE_VERSION
 
 
 # GameEngine 默认端口 9081，确保与 test_net.py 的 19081 不冲突
@@ -45,8 +46,9 @@ def _patch_fast_worldgen(monkeypatch):
 
 
 def _state_at(time: int) -> dict:
-    """最小可写状态（时钟 + 玩家，时间可辨）。"""
+    """最小可写状态（格式版本 + 时钟 + 玩家，时间可辨）。"""
     return {
+        "state_version": STATE_VERSION,
         "clock": {"time": time, "speed": 1.0, "paused": False},
         "player": {"entity_id": "e1", "x": float(time), "y": float(time)},
         "archive_max_timestamp": 0,
@@ -270,6 +272,174 @@ class TestWorldProcessEntry:
             world_id = engine.save_manager.create_world("普通进入", seed=7).world_id
             engine.load_world(world_id=world_id)
             assert engine.save_manager.list_snapshots(world_id) == []
+        finally:
+            engine.stop()
+
+    def test_full_state_round_trip_through_disk(self, monkeypatch):
+        """P4 完整存档：干预表与注入核随 W_t 落盘并在新进程恢复。
+
+        模拟真实读档路径：进程 A 施加干预 + 强制特征核 → 保存脉搏落盘
+        （含 state.json.enc 与 manifest 世界设置）→ 进程 B 重新
+        load_world，状态必须完整回来。
+        """
+        _patch_fast_worldgen(monkeypatch)
+        # 保留真实 chunk 生成（缩小半径），否则没有可干预的实例
+        monkeypatch.setattr("ascend.game.INITIAL_CHUNK_RADIUS", 1)
+        monkeypatch.setattr(
+            GameEngine, "_generate_initial_chunks", _REAL_GENERATE_INITIAL,
+        )
+        from ascend.causal import InterventionRecord
+        from ascend.causal.world import ASCEND_MECHANISMS
+        from ascend.weather.mechanisms import INSTANT_TEMPERATURE
+
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            world_id = engine.save_manager.create_world(
+                "完整存档", seed=7,
+            ).world_id
+            engine.load_world(world_id=world_id)
+            assert engine.chunk_store, "快路径也应加载至少一个 chunk"
+            chunk = engine.chunk_store.keys()[0]
+            # 施加一条节点干预 + 一个强制特征核，然后走真实保存脉搏
+            engine.intervention_table.commit(InterventionRecord(
+                target_space="node", target=INSTANT_TEMPERATURE,
+                instance=chunk, rep="value", value=30.0,
+                frame_t0=0, duration=None,
+            ))
+            engine.weather_engine.force_feature(
+                chunk[0], chunk[1], "storm", True,
+            )
+            engine._save_state_now()
+            state = engine.save_manager.read_state(world_id)
+            # 节点干预 + 特征核控制各一条（后者由 force_feature 登记）
+            assert [
+                record["target_space"]
+                for record in state["weather"]["interventions"]
+            ] == ["node", "field_feature"]
+            assert len(state["weather"]["feature_cores"]) == 1
+            assert engine.save_manager.get_manifest(
+                world_id,
+            ).mechanism_declaration["declaration_hash"] == \
+                ASCEND_MECHANISMS.declaration_hash
+        finally:
+            engine.stop()
+
+        # 进程 B：新引擎读同一存档位
+        engine_b = GameEngine(seed=42)
+        try:
+            engine_b.start_service()
+            engine_b.load_world(world_id=world_id)
+            assert len(engine_b.intervention_table.persist()) == 2
+            assert engine_b.weather_engine.field.features.get_injected(
+                chunk[0], chunk[1], "storm",
+            ) is not None
+        finally:
+            engine_b.stop()
+
+    def test_load_world_materializes_evicted_intervention_target(self, monkeypatch):
+        """读档期装载器接线：干预目标 chunk 被 LRU 淘汰后仍能恢复。
+
+        世界运行中 LRU 会注销 chunk；存档里的干预指向该 chunk 时，
+        ``apply_state`` 的 instance_loader 必须把它拉回来（含 tile 就绪），
+        否则读档整体被 fail-closed 拒绝。
+        """
+        _patch_fast_worldgen(monkeypatch)
+        monkeypatch.setattr("ascend.game.INITIAL_CHUNK_RADIUS", 1)
+        monkeypatch.setattr(
+            GameEngine, "_generate_initial_chunks", _REAL_GENERATE_INITIAL,
+        )
+        from ascend.causal import InterventionRecord
+        from ascend.weather.mechanisms import INSTANT_TEMPERATURE
+
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            world_id = engine.save_manager.create_world("装载", seed=7).world_id
+            engine.load_world(world_id=world_id)
+            chunk = engine.chunk_store.keys()[0]
+            engine.intervention_table.commit(InterventionRecord(
+                target_space="node", target=INSTANT_TEMPERATURE,
+                instance=chunk, rep="value", value=30.0,
+                frame_t0=0, duration=None,
+            ))
+            # 模拟 LRU 淘汰：移出缓存并注销 chunk 服务
+            engine.chunk_store._cache.pop(chunk, None)
+            engine._on_chunk_evicted(*chunk)
+            assert not engine.weather_engine.has_chunk(*chunk)
+            engine._save_state_now()
+        finally:
+            engine.stop()
+
+        engine_b = GameEngine(seed=42)
+        try:
+            engine_b.start_service()
+            engine_b.load_world(world_id=world_id)
+            assert engine_b.weather_engine.has_chunk(*chunk), \
+                "装载器应把干预目标 chunk 拉回来"
+            assert engine_b.chunk_store.get(*chunk).has_tiles, \
+                "拉回来的 chunk 必须 tile 就绪（否则状态不结算）"
+            assert len(engine_b.intervention_table.persist()) == 1
+        finally:
+            engine_b.stop()
+
+    def test_load_world_restores_clock_before_chunk_settlement(self, monkeypatch):
+        """回归：读档时钟必须在 chunk 注册结算之前就位。
+
+        地形状态引擎按 `_now_day()`（读时钟）结算缺口；若时钟仍停在
+        epoch，`on_tiles_ready` 会把已结算历史重放一遍并把 chunk 的
+        settled_day 回退到 1（状态被改写）。构造 day 31 的存档后重新
+        load_world，settled_day 不得回退。
+        """
+        _patch_fast_worldgen(monkeypatch)
+        monkeypatch.setattr("ascend.game.INITIAL_CHUNK_RADIUS", 1)
+        monkeypatch.setattr(
+            GameEngine, "_generate_initial_chunks", _REAL_GENERATE_INITIAL,
+        )
+        from ascend.config import GAME_DAY
+
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            world_id = engine.save_manager.create_world("结算日", seed=7).world_id
+            engine.load_world(world_id=world_id)
+            engine.clock.restore(time=30 * GAME_DAY)
+            for cx, cy in engine.chunk_store.keys():
+                engine.tile_state_engine.on_tiles_ready(cx, cy)
+            chunk_key = engine.chunk_store.keys()[0]
+            settled_before = engine.chunk_store.get(*chunk_key).settled_day
+            assert settled_before == 31, "前提：chunk 已结算到 day 31"
+            engine._save_state_now()
+        finally:
+            engine.stop()
+
+        engine_b = GameEngine(seed=42)
+        try:
+            engine_b.start_service()
+            engine_b.load_world(world_id=world_id)
+            assert engine_b.chunk_store.get(*chunk_key).settled_day == 31, \
+                "读档不得把已结算 chunk 的结算日回退"
+        finally:
+            engine_b.stop()
+
+    def test_load_world_rejects_declaration_mismatch(self, monkeypatch):
+        """世界设置不一致：拒绝加载（fail-closed，先于昂贵的世界生成）。"""
+        _patch_fast_worldgen(monkeypatch)
+        from ascend.causal.world import ASCEND_MECHANISMS
+
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            mgr = engine.save_manager
+            world_id = mgr.create_world("错版世界", seed=7).world_id
+            manifest = mgr.get_manifest(world_id)
+            manifest.mechanism_declaration = {
+                **ASCEND_MECHANISMS.declaration_settings(),
+                "declaration_hash": "sha256:0000",
+            }
+            manifest.write(mgr.manifest_path(world_id))
+            with pytest.raises(ValueError, match="declaration_hash"):
+                engine.load_world(world_id=world_id)
         finally:
             engine.stop()
 

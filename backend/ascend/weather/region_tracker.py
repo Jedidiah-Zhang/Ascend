@@ -11,21 +11,26 @@ precipitation_start/stop 事件。
 
 线程安全：由 WeatherEngine 单线程驱动（查询侧不接触本类）。
 
+    场越阈判定与强度校准统一经**注入的求值器**（WeatherEngine 传入
+    ``evaluate_node``），与 get_weather 查询路径共用同一节点求值点——
+    干预执行器对 ``precipitation_threshold`` / ``precipitation_intensity``
+    的覆盖因此在事件路径同样生效。
+
 用法:
-    tracker = RegionTracker(field)
+    tracker = RegionTracker(field, evaluate=engine.evaluate_node)
     tracker.set_chunk_baseline(cx, cy, annual_rainfall, mean_intensity)
     events = tracker.update(now)   # → list[RegionEvent]
     tracker.remove_chunk(cx, cy)
 """
 
 from dataclasses import dataclass
+from typing import Callable
 
 from ascend.config import PRECIP_SIGNAL_MAX
 from ascend.space import TILE_MAP_SIZE
 
-from .field import (
-    UnifiedWeatherField, CH_PRECIPITATION, calibrate_precip, precip_threshold,
-)
+from . import mechanisms as m
+from .field import UnifiedWeatherField, CH_PRECIPITATION
 
 # 降水信号最大可信值（超过视同饱和，防止校准溢出）
 _PRECIP_SIGNAL_CAP: float = PRECIP_SIGNAL_MAX
@@ -56,15 +61,24 @@ class RegionTracker:
 
     Args:
         field: 统一天气场（降水信号采样源）。
+        evaluate: 节点求值入口 ``(节点 ID, 父值, *, frame, instance) -> 值``
+            （WeatherEngine.evaluate_node，含干预覆盖）。
     """
 
-    def __init__(self, field: UnifiedWeatherField) -> None:
+    def __init__(
+        self,
+        field: UnifiedWeatherField,
+        *,
+        evaluate: Callable[..., object],
+    ) -> None:
         """初始化区域跟踪器。
 
         Args:
             field: 统一天气场。
+            evaluate: 节点求值入口（含干预覆盖）。
         """
         self._field = field
+        self._evaluate = evaluate
         # chunk → (年降雨量, 基准降雨强度)（阈值校准输入，注册时注入）
         self._baselines: dict[tuple[int, int], tuple[float, float]] = {}
         # 上一帧区域（每区域 = chunk 坐标集合）
@@ -139,7 +153,11 @@ class RegionTracker:
             return stops
         raining: set[tuple[int, int]] = set()
         for (cx, cy), (annual, _mi) in self._baselines.items():
-            threshold = precip_threshold(annual)
+            threshold = self._evaluate(
+                m.PRECIPITATION_THRESHOLD,
+                {m.ANNUAL_RAINFALL: annual},
+                frame=now, instance=(cx, cy),
+            )
             if self._signal_at_chunk(cx, cy, now) > threshold:
                 raining.add((cx, cy))
         regions = self._connected(raining)
@@ -226,8 +244,19 @@ class RegionTracker:
             signal = self._signal_at_chunk(center_cx, center_cy, now)
             annual, mean_intensity = self._baselines.get(
                 (center_cx, center_cy), (0.0, 5.0))
-            intensity = calibrate_precip(
-                signal, annual, mean_intensity,
+            threshold = self._evaluate(
+                m.PRECIPITATION_THRESHOLD,
+                {m.ANNUAL_RAINFALL: annual},
+                frame=now, instance=(center_cx, center_cy),
+            )
+            intensity = self._evaluate(
+                m.INSTANT_PRECIPITATION_INTENSITY,
+                {
+                    m.FIELD_PRECIPITATION_SIGNAL: signal,
+                    m.PRECIPITATION_THRESHOLD: threshold,
+                    m.MEAN_PRECIP_INTENSITY: mean_intensity,
+                },
+                frame=now, instance=(center_cx, center_cy),
             )
         return RegionEvent(
             kind=kind,

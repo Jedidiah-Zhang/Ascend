@@ -1,4 +1,4 @@
-"""存档序列化单元测试 — 状态采集/恢复与读档时钟对齐。
+"""存档序列化单元测试 — 完整状态采集/恢复、版本校验与读档时钟对齐。
 
 覆盖 ascend/save/serializer.py，以及 WorldClock.restore /
 EntityManager.restore / PlayerService.restore 的静默恢复语义。
@@ -7,7 +7,8 @@ EntityManager.restore / PlayerService.restore 的静默恢复语义。
 import pytest
 
 from ascend.save.serializer import (
-    collect_state, apply_state, apply_clock, apply_player, aligned_time,
+    STATE_VERSION, collect_state, apply_state, apply_clock, apply_player,
+    aligned_time, require_state_version,
 )
 from ascend.time import WorldClock
 from ascend.entity import EntityManager, PlayerService
@@ -33,13 +34,14 @@ def player(clock: WorldClock) -> PlayerService:
 
 
 class TestCollectState:
-    """状态采集。"""
+    """状态采集（完整状态 W_t 的分量清单）。"""
 
     def test_collects_clock_and_player(self, clock, player):
-        """采集时钟与玩家位置/实体 ID。"""
+        """采集时钟与玩家位置/实体 ID，并声明格式版本。"""
         clock.tick()
         player.move_to(100.0, 200.0)
         state = collect_state(clock, player, None, archive_max_timestamp=42)
+        assert state["state_version"] == STATE_VERSION
         assert state["clock"]["time"] == clock.time
         assert state["clock"]["speed"] == 1.0
         assert state["player"]["x"] == 100.0
@@ -59,6 +61,39 @@ class TestCollectState:
         assert state["player"]["entity_id"] is None
         assert state["player"]["x"] == 3 * 200
 
+    def test_without_weather_engine_has_empty_world_state(self, clock, player):
+        """无天气引擎时天气侧状态为空（不是缺失字段）。"""
+        state = collect_state(clock, player, None, archive_max_timestamp=0)
+        assert state["weather"] == {
+            "interventions": [], "feature_cores": [],
+        }
+
+
+class TestStateVersion:
+    """状态格式版本（无向后兼容，fail-closed）。"""
+
+    def test_accepts_current_version(self):
+        assert require_state_version({"state_version": STATE_VERSION}) == \
+            STATE_VERSION
+
+    def test_missing_version_rejected(self):
+        """旧格式（无版本字段）拒绝加载。"""
+        with pytest.raises(ValueError, match="state_version"):
+            require_state_version({"clock": {"time": 1}})
+
+    def test_future_version_rejected(self):
+        with pytest.raises(ValueError, match="状态格式版本不符"):
+            require_state_version({"state_version": STATE_VERSION + 1})
+
+    def test_bool_version_rejected(self):
+        """bool 是 int 子类，必须显式拒绝（否则 True == 1 混过校验）。"""
+        with pytest.raises(ValueError, match="整数"):
+            require_state_version({"state_version": True})
+
+    def test_non_mapping_rejected(self):
+        with pytest.raises(ValueError, match="映射"):
+            require_state_version(["state_version"])
+
 
 class TestApplyState:
     """状态恢复。"""
@@ -66,9 +101,9 @@ class TestApplyState:
     def test_restores_clock(self, clock, player):
         """恢复时钟时间/速度/暂停。"""
         state = {
+            "state_version": STATE_VERSION,
             "clock": {"time": 172800, "speed": 2.0, "paused": True},
             "player": {"entity_id": player.entity.id, "x": 5.0, "y": 6.0},
-            "weather": {"seed": 1},
             "archive_max_timestamp": 0,
         }
         apply_state(state, clock, player)
@@ -81,9 +116,9 @@ class TestApplyState:
         entity_id = player.entity.id
         player.move_to(10.0, 20.0)
         state = {
+            "state_version": STATE_VERSION,
             "clock": {"time": 0, "speed": 1.0, "paused": False},
             "player": {"entity_id": entity_id, "x": 10.0, "y": 20.0},
-            "weather": {"seed": 1},
             "archive_max_timestamp": 0,
         }
         # 模拟读档：新管理器 + 新服务
@@ -97,12 +132,23 @@ class TestApplyState:
         assert restored_service.position == (10.0, 20.0)
         assert restored_service.entity.id == entity_id
 
+    def test_version_rejected_before_side_effects(self, clock, player):
+        """版本不符时不产生任何副作用（时钟/玩家保持原状）。"""
+        clock.restore(time=500)
+        state = {
+            "clock": {"time": 999, "speed": 1.0, "paused": False},
+            "player": {"entity_id": None, "x": 0.0, "y": 0.0},
+        }
+        with pytest.raises(ValueError, match="state_version"):
+            apply_state(state, clock, player)
+        assert clock.time == 500, "版本校验必须早于任何恢复动作"
+
     def test_negative_time_rejected(self, clock, player):
         """负时间恢复被拒绝。"""
         state = {
+            "state_version": STATE_VERSION,
             "clock": {"time": -1, "speed": 1.0, "paused": False},
             "player": {"entity_id": None, "x": 0.0, "y": 0.0},
-            "weather": {"seed": 1},
             "archive_max_timestamp": 0,
         }
         with pytest.raises(ValueError):
@@ -111,6 +157,7 @@ class TestApplyState:
     def test_nan_clock_time_rejected(self, clock, player):
         """NaN 时钟时间被熔断（NaN 比较恒 False，< 0 校验形同虚设）。"""
         state = {
+            "state_version": STATE_VERSION,
             "clock": {"time": float("nan"), "speed": 1.0, "paused": False},
             "player": {"entity_id": None, "x": 0.0, "y": 0.0},
             "archive_max_timestamp": 0,
@@ -121,6 +168,7 @@ class TestApplyState:
     def test_inf_clock_speed_rejected(self, clock, player):
         """Inf 时钟速度被熔断。"""
         state = {
+            "state_version": STATE_VERSION,
             "clock": {"time": 100, "speed": float("inf"), "paused": False},
             "player": {"entity_id": None, "x": 0.0, "y": 0.0},
             "archive_max_timestamp": 0,
@@ -131,6 +179,7 @@ class TestApplyState:
     def test_nan_player_position_rejected(self, clock, player):
         """NaN 玩家坐标被熔断。"""
         state = {
+            "state_version": STATE_VERSION,
             "clock": {"time": 100, "speed": 1.0, "paused": False},
             "player": {"entity_id": "e1", "x": float("nan"), "y": 5.0},
             "archive_max_timestamp": 0,

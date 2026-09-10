@@ -38,6 +38,7 @@ def _rebuild_registry(**changes) -> MechanismRegistry:
         "declaration_version": ASCEND_MECHANISMS.declaration_version,
         "microstep_order": ASCEND_MECHANISMS.microstep_order,
         "slice_boundary": ASCEND_MECHANISMS.slice_boundary,
+        "wired_nodes": ASCEND_MECHANISMS.wired_nodes,
         "nodes": tuple(ASCEND_MECHANISMS.nodes.values()),
         "parameters": tuple(ASCEND_MECHANISMS.parameters.values()),
         "exogenous_sources": tuple(
@@ -497,7 +498,7 @@ class TestSourcelessPackagedBuild:
     def test_build_and_evaluate_in_sourceless_mode(self, monkeypatch):
         monkeypatch.setenv("ASCEND_SOURCELESS", "1")
         from ascend.causal.world import build_registry
-        from ascend.weather.field import precip_threshold
+        from ascend.weather import mechanisms as m
 
         registry = build_registry()
         assert len(registry.mechanisms) == len(ASCEND_MECHANISMS.mechanisms)
@@ -505,8 +506,9 @@ class TestSourcelessPackagedBuild:
                                  {SEA_LEVEL_TEMPERATURE: 15.0}) == pytest.approx(
             ASCEND_MECHANISMS.evaluate(SOLAR_LATITUDE_PROXY,
                                        {SEA_LEVEL_TEMPERATURE: 15.0}))
-        assert precip_threshold(100.0) == pytest.approx(
-            0.5456521739130435, abs=1e-12)
+        assert registry.evaluate(
+            m.PRECIPITATION_THRESHOLD, {m.ANNUAL_RAINFALL: 100.0},
+        ) == pytest.approx(0.5456521739130435, abs=1e-12)
 
     def test_sourceless_versions_are_degraded_and_stable(self, monkeypatch):
         monkeypatch.setenv("ASCEND_SOURCELESS", "1")
@@ -606,6 +608,7 @@ class TestSnapshotPortability:
             declaration_version=ASCEND_MECHANISMS.declaration_version,
             microstep_order=MICROSTEP_ORDER,
             slice_boundary=ASCEND_MECHANISMS.slice_boundary,
+            wired_nodes=ASCEND_MECHANISMS.wired_nodes,
             nodes=weather_mech.WEATHER_NODES + space_mech.WORLD_GEN_NODES,
             parameters=(
                 weather_mech.WEATHER_PARAMETERS

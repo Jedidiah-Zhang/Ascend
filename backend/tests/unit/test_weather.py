@@ -19,6 +19,33 @@ from ascend.weather.events import (
 )
 
 
+def _node_evaluate(node_id, parents, *, frame=0, instance=()):
+    """测试用节点求值入口（直连注册表；生产路径见 WeatherEngine.evaluate_node）。"""
+    from ascend.causal.world import ASCEND_MECHANISMS
+    return ASCEND_MECHANISMS.evaluate(node_id, parents)
+
+
+def _precip_threshold(annual_rainfall: float) -> float:
+    from ascend.weather import mechanisms as m
+    return _node_evaluate(
+        m.PRECIPITATION_THRESHOLD, {m.ANNUAL_RAINFALL: annual_rainfall},
+    )
+
+
+def _calibrate_precip(
+    signal: float, annual_rainfall: float, mean_intensity: float = 5.0,
+    threshold: float | None = None,
+) -> float:
+    from ascend.weather import mechanisms as m
+    if threshold is None:
+        threshold = _precip_threshold(annual_rainfall)
+    return _node_evaluate(m.INSTANT_PRECIPITATION_INTENSITY, {
+        m.FIELD_PRECIPITATION_SIGNAL: signal,
+        m.PRECIPITATION_THRESHOLD: threshold,
+        m.MEAN_PRECIP_INTENSITY: mean_intensity,
+    })
+
+
 def _publish_minute(wt, game_time):
     """发布 minute_change 事件驱动 WeatherEngine。"""
     from ascend.config import GAME_DAY, GAME_HOUR
@@ -563,39 +590,33 @@ class TestTextureField:
 
 
 class TestPrecipCalibration:
-    """降水信号 → 阈值/强度校准测试。"""
+    """降水信号 → 阈值/强度节点求值（唯一实现 = 注册表方程）。"""
 
     def test_threshold_dry_high_wet_low(self):
-        from ascend.weather.field import precip_threshold
-        assert precip_threshold(50.0) == pytest.approx(0.55)
-        assert precip_threshold(3500.0) == pytest.approx(0.25)
-        assert precip_threshold(800.0) < precip_threshold(100.0)
+        assert _precip_threshold(50.0) == pytest.approx(0.55)
+        assert _precip_threshold(3500.0) == pytest.approx(0.25)
+        assert _precip_threshold(800.0) < _precip_threshold(100.0)
 
     def test_threshold_clamped_outside_range(self):
-        from ascend.weather.field import precip_threshold
-        assert precip_threshold(0.0) == pytest.approx(0.55)
-        assert precip_threshold(100000.0) == pytest.approx(0.25)
+        assert _precip_threshold(0.0) == pytest.approx(0.55)
+        assert _precip_threshold(100000.0) == pytest.approx(0.25)
 
     def test_calibrate_below_threshold_zero(self):
-        from ascend.weather.field import calibrate_precip
-        assert calibrate_precip(0.1, 100.0, 5.0) == 0.0
+        assert _calibrate_precip(0.1, 100.0, 5.0) == 0.0
 
     def test_calibrate_above_threshold_scaled(self):
-        from ascend.weather.field import calibrate_precip
         # 阈值 0.25（湿润），信号 0.5 → 超阈 0.25 × 2 × 10 = 5.0
-        assert calibrate_precip(0.5, 3500.0, 10.0) == pytest.approx(5.0)
+        assert _calibrate_precip(0.5, 3500.0, 10.0) == pytest.approx(5.0)
 
     def test_calibrate_signal_capped(self):
-        from ascend.weather.field import calibrate_precip
         # 信号超 PRECIP_SIGNAL_MAX 时按饱和值计
-        assert calibrate_precip(5.0, 3500.0, 10.0) == \
-            calibrate_precip(1.2, 3500.0, 10.0)
+        assert _calibrate_precip(5.0, 3500.0, 10.0) == \
+            _calibrate_precip(1.2, 3500.0, 10.0)
 
     def test_calibrate_precomputed_threshold(self):
-        from ascend.weather.field import calibrate_precip, precip_threshold
-        th = precip_threshold(800.0)
-        assert calibrate_precip(0.6, 800.0, 5.0, threshold=th) == \
-            calibrate_precip(0.6, 800.0, 5.0)
+        th = _precip_threshold(800.0)
+        assert _calibrate_precip(0.6, 800.0, 5.0, threshold=th) == \
+            _calibrate_precip(0.6, 800.0, 5.0)
 
 
 # ── 特征场（FeatureField）────────────────────────────────────────
@@ -682,6 +703,98 @@ class TestFeatureField:
         with pytest.raises(ValueError):
             f.inject_core(0, 0, "tornado", center_x=0.0, center_y=0.0,
                           radius=100.0, born_tick=0, duration=100)
+
+    # ── 注入核持久化（P4：W_t 的不可重算部分）──────────────────
+
+    def test_injected_cores_round_trip(self):
+        """persist_injected → restore_injected 逐字段一致。"""
+        from ascend.weather.features import FeatureField
+        source = FeatureField(seed=42)
+        source.inject_core(0, 0, "storm", center_x=100.0, center_y=200.0,
+                           radius=500.0, born_tick=10, duration=None)
+        source.inject_core(1, 2, "front", center_x=1.0, center_y=2.0,
+                           radius=300.0, born_tick=20, duration=50,
+                           vel_x=0.5, vel_y=0.3)
+        payload = source.persist_injected()
+
+        target = FeatureField(seed=42)
+        assert target.restore_injected(payload) == 2
+        assert target.persist_injected() == payload
+        core = target.get_injected(0, 0, "storm")
+        assert core.no_ramp is True and core.duration is None
+        assert target.get_injected(1, 2, "front").vel_x == 0.5
+
+    def test_restore_injected_replaces_existing_set(self):
+        """恢复是整体替换：残留注入核不得存活（存档是唯一事实源）。"""
+        from ascend.weather.features import FeatureField
+        source = FeatureField(seed=42)
+        source.inject_core(0, 0, "storm", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=0, duration=None)
+        target = FeatureField(seed=42)
+        target.inject_core(1, 1, "cold_snap", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=0, duration=None)
+        target.restore_injected(source.persist_injected())
+        assert target.get_injected(0, 0, "storm") is not None
+        assert target.get_injected(1, 1, "cold_snap") is None
+
+    @pytest.mark.parametrize("field_name,value", [
+        ("core_id", "inj:9:9:storm"),
+        ("type_name", "tsunami"),
+        ("chunk", [0, 0, 0]),
+        ("born_tick", -1),
+        ("duration", 0),
+        ("radius", float("nan")),
+        ("magnitude", float("inf")),
+    ])
+    def test_restore_injected_rejects_bad_field(self, field_name, value):
+        from ascend.weather.features import FeatureField
+        source = FeatureField(seed=42)
+        source.inject_core(0, 0, "storm", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=5, duration=None)
+        payload = source.persist_injected()
+        payload[0][field_name] = value
+        with pytest.raises(ValueError):
+            FeatureField(seed=42).restore_injected(payload)
+
+    def test_restore_injected_rejects_unknown_field(self):
+        from ascend.weather.features import FeatureField
+        source = FeatureField(seed=42)
+        source.inject_core(0, 0, "storm", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=5, duration=None)
+        payload = source.persist_injected()
+        payload[0]["ghost"] = 1
+        with pytest.raises(ValueError, match="未知字段"):
+            FeatureField(seed=42).restore_injected(payload)
+
+    def test_restore_injected_rejects_non_list(self):
+        from ascend.weather.features import FeatureField
+        with pytest.raises(ValueError, match="列表"):
+            FeatureField(seed=42).restore_injected({"a": 1})
+
+    def test_restore_injected_is_all_or_nothing(self):
+        """任一核非法 → 整体拒绝，已有注入核不被清空。"""
+        from ascend.weather.features import FeatureField
+        source = FeatureField(seed=42)
+        source.inject_core(0, 0, "storm", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=5, duration=None)
+        payload = source.persist_injected()
+        payload.append({"chunk": [1, 1]})       # 缺字段
+        target = FeatureField(seed=42)
+        target.inject_core(2, 2, "front", center_x=0.0, center_y=0.0,
+                           radius=100.0, born_tick=0, duration=None)
+        with pytest.raises(ValueError):
+            target.restore_injected(payload)
+        assert target.get_injected(2, 2, "front") is not None, \
+            "拒绝时必须保持原状，不留半成品"
+
+    def test_persist_injected_is_json_safe(self):
+        import json
+        from ascend.weather.features import FeatureField
+        f = FeatureField(seed=42)
+        f.inject_core(0, 0, "storm", center_x=1.0, center_y=2.0,
+                      radius=100.0, born_tick=5, duration=None)
+        payload = f.persist_injected()
+        assert json.loads(json.dumps(payload)) == payload
 
     def test_front_has_no_event_classes(self):
         """锋面是纯降水带（带形），无 start/stop 事件类。"""
@@ -779,7 +892,9 @@ class TestRegionTracker:
 
     def _make_tracker(self):
         from ascend.weather import UnifiedWeatherField, RegionTracker
-        tr = RegionTracker(UnifiedWeatherField(seed=42))
+        tr = RegionTracker(
+            UnifiedWeatherField(seed=42), evaluate=_node_evaluate,
+        )
         for cx in range(-2, 3):
             for cy in range(-2, 3):
                 tr.set_chunk_baseline(cx, cy, 3000.0, 10.0)
@@ -835,7 +950,9 @@ class TestRegionTracker:
     def test_dry_climate_never_rains(self):
         """极干旱校准（高阈）→ 无区域事件。"""
         from ascend.weather import UnifiedWeatherField, RegionTracker
-        tr = RegionTracker(UnifiedWeatherField(seed=42))
+        tr = RegionTracker(
+            UnifiedWeatherField(seed=42), evaluate=_node_evaluate,
+        )
         tr.set_chunk_baseline(0, 0, 10.0, 2.0)
         events = tr.update(10000000)
         assert not any(e.kind == "start" for e in events)
@@ -2160,25 +2277,22 @@ class TestRegistryProductionAudit:
         finally:
             e.shutdown()
 
-    def test_calibrate_precip_matches_registry(self):
-        """区域事件路径降水校准 == 注册表方程（含显式阈值复用）。"""
-        from ascend.weather.field import calibrate_precip, precip_threshold
+    def test_region_tracker_uses_injected_evaluator(self):
+        """区域事件路径与查询路径共用注入的求值入口（无旁路公式）。"""
+        from ascend.weather import UnifiedWeatherField, RegionTracker
         from ascend.weather import mechanisms as m
         from ascend.causal.world import ASCEND_MECHANISMS as reg
 
-        for annual in (100.0, 800.0, 3500.0):
-            threshold = reg.evaluate(m.PRECIPITATION_THRESHOLD,
-                                     {m.ANNUAL_RAINFALL: annual})
-            assert precip_threshold(annual) == pytest.approx(threshold, abs=1e-12)
-            for signal in (0.1, 0.5, 1.0):
-                for intensity in (5.0, 10.0):
-                    expected = reg.evaluate(m.INSTANT_PRECIPITATION_INTENSITY, {
-                        m.FIELD_PRECIPITATION_SIGNAL: signal,
-                        m.PRECIPITATION_THRESHOLD: threshold,
-                        m.MEAN_PRECIP_INTENSITY: intensity,
-                    })
-                    got = calibrate_precip(signal, annual, intensity)
-                    assert got == pytest.approx(expected, abs=1e-12)
-                    got_th = calibrate_precip(signal, annual, intensity,
-                                              threshold=threshold)
-                    assert got_th == pytest.approx(expected, abs=1e-12)
+        calls: list[str] = []
+
+        def spy(node_id, parents, *, frame=0, instance=()):
+            calls.append(node_id)
+            return reg.evaluate(node_id, parents)
+
+        tr = RegionTracker(UnifiedWeatherField(seed=42), evaluate=spy)
+        tr.set_chunk_baseline(0, 0, 3000.0, 10.0)
+        tr.update(10000000)
+        assert m.PRECIPITATION_THRESHOLD in calls
+        # 出现区域时强度也经同一入口求值
+        if any(e.kind == "start" for e in tr.update(10000000 + 120)):
+            assert m.INSTANT_PRECIPITATION_INTENSITY in calls

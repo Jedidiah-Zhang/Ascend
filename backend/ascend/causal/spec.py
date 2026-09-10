@@ -146,13 +146,20 @@ class RandomBinding:
 
 @dataclass(frozen=True, slots=True)
 class DependencyWitness:
-    """C1 功能依赖见证：固定上下文，仅替换一个父值。"""
+    """C1 功能依赖见证：固定上下文，仅替换一个父值。
+
+    Attributes:
+        random_values: 见证评估的随机上下文（源 ID → 取值）。
+            空 = 每个声明的随机源取注册表占位常数；显式给出可避免
+            "父依赖恰好在占位值处抵消"的误拒。
+    """
 
     label: str
     parent: str
     inputs: tuple[tuple[str, object], ...]
     alternate_value: object
     expected_outputs: tuple[object, object]
+    random_values: tuple[tuple[str, object], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
