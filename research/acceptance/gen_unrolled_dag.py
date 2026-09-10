@@ -48,8 +48,19 @@ def _sanitize(name: str) -> str:
     return "".join(out)
 
 
+def _lag_bound() -> int:
+    """滞后上界 K：实际用到的最大滞后 + 1（至少 2）。"""
+    registry = _load_registry()
+    max_lag = 0
+    for mechanism in registry.mechanisms.values():
+        for parent in mechanism.parents:
+            max_lag = max(max_lag, parent.lag)
+    return max(2, max_lag + 1)
+
+
 def _render() -> str:
     registry = _load_registry()
+    lag_count = _lag_bound()
     order = list(registry.microstep_order)
     steps = {name: index for index, name in enumerate(order)}
     nodes = sorted(registry.nodes)
@@ -80,26 +91,29 @@ def _render() -> str:
     lines.append("")
     lines.append("open AscendLean.CausalVerification")
     lines.append("")
-    lines.append("-- ═══ 第一节 微步序（更新阶段 r_v 的全序）═══")
+    lines.append("-- ═══ 第一节 规模常量 ═══")
     lines.append("")
-    for index, name in enumerate(order):
-        lines.append(f"/-- {name} -/")
-        lines.append(f"def step{index} : ℕ := {index}")
-    lines.append("")
-    lines.append(f"def stepCount : ℕ := {len(order)}")
-    lines.append("")
-    lines.append("-- ═══ 第二节 节点索引（分量模板 v）═══")
-    lines.append("")
-    for node_id in nodes:
-        lines.append(f"/-- {node_id} -/")
-        lines.append(f"def node{_sanitize(node_id)} : ℕ := {node_index[node_id]}")
-    lines.append("")
+    lines.append(f"/-- 分量模板数（生产声明节点数）。 -/")
     lines.append(f"def nodeCount : ℕ := {len(nodes)}")
     lines.append("")
-    lines.append("-- ═══ 第三节 声明（父模板表）═══")
+    lines.append("/-- 更新阶段数（微步序长度）。 -/")
+    lines.append(f"def stepCount : ℕ := {len(order)}")
     lines.append("")
-    lines.append("/-- 生产声明的父模板表（可计算：节点索引 → 阶段 → 父模板列表）。 -/")
-    lines.append("def realParents : ℕ → ℕ → List ParentSpec := fun v r =>")
+    lines.append("/-- 滞后上界（实际用到的最大滞后 + 1）。 -/")
+    lines.append(f"def lagCount : ℕ := {lag_count}")
+    lines.append("")
+    lines.append("/-- 本文件使用的父模板结构别名（绑定生产声明的规模）。 -/")
+    lines.append("abbrev PSpec : Type :=")
+    lines.append("  AscendLean.CausalVerification.ParentSpec nodeCount stepCount lagCount")
+    lines.append("")
+    lines.append("-- ═══ 第二节 生产声明的父模板表（有限索引，可计算）═══")
+    lines.append("")
+    lines.append("/-- 分量模板索引按节点 ID 排序（与注册表 `sorted(nodes)` 同序）。 -/")
+    for index, node_id in enumerate(nodes):
+        lines.append(f"def node{_sanitize(node_id)} : ℕ := {index}")
+    lines.append("")
+    lines.append("/-- 父模板表：分量索引 → 阶段 → 父模板列表。 -/")
+    lines.append("def realParents : ℕ → ℕ → List PSpec := fun v r =>")
     lines.append("  match v, r with")
     for node_id in nodes:
         spec = registry.nodes[node_id]
@@ -107,28 +121,31 @@ def _render() -> str:
         mechanism = by_output.get(node_id)
         parents = mechanism.parents if mechanism is not None else ()
         rendered = ", ".join(
-            "⟨%d, %d, %d⟩" % (
+            "({ par := ⟨%d, by decide⟩, lag := ⟨%d, by decide⟩,"
+            " pr := ⟨%d, by decide⟩ } : PSpec)" % (
                 node_index[parent.parent],
                 parent.lag,
                 steps[parent.source_microstep],
             )
             for parent in parents
         )
-        body = "[" + rendered + "]" if rendered else "([] : List ParentSpec)"
+        body = "[" + rendered + "]" if rendered else "([] : List PSpec)"
         lines.append(f"  | {node_index[node_id]}, {stage} => {body}")
     lines.append("  | _, _ => []")
     lines.append("")
-    lines.append("/-- 展开声明：父模板列表 → 有限集合（可计算，无 choice）。 -/")
-    lines.append("def realDecl : Decl := fun v r => (realParents v r).toFinset")
+    lines.append("/-- **生产声明**（有限索引：`Fin nodeCount` × `Fin stepCount`）。 -/")
+    lines.append("def realDecl : Decl nodeCount stepCount lagCount := fun v r =>")
+    lines.append("  realParents v.val r.val")
     lines.append("")
-    lines.append("-- ═══ 第四节 规模与待办 ═══")
+    lines.append("-- ═══ 第三节 机器可判的合法性证明 ═══")
     lines.append("")
-    lines.append("/-! 待办（P5 后续）：把 `realDecl` 的 `WellFormed` 证明补上，")
-    lines.append("即可直接套用 `unroll_acyclic` 得到生产声明的时间展开无环。")
-    lines.append("当前卡点：`v r : ℕ` 上的全称量词不可判定（无 `Fintype ℕ`），")
-    lines.append("`fin_cases`/`omega` 的组合在大匹配上超出心跳预算；可行的路径是")
-    lines.append("为每个节点单独生成 `WellFormed` 的逐节点引理，或把 `Decl` 换成")
-    lines.append("`Fin nodeCount → Fin stepCount → Finset ParentSpec` 的有限索引版本。 -/")
+    lines.append("/-- **生产声明合法**（判定式在有界索引上穷尽枚举）。 -/")
+    lines.append("theorem wellFormed_real : WellFormed realDecl :=")
+    lines.append("  wellFormed_of_check (by native_decide)")
+    lines.append("")
+    lines.append("/-- **生产声明的时间展开图无环**（C2 的实例见证）。 -/")
+    lines.append("theorem unroll_acyclic_real : Acyclic (UnrollEdge lagCount realDecl) :=")
+    lines.append("  unroll_acyclic wellFormed_real")
     lines.append("")
     lines.append("end AscendLean.GenUnrolledDag")
     lines.append("")

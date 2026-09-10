@@ -76,18 +76,31 @@ watch 路径已扩展到 `research/acceptance/**`、`backend/ascend/save/**`、
 ## 5. Lean 实例化（C2 的理论内核 × 生产声明）
 
 `UnrolledDag.lean` 证明"任何合法声明展开无环"，但此前**从未与真实声明
-对上**。`gen_unrolled_dag.py` 把生产声明实例化为 `UnrolledDag.Decl`：
+对上**。`gen_unrolled_dag.py` 把生产声明实例化为 `UnrolledDag.Decl`，
+并给出**机器可判的合法性证明**：
 
-- 生成物 `GenUnrolledDag.lean`：微步序索引、节点索引、父模板表、
-  支撑表、展开边表、秩函数与边秩检查；
+- `wellFormed_real : WellFormed realDecl`——生产声明合法；
+- `unroll_acyclic_real : Acyclic (UnrollEdge realDecl)`——由通用定理
+  `unroll_acyclic` 直接得到生产声明的时间展开图无环；
 - `run_acceptance.py --check` 巡检生成物与生产声明是否漂移（接入 CI）。
 
-**待办**：`realDecl` 的 `WellFormed` 证明尚未闭合——`v r : ℕ` 上的全称
-量词不可判定（无 `Fintype ℕ`），`fin_cases`/`omega` 在大匹配上超心跳
-预算。可行路径：逐节点生成 `WellFormed` 引理，或把 `Decl` 换成
-`Fin nodeCount → Fin stepCount → Finset ParentSpec` 的有限索引版本。
-在此之前，C2 的实例侧由 runner 的展开检查（Python）承担，理论侧由
-`UnrolledDag.lean` 的通用定理承担。
+**有限索引（关键设计）**：`Decl`、`Node` 与 `ParentSpec` 的参数一律以
+有界索引声明——`Fin n`（分量）、`Fin m`（更新阶段）、`Fin K`（滞后上界）：
+
+```
+ParentSpec (n m K : ℕ)   par : Fin n, lag : Fin K, pr : Fin m
+Decl (n m K : ℕ)         := Fin n → Fin m → List (ParentSpec n m K)
+WellFormed (D : Decl n m K) := 每个父模板满足"同帧父来自更早阶段"
+```
+
+理由：合法性本身包含"参数在界内"，把这条**编码进类型**之后，命题在
+有限域上**可判定**，实例化时由判定式 `wellFormedCheck`（在 `Fin` 与
+列表视图上显式递归求与，保持可计算）经 `native_decide` 一次判定，
+不需要在无限域（`ℕ`）上做全称推理——后者因 `ℕ` 无 `Fintype` 而
+无法合成 `Decidable`，是此前卡住的根因。
+
+值用 `List` 而非 `Finset`：声明是生成物、重复项由生成器保证不出现，
+而 `Finset.toList` 依赖选择公理（`noncomputable`），会破坏判定式的可计算性。
 
 ## 6. 验证
 

@@ -10,3 +10,4 @@ import AscendLean.CausalVerification.SpatialKernel
 import AscendLean.CausalVerification.InterventionTypes
 import AscendLean.CausalVerification.Declarations
 import AscendLean.CausalVerification.GenDeclarationData
+import AscendLean.CausalVerification.GenUnrolledDag
