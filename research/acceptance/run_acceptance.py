@@ -1,7 +1,7 @@
 """世界验收 runner — C0–C2 / W0–W5 / I0–I1 统一执行与产物落盘。
 
 运行:
-    .venv/bin/python research/acceptance/run_acceptance.py [--json out.json] [--fast]
+    .venv/bin/python research/acceptance/run_acceptance.py [--json out.json] [--check]
 
 判据见 ``checks.py``；每项独立报告输入、参考输出、引擎输出与首个分歧
 （04 §1：只保存最终状态哈希不足以定位分歧）。退出码 0 = 全部通过。
@@ -25,7 +25,6 @@ import gen_unrolled_dag  # noqa: E402
 def main() -> int:
     ap = argparse.ArgumentParser(description="世界验收 runner")
     ap.add_argument("--json", default="", help="产物输出路径（缺省只打印）")
-    ap.add_argument("--fast", action="store_true", help="快速模式（缩短窗口）")
     ap.add_argument(
         "--check", action="store_true",
         help="只巡检 Lean UnrolledDag 生成物与生产声明是否漂移",

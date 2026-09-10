@@ -105,23 +105,34 @@ class TraceCommandsMixin:
         )
 
     def _cmd_trace_list(self, args: list[str]) -> CommandResult:
+        """列出记录（**限量**：终端输出也会被帧长上限截断）。"""
         t = self._i18n.t
         log = self._require_trace()
-        frame, node_id = self._parse_filters(args)
-        records = log.records(frame=frame, node_id=node_id)
-        if not records:
+        frame, node_id, limit = self._parse_filters(args)
+        page, total = log.page(
+            frame=frame, node_id=node_id, limit=limit,
+        )
+        if not page:
             return CommandResult(
                 success=True, output=t("console.trace_list_empty"),
             )
-        lines = [t("console.trace_list_header", count=len(records))]
-        for entry in records:
+        lines = [t("console.trace_list_header", count=len(page))]
+        for entry in page:
             lines.append(
                 f"  [{entry.frame}] {entry.node_id} "
                 f"{entry.mechanism_id or t('console.trace_value_rep')} "
                 f"= {entry.output!r} "
                 f"{t('console.trace_parents', count=len(entry.parents))}"
             )
+        if total > len(page):
+            lines.append(t(
+                "console.trace_list_truncated",
+                shown=len(page), total=total,
+            ))
         return CommandResult(success=True, output="\n".join(lines))
+
+    #: 终端默认输出条数（超过会提示截断）
+    _LIST_DEFAULT_LIMIT: int = 50
 
     def _cmd_trace_show(self, args: list[str]) -> CommandResult:
         t = self._i18n.t
@@ -129,7 +140,7 @@ class TraceCommandsMixin:
         if not args:
             raise ValueError(t("console.trace_need_node"))
         node_id = args[0]
-        frame, extra_node = self._parse_filters(args[1:])
+        frame, extra_node, _limit = self._parse_filters(args[1:])
         if extra_node is not None:
             raise ValueError(t("console.trace_extra_args"))
         records = log.records(frame=frame, node_id=node_id)
@@ -192,25 +203,37 @@ class TraceCommandsMixin:
             raise ValueError(self._i18n.t("console.trace_not_on"))
         return self._weather.trace
 
-    def _parse_filters(self, args: list[str]) -> tuple[int | None, str | None]:
-        """解析 ``[frame N] [node ID]``（顺序不限，多余参数报错）。"""
+    def _parse_filters(
+        self, args: list[str],
+    ) -> tuple[int | None, str | None, int]:
+        """解析 ``[frame N] [limit N] [node ID]``（顺序不限，多余参数报错）。"""
         t = self._i18n.t
         frame: int | None = None
         node_id: str | None = None
+        limit = self._LIST_DEFAULT_LIMIT
         rest = list(args)
         while rest:
             token = rest.pop(0)
-            if token == "frame":
+            if token in ("frame", "limit"):
                 if not rest:
                     raise ValueError(t("console.trace_need_frame"))
+                raw_value = rest.pop(0)
                 try:
-                    frame = int(rest.pop(0))
+                    value = int(raw_value)
                 except ValueError:
                     raise ValueError(
-                        t("console.trace_bad_frame", value=token)
+                        t("console.trace_bad_frame", value=raw_value)
                     ) from None
+                if token == "frame":
+                    frame = value
+                else:
+                    if value < 1:
+                        raise ValueError(
+                            t("console.trace_bad_frame", value=raw_value)
+                        )
+                    limit = value
             elif node_id is None:
                 node_id = token
             else:
                 raise ValueError(t("console.trace_extra_args"))
-        return frame, node_id
+        return frame, node_id, limit

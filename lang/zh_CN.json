@@ -167,7 +167,7 @@
   "console.help_trace_on": "开启研究日志（记录每次节点求值，缺省容量 4096）",
   "console.help_trace_off": "关闭研究日志（已记录内容保留）",
   "console.help_trace_status": "查看研究日志开关与记录数",
-  "console.help_trace_list": "按帧/节点筛选记录",
+  "console.help_trace_list": "按帧/节点筛选记录（limit N 控制条数，缺省 50）",
   "console.help_trace_show": "打印单条记录的完整字段",
   "console.help_trace_verify": "全部记录重算校验（日志可重算任意节点）",
   "console.help_trace_clear": "清空记录",
@@ -469,5 +469,6 @@
   "ui.common.connection_lost_retry": "连接中断，操作未完成 — 请重试",
   "ui.common.backend_unavailable": "后端不可用：{reason}",
   "ui.common.request_failed": "请求失败：{reason}",
-  "ui.common.request_timeout": "请求超时，请重试"
+  "ui.common.request_timeout": "请求超时，请重试",
+  "console.trace_list_truncated": "  …… 仅显示 {shown}/{total} 条（用 limit N 查看更多）"
 }

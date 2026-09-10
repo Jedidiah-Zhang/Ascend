@@ -167,7 +167,7 @@
   "console.help_trace_on": "enable the research log (records every node evaluation; default capacity 4096)",
   "console.help_trace_off": "disable the research log (records are kept)",
   "console.help_trace_status": "show the research log switch and record count",
-  "console.help_trace_list": "filter records by frame / node",
+  "console.help_trace_list": "filter records by frame / node (limit N, default 50)",
   "console.help_trace_show": "print every field of one record",
   "console.help_trace_verify": "recompute every record (the log can recompute any node)",
   "console.help_trace_clear": "clear records",
@@ -469,5 +469,6 @@
   "ui.common.connection_lost_retry": "Connection lost, operation failed - retry",
   "ui.common.backend_unavailable": "Backend unavailable: {reason}",
   "ui.common.request_failed": "Request failed: {reason}",
-  "ui.common.request_timeout": "Request timed out, please retry"
+  "ui.common.request_timeout": "Request timed out, please retry",
+  "console.trace_list_truncated": "  ... showing {shown}/{total} (use limit N for more)"
 }

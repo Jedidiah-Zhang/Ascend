@@ -67,6 +67,8 @@ jobs:
           python-version: "3.14"
       - name: 安装后端依赖
         run: python -m pip install -q -r requirements.txt
+      - name: Lean 实例漂移巡检（生产声明 → UnrolledDag）
+        run: python research/acceptance/run_acceptance.py --check
       - name: 世界验收 runner（C0–C2 / W0–W5 / I0–I1）
         run: python research/acceptance/run_acceptance.py --json acceptance.json
       - name: 上传验收产物

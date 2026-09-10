@@ -29,6 +29,11 @@ from ascend.net.protocol import make_response
 
 logger = get_logger(__name__)
 
+# 研究日志查询的缺省/最大页长：单帧有 MAX_MESSAGE_SIZE 上限，
+# 一次返回上万条会超限被前端静默丢弃。
+TRACE_PAGE_DEFAULT: int = 200
+TRACE_PAGE_MAX: int = 1000
+
 _SPACE_MAP = {
     "node": "node",
     "parameter": "parameter",
@@ -150,12 +155,29 @@ def make_research_handler(
             node_id = payload.get("node_id")
             if node_id is not None and not isinstance(node_id, str):
                 raise ValueError(f"node_id 必须为字符串: {node_id!r}")
+            offset = _optional_int(payload, "offset") or 0
+            limit = _optional_int(payload, "limit") or TRACE_PAGE_DEFAULT
+            if limit < 1 or limit > TRACE_PAGE_MAX:
+                raise ValueError(
+                    f"limit 必须在 [1, {TRACE_PAGE_MAX}]: {limit}"
+                )
+            if offset < 0:
+                raise ValueError(f"offset 必须 ≥ 0: {offset}")
+            page, total = log.page(
+                frame=frame, node_id=node_id, offset=offset, limit=limit,
+            )
         except ValueError as exc:
             return _fail("research_trace_list", str(exc))
-        records = log.records(frame=frame, node_id=node_id)
         return make_response(
             "research_trace_list",
-            {"success": True, "records": [r.plain() for r in records]},
+            {
+                "success": True,
+                "records": [r.plain() for r in page],
+                "offset": offset,
+                "limit": limit,
+                "returned": len(page),
+                "total": total,
+            },
         )
 
     def handle_trace_replay(msg: dict) -> dict:

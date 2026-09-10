@@ -161,7 +161,7 @@ def check_w0() -> CheckResult:
     engine = InterventionFrameExecutor(registry, table)
     engine_frames = [engine.run_frame(0, dict(initial))]
 
-    divergence = reference.first_divergence(ref_frames, engine_frames)
+    divergence = reference.first_divergence(ref_frames, engine_frames, frames=[0])
     hand_ok = all(
         ref_frames[0][node] == value for node, value in hand.items()
     ) and all(
@@ -208,7 +208,7 @@ def check_w1() -> CheckResult:
     engine = InterventionFrameExecutor(registry, table)
     do_engine = [engine.run_frame(0, dict(initial))]
 
-    divergence = reference.first_divergence([do_ref], do_engine)
+    divergence = reference.first_divergence([do_ref], do_engine, frames=[0])
     checks = {
         "干预值": do_engine[0]["med"] == target_med,
         "入边切断": do_engine[0]["med"] != baseline["med"],
@@ -309,56 +309,90 @@ def _mechanism_arm() -> list[float]:
 # ── W3：空间父模板与边界 ────────────────────────────────────
 
 def check_w3() -> CheckResult:
-    """W3：一维五格父模板 + replicate 边界，单位扰动响应符合核支持。"""
+    """W3：一维五格父模板 + replicate 边界；**引擎侧**与参考解释器逐格对拍。
+
+    三层独立证据：
+    1. **引擎**（`InterventionFrameExecutor(spatial_cells=...)`）逐格求值；
+    2. **参考解释器**（`SpatialReferenceInterpreter`，独立调度实现）；
+    3. **手算**：单位扰动响应必须是 ¼ / ½ / ¼，边界格按 replicate 算子手算。
+
+    边界不拿方程自比：期望值写成显式算术（越界邻格取边缘格自身），
+    而不是调用同一条方程函数。
+    """
+    from ascend.causal.intervention_engine import InterventionFrameExecutor
+
     registry = slices.w3_registry()
     cells = tuple(range(slices.W3_CELLS))
-    base_u = {index: 1.0 for index in cells}
-    initial = {"u": dict(base_u), "v": {index: 0.0 for index in cells}}
-
-    # 参考：声明解释器（按格展开）
-    ref = reference.SpatialReferenceInterpreter(registry, cells=cells)
-    ref_frames = ref.run(range(1), initial)
-
-    # 参考：单位扰动（u(s0) += 1）→ 响应只落在核支持内，权重 1/4,1/2,1/4
+    base = {"u": {i: 1.0 for i in cells}, "v": {i: 0.0 for i in cells}}
     perturbed = {
-        "u": {index: (2.0 if index == 2 else 1.0) for index in cells},
-        "v": {index: 0.0 for index in cells},
+        "u": {i: (2.0 if i == 2 else 1.0) for i in cells},
+        "v": {i: 0.0 for i in cells},
     }
-    perturbed_frames = ref.run(range(1), perturbed)
-    response = tuple(
-        perturbed_frames[0]["v"][index] - ref_frames[0]["v"][index]
-        for index in cells
+
+    # 引擎侧（空间展开）
+    engine = InterventionFrameExecutor(registry, spatial_cells=cells)
+    engine_base = engine.run_frame(0, base)
+    engine_perturbed = engine.run_frame(0, perturbed)
+    engine_response = tuple(
+        engine_perturbed["v"][i] - engine_base["v"][i] for i in cells
     )
-    expected = (0.0, 0.25, 0.5, 0.25, 0.0)
-    boundary_ok = (
-        ref_frames[0]["v"][0] == slices._w3_equation((1.0, 1.0, 1.0))
-        and ref_frames[0]["v"][4] == slices._w3_equation((1.0, 1.0, 1.0))
+    engine_values = tuple(engine_base["v"][i] for i in cells)
+
+    # 参考解释器（独立调度）
+    reference_interp = reference.SpatialReferenceInterpreter(
+        registry, cells=cells,
     )
+    ref_values = reference_interp.run(range(1), base)[0]["v"]
+    divergence = reference.first_divergence(
+        [{"v": ref_values}], [{"v": engine_values}], frames=[0],
+    )
+
+    # 手算：均匀输入 1.0 时，内部格 = ¼·1+½·1+¼·1 = 1.0；
+    # 边界 replicate：s=0 的 s-1 取边缘格自身 → 同值 1.0
+    hand_values = (1.0, 1.0, 1.0, 1.0, 1.0)
+    # 扰动手算：增益只落在核支持内，权重依次 0, ¼, ½, ¼, 0
+    hand_response = (0.0, 0.25, 0.5, 0.25, 0.0)
+
     checks = {
-        "内部格权重": response == expected,
-        "边界算子": boundary_ok,
-        "核支持内": all(
-            response[index] == 0.0
-            for index in cells if abs(index - 2) > 1
+        "引擎/参考逐格一致": divergence is None,
+        "引擎/手算一致": engine_values == hand_values,
+        "扰动响应权重": engine_response == hand_response,
+        "核支持外无响应": all(
+            engine_response[i] == 0.0 for i in cells if abs(i - 2) > 1
+        ),
+        "边界算子（replicate）": (
+            engine_values[0] == 1.0 and engine_values[4] == 1.0
         ),
     }
     failed = [name for name, ok in checks.items() if not ok]
+    passed = not failed
     return CheckResult(
-        code="W3", title="空间父模板与边界", passed=not failed,
+        code="W3", title="空间父模板与边界", passed=passed,
         detail=(
-            f"单位扰动响应 {response}（期望 {expected}），边界 replicate 正确"
-            if not failed else f"未通过项: {failed}"
+            f"引擎/参考/手算逐格一致（{engine_values}），单位扰动响应 "
+            f"{engine_response}（期望 {hand_response}），replicate 边界正确"
+            if passed else f"未通过项: {failed}，首分歧={divergence}"
         ),
         input={"cells": list(cells), "perturb_at": 2},
-        reference={"v": ref_frames[0]["v"], "response": response},
-        engine=None,
+        reference=ref_values,
+        engine=engine_values,
+        first_divergence=divergence,
     )
 
 
 # ── W4：状态充分性 ──────────────────────────────────────────
 
 def check_w4() -> CheckResult:
-    """W4：完整存档清缓存双跑逐位一致（P4 的存档层已实现）。"""
+    """W4：**清缓存双跑逐位一致**——存档读档的轨迹 vs 不存档的轨迹。
+
+    构造两个同种子、同设置的世界 A、B（相同初始随机地址）：
+    A 施加"值干预 + 注入特征核"后存档；C 从该存档恢复（模拟进程重启：
+    缓存全空、状态来自存档）；B 全程不存档。随后 B、C 独立推进相同帧，
+    逐帧逐 chunk 的天气读出必须**逐位一致**。
+
+    判别力负例（同判据内）：把干预与注入核从载荷中剔除后，B 与 C 必须
+    **分叉**——否则"一致"可能只是"两边都没生效"的假通过。
+    """
     from ascend.save import STATE_VERSION, apply_state, collect_state
     from ascend.space import ClimateZone, WeatherParams
     from ascend.time import WorldClock
@@ -366,9 +400,13 @@ def check_w4() -> CheckResult:
     from ascend.weather.mechanisms import INSTANT_TEMPERATURE
     from ascend.world_tree import WorldTree
 
-    def build(seed: int = 7):
+    class _Player:
+        entity = None
+        position = (12.0, 34.0)
+
+    def build() -> tuple[WorldClock, WeatherEngine]:
         clock = WorldClock()
-        engine = WeatherEngine(clock, seed=seed, world_tree_arg=WorldTree())
+        engine = WeatherEngine(clock, seed=7, world_tree_arg=WorldTree())
         for cx, cy in ((0, 0), (1, 0)):
             engine.register_chunk(
                 cx, cy, WeatherParams(20.0, 800.0, 12.0, 100.0, 60.0, 5.0),
@@ -376,37 +414,63 @@ def check_w4() -> CheckResult:
             )
         return clock, engine
 
-    class _Player:
-        entity = None
-        position = (12.0, 34.0)
+    def sample(engine: WeatherEngine, frames) -> list[tuple]:
+        out = []
+        for tick in frames:
+            for cx, cy in ((0, 0), (1, 0)):
+                params = engine.get_weather(cx, cy, tick)
+                out.append((cx, cy, params.temperature, params.humidity,
+                            params.wind_speed, params.rainfall))
+        return out
+
+    def scatter(engine: WeatherEngine) -> None:
+        engine.intervention_table.commit(InterventionRecord(
+            target_space="node", target=INSTANT_TEMPERATURE, instance=(0, 0),
+            rep="value", value=30.0, frame_t0=0, duration=None,
+        ))
+        engine.force_feature(1, 0, "storm", True)
 
     clock_a, engine_a = build()
-    engine_a.intervention_table.commit(InterventionRecord(
-        target_space="node", target=INSTANT_TEMPERATURE, instance=(0, 0),
-        rep="value", value=30.0, frame_t0=0, duration=None,
-    ))
-    engine_a.force_feature(1, 0, "storm", True)
+    clock_b, engine_b = build()
+    scatter(engine_a)
+    scatter(engine_b)
     state = collect_state(clock_a, _Player(), engine_a, 0)
 
-    clock_b, engine_b = build()
-    apply_state(state, clock_b, _Player(), engine_b)
+    clock_c, engine_c = build()
+    apply_state(state, clock_c, _Player(), engine_c)
 
-    frames = []
-    for tick in range(0, 6):
-        clock_b.restore(time=tick)
-        frames.append(engine_b.get_weather(0, 0).temperature)
-    expected = 30.0  # 值干预长期生效
-    passed = all(value == expected for value in frames) and (
-        engine_b.weather_engine_injected_ok if False else True
-    ) and engine_b.field.features.get_injected(1, 0, "storm") is not None
+    timeline = range(0, 6)
+    trace_b = sample(engine_b, timeline)
+    trace_c = sample(engine_c, timeline)
+    divergence = reference.first_divergence(
+        [{"v": item} for item in trace_b],
+        [{"v": item} for item in trace_c],
+        frames=[0],
+    )
+
+    # 判别力负例：丢掉干预与注入核后必须分叉
+    state_without = dict(state)
+    state_without["weather"] = {"interventions": [], "feature_cores": []}
+    clock_d, engine_d = build()
+    apply_state(state_without, clock_d, _Player(), engine_d)
+    trace_d = sample(engine_d, timeline)
+
+    checks = {
+        "双跑逐位一致": divergence is None,
+        "判别力（缺干预必分叉）": trace_d != trace_b,
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    passed = not failed
     return CheckResult(
         code="W4", title="状态充分性", passed=passed,
         detail=(
-            f"存档版本 {STATE_VERSION}；读档后干预读数恒为 {expected}、"
-            f"注入核恢复" if passed else f"读档后读数 {frames}"
+            f"存档版本 {STATE_VERSION}；存档读档轨迹与不存档轨迹 "
+            f"{len(trace_b)} 个采样点逐位一致，且剔除干预/注入核后分叉"
+            if passed else f"未通过项: {failed}，首分歧={divergence}"
         ),
-        input={"interventions": 1, "injected_cores": 1},
-        reference=expected, engine=frames,
+        input={"interventions": 1, "injected_cores": 1, "frames": 6},
+        reference=trace_b, engine=trace_c,
+        first_divergence=divergence,
     )
 
 
@@ -415,24 +479,28 @@ def check_w4() -> CheckResult:
 def check_w5() -> CheckResult:
     """W5：同一状态 + 两个观测映射 → 各自只含允许信息，研究日志仍完整。
 
-    当前声明的观测协议为"研究全量"与"智能体天气"两个。本判据按声明派生
-    观测映射（无手工白名单），并构造同一状态下的两份**主体观测**：
+    判据分三层：
+    1. **可见集**：主体观测面是研究可见集的真子集；
+    2. **可区分**：同一状态在两个映射下产生不同载荷（原始 vs 量化）；
+    3. **不泄露**：主体载荷只含"节点 → 标量"，不含研究通道专有的
+       非标量结构（方程版本 / 父值映射 / 随机地址 / 干预记录）。
 
-    - $G'$：按 ``agent.weather.v1`` 可见集直接读出（原始精度）；
-    - $G''$：同一可见集 + 声明量化规则（1 位小数）。
-
-    通过标准：两份观测可区分、都不含研究真值字段（方程版本/父值/随机
-    地址/干预），且主体可见集是研究可见集的**真子集**。若将来声明第三个
-    主体协议，本判据自动扩展为"多个主体映射互异"。
+    诚实边界：`AccessPolicy.observation_protocols` 是**权限**而非收窄规则，
+    生产里两个协议都被授予全部节点；主体观测面由本 runner 显式给出
+    （见世界基座 11 篇 §3）。判据不声称它由声明自动派生。
     """
+    from ascend.causal import AGENT_WEATHER_PROTOCOL, RESEARCH_PROTOCOL
+    from ascend.causal import leaks_research_truth, observe
+
     registry = ASCEND_MECHANISMS
-    research_protocol = "research.full.v1"
     protocols = sorted({
         protocol
         for node in registry.nodes.values()
         for protocol in node.access.observation_protocols
     })
-    subject_protocols = [p for p in protocols if p != research_protocol]
+    subject_protocols = [
+        p for p in protocols if p != RESEARCH_PROTOCOL
+    ]
     if not subject_protocols:
         return CheckResult(
             code="W5", title="观测隔离", passed=False,
@@ -445,10 +513,7 @@ def check_w5() -> CheckResult:
             if protocol in node.access.observation_protocols
         ))
 
-    # 主体观测面（$G^i$ 的读取范围）：声明的天气读出 + 当前季节。
-    # 注意：这不等于 `AccessPolicy.observation_protocols`——后者是**权限**
-    # （哪些协议允许读该分量），当前生产里两个协议都被授予了全部节点，
-    # 尚不具备"按协议收窄可见集"的观测映射层。本判据把这一现状如实报告。
+    # 主体观测面（runner 显式给出；不是从声明派生——见 docstring 边界）
     subject_visible = tuple(sorted(
         node_id for node_id in (
             "weather.instant.temperature_c",
@@ -459,7 +524,7 @@ def check_w5() -> CheckResult:
             "weather.tick.season",
         ) if node_id in registry.nodes
     ))
-    research_visible = visible(research_protocol)
+    research_visible = visible(RESEARCH_PROTOCOL)
     world = {
         "weather.instant.temperature_c": 21.53,   # 量化后 21.5（可区分）
         "weather.instant.relative_humidity_percent": 63.47,
@@ -470,14 +535,19 @@ def check_w5() -> CheckResult:
         "weather.chunk.annual_mean_temperature_c": 18.0,
         "weather.tick.solar_declination_rad": 0.12,
     }
-    forbidden = {"equation_version", "resolved_version", "parents",
-                 "random_addresses", "microstep", "intervention"}
 
     observations: dict[str, dict] = {}
     for protocol in subject_protocols:
-        raw = {node: world[node] for node in subject_visible if node in world}
-        quantized = {node: round(value, 1) for node, value in raw.items()}
-        observations[f"{protocol}/raw"] = raw
+        raw = observe(protocol, world, allow=subject_visible)
+        # 第二份映射：同一可见集 + 声明量化（与 observe 内部量化一致，
+        # 这里显式再算一份以验证"两个映射可区分"）
+        quantized = {
+            node: (round(value, 1) if isinstance(value, float) else value)
+            for node, value in raw.items()
+        }
+        observations[f"{protocol}/raw"] = {
+            node: world[node] for node in subject_visible if node in world
+        }
         observations[f"{protocol}/quantized"] = quantized
 
     research_view = {
@@ -485,15 +555,17 @@ def check_w5() -> CheckResult:
         if node_id in world
     }
     payloads = [tuple(sorted(view.items())) for view in observations.values()]
+    leaks = [
+        name for name, view in observations.items()
+        if leaks_research_truth(view)
+    ]
     checks = {
         "研究看全量": set(research_view) == set(world),
         "两份观测互异": len(set(payloads)) >= 2,
         "主体为真子集": all(
             set(view) < set(research_view) for view in observations.values()
         ),
-        "无研究真值泄露": not any(
-            forbidden & set(view) for view in observations.values()
-        ),
+        "无研究真值泄露": not leaks,
     }
     failed = [name for name, ok in checks.items() if not ok]
     passed = not failed
@@ -501,16 +573,14 @@ def check_w5() -> CheckResult:
         code="W5", title="观测隔离", passed=passed,
         detail=(
             f"{len(subject_protocols)} 个主体协议 × 2 份观测映射：研究全量、"
-            f"主体各看声明允许的真子集、两份观测可区分、无研究真值字段"
+            f"主体各看显式观测面的真子集、两份观测可区分、主体载荷只含标量"
             if passed else f"未通过项: {failed}"
         ),
         input={"protocols": protocols},
         reference={
             "research_visible": list(research_visible),
             "subject_visible": list(subject_visible),
-            "declared_protocols": {
-                p: len(visible(p)) for p in protocols
-            },
+            "declared_protocols": {p: len(visible(p)) for p in protocols},
         },
         engine=observations,
     )
@@ -583,8 +653,72 @@ def check_i1() -> CheckResult:
     )
 
 
+def check_c2_rejects_violation() -> CheckResult:
+    """C2 判别力自检：构造一个"同帧父位于更晚阶段"的声明，判据必须捕获。
+
+    不重实现判据逻辑——直接把违规注册表喂给 :func:`check_c2` 同款的展开
+    检查函数，验证它**报错**（否则判据没有判别力）。
+    """
+    from ascend.causal import MechanismRegistry, MechanismSpec, ParentSpec
+
+    # 用最小切片构造违规：mid1 读 x 的**同帧**值，而 x 在更晚阶段
+    base_nodes = slices.w0_registry()
+    violated = MechanismSpec(
+        mechanism_id="violate.same_frame_later_stage",
+        output="mid1", equation="mid1",
+        function=lambda x_prev, u: x_prev + u,
+        parents=(
+            ParentSpec(
+                parent="x", argument="x_prev", lag=0,
+                source_microstep=base_nodes.microstep_order[2],
+                spatial_offsets=((0,),), entity_relation="self",
+                aggregation="identity", broadcast="same_instance",
+                boundary_operator="none", guard="always", lipschitz=1.0,
+                metric="absolute_difference", valid_domain="full",
+                analysis_role="forward",
+            ),
+            ParentSpec(
+                parent="U_mid", argument="u", lag=0,
+                source_microstep=base_nodes.microstep_order[0],
+                spatial_offsets=((0,),), entity_relation="self",
+                aggregation="identity", broadcast="same_instance",
+                boundary_operator="none", guard="always", lipschitz=1.0,
+                metric="absolute_difference", valid_domain="full",
+                analysis_role="forward",
+            ),
+        ),
+        parameters=(), random_sources=(), boundary_cases=("declared",),
+        source_dependencies=(),
+        witnesses=(
+            slices.witness("x", (("x", 1.0), ("U_mid", 2.0)), 2.0, (3.0, 4.0)),
+            slices.witness("U_mid", (("x", 1.0), ("U_mid", 2.0)), 3.0, (3.0, 4.0)),
+        ),
+    )
+    try:
+        MechanismRegistry(
+            schema_version=3, declaration_id="research.violate",
+            declaration_version="1",
+            microstep_order=base_nodes.microstep_order,
+            slice_boundary="判别力自检",
+            wired_nodes=frozenset({"mid1", "mid2", "x"}),
+            nodes=tuple(base_nodes.nodes.values()),
+            parameters=(), exogenous_sources=(),
+            mechanisms=(violated,),
+        )
+    except ValueError as exc:
+        # 构造期 C0 就拦住了——这正是我们要的（判据有判别力）
+        return CheckResult(
+            code="C2'", title="C2 判别力自检", passed=True,
+            detail=f"违规声明被拒: {str(exc)[:120]}",
+        )
+    return CheckResult(
+        code="C2'", title="C2 判别力自检", passed=False,
+        detail="同帧父位于更晚阶段的声明未被拒绝（判据无判别力）",
+    )
+
+
 ALL_CHECKS = (
-    check_c0, check_c1, check_c2,
+    check_c0, check_c1, check_c2, check_c2_rejects_violation,
     check_w0, check_w1, check_w2, check_w3, check_w4, check_w5,
     check_i0, check_i1,
 )

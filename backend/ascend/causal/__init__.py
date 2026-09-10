@@ -12,6 +12,12 @@ from .intervention import (
     default_duration,
 )
 from .intervention_engine import InterventionEvaluator, InterventionFrameExecutor
+from .observe import (
+    AGENT_WEATHER_PROTOCOL,
+    RESEARCH_PROTOCOL,
+    leaks_research_truth,
+    observe,
+)
 from .registry import MechanismRegistry
 from .trace import RandomAddress, TraceLog, TraceRecord
 from .spec import (
@@ -57,6 +63,10 @@ __all__ = [
     "RandomAddress",
     "TraceLog",
     "TraceRecord",
+    "AGENT_WEATHER_PROTOCOL",
+    "RESEARCH_PROTOCOL",
+    "leaks_research_truth",
+    "observe",
     "FOREVER",
     "SINGLE",
     "WINDOW",

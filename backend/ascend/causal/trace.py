@@ -27,13 +27,6 @@ from typing import TYPE_CHECKING, Mapping
 if TYPE_CHECKING:
     from .registry import MechanismRegistry
 
-# 干预在记录中的呈现：替换规格 → 人类可读标签
-_INTERVENTION_LABELS = {
-    "value": "value",
-    "mechanism": "mechanism",
-}
-
-
 @dataclass(frozen=True, slots=True)
 class RandomAddress:
     """一次随机抽取的结构化地址。
@@ -138,7 +131,9 @@ class TraceLog:
 
     Parameters:
         registry: 不可变机制注册表（重算用）。
-        capacity: 保留的最大记录数（0 = 不限制；生产用有界值）。
+        capacity: 保留的最大记录数（**必须为正**）。上界是刻意的：
+            研究日志在内存里，无上限会让长会话持续增长；调用方要更大
+            的窗口就显式给更大的数。
     """
 
     def __init__(
@@ -147,8 +142,10 @@ class TraceLog:
         *,
         capacity: int = 4096,
     ) -> None:
-        if capacity < 0:
-            raise ValueError(f"capacity 必须 ≥ 0: {capacity}")
+        if capacity < 1:
+            raise ValueError(
+                f"capacity 必须为正整数（0 不是「不限制」）: {capacity}"
+            )
         self._registry = registry
         self._capacity = capacity
         self._records: list[TraceRecord] = []
@@ -175,7 +172,7 @@ class TraceLog:
         """
         self._validate(entry)
         self._records.append(entry)
-        if self._capacity and len(self._records) > self._capacity:
+        if len(self._records) > self._capacity:
             del self._records[: len(self._records) - self._capacity]
         return entry
 
@@ -191,6 +188,27 @@ class TraceLog:
             if (frame is None or entry.frame == frame)
             and (node_id is None or entry.node_id == node_id)
         )
+
+    def page(
+        self,
+        *,
+        frame: int | None = None,
+        node_id: str | None = None,
+        offset: int = 0,
+        limit: int = 200,
+    ) -> tuple[tuple[TraceRecord, ...], int]:
+        """筛选后分页读取：返回 ``(本页记录, 筛选后总数)``。
+
+        研究通道必须分页：单帧有长度上限（``MAX_MESSAGE_SIZE``），
+        一次返回上万条会超限，被前端**静默丢弃**——研究者看到的是
+        "没有响应"而不是错误。
+        """
+        if offset < 0:
+            raise ValueError(f"offset 必须 ≥ 0: {offset}")
+        if limit < 1:
+            raise ValueError(f"limit 必须为正整数: {limit}")
+        matched = self.records(frame=frame, node_id=node_id)
+        return matched[offset : offset + limit], len(matched)
 
     def clear(self) -> int:
         """清空记录，返回被清空的条数。"""

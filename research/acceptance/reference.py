@@ -209,19 +209,36 @@ def first_divergence(
     reference: list[dict[str, object]],
     engine: list[dict[str, object]],
     *,
-    frame_offset: int = 0,
+    frames: list[int] | None = None,
 ) -> tuple | None:
-    """逐帧逐节点比较，返回首个分歧 ``(帧, 节点, 参考值, 引擎值)``。"""
-    for index, (ref_frame, eng_frame) in enumerate(zip(reference, engine)):
-        for node_id in sorted(ref_frame):
+    """逐帧逐节点比较，返回首个分歧 ``(帧, 节点, 参考值, 引擎值)``。
+
+    Args:
+        reference: 参考侧逐帧状态（帧序）。
+        engine: 引擎侧逐帧状态（帧序）。
+        frames: 各帧的真实帧标签；None = 用 ``range(len(reference))``。
+            帧标签必须显式给出：调用方可能从第 5 帧开始推进，报"下标"
+            会把研究者引到错误的帧上。
+
+    比较是**双向**的：参考多出、引擎多出、以及长度不等都算分歧。
+    """
+    labels = frames if frames is not None else list(range(len(reference)))
+    for index in range(max(len(reference), len(engine))):
+        label = labels[index] if index < len(labels) else index
+        if index >= len(reference):
+            return (label, "<missing>", None, engine[index])
+        if index >= len(engine):
+            return (label, "<missing>", reference[index], None)
+        ref_frame = reference[index]
+        eng_frame = engine[index]
+        for node_id in sorted(set(ref_frame) | set(eng_frame)):
+            if node_id not in ref_frame:
+                return (label, node_id, None, eng_frame[node_id])
             if node_id not in eng_frame:
-                return (index + frame_offset, node_id, ref_frame[node_id], None)
+                return (label, node_id, ref_frame[node_id], None)
             if ref_frame[node_id] != eng_frame[node_id]:
                 return (
-                    index + frame_offset, node_id,
+                    label, node_id,
                     ref_frame[node_id], eng_frame[node_id],
                 )
-    if len(reference) != len(engine):
-        return (min(len(reference), len(engine)) + frame_offset, "<frames>",
-                len(reference), len(engine))
     return None

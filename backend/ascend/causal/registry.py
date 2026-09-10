@@ -745,7 +745,6 @@ class MechanismRegistry:
                         f"spatial_offsets 里）"
                     )
                 seen_parents.add(parent.parent)
-                seen_parents.add(parent.parent)
                 if parent.parent not in self.nodes:
                     issues.append(f"{mechanism_id}: 父节点未声明 {parent.parent}")
                     continue

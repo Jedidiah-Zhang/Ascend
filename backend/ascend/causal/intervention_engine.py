@@ -151,10 +151,16 @@ class InterventionFrameExecutor:
     值干预命中的节点不消费随机地址（CRN）；机制干预只消费替换机制
     声明的随机源。追记已消费随机地址供测试断言。
 
+    **空间父模板**：声明了多空间偏移的父引用（``len(spatial_offsets) > 1``）
+    需要按格展开。传 ``spatial_cells`` 后，这类节点的帧状态是
+    ``{位置: 值}``，执行器对每个位置取偏移邻居（含边界算子）后求值——
+    与参考解释器同语义，互为对拍。
+
     Parameters:
         registry: 注册表切片（研究世界声明）。
         table: 干预表；None = 无干预基线轨迹。
         exogenous: 随机源采样器 ``fn(source_id, frame, instance) -> value``。
+        spatial_cells: 空间展开的位置集合；None = 纯标量切片。
     """
 
     def __init__(
@@ -163,10 +169,24 @@ class InterventionFrameExecutor:
         table: InterventionTable | None = None,
         *,
         exogenous: Callable[[str, int, tuple], object] | None = None,
+        spatial_cells: tuple[int, ...] | None = None,
     ) -> None:
         self._registry = registry
         self._evaluator = InterventionEvaluator(registry, table)
         self._exogenous = exogenous
+        # 空间展开：节点 → 是否按格求值（该节点读多偏移父模板，或是空间实例域）
+        self._spatial_cells = (
+            tuple(sorted(spatial_cells)) if spatial_cells is not None else None
+        )
+        if self._spatial_cells is None:
+            self._spatial_nodes = frozenset()
+        else:
+            # 空间节点 = 实例域为空间场（值按位置索引）；多偏移父模板
+            # 只是"读邻居"的一种，单偏移的空间节点同样要按格求值。
+            self._spatial_nodes = frozenset(
+                node_id for node_id, node in registry.nodes.items()
+                if node.instance_domain.kind == "spatial_field"
+            )
         self._by_step: dict[str, list] = {}
         for mechanism in registry.mechanisms.values():
             microstep = registry.nodes[mechanism.output].update.microstep
@@ -182,12 +202,20 @@ class InterventionFrameExecutor:
         *,
         instance: tuple = (),
     ) -> dict[str, object]:
-        """推进一帧；返回新的帧状态（新 dict，不就地修改）。"""
+        """推进一帧；返回新的帧状态（新 dict，不就地修改）。
+
+        空间切片下：空间节点的值是 ``{位置: 值}``，其余节点为标量。
+        """
         prev_state = prev_state if prev_state is not None else state
         next_state = dict(state)
         for microstep in self._registry.microstep_order:
             for mechanism in self._by_step.get(microstep, ()):
                 output = mechanism.output
+                if output in self._spatial_nodes:
+                    next_state[output] = self._run_spatial(
+                        mechanism, next_state, prev_state, frame, instance,
+                    )
+                    continue
                 resolution = (
                     self._evaluator.table.resolve_node(output, instance, frame)
                     if self._evaluator.table is not None
@@ -221,6 +249,53 @@ class InterventionFrameExecutor:
                     random_values=random_values,
                 )
         return next_state
+
+    def _run_spatial(
+        self,
+        mechanism,
+        state: dict[str, object],
+        prev_state: dict[str, object],
+        frame: int,
+        instance: tuple,
+    ) -> dict[int, object]:
+        """按格展开求值（空间父模板）：逐位置收集偏移邻居后调用方程。"""
+        cells = self._spatial_cells
+        if not cells:
+            raise ValueError("空间节点需要 spatial_cells")
+        output: dict[int, object] = {}
+        for cell in cells:
+            parents: dict[str, object] = {}
+            for parent in mechanism.parents:
+                source = prev_state if parent.lag >= 1 else state
+                if parent.parent not in source:
+                    raise KeyError(f"帧状态缺少父值: {parent.parent}")
+                raw = source[parent.parent]
+                if len(parent.spatial_offsets) <= 1:
+                    parents[parent.parent] = raw[cell]
+                    continue
+                parents[parent.parent] = self._neighbours(
+                    raw, parent, cell, cells,
+                )
+            output[cell] = self._evaluator.evaluate(
+                mechanism.output, parents, frame=frame, instance=instance,
+            )
+        return output
+
+    @staticmethod
+    def _neighbours(
+        values: dict, parent, cell: int, cells: tuple[int, ...],
+    ) -> tuple:
+        """按父模板的空间偏移取邻居值（边界算子作用在位置上）。"""
+        low, high = cells[0], cells[-1]
+        out = []
+        for offset in parent.spatial_offsets:
+            position = cell + offset[0]
+            if parent.boundary_operator == "replicate":
+                position = min(max(position, low), high)
+            if position not in values:
+                raise KeyError(f"帧状态缺少位置 {position}: {parent.parent}")
+            out.append(values[position])
+        return tuple(out)
 
     def _parents(
         self,

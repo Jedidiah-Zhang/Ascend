@@ -118,25 +118,48 @@ class TestChecks:
         assert failed == [], f"未通过判据: {failed}"
 
     def test_c2_rejects_bad_stage_order(self):
-        """C2 判别力：人为倒置阶段序必须被判据捕获。"""
-        from ascend.causal import MechanismRegistry
-        from ascend.causal.world import ASCEND_MECHANISMS
+        """C2 判别力：违规声明必须被判据侧拒绝（不重实现判据逻辑）。"""
+        result = checks.check_c2_rejects_violation()
+        assert result.passed, result.detail
+        assert "违规声明被拒" in result.detail
 
-        # 用一个阶段序倒置的注册表验证展开检查的判别力
-        registry = ASCEND_MECHANISMS
-        order = list(registry.microstep_order)
-        assert len(order) > 1
+    def test_first_divergence_detects_extra_engine_node(self):
+        """引擎多出节点也算分歧（此前只遍历参考侧，会漏报）。"""
+        assert reference.first_divergence(
+            [{"a": 1.0}], [{"a": 1.0, "b": 99.0}],
+        ) == (0, "b", None, 99.0)
 
-        def rank_violation(parent, child) -> bool:
-            index = {name: i for i, name in enumerate(order)}
-            return index[parent] >= index[child]
+    def test_first_divergence_detects_missing_engine_node(self):
+        assert reference.first_divergence(
+            [{"a": 1.0, "b": 2.0}], [{"a": 1.0}],
+        ) == (0, "b", 2.0, None)
 
-        # 生产声明里所有同帧父必须更早（C0 已保证）；此处直接断言判据口径
-        for mechanism in registry.mechanisms.values():
-            target = registry.nodes[mechanism.output].update.microstep
-            for parent in mechanism.parents:
-                if parent.lag == 0:
-                    assert not rank_violation(parent.source_microstep, target)
+    def test_first_divergence_reports_real_frame_label(self):
+        """报的是真实帧标签，不是 list 下标。"""
+        assert reference.first_divergence(
+            [{"a": 1.0}], [{"a": 2.0}], frames=[5],
+        ) == (5, "a", 1.0, 2.0)
+
+    def test_w3_engine_matches_reference(self):
+        """W3 有引擎侧：帧执行器支持空间展开，与参考逐格一致。"""
+        from ascend.causal.intervention_engine import InterventionFrameExecutor
+
+        registry = slices.w3_registry()
+        cells = tuple(range(slices.W3_CELLS))
+        engine = InterventionFrameExecutor(registry, spatial_cells=cells)
+        state = {"u": {i: float(i + 1) for i in cells},
+                 "v": {i: 0.0 for i in cells}}
+        out = engine.run_frame(0, state)
+        assert tuple(out["v"][i] for i in cells) == (1.25, 2.0, 3.0, 4.0, 4.75)
+
+    def test_w3_engine_scalar_mode_rejects_spatial(self):
+        """不传 spatial_cells 时空间切片必须显式失败（不静默错算）。"""
+        from ascend.causal.intervention_engine import InterventionFrameExecutor
+
+        registry = slices.w3_registry()
+        engine = InterventionFrameExecutor(registry)
+        with pytest.raises(ValueError):
+            engine.run_frame(0, {"u": {0: 1.0}, "v": {0: 0.0}})
 
     def test_w2_arms_are_distinct(self):
         result = checks.check_w2()
@@ -148,7 +171,10 @@ class TestChecks:
     def test_w3_unit_perturbation_within_kernel(self):
         result = checks.check_w3()
         assert result.passed
-        assert tuple(result.reference["response"]) == (0.0, 0.25, 0.5, 0.25, 0.0)
+        # 引擎侧与参考侧都在结果里，扰动响应由判据 detail 断言
+        assert result.reference == (1.0, 1.0, 1.0, 1.0, 1.0)
+        assert result.engine == (1.0, 1.0, 1.0, 1.0, 1.0)
+        assert "(0.0, 0.25, 0.5, 0.25, 0.0)" in result.detail
 
     def test_w5_reports_subject_subset(self):
         result = checks.check_w5()
@@ -157,3 +183,15 @@ class TestChecks:
         assert set(reference_view["subject_visible"]) < set(
             reference_view["research_visible"]
         )
+
+    def test_w5_leak_detector_is_discriminative(self):
+        """W5 的泄露检测真能失败（此前恒空）。"""
+        from ascend.causal import leaks_research_truth
+
+        assert leaks_research_truth({"temperature": 21.5}) is False
+        assert leaks_research_truth(
+            {"temperature": 21.5, "parents": {"x": 1.0}}
+        ) is True
+        assert leaks_research_truth(
+            {"temperature": 21.5, "random_addresses": [{"source": "u"}]}
+        ) is True

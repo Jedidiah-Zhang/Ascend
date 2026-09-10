@@ -55,8 +55,12 @@ TraceLog        record() / records(frame,node_id) / clear() / replay() / verify(
 - **随机地址**：按机制声明的随机源生成（源 ID + 帧 + 实例 + 抽取序号），
   并记录实际抽取值（重算自包含）。生产声明当前不含外生随机源，因此地址集
   为空——接口就绪，登记源后自动生效（见 §5）。
-- **有界内存**：`TraceLog` 是环形缓冲（缺省 4096 条），不落盘（P4 存档只
-  存 $\mathcal W_t$，不含日志）。
+- **有界内存**：`TraceLog` 是环形缓冲（缺省 4096 条，容量**必须为正**——
+  无上限会让长会话持续增长），不落盘（P4 存档只存 $\mathcal W_t$，不含日志）。
+- **查询必须分页**：单帧有长度上限（`MAX_MESSAGE_SIZE` = 16 MiB），一次
+  返回上万条会超限，被前端 `frame_codec` **清空缓冲**——研究者看到的是
+  "没有响应"而不是错误。研究 API 缺省 200 条、上限 1000 条，响应带
+  `total`；终端 `trace list` 缺省 50 条并在截断时明确提示。
 
 ## 3. 日志可重算任意节点
 
@@ -92,7 +96,7 @@ verify(record) = replay(record) == record.output     # 精确相等，无容差
 
 | 请求 | 载荷 | 成功响应 |
 | --- | --- | --- |
-| `research_trace_list` | `{frame?, node_id?}` | `{success, records}` |
+| `research_trace_list` | `{frame?, node_id?, offset?, limit?}` | `{success, records, offset, limit, returned, total}` |
 | `research_trace_replay` | `{node_id, frame?}` | `{success, record, replayed, consistent}` |
 | `research_trace_clear` | — | `{success, cleared}` |
 

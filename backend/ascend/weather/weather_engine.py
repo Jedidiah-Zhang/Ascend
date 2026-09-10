@@ -175,9 +175,13 @@ class WeatherEngine:
         fail-closed：记录不完整即拒绝求值。重复调用返回同一实例。
         """
         if self._trace is None:
+            # 经 _intervention() 取表：它会按需建表（无注入表的引擎路径），
+            # 直接读 self._intervention_table 会跳过建表分支，导致该引擎
+            # 此后永久没有干预表（属性返回 None、commit 抛 AttributeError）。
+            _, table = self._intervention()
             self._trace = TraceLog(_registry(), capacity=capacity)
             self._intervention_eval = InterventionEvaluator(
-                _registry(), self._intervention_table, trace=self._trace,
+                _registry(), table, trace=self._trace,
             )
         return self._trace
 
