@@ -1,0 +1,275 @@
+{
+  "schema_version": 1,
+  "contract_version": "v0.1",
+  "slice": {
+    "id": "weather+terrain",
+    "description": "第一阶段首切片：天气与地形状态（不含实体/智能体）"
+  },
+  "refs": {
+    "audit": "docs/研究理论/首切片槽位归位清单.md",
+    "contract": "docs/研究理论/世界契约.md"
+  },
+  "slots": [
+    {
+      "id": "world.clock.tick",
+      "carrier": "global",
+      "domain": {
+        "type": "int",
+        "min": 0,
+        "unit": "tick"
+      },
+      "role": "state",
+      "update": {
+        "kind": "driver_frame_advance"
+      },
+      "permissions": {
+        "intervene": false,
+        "observe": true,
+        "record": true
+      },
+      "owner": "world.clock",
+      "persist": true,
+      "audit_ref": "§1"
+    },
+    {
+      "id": "world.terrain.moisture",
+      "carrier": "field",
+      "domain": {
+        "type": "int",
+        "bits": 8,
+        "resolution": "u8 通道值"
+      },
+      "role": "state",
+      "update": {
+        "kind": "mechanism",
+        "stage": "TBD:#48"
+      },
+      "permissions": {
+        "intervene": "candidate",
+        "observe": true,
+        "record": true
+      },
+      "owner": "world.terrain.settlement",
+      "persist": true,
+      "audit_ref": "§1"
+    },
+    {
+      "id": "world.terrain.snow",
+      "carrier": "field",
+      "domain": {
+        "type": "int",
+        "bits": 8,
+        "resolution": "u8 通道值"
+      },
+      "role": "state",
+      "update": {
+        "kind": "mechanism",
+        "stage": "TBD:#48"
+      },
+      "permissions": {
+        "intervene": "candidate",
+        "observe": true,
+        "record": true
+      },
+      "owner": "world.terrain.settlement",
+      "persist": true,
+      "audit_ref": "§1"
+    },
+    {
+      "id": "world.terrain.ice",
+      "carrier": "field",
+      "domain": {
+        "type": "int",
+        "bits": 8,
+        "resolution": "u8 通道值"
+      },
+      "role": "state",
+      "update": {
+        "kind": "mechanism",
+        "stage": "TBD:#48"
+      },
+      "permissions": {
+        "intervene": "candidate",
+        "observe": true,
+        "record": true
+      },
+      "owner": "world.terrain.settlement",
+      "persist": true,
+      "audit_ref": "§1"
+    }
+  ],
+  "derived": [
+    {
+      "id": "world.weather.field",
+      "recompute": "derive(seed, ...) 的解析函数（纹理/特征/气候代理/噪声）",
+      "cache_ok": true,
+      "audit_ref": "§2"
+    },
+    {
+      "id": "world.weather.baseline",
+      "recompute": "chunk 生成参数 + 气候模板 + 声明方程",
+      "cache_ok": true,
+      "audit_ref": "§2"
+    },
+    {
+      "id": "world.terrain.terrain",
+      "recompute": "种子 + 大陆生成参数",
+      "cache_ok": true,
+      "audit_ref": "§2"
+    },
+    {
+      "id": "world.terrain.elevation_slope",
+      "recompute": "种子 + 大陆生成参数",
+      "cache_ok": true,
+      "audit_ref": "§2"
+    },
+    {
+      "id": "world.geography.continent_hydrology",
+      "recompute": "种子 + 生成参数 + 生成算法摘要",
+      "cache_ok": true,
+      "audit_ref": "§2"
+    },
+    {
+      "id": "world.time.calendar_boundaries",
+      "recompute": "world.clock.tick 纯函数",
+      "cache_ok": true,
+      "audit_ref": "§2"
+    },
+    {
+      "id": "world.weather.precipitation_regions",
+      "recompute": "f(场(t-1), 场(t))，声明域扫描",
+      "cache_ok": false,
+      "audit_ref": "§2"
+    },
+    {
+      "id": "world.terrain.aggregates",
+      "recompute": "状态三通道纯函数",
+      "cache_ok": true,
+      "audit_ref": "§2"
+    }
+  ],
+  "external_inputs": [
+    {
+      "id": "interventions.timeline",
+      "description": "逐帧独立、只追加的干预记录；世界内只做值干预",
+      "enters_world_state": false,
+      "audit_ref": "§3"
+    },
+    {
+      "id": "feature_injections.timeline",
+      "description": "注入核由时间线投影生成，不再作为世界状态持久化",
+      "enters_world_state": false,
+      "audit_ref": "§3"
+    },
+    {
+      "id": "driver.frame_advance",
+      "description": "帧推进、暂停、速度；驱动层输入，不参与求值",
+      "enters_world_state": false,
+      "audit_ref": "§3"
+    }
+  ],
+  "records": [
+    {
+      "id": "records.research_trace",
+      "description": "研究 trace，只作证据",
+      "audit_ref": "§3"
+    },
+    {
+      "id": "records.world_events",
+      "description": "事件归档；不得反馈进世界演化",
+      "audit_ref": "§3"
+    }
+  ],
+  "removed": [
+    {
+      "id": "region_tracker.baselines_from_loaded_chunks",
+      "reason": "加载集进入演化路径（WC-2.3）",
+      "audit_ref": "§4 行1"
+    },
+    {
+      "id": "region_tracker.prev_regions",
+      "reason": "隐藏状态，读档补发降水事件（WC-7.5 / WC-8.1）",
+      "audit_ref": "§4 行2"
+    },
+    {
+      "id": "tile_state.precip_start_instant_deposit",
+      "reason": "首小时双计（WC-4.1 / WC-7.1）",
+      "audit_ref": "§4 行3"
+    },
+    {
+      "id": "tile_state.settled_day",
+      "reason": "双积分路径记账（WC-4.2 / WC-7.1）",
+      "audit_ref": "§4 行4"
+    },
+    {
+      "id": "chunk_store.persist_once_gap",
+      "reason": "状态落盘缺口（WC-8.2）",
+      "audit_ref": "§4 行5"
+    },
+    {
+      "id": "feature_field.injection_float_order",
+      "reason": "注入核浮点顺序求和，末位可翻转阈值（WC-4.4 / WC-4.5）",
+      "audit_ref": "§4 行6"
+    },
+    {
+      "id": "weather_field.last_tier_markers",
+      "reason": "隐藏边界值，改由上一帧状态派生（WC-10）",
+      "audit_ref": "§4 行7"
+    },
+    {
+      "id": "weather_engine.climates_dead_cache",
+      "reason": "死缓存",
+      "audit_ref": "§4 行8"
+    },
+    {
+      "id": "chunk_store.load_order_affects_persistence",
+      "reason": "访问顺序进入落盘行为（WC-4.5）",
+      "audit_ref": "§4 行9"
+    },
+    {
+      "id": "continent.fingerprint_fallback",
+      "reason": "指纹不符沿用旧缓存（WC-1.2 / WC-9.1）",
+      "audit_ref": "§4 行10"
+    },
+    {
+      "id": "save.archive_timestamp_alignment",
+      "reason": "归档时间戳进入读档路径（WC-8.3）",
+      "audit_ref": "§4 行11"
+    },
+    {
+      "id": "calendar.pseudo_day_change_on_load",
+      "reason": "读档首帧伪事件（WC-7.1）",
+      "audit_ref": "§4 行12"
+    },
+    {
+      "id": "game.save_pulse_wallclock",
+      "reason": "墙钟调度进入持久化时点（WC-4.5，驱动层）",
+      "audit_ref": "§4 行13"
+    },
+    {
+      "id": "tile_state.event_bus_state_updates",
+      "reason": "事件总线驱动状态更新，非纯函数（WC-4）",
+      "audit_ref": "§4 行14"
+    },
+    {
+      "id": "clock.accumulator",
+      "reason": "驱动层相位，不进世界状态（WC-4.5）",
+      "audit_ref": "§4 行15"
+    },
+    {
+      "id": "fate.fate_stream",
+      "reason": "随机流状态；改为地址→值纯函数（WC-5.1）",
+      "contract_ref": "WC-5.1"
+    },
+    {
+      "id": "feature_field.injected_state",
+      "reason": "注入核应改为时间线投影（WC-6.5）",
+      "audit_ref": "§3"
+    },
+    {
+      "id": "feature_field.timeline_generation_order_sensitivity",
+      "reason": "惰性缓存影响事件字段（WC-4.2）",
+      "audit_ref": "§2"
+    }
+  ]
+}
