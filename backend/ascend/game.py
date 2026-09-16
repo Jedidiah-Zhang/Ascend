@@ -443,11 +443,11 @@ class GameEngine:
         logger.info("玩家实体就绪: %r", self.player_service)
 
         # 5b. 天气引擎（接入已加载 chunk 的天气基线）
-        # 干预执行器挂载点：单一干预表注入引擎/终端/研究 API（同源）；
-        # 表自带时钟（applied_at 盖章 / 缺省帧）与实例存在性查询。
-        from ascend.causal import InterventionTable
+        # 干预时间线挂载点：单一线程安全实例注入引擎/终端/研究 API（同源）；
+        # 自带时钟（submitted_at 盖章 / 缺省帧）与实例存在性查询。
+        from ascend.causal import InterventionTimeline
         from ascend.causal.world import ASCEND_MECHANISMS
-        self.intervention_table = InterventionTable(
+        self.intervention_table = InterventionTimeline(
             ASCEND_MECHANISMS,
             now=lambda: self.clock.time,
             instance_exists=lambda node, inst: (
@@ -481,8 +481,8 @@ class GameEngine:
             self.chunk_services.on_tiles_ready(cx, cy)
         logger.info("天气引擎已接入 %d 个 chunk", len(self.chunk_store))
 
-        # 5d. 完整状态恢复（时钟 / 玩家 / 干预表 / 注入核一次到位）。
-        # 必须在 chunk 服务之后：干预表校验要用实例存在性查询与
+        # 5d. 完整状态恢复（时钟 / 玩家 / 干预时间线 / 注入核一次到位）。
+        # 必须在 chunk 服务之后：时间线校验要用实例存在性查询与
         # "把被 LRU 淘汰的目标 chunk 拉回来"的装载器；也必须早于
         # 首个 minute_change（区域事件与特征核事件的身份跟踪）。
         if self._load_state is not None:
@@ -492,9 +492,11 @@ class GameEngine:
                 instance_loader=self._ensure_intervention_instance,
             )
             weather_state = self._load_state.get("weather") or {}
+            interventions = weather_state.get("interventions") or {}
             logger.info(
-                "存档状态已恢复: 干预 %d 条, 注入核 %d 个",
-                len(weather_state.get("interventions") or []),
+                "存档状态已恢复: 干预计划 %d 条 / 记录 %d 条, 注入核 %d 个",
+                len(interventions.get("plan") or []),
+                len(interventions.get("records") or []),
                 len(weather_state.get("feature_cores") or []),
             )
 
@@ -683,7 +685,7 @@ class GameEngine:
 
         Args:
             node_id: 目标节点 ID（本方法只按实例坐标定位，保留参数以
-                匹配 ``InterventionTable.restore`` 的装载器签名）。
+                匹配 ``InterventionTimeline.restore`` 的装载器签名）。
             instance: 实例坐标（chunk 节点为 (cx, cy)）。
 
         Returns:
@@ -711,9 +713,9 @@ class GameEngine:
                 # （含玩家改动，不可再生），缺失才由 tile 生成器补
                 saved = self.chunk_store.load_tiles_with_day(cx, cy)
                 if saved is not None:
-                    grid, settled_day = saved
+                    grid, integrated_through = saved
                     chunk.restore_tiles(grid)
-                    chunk.settled_day = settled_day
+                    chunk.integrated_through = integrated_through
                 else:
                     chunk.generate_tiles(
                         self.tile_generator.generate_chunk_for(chunk)
@@ -835,9 +837,9 @@ class GameEngine:
         def _build_tiles(chunk):
             saved = self.chunk_store.load_tiles_with_day(chunk.cx, chunk.cy)
             if saved is not None:
-                saved_grid, settled_day = saved
+                saved_grid, integrated_through = saved
                 chunk.restore_tiles(saved_grid)
-                chunk.settled_day = settled_day
+                chunk.integrated_through = integrated_through
             else:
                 grid = self.tile_generator.generate_chunk_for(chunk)
                 chunk.generate_tiles(grid)

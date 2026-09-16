@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from ascend.causal import InterventionRecord
+from ascend.causal import PlannedIntervention
 from ascend.save import (
     STATE_VERSION,
     apply_state,
@@ -56,20 +56,20 @@ def _build_world(seed: int = _SEED) -> tuple[WorldClock, WeatherEngine]:
 
 
 def _apply_research_interventions(engine: WeatherEngine, frame: int) -> None:
-    """施加一条节点干预 + 一条参数干预（值替换与机制空间各一）。"""
+    """施加一条长期节点干预 + 一条窗口节点干预 + 一条参数干预。"""
     table = engine.intervention_table
-    table.commit(InterventionRecord(
+    table.plan(PlannedIntervention(
         target_space="node", target=INSTANT_TEMPERATURE, instance=(0, 0),
-        rep="value", value=30.0, frame_t0=frame, duration=None,
+        value=30.0, start_frame=frame, stop_frame=None, source="test",
     ))
-    table.commit(InterventionRecord(
+    table.plan(PlannedIntervention(
         target_space="node", target=PRECIPITATION_THRESHOLD, instance=(1, 0),
-        rep="value", value=0.5, frame_t0=frame, duration=2,
+        value=0.5, start_frame=frame, stop_frame=frame + 2, source="test",
     ))
-    table.commit(InterventionRecord(
+    table.plan(PlannedIntervention(
         target_space="parameter",
         target="world.parameter.temp_perturb_scale_c",
-        rep="value", value=0.0, frame_t0=frame,
+        value=0.0, start_frame=frame, stop_frame=None, source="test",
     ))
 
 
@@ -178,7 +178,10 @@ class TestStateSufficiencyW4:
         clock_b, engine_b = _build_world()
         state_without = dict(state)
         # 模拟旧版存档（P4 之前）：只有时钟与玩家，干预与注入核丢失
-        state_without["weather"] = {"interventions": [], "feature_cores": []}
+        state_without["weather"] = {
+            "interventions": {"plan": [], "records": []},
+            "feature_cores": [],
+        }
         apply_state(state_without, clock_b, _Player(), engine_b)
 
         assert _trajectory(engine_a, range(0, 4)) != \
@@ -196,28 +199,36 @@ class TestFailClosedLoad:
     def test_unknown_intervention_field_rejected(self):
         clock, engine = _build_world()
         state = collect_state(clock, _Player(), engine, 0)
-        state["weather"]["interventions"] = [{
-            "target_space": "node", "target": INSTANT_TEMPERATURE,
-            "instance": [0, 0], "rep": "value", "value": 1.0,
-            "mechanism": None, "frame_t0": 0, "duration": 1, "version": "",
-            "applied_at": 0, "seq": 1, "ghost": True,
-        }]
+        state["weather"]["interventions"] = {
+            "plan": [{
+                "target_space": "node", "target": INSTANT_TEMPERATURE,
+                "instance": [0, 0], "value": 1.0,
+                "start_frame": 0, "stop_frame": 1, "source": "test",
+                "version": "", "seq": 1, "submitted_at": 0, "ghost": True,
+            }],
+            "records": [],
+        }
         clock2, engine2 = _build_world()
         with pytest.raises(ValueError, match="未知字段"):
             apply_state(state, clock2, _Player(), engine2)
-        assert engine2.intervention_table.persist() == []
+        assert engine2.intervention_table.persist() == {
+            "plan": [], "records": [],
+        }
 
     def test_unwired_target_rejected_on_restore(self):
         """存档里的干预重新走登记校验：未接线目标不得静默恢复。"""
         clock, engine = _build_world()
         state = collect_state(clock, _Player(), engine, 0)
-        state["weather"]["interventions"] = [{
-            "target_space": "node",
-            "target": "weather.instant.precipitation_type",  # 未接线
-            "instance": [0, 0], "rep": "value", "value": "rain",
-            "mechanism": None, "frame_t0": 0, "duration": None, "version": "",
-            "applied_at": 0, "seq": 1,
-        }]
+        state["weather"]["interventions"] = {
+            "plan": [{
+                "target_space": "node",
+                "target": "weather.instant.precipitation_type",  # 未接线
+                "instance": [0, 0], "value": "rain",
+                "start_frame": 0, "stop_frame": None, "source": "test",
+                "version": "", "seq": 1, "submitted_at": 0,
+            }],
+            "records": [],
+        }
         clock2, engine2 = _build_world()
         with pytest.raises(ValueError, match="未接线"):
             apply_state(state, clock2, _Player(), engine2)
@@ -245,11 +256,15 @@ class TestFailClosedLoad:
         clock, engine = _build_world()
         _apply_research_interventions(engine, frame=0)
         state = collect_state(clock, _Player(), engine, 0)
-        state["weather"]["interventions"].append({"target_space": "node"})
+        state["weather"]["interventions"]["plan"].append(
+            {"target_space": "node"}
+        )
         clock2, engine2 = _build_world()
         with pytest.raises(ValueError, match="缺少字段"):
             apply_state(state, clock2, _Player(), engine2)
-        assert engine2.intervention_table.persist() == []
+        assert engine2.intervention_table.persist() == {
+            "plan": [], "records": [],
+        }
 
-    def test_state_version_constant_is_one(self):
-        assert STATE_VERSION == 1
+    def test_state_version_constant_is_current(self):
+        assert STATE_VERSION == 2

@@ -1,29 +1,33 @@
 """干预执行器网络处理程序 — 研究 API（与终端 do 指令同源）。
 
 通过 make_research_handler() 工厂函数创建，返回 {request_type: handler}
-映射。全部操作落进同一干预表（单一事实源，执行前校验复用），缺省解析
-与终端 do 共用 ``InterventionTable.default_frame`` / ``default_duration``。
+映射。全部操作落进同一干预时间线（单一事实源，执行前校验复用），缺省
+解析与终端 do 共用 ``InterventionTimeline.default_frame`` /
+``default_duration``。
 
-- research_do：登记一条干预（结构化 JSON）→ ``{success, record}``。
-- research_do_clear：清除指定干预（返回实际清除的替换规格）→
-  ``{success, cleared}``。
-- research_do_list：当前有效干预 + 完整历史（确定性快照）。
+- research_do：登记一条计划条目（结构化 JSON）→ ``{success, plan}``。
+- research_do_clear：撤销指定计划（返回结束的条目数）→
+  ``{success, stopped}``。
+- research_do_list：当前生效计划 + 已发生记录（确定性快照）。
 
 字段校验全部 fail-closed：``instance`` 必须是列表/元组（None 视作空元组），
-``rep`` 必须为 value|mechanism 且仅适用于 node 空间，非法输入一律返回
-``{success: false, error}`` 而不是抛异常。
+未知字段一律拒绝；运行内机制替换已废除（WC-1.3，结构变体 = 换世界），
+``rep`` / ``mechanism_id`` 返回 ``{success: false, error}``。
 
 特征核控制（space="feature"）转发到 ``WeatherEngine.force_feature``——
 与终端 `weather feature` 同一写入路径，不产生"只登记不生效"的幽灵记录；
-该空间只接受 ``space/target/instance/value{active}``，其余字段一律拒绝
-（force_feature 没有帧/时长语义），成功响应为 ``{success, changed}``。
+该空间只接受 ``space/target/instance/value{active}``，其余字段一律拒绝。
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from ascend.causal import InterventionRecord, InterventionTable, default_duration
+from ascend.causal import (
+    InterventionTimeline,
+    PlannedIntervention,
+    default_duration,
+)
 from ascend.log import get_logger
 from ascend.net.protocol import make_response
 
@@ -39,18 +43,21 @@ _SPACE_MAP = {
     "parameter": "parameter",
     "feature": "field_feature",
 }
-_REP_KINDS = ("value", "mechanism")
+_PLAN_FIELDS = frozenset({
+    "space", "target", "instance", "value", "start_frame", "duration",
+    "version",
+})
 _FEATURE_FIELDS = frozenset({"space", "target", "instance", "value"})
 
 
 def make_research_handler(
-    table: InterventionTable,
+    table: InterventionTimeline,
     weather_engine=None,
 ) -> dict[str, Callable[[dict], dict]]:
-    """为给定的干预表创建干预执行器处理程序。
+    """为给定的干预时间线创建干预执行器处理程序。
 
     Args:
-        table: InterventionTable 实例（干预执行器单一事实源）。
+        table: InterventionTimeline 实例（干预执行器单一事实源）。
         weather_engine: WeatherEngine 实例（feature 空间转发目标）；
             None = feature 空间不可用（fail-closed）。
 
@@ -65,42 +72,37 @@ def make_research_handler(
         if space == "feature":
             return _handle_feature(payload, weather_engine)
         try:
-            record = _record_from_payload(table, payload, space)
-            stored = table.commit(record)
+            entry = _plan_from_payload(table, payload, space)
+            stored = table.plan(entry)
         except (ValueError, KeyError) as exc:
             return _fail("research_do", str(exc))
         logger.info(
-            "research_do: seq=%d %s %s frame=%d duration=%s",
+            "research_do: seq=%d %s %s window=[%d, %s)",
             stored.seq, stored.target_space, stored.target,
-            stored.frame_t0, stored.duration,
+            stored.start_frame, stored.stop_frame,
         )
         return make_response(
             "research_do",
-            {"success": True, "record": table.record_plain(stored)},
+            {"success": True, "plan": stored.plain()},
         )
 
     def handle_research_do_clear(msg: dict) -> dict:
         payload = msg.get("payload", {})
         space = payload.get("space", "node")
         target = payload.get("target", "")
-        rep = payload.get("rep")
         resolved = _SPACE_MAP.get(space)
         if resolved is None:
             return _fail("research_do_clear", f"非法目标空间: {space}")
-        if rep is not None and rep not in _REP_KINDS:
-            return _fail(
-                "research_do_clear",
-                f"非法替换规格: {rep!r}（可选 {'|'.join(_REP_KINDS)}）",
-            )
-        if rep is not None and space != "node":
-            return _fail("research_do_clear", "rep 仅适用于 node 目标空间")
         try:
             instance = _as_instance(payload)
         except ValueError as exc:
             return _fail("research_do_clear", str(exc))
+        extra = sorted(set(payload) - {"space", "target", "instance"})
+        if extra:
+            return _fail("research_do_clear", f"未知字段: {extra}")
         if space == "feature":
-            # 特征核的单一事实源是注入核：清除必须走 force_feature，
-            # 否则会留下"记录已清、核仍在"的孤儿状态。
+            # 特征核的单一事实源是注入核：解除必须走 force_feature，
+            # 否则会留下"计划已停、核仍在"的孤儿状态。
             if weather_engine is None:
                 return _fail(
                     "research_do_clear",
@@ -121,19 +123,19 @@ def make_research_handler(
                 return _fail("research_do_clear", f"chunk 未注册: {instance}")
             return make_response(
                 "research_do_clear",
-                {"success": True, "cleared": ["value"] if changed else []},
+                {"success": True, "changed": bool(changed)},
             )
-        cleared = table.clear(resolved, target, instance, rep=rep)
+        stopped = table.revoke(resolved, target, instance)
         return make_response(
             "research_do_clear",
-            {"success": True, "cleared": list(cleared)},
+            {"success": True, "stopped": stopped},
         )
 
     def handle_research_do_list(_msg: dict) -> dict:
         return make_response(
             "research_do_list",
             {
-                "snapshot": table.snapshot(),
+                "snapshot": table.snapshot(table.current_frame()),
                 "history": table.history_plain(),
             },
         )
@@ -289,44 +291,46 @@ def _handle_feature(payload: dict, weather_engine) -> dict:
     )
 
 
-def _record_from_payload(
-    table: InterventionTable, payload: dict, space: str,
-) -> InterventionRecord:
+def _plan_from_payload(
+    table: InterventionTimeline, payload: dict, space: str,
+) -> PlannedIntervention:
     if space not in _SPACE_MAP:
         raise ValueError(f"非法目标空间: {space!r}")
+    if "rep" in payload or "mechanism_id" in payload:
+        raise ValueError(
+            "运行内机制替换已废除（WC-1.3）；结构变体 = 换世界，"
+            "见 issue #49"
+        )
+    extra = sorted(set(payload) - _PLAN_FIELDS)
+    if extra:
+        raise ValueError(f"计划条目含未知字段: {extra}")
     target = payload.get("target", "")
     if not target:
         raise ValueError("缺少 target")
     instance = _as_instance(payload)
-    rep = payload.get("rep", "value")
-    frame_raw = payload.get("frame_t0")
-    if frame_raw is None:
-        frame_t0 = table.default_frame()
-    elif isinstance(frame_raw, bool) or not isinstance(frame_raw, int):
-        raise ValueError(f"frame_t0 必须为整数: {frame_raw!r}")
+    start_raw = payload.get("start_frame")
+    if start_raw is None:
+        start_frame = table.default_frame()
+    elif isinstance(start_raw, bool) or not isinstance(start_raw, int):
+        raise ValueError(f"start_frame 必须为整数: {start_raw!r}")
     else:
-        frame_t0 = frame_raw
-    kwargs = {
-        "target_space": _SPACE_MAP[space],
-        "target": target,
-        "instance": instance,
-        "rep": rep,
-        "frame_t0": frame_t0,
-        "duration": payload.get(
-            "duration", default_duration(_SPACE_MAP[space], rep),
-        ),
-        "version": payload.get("version", ""),
-    }
-    if rep == "value":
-        if "value" not in payload:
-            raise ValueError("值干预缺少 value")
-        kwargs["value"] = payload["value"]
-    elif rep == "mechanism":
-        mechanism_id = payload.get("mechanism_id", "")
-        mechanism = table.registry.mechanisms.get(mechanism_id)
-        if mechanism is None:
-            raise ValueError(f"机制未登记: {mechanism_id}")
-        kwargs["mechanism"] = mechanism
+        start_frame = start_raw
+    duration = payload.get("duration", default_duration(_SPACE_MAP[space]))
+    if duration is None:
+        stop_frame = None
     else:
-        raise ValueError(f"非法替换规格: {rep!r}")
-    return InterventionRecord(**kwargs)
+        if isinstance(duration, bool) or not isinstance(duration, int):
+            raise ValueError(f"duration 必须为整数或 null: {duration!r}")
+        stop_frame = start_frame + duration
+    if "value" not in payload:
+        raise ValueError("值干预缺少 value")
+    return PlannedIntervention(
+        target_space=_SPACE_MAP[space],
+        target=target,
+        instance=instance,
+        value=payload["value"],
+        start_frame=start_frame,
+        stop_frame=stop_frame,
+        source="research",
+        version=payload.get("version", ""),
+    )

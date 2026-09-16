@@ -288,7 +288,7 @@ class TestWorldProcessEntry:
         monkeypatch.setattr(
             GameEngine, "_generate_initial_chunks", _REAL_GENERATE_INITIAL,
         )
-        from ascend.causal import InterventionRecord
+        from ascend.causal import PlannedIntervention
         from ascend.causal.world import ASCEND_MECHANISMS
         from ascend.weather.mechanisms import INSTANT_TEMPERATURE
 
@@ -302,10 +302,10 @@ class TestWorldProcessEntry:
             assert engine.chunk_store, "快路径也应加载至少一个 chunk"
             chunk = engine.chunk_store.keys()[0]
             # 施加一条节点干预 + 一个强制特征核，然后走真实保存脉搏
-            engine.intervention_table.commit(InterventionRecord(
+            engine.intervention_table.plan(PlannedIntervention(
                 target_space="node", target=INSTANT_TEMPERATURE,
-                instance=chunk, rep="value", value=30.0,
-                frame_t0=0, duration=None,
+                instance=chunk, value=30.0,
+                start_frame=0, stop_frame=None, source="test",
             ))
             engine.weather_engine.force_feature(
                 chunk[0], chunk[1], "storm", True,
@@ -314,8 +314,8 @@ class TestWorldProcessEntry:
             state = engine.save_manager.read_state(world_id)
             # 节点干预 + 特征核控制各一条（后者由 force_feature 登记）
             assert [
-                record["target_space"]
-                for record in state["weather"]["interventions"]
+                plan["target_space"]
+                for plan in state["weather"]["interventions"]["plan"]
             ] == ["node", "field_feature"]
             assert len(state["weather"]["feature_cores"]) == 1
             assert engine.save_manager.get_manifest(
@@ -330,7 +330,9 @@ class TestWorldProcessEntry:
         try:
             engine_b.start_service()
             engine_b.load_world(world_id=world_id)
-            assert len(engine_b.intervention_table.persist()) == 2
+            assert len(
+                engine_b.intervention_table.persist()["plan"],
+            ) == 2
             assert engine_b.weather_engine.field.features.get_injected(
                 chunk[0], chunk[1], "storm",
             ) is not None
@@ -349,7 +351,7 @@ class TestWorldProcessEntry:
         monkeypatch.setattr(
             GameEngine, "_generate_initial_chunks", _REAL_GENERATE_INITIAL,
         )
-        from ascend.causal import InterventionRecord
+        from ascend.causal import PlannedIntervention
         from ascend.weather.mechanisms import INSTANT_TEMPERATURE
 
         engine = GameEngine(seed=42)
@@ -358,10 +360,10 @@ class TestWorldProcessEntry:
             world_id = engine.save_manager.create_world("装载", seed=7).world_id
             engine.load_world(world_id=world_id)
             chunk = engine.chunk_store.keys()[0]
-            engine.intervention_table.commit(InterventionRecord(
+            engine.intervention_table.plan(PlannedIntervention(
                 target_space="node", target=INSTANT_TEMPERATURE,
-                instance=chunk, rep="value", value=30.0,
-                frame_t0=0, duration=None,
+                instance=chunk, value=30.0,
+                start_frame=0, stop_frame=None, source="test",
             ))
             # 模拟 LRU 淘汰：移出缓存并注销 chunk 服务
             engine.chunk_store._cache.pop(chunk, None)
@@ -379,17 +381,18 @@ class TestWorldProcessEntry:
                 "装载器应把干预目标 chunk 拉回来"
             assert engine_b.chunk_store.get(*chunk).has_tiles, \
                 "拉回来的 chunk 必须 tile 就绪（否则状态不结算）"
-            assert len(engine_b.intervention_table.persist()) == 1
+            assert len(
+                engine_b.intervention_table.persist()["plan"],
+            ) == 1
         finally:
             engine_b.stop()
 
     def test_load_world_restores_clock_before_chunk_settlement(self, monkeypatch):
-        """回归：读档时钟必须在 chunk 注册结算之前就位。
+        """回归：读档时钟必须在 chunk 注册积分之前就位。
 
-        地形状态引擎按 `_now_day()`（读时钟）结算缺口；若时钟仍停在
-        epoch，`on_tiles_ready` 会把已结算历史重放一遍并把 chunk 的
-        settled_day 回退到 1（状态被改写）。构造 day 31 的存档后重新
-        load_world，settled_day 不得回退。
+        地形状态引擎按当前 tick 积分到更新点；若时钟仍停在起点，读档
+        会让已积分 chunk 的游标回退并把历史重放一遍（状态被改写）。
+        构造 day 31 的存档后重新 load_world，游标不得回退、状态逐位不变。
         """
         _patch_fast_worldgen(monkeypatch)
         monkeypatch.setattr("ascend.game.INITIAL_CHUNK_RADIUS", 1)
@@ -407,8 +410,10 @@ class TestWorldProcessEntry:
             for cx, cy in engine.chunk_store.keys():
                 engine.tile_state_engine.on_tiles_ready(cx, cy)
             chunk_key = engine.chunk_store.keys()[0]
-            settled_before = engine.chunk_store.get(*chunk_key).settled_day
-            assert settled_before == 31, "前提：chunk 已结算到 day 31"
+            chunk = engine.chunk_store.get(*chunk_key)
+            assert chunk.integrated_through == 30 * GAME_DAY, \
+                "前提：chunk 已积分到 day 31"
+            state_before = bytes(chunk.tile_grid.state_raw("snow"))
             engine._save_state_now()
         finally:
             engine.stop()
@@ -417,8 +422,11 @@ class TestWorldProcessEntry:
         try:
             engine_b.start_service()
             engine_b.load_world(world_id=world_id)
-            assert engine_b.chunk_store.get(*chunk_key).settled_day == 31, \
-                "读档不得把已结算 chunk 的结算日回退"
+            loaded = engine_b.chunk_store.get(*chunk_key)
+            assert loaded.integrated_through == 30 * GAME_DAY, \
+                "读档不得把已积分 chunk 的游标回退"
+            assert bytes(loaded.tile_grid.state_raw("snow")) == state_before, \
+                "读档不重放历史（状态逐位不变）"
         finally:
             engine_b.stop()
 
@@ -846,55 +854,57 @@ class TestTerrainStatePersistence:
             lambda self, continent: _REAL_GENERATE_INITIAL(self, continent),
         )
 
-    def test_settled_day_persists_across_restart(self, monkeypatch):
-        """装配结算到 epoch day 1 → 快进到 day 5 → 重启后 settled_day=5。"""
-        from ascend.config import GAME_DAY
+    def test_integrated_through_persists_across_restart(self, monkeypatch):
+        """装配积分到起点更新点 → 快进 4 天 → 重启后游标保留。"""
+        from ascend.config import GAME_DAY, GAME_HOUR
 
         _patch_fast_worldgen(monkeypatch)
         self._patch_single_chunk(monkeypatch)
+        epoch = 6 * GAME_HOUR
 
         engine1 = GameEngine(seed=42)
         try:
             world_id = self._start_world(engine1)
             assert len(engine1.chunk_store) == 1
             (cx, cy), chunk = next(iter(engine1.chunk_store.items()))
-            assert chunk.settled_day == 1, "装配即结算到 epoch day 1"
+            assert chunk.integrated_through == epoch, "装配即积分到起点更新点"
 
-            # skip 快进 4 天（真实日历发布 day_change，skipped=3）→ 缺口结算
+            # skip 快进 4 天（驱动信号同步补算）→ 游标推进
             engine1.clock.skip(4 * GAME_DAY)
-            assert chunk.settled_day == 5, "快进补结算到 day 5"
-            assert engine1.chunk_store.flush() >= 1, "settled_day 落盘"
+            assert chunk.integrated_through == 4 * GAME_DAY + epoch
+            assert engine1.chunk_store.flush() >= 1, "积分游标落盘"
         finally:
             engine1.stop()
 
-        # 重启（新进程）：库中 settled_day 随 chunk 持久化，不重放历史
+        # 重启（新进程）：游标随 chunk 持久化，不重放历史
         engine2 = GameEngine(seed=42)
         try:
             engine2.start_service()
             engine2.load_world(world_id=world_id)
             saved = engine2.chunk_store.load_tiles_with_day(cx, cy)
             assert saved is not None, "库中保留 engine1 的 chunk"
-            assert saved[1] == 5, "读档恢复结算日，不重放历史"
+            assert saved[1] == 4 * GAME_DAY + epoch, "读档恢复游标，不重放历史"
         finally:
             engine2.stop()
 
     def test_lru_evict_then_reload_continues(self, monkeypatch):
-        """LRU 淘汰注销 → map 请求重载 → 续算缺口到当前日。"""
-        from ascend.config import GAME_DAY
+        """LRU 淘汰注销 → map 请求重载 → 续算缺口到当前更新点。"""
+        from ascend.config import GAME_DAY, GAME_HOUR
 
         _patch_fast_worldgen(monkeypatch)
         self._patch_single_chunk(monkeypatch)
+        epoch = 6 * GAME_HOUR
 
         engine = GameEngine(seed=42)
         try:
             self._start_world(engine)
             assert len(engine.chunk_store) == 1
             (cx, cy), chunk = next(iter(engine.chunk_store.items()))
-            assert chunk.settled_day == 1
+            assert chunk.integrated_through == epoch
 
-            # skip 快进 2 天（真实日历）→ 结算到 day 3
+            # skip 快进 2 天（驱动信号补算）
             engine.clock.skip(2 * GAME_DAY)
-            assert chunk.settled_day == 3
+            assert chunk.integrated_through == 2 * GAME_DAY + epoch
 
             # 缩小 max_size 强制淘汰出生点 chunk（落盘 + 引擎注销）
             engine.chunk_store._max_size = 1
@@ -910,7 +920,7 @@ class TestTerrainStatePersistence:
             assert (cx, cy) not in engine.chunk_store, "LRU 已淘汰"
             assert engine.tile_state_engine._chunks == {}, "引擎同步注销"
 
-            # map 请求重载 → 恢复路径续算到当前日（不重放 [1,3)）
+            # map 请求重载 → 恢复路径续算到当前更新点（不重放 [0,3d)）
             engine.clock.skip(1 * GAME_DAY)  # 现在 day 4
             response = engine.dispatcher._handlers["get_chunks"]({
                 "type": "request", "request_type": "get_chunks",
@@ -920,7 +930,7 @@ class TestTerrainStatePersistence:
             assert response is not None
             assert (cx, cy) in engine.chunk_store, "重载入缓存"
             reloaded = engine.chunk_store.get(cx, cy)
-            assert reloaded.settled_day == 4, "重载续算到当前日"
-            assert reloaded.settled_day == 4, "不重放历史（起点=持久化结算日）"
+            assert reloaded.integrated_through == 3 * GAME_DAY + epoch, \
+                "重载续算到当前更新点（起点=持久化游标，不重放历史）"
         finally:
             engine.stop()

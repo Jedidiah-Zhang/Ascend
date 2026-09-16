@@ -65,7 +65,8 @@ class TestCollectState:
         """无天气引擎时天气侧状态为空（不是缺失字段）。"""
         state = collect_state(clock, player, None, archive_max_timestamp=0)
         assert state["weather"] == {
-            "interventions": [], "feature_cores": [],
+            "interventions": {"plan": [], "records": []},
+            "feature_cores": [],
         }
 
 

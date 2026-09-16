@@ -2,13 +2,13 @@
 
 from .intervention import (
     FOREVER,
-    INTERVENTION_REP_KINDS,
     INTERVENTION_TARGET_SPACES,
     SINGLE,
     WINDOW,
     InterventionRecord,
-    InterventionTable,
+    InterventionTimeline,
     NodeResolution,
+    PlannedIntervention,
     default_duration,
 )
 from .intervention_engine import InterventionEvaluator, InterventionFrameExecutor
@@ -20,6 +20,22 @@ from .observe import (
 )
 from .registry import MechanismRegistry
 from .trace import RandomAddress, TraceLog, TraceRecord
+from .declaration import DeclarationError
+from .fate_registry import (
+    FATE_NAMESPACES_PATH,
+    FateNamespaceEntry,
+    FateNamespaceRegistry,
+    load_fate_namespaces,
+)
+from .state_schema import (
+    DECLARATION_PATH,
+    SlotDeclaration,
+    StateDeclaration,
+    StateSlice,
+    encode_state,
+    load_declaration,
+    state_digest,
+)
 from .spec import (
     AccessPolicy,
     DependencyWitness,
@@ -39,8 +55,13 @@ from .spec import (
 
 __all__ = [
     "AccessPolicy",
+    "DECLARATION_PATH",
+    "DeclarationError",
     "DependencyWitness",
     "ExogenousSourceSpec",
+    "FATE_NAMESPACES_PATH",
+    "FateNamespaceEntry",
+    "FateNamespaceRegistry",
     "InstanceDomain",
     "MathMetadata",
     "MechanismRegistry",
@@ -50,14 +71,17 @@ __all__ = [
     "ParameterSpec",
     "ParentSpec",
     "RandomBinding",
+    "SlotDeclaration",
+    "StateDeclaration",
     "StateOwnership",
+    "StateSlice",
     "UpdateContract",
     "ValueDomain",
-    "INTERVENTION_REP_KINDS",
     "INTERVENTION_TARGET_SPACES",
     "InterventionRecord",
-    "InterventionTable",
+    "InterventionTimeline",
     "NodeResolution",
+    "PlannedIntervention",
     "InterventionEvaluator",
     "InterventionFrameExecutor",
     "RandomAddress",
@@ -71,4 +95,8 @@ __all__ = [
     "SINGLE",
     "WINDOW",
     "default_duration",
+    "encode_state",
+    "load_declaration",
+    "load_fate_namespaces",
+    "state_digest",
 ]

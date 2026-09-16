@@ -342,7 +342,7 @@ class TestMapHandlersWithStateEngine:
         chunks = response["payload"]["chunks"]
         assert len(chunks) == 1 and "tiles_b64" in chunks[0], "BLOB 返回"
         assert (coord[0], coord[1]) in engine._chunks, "就绪后已注册并持有网格"
-        chunk, grid = engine._chunks[(coord[0], coord[1])]
-        assert grid is not None, "快照网格非 None（动态生成后回写）"
+        chunk = engine._chunks[(coord[0], coord[1])]
+        assert chunk.tile_grid is not None, "网格非 None（动态生成后回写）"
         agg = engine.aggregates(coord[0], coord[1])
         assert set(agg) == {"water_frozen", "mean_snow", "mean_moisture"}

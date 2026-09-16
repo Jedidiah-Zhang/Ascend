@@ -22,7 +22,8 @@ from typing import Mapping
 
 from ascend.config import (GAME_DAY, GAME_HOUR, TILE_MAP_SIZE)
 from ascend.causal import (
-    InterventionEvaluator, InterventionRecord, InterventionTable, TraceLog,
+    InterventionEvaluator, InterventionRecord, InterventionTimeline,
+    PlannedIntervention, TraceLog,
 )
 from ascend.log import get_logger
 from ascend.space import (ClimateZone, WeatherParams,
@@ -115,7 +116,7 @@ class WeatherEngine:
         *,
         seed: int = 0,
         world_tree_arg=None,
-        intervention_table: InterventionTable | None = None,
+        intervention_table: InterventionTimeline | None = None,
     ) -> None:
         """初始化天气引擎。
 
@@ -140,7 +141,6 @@ class WeatherEngine:
         self._query_lock = threading.RLock()
         self._field = UnifiedWeatherField(seed=seed)
         self._fields: dict[tuple[int, int], WeatherField] = {}
-        self._climates: dict[tuple[int, int], ClimateZone] = {}
         self._tracker = RegionTracker(self._field, evaluate=self.evaluate_node)
         self._last_season: int | None = None
         self._scope = SubscriptionScope()
@@ -158,7 +158,7 @@ class WeatherEngine:
         return self._field
 
     @property
-    def intervention_table(self) -> InterventionTable:
+    def intervention_table(self) -> InterventionTimeline:
         """挂载的干预表（存档/研究 API 共用同一实例；未挂载时惰性自建）。"""
         _, table = self._intervention()
         return table
@@ -193,7 +193,7 @@ class WeatherEngine:
     # ── 完整世界状态（P4）：不可重算部分 ────────────────────────
 
     def persist_state(self) -> dict:
-        """天气侧 W_t 载荷：生效干预记录 + 注入特征核。
+        """天气侧 W_t 载荷：干预时间线（计划 + 已发生记录）+ 注入特征核。
 
         可重算量（统一天气场、气候代理、自然核时间线、区域跟踪器、
         chunk 基线）一律不落盘——它们由 seed + 时钟 + 声明重建，
@@ -207,21 +207,21 @@ class WeatherEngine:
     def restore_state(self, payload, *, instance_loader=None) -> None:
         """从存档载荷恢复天气侧 W_t（fail-closed）。
 
-        干预记录逐条重走登记校验（``InterventionTable.restore``），
+        干预时间线全量重走登记校验（``InterventionTimeline.restore``），
         注入核逐条校验字段与身份（``FeatureField.restore_injected``）；
         任一条非法即抛 ValueError，不留下半成品状态。
 
         Args:
             payload: ``persist_state`` 输出的载荷。
             instance_loader: 可选实例装载器（读档时把被 LRU 淘汰的
-                目标 chunk 拉回来再校验），见 ``InterventionTable.restore``。
+                目标 chunk 拉回来再校验），见 ``InterventionTimeline.restore``。
         """
         if not isinstance(payload, Mapping):
             raise ValueError(
                 f"天气状态载荷必须为映射: {type(payload).__name__}"
             )
         self.intervention_table.restore(
-            payload.get("interventions") or [],
+            payload.get("interventions") or {},
             instance_loader=instance_loader,
         )
         self._field.features.restore_injected(
@@ -278,7 +278,6 @@ class WeatherEngine:
         key = (cx, cy)
         with self._query_lock:
             self._fields[key] = WeatherField(cx, cy, bl)
-            self._climates[key] = climate
             self._tracker.set_chunk_baseline(
                 cx, cy, baseline.rainfall, bl.mean_intensity,
             )
@@ -294,7 +293,6 @@ class WeatherEngine:
         key = (cx, cy)
         with self._query_lock:
             self._fields.pop(key, None)
-            self._climates.pop(key, None)
             self._tracker.remove_chunk(cx, cy)
 
     def shutdown(self) -> None:
@@ -345,7 +343,7 @@ class WeatherEngine:
             return False
         return self.has_chunk(instance[0], instance[1])
 
-    def _intervention(self) -> tuple[InterventionEvaluator, InterventionTable]:
+    def _intervention(self) -> tuple[InterventionEvaluator, InterventionTimeline]:
         """干预执行器挂载点：覆盖感知求值器 + 干预表（惰性创建）。
 
         无干预表时引擎自建（无记录 → 行为与直通注册表一致），并注入
@@ -355,7 +353,7 @@ class WeatherEngine:
         """
         if self._intervention_eval is None:
             if self._intervention_table is None:
-                self._intervention_table = InterventionTable(
+                self._intervention_table = InterventionTimeline(
                     _registry(),
                     now=lambda: self._clock.time,
                     instance_exists=self.instance_exists,
@@ -765,7 +763,7 @@ class WeatherEngine:
     ) -> bool | None:
         """强制开启/关闭指定 chunk 的特征核（终端调试指令用）。
 
-        干预执行器接线：强制控制先登记 field_feature 干预（目标/实例/
+        干预接线：强制控制先登记 field_feature 计划条目（目标/实例/
         生效帧校验 + 历史），再执行特征核注入/移除（运行时状态桥接，
         随 W_t 序列化，见 ``persist_state``）。注入核与自然核同代码路径——
         查询与事件都走场合成，无特判。
@@ -773,8 +771,8 @@ class WeatherEngine:
         差异跟踪自动发布。
 
         **单一事实源 = 注入核**：no-op 判定与解除都只看核是否存在
-        （``get_injected``），记录仅作校验/历史；强制核 duration=None
-        与记录的"长期"语义一致，核不会先于记录过期。
+        （``get_injected``），计划条目仅作校验/历史；强制核常驻与条目的
+        stop_frame=None（长期）语义一致，核不会先于条目失效。
 
         Args:
             cx: chunk X 坐标。
@@ -805,14 +803,14 @@ class WeatherEngine:
             if active:
                 if core is not None and core.is_active(now):
                     return False
-                table.commit(InterventionRecord(
+                table.plan(PlannedIntervention(
                     target_space="field_feature",
                     target=type_name,
                     instance=(cx, cy),
-                    rep="value",
                     value={"active": True},
-                    frame_t0=now,
-                    duration=None,
+                    start_frame=now,
+                    stop_frame=None,
+                    source="feature",
                 ))
                 cfg = FEATURE_TYPES[type_name]
                 wx = (cx + 0.5) * TILE_MAP_SIZE
@@ -833,7 +831,9 @@ class WeatherEngine:
                 if core is None:
                     return False
                 features.remove_injected(cx, cy, type_name)
-                table.clear("field_feature", type_name, (cx, cy))
+                table.revoke(
+                    "field_feature", type_name, (cx, cy), at_frame=now,
+                )
         logger.info(
             "强制%s特征核 %s: chunk (%d,%d)",
             "激活" if active else "解除", type_name, cx, cy,

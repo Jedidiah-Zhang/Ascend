@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "contract_version": "v0.1",
   "slice": {
     "id": "weather+terrain",
@@ -9,14 +9,21 @@
     "audit": "docs/研究理论/首切片槽位归位清单.md",
     "contract": "docs/研究理论/世界契约.md"
   },
+  "space": {
+    "kind": "chunked_grid",
+    "chunk_size": 200
+  },
   "slots": [
     {
       "id": "world.clock.tick",
       "carrier": "global",
       "domain": {
         "type": "int",
+        "bits": 64,
         "min": 0,
-        "unit": "tick"
+        "max": 18446744073709551615,
+        "unit": "tick",
+        "missing": "none"
       },
       "role": "state",
       "update": {
@@ -37,20 +44,27 @@
       "domain": {
         "type": "int",
         "bits": 8,
-        "resolution": "u8 通道值"
+        "min": 0,
+        "max": 100,
+        "unit": "u8 通道值",
+        "missing": "none",
+        "scope": "tile"
       },
       "role": "state",
       "update": {
         "kind": "mechanism",
-        "stage": "TBD:#48"
+        "stage": "terrain.integrate"
       },
       "permissions": {
-        "intervene": "candidate",
+        "intervene": null,
         "observe": true,
         "record": true
       },
       "owner": "world.terrain.settlement",
       "persist": true,
+      "pending": {
+        "permissions.intervene": "干预权限随数值内核与 carried-value 语义在后续批次裁决"
+      },
       "audit_ref": "§1"
     },
     {
@@ -59,20 +73,27 @@
       "domain": {
         "type": "int",
         "bits": 8,
-        "resolution": "u8 通道值"
+        "min": 0,
+        "max": 255,
+        "unit": "u8 通道值",
+        "missing": "none",
+        "scope": "tile"
       },
       "role": "state",
       "update": {
         "kind": "mechanism",
-        "stage": "TBD:#48"
+        "stage": "terrain.integrate"
       },
       "permissions": {
-        "intervene": "candidate",
+        "intervene": null,
         "observe": true,
         "record": true
       },
       "owner": "world.terrain.settlement",
       "persist": true,
+      "pending": {
+        "permissions.intervene": "干预权限随数值内核与 carried-value 语义在后续批次裁决"
+      },
       "audit_ref": "§1"
     },
     {
@@ -81,20 +102,56 @@
       "domain": {
         "type": "int",
         "bits": 8,
-        "resolution": "u8 通道值"
+        "min": 0,
+        "max": 255,
+        "unit": "u8 通道值",
+        "missing": "none",
+        "scope": "tile"
       },
       "role": "state",
       "update": {
         "kind": "mechanism",
-        "stage": "TBD:#48"
+        "stage": "terrain.integrate"
       },
       "permissions": {
-        "intervene": "candidate",
+        "intervene": null,
         "observe": true,
         "record": true
       },
       "owner": "world.terrain.settlement",
       "persist": true,
+      "pending": {
+        "permissions.intervene": "干预权限随数值内核与 carried-value 语义在后续批次裁决"
+      },
+      "audit_ref": "§1"
+    },
+    {
+      "id": "world.terrain.integrated_through",
+      "carrier": "field",
+      "domain": {
+        "type": "int",
+        "bits": 64,
+        "min": 0,
+        "max": 18446744073709551615,
+        "unit": "tick",
+        "missing": "none",
+        "scope": "chunk"
+      },
+      "role": "state",
+      "update": {
+        "kind": "mechanism",
+        "stage": "terrain.integrate"
+      },
+      "permissions": {
+        "intervene": null,
+        "observe": true,
+        "record": true
+      },
+      "owner": "world.terrain.settlement",
+      "persist": true,
+      "pending": {
+        "permissions.intervene": "干预权限随数值内核与 carried-value 语义在后续批次裁决"
+      },
       "audit_ref": "§1"
     }
   ],
@@ -192,21 +249,6 @@
       "audit_ref": "§4 行2"
     },
     {
-      "id": "tile_state.precip_start_instant_deposit",
-      "reason": "首小时双计（WC-4.1 / WC-7.1）",
-      "audit_ref": "§4 行3"
-    },
-    {
-      "id": "tile_state.settled_day",
-      "reason": "双积分路径记账（WC-4.2 / WC-7.1）",
-      "audit_ref": "§4 行4"
-    },
-    {
-      "id": "chunk_store.persist_once_gap",
-      "reason": "状态落盘缺口（WC-8.2）",
-      "audit_ref": "§4 行5"
-    },
-    {
       "id": "feature_field.injection_float_order",
       "reason": "注入核浮点顺序求和，末位可翻转阈值（WC-4.4 / WC-4.5）",
       "audit_ref": "§4 行6"
@@ -245,11 +287,6 @@
       "id": "game.save_pulse_wallclock",
       "reason": "墙钟调度进入持久化时点（WC-4.5，驱动层）",
       "audit_ref": "§4 行13"
-    },
-    {
-      "id": "tile_state.event_bus_state_updates",
-      "reason": "事件总线驱动状态更新，非纯函数（WC-4）",
-      "audit_ref": "§4 行14"
     },
     {
       "id": "clock.accumulator",

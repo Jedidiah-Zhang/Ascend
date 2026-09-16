@@ -165,8 +165,8 @@ class TestChecks:
         result = checks.check_w2()
         assert result.passed
         engine = result.engine
-        assert len({tuple(engine["node"]), tuple(engine["persist"]),
-                    tuple(engine["mech"])}) == 3
+        assert tuple(engine["node"]) != tuple(engine["window"])
+        assert engine["closed"] is True
 
     def test_w3_unit_perturbation_within_kernel(self):
         result = checks.check_w3()

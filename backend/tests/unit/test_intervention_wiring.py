@@ -1,13 +1,13 @@
-"""干预执行器生产接线测试 — 引擎求值覆盖、force_feature、do 指令、研究 API。
+"""干预时间线生产接线测试 — 引擎求值覆盖、force_feature、do 指令、研究 API。
 
-覆盖 P2 生产接线：weather_engine 经 ``evaluate_node`` 按 (节点, chunk,
-tick) 覆盖求值（region_tracker 复用同一入口）；force_feature 登记
-field_feature 干预（单一事实源 = 注入核）；终端 do 指令组与 net 研究
-API 同源落到同一干预表，缺省解析与错误处理一致。
+覆盖生产接线：weather_engine 经 ``evaluate_node`` 按 (节点, chunk, tick)
+覆盖求值（region_tracker 复用同一入口）；force_feature 登记 field_feature
+计划条目（单一事实源 = 注入核）；终端 do 指令组与 net 研究 API 同源落到
+同一时间线，缺省解析与错误处理一致。
 
-另含两条系统性门禁：
-- 可达性漂移巡检：``WIRED_NODES`` 声明 == 实际求值点（源码扫描）。
-- i18n：do 指令组用户可见文案中英双语可用。
+- 历史稳定：撤销不改写已物化帧的解析结果。
+- 机制替换关闭：do mech 与 research_do 的 rep/mechanism_id 一律拒绝。
+- 另含两条系统性门禁：可达性漂移巡检与 do 指令组 i18n 双语对账。
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from ascend.causal import InterventionRecord, InterventionTable
+from ascend.causal import InterventionTimeline, PlannedIntervention
 from ascend.time import WorldClock, GameCalendar
 from ascend.i18n import I18n
 
@@ -45,7 +45,7 @@ def weather_engine(clock):
 
     wt = WorldTree()
     engine = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-    table = InterventionTable(
+    table = InterventionTimeline(
         _registry(),
         now=lambda: clock.time,
         instance_exists=lambda _node, inst: engine.has_chunk(*inst),
@@ -81,6 +81,21 @@ def _registry():
     return ASCEND_MECHANISMS
 
 
+def _plan_node(
+    table: InterventionTimeline,
+    target: str,
+    value: object,
+    *,
+    instance: tuple = (0, 0),
+    start: int = 0,
+    stop: int | None = None,
+) -> PlannedIntervention:
+    return table.plan(PlannedIntervention(
+        target_space="node", target=target, instance=instance,
+        value=value, start_frame=start, stop_frame=stop, source="test",
+    ))
+
+
 # ── 天气引擎求值覆盖 ─────────────────────────────────────────
 
 class TestEngineEvaluation:
@@ -89,11 +104,7 @@ class TestEngineEvaluation:
 
         engine, table = weather_engine
         baseline = engine.get_weather(0, 0, time=0)
-        table.commit(InterventionRecord(
-            target_space="node", target=m.INSTANT_TEMPERATURE,
-            instance=(0, 0), rep="value", value=25.0,
-            frame_t0=0, duration=1,
-        ))
+        _plan_node(table, m.INSTANT_TEMPERATURE, 25.0, stop=1)
         overridden = engine.get_weather(0, 0, time=0)
         assert overridden.temperature == 25.0
         assert baseline.temperature != 25.0
@@ -102,35 +113,27 @@ class TestEngineEvaluation:
         from ascend.weather import mechanisms as m
 
         engine, table = weather_engine
-        table.commit(InterventionRecord(
-            target_space="node", target=m.INSTANT_TEMPERATURE,
-            instance=(9, 9), rep="value", value=25.0,
-            frame_t0=0, duration=1,
-        ))
+        _plan_node(table, m.INSTANT_TEMPERATURE, 25.0,
+                   instance=(9, 9), stop=1)
         assert engine.get_weather(9, 9, time=0).temperature == 25.0
         assert engine.get_weather(0, 0, time=0).temperature != 25.0
 
     def test_parameter_intervention_flows_to_weather(self, weather_engine):
         """参数干预（环境变化）真正流入已接线机制的求值。"""
-        from ascend.weather import mechanisms as m
-
         engine, table = weather_engine
         param_id = "world.parameter.temp_perturb_scale_c"
         assert param_id in table.registry.wired_parameters
         before = engine.get_weather(0, 0, time=0).temperature
-        table.commit(InterventionRecord(
-            target_space="parameter", target=param_id, rep="value",
-            value=100.0, frame_t0=0,
+        table.plan(PlannedIntervention(
+            target_space="parameter", target=param_id, value=100.0,
+            start_frame=0, stop_frame=None, source="test",
         ))
         after = engine.get_weather(0, 0, time=0).temperature
         assert after != before
         assert table.resolve_parameter(param_id, 0) == (True, 100.0)
-        # 环境变化标记 + 快照可见
-        snapshot = table.snapshot()
-        record = snapshot["parameters"][0]
-        assert record["target"] == param_id
-        assert record["environment_change"] is True
-        assert record["applied_at"] is not None
+        snapshot = table.snapshot(table.current_frame())
+        assert snapshot[0]["target"] == param_id
+        assert snapshot[0]["submitted_at"] is not None
 
     def test_unwired_node_rejected(self, weather_engine):
         """已声明但未接线的生成点：登记被拒绝（不再静默无效）。"""
@@ -138,19 +141,15 @@ class TestEngineEvaluation:
 
         _, table = weather_engine
         with pytest.raises(ValueError, match="未接线"):
-            table.commit(InterventionRecord(
-                target_space="node", target=m.ANNUAL_TEMPERATURE,
-                instance=(0, 0), rep="value", value=25.0,
-                frame_t0=0, duration=1,
-            ))
+            _plan_node(table, m.ANNUAL_TEMPERATURE, 25.0, stop=1)
 
     def test_unwired_parameter_rejected(self, weather_engine):
         _, table = weather_engine
         with pytest.raises(ValueError, match="未被已接线机制消费"):
-            table.commit(InterventionRecord(
+            table.plan(PlannedIntervention(
                 target_space="parameter",
                 target="weather.parameter.latitude.input_min_c",
-                rep="value", value=0.0, frame_t0=0,
+                value=0.0,
             ))
 
     def test_unregistered_instance_rejected(self, weather_engine):
@@ -159,29 +158,19 @@ class TestEngineEvaluation:
 
         _, table = weather_engine
         with pytest.raises(ValueError, match="实例不存在"):
-            table.commit(InterventionRecord(
-                target_space="node", target=m.INSTANT_TEMPERATURE,
-                instance=(999, 999), rep="value", value=25.0,
-                frame_t0=0, duration=1,
-            ))
+            _plan_node(table, m.INSTANT_TEMPERATURE, 25.0,
+                       instance=(999, 999), stop=1)
 
     def test_instance_domain_must_match(self, weather_engine):
         """实例必须匹配节点实例域（§7 目标分量实例存在，fail-closed）。"""
         from ascend.weather import mechanisms as m
 
-        engine, table = weather_engine
+        _, table = weather_engine
         with pytest.raises(ValueError, match="实例"):
-            table.commit(InterventionRecord(
-                target_space="node", target=m.INSTANT_TEMPERATURE,
-                instance=(), rep="value", value=25.0,
-                frame_t0=0, duration=1,
-            ))
+            _plan_node(table, m.INSTANT_TEMPERATURE, 25.0, instance=(), stop=1)
         with pytest.raises(ValueError, match="实例"):
-            table.commit(InterventionRecord(
-                target_space="node", target=m.INSTANT_TEMPERATURE,
-                instance=(0, 0, 0), rep="value", value=25.0,
-                frame_t0=0, duration=1,
-            ))
+            _plan_node(table, m.INSTANT_TEMPERATURE, 25.0,
+                       instance=(0, 0, 0), stop=1)
         global_node = next(
             nid for nid, node in table.registry.nodes.items()
             if node.instance_domain.kind == "global_singleton"
@@ -189,43 +178,40 @@ class TestEngineEvaluation:
             and nid in table.registry.wired_nodes
         )
         with pytest.raises(ValueError, match="实例"):
-            table.commit(InterventionRecord(
-                target_space="node", target=global_node,
-                instance=(0, 0), rep="value", value=1.0,
-                frame_t0=0, duration=1,
-            ))
+            _plan_node(table, global_node, 1, instance=(0, 0), stop=1)
 
     def test_past_query_uses_intervention_window(self, weather_engine):
         """干预窗口确定性：过去查询按记录窗口解析。"""
         from ascend.weather import mechanisms as m
 
         engine, table = weather_engine
-        table.commit(InterventionRecord(
-            target_space="node", target=m.INSTANT_TEMPERATURE,
-            instance=(0, 0), rep="value", value=25.0,
-            frame_t0=0, duration=1,
-        ))
+        _plan_node(table, m.INSTANT_TEMPERATURE, 25.0, stop=1)
         assert engine.get_weather(0, 0, time=0).temperature == 25.0
         assert engine.get_weather(0, 0, time=3).temperature != 25.0
 
-    def test_event_path_and_query_path_agree(self, weather_engine):
-        """同一节点在查询路径与 region_tracker 事件路径上求值一致。
+    def test_revoke_does_not_rewrite_past_query(self, weather_engine, clock):
+        """撤销不改写历史：撤销帧之前的查询结果保持不变。"""
+        from ascend.weather import mechanisms as m
 
-        阈值干预必须同时影响 get_weather 与区域事件判定——两者共用
-        ``evaluate_node``，不存在第二个旁路求值点。
-        """
+        engine, table = weather_engine
+        now = clock.time
+        _plan_node(table, m.INSTANT_TEMPERATURE, 33.7, stop=None)
+        assert engine.get_weather(0, 0, time=now).temperature == 33.7
+        assert table.revoke("node", m.INSTANT_TEMPERATURE, (0, 0)) == 1
+        assert engine.get_weather(0, 0, time=now).temperature == 33.7
+        assert engine.get_weather(0, 0, time=now - 1).temperature == 33.7
+        clock.restore(time=now + 10)
+        assert engine.get_weather(0, 0, time=now + 1).temperature != 33.7
+
+    def test_event_path_and_query_path_agree(self, weather_engine):
+        """同一节点在查询路径与 region_tracker 事件路径上求值一致。"""
         from ascend.weather import mechanisms as m
 
         engine, table = weather_engine
         before = engine.get_weather(0, 0, time=0).rainfall
-        table.commit(InterventionRecord(
-            target_space="node", target=m.PRECIPITATION_THRESHOLD,
-            instance=(0, 0), rep="value", value=0.26,
-            frame_t0=0, duration=None,
-        ))
+        _plan_node(table, m.PRECIPITATION_THRESHOLD, 0.26, stop=None)
         after = engine.get_weather(0, 0, time=0).rainfall
         assert after != before
-        # region_tracker 用同一入口求阈值（注入回调即 engine.evaluate_node）
         tracker_threshold = engine._tracker._evaluate(
             m.PRECIPITATION_THRESHOLD, {m.ANNUAL_RAINFALL: 800.0},
             frame=0, instance=(0, 0),
@@ -236,31 +222,33 @@ class TestEngineEvaluation:
 # ── force_feature 干预化（单一事实源 = 注入核）───────────────
 
 class TestForceFeatureIntervention:
-    def test_force_feature_registers_intervention(self, weather_engine, clock):
+    def test_force_feature_registers_plan(self, weather_engine, clock):
         engine, table = weather_engine
         assert engine.force_feature(0, 0, "storm", True) is True
-        records = table.snapshot()["features"]
-        assert records and records[0]["target_space"] == "field_feature"
-        assert records[0]["applied_at"] == clock.time
+        plans = table.snapshot(table.current_frame())
+        assert plans and plans[0]["target_space"] == "field_feature"
+        assert plans[0]["submitted_at"] == clock.time
         assert engine.force_feature(0, 0, "storm", True) is False
         assert engine.force_feature(0, 0, "storm", False) is True
-        assert table.snapshot()["features"] == []
+        assert table.snapshot(table.current_frame()) == []
         assert engine.force_feature(0, 0, "storm", False) is False
 
     def test_forced_core_does_not_expire(self, weather_engine, clock):
-        """强制核与记录同语义（长期）：不会先于记录过期。"""
-        engine, table = weather_engine
+        """强制核与计划条目同语义（长期）：不会先于条目失效。"""
+        engine, _ = weather_engine
         assert engine.force_feature(0, 0, "storm", True) is True
         core = engine.field.features.get_injected(0, 0, "storm")
         assert core is not None and core.duration is None
         far_future = clock.time + 100 * 360 * 24 * 60 * 60
         assert core.is_active(far_future)
 
-    def test_clear_then_stop_still_removes_core(self, weather_engine, clock):
-        """回归：do clear 只清记录后，weather feature stop 仍能解除核。"""
+    def test_revoke_then_stop_still_removes_core(self, weather_engine, clock):
+        """回归：撤销计划后，weather feature stop 仍能解除核。"""
         engine, table = weather_engine
         assert engine.force_feature(0, 0, "storm", True) is True
-        assert table.clear("field_feature", "storm", (0, 0)) == ("value",)
+        assert table.revoke(
+            "field_feature", "storm", (0, 0), at_frame=clock.time,
+        ) == 1
         assert engine.field.features.get_injected(0, 0, "storm") is not None
         assert engine.force_feature(0, 0, "storm", False) is True
         assert engine.field.features.get_injected(0, 0, "storm") is None
@@ -291,9 +279,9 @@ class TestDoCommands:
         engine, table = weather_engine
         result = executor.execute(f"do value {m.INSTANT_TEMPERATURE} 25")
         assert result.success is True
-        record = table.snapshot()["values"][0]
-        assert record["frame_t0"] == clock.time + 1
-        assert record["duration"] == 1
+        plan = table.snapshot(table.default_frame())[0]
+        assert plan["start_frame"] == clock.time + 1
+        assert plan["stop_frame"] == clock.time + 2
         assert engine.get_weather(0, 0, time=clock.time).temperature != 25.0
 
     def test_do_value_invalid_rejected(self, executor):
@@ -337,7 +325,7 @@ class TestDoCommands:
         assert res.rep == "value" and res.value == 5
 
     def test_do_value_integer_enum_node(self, executor, weather_engine):
-        """整数枚举域节点按 choices 类型解析（此前终端无法登记 season）。"""
+        """整数枚举域节点按 choices 类型解析（终端可登记 season）。"""
         from ascend.weather import mechanisms as m
 
         _, table = weather_engine
@@ -351,23 +339,11 @@ class TestDoCommands:
         assert bad.success is False
         assert "enum" in bad.output
 
-    def test_do_mech(self, executor, weather_engine):
-        from ascend.weather import mechanisms as m
-
-        _, table = weather_engine
-        mech_id = table.registry.mechanism_for(m.INSTANT_TEMPERATURE).mechanism_id
-        result = executor.execute(
-            f"do mech {m.INSTANT_TEMPERATURE} {mech_id} at 0",
-        )
-        assert result.success is True
-        res = table.resolve_node(m.INSTANT_TEMPERATURE, (0, 0), 0)
-        assert res.rep == "mechanism"
-        assert table.snapshot()["mechanisms"][0]["mechanism"] == mech_id
-
-    def test_do_mech_unknown_mechanism(self, executor):
-        result = executor.execute("do mech ghost missing_mech")
+    def test_do_mech_is_gone(self, executor):
+        """运行内机制替换已废除：do mech 落到帮助文案（fail-closed）。"""
+        result = executor.execute("do mech weather.instant.temperature_c inc")
         assert result.success is False
-        assert "未登记" in result.output
+        assert "do value" in result.output
 
     def test_do_param(self, executor, weather_engine):
         _, table = weather_engine
@@ -380,63 +356,53 @@ class TestDoCommands:
         assert "环境变化" in result.output
 
     def test_do_param_rejects_extra_args(self, executor, weather_engine):
-        _, table = weather_engine
         param_id = "world.parameter.game_day_ticks"
         result = executor.execute(f"do param {param_id} 1.0 0")
         assert result.success is False
 
-    def test_do_list_and_clear(self, executor, weather_engine):
+    def test_do_list_and_clear(self, executor, weather_engine, clock):
         from ascend.weather import mechanisms as m
 
         _, table = weather_engine
-        executor.execute(f"do value {m.INSTANT_TEMPERATURE} 25 at 0")
+        now = clock.time
+        executor.execute(f"do value {m.INSTANT_TEMPERATURE} 25 at {now}")
         listing = executor.execute("do list")
         assert listing.success is True
         assert m.INSTANT_TEMPERATURE in listing.output
-        assert "[0, 1)" in listing.output
+        assert f"[{now}, {now + 1})" in listing.output
 
         cleared = executor.execute(
             f"do clear node {m.INSTANT_TEMPERATURE} 0 0",
         )
         assert cleared.success is True
-        assert table.resolve_node(m.INSTANT_TEMPERATURE, (0, 0), 0).rep is None
-
-    def test_do_clear_removes_mechanism_too(self, executor, weather_engine):
-        """回归：do clear 清空该键全部规格（值 + 机制），不报假成功。"""
-        from ascend.weather import mechanisms as m
-
-        _, table = weather_engine
-        mech_id = table.registry.mechanism_for(m.INSTANT_TEMPERATURE).mechanism_id
-        executor.execute(f"do value {m.INSTANT_TEMPERATURE} 25 0 0 at 0")
-        executor.execute(f"do mech {m.INSTANT_TEMPERATURE} {mech_id} 0 0 at 0")
-        cleared = executor.execute(
-            f"do clear node {m.INSTANT_TEMPERATURE} 0 0",
-        )
-        assert cleared.success is True
-        assert "value" in cleared.output and "mechanism" in cleared.output
-        assert table.resolve_node(m.INSTANT_TEMPERATURE, (0, 0), 0).rep is None
-        assert table.snapshot()["mechanisms"] == []
-
-    def test_do_clear_rep_filter(self, executor, weather_engine):
-        from ascend.weather import mechanisms as m
-
-        _, table = weather_engine
-        mech_id = table.registry.mechanism_for(m.INSTANT_TEMPERATURE).mechanism_id
-        executor.execute(f"do value {m.INSTANT_TEMPERATURE} 25 0 0 at 0")
-        executor.execute(f"do mech {m.INSTANT_TEMPERATURE} {mech_id} 0 0 at 0")
-        cleared = executor.execute(
-            f"do clear node {m.INSTANT_TEMPERATURE} 0 0 rep value",
-        )
-        assert cleared.success is True
+        assert "撤销" in cleared.output
         assert table.resolve_node(
-            m.INSTANT_TEMPERATURE, (0, 0), 0,
-        ).rep == "mechanism"
+            m.INSTANT_TEMPERATURE, (0, 0), now,
+        ).record is None
+
+    def test_do_clear_not_found(self, executor):
+        from ascend.weather import mechanisms as m
+
+        result = executor.execute(f"do clear node {m.INSTANT_TEMPERATURE} 0 0")
+        assert result.success is False
+        assert "未找到" in result.output
 
     def test_do_clear_single_coord_is_friendly_error(self, executor):
         """回归：单坐标不再抛 IndexError 逃逸到 dispatcher。"""
         from ascend.weather import mechanisms as m
 
         result = executor.execute(f"do clear node {m.INSTANT_TEMPERATURE} 3")
+        assert result.success is False
+        assert "多余参数" in result.output
+
+    def test_do_clear_rejects_rep(self, executor):
+        """rep 参数已废除（运行内机制替换关闭）。"""
+        from ascend.weather import mechanisms as m
+
+        executor.execute(f"do value {m.INSTANT_TEMPERATURE} 25 0 0 at 0")
+        result = executor.execute(
+            f"do clear node {m.INSTANT_TEMPERATURE} 0 0 rep value",
+        )
         assert result.success is False
         assert "多余参数" in result.output
 
@@ -511,30 +477,30 @@ class TestResearchApi:
         engine, table = weather_engine
         return make_research_handler(table, engine), table
 
-    def test_research_do_and_list(self, weather_engine):
+    def test_research_do_and_list(self, weather_engine, clock):
         from ascend.weather import mechanisms as m
 
         handler, table = self._handler(weather_engine)
+        now = clock.time
         response = handler["research_do"]({
             "payload": {
                 "space": "node",
                 "target": m.INSTANT_TEMPERATURE,
                 "instance": [0, 0],
-                "rep": "value",
                 "value": 25.0,
-                "frame_t0": 0,
-                "duration": 1,
+                "start_frame": now,
+                "duration": None,
             },
         })
         payload = response["payload"]
         assert payload["success"] is True
-        assert payload["record"]["seq"] == 1
-        assert payload["record"]["target"] == m.INSTANT_TEMPERATURE
-        assert payload["record"]["applied_at"] is not None
-        res = table.resolve_node(m.INSTANT_TEMPERATURE, (0, 0), 0)
+        assert payload["plan"]["seq"] == 1
+        assert payload["plan"]["target"] == m.INSTANT_TEMPERATURE
+        assert payload["plan"]["submitted_at"] is not None
+        res = table.resolve_node(m.INSTANT_TEMPERATURE, (0, 0), now)
         assert res.rep == "value" and res.value == 25.0
         listing = handler["research_do_list"]({})["payload"]
-        assert listing["snapshot"]["values"][0]["target"] == m.INSTANT_TEMPERATURE
+        assert listing["snapshot"][0]["target"] == m.INSTANT_TEMPERATURE
         assert len(listing["history"]) == 1
 
     def test_research_do_defaults_match_terminal(self, weather_engine, clock):
@@ -551,9 +517,9 @@ class TestResearchApi:
             },
         })
         assert response["payload"]["success"] is True
-        record = table.snapshot()["values"][0]
-        assert record["frame_t0"] == clock.time + 1
-        assert record["duration"] == 1
+        plan = table.snapshot(table.default_frame())[0]
+        assert plan["start_frame"] == clock.time + 1
+        assert plan["stop_frame"] == clock.time + 2
 
     def test_research_do_rejects_bad_value(self, weather_engine):
         from ascend.weather import mechanisms as m
@@ -564,9 +530,8 @@ class TestResearchApi:
                 "space": "node",
                 "target": m.INSTANT_TEMPERATURE,
                 "instance": [0, 0],
-                "rep": "value",
                 "value": 9999.0,
-                "frame_t0": 0,
+                "start_frame": 0,
                 "duration": 1,
             },
         })
@@ -578,27 +543,28 @@ class TestResearchApi:
         assert response["payload"]["success"] is False
         assert "target" in response["payload"]["error"]
 
-    def test_research_do_mechanism(self, weather_engine):
+    def test_research_do_rejects_mechanism_replacement(self, weather_engine):
+        """运行内机制替换已废除（WC-1.3，结构变体 = 换世界）。"""
         from ascend.weather import mechanisms as m
 
-        handler, table = self._handler(weather_engine)
-        mechanism = table.registry.mechanism_for(m.INSTANT_TEMPERATURE)
-        response = handler["research_do"]({
-            "payload": {
-                "space": "node",
-                "target": m.INSTANT_TEMPERATURE,
-                "instance": [0, 0],
-                "rep": "mechanism",
-                "mechanism_id": mechanism.mechanism_id,
-                "frame_t0": 0,
+        handler, _ = self._handler(weather_engine)
+        for payload in (
+            {
+                "space": "node", "target": m.INSTANT_TEMPERATURE,
+                "instance": [0, 0], "value": 25.0,
+                "rep": "mechanism", "mechanism_id": "weather.instant.temp",
             },
-        })
-        assert response["payload"]["success"] is True
-        assert table.resolve_node(
-            m.INSTANT_TEMPERATURE, (0, 0), 0
-        ).rep == "mechanism"
+            {
+                "space": "node", "target": m.INSTANT_TEMPERATURE,
+                "instance": [0, 0], "value": 25.0,
+                "mechanism_id": "weather.instant.temp",
+            },
+        ):
+            response = handler["research_do"]({"payload": payload})
+            assert response["payload"]["success"] is False
+            assert "机制替换" in response["payload"]["error"]
 
-    def test_research_do_feature_forwards_to_engine(self, weather_engine, clock):
+    def test_research_do_feature_forwards_to_engine(self, weather_engine):
         """feature 空间转发 force_feature（与终端同写入路径，无幽灵记录）。"""
         handler, table = self._handler(weather_engine)
         engine = weather_engine[0]
@@ -610,7 +576,7 @@ class TestResearchApi:
         })
         assert response["payload"] == {"success": True, "changed": True}
         assert engine.field.features.get_injected(0, 0, "storm") is not None
-        assert len(table.snapshot()["features"]) == 1
+        assert len(table.snapshot(table.current_frame())) == 1
         response = handler["research_do"]({
             "payload": {
                 "space": "feature", "target": "storm", "instance": [0, 0],
@@ -635,9 +601,9 @@ class TestResearchApi:
                 "space": "feature", "target": "storm", "instance": [0, 0],
             },
         })
-        assert response["payload"] == {"success": True, "cleared": ["value"]}
+        assert response["payload"] == {"success": True, "changed": True}
         assert engine.field.features.get_injected(0, 0, "storm") is None
-        assert table.snapshot()["features"] == []
+        assert table.snapshot(table.current_frame()) == []
 
     def test_research_do_feature_rejects_unknown_type(self, weather_engine):
         handler, _ = self._handler(weather_engine)
@@ -648,7 +614,9 @@ class TestResearchApi:
         })
         assert response["payload"]["success"] is False
 
-    def test_research_do_feature_rejects_unregistered_chunk(self, weather_engine):
+    def test_research_do_feature_rejects_unregistered_chunk(
+        self, weather_engine,
+    ):
         handler, _ = self._handler(weather_engine)
         response = handler["research_do"]({
             "payload": {
@@ -657,19 +625,19 @@ class TestResearchApi:
         })
         assert response["payload"]["success"] is False
 
-    def test_research_do_clear(self, weather_engine):
+    def test_research_do_clear(self, weather_engine, clock):
         from ascend.weather import mechanisms as m
 
         handler, table = self._handler(weather_engine)
+        now = clock.time
         handler["research_do"]({
             "payload": {
                 "space": "node",
                 "target": m.INSTANT_TEMPERATURE,
                 "instance": [0, 0],
-                "rep": "value",
                 "value": 25.0,
-                "frame_t0": 0,
-                "duration": 1,
+                "start_frame": now,
+                "duration": None,
             },
         })
         response = handler["research_do_clear"]({
@@ -680,15 +648,28 @@ class TestResearchApi:
             },
         })
         assert response["payload"]["success"] is True
-        assert response["payload"]["cleared"] == ["value"]
+        assert response["payload"]["stopped"] == 1
         assert table.resolve_node(
-            m.INSTANT_TEMPERATURE, (0, 0), 0
-        ).rep is None
-        # 未命中：success 但仍返回空列表
+            m.INSTANT_TEMPERATURE, (0, 0), now,
+        ).record is None
+        # 未命中：success 且 stopped 为 0
         response = handler["research_do_clear"]({
             "payload": {"space": "node", "target": m.INSTANT_TEMPERATURE},
         })
-        assert response["payload"]["cleared"] == []
+        assert response["payload"]["stopped"] == 0
+
+    def test_research_do_clear_rejects_unknown_field(self, weather_engine):
+        from ascend.weather import mechanisms as m
+
+        handler, _ = self._handler(weather_engine)
+        response = handler["research_do_clear"]({
+            "payload": {
+                "space": "node", "target": m.INSTANT_TEMPERATURE,
+                "instance": [0, 0], "rep": "value",
+            },
+        })
+        assert response["payload"]["success"] is False
+        assert "未知字段" in response["payload"]["error"]
 
     def test_research_do_rejects_bad_instance_types(self, weather_engine):
         """instance 非序列（含 JSON null）→ 规范失败响应，不抛异常。"""
@@ -704,7 +685,6 @@ class TestResearchApi:
             })
             assert response["payload"]["success"] is False
             assert "instance" in response["payload"]["error"]
-        # null 视作空元组 → 空间分量因实例域不符被拒（仍是规范响应）
         response = handler["research_do"]({
             "payload": {
                 "space": "node", "target": m.INSTANT_TEMPERATURE,
@@ -733,37 +713,18 @@ class TestResearchApi:
         assert response["payload"]["success"] is False
         assert "instance" in response["payload"]["error"]
 
-    def test_research_do_clear_feature_unknown_type_is_handled(self, weather_engine):
+    def test_research_do_clear_feature_unknown_type_is_handled(
+        self, weather_engine,
+    ):
         """回归：clear 的 feature 分支与 do 对称（不抛未捕获 ValueError）。"""
         handler, _ = self._handler(weather_engine)
         response = handler["research_do_clear"]({
-            "payload": {"space": "feature", "target": "tsunami", "instance": [0, 0]},
-        })
-        assert response["payload"]["success"] is False
-        assert "未知特征类型" in response["payload"]["error"]
-
-    def test_research_do_clear_rejects_bad_rep(self, weather_engine):
-        from ascend.weather import mechanisms as m
-
-        handler, _ = self._handler(weather_engine)
-        for rep in ("bogus", 3):
-            response = handler["research_do_clear"]({
-                "payload": {
-                    "space": "node", "target": m.INSTANT_TEMPERATURE,
-                    "instance": [0, 0], "rep": rep,
-                },
-            })
-            assert response["payload"]["success"] is False
-            assert "替换规格" in response["payload"]["error"]
-        # rep 仅适用于 node 空间（与终端一致）
-        response = handler["research_do_clear"]({
             "payload": {
-                "space": "parameter", "target": "world.parameter.game_day_ticks",
-                "rep": "value",
+                "space": "feature", "target": "tsunami", "instance": [0, 0],
             },
         })
         assert response["payload"]["success"] is False
-        assert "node" in response["payload"]["error"]
+        assert "未知特征类型" in response["payload"]["error"]
 
     def test_research_do_feature_rejects_irrelevant_fields(self, weather_engine):
         """feature 空间没有帧/时长语义：无关字段一律拒绝（fail-closed）。"""

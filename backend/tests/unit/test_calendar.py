@@ -1,7 +1,8 @@
 """GameCalendar 单元测试。
 
-覆盖：初始化校验、首刻静默初始化、分钟/小时/天边界事件、
-day_end→day_change 发布顺序、跳天计数、独立查询、shutdown 退订。
+覆盖：初始化校验、派生视图（day/hour/minute 来自 clock.time）、
+分钟/小时/天边界事件、day_end→day_change 发布顺序、跳天计数、
+读档后无伪事件、独立查询、shutdown 退订。
 
 日历发布到全局 world_tree 单例，测试通过订阅收集事件。
 """
@@ -40,11 +41,11 @@ class TestCalendarInit:
             GameCalendar(clock, start_day=0)
 
     def test_T2_initial_properties(self):
-        """初始化前 hour/minute 返回 0，day 为 start_day。"""
+        """初始化时 day/hour/minute 由 clock.time 派生。"""
         clock = WorldClock(epoch=0)
-        cal = GameCalendar(clock, start_day=3)
+        cal = GameCalendar(clock)
         try:
-            assert cal.day == 3
+            assert cal.day == 1
             assert cal.hour == 0
             assert cal.minute == 0
             assert cal.elapsed_days == 0
@@ -52,7 +53,7 @@ class TestCalendarInit:
             cal.shutdown()
 
     def test_T3_first_tick_silent_init(self, capture):
-        """首个 tick 静默初始化 hour/minute，不发布 hour/minute 事件。"""
+        """首个 tick 不跨边界：无 hour/minute 事件。"""
         clock = WorldClock(epoch=6 * GAME_HOUR)
         cal = GameCalendar(clock)
         try:
@@ -61,6 +62,20 @@ class TestCalendarInit:
             assert cal.minute == 0
             assert _of_type(capture, "hour_change") == []
             assert _of_type(capture, "minute_change") == []
+        finally:
+            cal.shutdown()
+
+    def test_restore_then_first_tick_has_no_pseudo_events(self, capture):
+        """读档重建日历（时钟已恢复到第 31 天）后首 tick 无日变伪事件。"""
+        clock = WorldClock(epoch=6 * GAME_HOUR)
+        clock.restore(time=30 * GAME_DAY + 6 * GAME_HOUR)
+        cal = GameCalendar(clock)
+        try:
+            assert cal.day == 31
+            clock.tick()
+            assert _of_type(capture, "day_end") == []
+            assert _of_type(capture, "day_change") == []
+            assert cal.day == 31
         finally:
             cal.shutdown()
 
@@ -116,8 +131,8 @@ class TestCalendarBoundaries:
             data = hours[0].data
             assert data["hour"] == 7
             assert data["previous_hour"] == 6
-            assert data["hour_change_count"] == 1
-            assert cal.hour_change_count == 1
+            assert data["hour_change_count"] == 7
+            assert cal.hour_change_count == 7
         finally:
             cal.shutdown()
 
@@ -144,7 +159,7 @@ class TestCalendarBoundaries:
             cal.shutdown()
 
     def test_T7_multi_day_skip_counts_skipped(self, capture):
-        """一次跳 3 天：day_change 仅发一次，skipped_days=2。"""
+        """一次跳 3 天：day_change 仅发一次，skipped_days=2，计数派生。"""
         clock = WorldClock(epoch=6 * GAME_HOUR)
         cal = GameCalendar(clock)
         try:
@@ -155,7 +170,8 @@ class TestCalendarBoundaries:
             assert len(changes) == 1
             assert changes[0].data["day"] == 4
             assert changes[0].data["skipped_days"] == 2
-            assert cal.day_change_count == 1
+            assert changes[0].data["day_change_count"] == 3
+            assert cal.day_change_count == 3
         finally:
             cal.shutdown()
 
@@ -190,7 +206,7 @@ class TestCalendarQueries:
             cal.shutdown()
 
     def test_T10_shutdown_unsubscribes(self, capture):
-        """shutdown 后时钟推进不再产生日历事件。"""
+        """shutdown 后时钟推进不再产生日历事件（派生视图仍随时钟）。"""
         clock = WorldClock(epoch=6 * GAME_HOUR)
         cal = GameCalendar(clock)
         clock.tick()
@@ -199,4 +215,4 @@ class TestCalendarQueries:
         clock.skip(GAME_DAY)
 
         assert _of_type(capture, "day_change") == []
-        assert cal.day == 1  # 状态冻结
+        assert cal.day == 2
