@@ -6,7 +6,8 @@
   逐位一致（``tests/unit/test_wave_executor.py`` 锁定）；
 - 边界节点（无机制写者的输入节点）取值由调用方 ``provide`` 提供，
   未提供即拒绝（fail-closed）；
-- 当前仅支持单偏移、lag=0 的父依赖（wired 子集）；其余显式拒绝。
+- 当前仅支持单偏移且偏移为 ``(0,0)``、lag=0 的父依赖（wired 子集）；
+  其余（多偏移、非零偏移、lag≠0）显式拒绝。
 
 本模块不写世界状态、不发布记录；它是机制图的求解器。生产路径接入
 见 docs/研究理论/世界基座/13-世界程序编译.md 分期。
@@ -42,14 +43,16 @@ def execute_waves(
         instances: 非全局节点的实例列表（如 [(cx, cy), ...]）。
         parallel: 同波并发求值（结果须与串行逐位一致）；调用方须保证
             ``evaluate`` 与 ``provide`` 并发安全。
-        workers: 并行线程数（None = 同波任务数）。
+        workers: 并行线程数（None = ThreadPoolExecutor 默认池大小
+            ≈min(32, CPU+4)，单池复用至本批结束）。
         wired_only: 只求值 wired 节点（当前生产子集）。
 
     Returns:
         ``{(output, instance): value}``；instance 为全局节点时为 ``()``。
 
     Raises:
-        NotImplementedError: 父依赖含多空间偏移或 lag≠0（尚未支持）。
+        NotImplementedError: 父依赖含多空间偏移、非 (0,0) 单偏移或 lag≠0
+            （尚未支持）。
         KeyError: 边界值未提供，或父值缺失（求值顺序/声明错误）。
     """
     values: dict[tuple[str, tuple], object] = {}
@@ -119,11 +122,14 @@ def _run_task(
     mechanism, output, instance = task
     parent_values: dict[str, object] = {}
     for parent in mechanism.parents:
-        if parent.lag != 0 or len(parent.spatial_offsets) > 1:
+        offsets = tuple(tuple(o) for o in parent.spatial_offsets)
+        # 只支持"同实例"父依赖：空偏移（标量父）或单偏移 (0,0)。
+        # 非零单偏移会静默退回同实例取值——必须显式拒绝（fail-closed）。
+        if parent.lag != 0 or offsets not in ((), ((0, 0),)):
             raise NotImplementedError(
-                f"父依赖暂不支持（lag={parent.lag}, "
-                f"偏移数={len(parent.spatial_offsets)}）: "
-                f"{mechanism.mechanism_id} ← {parent.parent}"
+                f"父依赖暂不支持（仅支持单偏移 (0,0)、lag=0）: "
+                f"{mechanism.mechanism_id} ← {parent.parent} "
+                f"(lag={parent.lag}, offsets={offsets!r})"
             )
         parent_node = registry.nodes[parent.parent]
         parent_instance = () if not parent_node.instance_domain.axes else instance

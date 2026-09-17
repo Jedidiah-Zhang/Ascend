@@ -22,7 +22,7 @@ from typing import Mapping
 
 from ascend.config import (GAME_DAY, GAME_HOUR, TILE_MAP_SIZE)
 from ascend.causal import (
-    InterventionEvaluator, InterventionRecord, InterventionTimeline,
+    InterventionEvaluator, InterventionTimeline,
     PlannedIntervention, TraceLog,
 )
 from ascend.log import get_logger
@@ -120,6 +120,7 @@ class WeatherEngine:
         region_domain=None,
         world_program=None,
         wave_parallel: bool = False,
+        state_store=None,
     ) -> None:
         """初始化天气引擎。
 
@@ -138,6 +139,10 @@ class WeatherEngine:
                 进程内编译缓存（测试/独立使用）。
             wave_parallel: 同波并发求值（结果与串行逐位一致；挂载研究
                 trace 时自动降级串行，保证记录顺序确定）。
+            state_store: 共享帧事务存储（``runtime.state_store``）；注入后
+                ``advance`` 的事件发布与观察缓存经 ``stage_after_commit``
+                挂入帧事务（回滚的帧不留事件、不推进缓存）；None = 立即
+                生效（测试/独立使用）。
         """
         self._clock = clock
         self._seed = seed
@@ -161,7 +166,11 @@ class WeatherEngine:
         self._region_domain = region_domain
         self._world_program = world_program
         self._wave_parallel = wave_parallel
+        self._state_store = state_store
         self._last_season: int | None = None
+        # 上一帧观察域（域移动语义：前后帧各用当时的域比较；帧事务内推
+        # 进——回滚的帧不推进）。
+        self._last_region_domain: tuple[tuple[int, int], ...] | None = None
         logger.debug("天气引擎初始化 seed=%d", seed)
 
     @property
@@ -805,6 +814,11 @@ class WeatherEngine:
         """每游戏分钟：全局季节 + 区域降水事件 + per-chunk 参数/昼夜/特征核。
 
         由 FrameScheduler 按声明更新点调用（驱动层信号，非世界树订阅）。
+
+        帧事务语义（WC-7.6）：事件发布与观察缓存（季节/等级/昼夜/核集合/
+        观察域）在本帧提交成功后才生效——注入 ``state_store`` 时经
+        ``stage_after_commit`` 挂入帧事务，回滚的帧不留事件、不推进缓存，
+        下一帧以未推进的缓存重算（重试不丢事件）；未注入时立即生效。
         """
         tod = now % GAME_DAY
         with self._query_lock:
@@ -812,94 +826,112 @@ class WeatherEngine:
         # 世界程序波次计划：全部 wired 节点一次求值（唯一执行路径；
         # wave_parallel 时同波并发，结果逐位一致）
         values, hum_perturb = self._evaluate(now, fields)
-        season = values[(_mechanisms.SEASON, ())]
-        hour = values[(_mechanisms.HOUR_OF_DAY, ())]
-        with self._query_lock:
-            # 全局季节事件（location=(0,0)，不 per-chunk）
-            if self._last_season is not None and season != self._last_season:
-                self._publish(0, 0, now, SeasonChange(
-                    season=season, time_of_day=int(tod),
-                ))
-            self._last_season = season
-            # 区域降水事件（观察者域内的连通域，纯函数派生；域未声明
-            # 则不产区域事件）
-            if self._region_domain is not None:
-                for r in self._tracker.observe(now, self._region_domain()):
-                    self._publish_region_event(r, now, tod, values, fields)
-            # per-chunk 事件
-            for (cx, cy), field in fields.items():
-                params, sr, ss, _ = self._params_from_values(
-                    field, values, hum_perturb.get((cx, cy), 0.0),
-                )
-                # 温度 — 等级变化时发布（首刻静默初始化，初始状态走查询 API）
-                temp_tier = classify_temperature(params.temperature)
-                if field.last_temp_tier is None:
-                    field.last_temp_tier = temp_tier
-                elif temp_tier != field.last_temp_tier:
-                    self._publish(cx, cy, now, TemperatureChange(
-                        temperature=float(params.temperature),
-                        prev_tier=field.last_temp_tier,
-                        tier=temp_tier,
-                        season=season,
-                        time_of_day=int(tod),
+
+        def _commit_records() -> None:
+            """帧提交成功后：按原顺序发布本帧事件并推进观察缓存。"""
+            season = values[(_mechanisms.SEASON, ())]
+            hour = values[(_mechanisms.HOUR_OF_DAY, ())]
+            with self._query_lock:
+                # 全局季节事件（location=(0,0)，不 per-chunk）
+                if self._last_season is not None and season != self._last_season:
+                    self._publish(0, 0, now, SeasonChange(
+                        season=season, time_of_day=int(tod),
                     ))
-                    field.last_temp_tier = temp_tier
-                # 湿度 — 等级变化时发布
-                hum_tier = classify_humidity(params.humidity)
-                if field.last_humidity_tier is None:
-                    field.last_humidity_tier = hum_tier
-                elif hum_tier != field.last_humidity_tier:
-                    self._publish(cx, cy, now, HumidityChange(
-                        humidity=float(params.humidity),
-                        prev_tier=field.last_humidity_tier,
-                        tier=hum_tier,
-                        time_of_day=int(tod),
-                    ))
-                    field.last_humidity_tier = hum_tier
-                # 风 — 等级变化时发布（风向 = 场纹理风向量）
-                wind_tier = classify_wind(params.wind_speed)
-                if field.last_wind_tier is None:
-                    field.last_wind_tier = wind_tier
-                elif wind_tier != field.last_wind_tier:
-                    wx = (cx + 0.5) * TILE_MAP_SIZE
-                    wy = (cy + 0.5) * TILE_MAP_SIZE
-                    wind_x, wind_y = self._field.texture.wind_vector_at(
-                        wx, wy, now)
-                    self._publish(cx, cy, now, WindChange(
-                        wind_speed=float(params.wind_speed),
-                        prev_tier=field.last_wind_tier,
-                        tier=wind_tier,
-                        wind_dir_x=float(wind_x),
-                        wind_dir_y=float(wind_y),
-                        time_of_day=int(tod),
-                    ))
-                    field.last_wind_tier = wind_tier
-                # 日照 — 等级变化时发布
-                sun_tier = classify_sunshine(params.sunshine)
-                if field.last_sunshine_tier is None:
-                    field.last_sunshine_tier = sun_tier
-                elif sun_tier != field.last_sunshine_tier:
-                    self._publish(cx, cy, now, SunshineChange(
-                        sunshine=float(params.sunshine),
-                        prev_tier=field.last_sunshine_tier,
-                        tier=sun_tier,
-                        season=season,
-                        time_of_day=int(tod),
-                    ))
-                    field.last_sunshine_tier = sun_tier
-                # per-chunk 昼夜切换（复用波次求值返回的 sr/ss）
-                is_day = sr <= hour < ss
-                if (field.last_is_daytime is not None
-                        and is_day != field.last_is_daytime):
-                    dl = ss - sr
-                    self._publish(cx, cy, now, Sunrise(
-                        time_of_day=int(tod), daylight_hours=float(dl),
-                    ) if is_day else Sunset(
-                        time_of_day=int(tod), daylight_hours=float(dl),
-                    ))
-                field.last_is_daytime = is_day
-                # 特征核区域事件（核出现/消失 → start/stop）
-                self._sync_feature_events(cx, cy, field, now, tod)
+                self._last_season = season
+                # 区域降水事件（观察者域内的连通域，纯函数派生；域未声明
+                # 则不产区域事件）。域移动语义：前后帧各用当时的域比较，
+                # 走入既有雨带记为 start（"雨来了"）；上一帧域随帧事务推进。
+                if self._region_domain is not None:
+                    domain = tuple(self._region_domain())
+                    previous_domain = (
+                        domain if self._last_region_domain is None
+                        else self._last_region_domain
+                    )
+                    for r in self._tracker.observe(
+                        now, domain, previous_domain=previous_domain,
+                    ):
+                        self._publish_region_event(r, now, tod, values, fields)
+                    self._last_region_domain = domain
+                # per-chunk 事件
+                for (cx, cy), field in fields.items():
+                    params, sr, ss, _ = self._params_from_values(
+                        field, values, hum_perturb.get((cx, cy), 0.0),
+                    )
+                    # 温度 — 等级变化时发布（首刻静默初始化，初始状态走查询 API）
+                    temp_tier = classify_temperature(params.temperature)
+                    if field.last_temp_tier is None:
+                        field.last_temp_tier = temp_tier
+                    elif temp_tier != field.last_temp_tier:
+                        self._publish(cx, cy, now, TemperatureChange(
+                            temperature=float(params.temperature),
+                            prev_tier=field.last_temp_tier,
+                            tier=temp_tier,
+                            season=season,
+                            time_of_day=int(tod),
+                        ))
+                        field.last_temp_tier = temp_tier
+                    # 湿度 — 等级变化时发布
+                    hum_tier = classify_humidity(params.humidity)
+                    if field.last_humidity_tier is None:
+                        field.last_humidity_tier = hum_tier
+                    elif hum_tier != field.last_humidity_tier:
+                        self._publish(cx, cy, now, HumidityChange(
+                            humidity=float(params.humidity),
+                            prev_tier=field.last_humidity_tier,
+                            tier=hum_tier,
+                            time_of_day=int(tod),
+                        ))
+                        field.last_humidity_tier = hum_tier
+                    # 风 — 等级变化时发布（风向 = 场纹理风向量）
+                    wind_tier = classify_wind(params.wind_speed)
+                    if field.last_wind_tier is None:
+                        field.last_wind_tier = wind_tier
+                    elif wind_tier != field.last_wind_tier:
+                        wx = (cx + 0.5) * TILE_MAP_SIZE
+                        wy = (cy + 0.5) * TILE_MAP_SIZE
+                        wind_x, wind_y = self._field.texture.wind_vector_at(
+                            wx, wy, now)
+                        self._publish(cx, cy, now, WindChange(
+                            wind_speed=float(params.wind_speed),
+                            prev_tier=field.last_wind_tier,
+                            tier=wind_tier,
+                            wind_dir_x=float(wind_x),
+                            wind_dir_y=float(wind_y),
+                            time_of_day=int(tod),
+                        ))
+                        field.last_wind_tier = wind_tier
+                    # 日照 — 等级变化时发布
+                    sun_tier = classify_sunshine(params.sunshine)
+                    if field.last_sunshine_tier is None:
+                        field.last_sunshine_tier = sun_tier
+                    elif sun_tier != field.last_sunshine_tier:
+                        self._publish(cx, cy, now, SunshineChange(
+                            sunshine=float(params.sunshine),
+                            prev_tier=field.last_sunshine_tier,
+                            tier=sun_tier,
+                            season=season,
+                            time_of_day=int(tod),
+                        ))
+                        field.last_sunshine_tier = sun_tier
+                    # per-chunk 昼夜切换（复用波次求值返回的 sr/ss）
+                    is_day = sr <= hour < ss
+                    if (field.last_is_daytime is not None
+                            and is_day != field.last_is_daytime):
+                        dl = ss - sr
+                        self._publish(cx, cy, now, Sunrise(
+                            time_of_day=int(tod), daylight_hours=float(dl),
+                        ) if is_day else Sunset(
+                            time_of_day=int(tod), daylight_hours=float(dl),
+                        ))
+                    field.last_is_daytime = is_day
+                    # 特征核区域事件（核出现/消失 → start/stop）
+                    self._sync_feature_events(cx, cy, field, now, tod)
+
+        # 帧事务未注入：立即生效（测试/独立使用）；注入：提交后执行
+        if self._state_store is None:
+            _commit_records()
+        else:
+            self._state_store.stage_after_commit(_commit_records)
 
     def _sync_feature_events(
         self, cx: int, cy: int, field: WeatherField, now: int, tod: int,

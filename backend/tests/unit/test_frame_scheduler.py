@@ -192,3 +192,108 @@ class TestFrameTransaction:
         with pytest.raises(RuntimeError, match="boom"):
             scheduler.advance(1)
         assert hooks == []
+
+
+    def test_commit_failure_rolls_back_boundary(self):
+        """提交阶段失败：边界回滚，下一帧重试（幂等动作重放）。"""
+        store = FrameStateStore()
+        scheduler = FrameScheduler(store=store)
+        runs: list = []
+        state = {"fail": True}
+
+        def callback(now: int) -> None:
+            runs.append(now)
+
+            def apply() -> None:
+                if state["fail"]:
+                    raise ValueError("applier boom")
+                runs.append("applied")
+
+            store.stage_apply(apply)
+
+        scheduler.register("p", period=1, callback=callback)
+        with pytest.raises(RuntimeError, match="帧提交失败"):
+            scheduler.advance(1)
+        assert runs == [1]
+        assert store.version == 0
+        state["fail"] = False
+        scheduler.advance(1)
+        assert runs == [1, 1, "applied"]
+        assert store.version == 1
+
+    def test_persistent_failure_backs_off_then_recovers(self):
+        """连续失败指数退避：退避窗口内不重试，恢复后重试并清零。"""
+        store = FrameStateStore()
+        scheduler = FrameScheduler(store=store)
+        attempts: list[int] = []
+        state = {"fail": True}
+
+        def flaky(now: int) -> None:
+            attempts.append(now)
+            if state["fail"]:
+                raise RuntimeError("boom")
+
+        scheduler.register("p", period=1, callback=flaky)
+        assert scheduler.consecutive_failures == 0
+        # 首次失败：下一帧重试（退避 0）
+        with pytest.raises(RuntimeError):
+            scheduler.advance(1)
+        assert scheduler.consecutive_failures == 1
+        # 第二次失败：退避 1 tick（1 + 1 = 2 前不重试）
+        with pytest.raises(RuntimeError):
+            scheduler.advance(1)
+        assert scheduler.consecutive_failures == 2
+        scheduler.advance(1)  # 退避窗口内：跳过、不重抛
+        assert attempts == [1, 1]
+        # 第三次失败：退避 2 tick（2 + 2 = 4）
+        with pytest.raises(RuntimeError):
+            scheduler.advance(2)
+        scheduler.advance(3)
+        assert attempts == [1, 1, 2]
+        # 第四次失败：退避 4 tick（4 + 4 = 8）
+        with pytest.raises(RuntimeError):
+            scheduler.advance(4)
+        scheduler.advance(7)
+        assert attempts == [1, 1, 2, 4]
+        state["fail"] = False
+        scheduler.advance(8)  # 恢复：提交成功、计数清零
+        assert attempts == [1, 1, 2, 4, 8]
+        assert scheduler.consecutive_failures == 0
+        assert store.version == 1
+
+    def test_backoff_cap(self):
+        """退避按 2 的幂增长并封顶 64 tick（第 8 次失败起不再放大）。"""
+        scheduler = FrameScheduler(store=FrameStateStore())
+
+        def always_fail(now: int) -> None:
+            raise RuntimeError("boom")
+
+        scheduler.register("p", period=1, callback=always_fail)
+        deltas: list[int] = []
+        now = 1
+        for _ in range(10):
+            with pytest.raises(RuntimeError):
+                scheduler.advance(now)
+            deltas.append(scheduler._retry_not_before - now)
+            now = scheduler._retry_not_before
+        assert deltas == [0, 1, 2, 4, 8, 16, 32, 64, 64, 64]
+
+    def test_backoff_bypassed_by_large_skip(self):
+        """skip 大跳越过后退避窗口 → 立即重试（不等待）。"""
+        scheduler = FrameScheduler(store=FrameStateStore())
+        calls: list[int] = []
+
+        def always_fail(now: int) -> None:
+            calls.append(now)
+            raise RuntimeError("boom")
+
+        scheduler.register("p", period=1, callback=always_fail)
+        with pytest.raises(RuntimeError):
+            scheduler.advance(1)
+        with pytest.raises(RuntimeError):
+            scheduler.advance(1)   # 第二次失败 → 退避至 tick 2
+        scheduler.advance(1)       # 窗口内：跳过
+        assert calls == [1, 1]
+        with pytest.raises(RuntimeError):
+            scheduler.advance(10_000)
+        assert calls == [1, 1, 10_000]

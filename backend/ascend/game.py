@@ -482,6 +482,7 @@ class GameEngine:
             region_domain=self._region_domain,
             world_program=self.world_program,
             wave_parallel=True,
+            state_store=self.state_store,
         )
         self._world_stack.push(
             self._unset("weather_engine", self.weather_engine.shutdown)
@@ -532,7 +533,7 @@ class GameEngine:
         # 5d. 完整状态恢复（时钟 / 玩家 / 干预时间线 / 注入核一次到位）。
         # 必须在 chunk 服务之后：时间线校验要用实例存在性查询与
         # "把被 LRU 淘汰的目标 chunk 拉回来"的装载器；也必须早于
-        # 首个 minute_change（区域事件与特征核事件的身份跟踪）。
+        # 首个 weather.evaluate 推进（区域事件与特征核事件的身份跟踪）。
         if self._load_state is not None:
             apply_state(
                 self._load_state, self.clock, self.player_service,

@@ -366,6 +366,40 @@ class TestPersistence:
         with pytest.raises(ValueError):
             _timeline().restore(payload)
 
+    def test_restore_failure_leaves_no_partial_plan(self):
+        """两阶段恢复：合法条目在前、非法条目在后 → 时间线不变。"""
+        source = _timeline()
+        source.plan(_node_entry(value=0.4))
+        payload = source.persist()
+        payload["plan"].append({
+            **payload["plan"][0],
+            "target": UNWIRED_NODE,
+            "seq": 2,
+        })
+        target = _timeline()
+        with pytest.raises(ValueError):
+            target.restore(payload)
+        assert target.persist() == {"plan": [], "records": []}
+        assert target.history_plain() == []
+
+    def test_restore_failure_leaves_no_partial_records(self):
+        """记录阶段失败同样不留半成品（前合法后非法）。"""
+        source = _timeline()
+        source.plan(_node_entry(value=0.4))
+        source.resolve_node(NODE, (0, 0), 1)
+        payload = source.persist()
+        payload["records"].append({
+            **payload["records"][0],
+            "frame": 2,
+            "seq": 2,
+            "value": 2.0,          # 越界：校验失败
+        })
+        target = _timeline()
+        with pytest.raises(ValueError):
+            target.restore(payload)
+        assert target.persist() == {"plan": [], "records": []}
+        assert target.history_plain() == []
+
     def test_restore_uses_instance_loader(self):
         timeline = _timeline()
         timeline.plan(_node_entry(value=0.4))

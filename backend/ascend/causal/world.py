@@ -29,7 +29,7 @@ from ascend.weather.mechanisms import (
 
 # 当前引擎真正求值的节点（tick 派生 7 + chunk 求值 13）。
 WIRED_NODES: frozenset[str] = frozenset({
-    # _tick_context（全局实例）
+    # 全局实例（tick 派生）
     wm.DAY,
     wm.HOUR_OF_DAY,
     wm.DAY_OF_YEAR,
@@ -37,7 +37,7 @@ WIRED_NODES: frozenset[str] = frozenset({
     wm.SOLAR_DECLINATION,
     wm.SEASON_PHASE_COS,
     wm.DIURNAL_PHASE_COS,
-    # _compute_params（chunk 实例）
+    # chunk 实例（参数合成）
     wm.SEASONAL_TEMPERATURE_OFFSET,
     wm.DIURNAL_TEMPERATURE_OFFSET,
     wm.SEASONAL_HUMIDITY_OFFSET,

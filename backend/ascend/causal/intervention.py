@@ -408,6 +408,10 @@ class InterventionTimeline:
     ) -> int:
         """从存档载荷恢复（读档路径，fail-closed，全量校验后落表）。
 
+        两阶段：先对全部计划/记录做完整校验（含重复记录检测），任一
+        条目非法即抛出；校验全部通过后才统一落表（此后不再失败）——
+        失败不会在时间线里留下半成品。
+
         Args:
             payload: :meth:`persist` 输出的映射。
             instance_loader: 可选实例装载器；仅本调用期间生效。
@@ -443,6 +447,7 @@ class InterventionTimeline:
             self._instance_exists = _with_loader
         try:
             with self._lock:
+                # 阶段一：全量校验（不改动时间线）
                 keys: set[tuple] = set()
                 for record in records:
                     key = (record.target_space, record.target, record.instance)
@@ -454,10 +459,13 @@ class InterventionTimeline:
                     keys.add((key, record.frame))
                 for entry in plans:
                     self._validate(entry, allow_empty=True)
+                for record in records:
+                    self._validate_record(record)
+                # 阶段二：统一落表（此后不再有失败点）
+                for entry in plans:
                     self._plan_seq = max(self._plan_seq, entry.seq or 0)
                     self._plan.append(entry)
                 for record in records:
-                    self._validate_record(record)
                     self._record_seq = max(self._record_seq, record.seq or 0)
                     key = (
                         record.target_space, record.target, record.instance,

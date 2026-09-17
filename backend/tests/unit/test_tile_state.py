@@ -18,7 +18,7 @@ from ascend.space.terrain import TERRAIN_DEFS, TerrainType
 # ── 纯 Python 参考内核（与 _state.c 公式逐项对应，对拍基准） ──
 
 def _param_tables():
-    """与 tile_state._build_param_tables 相同的表（白盒对拍）。"""
+    """与 state_defs.build_param_tables 相同的表（白盒对拍）。"""
     keys = state_keys()
     n = len(keys)
     deposit = [0.0] * (n * 256)

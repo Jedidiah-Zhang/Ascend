@@ -205,9 +205,13 @@ class TestProgramBinding:
             )
 
     def test_mechanism_kernel_binding(self):
+        spec = next(
+            s for s in ASCEND_MECHANISMS.mechanisms.values()
+            if s.output == "weather.tick.day"
+        )
         pair = KernelPair(
             anchor="weather.tick.day", version="tick.day.v1",
-            reference=lambda **kwargs: 1, accelerated=lambda **kwargs: 1,
+            reference=spec.function, accelerated=lambda **kwargs: 1,
             note="测试用",
         )
         program = compile_world_program(
@@ -221,3 +225,20 @@ class TestProgramBinding:
         kernel = program.kernel_for("weather.tick.day")
         assert kernel.kernel_version == "tick.day.v1"
         assert kernel.accelerated is not None
+
+    def test_mechanism_kernel_reference_mismatch_rejected(self):
+        """机制输出锚点声明了与注册表不同的参考实现 → 编译期拒绝（陷阱）。"""
+        pair = KernelPair(
+            anchor="weather.tick.day", version="tick.day.v1",
+            reference=lambda **kwargs: 1, accelerated=None,
+            note="测试用",
+        )
+        with pytest.raises(ValueError, match="参考实现与注册表不一致"):
+            compile_world_program(
+                ASCEND_MECHANISMS,
+                state=load_declaration(),
+                addresses=load_fate_namespaces(),
+                points=load_update_points(),
+                ticks=dict(TICKS),
+                kernels=(pair,),
+            )

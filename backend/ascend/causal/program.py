@@ -411,9 +411,15 @@ def _validate_kernel_pairs(
     points: UpdatePointTable,
     issues: list[str],
 ) -> dict[str, KernelPair]:
-    """校验内核对锚点并建映射（fail-closed）。"""
-    outputs = {
-        spec.output for spec in getattr(registry, "mechanisms", {}).values()
+    """校验内核对锚点并建映射（fail-closed）。
+
+    机制输出锚点的 ``reference`` 必须与注册表声明的实现为**同一可调用
+    对象**（注册表是机制参考实现的单一事实源）——声明了却被静默忽略的
+    参考实现是陷阱，编译期拒绝。更新点锚点的 ``reference`` 即实现本身。
+    """
+    output_specs = {
+        spec.output: spec
+        for spec in getattr(registry, "mechanisms", {}).values()
     }
     point_ids = {point.id for point in points.points}
     pair_map: dict[str, KernelPair] = {}
@@ -425,7 +431,7 @@ def _validate_kernel_pairs(
         if anchor in pair_map:
             issues.append(f"内核对重复锚点: {anchor}")
             continue
-        if anchor not in outputs and anchor not in point_ids:
+        if anchor not in output_specs and anchor not in point_ids:
             issues.append(
                 f"内核对锚点未声明（既非机制输出也非更新点）: {anchor}"
             )
@@ -438,6 +444,13 @@ def _validate_kernel_pairs(
             continue
         if pair.accelerated is not None and not callable(pair.accelerated):
             issues.append(f"内核对加速实现不可调用: {anchor}")
+            continue
+        if (anchor in output_specs
+                and pair.reference is not output_specs[anchor].function):
+            issues.append(
+                f"内核对参考实现与注册表不一致（机制输出以注册表为单一"
+                f"事实源）: {anchor}"
+            )
             continue
         pair_map[anchor] = pair
     return pair_map

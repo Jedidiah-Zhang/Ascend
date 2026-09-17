@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from array import array
 
-from .state_defs import STATE_TYPES, build_param_tables, state_keys
+from .state_defs import build_param_tables, state_keys
 
 (
     _DEPOSIT, _DRAIN, _MELT, _FREEZE,

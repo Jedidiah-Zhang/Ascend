@@ -3,9 +3,10 @@
 判定：对声明域内每个 chunk，按解析场降水信号与降水阈值（经注入求值器，
 含干预覆盖）判定"越阈"；连通域 = 4-邻接 chunk 集合。
 
-事件：``events(t) = diff(regions(域, t), regions(域, t−GAME_MINUTE))``——
-前后两帧都是解析量，**没有任何隐藏状态**（WC-3.2）：读档/首帧天然正确，
-同一时刻重复观测结果相同，不产生伪事件。
+事件：``events(t) = diff(regions(域ₜ, t), regions(域ₜ₋₁, t−GAME_MINUTE))``
+——前后两帧都是解析量，**没有任何隐藏状态**（WC-3.2）：读档/首帧天然
+正确，同一 (时刻, 域, 前域) 重复观测结果相同，不产生伪事件。前域由
+调用方（观察者）提供：域移动时前后帧各用**当时**的域比较。
 
 域由观察者声明（当前为玩家窗口），与加载集/缓存无关（WC-2.3）；阈值与
 强度校准输入（年降雨量、基准降雨强度）来自纯气候查询（chunk 气候为
@@ -94,12 +95,18 @@ class RegionTracker:
 
     def observe(
         self, now: int, domain: Iterable[tuple[int, int]],
+        *, previous_domain: Iterable[tuple[int, int]] | None = None,
     ) -> list[RegionEvent]:
-        """对声明域输出区域出现/消失事件（纯函数：同 (now, 域) 同结果）。
+        """对声明域输出区域出现/消失事件（功能纯：同参数同结果）。
+
+        前后两帧各用当时的观察域比较：``previous_domain`` 为上一帧的
+        域（观察者移动时进入窗口的雨区记为 start）；None = 与 ``domain``
+        相同（静态域/首帧）。
 
         Args:
             now: 当前时刻（tick）。
             domain: 观察者声明的 chunk 域（与加载集无关）。
+            previous_domain: 上一帧的观察域；None = 与 ``domain`` 相同。
 
         Returns:
             区域事件列表。
@@ -112,9 +119,12 @@ class RegionTracker:
                 "区域观测缺少气候基线查询（climate_baseline）"
             )
         chunks = tuple(domain)
+        prev_chunks = (
+            chunks if previous_domain is None else tuple(previous_domain)
+        )
         current = self._regions(chunks, now)
         previous = (
-            self._regions(chunks, now - GAME_MINUTE)
+            self._regions(prev_chunks, now - GAME_MINUTE)
             if now >= GAME_MINUTE else []
         )
         return self._diff(current, previous, now)

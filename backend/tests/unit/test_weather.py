@@ -1006,6 +1006,22 @@ class TestRegionTracker:
         assert [e.kind for e in events] == ["start"]
         assert set(calls) >= set(domain), "域内每 chunk 均经气候查询"
 
+    def test_domain_move_semantics(self):
+        """域移动：走入既有雨带 → start；走出 → stop（前后帧各用当时的域）。"""
+        def signal(x, y, t):
+            cx = int(x // TILE_MAP_SIZE)
+            return 1.0 if cx in (0, 1) else 0.0  # (0,*)/(1,*) 列恒降雨
+
+        tr = self._make_tracker(signal)
+        dry_window = ((5, 5),)
+        wet_window = ((0, 0),)
+        # 首帧：previous 缺省 = 当前域 → 不产生伪事件（无隐藏状态）
+        assert tr.observe(2 * 120, wet_window) == []
+        moved_in = tr.observe(3 * 120, wet_window, previous_domain=dry_window)
+        assert [e.kind for e in moved_in] == ["start"]
+        moved_out = tr.observe(4 * 120, dry_window, previous_domain=wet_window)
+        assert [e.kind for e in moved_out] == ["stop"]
+
     def test_diff_overlap_split_merge(self):
         """前后帧重叠/分裂/合并 → 无事件；全新/消失 → start/stop。"""
         tr = self._make_tracker(self._by_minute([1.0]))
@@ -1115,6 +1131,57 @@ class TestSeasonalAmplitude:
 
 
 # ── weather_engine ─────────────────────────────────────────────────
+
+
+class TestFrameDeferredRecords:
+    """天气事件与观察缓存只在帧提交后生效（WC-7.6，注入 state_store）。"""
+
+    def _engine(self, store=None):
+        from ascend.weather.weather_engine import WeatherEngine
+        wt = WorldTree()
+        events: list = []
+        wt.subscribe("temperature_change", lambda e: events.append(e))
+        clock = WorldClock()
+        engine = WeatherEngine(
+            clock, seed=42, world_tree_arg=wt, state_store=store,
+        )
+        engine.register_chunk(
+            0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0,
+        )
+        return engine, clock, events
+
+    def test_rollback_leaves_no_events_and_retries(self):
+        """回滚的帧不留事件、不推进观察缓存；重试帧提交后发布（不丢事件）。"""
+        from ascend.runtime.state_store import FrameStateStore
+        store = FrameStateStore()
+        engine, clock, events = self._engine(store)
+        _advance_weather(engine, clock.time)  # 首刻静默初始化
+        _force_perception_reset(engine, 0, 0, "temp")
+        clock.skip(1)
+
+        store.begin_frame()
+        engine.advance(clock.time)
+        store.abort()
+        assert events == [], "回滚的帧不留事件"
+        assert engine._fields[(0, 0)].last_temp_tier == -1, (
+            "回滚的帧不推进观察缓存"
+        )
+
+        with store.frame():
+            engine.advance(clock.time)
+        assert len(events) == 1, "重试帧提交后发布（不丢事件）"
+        assert engine._fields[(0, 0)].last_temp_tier != -1
+        engine.shutdown()
+
+    def test_no_store_publishes_immediately(self):
+        """未注入帧事务（测试/独立使用）：行为与旧路径一致（立即生效）。"""
+        engine, clock, events = self._engine(store=None)
+        _advance_weather(engine, clock.time)
+        _force_perception_reset(engine, 0, 0, "temp")
+        clock.skip(1)
+        engine.advance(clock.time)
+        assert len(events) == 1
+        engine.shutdown()
 
 
 class TestWeatherEngine:
@@ -1356,6 +1423,50 @@ class TestWeatherEngine:
         stops = [ev for ev in events if ev.event_type == "precipitation_stop"]
         assert len(stops) >= 1
         assert tuple(tuple(c) for c in stops[0].data["chunks"]) == (dry,)
+        e.shutdown()
+
+    def test_domain_move_emits_region_start_and_stop(self):
+        """观察域移动：走入既有雨带 → start；走出 → stop（各用当时的域）。"""
+        from ascend.config import GAME_MINUTE
+        from ascend.causal import PlannedIntervention
+        from ascend.weather import mechanisms as m
+        from ascend.weather.weather_engine import WeatherEngine
+
+        wt = WorldTree()
+        events = []
+        for t in ("precipitation_start", "precipitation_stop"):
+            wt.subscribe(t, lambda e: events.append(e))
+        clock = WorldClock()
+        domain: list[tuple[int, int]] = []
+        e = WeatherEngine(
+            clock, seed=42, world_tree_arg=wt,
+            climate_lookup=lambda cx, cy: (800.0, 5.0),
+            region_domain=lambda: tuple(domain),
+        )
+        now = clock.time
+        dry = _find_dry_chunk(e, now)
+        assert dry is not None, "应存在自然干燥且信号高于阈下界的 chunk"
+        e.register_chunk(
+            dry[0], dry[1], _make_baseline(temp=20.0),
+            ClimateZone.TEMPERATE_FOREST, 15.0,
+        )
+        e.intervention_table.plan(PlannedIntervention(
+            target_space="node", target=m.PRECIPITATION_THRESHOLD,
+            instance=dry, value=0.25,
+            start_frame=now, stop_frame=now + 10 * GAME_MINUTE,
+            source="test",
+        ))
+        _advance_weather(e, now)  # 域空：无区域事件
+        assert events == []
+        domain.append(dry)  # 走入雨带
+        clock.skip(GAME_MINUTE)
+        _advance_weather(e, clock.time)
+        assert [ev.event_type for ev in events] == ["precipitation_start"]
+        events.clear()
+        domain.clear()  # 走出雨带
+        clock.skip(GAME_MINUTE)
+        _advance_weather(e, clock.time)
+        assert [ev.event_type for ev in events] == ["precipitation_stop"]
         e.shutdown()
 
     def test_precip_type_snow_when_cold(self):

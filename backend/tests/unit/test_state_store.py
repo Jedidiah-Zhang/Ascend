@@ -192,3 +192,68 @@ class TestThreadIsolation:
         assert store.get("b") == "b"
         assert store.version == 2
         assert sorted(results.values()) == [1, 2]
+
+
+class TestCommitFailure:
+    """应用动作抛错：异常向调用方传播，帧可重试（幂等动作安全重放）。
+
+    已执行动作不回滚、记录回调不执行——重试帧重新登记后再执行（文档化语义）。
+    """
+
+    def test_applier_failure_propagates(self):
+        store = FrameStateStore()
+        applied: list[str] = []
+
+        def failing() -> None:
+            raise ValueError("applier boom")
+
+        store.begin_frame()
+        store.stage_apply(lambda: applied.append("first"))
+        store.stage_apply(failing)
+        with pytest.raises(RuntimeError, match="帧提交失败"):
+            store.commit()
+        assert applied == ["first"], "已执行动作不回滚（文档化语义）"
+        assert store.version == 0
+        assert not store.transaction_open, "失败后事务已摘下"
+
+    def test_after_commit_hooks_dropped_on_commit_failure(self):
+        """提交失败：已登记记录回调一律不执行；重试帧重新登记后执行。"""
+        store = FrameStateStore()
+        hooks: list[str] = []
+        state = {"fail": True}
+
+        def apply() -> None:
+            if state["fail"]:
+                raise ValueError("applier boom")
+
+        store.begin_frame()
+        store.stage_apply(apply)
+        store.stage_after_commit(lambda: hooks.append("first"))
+        with pytest.raises(RuntimeError, match="帧提交失败"):
+            store.commit()
+        assert hooks == [], "失败帧的记录回调不得执行"
+        state["fail"] = False
+        store.begin_frame()
+        store.stage_apply(apply)
+        store.stage_after_commit(lambda: hooks.append("retry"))
+        store.commit()
+        assert hooks == ["retry"]
+
+    def test_frame_retry_succeeds(self):
+        store = FrameStateStore()
+        state = {"fail": True}
+        applied: list[str] = []
+
+        def flaky() -> None:
+            if state["fail"]:
+                state["fail"] = False
+                raise ValueError("boom")
+            applied.append("ok")
+
+        with pytest.raises(RuntimeError):
+            with store.frame():
+                store.stage_apply(flaky)
+        with store.frame():
+            store.stage_apply(flaky)
+        assert applied == ["ok"]
+        assert store.version == 1

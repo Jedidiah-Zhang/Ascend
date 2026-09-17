@@ -9,6 +9,8 @@
   任一写方抛错则 ``abort``，本帧全部影子写入丢弃（状态不变）；
 - ``stage_after_commit`` 登记记录回调（事件发布），只在提交成功后
   于锁外执行——记录不得先于状态可见，被回滚的帧不得留事件；
+  提交阶段（应用动作）抛错时已执行动作不回滚（幂等可重放），
+  本帧已登记的记录回调**一律不执行**——重试帧重新登记后再执行；
 - ``guard`` 返回提交锁，跨字段读取（序列化、聚合）在锁内进行，
   保证读到的是某一已提交版本，而不是半帧。
 
@@ -83,16 +85,29 @@ class FrameStateStore:
     def commit(self) -> int:
         """提交当前线程的帧事务：应用影子写入并发布，返回新版本号。
 
+        应用动作（``stage_apply``）应当是幂等且不抛错的（参考实现：
+        数组整组替换 + 游标赋值）；若某个动作抛错，已执行的动作不会
+        回滚（编程错误路径）——异常向调用方抛出，调用方须视为整帧
+        失败（不得推进边界），下一帧重试（幂等动作可安全重放）。
+        失败帧已登记的记录回调（``stage_after_commit``）一律不执行：
+        记录不得先于状态可见，重试帧重新登记后再执行。
+
         Raises:
-            RuntimeError: 本线程无打开的事务。
+            RuntimeError: 本线程无打开的事务，或应用动作在提交中抛错。
         """
         txn = self._transaction()
         if txn is None:
             raise RuntimeError("帧事务未打开：commit 无对象")
         self._local.txn = None
         with self._lock:
-            for apply in txn.appliers:
-                apply()
+            for index, apply in enumerate(txn.appliers):
+                try:
+                    apply()
+                except BaseException as exc:
+                    raise RuntimeError(
+                        f"帧提交失败（应用动作 {index + 1}/"
+                        f"{len(txn.appliers)} 抛错；已执行动作不回滚）: {exc}"
+                    ) from exc
             self._committed.update(txn.staged)
             self._version += 1
             version = self._version

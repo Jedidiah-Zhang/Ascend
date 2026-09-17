@@ -199,6 +199,18 @@ class TestWaveExecution:
         with pytest.raises(NotImplementedError, match="父依赖暂不支持"):
             self._run(registry, parallel=False)
 
+    def test_single_nonzero_offset_parent_rejected(self):
+        """单偏移但非 (0,0)：不得静默退回同实例取值（fail-closed）。"""
+        parent = SimpleNamespace(
+            parent="n.in", lag=0, source_microstep="in",
+            spatial_offsets=((1, 0),),
+        )
+        extra = (_mechanism("m.off", "n.off", [parent]),)
+        registry = _graph(extra=extra, wired=("n.x", "n.y", "n.z", "n.off"))
+        registry.nodes["n.off"] = _node("b")
+        with pytest.raises(NotImplementedError, match="父依赖暂不支持"):
+            self._run(registry, parallel=False)
+
 def _hand_sequence(engine, now, boundary, instance, wm):
     """独立参考序列：按声明依赖逐节点手工求值（不经波次计划）。
 

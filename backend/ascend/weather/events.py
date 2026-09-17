@@ -70,8 +70,8 @@ class SunshineChange(WorldEvent):
 class PrecipitationStart(WorldEvent):
     """降水开始。precip_type: rain|snow，由当前温度判定。
 
-    chunks: 区域涉及的 chunk 坐标（必填）——状态引擎按此批量涂抹，
-    前端区域高亮亦可用。坐标 = 区域连通域 chunk 集合。
+    chunks: 区域涉及的 chunk 坐标（必填）——前端区域渲染与叙事载荷用，
+    坐标 = 区域连通域 chunk 集合（状态演化不消费事件，ADR-12）。
     """
 
     event_type: ClassVar[str] = "precipitation_start"
