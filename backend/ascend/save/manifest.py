@@ -99,6 +99,10 @@ class Manifest:
         观测协议版本，``MechanismRegistry.declaration_settings()``）；
         None = 旧存档尚未记录（首次加载时补写）。读档前与当前注册表
         比对，不一致拒绝加载（见 settings.validate_world_settings）。
+    world_program: 世界程序身份视图（``WorldProgram.settings()``：身份摘要 +
+        契约版本 + 各分量摘要）；None = 旧存档尚未记录（首次加载时补写）。
+        读档前与当前编译产物比对，不一致拒绝加载
+        （见 settings.validate_world_program）。
     """
 
     name: str
@@ -116,6 +120,7 @@ class Manifest:
     # 种子之外再生的不确定性来源，创建时定案，与 seed 同权重。
     gen_params: dict | None = None
     mechanism_declaration: dict | None = None
+    world_program: dict | None = None
 
     @property
     def dict(self) -> dict:
@@ -189,6 +194,9 @@ class Manifest:
                 raw_declaration, dict,
             ):
                 raise ValueError("mechanism_declaration 必须为对象")
+            raw_program = data.get("world_program")
+            if raw_program is not None and not isinstance(raw_program, dict):
+                raise ValueError("world_program 必须为对象")
             return Manifest(
                 name=str(data["name"]),
                 seed=int(data["seed"]),
@@ -202,6 +210,7 @@ class Manifest:
                 secrets_blob=str(blob) if blob else None,
                 gen_params=gen_params,
                 mechanism_declaration=raw_declaration,
+                world_program=raw_program,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SaveFormatError(f"manifest 字段非法: {exc}") from exc

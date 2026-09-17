@@ -1,19 +1,18 @@
 """干预执行引擎 — 覆盖感知求值器与引擎级逐帧执行器。
 
-``InterventionEvaluator`` 是生产求值入口：包裹注册表与干预表，按 (目标,
-实例, 帧) 解析值/机制干预并在求值点替换；参数干预经 ``parameter_values``
+``InterventionEvaluator`` 是生产求值入口：包裹注册表与干预时间线，按
+(目标, 实例, 帧) 解析值干预并在求值点替换；参数干预经 ``parameter_values``
 注入注册表求值（同一实现，见 registry.evaluate_mechanism）。
 
 ``InterventionFrameExecutor`` 是引擎级（研究切片）逐帧求值器：按微步序对
-注册表切片逐节点求值，干预覆盖生效，并维护 CRN 随机流契约（值覆盖
-整段不消费随机地址；机制覆盖只消费替换机制声明的源）。
+注册表切片逐节点求值，干预覆盖生效；值覆盖整段不消费随机地址（CRN）。
 """
 
 from __future__ import annotations
 
 from typing import Callable, Mapping
 
-from .intervention import InterventionRecord, InterventionTable, NodeResolution
+from .intervention import InterventionRecord, InterventionTimeline, NodeResolution
 from .registry import MechanismRegistry
 
 
@@ -22,7 +21,7 @@ class InterventionEvaluator:
 
     Parameters:
         registry: 不可变机制注册表。
-        table: 干预表；None = 直通注册表（零开销回退）。
+        table: 干预时间线；None = 直通注册表（零开销回退）。
         trace: 研究日志；None = 不记录（零开销）。挂载后每次求值都留下
             一条完整记录（fail-closed），值覆盖也如实记录"生成结果被替换"。
     """
@@ -30,7 +29,7 @@ class InterventionEvaluator:
     def __init__(
         self,
         registry: MechanismRegistry,
-        table: InterventionTable | None = None,
+        table: InterventionTimeline | None = None,
         *,
         trace: TraceLog | None = None,
     ) -> None:
@@ -39,7 +38,7 @@ class InterventionEvaluator:
         self._trace = trace
 
     @property
-    def table(self) -> InterventionTable | None:
+    def table(self) -> InterventionTimeline | None:
         return self._table
 
     @property
@@ -80,7 +79,7 @@ class InterventionEvaluator:
                 instance=instance,
             )
         resolution = table.resolve_node(target, instance, frame)
-        if resolution.rep == "value":
+        if resolution.record is not None:
             if trace is not None:
                 trace.record(self._registry.build_trace_record(
                     resolution=resolution,
@@ -95,19 +94,8 @@ class InterventionEvaluator:
                 ))
             return resolution.value
         merged_parameters = self._parameter_overrides(
-            table, target, resolution, frame, parameter_values
+            table, target, frame, parameter_values
         )
-        if resolution.rep == "mechanism":
-            return self._registry.evaluate_mechanism(
-                resolution.mechanism,
-                parent_values,
-                random_values=random_values,
-                parameter_values=merged_parameters,
-                trace=trace,
-                resolution=resolution,
-                frame=frame,
-                instance=instance,
-            )
         return self._registry.evaluate(
             target,
             parent_values,
@@ -121,20 +109,15 @@ class InterventionEvaluator:
 
     def _parameter_overrides(
         self,
-        table: InterventionTable,
+        table: InterventionTimeline,
         target: str,
-        resolution: NodeResolution,
         frame: int,
         parameter_values: Mapping[str, object] | None,
     ) -> dict[str, object] | None:
-        """合并调用方参数覆盖与干预表参数干预（表内活跃覆盖优先）。"""
-        mechanism = None
-        if resolution.rep == "mechanism":
-            mechanism = resolution.mechanism
-        else:
-            mechanism = self._registry.mechanisms.get(target)
-            if mechanism is None:
-                mechanism = self._registry.mechanism_for(target)
+        """合并调用方参数覆盖与时间线参数干预（干预命中优先）。"""
+        mechanism = self._registry.mechanisms.get(target)
+        if mechanism is None:
+            mechanism = self._registry.mechanism_for(target)
         merged = dict(parameter_values or {})
         for binding in mechanism.parameters:
             active, value = table.resolve_parameter(binding.parameter, frame)
@@ -148,8 +131,7 @@ class InterventionFrameExecutor:
 
     按注册表微步偏序逐节点求值，父值从帧状态取用：lag=0 读当帧在
     步序中的最新值，lag>=1 读 ``prev_state``（上一帧结束快照）。
-    值干预命中的节点不消费随机地址（CRN）；机制干预只消费替换机制
-    声明的随机源。追记已消费随机地址供测试断言。
+    值干预命中的节点不消费随机地址（CRN）。追记已消费随机地址供测试断言。
 
     **空间父模板**：声明了多空间偏移的父引用（``len(spatial_offsets) > 1``）
     需要按格展开。传 ``spatial_cells`` 后，这类节点的帧状态是
@@ -166,7 +148,7 @@ class InterventionFrameExecutor:
     def __init__(
         self,
         registry: MechanismRegistry,
-        table: InterventionTable | None = None,
+        table: InterventionTimeline | None = None,
         *,
         exogenous: Callable[[str, int, tuple], object] | None = None,
         spatial_cells: tuple[int, ...] | None = None,
@@ -221,21 +203,15 @@ class InterventionFrameExecutor:
                     if self._evaluator.table is not None
                     else None
                 )
-                if resolution is not None and resolution.rep == "value":
+                if resolution is not None and resolution.record is not None:
                     next_state[output] = resolution.value
                     continue
-                effective = (
-                    resolution.mechanism
-                    if resolution is not None and resolution.rep == "mechanism"
-                    else mechanism
-                )
-                # 父值按生效机制（含替换机制）的父集提供
                 parents = self._parents(
-                    effective.parents, next_state, prev_state,
+                    mechanism.parents, next_state, prev_state,
                     frame, instance,
                 )
                 random_values: dict[str, object] = {}
-                for binding in effective.random_sources:
+                for binding in mechanism.random_sources:
                     value = self._exogenous(
                         binding.source, frame, instance
                     )

@@ -10,7 +10,7 @@ import pytest
 
 from ascend.causal.world import ASCEND_MECHANISMS
 from ascend.save.manifest import Manifest, SaveFormatError
-from ascend.save.settings import validate_world_settings
+from ascend.save.settings import validate_world_program, validate_world_settings
 
 _SEED = 20260908
 
@@ -83,3 +83,84 @@ class TestWorldSettings:
                 "name": "x", "seed": 1, "world_id": "w",
                 "mechanism_declaration": "not-a-dict",
             })
+
+
+class TestWorldProgram:
+    """manifest 世界程序身份校验（不一致即拒绝加载）。"""
+
+    def _program(self) -> dict:
+        from ascend.causal.program import get_default_program
+
+        return get_default_program().settings()
+
+    def _manifest(self, program=None) -> Manifest:
+        return Manifest(
+            name="测试世界", seed=_SEED, world_id="w1",
+            world_program=program,
+        )
+
+    def test_matching_program_accepted(self):
+        view = self._program()
+        validate_world_program(self._manifest(view), view)
+
+    def test_absent_program_accepted_for_backfill(self):
+        """旧存档未记录程序身份：放行，由调用方随后补写。"""
+        validate_world_program(self._manifest(None), self._program())
+
+    def test_identity_mismatch_rejected(self):
+        view = self._program()
+        stored = {**view, "identity": "sha256:" + "00" * 32}
+        with pytest.raises(ValueError, match="世界程序身份"):
+            validate_world_program(self._manifest(stored), view)
+
+    def test_partial_program_rejected(self):
+        """记录存在但缺 identity = 损坏，不是"未记录"。"""
+        view = self._program()
+        with pytest.raises(ValueError, match="缺少字段"):
+            validate_world_program(self._manifest({"schema_version": 1}), view)
+
+    def test_non_mapping_program_rejected(self):
+        with pytest.raises(ValueError, match="必须为映射"):
+            validate_world_program(
+                self._manifest("sha256:0"), self._program(),
+            )
+
+    def test_incomplete_current_view_rejected(self):
+        with pytest.raises(ValueError, match="世界程序视图缺少字段"):
+            validate_world_program(self._manifest(None), {"schema_version": 1})
+
+    def test_program_view_matches_registry(self):
+        from ascend.causal.program import get_default_program
+
+        program = get_default_program()
+        view = program.settings()
+        assert view["identity"] == program.identity
+        assert view["registry_digest"] == program.registry_digest
+        assert view["slots_digest"] == program.slots_digest
+        assert view["address_digest"] == program.address_digest
+        assert view["update_points_digest"] == program.update_points_digest
+
+    def test_manifest_rejects_non_dict_program_on_read(self, tmp_path):
+        """manifest 读取期就拒绝非对象程序视图（不等读档校验）。"""
+        manifest = self._manifest(None)
+        data = manifest.dict
+        data["world_program"] = "sha256:0"
+        import json
+
+        path = tmp_path / "manifest.json"
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        with pytest.raises(SaveFormatError, match="world_program"):
+            Manifest.read(str(path))
+
+    def test_manifest_roundtrip_program(self, tmp_path):
+        """world_program 随 manifest 读写往返。"""
+        import json
+
+        view = self._program()
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            json.dumps(self._manifest(view).dict, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        loaded = Manifest.read(str(path))
+        assert loaded.world_program == view

@@ -1,23 +1,20 @@
 """干预执行器终端指令组 — do 指令（研究者原子化执行干预）。
 
-指令（与 net 研究 API 同源：同一干预表、同一校验、同一缺省解析）:
+指令（与 net 研究 API 同源：同一时间线、同一校验、同一缺省解析）:
 
     do list                                          列出当前有效干预
     do value <node> <value> [cx cy] [at T] [dur N]   值干预（缺省单帧）
-    do mech <node> <mechanism_id> [cx cy] [at T] [dur N]
-                                                     机制干预（缺省长期）
     do param <parameter_id> <value> [at T]           参数干预（环境变化）
-    do clear <node|param|feature> <target> [cx cy] [rep value|mechanism]
-                                                     清除干预
+    do clear <node|param|feature> <target> [cx cy]   撤销（后续帧不再生效）
 
-帧基准为时间模块 tick；缺省下一 tick 生效（``InterventionTable.default_frame``），
+帧基准为时间模块 tick；缺省下一 tick 生效（``InterventionTimeline.default_frame``），
 chunk 分量缺省坐标用 default_chunk。任何未识别的多余参数都会报错
 （fail-closed），不做静默忽略。全部用户可见文案走 i18n。
 """
 
 from __future__ import annotations
 
-from ascend.causal import InterventionRecord, default_duration
+from ascend.causal import PlannedIntervention, default_duration
 from ascend.log import get_logger
 
 from .result import CommandResult
@@ -29,12 +26,11 @@ _SPACE_MAP = {
     "param": "parameter",
     "feature": "field_feature",
 }
-_LIST_GROUPS = (
-    ("values", "console.do_label_value"),
-    ("mechanisms", "console.do_label_mechanism"),
-    ("parameters", "console.do_label_parameter"),
-    ("features", "console.do_label_feature"),
-)
+_LIST_LABELS = {
+    "node": "console.do_label_value",
+    "parameter": "console.do_label_parameter",
+    "field_feature": "console.do_label_feature",
+}
 
 
 class InterventionCommandsMixin:
@@ -55,7 +51,6 @@ class InterventionCommandsMixin:
                 success=True, output=self._cmd_do_list(),
             ),
             "value": self._cmd_do_value,
-            "mech": self._cmd_do_mech,
             "param": self._cmd_do_param,
             "clear": self._cmd_do_clear,
         }
@@ -77,11 +72,9 @@ class InterventionCommandsMixin:
         return "\n".join((
             f"  do value <node> <value> [cx cy] [at T] [dur N]"
             f"   {t('console.help_do_value')}",
-            f"  do mech <node> <mechanism_id> [cx cy] [at T] [dur N]"
-            f"   {t('console.help_do_mech')}",
             f"  do param <parameter_id> <value> [at T]"
             f"           {t('console.help_do_param')}",
-            f"  do clear <node|param|feature> <target> [cx cy] [rep value|mechanism]"
+            f"  do clear <node|param|feature> <target> [cx cy]"
             f"   {t('console.help_do_clear')}",
             f"  do list                                          "
             f"{t('console.help_do_list')}",
@@ -104,49 +97,20 @@ class InterventionCommandsMixin:
         value = self._coerce(
             value_text, node_spec.value.kind, node_spec.value.choices,
         )
-        frame, duration, instance = self._parse_target(
-            rest, node, default_duration=default_duration("node", "value"),
+        frame, stop, instance = self._parse_target(
+            rest, node, default_duration=default_duration("node"),
         )
-        self._intervention_table.commit(InterventionRecord(
+        self._intervention_table.plan(PlannedIntervention(
             target_space="node", target=node, instance=instance,
-            rep="value", value=value,
-            frame_t0=frame, duration=duration,
+            value=value, start_frame=frame, stop_frame=stop,
+            source="terminal",
         ))
         return CommandResult(
             success=True,
             output=t(
                 "console.do_registered_value",
                 target=node, value=value,
-                window=self._window_text(frame, duration),
-            ),
-        )
-
-    def _cmd_do_mech(self, args: list[str]) -> CommandResult:
-        t = self._i18n.t
-        node, rest = self._pop(args)
-        if node is None:
-            raise ValueError(t("console.do_need_node"))
-        mech_id, rest = self._pop(rest)
-        if mech_id is None:
-            raise ValueError(t("console.do_need_mech"))
-        registry = self._intervention_table.registry
-        mechanism = registry.mechanisms.get(mech_id)
-        if mechanism is None:
-            raise ValueError(t("console.do_unknown_mechanism", id=mech_id))
-        frame, duration, instance = self._parse_target(
-            rest, node, default_duration=default_duration("node", "mechanism"),
-        )
-        self._intervention_table.commit(InterventionRecord(
-            target_space="node", target=node, instance=instance,
-            rep="mechanism", mechanism=mechanism,
-            frame_t0=frame, duration=duration,
-        ))
-        return CommandResult(
-            success=True,
-            output=t(
-                "console.do_registered_mechanism",
-                target=node, id=mech_id,
-                window=self._window_text(frame, duration),
+                window=self._window_text(frame, stop),
             ),
         )
 
@@ -167,10 +131,10 @@ class InterventionCommandsMixin:
         self._reject_extra(rest)
         if frame is None:
             frame = self._intervention_table.default_frame()
-        self._intervention_table.commit(InterventionRecord(
+        self._intervention_table.plan(PlannedIntervention(
             target_space="parameter", target=param,
-            rep="value", value=value, frame_t0=frame,
-            duration=default_duration("parameter", "value"),
+            value=value, start_frame=frame, stop_frame=None,
+            source="terminal",
         ))
         return CommandResult(
             success=True,
@@ -195,21 +159,11 @@ class InterventionCommandsMixin:
                 instance, rest = self._take_instance(rest)
         elif space == "feature":
             instance, rest = self._take_instance(rest)
-        rep = None
-        if rest and rest[0] == "rep":
-            if space != "node":
-                raise ValueError(t("console.do_rep_only_node"))
-            if len(rest) < 2:
-                raise ValueError(t("console.do_clear_usage"))
-            rep = rest[1]
-            rest = rest[2:]
-            if rep not in ("value", "mechanism"):
-                raise ValueError(t("console.do_bad_rep", rep=rep))
         self._reject_extra(rest)
-        cleared = self._intervention_table.clear(
-            _SPACE_MAP[space], target, instance, rep=rep,
+        stopped = self._intervention_table.revoke(
+            _SPACE_MAP[space], target, instance,
         )
-        if not cleared:
+        if not stopped:
             return CommandResult(
                 success=False,
                 output=t("console.do_not_found", space=space, target=target),
@@ -217,28 +171,24 @@ class InterventionCommandsMixin:
         return CommandResult(
             success=True,
             output=t(
-                "console.do_cleared", space=space, target=target,
-                reps=",".join(cleared),
+                "console.do_revoked", space=space, target=target,
+                count=stopped,
             ),
         )
 
     def _cmd_do_list(self) -> str:
         t = self._i18n.t
-        snapshot = self._intervention_table.snapshot()
+        frame = self._intervention_table.current_frame()
+        active = self._intervention_table.snapshot(frame)
         lines = [t("console.do_list_header")]
-        any_active = False
-        for group, label_key in _LIST_GROUPS:
-            records = snapshot.get(group, [])
-            if not records:
-                continue
-            any_active = True
-            for record in records:
-                lines.append(
-                    f"  [{t(label_key)}] {record['target']} "
-                    f"{self._window_text(record['frame_t0'], record['duration'])} "
-                    f"seq={record['seq']}"
-                )
-        if not any_active:
+        for entry in active:
+            lines.append(
+                f"  [{t(_LIST_LABELS[entry['target_space']])}] "
+                f"{entry['target']} "
+                f"{self._window_text(entry['start_frame'], entry['stop_frame'])} "
+                f"seq={entry['seq']}"
+            )
+        if not active:
             lines.append(t("console.do_list_empty"))
         return "\n".join(lines)
 
@@ -251,11 +201,11 @@ class InterventionCommandsMixin:
         return args[0], args[1:]
 
     @staticmethod
-    def _window_text(frame_t0: int, duration: int | None) -> str:
-        """生效窗口文本：[t0, t0+dur) 或 [t0, ∞)。"""
-        if duration is None:
-            return f"@[{frame_t0}, \u221e)"
-        return f"@[{frame_t0}, {frame_t0 + duration})"
+    def _window_text(start_frame: int, stop_frame: int | None) -> str:
+        """计划窗口文本：[start, stop) 或 [start, ∞)。"""
+        if stop_frame is None:
+            return f"@[{start_frame}, \u221e)"
+        return f"@[{start_frame}, {stop_frame})"
 
     @staticmethod
     def _coerce(
@@ -303,7 +253,7 @@ class InterventionCommandsMixin:
 
     @staticmethod
     def _take_duration(args: list[str]) -> tuple[int | None, list[str]]:
-        """解析 `dur <n>`；缺省返回 None（调用方按替换规格缺省处理）。"""
+        """解析 `dur <n>`；缺省返回 None（调用方按缺省时长处理）。"""
         rest = list(args)
         if rest and rest[0] == "dur":
             if len(rest) < 2:
@@ -335,7 +285,7 @@ class InterventionCommandsMixin:
         *,
         default_duration: int | None,
     ) -> tuple[int, int | None, tuple]:
-        """解析 (生效帧, 时长, 实例) 三要素，多余参数一律报错。"""
+        """解析 (生效帧, 失效帧, 实例) 三要素，多余参数一律报错。"""
         registry = self._intervention_table.registry
         node_spec = registry.nodes[node]
         is_global = node_spec.instance_domain.kind == "global_singleton"
@@ -350,4 +300,5 @@ class InterventionCommandsMixin:
             frame = self._intervention_table.default_frame()
         if duration is None:
             duration = default_duration
-        return frame, duration, instance
+        stop = None if duration is None else frame + duration
+        return frame, stop, instance

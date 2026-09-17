@@ -15,8 +15,8 @@ import math
 from dataclasses import dataclass, field
 
 from ascend.causal import (
-    InterventionRecord,
-    InterventionTable,
+    InterventionTimeline,
+    PlannedIntervention,
 )
 from ascend.causal.intervention_engine import InterventionFrameExecutor
 from ascend.causal.registry import MechanismRegistry
@@ -157,7 +157,7 @@ def check_w0() -> CheckResult:
     ref = reference.ReferenceInterpreter(registry)
     ref_frames = ref.run(range(1), initial).frames
 
-    table = InterventionTable(registry, now=lambda: 0)
+    table = InterventionTimeline(registry, now=lambda: 0)
     engine = InterventionFrameExecutor(registry, table)
     engine_frames = [engine.run_frame(0, dict(initial))]
 
@@ -200,10 +200,10 @@ def check_w1() -> CheckResult:
         registry, overrides=(reference.ValueOverride("med", target_med),),
     ).run(range(1), initial).frames[0]
 
-    table = InterventionTable(registry, now=lambda: 0)
-    table.commit(InterventionRecord(
-        target_space="node", target="med", rep="value",
-        value=target_med, frame_t0=0, duration=1,
+    table = InterventionTimeline(registry, now=lambda: 0)
+    table.plan(PlannedIntervention(
+        target_space="node", target="med", value=target_med,
+        start_frame=0, stop_frame=1, source="acceptance",
     ))
     engine = InterventionFrameExecutor(registry, table)
     do_engine = [engine.run_frame(0, dict(initial))]
@@ -230,17 +230,21 @@ def check_w1() -> CheckResult:
     )
 
 
-# ── W2：三类干预互异 ────────────────────────────────────────
+# ── W2：动态干预与机制替换关闭（负例）──────────────────────
 
 def check_w2() -> CheckResult:
-    """W2：值(1帧)/值(2帧)/机制三类干预轨迹互异且可手算。"""
+    """W2：值(单帧)/值(窗口)两臂互异且可手算；运行内机制替换被拒绝。
+
+    结构变体 = 换世界（WC-1.3）：完整的变体世界双跑检验由 #49 承接，
+    本判据先锁定"运行内机制替换路径已关闭"（单条件负例）。
+    """
     registry = slices.w2_registry()
     initial = {"x": 0.0}
 
-    def run(records) -> list[float]:
-        table = InterventionTable(registry, now=lambda: 0)
-        for record in records:
-            table.commit(record)
+    def run(entries) -> list[float]:
+        table = InterventionTimeline(registry, now=lambda: 0)
+        for entry in entries:
+            table.plan(entry)
         executor = InterventionFrameExecutor(registry, table)
         state = dict(initial)
         prev = dict(initial)
@@ -251,59 +255,43 @@ def check_w2() -> CheckResult:
             out.append(state["x"])
         return out
 
-    node = run([InterventionRecord(
-        target_space="node", target="x", rep="value",
-        value=10.0, frame_t0=0, duration=1,
+    node = run([PlannedIntervention(
+        target_space="node", target="x", value=10.0,
+        start_frame=0, stop_frame=1, source="acceptance",
     )])
-    persist = run([InterventionRecord(
-        target_space="node", target="x", rep="value",
-        value=10.0, frame_t0=0, duration=2,
+    window = run([PlannedIntervention(
+        target_space="node", target="x", value=10.0,
+        start_frame=0, stop_frame=2, source="acceptance",
     )])
-    mech = _mechanism_arm()
 
-    hand = {"node": [10.0, 11.0, 12.0], "persist": [10.0, 10.0, 11.0],
-            "mech": [1.0, 2.0, 3.0]}
+    from ascend.net.handlers.research_handler import make_research_handler
+    handler = make_research_handler(
+        InterventionTimeline(registry, now=lambda: 0),
+    )
+    negative = handler["research_do"]({"payload": {
+        "space": "node", "target": "x", "value": 10.0,
+        "rep": "mechanism", "mechanism_id": "toy.x",
+    }})
+    closed = negative["payload"].get("success") is False
+
+    hand = {"node": [10.0, 11.0, 12.0], "window": [10.0, 10.0, 11.0]}
     checks = {
-        "值(1帧)": node == hand["node"],
-        "值(2帧)": persist == hand["persist"],
-        "机制(恒等替换)": mech == hand["mech"],
-        "三条互异": len({tuple(node), tuple(persist), tuple(mech)}) == 3,
+        "值(单帧)": node == hand["node"],
+        "值(窗口)": window == hand["window"],
+        "两臂互异": node != window,
+        "机制替换路径关闭": closed,
     }
     failed = [name for name, ok in checks.items() if not ok]
     return CheckResult(
-        code="W2", title="三类动态干预", passed=not failed,
+        code="W2", title="动态干预（机制替换关闭）", passed=not failed,
         detail=(
-            f"节点={node} 持续={persist} 机制={mech}（手算一致且互异；"
-            f"机制臂为单写者约束下的恒等替换）"
+            f"节点={node} 窗口={window}；运行内机制替换被拒绝（负例）"
             if not failed else f"未通过项: {failed}"
         ),
         input={"initial": initial, "hand_computed": hand},
-        reference=hand, engine={"node": node, "persist": persist, "mech": mech},
+        reference=hand,
+        engine={"node": node, "window": window, "closed": closed},
     )
-
-
-def _mechanism_arm() -> list[float]:
-    """机制干预臂：替换机制 = 原机制（单写者约束下的恒等替换）。
-
-    生产注册表 C0 强制"节点单写者"，因此当前 `do mech` 只能登记恒等替换
-    （F'=F，Lean `mechDo_same_eq_traj` 语义）。本判据如实反映该现状：
-    机制臂 = 恒等替换 → 与无干预轨迹一致，但仍与值/持续两臂互异。
-    """
-    registry = slices.w2_registry()
-    table = InterventionTable(registry, now=lambda: 0)
-    original = registry.mechanism_for("x")
-    table.commit(InterventionRecord(
-        target_space="node", target="x", rep="mechanism",
-        mechanism=original, frame_t0=0, duration=None,
-    ))
-    executor = InterventionFrameExecutor(registry, table)
-    state = {"x": 0.0}
-    out = []
-    for frame in range(3):
-        prev = dict(state)
-        state = executor.run_frame(frame, state, prev)
-        out.append(state["x"])
-    return out
 
 
 # ── W3：空间父模板与边界 ────────────────────────────────────
@@ -424,9 +412,9 @@ def check_w4() -> CheckResult:
         return out
 
     def scatter(engine: WeatherEngine) -> None:
-        engine.intervention_table.commit(InterventionRecord(
+        engine.intervention_table.plan(PlannedIntervention(
             target_space="node", target=INSTANT_TEMPERATURE, instance=(0, 0),
-            rep="value", value=30.0, frame_t0=0, duration=None,
+            value=30.0, start_frame=0, stop_frame=None, source="acceptance",
         ))
         engine.force_feature(1, 0, "storm", True)
 
@@ -450,7 +438,10 @@ def check_w4() -> CheckResult:
 
     # 判别力负例：丢掉干预与注入核后必须分叉
     state_without = dict(state)
-    state_without["weather"] = {"interventions": [], "feature_cores": []}
+    state_without["weather"] = {
+        "interventions": {"plan": [], "records": []},
+        "feature_cores": [],
+    }
     clock_d, engine_d = build()
     apply_state(state_without, clock_d, _Player(), engine_d)
     trace_d = sample(engine_d, timeline)

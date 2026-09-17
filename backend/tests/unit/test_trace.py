@@ -15,11 +15,11 @@ from ascend.causal import (
     AccessPolicy,
     DependencyWitness,
     InstanceDomain,
-    InterventionRecord,
-    InterventionTable,
+    InterventionTimeline,
     MathMetadata,
     MechanismRegistry,
     MechanismSpec,
+    PlannedIntervention,
     NodeSpec,
     ParentSpec,
     RandomAddress,
@@ -310,10 +310,10 @@ class TestEvaluatorTracing:
         assert log.verify_all() == []
 
     def test_value_intervention_recorded(self, registry):
-        table = InterventionTable(registry, now=lambda: 0)
-        table.commit(InterventionRecord(
-            target_space="node", target="x", rep="value",
-            value=30.0, frame_t0=1, duration=None,
+        table = InterventionTimeline(registry, now=lambda: 0)
+        table.plan(PlannedIntervention(
+            target_space="node", target="x", value=30.0,
+            start_frame=1, stop_frame=None, source="trace-test",
         ))
         log = TraceLog(registry)
         evaluator = InterventionEvaluator(registry, table, trace=log)
@@ -328,7 +328,7 @@ class TestEvaluatorTracing:
 
     def test_trace_does_not_change_output(self, registry):
         """开启 trace 不改变任何求值结果（纯观察层）。"""
-        table = InterventionTable(registry, now=lambda: 0)
+        table = InterventionTimeline(registry, now=lambda: 0)
         plain = InterventionEvaluator(registry, table)
         traced = InterventionEvaluator(registry, table, trace=TraceLog(registry))
         for frame in range(1, 4):

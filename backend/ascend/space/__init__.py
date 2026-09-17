@@ -31,6 +31,7 @@ from .climate import (
     annual_baseline, sea_level_temperature, apply_lapse_rate,
     rainfall_from_noise, get_climate_template, LAPSE_RATE,
 )
+from .climate_lookup import ChunkClimateLookup
 from .biome import (
     BiomeType, BiomeTemplate, TerrainBias,
     biome_membership, biome_from_attrs,
@@ -66,6 +67,7 @@ __all__ = [
     "PerlinNoise",
     "ClimateZone",
     "ClimateTemplate",
+    "ChunkClimateLookup",
     "SeasonalityMode",
     "WeatherParams",
     "classify",

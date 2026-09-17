@@ -2,24 +2,58 @@
 
 from .intervention import (
     FOREVER,
-    INTERVENTION_REP_KINDS,
     INTERVENTION_TARGET_SPACES,
     SINGLE,
     WINDOW,
     InterventionRecord,
-    InterventionTable,
+    InterventionTimeline,
     NodeResolution,
+    PlannedIntervention,
     default_duration,
 )
 from .intervention_engine import InterventionEvaluator, InterventionFrameExecutor
+from .kernels import KernelPair, default_kernel_pairs
 from .observe import (
     AGENT_WEATHER_PROTOCOL,
     RESEARCH_PROTOCOL,
     leaks_research_truth,
     observe,
+    protocol_nodes,
+)
+from .program import (
+    KernelBinding,
+    PointKernelBinding,
+    UpdatePointPlan,
+    Wave,
+    WorldProgram,
+    compile_default_program,
+    compile_world_program,
+    get_default_program,
 )
 from .registry import MechanismRegistry
 from .trace import RandomAddress, TraceLog, TraceRecord
+from .declaration import DeclarationError
+from .fate_registry import (
+    FATE_NAMESPACES_PATH,
+    FateNamespaceEntry,
+    FateNamespaceRegistry,
+    load_fate_namespaces,
+)
+from .state_schema import (
+    DECLARATION_PATH,
+    SlotDeclaration,
+    StateDeclaration,
+    StateSlice,
+    encode_state,
+    load_declaration,
+    state_digest,
+)
+from .update_points import (
+    UPDATE_POINTS_PATH,
+    UpdatePointDeclaration,
+    UpdatePointTable,
+    load_update_points,
+)
 from .spec import (
     AccessPolicy,
     DependencyWitness,
@@ -39,9 +73,16 @@ from .spec import (
 
 __all__ = [
     "AccessPolicy",
+    "DECLARATION_PATH",
+    "DeclarationError",
     "DependencyWitness",
     "ExogenousSourceSpec",
+    "FATE_NAMESPACES_PATH",
+    "FateNamespaceEntry",
+    "FateNamespaceRegistry",
     "InstanceDomain",
+    "KernelBinding",
+    "KernelPair",
     "MathMetadata",
     "MechanismRegistry",
     "MechanismSpec",
@@ -49,15 +90,25 @@ __all__ = [
     "ParameterBinding",
     "ParameterSpec",
     "ParentSpec",
+    "PointKernelBinding",
     "RandomBinding",
+    "SlotDeclaration",
+    "StateDeclaration",
     "StateOwnership",
+    "StateSlice",
+    "UPDATE_POINTS_PATH",
     "UpdateContract",
+    "UpdatePointDeclaration",
+    "UpdatePointPlan",
+    "UpdatePointTable",
     "ValueDomain",
-    "INTERVENTION_REP_KINDS",
+    "Wave",
+    "WorldProgram",
     "INTERVENTION_TARGET_SPACES",
     "InterventionRecord",
-    "InterventionTable",
+    "InterventionTimeline",
     "NodeResolution",
+    "PlannedIntervention",
     "InterventionEvaluator",
     "InterventionFrameExecutor",
     "RandomAddress",
@@ -67,8 +118,18 @@ __all__ = [
     "RESEARCH_PROTOCOL",
     "leaks_research_truth",
     "observe",
+    "protocol_nodes",
     "FOREVER",
     "SINGLE",
     "WINDOW",
+    "compile_default_program",
+    "compile_world_program",
     "default_duration",
+    "default_kernel_pairs",
+    "encode_state",
+    "get_default_program",
+    "load_declaration",
+    "load_fate_namespaces",
+    "load_update_points",
+    "state_digest",
 ]

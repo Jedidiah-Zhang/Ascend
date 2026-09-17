@@ -563,9 +563,8 @@ class MechanismRegistry:
 
     @staticmethod
     def _intervention_plain(record) -> dict[str, object]:
-        """干预记录 → 可序列化视图（惰性导入，避免与干预模块的环）。"""
-        from .intervention import InterventionTable
-        return InterventionTable.record_plain(record)
+        """干预记录 → 可序列化视图。"""
+        return record.plain()
 
     def declaration_settings(self) -> dict[str, str]:
         """世界设置视图：声明 ID + 声明摘要 + 观测协议版本。

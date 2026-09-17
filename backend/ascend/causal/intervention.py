@@ -1,70 +1,44 @@
-"""干预执行器 — 干预记录、干预表、执行前校验与解析。
+"""干预时间线 — 计划（外部输入 I_t）与已发生记录（只追加）。
 
-干预执行器是研究者对世界施加干预的工程入口：把一次干预（do）形式化为一条
-不可变的干预记录（``InterventionRecord``），登记进干预表（``InterventionTable``），
-在节点/参数求值点按固定规则替换生成。语义契约（第一阶段实施定义 §7、
-工程符号体系 §5、世界基座 08）：
+《世界契约》WC-6 / 设计决定 D2：
+- 干预以逐帧独立记录进入时间线，只追加；同一帧、同一目标后到覆盖先到；
+- 持续干预 = 窗口内逐帧记录；撤销 = 后续帧不再记录，既有记录不改写；
+- 干预属于外部输入，不是 W_t；历史求值只用记录，不看"当前表"；
+- 运行内机制替换不属于世界内干预（WC-1.3，结构变更 = 换世界）。
 
-- **目标空间**：node（节点生成结果）、parameter（参数槽位，环境变化）、
-  field_feature（统一天气场特征核控制，仅由 ``WeatherEngine.force_feature``
-  写入，net 研究 API 转发到该入口）。
-- **替换规格**：value（换常数）/ mechanism（换公式）；参数与特征核
-  控制仅 value。
-- **时长（两轴模型）**：single（1 帧，原"节点干预"）／window（>1 帧
-  窗口，窗口结束自然演化）／forever（None，长期钉住直至被替换或清除）。
-  合法组合由 ``_DURATION_RULES`` 一处声明；参数与特征核控制恒为
-  forever（环境变化 / 特征核控制）。
-- **优先级/重叠（固定规则，无人工数字）**：研究者原子序列执行，
-  同一 (空间, 目标, 实例, 替换规格) 后到覆盖先到；同一节点同时存在
-  值覆盖与机制覆盖时值覆盖优先（影响范围更小，§7 "数值优先于机制"）。
-- **可达性（fail-closed）**：登记前校验目标是否在当前引擎的求值点上
-  （``MechanismRegistry.wired_nodes`` / ``wired_parameters``）。已声明但
-  未接线的分量会被**拒绝**，而不是登记成功却永不生效。
-- **CRN 随机流契约**：值覆盖整段不消费原机制随机地址；机制覆盖的
-  替换机制随机源不得与无关机制重叠（可新增全新地址、可复用原地址）。
-- **执行前校验（§7 六条）**：目标存在且可达、值属声明值域、帧/时长有效、
-  权限允许（``AccessPolicy.interventions`` / ``ParameterSpec.intervention_allowed``）、
-  实例存在且匹配实例域、参数自动标记环境变化。读出/边界分量的保护由
-  注册表声明期不变量保证（这类分量不得声明干预权限）。
-
-本模块不依赖求值路径（见 :mod:`ascend.causal.intervention_engine` 的
-``InterventionEvaluator`` / ``InterventionFrameExecutor``）。
+实现分层：
+- :class:`InterventionPlan` 语义由 :class:`InterventionTimeline` 内联承载
+  （``plan`` / ``revoke``）；计划条目含 ``[start_frame, stop_frame)`` 窗口；
+- 求值点（``resolve_node`` / ``resolve_parameter``）惰性物化：该帧生效且
+  尚无记录时补记一条，保证"已求值帧的记录"只追加、撤销不改写历史。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import threading
-from typing import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 
 from .registry import MechanismRegistry
-from .spec import MechanismSpec, NodeSpec, ParameterSpec
+from .spec import NodeSpec
 
-# 目标空间与替换规格的合法组合
+# 目标空间（值干预）
 INTERVENTION_TARGET_SPACES = frozenset({"node", "parameter", "field_feature"})
-INTERVENTION_REP_KINDS = frozenset({"value", "mechanism"})
-# 目标空间允许的替换规格
-_REP_BY_SPACE = {
-    "node": frozenset({"value", "mechanism"}),
-    "parameter": frozenset({"value"}),
-    "field_feature": frozenset({"value"}),
-}
 
-# ── 时长语义（两轴模型的第二轴）────────────────────────────
-SINGLE = "single"      # 1 帧：只替换一次生成结果，断原入边
-WINDOW = "window"      # >1 帧：窗口内逐帧替换，窗口结束自然演化
-FOREVER = "forever"    # None：长期钉住直至被替换/清除
-# (空间, 替换规格) → 允许的时长类别；一处声明，校验只查本表
-_DURATION_RULES: dict[tuple[str, str], frozenset[str]] = {
-    ("node", "value"): frozenset({SINGLE, WINDOW, FOREVER}),
-    ("node", "mechanism"): frozenset({FOREVER, WINDOW}),
-    ("parameter", "value"): frozenset({FOREVER}),
-    ("field_feature", "value"): frozenset({FOREVER}),
+# 时长语义类别（由窗口推导，仅用于校验与文案）
+SINGLE = "single"      # 1 帧
+WINDOW = "window"      # >1 帧
+FOREVER = "forever"    # 长期
+# 空间 → 允许的时长类别
+_DURATION_RULES: dict[str, frozenset[str]] = {
+    "node": frozenset({SINGLE, WINDOW, FOREVER}),
+    "parameter": frozenset({FOREVER}),
+    "field_feature": frozenset({FOREVER}),
 }
 
 
 def _duration_class(duration: int | None) -> str:
-    """时长 → 语义类别；非法时长抛 ValueError（fail-closed）。"""
+    """时长（帧数）→ 语义类别；非法时长抛 ValueError（fail-closed）。"""
     if duration is None:
         return FOREVER
     if not isinstance(duration, int) or isinstance(duration, bool) or duration < 1:
@@ -74,73 +48,128 @@ def _duration_class(duration: int | None) -> str:
     return SINGLE if duration == 1 else WINDOW
 
 
-def default_duration(target_space: str, rep: str) -> int | None:
+def default_duration(target_space: str) -> int | None:
     """缺省时长（终端 do 与研究 API 共用一处）。
 
-    值替换单帧（原"节点干预"），其余（机制/参数/特征核控制）长期。
+    节点值替换缺省单帧（原"节点干预"），参数/特征核控制缺省长期。
     """
-    return 1 if (target_space == "node" and rep == "value") else None
+    return 1 if target_space == "node" else None
 
 
 @dataclass(frozen=True, slots=True)
-class InterventionRecord:
-    """一条干预（干预记录）。
+class PlannedIntervention:
+    """一条计划条目：目标在 ``[start_frame, stop_frame)`` 内逐帧替换。
 
     Attributes:
         target_space: "node" | "parameter" | "field_feature"。
-        target: 节点 ID / 参数 ID / 特征类型名（field_feature）。
+        target: 节点 ID / 参数 ID / 特征类型名。
         instance: 实例坐标元组；全局分量用空元组 ()。
-        rep: "value" | "mechanism"。
-        value: rep="value" 时的替换值。
-        mechanism: rep="mechanism" 时的替换机制（MechanismSpec）。
-        frame_t0: 生效帧（tick）。
-        duration: 时长；1=单帧，>1=窗口，None=长期。
+        value: 替换值。
+        start_frame: 生效起始帧（含）。
+        stop_frame: 失效帧（不含）；None = 长期，直至撤销。
+        source: 来源标识（terminal / research / feature 等）。
         version: 登记方提供的版本号（溯源用）。
-        applied_at: 登记时的世界 tick（``InterventionTable.commit`` 盖章，只读）。
-        seq: 全局自增序号（``InterventionTable.commit`` 盖章，只读）。
+        seq: 计划登记序号（Timeline 盖章，只读）。
+        submitted_at: 登记时的世界 tick（Timeline 盖章，只读）。
     """
 
     target_space: str
     target: str
     instance: tuple = ()
-    rep: str = "value"
     value: object = None
-    mechanism: object = None
-    frame_t0: int = 0
-    duration: int | None = None
+    start_frame: int = 0
+    stop_frame: int | None = None
+    source: str = ""
     version: str = ""
+    seq: int | None = field(default=None, init=False)
+    submitted_at: int | None = field(default=None, init=False)
+
+    def active_at(self, frame: int) -> bool:
+        """该帧是否处于计划窗口内（逐帧独立判定）。"""
+        if frame < self.start_frame:
+            return False
+        return self.stop_frame is None or frame < self.stop_frame
+
+    def duration_class(self) -> str:
+        """窗口对应的时长类别。"""
+        if self.stop_frame is None:
+            return FOREVER
+        return _duration_class(self.stop_frame - self.start_frame)
+
+    def plain(self) -> dict[str, object]:
+        """可序列化视图（计划载荷）。"""
+        return {
+            "target_space": self.target_space,
+            "target": self.target,
+            "instance": list(self.instance),
+            "value": self.value,
+            "start_frame": self.start_frame,
+            "stop_frame": self.stop_frame,
+            "source": self.source,
+            "version": self.version,
+            "seq": self.seq,
+            "submitted_at": self.submitted_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class InterventionRecord:
+    """一条已发生记录：某帧实际生效的值替换（时间线单位，只追加）。
+
+    Attributes:
+        frame: 记录绑定帧（求值点物化）。
+        target_space / target / instance: 同计划条目。
+        value: 实际替换值。
+        source / version: 来源与版本（溯源）。
+        plan_seq: 命中的计划条目序号（可回溯撤销历史）。
+        applied_at: 物化时的世界 tick（只读）。
+        seq: 记录追加序号（只读）。
+    """
+
+    frame: int
+    target_space: str
+    target: str
+    instance: tuple
+    value: object
+    source: str
+    version: str
+    plan_seq: int | None
     applied_at: int | None = field(default=None, init=False)
     seq: int | None = field(default=None, init=False)
 
-    @property
-    def environment_change(self) -> bool:
-        """参数干预恒为环境变化（由目标空间推导，无独立字段可撒谎）。"""
-        return self.target_space == "parameter"
+    def plain(self) -> dict[str, object]:
+        """可序列化视图（记录载荷）。"""
+        return {
+            "frame": self.frame,
+            "target_space": self.target_space,
+            "target": self.target,
+            "instance": list(self.instance),
+            "value": self.value,
+            "source": self.source,
+            "version": self.version,
+            "plan_seq": self.plan_seq,
+            "applied_at": self.applied_at,
+            "seq": self.seq,
+        }
 
 
 @dataclass(frozen=True, slots=True)
 class NodeResolution:
-    """节点求值解析结果：命中的干预或空（保持原机制）。"""
+    """节点求值解析结果：命中的记录或空（保持原机制）。"""
 
     rep: str | None = None
     record: InterventionRecord | None = None
     value: object = None
-    mechanism: object = None
 
 
-class InterventionTable:
-    """干预表 — 干预记录的单一事实源与解析器。
+class InterventionTimeline:
+    """干预时间线 — 计划登记/撤销 + 逐帧记录（只追加）+ 求值解析。
 
-    构造绑定一个不可变注册表用于校验；表自身随登记/清除演化，
-    但每条记录不可变，历史按登记顺序保留（供 P3 trace / P4 还原）。
-
-    线程安全：登记/清除/持久化与求值解析共用一把可重入锁。存档脉搏在
-    专用保存线程执行（``persist``），与游戏线程的登记/求值并发——没有
-    这把锁，存档可能读到登记中途的字典状态。
+    线程安全：登记/撤销/物化/解析/持久化共用一把可重入锁。
 
     Parameters:
-        registry: 不可变机制注册表（提供值域、权限、可达性声明）。
-        now: 世界时钟读取函数 ``() -> tick``；登记时盖章 ``applied_at``。
+        registry: 不可变机制注册表（提供值域、权限、接线声明）。
+        now: 世界时钟读取函数 ``() -> tick``；登记时盖章 ``submitted_at``。
             None = 不记录登记时刻（仅测试/无世界句柄场景）。
         instance_exists: 实例存在性查询 ``(节点 ID, 实例元组) -> bool``；
             由引擎注入（当前 = chunk 是否已注册）。None = 跳过存在性校验。
@@ -156,13 +185,11 @@ class InterventionTable:
         self._registry = registry
         self._now = now
         self._instance_exists = instance_exists
-        # 键 → 当前有效记录（同一键后到覆盖先到）
-        self._values: dict[tuple[str, str, tuple], InterventionRecord] = {}
-        self._mechanisms: dict[tuple[str, str, tuple], InterventionRecord] = {}
-        self._parameters: dict[str, InterventionRecord] = {}
-        self._features: dict[tuple[str, str, tuple], InterventionRecord] = {}
-        self._history: list[InterventionRecord] = []
-        self._seq: int = 0
+        self._plan: list[PlannedIntervention] = []
+        self._plan_seq: int = 0
+        self._records: dict[tuple, dict[int, InterventionRecord]] = {}
+        self._record_list: list[InterventionRecord] = []
+        self._record_seq: int = 0
         self._lock = threading.RLock()
 
     @property
@@ -171,123 +198,90 @@ class InterventionTable:
         return self._registry
 
     def default_frame(self) -> int:
-        """缺省生效帧 = 下一 tick（无时钟注入时为 0）。
-
-        终端 do 与研究 API 共用，保证两个入口的缺省语义一致。
-        """
+        """缺省生效帧 = 下一 tick（无时钟注入时为 0）。"""
         return self._now() + 1 if self._now is not None else 0
 
-    # ── 登记与清除 ─────────────────────────────────────────
+    def current_frame(self) -> int:
+        """当前世界帧（无时钟注入时为 0）。"""
+        return self._now() if self._now is not None else 0
 
-    def commit(self, record: InterventionRecord) -> InterventionRecord:
-        """校验并登记一条干预；同一键的后登记替换先登记（原子序列）。
+    # ── 计划：登记与撤销 ───────────────────────────────────
 
-        Args:
-            record: 待登记干预（``applied_at``/``seq`` 由本方法盖章）。
-
-        Returns:
-            登记后的不可变记录。
+    def plan(self, entry: PlannedIntervention) -> PlannedIntervention:
+        """校验并登记一条计划条目（同一键的后续条目按 seq 后到优先）。
 
         Raises:
             ValueError: 任一执行前校验失败（fail-closed）。
         """
-        raw_instance = record.instance
-        if raw_instance is None:
-            raw_instance = ()
-        if not isinstance(raw_instance, (tuple, list)):
-            raise ValueError(
-                f"实例必须为元组或列表（None 视作空元组）: {raw_instance!r}"
-            )
-        normalized = InterventionRecord(
-            target_space=record.target_space,
-            target=record.target,
-            instance=tuple(raw_instance),
-            rep=record.rep,
-            value=(
-                dict(record.value)
-                if isinstance(record.value, dict)
-                else record.value
-            ),
-            mechanism=record.mechanism,
-            frame_t0=record.frame_t0,
-            duration=record.duration,
-            version=record.version,
-        )
+        normalized = self._normalize(entry)
         self._validate(normalized)
         with self._lock:
-            self._seq += 1
+            self._plan_seq += 1
+            object.__setattr__(normalized, "seq", self._plan_seq)
             object.__setattr__(
-                normalized, "applied_at",
+                normalized, "submitted_at",
                 self._now() if self._now is not None else None,
             )
-            object.__setattr__(normalized, "seq", self._seq)
-            if normalized.target_space == "node":
-                if normalized.rep == "value":
-                    self._values[
-                        (normalized.target, normalized.instance)
-                    ] = normalized
-                else:
-                    self._mechanisms[
-                        (normalized.target, normalized.instance)
-                    ] = normalized
-            elif normalized.target_space == "parameter":
-                self._parameters[normalized.target] = normalized
-            else:
-                self._features[
-                    (normalized.target, normalized.instance)
-                ] = normalized
-            self._history.append(normalized)
+            self._plan.append(normalized)
         return normalized
 
-    def clear(
+    def revoke(
         self,
         target_space: str,
         target: str,
         instance: tuple = (),
         *,
-        rep: str | None = None,
-    ) -> tuple[str, ...]:
-        """清除指定键的干预（撤销）。
+        at_frame: int | None = None,
+    ) -> int:
+        """撤销：把该键所有长期条目在 ``at_frame`` 处结束（后续帧不再记录）。
 
-        Args:
-            target_space: "node" | "parameter" | "field_feature"。
-            target: 节点 ID / 参数 ID / 特征类型名。
-            instance: 实例坐标（全局分量用空元组）。
-            rep: 仅清除指定替换规格；None = 该键的全部规格。
+        撤销立即生效：缺省 ``at_frame`` = 当前帧，即当前帧起不再物化；
+        既有记录不改写，已求值帧的结果不变（WC-6.2）。
 
         Returns:
-            实际清除的替换规格元组（空元组 = 未命中）。
+            实际结束的计划条目数（0 = 未命中）。
         """
-        key = (target, tuple(instance or ()))
+        key = (target_space, target, tuple(instance or ()))
+        stop = at_frame if at_frame is not None else self.current_frame()
+        if not isinstance(stop, int) or isinstance(stop, bool) or stop < 0:
+            raise ValueError(f"撤销帧必须为非负整数 tick: {stop!r}")
+        stopped = 0
         with self._lock:
-            return self._clear_locked(target_space, key, target, rep)
+            for index, entry in enumerate(self._plan):
+                if (entry.target_space, entry.target, entry.instance) != key:
+                    continue
+                if entry.stop_frame is not None and entry.stop_frame <= stop:
+                    continue
+                new_stop = max(stop, entry.start_frame)
+                if entry.stop_frame == new_stop:
+                    continue
+                self._plan[index] = self._replace_stop(entry, new_stop)
+                stopped += 1
+        return stopped
 
-    def _clear_locked(
-        self, target_space: str, key: tuple, target: str, rep: str | None,
-    ) -> tuple[str, ...]:
-        if target_space == "node":
-            removed: list[str] = []
-            if rep in (None, "value") and self._values.pop(key, None) is not None:
-                removed.append("value")
-            if (
-                rep in (None, "mechanism")
-                and self._mechanisms.pop(key, None) is not None
-            ):
-                removed.append("mechanism")
-            return tuple(removed)
-        if target_space == "parameter":
-            if rep not in (None, "value"):
-                return ()
-            if self._parameters.pop(target, None) is None:
-                return ()
-            return ("value",)
-        if rep not in (None, "value"):
-            return ()
-        if self._features.pop(key, None) is None:
-            return ()
-        return ("value",)
+    def plan_entries(self) -> tuple[PlannedIntervention, ...]:
+        """全部计划条目（按登记顺序）。"""
+        with self._lock:
+            return tuple(self._plan)
 
-    # ── 解析 ───────────────────────────────────────────────
+    def active_plans(self, frame: int) -> tuple[PlannedIntervention, ...]:
+        """该帧生效的计划投影：同键取 seq 最大者，按 (空间, 目标, 实例) 排序。"""
+        with self._lock:
+            plans = list(self._plan)
+        by_key: dict[tuple, PlannedIntervention] = {}
+        for entry in plans:
+            if not entry.active_at(frame):
+                continue
+            key = (entry.target_space, entry.target, entry.instance)
+            current = by_key.get(key)
+            if current is None or (entry.seq or 0) > (current.seq or 0):
+                by_key[key] = entry
+        return tuple(sorted(
+            by_key.values(),
+            key=lambda item: (item.target_space, item.target, item.instance),
+        ))
+
+    # ── 求值解析（求值点惰性物化）──────────────────────────
 
     def resolve_node(
         self,
@@ -295,140 +289,153 @@ class InterventionTable:
         instance: tuple,
         frame: int,
     ) -> NodeResolution:
-        """解析节点求值：值干预 > 机制干预 > 原机制（固定规则）。
-
-        值覆盖影响范围小于公式覆盖 → 同节点同时活跃时值优先。
-        """
-        value_key = (target, tuple(instance or ()))
-        with self._lock:
-            return self._resolve_node_locked(value_key, frame)
-
-    def _resolve_node_locked(
-        self, value_key: tuple, frame: int,
-    ) -> NodeResolution:
-        record = self._values.get(value_key)
-        if record is not None and self._active(record, frame):
-            return NodeResolution(
-                rep="value", record=record,
-                value=record.value, mechanism=None,
-            )
-        mechanism = self._mechanisms.get(value_key)
-        if mechanism is not None and self._active(mechanism, frame):
-            return NodeResolution(
-                rep="mechanism", record=mechanism,
-                value=None, mechanism=mechanism.mechanism,
-            )
-        return NodeResolution()
+        """解析节点求值：命中记录即值替换，否则保持原机制。"""
+        record = self._materialize("node", target, instance, frame)
+        if record is None:
+            return NodeResolution()
+        return NodeResolution(rep="value", record=record, value=record.value)
 
     def resolve_parameter(
         self,
         parameter_id: str,
         frame: int,
     ) -> tuple[bool, object]:
-        """解析参数槽位覆盖；返回 (是否活跃, 覆盖值)。"""
-        with self._lock:
-            record = self._parameters.get(parameter_id)
-        if record is not None and self._active(record, frame):
-            return True, record.value
-        return False, None
+        """解析参数槽位覆盖；返回 (是否命中, 替换值)。"""
+        record = self._materialize("parameter", parameter_id, (), frame)
+        if record is None:
+            return False, None
+        return True, record.value
 
-    # ── 快照与历史 ─────────────────────────────────────────
-
-    @property
-    def history(self) -> tuple[InterventionRecord, ...]:
-        """按登记顺序的全部干预记录（含被替换的历史，供 trace/还原）。"""
+    def _materialize(
+        self,
+        target_space: str,
+        target: str,
+        instance: tuple,
+        frame: int,
+    ) -> InterventionRecord | None:
+        """该帧生效且尚无记录时补记一条（幂等；后到优先由 seq 决定）。"""
+        key = (target_space, target, tuple(instance or ()))
+        existing = self._records.get(key, {}).get(frame)
+        if existing is not None:
+            return existing
         with self._lock:
-            return tuple(self._history)
+            existing = self._records.get(key, {}).get(frame)
+            if existing is not None:
+                return existing
+            candidates = [
+                entry for entry in self._plan
+                if entry.target_space == target_space
+                and entry.target == target
+                and entry.instance == key[2]
+                and entry.active_at(frame)
+            ]
+            if not candidates:
+                return None
+            entry = max(candidates, key=lambda item: item.seq or 0)
+            record = InterventionRecord(
+                frame=frame,
+                target_space=target_space,
+                target=target,
+                instance=key[2],
+                value=entry.value,
+                source=entry.source,
+                version=entry.version,
+                plan_seq=entry.seq,
+            )
+            self._record_seq += 1
+            object.__setattr__(record, "seq", self._record_seq)
+            object.__setattr__(
+                record, "applied_at",
+                self._now() if self._now is not None else None,
+            )
+            self._records.setdefault(key, {})[frame] = record
+            self._record_list.append(record)
+            return record
+
+    # ── 记录与快照 ─────────────────────────────────────────
+
+    def records(self) -> tuple[InterventionRecord, ...]:
+        """全部已发生记录（按时序）。"""
+        with self._lock:
+            return tuple(self._record_list)
+
+    def record_at(
+        self,
+        target_space: str,
+        target: str,
+        instance: tuple,
+        frame: int,
+    ) -> InterventionRecord | None:
+        """查询指定 (键, 帧) 的已发生记录。"""
+        key = (target_space, target, tuple(instance or ()))
+        with self._lock:
+            return self._records.get(key, {}).get(frame)
 
     def history_plain(self) -> list[dict[str, object]]:
-        """按登记顺序的完整历史（可序列化，含 seq/applied_at）。"""
+        """全部已发生记录的可序列化视图（按规范排序）。"""
         with self._lock:
-            history = list(self._history)
-        return [self.record_plain(record) for record in history]
+            records = list(self._record_list)
+        return [record.plain() for record in self._canonical_records(records)]
 
-    def snapshot(self) -> dict[str, object]:
-        """当前有效记录的确定性快照（可序列化）。"""
-        with self._lock:
-            values = list(self._values.values())
-            mechanisms = list(self._mechanisms.values())
-            parameters = list(self._parameters.values())
-            features = list(self._features.values())
-        records = {
-            "values": sorted(
-                (self.record_plain(rec) for rec in values),
-                key=lambda item: (item["target"], item["instance"]),
-            ),
-            "mechanisms": sorted(
-                (self.record_plain(rec) for rec in mechanisms),
-                key=lambda item: (item["target"], item["instance"]),
-            ),
-            "parameters": sorted(
-                (self.record_plain(rec) for rec in parameters),
-                key=lambda item: item["target"],
-            ),
-            "features": sorted(
-                (self.record_plain(rec) for rec in features),
-                key=lambda item: (item["target"], item["instance"]),
-            ),
-        }
-        return records
+    def snapshot(self, frame: int) -> list[dict[str, object]]:
+        """当前生效计划投影（可序列化；``do list`` 用）。"""
+        return [entry.plain() for entry in self.active_plans(frame)]
 
-    # ── 持久化（P4 完整存档：干预表随 W_t 落盘）──────────────
+    # ── 持久化（计划 = 实验上下文；记录 = 已发生前缀）────────
 
-    def persist(self) -> list[dict[str, object]]:
-        """当前**有效**记录的确定性列表（存档载荷）。
+    def persist(self) -> dict[str, object]:
+        """确定性载荷：``{"plan": [...], "records": [...]}``。
 
-        只含活跃记录（已被覆盖/清除的历史不落盘）：生效状态才是
-        W_t 的一部分，历史由 P3 trace 与研究 API 提供。
-        排序键 ``(applied_at, seq)`` 即登记顺序；``applied_at`` 缺失
-        （无时钟注入的测试表）排在最前，仍保持登记顺序。
+        - 计划按登记顺序（seq）保留，撤销已固化为 ``stop_frame``；
+        - 记录按 ``(frame, 空间, 目标, 实例, seq)`` 规范排序，跨运行逐位一致。
         """
         with self._lock:
-            records = (
-                list(self._values.values())
-                + list(self._mechanisms.values())
-                + list(self._parameters.values())
-                + list(self._features.values())
+            plan = sorted(
+                self._plan,
+                key=lambda item: item.seq if item.seq is not None else -1,
             )
-        records.sort(
-            key=lambda record: (
-                record.applied_at if record.applied_at is not None else -1,
-                record.seq if record.seq is not None else -1,
-            )
-        )
-        return [self.record_plain(record) for record in records]
+            records = self._canonical_records(list(self._record_list))
+        return {
+            "plan": [entry.plain() for entry in plan],
+            "records": [record.plain() for record in records],
+        }
 
     def restore(
         self,
-        payload: Sequence[Mapping[str, object]],
+        payload: object,
         *,
         instance_loader: Callable[[str, tuple], bool] | None = None,
     ) -> int:
-        """从存档载荷恢复干预表（读档路径，fail-closed）。
+        """从存档载荷恢复（读档路径，fail-closed，全量校验后落表）。
 
-        每条记录重新走 :meth:`commit` 的六条执行前校验，再回填
-        ``seq`` / ``applied_at`` —— 存档不是绕过校验的后门：目标未接线、
-        值越界、权限不符的记录一律拒绝加载。
+        两阶段：先对全部计划/记录做完整校验（含重复记录检测），任一
+        条目非法即抛出；校验全部通过后才统一落表（此后不再失败）——
+        失败不会在时间线里留下半成品。
 
         Args:
-            payload: :meth:`persist` 输出的记录列表（``record_plain`` 视图）。
-            instance_loader: 可选实例装载器 ``(节点, 实例) -> 是否可用``。
-                读档时 LRU 缓存可能已淘汰干预目标所在的 chunk，装载器
-                负责把它拉回来再校验；仍不可用则拒绝（fail-closed）。
-                仅本调用期间生效——运行期登记不做隐式加载。
+            payload: :meth:`persist` 输出的映射。
+            instance_loader: 可选实例装载器；仅本调用期间生效。
 
         Returns:
-            实际恢复的记录数。
+            实际恢复的条目数（计划 + 记录）。
 
         Raises:
-            ValueError: 载荷非列表、字段缺失/多余/类型非法，或任一记录
-                未通过登记校验。
+            ValueError: 载荷结构或任一条目校验失败（整体拒绝）。
         """
-        if not isinstance(payload, (list, tuple)):
-            raise ValueError(f"干预载荷必须为列表: {type(payload).__name__}")
-        records = [
-            self._record_from_plain(item) for item in payload
-        ]
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"干预载荷必须为映射: {type(payload).__name__}")
+        extra = sorted(set(payload) - {"plan", "records"})
+        if extra:
+            raise ValueError(f"干预载荷含未知字段: {extra}")
+        plan_items = payload.get("plan", [])
+        record_items = payload.get("records", [])
+        if not isinstance(plan_items, (list, tuple)):
+            raise ValueError("干预载荷 plan 必须为列表")
+        if not isinstance(record_items, (list, tuple)):
+            raise ValueError("干预载荷 records 必须为列表")
+        plans = [self._plan_from_plain(item) for item in plan_items]
+        records = [self._record_from_plain(item) for item in record_items]
+
         previous = self._instance_exists
         if instance_loader is not None:
             def _with_loader(node_id: str, instance: tuple) -> bool:
@@ -439,318 +446,340 @@ class InterventionTable:
                 return previous(node_id, instance) if previous else False
             self._instance_exists = _with_loader
         try:
-            # 先全部解析校验，再落表：任一条非法即整体拒绝（不留半成品表）。
-            # 记录携带存档中的 seq/applied_at，commit 盖章后回填原值——
-            # 登记时刻的单一来源仍是 commit，存档只是恢复既成事实。
             with self._lock:
+                # 阶段一：全量校验（不改动时间线）
+                keys: set[tuple] = set()
                 for record in records:
-                    stored = self.commit(record)
-                    object.__setattr__(stored, "applied_at", record.applied_at)
-                    object.__setattr__(stored, "seq", record.seq)
-                self._seq = max(
-                    [self._seq] + [rec.seq for rec in records if rec.seq],
-                )
+                    key = (record.target_space, record.target, record.instance)
+                    if (key, record.frame) in keys:
+                        raise ValueError(
+                            f"重复记录: {record.target_space}/{record.target} "
+                            f"@{record.frame}"
+                        )
+                    keys.add((key, record.frame))
+                for entry in plans:
+                    self._validate(entry, allow_empty=True)
+                for record in records:
+                    self._validate_record(record)
+                # 阶段二：统一落表（此后不再有失败点）
+                for entry in plans:
+                    self._plan_seq = max(self._plan_seq, entry.seq or 0)
+                    self._plan.append(entry)
+                for record in records:
+                    self._record_seq = max(self._record_seq, record.seq or 0)
+                    key = (
+                        record.target_space, record.target, record.instance,
+                    )
+                    self._records.setdefault(key, {})[record.frame] = record
+                    self._record_list.append(record)
         finally:
             self._instance_exists = previous
-        return len(records)
+        return len(plans) + len(records)
 
-    def _record_from_plain(self, item: object) -> InterventionRecord:
-        """存档记录视图 → 待登记记录（字段校验全部 fail-closed）。"""
-        if not isinstance(item, Mapping):
-            raise ValueError(f"干预记录必须为映射: {item!r}")
-        known = {
-            "target_space", "target", "instance", "rep", "value", "mechanism",
-            "frame_t0", "duration", "version", "environment_change",
-            "applied_at", "seq",
-        }
-        extra = sorted(set(item) - known)
-        if extra:
-            raise ValueError(f"干预记录含未知字段: {extra}")
-        missing = sorted({
-            "target_space", "target", "rep", "frame_t0", "version",
-            "applied_at", "seq",
-        } - set(item))
-        if missing:
-            raise ValueError(f"干预记录缺少字段: {missing}")
-        raw_instance = item.get("instance", ())
+    # ── 内部：规范化与序列化 ───────────────────────────────
+
+    @staticmethod
+    def _replace_stop(
+        entry: PlannedIntervention, stop_frame: int,
+    ) -> PlannedIntervention:
+        replacement = PlannedIntervention(
+            target_space=entry.target_space,
+            target=entry.target,
+            instance=entry.instance,
+            value=entry.value,
+            start_frame=entry.start_frame,
+            stop_frame=stop_frame,
+            source=entry.source,
+            version=entry.version,
+        )
+        object.__setattr__(replacement, "seq", entry.seq)
+        object.__setattr__(replacement, "submitted_at", entry.submitted_at)
+        return replacement
+
+    @staticmethod
+    def _normalize(entry: PlannedIntervention) -> PlannedIntervention:
+        raw_instance = entry.instance
         if raw_instance is None:
             raw_instance = ()
         if not isinstance(raw_instance, (tuple, list)):
-            raise ValueError(f"干预实例必须为列表或元组: {raw_instance!r}")
+            raise ValueError(
+                f"实例必须为元组或列表（None 视作空元组）: {raw_instance!r}"
+            )
+        return PlannedIntervention(
+            target_space=entry.target_space,
+            target=entry.target,
+            instance=tuple(raw_instance),
+            value=(
+                dict(entry.value)
+                if isinstance(entry.value, dict)
+                else entry.value
+            ),
+            start_frame=entry.start_frame,
+            stop_frame=entry.stop_frame,
+            source=entry.source,
+            version=entry.version,
+        )
+
+    @staticmethod
+    def _canonical_records(
+        records: Sequence[InterventionRecord],
+    ) -> list[InterventionRecord]:
+        return sorted(
+            records,
+            key=lambda item: (
+                item.frame,
+                item.target_space,
+                item.target,
+                item.instance,
+                item.seq if item.seq is not None else -1,
+            ),
+        )
+
+    @staticmethod
+    def _plan_from_plain(item: object) -> PlannedIntervention:
+        if not isinstance(item, Mapping):
+            raise ValueError(f"计划条目必须为映射: {item!r}")
+        known = {
+            "target_space", "target", "instance", "value", "start_frame",
+            "stop_frame", "source", "version", "seq", "submitted_at",
+        }
+        extra = sorted(set(item) - known)
+        if extra:
+            raise ValueError(f"计划条目含未知字段: {extra}")
+        missing = sorted(known - set(item))
+        if missing:
+            raise ValueError(f"计划条目缺少字段: {missing}")
+        raw_instance = item["instance"]
+        if not isinstance(raw_instance, (list, tuple)):
+            raise ValueError(f"计划实例必须为列表或元组: {raw_instance!r}")
         seq = item["seq"]
         if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
-            raise ValueError(f"干预记录 seq 必须为正整数: {seq!r}")
+            raise ValueError(f"计划 seq 必须为正整数: {seq!r}")
+        submitted_at = item["submitted_at"]
+        if submitted_at is not None and (
+            not isinstance(submitted_at, int)
+            or isinstance(submitted_at, bool)
+            or submitted_at < 0
+        ):
+            raise ValueError(
+                f"计划 submitted_at 必须为 None 或非负整数 tick: {submitted_at!r}"
+            )
+        value = item["value"]
+        entry = PlannedIntervention(
+            target_space=item["target_space"],
+            target=item["target"],
+            instance=tuple(raw_instance),
+            value=dict(value) if isinstance(value, dict) else value,
+            start_frame=item["start_frame"],
+            stop_frame=item["stop_frame"],
+            source=item["source"],
+            version=item["version"],
+        )
+        object.__setattr__(entry, "seq", seq)
+        object.__setattr__(entry, "submitted_at", submitted_at)
+        return entry
+
+    @staticmethod
+    def _record_from_plain(item: object) -> InterventionRecord:
+        if not isinstance(item, Mapping):
+            raise ValueError(f"记录条目必须为映射: {item!r}")
+        known = {
+            "frame", "target_space", "target", "instance", "value",
+            "source", "version", "plan_seq", "applied_at", "seq",
+        }
+        extra = sorted(set(item) - known)
+        if extra:
+            raise ValueError(f"记录条目含未知字段: {extra}")
+        missing = sorted(known - set(item))
+        if missing:
+            raise ValueError(f"记录条目缺少字段: {missing}")
+        raw_instance = item["instance"]
+        if not isinstance(raw_instance, (list, tuple)):
+            raise ValueError(f"记录实例必须为列表或元组: {raw_instance!r}")
+        for label in ("frame", "seq"):
+            value = item[label]
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"记录 {label} 必须为非负整数: {value!r}")
         applied_at = item["applied_at"]
-        if (
+        if applied_at is not None and (
             not isinstance(applied_at, int)
             or isinstance(applied_at, bool)
             or applied_at < 0
         ):
             raise ValueError(
-                f"干预记录 applied_at 必须为非负整数 tick: {applied_at!r}"
+                f"记录 applied_at 必须为 None 或非负整数: {applied_at!r}"
             )
-        mechanism = None
-        mechanism_id = item.get("mechanism")
-        if mechanism_id is not None:
-            if not isinstance(mechanism_id, str):
-                raise ValueError(f"机制 ID 必须为字符串: {mechanism_id!r}")
-            mechanism = self._registry.mechanisms.get(mechanism_id)
-            if mechanism is None:
-                raise ValueError(f"替换机制未登记: {mechanism_id}")
-        version = item["version"]
-        if not isinstance(version, str):
-            raise ValueError(f"干预版本号必须为字符串: {version!r}")
-        duration = item.get("duration")
-        if duration is not None and (
-            not isinstance(duration, int)
-            or isinstance(duration, bool)
-            or duration < 1
+        if item["seq"] < 1:
+            raise ValueError(f"记录 seq 必须为正整数: {item['seq']!r}")
+        plan_seq = item["plan_seq"]
+        if plan_seq is not None and (
+            not isinstance(plan_seq, int)
+            or isinstance(plan_seq, bool)
+            or plan_seq < 1
         ):
-            raise ValueError(f"干预时长必须为 None 或正整数: {duration!r}")
+            raise ValueError(f"记录 plan_seq 必须为 None 或正整数: {plan_seq!r}")
+        value = item["value"]
         record = InterventionRecord(
+            frame=item["frame"],
             target_space=item["target_space"],
             target=item["target"],
             instance=tuple(raw_instance),
-            rep=item["rep"],
-            value=item.get("value"),
-            mechanism=mechanism,
-            frame_t0=item["frame_t0"],
-            duration=duration,
-            version=version,
+            value=dict(value) if isinstance(value, dict) else value,
+            source=item["source"],
+            version=item["version"],
+            plan_seq=plan_seq,
         )
-        # applied_at/seq 为 commit 盖章字段（init=False）：恢复时先解析
-        # 出来挂在记录上，commit 后由 restore 回填（单一来源不变）。
-        object.__setattr__(record, "applied_at", applied_at)
-        object.__setattr__(record, "seq", seq)
+        object.__setattr__(record, "applied_at", item["applied_at"])
+        object.__setattr__(record, "seq", item["seq"])
         return record
 
-    # ── 内部 ───────────────────────────────────────────────
+    # ── 内部：执行前校验 ───────────────────────────────────
 
-    @staticmethod
-    def _active(record: InterventionRecord, frame: int) -> bool:
-        if frame < record.frame_t0:
-            return False
-        if record.duration is None:
-            return True
-        return frame < record.frame_t0 + record.duration
-
-    @staticmethod
-    def record_plain(record: InterventionRecord) -> dict[str, object]:
-        """单条记录的可序列化视图（快照/历史/研究 API 共用）。"""
-        return {
-            "target_space": record.target_space,
-            "target": record.target,
-            "instance": list(record.instance),
-            "rep": record.rep,
-            "value": record.value,
-            "mechanism": (
-                record.mechanism.mechanism_id
-                if record.mechanism is not None
-                else None
-            ),
-            "frame_t0": record.frame_t0,
-            "duration": record.duration,
-            "version": record.version,
-            "environment_change": record.environment_change,
-            "applied_at": record.applied_at,
-            "seq": record.seq,
-        }
-
-    # ── 执行前校验（§7 六条）───────────────────────────────
-
-    def _validate(self, record: InterventionRecord) -> None:
-        if record.target_space not in INTERVENTION_TARGET_SPACES:
-            raise ValueError(f"非法目标空间: {record.target_space!r}")
-        if record.rep not in INTERVENTION_REP_KINDS:
-            raise ValueError(f"非法替换规格: {record.rep!r}")
-        if record.rep not in _REP_BY_SPACE[record.target_space]:
-            raise ValueError(
-                f"目标空间 {record.target_space} 不允许替换规格 {record.rep!r}"
-            )
-        if (
-            not isinstance(record.frame_t0, int)
-            or isinstance(record.frame_t0, bool)
-            or record.frame_t0 < 0
+    def _validate(
+        self,
+        entry: PlannedIntervention,
+        *,
+        allow_empty: bool = False,
+    ) -> None:
+        if entry.target_space not in INTERVENTION_TARGET_SPACES:
+            raise ValueError(f"非法目标空间: {entry.target_space!r}")
+        for label, value in (
+            ("start_frame", entry.start_frame),
+            ("stop_frame", entry.stop_frame),
         ):
+            if value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"{label} 必须为非负整数 tick: {value!r}")
+        if entry.stop_frame is not None:
+            if entry.stop_frame < entry.start_frame or (
+                entry.stop_frame == entry.start_frame and not allow_empty
+            ):
+                raise ValueError(
+                    f"窗口为空: [{entry.start_frame}, {entry.stop_frame})"
+                )
+        duration_class = (
+            entry.duration_class() if entry.stop_frame is not None else FOREVER
+        )
+        if duration_class not in _DURATION_RULES[entry.target_space]:
             raise ValueError(
-                f"生效帧必须为非负整数 tick: {record.frame_t0!r}"
+                f"{entry.target_space} 不支持时长类别 {duration_class}"
+                f"（允许: {sorted(_DURATION_RULES[entry.target_space])}）"
             )
-        duration_class = _duration_class(record.duration)
-        if duration_class not in _DURATION_RULES[
-            (record.target_space, record.rep)
-        ]:
-            raise ValueError(
-                f"{record.target_space}/{record.rep} 不支持时长类别 "
-                f"{duration_class}（允许: "
-                f"{sorted(_DURATION_RULES[(record.target_space, record.rep)])}）"
-            )
-        if not record.target:
+        if not isinstance(entry.target, str) or not entry.target:
             raise ValueError("干预目标不能为空")
-
-        if record.target_space == "node":
-            self._validate_node(record)
-        elif record.target_space == "parameter":
-            self._validate_parameter(record)
+        if not isinstance(entry.source, str):
+            raise ValueError(f"来源标识必须为字符串: {entry.source!r}")
+        if not isinstance(entry.version, str):
+            raise ValueError(f"干预版本号必须为字符串: {entry.version!r}")
+        if entry.target_space == "node":
+            self._validate_node(entry)
+        elif entry.target_space == "parameter":
+            self._validate_parameter(entry)
         else:
-            self._validate_feature(record)
+            self._validate_feature(entry)
 
-    def _validate_node(self, record: InterventionRecord) -> None:
+    def _validate_node(self, entry: PlannedIntervention) -> None:
         registry = self._registry
-        if record.target not in registry.nodes:
-            raise ValueError(f"目标分量未声明: {record.target}")
-        node = registry.nodes[record.target]
-        # 可达性：已声明但引擎未执行的生成点拒绝登记（防静默无效干预）
-        if record.target not in registry.wired_nodes:
+        if entry.target not in registry.nodes:
+            raise ValueError(f"目标分量未声明: {entry.target}")
+        node = registry.nodes[entry.target]
+        if entry.target not in registry.wired_nodes:
             raise ValueError(
-                f"目标分量未接线（当前引擎不执行该生成点）: {record.target}"
+                f"目标分量未接线（当前引擎不执行该生成点）: {entry.target}"
             )
-        self._validate_node_instance(record, node)
-        # 权限：值覆盖单帧→node、窗口/长期→persistent、机制覆盖→mechanism
-        required = _required_intervention(record)
+        self._validate_instance(entry.target, entry.instance, node)
+        required = (
+            "node" if entry.duration_class() == SINGLE else "persistent"
+        )
         if required not in node.access.interventions:
             raise ValueError(
-                f"{record.target} 不允许 {required} 干预 "
+                f"{entry.target} 不允许 {required} 干预 "
                 f"(权限={node.access.interventions})"
             )
-        if record.rep == "value":
-            if record.value is None:
-                raise ValueError("值干预必须提供替换值")
-            registry.require_node_value(record.target, record.value)
-        else:
-            self._validate_mechanism(record, node)
+        if entry.value is None:
+            raise ValueError("值干预必须提供替换值")
+        registry.require_node_value(entry.target, entry.value)
 
-    def _validate_node_instance(
-        self, record: InterventionRecord, node: NodeSpec,
+    def _validate_instance(
+        self, target: str, instance: tuple, node: NodeSpec,
     ) -> None:
-        """实例必须匹配节点实例域且真实存在（§7 目标分量实例存在）。
-
-        实例域形状不符或实例不存在均拒绝，防"登记成功但求值点永不命中"。
-        """
         kind = node.instance_domain.kind
         if kind == "global_singleton":
-            if record.instance != ():
+            if instance != ():
                 raise ValueError(
-                    f"{record.target} 为全局分量，实例必须为空元组: "
-                    f"{record.instance}"
+                    f"{target} 为全局分量，实例必须为空元组: {instance}"
                 )
             return
-        if len(record.instance) != len(node.instance_domain.axes):
+        if len(instance) != len(node.instance_domain.axes):
             raise ValueError(
-                f"{record.target} 实例必须匹配实例域 {kind} "
-                f"axes={node.instance_domain.axes}: {record.instance}"
+                f"{target} 实例必须匹配实例域 {kind} "
+                f"axes={node.instance_domain.axes}: {instance}"
             )
         if not all(
             isinstance(axis, int) and not isinstance(axis, bool)
-            for axis in record.instance
+            for axis in instance
         ):
-            raise ValueError(
-                f"{record.target} 实例坐标必须为整数: {record.instance}"
-            )
+            raise ValueError(f"{target} 实例坐标必须为整数: {instance}")
         if (
             self._instance_exists is not None
-            and not self._instance_exists(record.target, record.instance)
+            and not self._instance_exists(target, instance)
         ):
-            raise ValueError(
-                f"目标实例不存在: {record.target} {record.instance}"
-            )
+            raise ValueError(f"目标实例不存在: {target} {instance}")
 
-    def _validate_mechanism(
-        self, record: InterventionRecord, node: NodeSpec
-    ) -> None:
+    def _validate_parameter(self, entry: PlannedIntervention) -> None:
         registry = self._registry
-        mechanism = record.mechanism
-        if not isinstance(mechanism, MechanismSpec):
-            raise ValueError("机制干预必须提供 MechanismSpec")
-        if mechanism.output != record.target:
-            raise ValueError(
-                f"替换机制输出 {mechanism.output} != 目标 {record.target}"
-            )
-        try:
-            original = registry.mechanism_for(record.target)
-        except KeyError:
-            raise ValueError(f"目标节点无原机制: {record.target}") from None
-        # 父集必须不越出原机制（替换规律不改读入分量集合）
-        original_parents = {parent.parent for parent in original.parents}
-        new_parents = {parent.parent for parent in mechanism.parents}
-        extra = new_parents - original_parents
-        if extra:
-            raise ValueError(
-                f"替换机制读入未声明的父分量: {sorted(extra)}"
-            )
-        # CRN 随机源契约：不得与无关机制声明的随机源重叠
-        # （可复用原机制地址、可新增全新地址；shared_by 声明的共享除外）
-        claimed = {binding.source for binding in mechanism.random_sources}
-        others: set[str] = set()
-        for other in registry.mechanisms.values():
-            if other.mechanism_id == original.mechanism_id:
-                continue
-            for binding in other.random_sources:
-                if binding.source not in claimed:
-                    continue
-                source_decl = registry.exogenous_sources.get(binding.source)
-                shared = (
-                    source_decl.shared_by
-                    if source_decl is not None
-                    else ()
-                )
-                if (
-                    other.mechanism_id not in shared
-                    and original.mechanism_id not in shared
-                ):
-                    others.add(binding.source)
-        if others:
-            raise ValueError(
-                f"替换机制随机源与无关机制重叠: {sorted(others)}"
-            )
-
-    def _validate_parameter(self, record: InterventionRecord) -> None:
-        registry = self._registry
-        if record.target not in registry.parameters:
-            raise ValueError(f"目标参数未声明: {record.target}")
-        if record.target not in registry.wired_parameters:
+        if entry.target not in registry.parameters:
+            raise ValueError(f"目标参数未声明: {entry.target}")
+        if entry.target not in registry.wired_parameters:
             raise ValueError(
                 f"目标参数未被已接线机制消费（环境变化不会生效）: "
-                f"{record.target}"
+                f"{entry.target}"
             )
-        parameter = registry.parameters[record.target]
+        parameter = registry.parameters[entry.target]
         if not parameter.intervention_allowed:
-            raise ValueError(
-                f"参数不允许干预（环境变化）: {record.target}"
-            )
-        if record.value is None:
+            raise ValueError(f"参数不允许干预（环境变化）: {entry.target}")
+        if entry.value is None:
             raise ValueError("参数干预必须提供替换值")
-        registry.require_parameter_value(record.target, record.value)
+        registry.require_parameter_value(entry.target, entry.value)
 
-    @staticmethod
-    def _validate_feature(record: InterventionRecord) -> None:
-        if not isinstance(record.target, str) or not record.target.strip():
+    def _validate_feature(self, entry: PlannedIntervention) -> None:
+        if not isinstance(entry.target, str) or not entry.target.strip():
             raise ValueError("特征核控制干预必须指明特征类型")
-        if len(record.instance) != 2 or not all(
+        if len(entry.instance) != 2 or not all(
             isinstance(axis, int) and not isinstance(axis, bool)
-            for axis in record.instance
+            for axis in entry.instance
         ):
             raise ValueError("特征核控制干预必须指明整数 (cx, cy) 实例")
 
-
-def _required_intervention(record: InterventionRecord) -> str:
-    """干预所需的 ``AccessPolicy.interventions`` 条目（唯一映射处）。
-
-    机制替换改的是规律 → mechanism；值替换单帧只替换一次生成结果 →
-    node；值替换窗口/长期是"持续钉住" → persistent（影响范围更大）。
-    """
-    if record.rep == "mechanism":
-        return "mechanism"
-    return "node" if record.duration == 1 else "persistent"
+    def _validate_record(self, record: InterventionRecord) -> None:
+        """恢复记录时校验目标与值域（存档不是绕过校验的后门）。"""
+        entry = PlannedIntervention(
+            target_space=record.target_space,
+            target=record.target,
+            instance=record.instance,
+            value=record.value,
+            start_frame=record.frame,
+            stop_frame=None,
+            source=record.source,
+            version=record.version,
+        )
+        if record.target_space == "node":
+            self._validate_node(entry)
+        elif record.target_space == "parameter":
+            self._validate_parameter(entry)
+        else:
+            self._validate_feature(entry)
 
 
 __all__ = [
     "FOREVER",
-    "INTERVENTION_REP_KINDS",
     "INTERVENTION_TARGET_SPACES",
     "SINGLE",
     "WINDOW",
     "InterventionRecord",
-    "InterventionTable",
+    "InterventionTimeline",
     "NodeResolution",
+    "PlannedIntervention",
     "default_duration",
 ]

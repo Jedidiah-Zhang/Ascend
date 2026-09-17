@@ -58,6 +58,7 @@ wine "$WIN_PYTHON" -m nuitka \
   --include-package=cryptography \
   --include-data-files="$WINE_ROOT\\backend\\ascend\\space\\*.dll=ascend\\space\\" \
   --include-data-files="$WINE_ROOT\\backend\\ascend\\world_tree\\schema.sqlite.sql=ascend\\world_tree\\" \
+  --include-data-files="$WINE_ROOT\\backend\\ascend\\causal\\declarations\\*.json=ascend\\causal\\declarations\\" \
   --nofollow-import-to=pytest \
   --nofollow-import-to=tests \
   --product-name="Ascend" \

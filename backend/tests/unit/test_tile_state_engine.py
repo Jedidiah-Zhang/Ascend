@@ -1,521 +1,283 @@
-"""地形状态引擎测试 — 三通道驱动 + 统一对账出口 + 阈值事件。
+"""地形状态引擎测试 — 声明更新点的单一积分器。
 
-Coverage: TileStateEngine（生命周期/脉冲/降水涂抹/快进补结算/
-阈值穿越/聚合）。天气用真实 WeatherEngine（固定 seed，确定性）。
+覆盖：注册/就绪/注销、每小时积分与游标、逐步推进 ≡ 一次性补算、
+无天气不推进（fail-closed）、阈值穿越成对记录、聚合派生缓存、
+脏标记与事件形状。
 """
+
+from types import SimpleNamespace
 
 import pytest
 
-from ascend.config import GAME_DAY
-from ascend.space.state_defs import STATE_TYPES
+from ascend.config import GAME_HOUR
+from ascend.runtime import FrameScheduler, FrameStateStore
 from ascend.space.tile_grid import TileGrid
-from ascend.space.tile_state import TileStateEngine
+from ascend.space.tile_state import TileStateEngine, state_evolve
 from ascend.space.terrain import TerrainType
 from ascend.time import WorldClock
-from ascend.weather.weather_engine import WeatherEngine, WeatherParams
-from ascend.space.climate import ClimateZone
-from ascend.world_tree import Event, WorldTree
+from ascend.world_tree import WorldTree
 
 
-def _make_grid(water: bool = False) -> TileGrid:
-    """全 GRASSLAND 网格（可选含水面 tile）。"""
-    t = int(TerrainType.WATER) if water else int(TerrainType.GRASSLAND)
-    return TileGrid(data=[t] * 40000)
+class _FakeWeather:
+    """确定性伪天气：每小时可配置 (温度, 雨强 mm/h)；None=未注册。"""
+
+    def __init__(self) -> None:
+        self.hours: dict[int, tuple[float, float]] = {}
+        self.registered = True
+        self.lookup: list[tuple[int, int]] = []
+
+    def get_weather(self, cx: int, cy: int, t: int):
+        if not self.registered:
+            return None
+        self.lookup.append((cx, cy, t))
+        hour = t // GAME_HOUR
+        temp, rain = self.hours.get(hour, (10.0, 0.0))
+        return SimpleNamespace(temperature=temp, rainfall=rain)
 
 
-def _chunk(cx=0, cy=0, grid=None):
-    return type("ChunkStub", (), {"cx": cx, "cy": cy, "tile_grid": grid, "settled_day": 0})()
+def _chunk(cx: int = 0, cy: int = 0, grid: TileGrid | None = None):
+    """引擎级最小 chunk 替身（引擎只用坐标/网格/游标/脏标记）。"""
+    return SimpleNamespace(
+        cx=cx, cy=cy,
+        tile_grid=grid if grid is not None else TileGrid(),
+        integrated_through=0,
+        dirty=False,
+    )
 
 
-def _publish(wt: WorldTree, event_type: str, timestamp: int, data=None) -> None:
-    wt.publish(Event(
-        timestamp=timestamp,
-        location=(0, 0, None, None),
-        initiator_type="system",
-        initiator_id="test",
-        affected=[],
-        event_type=event_type,
-        data=data or {},
-    ))
-
-
-@pytest.fixture()
+@pytest.fixture
 def env():
-    """引擎 + 天气 + 时钟 + 世界树（seed 固定，确定性）。"""
+    clock = WorldClock(epoch=0)
+    weather = _FakeWeather()
     wt = WorldTree()
-    clock = WorldClock()
-    weather = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-    bl = WeatherParams(10.0, 800.0, 10.0, 100.0, 60.0, 5.0)
-    weather.register_chunk(0, 0, bl, ClimateZone.TEMPERATE_FOREST, 10.0)
     engine = TileStateEngine(clock, weather, wt=wt)
-    yield SimpleEnv(wt, clock, weather, engine)
-    engine._wt = None  # 防残留订阅
-    weather.shutdown()
+    events: list = []
+    unsub = wt.subscribe("state_threshold_crossed", events.append)
+    yield SimpleNamespace(
+        clock=clock, weather=weather, engine=engine, events=events,
+    )
+    unsub()
+    engine.shutdown()
 
 
-class SimpleEnv:
-    def __init__(self, wt, clock, weather, engine):
-        self.wt = wt
-        self.clock = clock
-        self.weather = weather
-        self.engine = engine
-
-    def subscribe(self, event_type):
-        events = []
-        self.wt.subscribe(event_type, lambda e: events.append(e))
-        return events
-
-
-class TestLifecycle:
-    def test_register_and_unregister(self, env):
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        assert env.engine.aggregates(0, 0)  # 已注册可查聚合
+class TestRegistration:
+    def test_aggregates_requires_registration(self, env):
+        assert env.engine.aggregates(0, 0) == {}
+        env.engine.register_chunk(_chunk())
+        assert env.engine.aggregates(0, 0)
+        assert env.engine.aggregates(9, 9) == {}
         env.engine.unregister_chunk(0, 0)
         assert env.engine.aggregates(0, 0) == {}
 
-    def test_unregistered_safe(self, env):
-        assert env.engine.aggregates(9, 9) == {}
-        env.engine.on_tiles_ready(9, 9)  # 不抛
-        env.engine.settle_gap(9, 9, 50)
-
-    def test_register_sets_baseline_tier(self, env):
-        """注册时初始档位 = 当前状态档位（不误报穿越）。"""
-        grid = _make_grid()
-        grid.state_raw("snow")[0] = 60  # 已是高档
-        env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(GAME_DAY)
-        _publish(env.wt, "hour_change", env.clock.time)
-        events = env.subscribe("state_threshold_crossed")
-        assert len(events) == 0
-
-
-class TestSettleOnReady:
-    def test_on_tiles_ready_settles_history(self, env):
-        """tile 就绪后从 day1 结算到现在（无事件、无副作用）。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(120 * GAME_DAY)  # 玩家已玩到 day 121
-        env.engine.on_tiles_ready(0, 0)
-        assert env.engine.aggregates(0, 0)["mean_snow"] >= 0
-        # 结算后数据直写生效（无叙事事件污染）
-        events = env.subscribe("state_threshold_crossed")
-        _publish(env.wt, "hour_change", env.clock.time)
-        env.clock.skip(GAME_DAY)
-        _publish(env.wt, "hour_change", env.clock.time)
-        assert len(events) == 0 or all(
-            e.event_type != "state_threshold_crossed" for e in events
-        )
-
-    def test_on_tiles_ready_idempotent(self, env):
-        """重复 on_tiles_ready 不重复结算（后一次无变化）。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(30 * GAME_DAY)
-        env.engine.on_tiles_ready(0, 0)
-        snap = grid.to_bytes()
-        env.engine.on_tiles_ready(0, 0)
-        assert grid.to_bytes() == snap
-
-    def test_on_tiles_ready_day1_noop(self, env):
-        """世界开端（day 1）就绪：空结算（无史前历史）。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        snap = grid.to_bytes()
-        env.engine.on_tiles_ready(0, 0)
-        assert grid.to_bytes() == snap
-
-
-class TestHourPulse:
-    def test_hour_pulse_evolves_states(self, env):
-        """小时脉冲按实时天气演化（沉积 + 衰减）。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(GAME_DAY)
-        for h in range(24):
-            _publish(env.wt, "hour_change", env.clock.time + h * 7200)
-        # 有雨时段 → 湿润沉积；无雨 → 排水衰减
+    def test_aggregates_shape(self, env):
+        env.engine.register_chunk(_chunk())
         agg = env.engine.aggregates(0, 0)
-        assert 0 <= agg["mean_moisture"] <= 100
+        assert set(agg) == {"water_frozen", "mean_snow", "mean_moisture"}
+        assert agg["water_frozen"] is False
+        assert agg["mean_snow"] == 0.0
 
-    def test_hour_pulse_no_weather_chunk(self, env):
-        """天气未注册的 chunk：脉冲空转不抛。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(cx=7, cy=7, grid=grid))
-        env.clock.skip(GAME_DAY)
-        _publish(env.wt, "hour_change", env.clock.time)
-        assert env.engine.aggregates(7, 7)
-
-
-class TestPrecipChannel:
-    def test_precip_start_paints_region(self, env):
-        """降水开始 → 区域 chunk 即时沉积（不等脉冲）。"""
-        grid = _make_grid()
+    def test_water_frozen_detection(self, env):
+        grid = TileGrid()
+        grid.raw_data()[0] = int(TerrainType.WATER)
+        grid.set_state("ice", 0, 0, 5)
         env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(GAME_DAY)
-        _publish(env.wt, "precipitation_start", env.clock.time, {
-            "precip_type": "rain",
-            "intensity": 40.0,
-            "time_of_day": 6 * 7200,
-            "chunks": ((0, 0), (1, 0), (0, 1)),
-        })
-        agg = env.engine.aggregates(0, 0)
-        assert agg["mean_moisture"] > 0
+        assert env.engine.aggregates(0, 0)["water_frozen"] is True
 
-    def test_precip_start_snow_type(self, env):
-        """雪型降水 → snow 状态沉积。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(GAME_DAY)
-        _publish(env.wt, "precipitation_start", env.clock.time, {
-            "precip_type": "snow",
-            "intensity": 30.0,
-            "time_of_day": 6 * 7200,
-            "chunks": ((0, 0),),
-        })
-        agg = env.engine.aggregates(0, 0)
-        assert agg["mean_snow"] > 0
-
-    def test_precip_unregistered_chunk_ignored(self, env):
-        """降水区域含未注册 chunk：忽略不抛。"""
-        env.clock.skip(GAME_DAY)
-        _publish(env.wt, "precipitation_start", env.clock.time, {
-            "precip_type": "rain", "intensity": 40.0,
-            "time_of_day": 0, "chunks": ((5, 5),),
-        })
-
-    def test_precip_stop_noop(self, env):
-        """降水停止：无沉积动作（状态不受影响）。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        snap = grid.to_bytes()
-        _publish(env.wt, "precipitation_stop", env.clock.time, {
-            "time_of_day": 0, "chunks": ((0, 0),),
-        })
-        assert grid.to_bytes() == snap
+    def test_unregister_all(self, env):
+        env.engine.register_chunk(_chunk())
+        env.engine.register_chunk(_chunk(1, 0))
+        env.engine.unregister_all()
+        assert env.engine.aggregates(0, 0) == {}
+        assert env.engine.aggregates(1, 0) == {}
 
 
-class TestSettleGap:
-    def test_day_change_fast_forward_settles(self, env):
-        """快进（skipped_days>0）→ 全部注册 chunk 补结算。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(200 * GAME_DAY)
-        _publish(env.wt, "day_change", env.clock.time, {
-            "day": 201, "previous_day": 1, "skipped_days": 200,
-            "elapsed_days": 200, "day_change_count": 1,
-        })
-        agg = env.engine.aggregates(0, 0)
-        assert agg["mean_snow"] >= 0
+class TestIntegration:
+    def test_on_tiles_ready_catches_up(self, env):
+        env.weather.hours = {h: (10.0, 1.0) for h in range(1, 4)}
+        chunk = _chunk()
+        env.engine.register_chunk(chunk)
+        env.clock.restore(time=3 * GAME_HOUR)
+        env.engine.on_tiles_ready(0, 0)
+        assert chunk.integrated_through == 3 * GAME_HOUR
+        assert sum(chunk.tile_grid.state_raw("moisture")) > 0
+        assert chunk.dirty is True
 
-    def test_day_change_no_skip_noop(self, env):
-        """日常日变（skipped=0）：不结算（小时脉冲已推进）。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        snap = grid.to_bytes()
-        _publish(env.wt, "day_change", env.clock.time, {
-            "day": 2, "previous_day": 1, "skipped_days": 0,
-            "elapsed_days": 1, "day_change_count": 1,
-        })
-        assert grid.to_bytes() == snap
+    def test_advance_before_boundary_is_noop(self, env):
+        chunk = _chunk()
+        env.engine.register_chunk(chunk)
+        env.engine.advance(GAME_HOUR - 1)
+        assert chunk.integrated_through == 0
+        assert sum(chunk.tile_grid.state_raw("moisture")) == 0
 
-    def test_settle_gap_power_idempotent(self, env):
-        """重复快进到同日：幂等（第二次无缺口）。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(90 * GAME_DAY)
-        _publish(env.wt, "day_change", env.clock.time, {
-            "day": 91, "previous_day": 1, "skipped_days": 90,
-            "elapsed_days": 90, "day_change_count": 1,
-        })
-        snap = grid.to_bytes()
-        _publish(env.wt, "day_change", env.clock.time, {
-            "day": 91, "previous_day": 91, "skipped_days": 0,
-            "elapsed_days": 90, "day_change_count": 1,
-        })
-        assert grid.to_bytes() == snap
+    def test_stepwise_equals_one_shot(self, env):
+        """逐步推进 ≡ 一次性补算（同一声明积分的路径一致性）。"""
+        env.weather.hours = {
+            h: (-5.0 if h % 2 else 12.0, 0.5 + 0.1 * h)
+            for h in range(1, 7)
+        }
+        stepwise = _chunk()
+        oneshot = _chunk(1, 0)
+        env.engine.register_chunk(stepwise)
+        env.engine.register_chunk(oneshot)
+        for hour in range(1, 7):
+            env.engine.advance(hour * GAME_HOUR)
+        env.engine.advance(6 * GAME_HOUR)
+        for key in ("moisture", "snow", "ice"):
+            assert list(stepwise.tile_grid.state_raw(key)) == \
+                list(oneshot.tile_grid.state_raw(key))
+        assert stepwise.integrated_through == oneshot.integrated_through
+
+    def test_one_hour_matches_kernel_reference(self, env):
+        """单小时积分与直接调用内核逐位一致（无额外路径）。"""
+        env.weather.hours = {1: (10.0, 2.0)}
+        chunk = _chunk()
+        env.engine.register_chunk(chunk)
+        env.engine.advance(GAME_HOUR)
+        reference = TileGrid()
+        precip = [[0.0], [0.0], [0.0]]
+        precip[0][0] = 2.0 * 24.0
+        state_evolve(reference, precip=precip, temp=[10.0], dt=1.0 / 24.0)
+        for key in ("moisture", "snow", "ice"):
+            assert list(chunk.tile_grid.state_raw(key)) == \
+                list(reference.state_raw(key))
+
+    def test_missing_weather_blocks_progress(self, env):
+        chunk = _chunk()
+        env.engine.register_chunk(chunk)
+        env.weather.registered = False
+        env.engine.advance(3 * GAME_HOUR)
+        assert chunk.integrated_through == 0
+        assert sum(chunk.tile_grid.state_raw("moisture")) == 0
+
+    def test_snow_and_moisture_split_by_temperature(self, env):
+        env.weather.hours = {1: (-10.0, 3.0)}
+        snow_chunk = _chunk()
+        env.engine.register_chunk(snow_chunk)
+        env.engine.advance(GAME_HOUR)
+        assert sum(snow_chunk.tile_grid.state_raw("snow")) > 0
+        assert sum(snow_chunk.tile_grid.state_raw("moisture")) == 0
+
+        env.weather.hours = {1: (-10.0, 3.0), 2: (10.0, 3.0)}
+        rain_chunk = _chunk(2, 0)
+        env.engine.register_chunk(rain_chunk)
+        env.engine.advance(2 * GAME_HOUR)
+        assert sum(rain_chunk.tile_grid.state_raw("snow")) > 0
+        assert sum(rain_chunk.tile_grid.state_raw("moisture")) > 0
 
 
 class TestThresholdEvents:
-    def test_snow_up_crossing(self, env):
-        """雪 max 升档 → up 事件（threshold=档位下界）。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(GAME_DAY)
-        events = env.subscribe("state_threshold_crossed")
-        # 数据直写（模拟积雪）：相对当前值 +60，对天气积累鲁棒
-        cur = grid.state_raw("snow")[0]
-        grid.state_raw("snow")[0] = cur + 60
-        _publish(env.wt, "hour_change", env.clock.time)
-        ups = [e for e in events if e.data["direction"] == "up"
-               and e.data["state"] == "snow"]
+    def test_up_and_down_crossings(self, env):
+        """雪跨 15：逐步推进下先升档（up）再融化跌破（down）。"""
+        env.weather.hours = {
+            1: (-10.0, 15.0),                    # 一小时沉积 15 → 升到档 1
+            **{h: (20.0, 0.0) for h in range(2, 12)},  # 高温融化
+        }
+        chunk = _chunk()
+        env.engine.register_chunk(chunk)
+        for hour in range(1, 12):
+            env.engine.advance(hour * GAME_HOUR)
+        directions = [(e.data["direction"], e.data["threshold"])
+                      for e in env.events]
+        assert ("up", 15) in directions
+        assert any(direction == "down" and threshold == 15
+                   for direction, threshold in directions)
+
+    def test_no_event_for_moisture(self, env):
+        """moisture 无阈值档：不产生穿越事件。"""
+        env.weather.hours = {h: (10.0, 5.0) for h in range(1, 4)}
+        env.engine.register_chunk(_chunk())
+        env.engine.advance(3 * GAME_HOUR)
+        assert env.events == []
+
+    def test_net_crossing_in_catch_up(self, env):
+        """一次性补算跨多档只发净变化一条，threshold=升到的档下界。"""
+        env.weather.hours = {h: (-10.0, 40.0) for h in range(1, 3)}
+        chunk = _chunk()
+        env.engine.register_chunk(chunk)
+        env.engine.advance(2 * GAME_HOUR)
+        ups = [e for e in env.events if e.data["direction"] == "up"]
         assert len(ups) == 1
-        assert ups[0].data["threshold"] == 50
-        assert ups[0].data["value"] >= cur + 60, "事件值含发布时天气积累（只增）"
-        assert ups[0].data["cx"] == 0 and ups[0].data["cy"] == 0
+        assert ups[0].data["threshold"] in (30, 50)
 
-    def test_snow_down_crossing(self, env):
-        """雪 max 降档 → down 事件。"""
-        grid = _make_grid()
-        grid.state_raw("snow")[0] = 60  # 模拟积雪（天气叠加无妨）
+    def test_event_shape(self, env):
+        env.weather.hours = {1: (-10.0, 15.0)}
+        env.engine.register_chunk(_chunk())
+        env.engine.advance(GAME_HOUR)
+        event = env.events[0]
+        assert event.event_type == "state_threshold_crossed"
+        assert event.data["state"] == "snow"
+        assert event.data["cx"] == 0 and event.data["cy"] == 0
+        assert event.timestamp == GAME_HOUR
+
+    def test_no_event_on_registration_of_high_state(self, env):
+        """已高于档位的既有状态在注册/首次推进时不补发事件。"""
+        grid = TileGrid()
+        for i in range(len(grid.state_raw("snow"))):
+            grid.state_raw("snow")[i] = 60
         env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(GAME_DAY)
-        events = env.subscribe("state_threshold_crossed")
-        grid.state_raw("snow")[0] = 0  # 融化到底（天气叠加后仍 < 15 最低档）
-        _publish(env.wt, "hour_change", env.clock.time)
-        downs = [e for e in events if e.data["direction"] == "down"
-                 and e.data["state"] == "snow"]
-        assert len(downs) == 1
-        assert downs[0].data["threshold"] == 15  # 跌破最低档
-
-    def test_same_tier_no_event(self, env):
-        """档内波动不发事件。"""
-        grid = _make_grid()
-        grid.state_raw("snow")[0] = 20  # tier 1 (15≤20<30)
-        env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(GAME_DAY)
-        events = env.subscribe("state_threshold_crossed")
-        grid.state_raw("snow")[0] = 25  # 仍在 tier 1
-        _publish(env.wt, "hour_change", env.clock.time)
-        assert len(events) == 0
-
-    def test_multiple_tier_jump_single_event(self, env):
-        """多档跳变只发一次（目标档位）。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(GAME_DAY)
-        events = env.subscribe("state_threshold_crossed")
-        grid.state_raw("snow")[0] = 200  # 0 → tier 3（跨 15/30/50）
-        _publish(env.wt, "hour_change", env.clock.time)
-        ups = [e for e in events if e.data["direction"] == "up"]
-        assert len(ups) == 1
-        assert ups[0].data["threshold"] == 50
-
-    def test_no_threshold_state_no_event(self, env):
-        """无阈值的状态（moisture）不发阈值事件。"""
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        env.clock.skip(GAME_DAY)
-        events = env.subscribe("state_threshold_crossed")
-        grid.state_raw("moisture")[0] = 100
-        _publish(env.wt, "hour_change", env.clock.time)
-        assert len(events) == 0
+        env.engine.advance(GAME_HOUR)
+        assert env.events == []
 
 
-class TestAggregates:
-    def test_water_frozen_detection(self, env):
-        """水面任一 tile 结冰 → water_frozen=True。"""
-        grid = _make_grid(water=True)
-        env.engine.register_chunk(_chunk(grid=grid))
-        agg = env.engine.aggregates(0, 0)
-        assert agg["water_frozen"] is False
-        grid.state_raw("ice")[0] = 10
-        _publish(env.wt, "hour_change", env.clock.time)  # 触发缓存失效
-        assert env.engine.aggregates(0, 0)["water_frozen"] is True
+class TestFrameCommit:
+    """帧事务提交：影子状态在提交前不可见，失败整帧回滚（WC-7.6）。"""
 
-    def test_land_chunk_never_frozen(self, env):
-        """陆地 chunk（无水面 tile）恒 water_frozen=False。"""
-        grid = _make_grid(water=False)
-        env.engine.register_chunk(_chunk(grid=grid))
-        grid.state_raw("ice")[0] = 10
-        _publish(env.wt, "hour_change", env.clock.time)
-        assert env.engine.aggregates(0, 0)["water_frozen"] is False
+    def _setup(self):
+        clock = WorldClock(epoch=0)
+        weather = _FakeWeather()
+        weather.hours[1] = (10.0, 5.0)
+        wt = WorldTree()
+        store = FrameStateStore()
+        engine = TileStateEngine(clock, weather, wt=wt, store=store)
+        chunk = _chunk()
+        engine.register_chunk(chunk)
+        engine.on_tiles_ready(0, 0)
+        return clock, weather, wt, store, engine, chunk
 
-    def test_aggregates_shape(self, env):
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        agg = env.engine.aggregates(0, 0)
-        assert set(agg) == {"water_frozen", "mean_snow", "mean_moisture"}
-        assert 0 <= agg["mean_snow"] <= 255
-        assert 0 <= agg["mean_moisture"] <= 100
+    def test_state_invisible_until_batch_commit(self):
+        clock, weather, wt, store, engine, chunk = self._setup()
+        seen: list[tuple[int, int]] = []
 
-    def test_aggregates_cached_and_invalidated(self, env):
-        """聚合缓存：查询两次同值；写入后失效重算。"""
-        from array import array
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(grid=grid))
-        a1 = env.engine.aggregates(0, 0)
-        a2 = env.engine.aggregates(0, 0)
-        assert a1 == a2
-        grid.state_raw("snow")[:] = array("B", [99]) * 40000
-        _publish(env.wt, "hour_change", env.clock.time)
-        assert env.engine.aggregates(0, 0)["mean_snow"] >= 99, \
-            "缓存失效重算应反映写入值（天气积累只增不减）"
+        def spy(now: int) -> None:
+            seen.append((
+                chunk.integrated_through,
+                max(chunk.tile_grid.state_raw("moisture")),
+            ))
 
-
-class TestEventContract:
-    def test_precip_event_carries_chunks(self):
-        """PrecipitationStart/Stop 事件契约：必含 chunks 字段。"""
-        from ascend.weather.events import PrecipitationStart, PrecipitationStop
-        ev = PrecipitationStart(
-            precip_type="rain", intensity=5.0, time_of_day=0,
-            chunks=((0, 0), (1, 1)),
+        scheduler = FrameScheduler(store=store)
+        scheduler.register(
+            "terrain.integrate", period=GAME_HOUR, callback=engine.advance,
         )
-        assert ev.as_dict()["chunks"] == [[0, 0], [1, 1]]
-        st = PrecipitationStop(time_of_day=0, chunks=())
-        assert st.as_dict()["chunks"] == []
+        scheduler.register("spy", period=GAME_HOUR, callback=spy)
+        scheduler.advance(GAME_HOUR)
+        assert seen == [(0, 0)], "帧内读者必须看到已提交状态"
+        assert chunk.integrated_through == GAME_HOUR
+        assert max(chunk.tile_grid.state_raw("moisture")) > 0
+        engine.shutdown()
 
-    def test_region_event_carries_chunks(self):
-        """RegionEvent 契约：chunks 与 cells 同源。"""
-        from ascend.weather.region_tracker import RegionEvent
-        ev = RegionEvent(
-            kind="start",
-            cells=[(100.5, 100.5)],
-            center_chunk=(0, 0),
-            intensity=3.0,
-            chunks=((0, 0),),
+    def test_failing_point_aborts_terrain_frame(self):
+        clock, weather, wt, store, engine, chunk = self._setup()
+        committed_version = store.version
+        state = {"fail": True}
+
+        def failing(now: int) -> None:
+            if state["fail"]:
+                raise RuntimeError("boom")
+
+        scheduler = FrameScheduler(store=store)
+        scheduler.register(
+            "terrain.integrate", period=GAME_HOUR, callback=engine.advance,
         )
-        assert ev.chunks == ((0, 0),)
-
-class TestDeferredGridReady:
-    """注册时 tile_grid 为 None（运行期动态生成）→ 就绪后通道生效。
-
-    回归：快照网格陈旧——on_tiles_ready 不回写网格引用时小时脉冲
-    永久跳过、日变更直接崩溃（reviewer 实测复现）。
-    """
-
-    def test_hour_pulse_works_after_deferred_ready(self, env):
-        """先注册（无网格）→ on_tiles_ready → 小时脉冲正常演化。"""
-        grid = _make_grid()
-        chunk = _chunk(grid=None)
-        env.engine.register_chunk(chunk)
-        chunk.tile_grid = grid  # 模拟 tile 生成完成
-        env.engine.on_tiles_ready(0, 0)
-        env.clock.skip(GAME_DAY)
-        for h in range(24):
-            _publish(env.wt, "hour_change", env.clock.time + h * 7200)
-        agg = env.engine.aggregates(0, 0)
-        assert 0 <= agg["mean_moisture"] <= 100, "就绪后脉冲生效"
-
-    def test_day_change_after_deferred_ready_settles(self, env):
-        """先注册（无网格）→ on_tiles_ready → 快进日变更正常结算。"""
-        grid = _make_grid()
-        chunk = _chunk(grid=None)
-        env.engine.register_chunk(chunk)
-        chunk.tile_grid = grid
-        env.engine.on_tiles_ready(0, 0)
-        env.clock.skip(200 * GAME_DAY)
-        _publish(env.wt, "day_change", env.clock.time, {
-            "day": 201, "previous_day": 1, "skipped_days": 200,
-            "elapsed_days": 200, "day_change_count": 1,
-        })
-        assert chunk.settled_day == 201, "快进结算不因延迟就绪而失败"
-        assert 0 <= env.engine.aggregates(0, 0)["mean_snow"] <= 255
-
-    def test_day_change_grid_still_none_skips(self, env):
-        """tile 始终未就绪：日变更跳过该 chunk 不抛。"""
-        chunk = _chunk(grid=None)
-        env.engine.register_chunk(chunk)
-        env.clock.skip(200 * GAME_DAY)
-        _publish(env.wt, "day_change", env.clock.time, {
-            "day": 201, "previous_day": 1, "skipped_days": 200,
-            "elapsed_days": 200, "day_change_count": 1,
-        })
-        assert chunk.settled_day == 0, "未就绪不结算"
-
-
-class TestConcurrentAccess:
-    """并发写路径：事件线程 vs handler 线程（RLock 互斥）。"""
-
-    def test_concurrent_settle_and_pulse(self, env):
-        """settle（日变更）与脉冲（小时变更）并发：无异常、状态一致。"""
-        import threading
-        grid = _make_grid()
-        chunk = _chunk(grid=grid)
-        env.engine.register_chunk(chunk)
-        env.clock.skip(30 * GAME_DAY)
-
-        errors: list[Exception] = []
-
-        def settle_worker():
-            try:
-                for _ in range(20):
-                    _publish(env.wt, "day_change", env.clock.time, {
-                        "day": 31, "previous_day": 30, "skipped_days": 1,
-                        "elapsed_days": 30, "day_change_count": 1,
-                    })
-            except Exception as exc:  # noqa: BLE001
-                errors.append(exc)
-
-        def pulse_worker():
-            try:
-                for _ in range(20):
-                    _publish(env.wt, "hour_change", env.clock.time)
-            except Exception as exc:  # noqa: BLE001
-                errors.append(exc)
-
-        t1 = threading.Thread(target=settle_worker)
-        t2 = threading.Thread(target=pulse_worker)
-        t1.start(); t2.start()
-        t1.join(); t2.join()
-        assert not errors, f"并发写路径异常: {errors}"
-        assert chunk.settled_day == 31, "settled_day 一致"
-        agg = env.engine.aggregates(0, 0)
-        assert 0 <= agg["mean_moisture"] <= 100
-
-    def test_concurrent_register_unregister(self, env):
-        """注册/注销与脉冲并发：无 KeyError 撕裂。"""
-        import threading
-        grid = _make_grid()
-        env.engine.register_chunk(_chunk(cx=3, cy=3, grid=grid))
-        errors: list[Exception] = []
-
-        def churn_worker():
-            try:
-                for i in range(30):
-                    env.engine.register_chunk(_chunk(cx=i % 5, cy=0, grid=grid))
-                    env.engine.unregister_chunk(i % 5, 0)
-            except Exception as exc:  # noqa: BLE001
-                errors.append(exc)
-
-        def pulse_worker():
-            try:
-                for _ in range(30):
-                    _publish(env.wt, "hour_change", env.clock.time)
-            except Exception as exc:  # noqa: BLE001
-                errors.append(exc)
-
-        t1 = threading.Thread(target=churn_worker)
-        t2 = threading.Thread(target=pulse_worker)
-        t1.start(); t2.start()
-        t1.join(); t2.join()
-        assert not errors, f"并发注册注销异常: {errors}"
-
-
-class TestSettledDayTracking:
-    """脉冲演化推进 settled_day（落盘语义：状态=当日态，读档不重放）。
-
-    回归：脉冲演化不更新 settled_day → 落盘后读档从旧结算日续算，
-    把已脉冲演化的区间再结算一遍（双计）。
-    """
-
-    def test_hour_pulse_advances_settled_day(self, env):
-        """24h 脉冲后 settled_day 跟随当前日。"""
-        grid = _make_grid()
-        chunk = _chunk(grid=grid)
-        env.engine.register_chunk(chunk)
-        env.clock.skip(GAME_DAY)  # → day 2
-        for h in range(24):
-            _publish(env.wt, "hour_change", env.clock.time + h * 7200)
-        assert chunk.settled_day == 2, "脉冲演化推进结算日"
-
-    def test_pulse_after_fast_forward_keeps_current_day(self, env):
-        """快进结算后脉冲演化：settled_day 推进到脉冲所在日（不重放）。"""
-        grid = _make_grid()
-        chunk = _chunk(grid=grid)
-        env.engine.register_chunk(chunk)
-        env.clock.skip(200 * GAME_DAY)  # → day 201
-        _publish(env.wt, "day_change", env.clock.time, {
-            "day": 201, "previous_day": 1, "skipped_days": 200,
-            "elapsed_days": 200, "day_change_count": 1,
-        })
-        assert chunk.settled_day == 201
-        # 当日脉冲演化 → settled_day 保持 201（同日无虚标）
-        for h in range(24):
-            _publish(env.wt, "hour_change", env.clock.time + h * 7200)
-        assert chunk.settled_day == 201, "同日脉冲不虚标"
-        # 跨天脉冲（day 202）→ settled_day 跟进 202（读档从 202 续算）
-        env.clock.skip(GAME_DAY)
-        for h in range(24):
-            _publish(env.wt, "hour_change", env.clock.time + h * 7200)
-        assert chunk.settled_day == 202, "跨天脉冲推进结算日"
+        scheduler.register("failing", period=GAME_HOUR, callback=failing)
+        with pytest.raises(RuntimeError, match="boom"):
+            scheduler.advance(GAME_HOUR)
+        assert chunk.integrated_through == 0
+        assert max(chunk.tile_grid.state_raw("moisture")) == 0
+        assert store.version == committed_version
+        # 下一帧重试：两个更新点都重跑，整帧提交
+        state["fail"] = False
+        scheduler.advance(GAME_HOUR)
+        assert chunk.integrated_through == GAME_HOUR
+        assert max(chunk.tile_grid.state_raw("moisture")) > 0
+        assert store.version == committed_version + 1
+        engine.shutdown()

@@ -47,6 +47,15 @@ if [ ! -d "$STAGE/lang" ] && [ ! -d "$STAGE/server/lang" ]; then
   echo "    [冒烟] 失败：缺少语言目录（STAGE/lang 或 STAGE/server/lang）" >&2
   exit 1
 fi
+# 因果声明配送检查：世界程序编译在进入世界时读取 declarations/*.json
+# （Nuitka standalone 须 --include-data-files 显式配送，见 build/nuitka/*.sh）
+for name in state_slots.json fate_namespaces.json update_points.json; do
+  if [ ! -f "$STAGE/server/ascend/causal/declarations/$name" ]; then
+    echo "    [冒烟] 失败：缺少因果声明 $name" \
+         "（server/ascend/causal/declarations/）" >&2
+    exit 1
+  fi
+done
 
 cleanup() {
   [ -n "$PID" ] && kill "$PID" 2>/dev/null || true

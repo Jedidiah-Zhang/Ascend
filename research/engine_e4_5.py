@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from ascend.config import GAME_DAY, GAME_YEAR
 from ascend.space import ClimateZone, WeatherParams
@@ -172,7 +172,7 @@ def _e5(fast=False):
 
     # ── 2. 同 seed 双跑：基线 vs do 干预 ──
     from ascend.config import GAME_DAY, GAME_MINUTE, GAME_YEAR
-    from ascend.fate import LoomOfFate
+    from ascend.fate import FateAddress, address_value
     from ascend.time import WorldClock
     from ascend.weather.weather_engine import WeatherEngine
 
@@ -187,11 +187,15 @@ def _e5(fast=False):
             e.register_chunk(5, 5,
                              WeatherParams(5.0, 800.0, 12.0, 100.0, 60.0, 5.0),
                              ClimateZone.TEMPERATE_FOREST, 15.0)
-            # do 干预：消费一组与天气无关的命运流（被干预节点机制被替换
-            # 后其流被弃用/其他系统照常消费——不得污染未干预流）
-            loom = LoomOfFate(42)
+            # do 干预：抽取一组与天气无关的地址（被干预节点机制被替换
+            # 后其地址不再被消费；地址是纯函数，未干预地址不受影响）
             for purpose in ("decision", "reproduction", "social"):
-                loom.stream(entity_id="bob", purpose=purpose, tick=5).random()
+                address_value(
+                    42,
+                    FateAddress("npc", purpose, ("bob",), time=5),
+                    minimum=0,
+                    maximum=2**32 - 1,
+                )
         for cx, cy in chunks:
             e.register_chunk(cx, cy,
                              WeatherParams(5.0, 800.0, 12.0, 100.0, 60.0, 5.0),

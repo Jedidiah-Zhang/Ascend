@@ -102,10 +102,10 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
 
                 saved = chunk_store.load_tiles_with_day(*coord)
                 if saved is not None:
-                    saved_grid, settled_day = saved
+                    saved_grid, integrated_through = saved
                     chunk = gen.generate_chunk(*coord)
                     chunk.restore_tiles(saved_grid)
-                    chunk.settled_day = settled_day
+                    chunk.integrated_through = integrated_through
                     coord_to_chunk[coord] = chunk
                     chunk_store.put(chunk)
                     if chunk_services is not None:

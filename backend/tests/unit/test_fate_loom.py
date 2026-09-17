@@ -1,22 +1,29 @@
-"""命运织机测试 — 种子派生确定性随机流契约。
+"""命运随机测试 — 种子派生与地址随机的确定性契约。
 
-承诺（设计文档: docs/世界框架/随机系统/设计.md）:
+承诺（《世界契约》WC-5；设计文档: docs/世界框架/随机系统/设计.md）:
   - derive 为纯函数：sha256 规范编码，跨平台位级一致，禁用内建 hash()
-  - 流独立性是构造性的：同身份同序列（无视交错求值序），异身份独立
-  - CRN 纪律（研究 05-E5）：do 干预不得改变未干预上游流的取值
+  - 地址 → 值：不存在流状态与消费顺序；任一抽取顺序、跳过、新增，
+    都不改变其他地址的取值（WC-5.1/5.2）
 """
 
-import random
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
-from ascend.fate import FateStream, LoomOfFate, derive, format_fate_path
+from ascend.fate import (
+    FATE_ALGORITHM,
+    FateAddress,
+    LoomOfFate,
+    address_seed,
+    address_value,
+    derive,
+)
 
 MASK_256 = (1 << 256) - 1
-
-
-def _draws(stream: random.Random, n: int = 8) -> list[float]:
-    return [stream.random() for _ in range(n)]
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestDerive:
@@ -80,132 +87,197 @@ class TestLoomOfFate:
         assert LoomOfFate(1).derive("x") != LoomOfFate(2).derive("x")
 
     def test_domain_path_composition(self):
-        """domain("a").stream(purpose="b") ≡ stream("a", purpose="b")。"""
         loom = LoomOfFate(42)
-        direct = loom.stream("env", purpose="weather", tick=100)
-        nested = loom.domain("env").stream(purpose="weather", tick=100)
-        assert direct.identity == nested.identity
-        assert _draws(direct) == _draws(nested)
+        assert loom.domain("env").derive("weather") == \
+            loom.derive("env", "weather")
+        assert loom.domain("a").domain("b").derive("c") == \
+            loom.derive("a", "b", "c")
 
-    def test_same_identity_same_stream(self):
-        loom = LoomOfFate(7)
-        s1 = loom.stream(entity_id="42", purpose="decision", tick=1000)
-        s2 = loom.stream(entity_id="42", purpose="decision", tick=1000)
-        assert _draws(s1) == _draws(s2)
 
-    def test_different_identity_independent(self):
-        loom = LoomOfFate(7)
-        a = _draws(loom.stream(entity_id="1", purpose="decision", tick=1))
-        b = _draws(loom.stream(entity_id="2", purpose="decision", tick=1))
-        assert a != b
+class TestFateAddress:
+    def test_parts_canonical_order(self):
+        address = FateAddress(
+            "weather", "texture.channel", ("temperature", 3), time=7,
+            draw_index=2,
+        )
+        assert address.parts() == (
+            "weather", "temperature", 3, "texture.channel", 7, 2,
+        )
+
+    def test_defaults_are_deterministic(self):
+        assert FateAddress("world", "birth_point").parts() == (
+            "world", "birth_point", 0, 0,
+        )
+
+    @pytest.mark.parametrize(
+        "namespace,purpose",
+        [("", "x"), ("Xxx", "x"), ("a b", "x"), ("-a", "x"),
+         ("a", ""), ("a", "Tbd:#48"), ("a", "x y")],
+    )
+    def test_invalid_namespace_or_purpose_rejected(self, namespace, purpose):
+        with pytest.raises(ValueError):
+            FateAddress(namespace, purpose)
+
+    @pytest.mark.parametrize(
+        "instance",
+        [("ok", None), (True,), (1.5,), (b"x",)],
+    )
+    def test_invalid_instance_part_rejected(self, instance):
+        with pytest.raises(ValueError):
+            FateAddress("a", "b", instance)
+
+    @pytest.mark.parametrize("time,draw_index", [(-1, 0), (0, -1), (True, 0)])
+    def test_invalid_time_or_index_rejected(self, time, draw_index):
+        with pytest.raises(ValueError):
+            FateAddress("a", "b", time=time, draw_index=draw_index)
+
+
+class TestAddressValue:
+    def test_deterministic(self):
+        address = FateAddress("weather", "proxy.temp")
+        assert address_value(7, address, minimum=0, maximum=99) == \
+            address_value(7, address, minimum=0, maximum=99)
+        assert address_seed(7, address) == address_seed(7, address)
+
+    def test_seed_is_derive_of_parts(self):
+        address = FateAddress("weather", "proxy.temp", ("rain",), 5, 1)
+        assert address_seed(123, address) == derive(123, *address.parts())
 
     def test_order_independent_interleaving(self):
         """CRN 前提：交错求值不影响取值（顺序无关）。"""
-        loom = LoomOfFate(20260806)
-        # 先取 X 再取无关流
-        x1 = _draws(loom.stream(entity_id="x", purpose="decision", tick=9))
-        _draws(loom.stream(entity_id="noise_a", purpose="whatever", tick=9))
-        _draws(loom.stream(entity_id="noise_b", purpose="whatever", tick=9))
-        # 先取无关流再取 X
-        _draws(loom.stream(entity_id="noise_a", purpose="whatever", tick=9))
-        _draws(loom.stream(entity_id="noise_b", purpose="whatever", tick=9))
-        x2 = _draws(loom.stream(entity_id="x", purpose="decision", tick=9))
-        assert x1 == x2
+        address = FateAddress("weather", "texture.wind")
+        first = address_value(9, address, minimum=0, maximum=255)
+        for i in range(50):
+            address_value(
+                9,
+                FateAddress("weather", "noise", (i,)),
+                minimum=0,
+                maximum=255,
+            )
+        assert address_value(9, address, minimum=0, maximum=255) == first
 
-    def test_crn_discipline_do_intervention(self):
-        """研究 05-E5 判据：do 干预改变执行路径，未干预流取值逐位不变。
+    def test_skipped_indices_do_not_recycle(self):
+        """缺抽不回收：跳过抽取序号不影响后续地址取值。"""
+        probe = FateAddress("weather", "proxy.rain", draw_index=10)
+        direct = address_value(11, probe, minimum=0, maximum=10**9)
+        for i in range(10):
+            address_value(
+                11,
+                FateAddress("weather", "proxy.rain", draw_index=i),
+                minimum=0,
+                maximum=10**9,
+            )
+        after = address_value(11, probe, minimum=0, maximum=10**9)
+        assert after == direct
 
-        基线：只消费 X 与无关流 A。
-        干预（do 语义）：被干预节点 Z 的机制被常数方程替换 → Z 的流
-        从不被消费（设计文档 do 契约）；执行路径因大量无关流消费而
-        改变——X/A 的取值必须不变。
-        """
-        loom = LoomOfFate(20260806)
-        x_base = _draws(loom.stream(entity_id="x", purpose="decision", tick=5))
-        a_base = _draws(loom.stream(entity_id="a", purpose="decision", tick=5))
+    def test_range_bounds_inclusive(self):
+        assert address_value(
+            1,
+            FateAddress("world", "birth_point"),
+            minimum=3,
+            maximum=3,
+        ) == 3
+        for index in range(20):
+            value = address_value(
+                1,
+                FateAddress("world", "birth_point", draw_index=index),
+                minimum=0,
+                maximum=255,
+            )
+            assert 0 <= value <= 255
+        assert -5 <= address_value(
+            1,
+            FateAddress("world", "birth_point"),
+            minimum=-5,
+            maximum=5,
+        ) <= 5
 
-        # 干预运行：Z 的机制被替换（流弃用，从不消费），
-        # 且执行路径插入大量无关流抽取
-        for i in range(20):
-            _draws(loom.stream(entity_id=f"extra{i}", purpose="noise", tick=5))
-        x_do = _draws(loom.stream(entity_id="x", purpose="decision", tick=5))
-        a_do = _draws(loom.stream(entity_id="a", purpose="decision", tick=5))
-        assert x_do == x_base
-        assert a_do == a_base
+    def test_instance_time_index_sensitive(self):
+        base = FateAddress("weather", "texture.channel", ("temp", 0), 5, 0)
+        variants = [
+            FateAddress("weather", "texture.channel", ("temp", 1), 5, 0),
+            FateAddress("weather", "texture.channel", ("temp", 0), 6, 0),
+            FateAddress("weather", "texture.channel", ("temp", 0), 5, 1),
+            FateAddress("weather", "other", ("temp", 0), 5, 0),
+            FateAddress("world", "texture.channel", ("temp", 0), 5, 0),
+        ]
+        values = {
+            address_value(3, address, minimum=0, maximum=MASK_256)
+            for address in [base, *variants]
+        }
+        assert len(values) == 1 + len(variants)
 
-    def test_stream_kwargs_only_extra_sorted(self):
-        loom = LoomOfFate(3)
-        s1 = loom.stream("k", extra_b=2, extra_a=1)
-        s2 = loom.stream("k", extra_a=1, extra_b=2)
-        assert _draws(s1) == _draws(s2)
+    def test_distribution_is_flat_enough(self):
+        """取模映射：100 桶 × 10000 次抽取，各桶应落在 4σ 邻域。"""
+        buckets = [0] * 100
+        for index in range(10000):
+            value = address_value(
+                20260806,
+                FateAddress("weather", "proxy.temp", draw_index=index),
+                minimum=0,
+                maximum=99,
+            )
+            buckets[value] += 1
+        assert all(60 <= count <= 140 for count in buckets)
 
-    def test_fork_derives_from_parent(self):
-        loom = LoomOfFate(5)
-        parent = loom.stream(entity_id="e", purpose="p", tick=10)
-        child = parent.fork("sub")
-        assert child.identity == ("e", "p", 10, "sub")
-        expect = random.Random(derive(5, "e", "p", 10, "sub"))
-        assert _draws(child) == _draws(expect)
+    @pytest.mark.parametrize(
+        "minimum,maximum",
+        [(0, -1), (5, 4), (True, 3), (0, True)],
+    )
+    def test_invalid_range_rejected(self, minimum, maximum):
+        address = FateAddress("world", "birth_point")
+        with pytest.raises(ValueError):
+            address_value(1, address, minimum=minimum, maximum=maximum)
 
-
-class TestFateStream:
-    def test_seed_override_rejected(self):
-        stream = LoomOfFate(1).stream(entity_id="e", purpose="p")
-        with pytest.raises(RuntimeError):
-            stream.seed(123)
-
-    def test_is_random_subclass(self):
-        stream = LoomOfFate(1).stream(entity_id="e", purpose="p")
-        assert isinstance(stream, random.Random)
-        assert 0.0 <= stream.random() < 1.0
-        assert stream.randint(0, 10) in range(11)
-
-    def test_fate_path_with_tick(self):
-        stream = LoomOfFate(1).stream(
-            entity_id="42", purpose="decision", tick=3912
+    def test_golden_values(self):
+        """黄金值：改动算法/编码/分量序必然改值（世界身份变更）。"""
+        assert FATE_ALGORITHM == "sha256/derive-1/mod"
+        address = FateAddress("weather", "proxy.temp", ("rain",), 5, 2)
+        assert address.parts() == ("weather", "rain", "proxy.temp", 5, 2)
+        assert address_seed(20260806, address) == (
+            68261482312194683340399700917897345018326434771545780184127317168849104368709
         )
-        assert stream.fate_path == "42/decision@3912"
+        assert address_value(
+            20260806, address, minimum=0, maximum=99,
+        ) == 9
+        assert address_value(
+            1,
+            FateAddress("world", "birth_point"),
+            minimum=0,
+            maximum=2**64 - 1,
+        ) == 6362245666454638048
 
-    def test_fate_path_without_tick(self):
-        stream = LoomOfFate(1).stream(entity_id="42", purpose="personality")
-        assert stream.fate_path == "42/personality"
 
-    def test_fate_path_multiple_int_parts(self):
-        stream = LoomOfFate(1).stream(
-            "feature", "block", 3, -2, "segment", 5, tick=100
+class TestProcessIsolation:
+    """跨进程一致：派生算法不依赖 PYTHONHASHSEED 等进程状态。"""
+
+    def _run(self, hashseed: str) -> int:
+        code = (
+            "from ascend.fate import FateAddress, address_value;"
+            "a=FateAddress('weather','proxy.temp',('rain',),5,2);"
+            "print(address_value(20260806,a,minimum=0,maximum=2**64-1))"
         )
-        assert stream.fate_path == "feature/block/3/-2/segment/5@100"
-
-    def test_fate_path_domain_nested(self):
-        stream = LoomOfFate(1).domain("weather").stream(
-            entity_id="region", purpose="precip", tick=7
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = hashseed
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+            cwd=_BACKEND_ROOT,
         )
-        assert stream.fate_path == "weather/region/precip@7"
+        return int(result.stdout.strip())
 
-    def test_identity_attribute(self):
-        stream = LoomOfFate(9).stream("a", entity_id="b", tick=3)
-        assert stream.identity == ("a", "b", 3)
-
-
-class TestFormatFatePath:
-    def test_empty(self):
-        assert format_fate_path(()) == ""
-
-    def test_single_tick(self):
-        assert format_fate_path((100,)) == "@100"
-
-    def test_str_only(self):
-        assert format_fate_path(("npc", "42", "decision")) == "npc/42/decision"
-
-
-class TestSeedingRandomFrom256Bit:
-    def test_random_deterministic_from_derive(self):
-        """256-bit seed → random.Random 播种跨实例确定（MT init_by_array）。"""
-        seed = derive(42, "npc", "7", "decision")
-        r1 = random.Random(seed)
-        r2 = random.Random(seed)
-        assert _draws(r1) == _draws(r2)
-        assert 0 <= seed <= MASK_256
+    def test_matches_subprocess_with_other_hash_seeds(self):
+        expected = address_value(
+            20260806,
+            FateAddress("weather", "proxy.temp", ("rain",), 5, 2),
+            minimum=0,
+            maximum=2**64 - 1,
+        )
+        assert self._run("0") == expected
+        assert self._run("4242") == expected
 
 
 class TestWeatherMigrationEquivalence:

@@ -36,6 +36,7 @@ import time as _real_time
 import zlib
 from collections import OrderedDict
 from collections.abc import Callable
+from contextlib import nullcontext
 
 from ascend.config import (
     CHUNK_STORE_DB_PATH as _DEFAULT_DB_PATH,
@@ -88,9 +89,15 @@ class ChunkStore:
     """
 
     def __init__(self, db_path: str = _DEFAULT_DB_PATH, max_size: int = _DEFAULT_MAX_SIZE,
-                 on_evict: Callable[[int, int], None] | None = None) -> None:
+                 on_evict: Callable[[int, int], None] | None = None,
+                 state_guard: Callable[[], object] | None = None) -> None:
         self._max_size = max_size
         self._on_evict = on_evict
+        # 状态提交锁（FrameStateStore.guard）：序列化状态数组时持锁，
+        # 保证读到某已提交版本而非半帧（WC-7.6）；None = 无并发写方。
+        self._state_guard = (
+            state_guard if state_guard is not None else nullcontext
+        )
         self._cache: OrderedDict[tuple[int, int], ChunkData] = OrderedDict()
         self._lock = threading.RLock()
 
@@ -105,21 +112,19 @@ class ChunkStore:
             "CREATE TABLE IF NOT EXISTS chunk_tiles ("
             "cx INTEGER, cy INTEGER, "
             "tiles BLOB NOT NULL, "
-            "settled_day INTEGER NOT NULL DEFAULT 0, "
+            "integrated_through INTEGER NOT NULL DEFAULT 0, "
             "PRIMARY KEY (cx, cy))"
         )
-# 旧库无 settled_day 列（建表早于该列引入）：就地补列（旧行默认
-# 0 = 未结算）。注意：BLOB 版本不符（含历史数据）一律被 from_bytes
-# 拒绝——设计取舍：无向后兼容，见 tile_grid.TILE_GRID_VERSION 文档。
-# settled_day=0 仅对格式兼容的新数据生效。
+# 旧库补列（建表早于该列引入）：就地补 integrated_through（旧行默认
+# 0 = 未积分）。BLOB 版本不符一律被 from_bytes 拒绝——无向后兼容。
         cols = {
             r["name"]
             for r in self._db.execute("PRAGMA table_info(chunk_tiles)").fetchall()
         }
-        if "settled_day" not in cols:
+        if "integrated_through" not in cols:
             self._db.execute(
                 "ALTER TABLE chunk_tiles ADD COLUMN "
-                "settled_day INTEGER NOT NULL DEFAULT 0"
+                "integrated_through INTEGER NOT NULL DEFAULT 0"
             )
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_chunk_tiles_coord ON chunk_tiles(cx, cy)")
         # 已落盘坐标集合：只增不删（库中行无删除路径）、启动时从库
@@ -237,18 +242,18 @@ class ChunkStore:
     # ── SQLite 持久化 ───────────────────────────────────
 
     def load_tiles_with_day(self, cx: int, cy: int) -> "tuple[TileGrid, int] | None":
-        """从 SQLite 加载已持久化的 TileGrid 及其状态结算日。
+        """从 SQLite 加载已持久化的 TileGrid 及其积分游标。
 
         Args:
             cx, cy: chunk 坐标。
 
         Returns:
-            (TileGrid, settled_day)；无记录返回 None。settled_day=0
-            表示旧库/未结算记录（状态全 0，按全新处理）。
+            (TileGrid, integrated_through)；无记录返回 None。
+            integrated_through=0 表示未积分记录（从世界开端补算）。
         """
         with self._lock:
             row = self._db.execute(
-                "SELECT tiles, settled_day FROM chunk_tiles "
+                "SELECT tiles, integrated_through FROM chunk_tiles "
                 "WHERE cx = ? AND cy = ?", (cx, cy),
             ).fetchone()
         if row is None:
@@ -265,7 +270,7 @@ class ChunkStore:
                 f"chunk ({cx},{cy}) 数据无法解码（{exc}）——"
                 f"旧版存档与当前版本不兼容，无法加载该区块"
             ) from exc
-        return grid, int(row["settled_day"])
+        return grid, int(row["integrated_through"])
 
     def load_tiles(self, cx: int, cy: int) -> TileGrid | None:
         """从 SQLite 加载已持久化的 TileGrid。
@@ -300,13 +305,13 @@ class ChunkStore:
         return row is not None
 
     def _save_tiles(
-        self, cx: int, cy: int, grid: TileGrid, settled_day: int = 0,
+        self, cx: int, cy: int, grid: TileGrid, integrated_through: int = 0,
     ) -> None:
         """将单个 chunk 的 TileGrid 写入 SQLite（zlib 压缩，INSERT OR REPLACE）。"""
         blob = _BLOB_ZLIB + zlib.compress(grid.to_bytes(), zlib.Z_DEFAULT_COMPRESSION)
         self._db.execute(
             "INSERT OR REPLACE INTO chunk_tiles VALUES (?, ?, ?, ?)",
-            (cx, cy, sqlite3.Binary(blob), int(settled_day)),
+            (cx, cy, sqlite3.Binary(blob), int(integrated_through)),
         )
 
     def _persist(self, chunk: ChunkData) -> None:
@@ -325,9 +330,11 @@ class ChunkStore:
             raise RuntimeError(
                 f"脏 chunk 无网格（不变量破坏）: ({chunk.cx}, {chunk.cy})"
             )
-        self._save_tiles(
-            chunk.cx, chunk.cy, grid, settled_day=chunk.settled_day,
-        )
+        with self._state_guard():
+            self._save_tiles(
+                chunk.cx, chunk.cy, grid,
+                integrated_through=chunk.integrated_through,
+            )
         chunk.dirty = False
         self._persisted_coords.add((chunk.cx, chunk.cy))
 

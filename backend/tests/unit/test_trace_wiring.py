@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from ascend.causal import InterventionRecord, InterventionTable
+from ascend.causal import InterventionTimeline, PlannedIntervention
 from ascend.causal.world import ASCEND_MECHANISMS
 from ascend.i18n import I18n
 from ascend.space import ClimateZone, WeatherParams
@@ -36,7 +36,7 @@ def engine(clock):
     """含 chunk (0,0) 的天气引擎（独立世界树 + 独立干预表）。"""
     wt = WorldTree()
     engine = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-    table = InterventionTable(
+    table = InterventionTimeline(
         ASCEND_MECHANISMS,
         now=lambda: clock.time,
         instance_exists=lambda _node, inst: engine.has_chunk(*inst),
@@ -114,10 +114,10 @@ class TestEngineTracing:
     def test_value_intervention_recorded_with_provenance(self, engine, clock):
         weather, table = engine
         log = weather.enable_trace()
-        table.commit(InterventionRecord(
+        table.plan(PlannedIntervention(
             target_space="node", target=INSTANT_TEMPERATURE,
-            instance=_CHUNK, rep="value", value=30.0,
-            frame_t0=0, duration=None,
+            instance=_CHUNK, value=30.0,
+            start_frame=0, stop_frame=None, source="trace-test",
         ))
         params = weather.get_weather(*_CHUNK)
         assert params.temperature == 30.0
@@ -134,26 +134,16 @@ class TestTraceIsSeparateFromGameplayEvents:
     def test_events_carry_no_trace_fields(self, engine, clock):
         """真实玩法事件（季节跨越）载荷不得含 trace 字段。"""
         from ascend.config import GAME_DAY
-        from ascend.world_tree import AffectedParty, Event
 
         weather, _ = engine
         wt = weather._wt
         captured: list = []
         wt.subscribe("*", lambda event: captured.append(event))
 
-        def publish_minute(game_time: int) -> None:
-            wt.publish(Event(
-                timestamp=game_time, location=(0, 0, None, None),
-                initiator_type="system", initiator_id="test",
-                affected=[AffectedParty("world", "subject")],
-                event_type="minute_change",
-                data={"game_time": game_time, "hour": 6, "minute": 0},
-            ))
-
         weather.enable_trace()
-        publish_minute(clock.time)           # 首次（不发季节事件）
+        weather.advance(clock.time)          # 首次（不发季节事件）
         clock.skip(90 * GAME_DAY)            # 跨季节边界
-        publish_minute(clock.time)
+        weather.advance(clock.time)
         weather.get_weather(*_CHUNK)
         assert captured, "前提：跨季节应产生玩法事件"
         forbidden = {

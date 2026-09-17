@@ -33,7 +33,7 @@ from typing import Mapping
 
 # 状态载荷格式版本。**无向后兼容**：读档只接受本版本，旧格式与未来格式
 # 一律拒绝（fail-closed），不做静默兜底——"看起来能跑"比拒绝加载更危险。
-STATE_VERSION: int = 1
+STATE_VERSION: int = 2
 
 
 def collect_state(
@@ -70,7 +70,10 @@ def collect_state(
         "weather": (
             weather_engine.persist_state()
             if weather_engine is not None
-            else {"interventions": [], "feature_cores": []}
+            else {
+                "interventions": {"plan": [], "records": []},
+                "feature_cores": [],
+            }
         ),
         "archive_max_timestamp": int(archive_max_timestamp or 0),
     }
@@ -122,8 +125,8 @@ def apply_state(
     """把完整状态恢复到各子系统（读档路径）。
 
     版本校验在前：``state_version`` 不符时立即拒绝，不产生任何副作用。
-    干预表与注入核的恢复各自 fail-closed（逐条重新校验，见
-    ``InterventionTable.restore`` / ``FeatureField.restore_injected``）。
+    干预时间线与注入核的恢复各自 fail-closed（逐条重新校验，见
+    ``InterventionTimeline.restore`` / ``FeatureField.restore_injected``）。
 
     Args:
         state: collect_state 输出的状态字典（或从存档解密的结果）。
@@ -142,7 +145,10 @@ def apply_state(
     apply_player(state, player_service)
     if weather_engine is not None:
         weather_engine.restore_state(
-            state.get("weather") or {"interventions": [], "feature_cores": []},
+            state.get("weather") or {
+                "interventions": {"plan": [], "records": []},
+                "feature_cores": [],
+            },
             instance_loader=instance_loader,
         )
 

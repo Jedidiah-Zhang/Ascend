@@ -72,11 +72,11 @@ class ChunkData:
     # _persisted_coords 集合负责（不在此处维护状态）。
     dirty: bool = False
 
-    # 状态层结算日（地形状态引擎维护）：tile_grid 的状态数组
-    # 已结算到该游戏日；0=未知/全新（引擎按 epoch 结算）。随
-    # chunk_tiles 持久化——LRU 淘汰/读档后按此续算缺口，防止
-    # 把已结算的历史重放一遍。
-    settled_day: int = 0
+    # 状态层积分游标（地形状态引擎维护）：tile_grid 的状态数组
+    # 已积分到该 tick 的声明更新点；0=未积分（从世界开端补算）。
+    # 随 chunk_tiles 持久化——LRU 淘汰/读档后按此续算缺口，防止
+    # 把已积分的历史重放一遍。
+    integrated_through: int = 0
 
     @property
     def chunk_key(self) -> tuple[int, int]:
