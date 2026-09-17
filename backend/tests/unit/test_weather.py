@@ -46,22 +46,9 @@ def _calibrate_precip(
     })
 
 
-def _publish_minute(wt, game_time):
-    """发布 minute_change 事件驱动 WeatherEngine。"""
-    from ascend.config import GAME_DAY, GAME_HOUR
-    day = game_time // GAME_DAY + 1
-    tod = game_time % GAME_DAY
-    hour = int(tod / GAME_HOUR)
-    minute = int((tod % GAME_HOUR) / (GAME_HOUR // 60))
-    wt.publish(Event(
-        timestamp=game_time,
-        location=(0, 0, None, None),
-        initiator_type="system",
-        initiator_id="test",
-        affected=[AffectedParty("world", "subject")],
-        event_type="minute_change",
-        data={"game_time": game_time, "day": day, "hour": hour, "minute": minute},
-    ))
+def _advance_weather(engine, game_time):
+    """驱动 WeatherEngine 到指定时刻（声明更新点；替代旧事件总线驱动）。"""
+    engine.advance(game_time)
 
 
 def _make_baseline(temp=20.0, rain=800.0, wind=5.0, humidity=60.0,
@@ -1069,7 +1056,7 @@ class TestWeatherEngine:
         wt = WorldTree()
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         e.shutdown()
 
     def test_temperature_in_bounds(self):
@@ -1081,10 +1068,10 @@ class TestWeatherEngine:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         _force_perception_reset(e, 0, 0, "temp")
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 1
         assert -30.0 <= events[0].data["temperature"] <= 50.0
         e.shutdown()
@@ -1099,10 +1086,10 @@ class TestWeatherEngine:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         _force_perception_reset(e, 0, 0, "wind")
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) >= 1
         d = events[0].data
         wdx, wdy = d["wind_dir_x"], d["wind_dir_y"]
@@ -1120,12 +1107,12 @@ class TestWeatherEngine:
         # 基线温度 5°C → 等级 2（阈值 5），冷季振幅 ~8°C，日间振幅 ~6°C
         # → 50 天（半个季节）后温度必定跨越进入等级 1 或 3
         e.register_chunk(0, 0, _make_baseline(temp=5.0), ClimateZone.TEMPERATE_FOREST, 5.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         assert len(events) == 0
         before_tier = e.get_tiers(0, 0)["temperature"]
         assert isinstance(before_tier, int)
         clock.skip(50 * GAME_DAY)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         after_events = [ev for ev in events if ev.event_type == "temperature_change"]
         assert len(after_events) >= 1
         after_tier = after_events[0].data["tier"]
@@ -1144,7 +1131,7 @@ class TestWeatherEngine:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         param_events = [ev for ev in events
                         if ev.event_type in ("temperature_change", "humidity_change",
                                              "wind_change", "sunshine_change")]
@@ -1168,10 +1155,10 @@ class TestWeatherEngine:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         _force_perception_reset(e, 0, 0, "temp", "humidity", "wind", "sunshine")
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert sum(1 for ev in events if ev.event_type == "temperature_change") == 1
         assert sum(1 for ev in events if ev.event_type == "humidity_change") == 1
         assert sum(1 for ev in events if ev.event_type == "wind_change") == 1
@@ -1192,10 +1179,10 @@ class TestWeatherEngine:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(temp=25.0), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         assert isinstance(e.get_tiers(0, 0)["temperature"], int)
         clock.skip(1)  # 推进 1 tick，微小变化
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         temp_events = [ev for ev in events if ev.event_type == "temperature_change"]
         assert len(temp_events) == 0
         e.shutdown()
@@ -1210,9 +1197,9 @@ class TestWeatherEngine:
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(temp=20.0), ClimateZone.TEMPERATE_FOREST, 15.0)
         e.force_feature(0, 0, "front", True)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         starts = [ev for ev in events if ev.event_type == "precipitation_start"]
         assert len(starts) >= 1
         assert starts[0].data["intensity"] > 0
@@ -1255,7 +1242,7 @@ class TestWeatherEngine:
         # 锋面核位置/强度随种子派生漂移：轮询直到降雨启动
         # （鲁棒断言，不依赖具体种子的核几何）
         for _ in range(120):
-            _publish_minute(wt, clock.time)
+            _advance_weather(e, clock.time)
             clock.skip(1)
             if any(ev.event_type == "precipitation_start" for ev in events):
                 break
@@ -1263,7 +1250,7 @@ class TestWeatherEngine:
         e.force_feature(dry_chunk[0], dry_chunk[1], "front", False)
         for _ in range(120):
             clock.skip(1)
-            _publish_minute(wt, clock.time)
+            _advance_weather(e, clock.time)
             if any(ev.event_type == "precipitation_stop" for ev in events):
                 break
         stops = [ev for ev in events if ev.event_type == "precipitation_stop"]
@@ -1281,9 +1268,9 @@ class TestWeatherEngine:
         # 极地，年均温 -10°C
         e.register_chunk(0, 0, _make_baseline(temp=-10.0), ClimateZone.POLAR_TUNDRA, -5.0)
         e.force_feature(0, 0, "front", True)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         starts = [ev for ev in events if ev.event_type == "precipitation_start"]
         assert len(starts) >= 1
         assert starts[0].data["precip_type"] == "snow"
@@ -1298,10 +1285,10 @@ class TestWeatherEngine:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         _force_perception_reset(e, 0, 0, "temp")
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         d = events[0].data
         assert set(d) == {f.name for f in fields(TemperatureChange)}
         assert "prev_tier" in d
@@ -1310,7 +1297,9 @@ class TestWeatherEngine:
         assert isinstance(d["tier"], int)
         e.shutdown()
 
-    def test_shutdown_unsubscribes(self):
+    def test_world_tree_events_do_not_drive_engine(self):
+        """事件总线不再是驱动路径：minute_change 不触发天气推进。"""
+        from ascend.config import GAME_DAY, GAME_HOUR
         from ascend.weather.weather_engine import WeatherEngine
         wt = WorldTree()
         events = []
@@ -1318,12 +1307,28 @@ class TestWeatherEngine:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         _force_perception_reset(e, 0, 0, "temp")
-        e.shutdown()
         clock.skip(1)
-        _publish_minute(wt, clock.time)
-        assert len(events) == 0
+        tod = clock.time % GAME_DAY
+        wt.publish(Event(
+            timestamp=clock.time,
+            location=(0, 0, None, None),
+            initiator_type="system",
+            initiator_id="test",
+            affected=[AffectedParty("world", "subject")],
+            event_type="minute_change",
+            data={
+                "game_time": clock.time,
+                "day": clock.time // GAME_DAY + 1,
+                "hour": int(tod / GAME_HOUR),
+                "minute": int((tod % GAME_HOUR) / (GAME_HOUR // 60)),
+            },
+        ))
+        assert events == [], "发布 minute_change 不应驱动天气求值"
+        _advance_weather(e, clock.time)
+        assert len(events) == 1, "调度器推进才产生天气事件"
+        e.shutdown()
 
     def test_multiple_chunks_independent(self):
         """多 chunk 各自发事件，location 区分。"""
@@ -1335,11 +1340,11 @@ class TestWeatherEngine:
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
         e.register_chunk(5, 5, _make_baseline(temp=25.0), ClimateZone.DESERT, 25.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         _force_perception_reset(e, 0, 0, "temp")
         _force_perception_reset(e, 5, 5, "temp")
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 2
         locs = {ev.location[:2] for ev in events}
         assert locs == {(0, 0), (5, 5)}
@@ -1382,10 +1387,10 @@ class TestWeatherEngine:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(sun=12.0), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         _force_perception_reset(e, 0, 0, "sunshine")
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 1
         assert 0.0 <= events[0].data["sunshine"] <= 24.0
         e.shutdown()
@@ -1400,9 +1405,9 @@ class TestWeatherEngine:
         clock.skip(6 * GAME_HOUR)  # 12:00（正午，确定白天）
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(3, 7, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首次（昼）
+        _advance_weather(e, clock.time)  # 首次（昼）
         clock.skip(6 * GAME_HOUR)  # 18:00（已日落 → 夜）
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 1
         assert events[0].location[:2] == (3, 7)
         assert "daylight_hours" in events[0].data
@@ -1419,9 +1424,9 @@ class TestWeatherEngine:
         clock.skip(14 * GAME_HOUR)  # 20:00（夜里）
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(5, 5, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首次（夜）
+        _advance_weather(e, clock.time)  # 首次（夜）
         clock.skip(12 * GAME_HOUR)  # 到次日 08:00（已日出）
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 1
         assert events[0].location[:2] == (5, 5)
         assert "daylight_hours" in events[0].data
@@ -1480,11 +1485,11 @@ class TestWeatherEngine:
         e.register_chunk(1, 0, _make_baseline(temp=4.9, rain=800.0),
                          ClimateZone.SUBARCTIC_TAIGA, 0.0)
         clock.skip(134 * GAME_DAY + 6 * GAME_HOUR)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         _force_perception_reset(e, 0, 0, "temp")
         _force_perception_reset(e, 1, 0, "temp")
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         temp_by_chunk: dict[tuple, float] = {}
         for ev in events:
             if ev.event_type == "temperature_change":
@@ -1829,10 +1834,10 @@ class TestWeatherReport:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         _force_perception_reset(e, 0, 0, "temp", "humidity", "wind", "sunshine")
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         wp = e.get_weather(0, 0)
         assert wp is not None
         assert wp.temperature == pytest.approx(
@@ -1863,7 +1868,7 @@ class TestGlobalEvents:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 0
         e.shutdown()
 
@@ -1877,9 +1882,9 @@ class TestGlobalEvents:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首次（day 1 春，不发）
+        _advance_weather(e, clock.time)  # 首次（day 1 春，不发）
         clock.skip(90 * GAME_DAY)  # 推进到 day 91 06:00（夏）
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 1
         assert events[0].data["season"] == 1  # 夏
         e.shutdown()
@@ -1894,9 +1899,9 @@ class TestGlobalEvents:
         clock.skip(6 * GAME_HOUR)  # 12:00（正午，确定白天）
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首次（昼）
+        _advance_weather(e, clock.time)  # 首次（昼）
         clock.skip(6 * GAME_HOUR)  # 18:00（已日落 → 夜）
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 1
         assert events[0].location[:2] == (0, 0)
         assert "daylight_hours" in events[0].data
@@ -1913,11 +1918,11 @@ class TestGlobalEvents:
         clock.skip(14 * GAME_HOUR)  # 20:00（夜里）
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)  # 首次（夜）
+        _advance_weather(e, clock.time)  # 首次（夜）
         assert len(events) == 0
         # 推进到次日 08:00（已日出，日出≈7:10）
         clock.skip(12 * GAME_HOUR)  # 20:00 + 12h = 次日 08:00
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 1
         assert events[0].location[:2] == (0, 0)
         assert "daylight_hours" in events[0].data
@@ -1933,9 +1938,9 @@ class TestGlobalEvents:
         clock = WorldClock()  # 06:00
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         clock.skip(6 * GAME_HOUR)  # 到 12:00（仍白天）
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 0
         e.shutdown()
 
@@ -1986,9 +1991,9 @@ class TestGlobalEvents:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         clock.skip(90 * GAME_DAY)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert events[0].location[:2] == (0, 0)
         e.shutdown()
 
@@ -2006,9 +2011,9 @@ class TestPerChunkDayNight:
         clock.skip(14 * GAME_HOUR)  # 20:00（夜里）
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         clock.skip(12 * GAME_HOUR)  # 次日 08:00
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 1
         assert 0.0 <= events[0].data["daylight_hours"] <= 24.0
         e.shutdown()
@@ -2023,9 +2028,9 @@ class TestPerChunkDayNight:
         clock.skip(6 * GAME_HOUR)  # 12:00（白天）
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.TEMPERATE_FOREST, 15.0)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         clock.skip(7 * GAME_HOUR)  # 19:00（已日落）
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert len(events) == 1
         assert 0.0 <= events[0].data["daylight_hours"] <= 24.0
         e.shutdown()
@@ -2042,9 +2047,9 @@ class TestPerChunkDayNight:
         e.register_chunk(0, 0, _make_baseline(), ClimateZone.EQUATORIAL_RAINFOREST, 30.0)
         e.register_chunk(10, 0, _make_baseline(), ClimateZone.POLAR_TUNDRA, -5.0)
         clock.skip(134 * GAME_DAY + 20 * GAME_HOUR)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         clock.skip(12 * GAME_HOUR)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         by_chunk: dict[tuple, float] = {}
         for ev in events:
             if ev.event_type == "sunrise":
@@ -2082,14 +2087,14 @@ class TestExtremeWeatherIntegration:
         clock = WorldClock()
         e = WeatherEngine(clock, seed=42, world_tree_arg=wt)
         e.register_chunk(0, 0, _make_baseline(temp=25.0), ClimateZone.DESERT, 22.0)
-        _publish_minute(wt, clock.time)  # 首刻静默初始化
+        _advance_weather(e, clock.time)  # 首刻静默初始化
         e.force_feature(0, 0, "heat_wave", True)
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert any(ev.event_type == "heat_wave_start" for ev in events)
         e.force_feature(0, 0, "heat_wave", False)
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert any(ev.event_type == "heat_wave_stop" for ev in events)
         e.shutdown()
 
@@ -2157,14 +2162,14 @@ class TestForceControl:
         events = []
         for t in ("cold_snap_start", "cold_snap_stop"):
             wt.subscribe(t, lambda ev: events.append(ev))
-        _publish_minute(wt, clock.time)  # 静默初始化
+        _advance_weather(e, clock.time)  # 静默初始化
         e.force_feature(0, 0, "cold_snap", True)
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert any(ev.event_type == "cold_snap_start" for ev in events)
         e.force_feature(0, 0, "cold_snap", False)
         clock.skip(1)
-        _publish_minute(wt, clock.time)
+        _advance_weather(e, clock.time)
         assert any(ev.event_type == "cold_snap_stop" for ev in events)
         e.shutdown()
 
@@ -2221,7 +2226,7 @@ class TestWeatherQueryConcurrency:
         try:
             for day in range(10):
                 clock.skip(GAME_DAY)
-                _publish_minute(wt, clock.time)
+                _advance_weather(e, clock.time)
                 # 引擎线程典型操作：重注册与注销交替（迭代期间 dict 增删）
                 e.register_chunk(day % 3, 0, _make_baseline(),
                                  ClimateZone.TEMPERATE_FOREST, 15.0)

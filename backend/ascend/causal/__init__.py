@@ -18,6 +18,14 @@ from .observe import (
     leaks_research_truth,
     observe,
 )
+from .program import (
+    KernelBinding,
+    UpdatePointPlan,
+    Wave,
+    WorldProgram,
+    compile_default_program,
+    compile_world_program,
+)
 from .registry import MechanismRegistry
 from .trace import RandomAddress, TraceLog, TraceRecord
 from .declaration import DeclarationError
@@ -35,6 +43,12 @@ from .state_schema import (
     encode_state,
     load_declaration,
     state_digest,
+)
+from .update_points import (
+    UPDATE_POINTS_PATH,
+    UpdatePointDeclaration,
+    UpdatePointTable,
+    load_update_points,
 )
 from .spec import (
     AccessPolicy,
@@ -63,6 +77,7 @@ __all__ = [
     "FateNamespaceEntry",
     "FateNamespaceRegistry",
     "InstanceDomain",
+    "KernelBinding",
     "MathMetadata",
     "MechanismRegistry",
     "MechanismSpec",
@@ -75,8 +90,14 @@ __all__ = [
     "StateDeclaration",
     "StateOwnership",
     "StateSlice",
+    "UPDATE_POINTS_PATH",
     "UpdateContract",
+    "UpdatePointDeclaration",
+    "UpdatePointPlan",
+    "UpdatePointTable",
     "ValueDomain",
+    "Wave",
+    "WorldProgram",
     "INTERVENTION_TARGET_SPACES",
     "InterventionRecord",
     "InterventionTimeline",
@@ -94,9 +115,12 @@ __all__ = [
     "FOREVER",
     "SINGLE",
     "WINDOW",
+    "compile_default_program",
+    "compile_world_program",
     "default_duration",
     "encode_state",
     "load_declaration",
     "load_fate_namespaces",
+    "load_update_points",
     "state_digest",
 ]

@@ -53,6 +53,7 @@ mkdir -p "$OUT_DIR"
   --include-package=cryptography \
   --include-data-files="$ROOT/backend/ascend/space/*.so=ascend/space/" \
   --include-data-files="$ROOT/backend/ascend/world_tree/schema.sqlite.sql=ascend/world_tree/" \
+  --include-data-files="$ROOT/backend/ascend/causal/declarations/*.json=ascend/causal/declarations/" \
   "${EXCLUDES[@]}" \
   --product-name="Ascend" \
   --product-version="$PRODUCT_VERSION" \

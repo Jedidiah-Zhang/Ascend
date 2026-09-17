@@ -21,7 +21,7 @@ from typing import ClassVar
 from ascend.config import GAME_HOUR
 from ascend.log import get_logger
 from ascend.weather.derive import precip_type_for
-from ascend.world_tree import AffectedParty, Event, WorldEvent, SubscriptionScope
+from ascend.world_tree import AffectedParty, Event, WorldEvent
 from ascend.world_tree import world_tree as _default_wt
 
 from ._cext import load_c_extension
@@ -251,14 +251,6 @@ class TileStateEngine:
         self._chunks: dict[tuple[int, int], object] = {}
         self._aggregates_cache: dict[tuple[int, int], dict] = {}
         self._lock = threading.RLock()
-        # 驱动信号（时钟推进）：tick/skip 后把状态积分到当前更新点。
-        self._scope = SubscriptionScope()
-        self._scope.capture(clock.on_tick(
-            lambda game_time: self.advance(game_time),
-        ))
-        self._scope.capture(clock.on_skip(
-            lambda skipped, game_time: self.advance(game_time),
-        ))
 
     # ── 注册 ──────────────────────────────────────────────
 
@@ -305,8 +297,7 @@ class TileStateEngine:
             self._advance_chunk(key, target)
 
     def shutdown(self) -> None:
-        """停止引擎：退订时钟信号并注销全部 chunk。"""
-        self._scope.close()
+        """停止引擎：注销全部 chunk。"""
         self.unregister_all()
 
     # ── 聚合（派生缓存）───────────────────────────────────

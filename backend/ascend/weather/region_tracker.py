@@ -135,7 +135,7 @@ class RegionTracker:
     def update(self, now: int) -> list[RegionEvent]:
         """扫描注册 chunk，输出区域出现/消失事件。
 
-        每游戏分钟调用一次（WeatherEngine._on_minute_change）。
+        每游戏分钟调用一次（WeatherEngine.advance）。
 
         Args:
             now: 当前时刻（tick）。

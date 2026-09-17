@@ -471,6 +471,28 @@ class GameEngine:
         self._world_stack.push(
             self._unset("tile_state_engine", self.tile_state_engine.shutdown)
         )
+        # 5c'. 世界程序 + 帧调度器：声明编译为执行计划（波次/内核绑定/
+        # 更新点/身份），调度器按计划驱动。执行权只来自声明——订阅者
+        # 不得回写世界状态（ADR-12/13）。
+        from ascend.causal.program import compile_default_program
+        from ascend.runtime import FrameScheduler, apply_update_points
+        self.world_program = compile_default_program()
+        self._scheduler = FrameScheduler(clock=self.clock)
+        apply_update_points(
+            self.world_program,
+            self._scheduler,
+            {
+                "weather.evaluate": self.weather_engine.advance,
+                "terrain.integrate": self.tile_state_engine.advance,
+            },
+        )
+        logger.info(
+            "世界程序就绪: identity=%s waves=%d points=%d",
+            self.world_program.identity,
+            len(self.world_program.waves),
+            len(self.world_program.update_points),
+        )
+        self._world_stack.push(self._unset("_scheduler", self._scheduler.shutdown))
         self.chunk_services = ChunkServiceRegistry([
             WeatherChunkService(self.weather_engine),
             TileStateChunkService(self.tile_state_engine),

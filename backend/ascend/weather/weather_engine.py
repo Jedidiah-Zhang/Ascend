@@ -29,8 +29,7 @@ from ascend.log import get_logger
 from ascend.space import (ClimateZone, WeatherParams,
                           get_climate_template)
 from ascend.time import WorldClock
-from ascend.world_tree import (AffectedParty, Event, SubscriptionScope,
-                               WorldEvent)
+from ascend.world_tree import (AffectedParty, Event, WorldEvent)
 from ascend.world_tree import world_tree as _default_wt
 
 from .derive import (DaySummary, classify_humidity, classify_sunshine,
@@ -135,16 +134,14 @@ class WeatherEngine:
         # 研究 trace（默认关闭：未挂载 = 零开销；研究通道按需开启）
         self._trace: TraceLog | None = None
         # 查询/写入互斥：handler 线程查询（get_weather 系）与游戏线程
-        # 推进（_on_minute_change / register / unregister）并发安全。
-        # RLock：_publish 在锁内同步分发事件，防未来订阅者回调重入查询 API
-        # （当前唯一订阅者 EventBridge 仅转发不查询，RLock 为低成本防御）。
+        # 推进（advance / register / unregister）并发安全。
+        # RLock：事件发布在锁内同步分发（记录/观测），防未来订阅者
+        # 回调重入查询 API（当前订阅者仅转发与展示，RLock 为低成本防御）。
         self._query_lock = threading.RLock()
         self._field = UnifiedWeatherField(seed=seed)
         self._fields: dict[tuple[int, int], WeatherField] = {}
         self._tracker = RegionTracker(self._field, evaluate=self.evaluate_node)
         self._last_season: int | None = None
-        self._scope = SubscriptionScope()
-        self._scope.subscribe(self._wt, "minute_change", self._on_minute_change)
         logger.debug("天气引擎初始化 seed=%d", seed)
 
     @property
@@ -296,8 +293,7 @@ class WeatherEngine:
             self._tracker.remove_chunk(cx, cy)
 
     def shutdown(self) -> None:
-        """取消订阅，释放资源。"""
-        self._scope.close()
+        """关闭引擎（无订阅；保留接口供生命周期统一调用）。"""
         logger.debug("天气引擎已关闭")
 
     # ── 公开：查询 API ──────────────────────────────────────────
@@ -385,7 +381,7 @@ class WeatherEngine:
     def _tick_context(self, now: int) -> dict:
         """推导 tick 级共享计算上下文（经机制注册表求值，对所有 chunk 相同）。
 
-        get_weather 查询路径与 _on_minute_change 事件路径共用，
+        get_weather 查询路径与 advance 驱动路径共用，
         保证两条路径的公式永远一致。
 
         Args:
@@ -840,11 +836,13 @@ class WeatherEngine:
         )
         return True
 
-    # ── 内部：tick 调度 ─────────────────────────────────────────
+    # ── 驱动入口：声明更新点（每游戏分钟）──────────────────────
 
-    def _on_minute_change(self, event: Event) -> None:
-        """每游戏分钟：全局季节 + 区域降水事件 + per-chunk 参数/昼夜/特征核。"""
-        now: int = event.data["game_time"]
+    def advance(self, now: int) -> None:
+        """每游戏分钟：全局季节 + 区域降水事件 + per-chunk 参数/昼夜/特征核。
+
+        由 FrameScheduler 按声明更新点调用（驱动层信号，非世界树订阅）。
+        """
         tod = now % GAME_DAY
         # tick 级预计算 — 这些值对所有 chunk 相同（与查询 API 共用同一推导）
         ctx = self._tick_context(now)

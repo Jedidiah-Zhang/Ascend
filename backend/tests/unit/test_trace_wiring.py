@@ -134,26 +134,16 @@ class TestTraceIsSeparateFromGameplayEvents:
     def test_events_carry_no_trace_fields(self, engine, clock):
         """真实玩法事件（季节跨越）载荷不得含 trace 字段。"""
         from ascend.config import GAME_DAY
-        from ascend.world_tree import AffectedParty, Event
 
         weather, _ = engine
         wt = weather._wt
         captured: list = []
         wt.subscribe("*", lambda event: captured.append(event))
 
-        def publish_minute(game_time: int) -> None:
-            wt.publish(Event(
-                timestamp=game_time, location=(0, 0, None, None),
-                initiator_type="system", initiator_id="test",
-                affected=[AffectedParty("world", "subject")],
-                event_type="minute_change",
-                data={"game_time": game_time, "hour": 6, "minute": 0},
-            ))
-
         weather.enable_trace()
-        publish_minute(clock.time)           # 首次（不发季节事件）
+        weather.advance(clock.time)          # 首次（不发季节事件）
         clock.skip(90 * GAME_DAY)            # 跨季节边界
-        publish_minute(clock.time)
+        weather.advance(clock.time)
         weather.get_weather(*_CHUNK)
         assert captured, "前提：跨季节应产生玩法事件"
         forbidden = {
