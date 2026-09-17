@@ -307,9 +307,12 @@ def _parent(
     parent: str,
     argument: str,
     source_microstep: str,
-    lipschitz: float,
+    lipschitz: float | None,
     valid_domain: str,
     analysis_role: str,
+    *,
+    modulus_kind: str = "linear",
+    jump_bound: float | None = None,
 ) -> ParentSpec:
     return ParentSpec(
         parent=parent,
@@ -326,6 +329,8 @@ def _parent(
         metric="absolute_difference",
         valid_domain=valid_domain,
         analysis_role=analysis_role,
+        modulus_kind=modulus_kind,
+        jump_bound=jump_bound,
     )
 
 
@@ -990,7 +995,10 @@ _NODES = (
         schedule="on_chunk_registration",
         microstep=WEATHER_CHUNK_DERIVED_A,
         writer="weather.chunk.derive_precipitation_threshold.v1",
-        error_budget=0.01,
+        # 确定性派生量：阈值 = 声明参数 + 年降雨的精确 ramp，无独立模型
+        # 误差；其不确定性全部经父节点（年降雨 ε=100mm × 斜坡）传播。
+        # 原 0.01 与父节点传播项构成双重计数（#53 G3 审计）。
+        error_budget=0.0,
         valid_domain="closed_interval_wet_to_dry",
     ),
     # ── chunk 派生（b 层）────────────────────────────────
@@ -1652,7 +1660,7 @@ _MECHANISMS = (
         _precip_threshold_equation,
         (
             _parent(ANNUAL_RAINFALL, "annual_rainfall",
-                    "world.gen_derived_a", 0.0,
+                    "world.gen_derived_a", 8.695652173913045e-05,
                     "annual_rainfall_in_declared_bounds", "forward"),
         ),
         (
@@ -1679,8 +1687,9 @@ _MECHANISMS = (
         "tick // game_day + 1",
         _day_equation,
         (
-            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, 0.0,
-                    "nonnegative_integer_tick", "forward"),
+            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, None,
+                    "nonnegative_integer_tick", "forward",
+                    modulus_kind="jump", jump_bound=1.0),
         ),
         (ParameterBinding(_P_GAME_DAY, "game_day"),),
         ("zero_tick:day_one", "positive_tick:monotonic_day"),
@@ -1697,8 +1706,9 @@ _MECHANISMS = (
         "(tick // game_day) % days_per_year",
         _day_of_year_equation,
         (
-            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, 0.0,
-                    "nonnegative_integer_tick", "forward"),
+            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, None,
+                    "nonnegative_integer_tick", "forward",
+                    modulus_kind="jump", jump_bound=1.0),
         ),
         (
             ParameterBinding(_P_GAME_DAY, "game_day"),
@@ -1718,8 +1728,9 @@ _MECHANISMS = (
         "(tick % game_day) / game_hour",
         _hour_equation,
         (
-            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, 0.0,
-                    "nonnegative_integer_tick", "forward"),
+            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, None,
+                    "nonnegative_integer_tick", "forward",
+                    modulus_kind="jump", jump_bound=24.0),
         ),
         (
             ParameterBinding(_P_GAME_DAY, "game_day"),
@@ -1762,7 +1773,7 @@ _MECHANISMS = (
         "/ seasons_per_year * 2 * pi)",
         _season_phase_cos_equation,
         (
-            _parent(DAY, "day", WEATHER_INSTANT_TICK_INPUT, 0.0,
+            _parent(DAY, "day", WEATHER_INSTANT_TICK_INPUT, 0.017453292519943295,
                     "positive_game_day", "forward"),
         ),
         (
@@ -1783,7 +1794,7 @@ _MECHANISMS = (
         "cos((hour - peak_hour) / 24 * 2 * pi)",
         _diurnal_phase_cos_equation,
         (
-            _parent(HOUR_OF_DAY, "hour", WEATHER_INSTANT_TICK_INPUT, 0.0,
+            _parent(HOUR_OF_DAY, "hour", WEATHER_INSTANT_TICK_INPUT, 0.2617993877991494,
                     "half_open_interval_0_24_hours", "forward"),
         ),
         (ParameterBinding(_P_DIURNAL_PEAK_HOUR, "peak_hour"),),
@@ -1802,7 +1813,7 @@ _MECHANISMS = (
         "days_per_year / 8) / days_per_year))",
         _solar_declination_equation,
         (
-            _parent(DAY_OF_YEAR, "day_of_year", WEATHER_INSTANT_TICK_INPUT, 0.0,
+            _parent(DAY_OF_YEAR, "day_of_year", WEATHER_INSTANT_TICK_INPUT, 0.00714023231980045,
                     "zero_based_day_of_year", "forward"),
         ),
         (
@@ -1886,7 +1897,7 @@ _MECHANISMS = (
                     WEATHER_INSTANT_TICK_DERIVED, 20.0,
                     "cosine_range", "forward"),
             _parent(HUMIDITY_SHARPNESS, "sharpness",
-                    "world.gen_derived_d", 0.0,
+                    "world.gen_derived_d", 20.0,
                     "nonnegative_sharpness", "forward"),
         ),
         (),
@@ -1949,8 +1960,9 @@ _MECHANISMS = (
                     WEATHER_CHUNK_DERIVED_A, 0.5,
                     "closed_interval_0_80_degrees", "forward"),
             _parent(SOLAR_DECLINATION, "solar_declination",
-                    WEATHER_INSTANT_TICK_DERIVED, 1.0,
-                    "solar_declination_range", "forward"),
+                    WEATHER_INSTANT_TICK_DERIVED, None,
+                    "solar_declination_range", "forward",
+                    modulus_kind="jump", jump_bound=12.0),
         ),
         (),
         ("equinox:twelve_noon_correction_zero", "polar_day:sunrise_zero",
@@ -1978,8 +1990,9 @@ _MECHANISMS = (
                     WEATHER_CHUNK_DERIVED_A, 0.5,
                     "closed_interval_0_80_degrees", "forward"),
             _parent(SOLAR_DECLINATION, "solar_declination",
-                    WEATHER_INSTANT_TICK_DERIVED, 1.0,
-                    "solar_declination_range", "forward"),
+                    WEATHER_INSTANT_TICK_DERIVED, None,
+                    "solar_declination_range", "forward",
+                    modulus_kind="jump", jump_bound=12.0),
         ),
         (),
         ("equinox:twelve_noon_correction_zero", "polar_day:sunset_twenty_four",
@@ -2151,7 +2164,7 @@ _MECHANISMS = (
                     WEATHER_FRAME_INPUT, 4.0,
                     "unified_field_channel_composite", "forward"),
             _parent(FIELD_WIND_MULTIPLIER, "multiplier",
-                    WEATHER_FRAME_INPUT, 0.0,
+                    WEATHER_FRAME_INPUT, 50.0,
                     "at_least_one_multiplier", "forward"),
         ),
         (
@@ -2192,13 +2205,13 @@ _MECHANISMS = (
         _precipitation_intensity_equation,
         (
             _parent(FIELD_PRECIPITATION_SIGNAL, "signal",
-                    WEATHER_FRAME_INPUT, 0.0,
+                    WEATHER_FRAME_INPUT, 20.0,
                     "unified_field_channel_composite", "forward"),
             _parent(PRECIPITATION_THRESHOLD, "threshold",
-                    WEATHER_CHUNK_DERIVED_A, 0.0,
+                    WEATHER_CHUNK_DERIVED_A, 20.0,
                     "closed_interval_wet_to_dry", "forward"),
             _parent(MEAN_PRECIP_INTENSITY, "mean_intensity",
-                    "world.gen_derived_d", 0.0,
+                    "world.gen_derived_d", 1.9,
                     "positive_mean_intensity", "forward"),
         ),
         (

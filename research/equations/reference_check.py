@@ -52,6 +52,10 @@ _TOLERANCES: dict[str, float] = {
     "weather.astronomy.derive_sunrise.v1": 0.05,
     "weather.astronomy.derive_sunset.v1": 0.05,
     "weather.astronomy.derive_daylight.v1": 0.1,
+    "world.gen.derive_baseline_humidity.v1": 1e-5,
+    "world.gen.derive_baseline_wind_speed.v1": 1e-5,
+    "world.gen.derive_humidity_sharpness.v1": 1e-5,
+    "world.gen.derive_mean_precip_intensity.v1": 1e-5,
 }
 
 

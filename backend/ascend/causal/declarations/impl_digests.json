@@ -155,22 +155,22 @@
     {
       "mechanism_id": "world.gen.derive_baseline_humidity.v1",
       "output": "weather.chunk.baseline_humidity_percent",
-      "equation_version": "sha256:4a96fb3058be0a95d653bb8f986d2ab191ff613489941ba114866cb559063d57"
+      "equation_version": "sha256:13418486ee74ed31ca7fe3092e62f024998ff526ce06dbfcf5564fe6a82bab53"
     },
     {
       "mechanism_id": "world.gen.derive_baseline_wind_speed.v1",
       "output": "weather.chunk.baseline_wind_speed_mps",
-      "equation_version": "sha256:4267a66e128049500a752448c94005db85459be2da0faba48bfd9fe825982875"
+      "equation_version": "sha256:cb464ad5118c468fd0dc4a8c8243661553c6238bb86c6f26a282d6c2148d46dc"
     },
     {
       "mechanism_id": "world.gen.derive_humidity_sharpness.v1",
       "output": "weather.chunk.humidity_sharpness",
-      "equation_version": "sha256:8e1684ad714e8a696c4a3f4f813eeda680458cfc1133d9f7a966e8248b2ee316"
+      "equation_version": "sha256:240df887ae0b3c4f20853012e036e79422de3fe6d2881cf7575e2a160376ab1c"
     },
     {
       "mechanism_id": "world.gen.derive_mean_precip_intensity.v1",
       "output": "weather.chunk.mean_precip_intensity_mm_per_hour",
-      "equation_version": "sha256:120c284783ddc645d3be340b106175340af283a9441c25c7ec86d2d6f12639be"
+      "equation_version": "sha256:5429e44460b3edf09249e17e958a23a30311b7a87f1f46b6cb544af01f28f942"
     },
     {
       "mechanism_id": "world.gen.derive_sea_level_temperature.v1",

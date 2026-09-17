@@ -216,6 +216,11 @@ def build_content(json_path: Path) -> tuple[str, dict]:
     add("")
     for e in decl["edges"]:
         p, c = e["parent"], e["child"]
+        if e["L"] is None:
+            # 跳变边（modulus_kind=jump）：无连续性声明，不产出 L 定义
+            add(f"-- jump edge {p} → {c}（L 不适用，"
+                f"jump_bound={e.get('jump_bound')!r}）")
+            continue
         name = EDGE_DEF_NAMES.get((p, c), f"edge{camel(p)}{camel(c)}L")
         add(f"-- {p} → {c} | role={e.get('role', '?')} | equation={e.get('equation', '?')}")
         add(f"def {name} : ℝ := {fmt(e['L'])}")

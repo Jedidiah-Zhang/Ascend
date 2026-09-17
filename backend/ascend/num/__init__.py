@@ -5,6 +5,6 @@
 包络表示与复合、定点内核迁移的逐位对拍工具。
 """
 
-from . import fixed
+from . import enclosure, fixed
 
-__all__ = ["fixed"]
+__all__ = ["enclosure", "fixed"]

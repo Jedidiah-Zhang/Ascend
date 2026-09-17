@@ -223,9 +223,12 @@ def _parent(
     parent: str,
     argument: str,
     source_microstep: str,
-    lipschitz: float,
+    lipschitz: float | None,
     valid_domain: str,
     analysis_role: str,
+    *,
+    modulus_kind: str = "linear",
+    jump_bound: float | None = None,
 ) -> ParentSpec:
     return ParentSpec(
         parent=parent,
@@ -242,6 +245,8 @@ def _parent(
         metric="absolute_difference",
         valid_domain=valid_domain,
         analysis_role=analysis_role,
+        modulus_kind=modulus_kind,
+        jump_bound=jump_bound,
     )
 
 
@@ -303,29 +308,84 @@ def _baseline_humidity_equation(
     climate_zone: int,
     humidity_noise: float,
 ) -> float:
+    """定点实现（issue #53 P4）：模板/噪声量化 + 定点乘加 + 定点 clamp。"""
+    from ascend.num.fixed import clamp as fixed_clamp, mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
     template = get_climate_template(ClimateZone(climate_zone))
     lo, hi = template.humidity_range
-    return clamp(lo + (humidity_noise + 1.0) * 0.5 * (hi - lo), 0.0, 100.0)
+    bits = TABLE_BITS
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    value = q(lo) + mul(
+        mul(q(humidity_noise) + q(1.0), q(0.5), bits),
+        q(hi) - q(lo), bits,
+    )
+    return to_float(
+        fixed_clamp(value, q(0.0), q(100.0)), bits,
+    )
 
 
 def _baseline_wind_speed_equation(
     climate_zone: int,
     wind_noise: float,
 ) -> float:
+    """定点实现（issue #53 P4）：模板/噪声量化 + 定点乘加 + 定点 clamp。"""
+    from ascend.num.fixed import clamp as fixed_clamp, mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
     template = get_climate_template(ClimateZone(climate_zone))
     lo, hi = template.wind_speed_range
-    return clamp(lo + (wind_noise + 1.0) * 0.5 * (hi - lo), 0.0, 50.0)
+    bits = TABLE_BITS
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    value = q(lo) + mul(
+        mul(q(wind_noise) + q(1.0), q(0.5), bits),
+        q(hi) - q(lo), bits,
+    )
+    return to_float(
+        fixed_clamp(value, q(0.0), q(50.0)), bits,
+    )
 
 
 def _mean_precip_intensity_equation(climate_zone: int) -> float:
-    return get_climate_template(ClimateZone(climate_zone)).mean_precip_intensity
+    """定点实现（issue #53 P4）：模板值量化往返（数据契约）。"""
+    from ascend.num.fixed import quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    value = get_climate_template(
+        ClimateZone(climate_zone),
+    ).mean_precip_intensity
+    return to_float(quantize(value, TABLE_BITS), TABLE_BITS)
 
 
 def _humidity_sharpness_equation(climate_zone: int) -> float:
-    return get_climate_template(ClimateZone(climate_zone)).humidity_sharpness
+    """定点实现（issue #53 P4）：模板值量化往返（数据契约）。"""
+    from ascend.num.fixed import quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    value = get_climate_template(
+        ClimateZone(climate_zone),
+    ).humidity_sharpness
+    return to_float(quantize(value, TABLE_BITS), TABLE_BITS)
 
 
 # ── 节点 ────────────────────────────────────────────────────────
+
+# 数值内核依赖（issue #53 P4）：定点/冻表实现源码进方程身份
+_NUM_DEPS = (
+    __import__("pathlib").Path(__file__).resolve().parents[1]
+    / "num" / "fixed.py",
+    __import__("pathlib").Path(__file__).resolve().parents[1]
+    / "num" / "tables.py",
+    __import__("pathlib").Path(__file__).resolve().parents[1]
+    / "num" / "frozen_tables.py",
+)
+
 
 
 def _boundary(
@@ -503,7 +563,9 @@ _NODES = (
         MEAN_PRECIP_INTENSITY,
         kind="float",
         unit="mm_per_hour",
-        bounds=(0.0, 100.0),
+        # 值域 = data/climate.json 模板实际范围（2..10）；原先的 [0,100]
+        # 是未加论证的名义界，会虚增下游 Lipschitz 界（#53 P4 G3 审计）
+        bounds=(2.0, 10.0),
         choices=(),
         reconstruction="world.gen.derive_mean_precip_intensity.v1",
         microstep=WORLD_GEN_DERIVED_D,
@@ -792,9 +854,10 @@ _MECHANISMS = (
         "（模板数据 data/climate.json）",
         _baseline_humidity_equation,
         (
-            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, 0.0,
-                    "climate_zone_enum_0_7", "forward"),
-            _parent(HUMIDITY_NOISE, "humidity_noise", WORLD_GEN_INPUT, 0.0,
+            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, None,
+                    "climate_zone_enum_0_7", "forward",
+                    modulus_kind="jump", jump_bound=90.0),
+            _parent(HUMIDITY_NOISE, "humidity_noise", WORLD_GEN_INPUT, 20.0,
                     "closed_interval_-1_1", "forward"),
         ),
         (),
@@ -803,7 +866,7 @@ _MECHANISMS = (
             "noise_plus_one:template_high",
             "finite_interior:linear_interpolation",
         ),
-        _TEMPLATE_DEPS,
+        _TEMPLATE_DEPS + _NUM_DEPS,
         (
             _w("humidity_noise_changes_baseline_humidity",
                HUMIDITY_NOISE,
@@ -823,9 +886,10 @@ _MECHANISMS = (
         "（模板数据 data/climate.json）",
         _baseline_wind_speed_equation,
         (
-            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, 0.0,
-                    "climate_zone_enum_0_7", "forward"),
-            _parent(WIND_NOISE, "wind_noise", WORLD_GEN_INPUT, 0.0,
+            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, None,
+                    "climate_zone_enum_0_7", "forward",
+                    modulus_kind="jump", jump_bound=25.0),
+            _parent(WIND_NOISE, "wind_noise", WORLD_GEN_INPUT, 11.0,
                     "closed_interval_-1_1", "forward"),
         ),
         (),
@@ -834,7 +898,7 @@ _MECHANISMS = (
             "noise_plus_one:template_high",
             "finite_interior:linear_interpolation",
         ),
-        _TEMPLATE_DEPS,
+        _TEMPLATE_DEPS + _NUM_DEPS,
         (
             _w("wind_noise_changes_baseline_wind_speed",
                WIND_NOISE,
@@ -852,12 +916,13 @@ _MECHANISMS = (
         "climate_template.mean_precip_intensity（数据契约）",
         _mean_precip_intensity_equation,
         (
-            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, 0.0,
-                    "climate_zone_enum_0_7", "forward"),
+            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, None,
+                    "climate_zone_enum_0_7", "forward",
+                    modulus_kind="jump", jump_bound=8.0),
         ),
         (),
         ("per_zone_lookup:data_contract",),
-        _TEMPLATE_DEPS,
+        _TEMPLATE_DEPS + _NUM_DEPS,
         (
             _w("climate_zone_changes_mean_precip_intensity",
                CLIMATE_ZONE,
@@ -870,12 +935,13 @@ _MECHANISMS = (
         "climate_template.humidity_sharpness（数据契约）",
         _humidity_sharpness_equation,
         (
-            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, 0.0,
-                    "climate_zone_enum_0_7", "forward"),
+            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, None,
+                    "climate_zone_enum_0_7", "forward",
+                    modulus_kind="jump", jump_bound=2.5),
         ),
         (),
         ("per_zone_lookup:data_contract",),
-        _TEMPLATE_DEPS,
+        _TEMPLATE_DEPS + _NUM_DEPS,
         (
             _w("climate_zone_changes_humidity_sharpness",
                CLIMATE_ZONE,

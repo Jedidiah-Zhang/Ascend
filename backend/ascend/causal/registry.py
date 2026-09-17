@@ -41,6 +41,7 @@ _VALUE_KINDS = {"float", "integer", "enum", "boolean", "string", "tuple"}
 # C1 见证评估的占位随机值（"其余一切不变"含随机源；见证只验证父依赖）
 _WITNESS_RANDOM_VALUE = 0.5
 _INTERVENTIONS = {"node", "persistent"}
+_MODULUS_KINDS = {"linear", "jump"}
 _ANALYSIS_ROLES = {"forward", "inverse", "observable"}
 
 # 快照文件依赖的机器无关锚点：仓库布局 backend/（源码模式才生成快照）。
@@ -788,8 +789,39 @@ class MechanismRegistry:
                     )
                 if parent.lag < 0:
                     issues.append(f"{mechanism_id}: 父 {parent.parent} lag < 0")
-                if parent.lipschitz < 0:
-                    issues.append(f"{mechanism_id}: 父 {parent.parent} L < 0")
+                if parent.modulus_kind not in _MODULUS_KINDS:
+                    issues.append(
+                        f"{mechanism_id}: 父 {parent.parent} 非法 "
+                        f"modulus_kind={parent.modulus_kind!r}"
+                    )
+                elif parent.modulus_kind == "linear":
+                    if (parent.lipschitz is None
+                            or not isinstance(parent.lipschitz, (int, float))
+                            or not math.isfinite(parent.lipschitz)
+                            or parent.lipschitz < 0):
+                        issues.append(
+                            f"{mechanism_id}: 父 {parent.parent} linear 模数需要"
+                            f"有限非负 lipschitz"
+                        )
+                    if parent.jump_bound is not None:
+                        issues.append(
+                            f"{mechanism_id}: 父 {parent.parent} linear 模数不得"
+                            f"声明 jump_bound"
+                        )
+                else:  # jump
+                    if parent.lipschitz is not None:
+                        issues.append(
+                            f"{mechanism_id}: 父 {parent.parent} jump 模数不得"
+                            f"声明 lipschitz（有界跳变无连续性）"
+                        )
+                    if (parent.jump_bound is None
+                            or not isinstance(parent.jump_bound, (int, float))
+                            or not math.isfinite(parent.jump_bound)
+                            or parent.jump_bound <= 0):
+                        issues.append(
+                            f"{mechanism_id}: 父 {parent.parent} jump 模数需要"
+                            f"正有限 jump_bound"
+                        )
                 if parent.analysis_role not in _ANALYSIS_ROLES:
                     issues.append(
                         f"{mechanism_id}: 非法 analysis_role={parent.analysis_role!r}"
@@ -1191,6 +1223,8 @@ class MechanismRegistry:
                     "role": "structural",
                     "analysis_role": parent.analysis_role,
                     "L": parent.lipschitz,
+                    "modulus_kind": parent.modulus_kind,
+                    "jump_bound": parent.jump_bound,
                     "equation": mechanism.mechanism_id,
                     "lag": parent.lag,
                     "source_microstep": parent.source_microstep,
