@@ -12,6 +12,8 @@ import pytest
 from ascend.num import tables
 from ascend.num.fixed import quantize, to_float
 from ascend.num.frozen_tables import (
+    ACOS_SEGMENTS,
+    ACOS_TABLE_Q,
     COS_QUARTER_Q,
     HALF_PI_Q,
     PI_Q,
@@ -42,7 +44,9 @@ class TestTableData:
              "cos": {"segments": SEGMENTS, "pi_q": PI_Q,
                      "table": list(COS_QUARTER_Q)},
              "tanh": {"segments": TANH_SEGMENTS, "min_q": TANH_MIN_Q,
-                      "max_q": TANH_MAX_Q, "table": list(TANH_TABLE_Q)}},
+                      "max_q": TANH_MAX_Q, "table": list(TANH_TABLE_Q)},
+             "acos": {"segments": ACOS_SEGMENTS,
+                      "table": list(ACOS_TABLE_Q)}},
             sort_keys=True, separators=(",", ":"),
         ).encode()
         assert TABLE_DIGEST == (
@@ -147,3 +151,42 @@ class TestTanhQuery:
     def test_other_precision_rejected(self):
         with pytest.raises(ValueError, match="只支持"):
             tables.tanh_q(1, bits=TABLE_BITS - 1)
+
+
+class TestAcosTanDegrees:
+    def test_acos_endpoints_and_symmetry(self):
+        assert tables.acos_q(SCALE) == 0
+        pi_q = tables.acos_q(-SCALE)
+        assert abs(to_float(pi_q, TABLE_BITS) - math.pi) <= 2e-6
+        assert abs(to_float(tables.acos_q(0), TABLE_BITS) - math.pi / 2) <= 1e-3
+        for raw in (-SCALE // 2, 0, SCALE // 3, SCALE):
+            left = tables.acos_q(raw)
+            right = tables.acos_q(-raw)
+            assert abs(
+                to_float(left + right, TABLE_BITS) - math.pi
+            ) <= 2 * tables.ACOS_MAX_ERROR
+
+    def test_acos_declared_error(self):
+        rng = random.Random(97)
+        worst = 0.0
+        for _ in range(3000):
+            x = rng.uniform(-1.0, 1.0)
+            raw = quantize(x, TABLE_BITS)
+            worst = max(worst, abs(
+                to_float(tables.acos_q(raw), TABLE_BITS) - math.acos(x)
+            ))
+        assert worst <= tables.ACOS_MAX_ERROR, worst
+
+    def test_tan_and_degrees(self):
+        assert tables.tan_q(0) == 0
+        rng = random.Random(98)
+        worst = 0.0
+        for _ in range(2000):
+            x = rng.uniform(-1.4, 1.4)
+            raw = quantize(x, TABLE_BITS)
+            worst = max(worst, abs(
+                to_float(tables.tan_q(raw), TABLE_BITS) - math.tan(x)
+            ))
+        assert worst <= tables.TAN_MAX_ERROR, worst
+        deg = tables.degrees_q(PI_Q)
+        assert abs(to_float(deg, TABLE_BITS) - 180.0) <= 1e-4

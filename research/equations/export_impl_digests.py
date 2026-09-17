@@ -23,8 +23,15 @@ DEFAULT_OUT = (
 
 sys.path.insert(0, str(BACKEND))
 
-from ascend.causal.registry import _sourceless  # noqa: E402
-from ascend.causal.world import ASCEND_MECHANISMS  # noqa: E402
+from ascend.causal.registry import _source_version, _sourceless  # noqa: E402
+from ascend.space.mechanisms import (  # noqa: E402
+    WORLD_GEN_MECHANISM_SPECS,
+)
+from ascend.weather.mechanisms import (  # noqa: E402
+    WEATHER_MECHANISM_SPECS,
+)
+
+_SPECS = WORLD_GEN_MECHANISM_SPECS + WEATHER_MECHANISM_SPECS
 
 CONTRACT_VERSION = "v0.1"
 SCHEMA_VERSION = 1
@@ -37,15 +44,18 @@ def content() -> str:
             "实现摘要表必须在源码模式生成（当前为打包/无源码模式）"
         )
     entries = []
-    for mechanism in sorted(
-        ASCEND_MECHANISMS.mechanisms.values(),
-        key=lambda spec: spec.mechanism_id,
-    ):
+    for mechanism in sorted(_SPECS, key=lambda spec: spec.mechanism_id):
+        # 直接读声明 spec 并以 verify_table=False 计算版本：表陈旧时
+        # 注册表无法构造（fail-closed），生成器不能依赖它。
         entries.append({
             "mechanism_id": mechanism.mechanism_id,
             "output": mechanism.output,
-            "equation_version": ASCEND_MECHANISMS.equation_version(
-                mechanism.output
+            "equation_version": _source_version(
+                mechanism.function,
+                mechanism.source_dependencies,
+                mechanism_id=mechanism.mechanism_id,
+                output=mechanism.output,
+                verify_table=False,
             ),
         })
     payload = {
@@ -101,7 +111,7 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(content(), encoding="utf-8")
     print(f"[PASS] 生成 {output}")
-    print(f"       机制 {len(ASCEND_MECHANISMS.mechanisms)} 条")
+    print(f"       机制 {len(_SPECS)} 条")
     return 0
 
 

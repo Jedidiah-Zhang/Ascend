@@ -104,6 +104,7 @@ def _source_version(
     *,
     mechanism_id: str,
     output: str,
+    verify_table: bool = True,
 ) -> str:
     """方程/依赖的版本摘要（实现内容身份，issue #49）。
 
@@ -143,7 +144,7 @@ def _source_version(
             ) from exc
         sources.append({"callable": _callable_name(item), "source": source})
     live = _digest(sources)
-    entry = _impl_digest_or_none(mechanism_id)
+    entry = _impl_digest_or_none(mechanism_id) if verify_table else None
     if entry is not None and (
         entry.output != output or entry.equation_version != live
     ):

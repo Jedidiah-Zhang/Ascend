@@ -1,7 +1,7 @@
 {
   "comment": "AUTO-GENERATED from the ASCEND_MECHANISMS registry (weather/mechanisms.py + space/mechanisms.py slices); do not edit by hand. variables/edges are the research graph projection.",
   "declaration": {
-    "hash": "sha256:77c75675e901eca5b00effadc41c476d54395bb787c9dc96ee0e85369acd4366",
+    "hash": "sha256:a3ab854d3ddd0c7922736a36f8f36ef1cdfe37b019b9691a696263bf6244dc23",
     "id": "ascend.world.scalar_formulas",
     "microstep_order": [
       "world.gen_input",
@@ -1141,7 +1141,7 @@
         "polar_day:twenty_four_hours"
       ],
       "equation": "sunset - sunrise",
-      "equation_version": "sha256:a9f7c8aa9957b31903073a8b354ef580dc139796701f3c3ff541530c5e95a601",
+      "equation_version": "sha256:6bec8306fc800e78035cbaf2c3ddf6f96a5b7ec757f228b0cab917e074905406",
       "function": "ascend.weather.mechanisms._daylight_equation",
       "output": "weather.astronomy.daylight_hours",
       "parameters": [],
@@ -1190,11 +1190,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:c15f06f96882692a3c4f305f2f20c2118f2ae0ef451abdc3064ef7b2a1fc7e33",
-      "source_dependencies": [],
+      "resolved_version": "sha256:c88071c062a13a2255188a8037eae028eca143baf40668ec56ef0ead0006ab47",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:a9f7c8aa9957b31903073a8b354ef580dc139796701f3c3ff541530c5e95a601",
+          "equation_version": "sha256:6bec8306fc800e78035cbaf2c3ddf6f96a5b7ec757f228b0cab917e074905406",
           "expected_outputs": [
             12.0,
             10.0
@@ -1212,7 +1217,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a9f7c8aa9957b31903073a8b354ef580dc139796701f3c3ff541530c5e95a601",
+          "equation_version": "sha256:6bec8306fc800e78035cbaf2c3ddf6f96a5b7ec757f228b0cab917e074905406",
           "expected_outputs": [
             12.0,
             14.0
@@ -1238,7 +1243,7 @@
         "polar_night:sunrise_twelve"
       ],
       "equation": "12 - degrees(acos(-clamp(tan(radians(latitude)) * tan(solar_declination), -1, 1))) / 15",
-      "equation_version": "sha256:17e90070f75cc81641f908a85ee41b5159beb89d9f047b087473cdaabcb5335c",
+      "equation_version": "sha256:19ef7dc1d4ccc088a4e9e1634f40c3bf8e0e77a5fca5459c512fb3294b8e81df",
       "function": "ascend.weather.mechanisms._sunrise_equation",
       "output": "weather.astronomy.sunrise_hour",
       "parameters": [],
@@ -1287,11 +1292,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:fee2f675ad87496b8c7a67916d337acbbea21088169500dc73144bad93f80c6b",
-      "source_dependencies": [],
+      "resolved_version": "sha256:cc93705fd801442b8be72c3013dc190cfa88406c9f1da49ed83788b3a040a172",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:17e90070f75cc81641f908a85ee41b5159beb89d9f047b087473cdaabcb5335c",
+          "equation_version": "sha256:19ef7dc1d4ccc088a4e9e1634f40c3bf8e0e77a5fca5459c512fb3294b8e81df",
           "expected_outputs": [
             6.0,
             0.0
@@ -1309,7 +1319,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:17e90070f75cc81641f908a85ee41b5159beb89d9f047b087473cdaabcb5335c",
+          "equation_version": "sha256:19ef7dc1d4ccc088a4e9e1634f40c3bf8e0e77a5fca5459c512fb3294b8e81df",
           "expected_outputs": [
             6.0,
             0.0
@@ -1335,7 +1345,7 @@
         "polar_night:sunset_twelve"
       ],
       "equation": "12 + degrees(acos(-clamp(tan(radians(latitude)) * tan(solar_declination), -1, 1))) / 15",
-      "equation_version": "sha256:7cda0d682b92382f16747133c02a308f27356f2e60161699e9b1fa87d73aaed4",
+      "equation_version": "sha256:88d870fb8e56ee9825fea7f0f693f52c9bb91262776b4ce492f4ddd956ae6b83",
       "function": "ascend.weather.mechanisms._sunset_equation",
       "output": "weather.astronomy.sunset_hour",
       "parameters": [],
@@ -1384,11 +1394,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:e7f50c678d8b65e1c58d9855cb6fcd97af2e0620599ff961362d3071c0469000",
-      "source_dependencies": [],
+      "resolved_version": "sha256:c21d0b163b748bf4dc1dbeebf3a7ad9d95392f5ab54b824fdedf18275750b0bf",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:7cda0d682b92382f16747133c02a308f27356f2e60161699e9b1fa87d73aaed4",
+          "equation_version": "sha256:88d870fb8e56ee9825fea7f0f693f52c9bb91262776b4ce492f4ddd956ae6b83",
           "expected_outputs": [
             18.0,
             24.0
@@ -1406,7 +1421,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:7cda0d682b92382f16747133c02a308f27356f2e60161699e9b1fa87d73aaed4",
+          "equation_version": "sha256:88d870fb8e56ee9825fea7f0f693f52c9bb91262776b4ce492f4ddd956ae6b83",
           "expected_outputs": [
             18.0,
             24.0
@@ -1431,7 +1446,7 @@
         "positive_amplitude:linear_scaling"
       ],
       "equation": "seasonal_amplitude * diurnal_to_seasonal_ratio * humidity_diurnal_scale",
-      "equation_version": "sha256:9e2b785f2170f0655ab4a7b85cabd4099625ae597e47253dc5de52ab25b69d35",
+      "equation_version": "sha256:b2887fb4faf2640266a799fcf44eac4fe2d4217aae960cd4c9f80cb2d3974892",
       "function": "ascend.weather.mechanisms._humidity_diurnal_amplitude_equation",
       "output": "weather.chunk.diurnal_humidity_amplitude_pp",
       "parameters": [
@@ -1468,14 +1483,19 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:59d248bfcdfbdd905c073f3f016c050ae49b19d9d875b0ef3efac6bd82489a12",
-      "source_dependencies": [],
+      "resolved_version": "sha256:a7ebbf92242b15a3de3a4788005d814d99ad93902a49c523295d6f6b1263f481",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:9e2b785f2170f0655ab4a7b85cabd4099625ae597e47253dc5de52ab25b69d35",
+          "equation_version": "sha256:b2887fb4faf2640266a799fcf44eac4fe2d4217aae960cd4c9f80cb2d3974892",
           "expected_outputs": [
-            4.0,
-            8.0
+            3.9999999990686774,
+            7.999999998137355
           ],
           "inputs_a": {
             "weather.chunk.seasonal_temperature_amplitude_c": 10.0
@@ -1495,7 +1515,7 @@
         "positive_amplitude:linear_scaling"
       ],
       "equation": "seasonal_amplitude * diurnal_to_seasonal_ratio",
-      "equation_version": "sha256:a1c162d7f5e31c76d9d65163983a974b152f83cac102dacbbcbfd29071f8829d",
+      "equation_version": "sha256:8402517f04884058f51f2d2e9535f04a54ecfd0e6bbf523eadad63108ef53a0b",
       "function": "ascend.weather.mechanisms._diurnal_amplitude_equation",
       "output": "weather.chunk.diurnal_temperature_amplitude_c",
       "parameters": [
@@ -1528,11 +1548,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:a0ccbdd63a575ac204355ae8cec133bd9c0fe2006b8a4d59e75926fb7d704cf8",
-      "source_dependencies": [],
+      "resolved_version": "sha256:5ac9e0092a2c38eced813d014917cd628ddd9c0858f0c75892252012eb09cf80",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:a1c162d7f5e31c76d9d65163983a974b152f83cac102dacbbcbfd29071f8829d",
+          "equation_version": "sha256:8402517f04884058f51f2d2e9535f04a54ecfd0e6bbf523eadad63108ef53a0b",
           "expected_outputs": [
             5.0,
             10.0
@@ -1556,7 +1581,7 @@
         "finite_interior_input:linear_interpolation"
       ],
       "equation": "threshold_wet + (threshold_dry - threshold_wet) * (1 - clamp((annual_rainfall - annual_dry) / (annual_wet - annual_dry), 0, 1))",
-      "equation_version": "sha256:29e7b835efca912393e5e9be5c2923e21ae464b1591fe2c770f4d6d9a3cb8c22",
+      "equation_version": "sha256:2ce85c46364c64f9b00322f06e7a33c36a45cc8625cbb5897cfca769056db7fd",
       "function": "ascend.weather.mechanisms._precip_threshold_equation",
       "output": "weather.chunk.precipitation_threshold",
       "parameters": [
@@ -1601,15 +1626,19 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:0ee235f3df2e7a1d4121362f326f362d8716c50fa49c09ea13b05b553a0141a8",
+      "resolved_version": "sha256:013c4ecd422bd39d754f2c262a38c7bb485b6ad2a526e029d3067cc9f22b10f4",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:29e7b835efca912393e5e9be5c2923e21ae464b1591fe2c770f4d6d9a3cb8c22",
+          "equation_version": "sha256:2ce85c46364c64f9b00322f06e7a33c36a45cc8625cbb5897cfca769056db7fd",
           "expected_outputs": [
-            0.55,
+            0.5499999998137355,
             0.25
           ],
           "inputs_a": {
@@ -1630,7 +1659,7 @@
         "positive_amplitude:linear_scaling"
       ],
       "equation": "seasonal_amplitude * humidity_seasonal_scale",
-      "equation_version": "sha256:4a101f006e97b11f76b9cd232fdb4bc33141b1e8b290afbd6866845ef537a8b7",
+      "equation_version": "sha256:bcff61b1b0a5aeb6e6f76ae1b04cf871928fed14e55f39b7af067fbbacc5eb76",
       "function": "ascend.weather.mechanisms._humidity_seasonal_amplitude_equation",
       "output": "weather.chunk.seasonal_humidity_amplitude_pp",
       "parameters": [
@@ -1663,14 +1692,19 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:cee25901bf2fd346c9881a7ad5c8f8ce6ff69658f41db2389d90a472900df7c9",
-      "source_dependencies": [],
+      "resolved_version": "sha256:dfcd439577ef84efac02aff6c0584bc32d3dac25177b4af4bda1ce1dd782c892",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:4a101f006e97b11f76b9cd232fdb4bc33141b1e8b290afbd6866845ef537a8b7",
+          "equation_version": "sha256:bcff61b1b0a5aeb6e6f76ae1b04cf871928fed14e55f39b7af067fbbacc5eb76",
           "expected_outputs": [
-            4.0,
-            8.0
+            4.00000000372529,
+            8.00000000745058
           ],
           "inputs_a": {
             "weather.chunk.seasonal_temperature_amplitude_c": 10.0
@@ -1693,7 +1727,7 @@
         "finite_interior_inputs:continuous_formula"
       ],
       "equation": "clamp(cold_endpoint - (annual_temperature - input_temp_min) / (input_temp_max - input_temp_min) * (cold_endpoint - hot_endpoint) + clamp((rain_reference - annual_rainfall) / rain_reference, -0.5, 1.0) * rain_bonus_scale, output_min, output_max)",
-      "equation_version": "sha256:688049c3a084318512c08555d7005b312f2f2d06b3d3ea40df2d2417786b419e",
+      "equation_version": "sha256:0a83017f1836ac8c389173678d9c82585fbed6956e3627766a9a63fce2d58c8a",
       "function": "ascend.weather.mechanisms._derive_seasonal_amplitude_equation",
       "output": "weather.chunk.seasonal_temperature_amplitude_c",
       "parameters": [
@@ -1775,16 +1809,20 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:fc23cb0478d865bcfb51fc895b73eb341e85b1e9c6e093b2edb1f67527be1a47",
+      "resolved_version": "sha256:c8b06b6cd3afd1d65a953c738d312b7bf15cd722a9767094611b3bf65335911b",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:688049c3a084318512c08555d7005b312f2f2d06b3d3ea40df2d2417786b419e",
+          "equation_version": "sha256:0a83017f1836ac8c389173678d9c82585fbed6956e3627766a9a63fce2d58c8a",
           "expected_outputs": [
-            27.15,
-            14.15
+            27.149999998509884,
+            14.149999998509884
           ],
           "inputs_a": {
             "weather.chunk.annual_mean_temperature_c": 0.0,
@@ -1799,9 +1837,9 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:688049c3a084318512c08555d7005b312f2f2d06b3d3ea40df2d2417786b419e",
+          "equation_version": "sha256:0a83017f1836ac8c389173678d9c82585fbed6956e3627766a9a63fce2d58c8a",
           "expected_outputs": [
-            18.6,
+            18.600000001490116,
             15.0
           ],
           "inputs_a": {
@@ -1825,7 +1863,7 @@
         "finite_interior_input:linear_interpolation"
       ],
       "equation": "clamp(output_max - (sea_level_temperature - input_min) / (input_max - input_min) * (output_max - output_min), output_min, output_max)",
-      "equation_version": "sha256:d19a58ec5326b62a5931450a7e6051604040d840ac99a37b42c35ba6a567c90a",
+      "equation_version": "sha256:e8896aa56b7b8ee7dac6ee2b8480accf1dc07e2d59ab856b34f3fdc40620cf72",
       "function": "ascend.weather.mechanisms._derive_latitude_equation",
       "output": "weather.chunk.solar_latitude_proxy_deg",
       "parameters": [
@@ -1870,13 +1908,17 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:a20b9697d06d121edc1d204e298753625ecf8192ff7ab9238ee4826f88f42323",
+      "resolved_version": "sha256:c7cf5918a61c8b5d20c68a79a4993edb1ccfbd999e14431fd5c33897f4894958",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:d19a58ec5326b62a5931450a7e6051604040d840ac99a37b42c35ba6a567c90a",
+          "equation_version": "sha256:e8896aa56b7b8ee7dac6ee2b8480accf1dc07e2d59ab856b34f3fdc40620cf72",
           "expected_outputs": [
             80.0,
             0.0
@@ -1955,7 +1997,7 @@
         "finite_interior:no_clamp"
       ],
       "equation": "clamp(baseline + seasonal_offset + diurnal_offset + perturbation * perturb_scale, lower_bound, upper_bound)",
-      "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
+      "equation_version": "sha256:a961acb8a3e83b700e72558d7f028189cb1e3bd34dc74a9c11e8bde92230a96a",
       "function": "ascend.weather.mechanisms._humidity_equation",
       "output": "weather.instant.relative_humidity_percent",
       "parameters": [
@@ -2059,13 +2101,17 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:23db8540213629d50e233f26dedee2e7a2469ce228f6e0405d06e8dfbaaa0f4b",
+      "resolved_version": "sha256:ce39dba00b4e0edb991dc910021f67ce31c24de3b8620a56aa1ce94f86a9d642",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
+          "equation_version": "sha256:a961acb8a3e83b700e72558d7f028189cb1e3bd34dc74a9c11e8bde92230a96a",
           "expected_outputs": [
             60.0,
             70.0
@@ -2087,7 +2133,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
+          "equation_version": "sha256:a961acb8a3e83b700e72558d7f028189cb1e3bd34dc74a9c11e8bde92230a96a",
           "expected_outputs": [
             60.0,
             65.0
@@ -2109,7 +2155,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
+          "equation_version": "sha256:a961acb8a3e83b700e72558d7f028189cb1e3bd34dc74a9c11e8bde92230a96a",
           "expected_outputs": [
             60.0,
             65.0
@@ -2131,7 +2177,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
+          "equation_version": "sha256:a961acb8a3e83b700e72558d7f028189cb1e3bd34dc74a9c11e8bde92230a96a",
           "expected_outputs": [
             60.0,
             75.0
@@ -2161,7 +2207,7 @@
         "finite_interior:linear_scaling"
       ],
       "equation": "0 if signal <= threshold else (min(signal, signal_max) - threshold) * intensity_scale * mean_intensity",
-      "equation_version": "sha256:45cceac19385262ae7bd0b45884d29bd49df5e1bfc38e88a02402717ecb94174",
+      "equation_version": "sha256:99254f78a0b7e02004fb7bad387dffdf9b859f76086e50b263f01bda8d4f5ea1",
       "function": "ascend.weather.mechanisms._precipitation_intensity_equation",
       "output": "weather.instant.precipitation_intensity_mm_per_hour",
       "parameters": [
@@ -2240,14 +2286,19 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:726434ed3c9690b35096e1c13f4ffa848ea7b0a2f3c109acc256d600aac96b22",
-      "source_dependencies": [],
+      "resolved_version": "sha256:798ac6e9770d43b58ed2a2349273836f2d30a7470a9761a157c250fd977ddd2e",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:45cceac19385262ae7bd0b45884d29bd49df5e1bfc38e88a02402717ecb94174",
+          "equation_version": "sha256:99254f78a0b7e02004fb7bad387dffdf9b859f76086e50b263f01bda8d4f5ea1",
           "expected_outputs": [
-            1.0,
-            6.0
+            0.9999999962747097,
+            5.99999999627471
           ],
           "inputs_a": {
             "weather.chunk.mean_precip_intensity_mm_per_hour": 5.0,
@@ -2264,10 +2315,10 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:45cceac19385262ae7bd0b45884d29bd49df5e1bfc38e88a02402717ecb94174",
+          "equation_version": "sha256:99254f78a0b7e02004fb7bad387dffdf9b859f76086e50b263f01bda8d4f5ea1",
           "expected_outputs": [
-            1.0,
-            0.5
+            0.9999999962747097,
+            0.49999999813735485
           ],
           "inputs_a": {
             "weather.chunk.mean_precip_intensity_mm_per_hour": 5.0,
@@ -2284,10 +2335,10 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:45cceac19385262ae7bd0b45884d29bd49df5e1bfc38e88a02402717ecb94174",
+          "equation_version": "sha256:99254f78a0b7e02004fb7bad387dffdf9b859f76086e50b263f01bda8d4f5ea1",
           "expected_outputs": [
-            1.0,
-            2.0
+            0.9999999962747097,
+            1.9999999925494194
           ],
           "inputs_a": {
             "weather.chunk.mean_precip_intensity_mm_per_hour": 5.0,
@@ -2312,7 +2363,7 @@
         "finite_interior:no_clamp"
       ],
       "equation": "clamp(daylight_hours + perturbation * perturb_scale, lower_bound, upper_bound)",
-      "equation_version": "sha256:9248df20bd195f319cccbd2ed4287a921a537d19070018227b0a6fc051c5d17d",
+      "equation_version": "sha256:b4844eb2e4c56641149e2fd8448894e23c2070600263feb34632902bcf563413",
       "function": "ascend.weather.mechanisms._sunshine_equation",
       "output": "weather.instant.sunshine_hours_per_day",
       "parameters": [
@@ -2374,13 +2425,17 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:9ffee2d952aa2a75023fd75126caa11bb727031637e0e8e73920606cf5507c45",
+      "resolved_version": "sha256:94e0b92af0bdd9f1eb0e3e4c8e18d3da35fd556a7acf108b7aaf586a40035a5f",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:9248df20bd195f319cccbd2ed4287a921a537d19070018227b0a6fc051c5d17d",
+          "equation_version": "sha256:b4844eb2e4c56641149e2fd8448894e23c2070600263feb34632902bcf563413",
           "expected_outputs": [
             12.0,
             16.0
@@ -2398,7 +2453,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:9248df20bd195f319cccbd2ed4287a921a537d19070018227b0a6fc051c5d17d",
+          "equation_version": "sha256:b4844eb2e4c56641149e2fd8448894e23c2070600263feb34632902bcf563413",
           "expected_outputs": [
             12.0,
             13.5
@@ -2424,7 +2479,7 @@
         "finite_interior:no_clamp"
       ],
       "equation": "clamp(annual_temperature + seasonal_offset + diurnal_offset + perturbation * perturb_scale, lower_bound, upper_bound)",
-      "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
+      "equation_version": "sha256:36dfe385c2b25be8e2844df0f2533997618e4298db72dc2309fa56d9351ba63c",
       "function": "ascend.weather.mechanisms._temperature_equation",
       "output": "weather.instant.temperature_c",
       "parameters": [
@@ -2528,13 +2583,17 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:b1239de7bda2fa0d9220887a43b0528a8499de8feca75927d71bcfabe33f39b7",
+      "resolved_version": "sha256:8b554144921e51b5a7f6e07efa2d57798725d263811e07ca0b229b324f4f0d5c",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
+          "equation_version": "sha256:36dfe385c2b25be8e2844df0f2533997618e4298db72dc2309fa56d9351ba63c",
           "expected_outputs": [
             10.0,
             20.0
@@ -2556,7 +2615,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
+          "equation_version": "sha256:36dfe385c2b25be8e2844df0f2533997618e4298db72dc2309fa56d9351ba63c",
           "expected_outputs": [
             10.0,
             15.0
@@ -2578,7 +2637,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
+          "equation_version": "sha256:36dfe385c2b25be8e2844df0f2533997618e4298db72dc2309fa56d9351ba63c",
           "expected_outputs": [
             10.0,
             15.0
@@ -2600,7 +2659,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
+          "equation_version": "sha256:36dfe385c2b25be8e2844df0f2533997618e4298db72dc2309fa56d9351ba63c",
           "expected_outputs": [
             10.0,
             15.0
@@ -2630,7 +2689,7 @@
         "product_above_upper_bound:second_clamp"
       ],
       "equation": "clamp(clamp(baseline + perturbation * perturb_scale, lower_bound, upper_bound) * multiplier, lower_bound, upper_bound)",
-      "equation_version": "sha256:2374a9e2f18ae7c87aca8f31b6a9bec73cfe430e9963702359fb092d4ce2c150",
+      "equation_version": "sha256:bb8a9e43277a13b87b691d75265e07ed94cab92f499ec17296c084232301ea44",
       "function": "ascend.weather.mechanisms._wind_equation",
       "output": "weather.instant.wind_speed_mps",
       "parameters": [
@@ -2713,13 +2772,17 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:d2e30f6c428a72b4b0c7d07a192a9dfd548cfec7dddcad9c344b57d0cb477e3f",
+      "resolved_version": "sha256:0fc092cc469433792cd1098b4a507496106b461783c4787e733e7a7a5e3c0ac8",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:2374a9e2f18ae7c87aca8f31b6a9bec73cfe430e9963702359fb092d4ce2c150",
+          "equation_version": "sha256:bb8a9e43277a13b87b691d75265e07ed94cab92f499ec17296c084232301ea44",
           "expected_outputs": [
             5.0,
             10.0
@@ -2739,7 +2802,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:2374a9e2f18ae7c87aca8f31b6a9bec73cfe430e9963702359fb092d4ce2c150",
+          "equation_version": "sha256:bb8a9e43277a13b87b691d75265e07ed94cab92f499ec17296c084232301ea44",
           "expected_outputs": [
             5.0,
             9.0
@@ -2759,7 +2822,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:2374a9e2f18ae7c87aca8f31b6a9bec73cfe430e9963702359fb092d4ce2c150",
+          "equation_version": "sha256:bb8a9e43277a13b87b691d75265e07ed94cab92f499ec17296c084232301ea44",
           "expected_outputs": [
             5.0,
             10.0
@@ -2786,7 +2849,7 @@
         "cosine_extremes:inverted"
       ],
       "equation": "amplitude * (-diurnal_phase_cos)",
-      "equation_version": "sha256:03f839622dae2e8457aaa21b6ee87264d4bdc65ca4af39a6a266fe4d00022758",
+      "equation_version": "sha256:1e5de40b7de0382a33920a06f28ed48bab7ba8d0c9ed3ac4a1242cb0631d91a4",
       "function": "ascend.weather.mechanisms._diurnal_humidity_offset_equation",
       "output": "weather.offset.diurnal_humidity_pp",
       "parameters": [],
@@ -2835,11 +2898,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:4cf3294a0d9a4895f555a4bf70451d3c4dfa2d4e0879c773628d7b8d970ba34f",
-      "source_dependencies": [],
+      "resolved_version": "sha256:f671f6a8fc5dae6c5f8b4154cd58073ecc6d1276bbf9a099939be41b9d8e7cd3",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:03f839622dae2e8457aaa21b6ee87264d4bdc65ca4af39a6a266fe4d00022758",
+          "equation_version": "sha256:1e5de40b7de0382a33920a06f28ed48bab7ba8d0c9ed3ac4a1242cb0631d91a4",
           "expected_outputs": [
             -4.0,
             -8.0
@@ -2857,7 +2925,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:03f839622dae2e8457aaa21b6ee87264d4bdc65ca4af39a6a266fe4d00022758",
+          "equation_version": "sha256:1e5de40b7de0382a33920a06f28ed48bab7ba8d0c9ed3ac4a1242cb0631d91a4",
           "expected_outputs": [
             -2.0,
             -4.0
@@ -2882,7 +2950,7 @@
         "cosine_extremes:plus_minus_amplitude"
       ],
       "equation": "amplitude * diurnal_phase_cos",
-      "equation_version": "sha256:5b340a300be9ed3fcbda35a0212e4be9d94405b89fede817265b2f3cc5c26e32",
+      "equation_version": "sha256:bff439c0322a5077abfa832523bce80984a700ee687e14cf80a95b9421e78b7b",
       "function": "ascend.weather.mechanisms._diurnal_temperature_offset_equation",
       "output": "weather.offset.diurnal_temperature_c",
       "parameters": [],
@@ -2931,11 +2999,11 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:50ec19a615701548f54e741c3ee33bd98bd617716da99e9507d42dcd6b7e399f",
+      "resolved_version": "sha256:0b8188f0e56b89db05e5fcd7f2eb15079517f4d7cb215be5da45ba03155e9d92",
       "source_dependencies": [],
       "witnesses": [
         {
-          "equation_version": "sha256:5b340a300be9ed3fcbda35a0212e4be9d94405b89fede817265b2f3cc5c26e32",
+          "equation_version": "sha256:bff439c0322a5077abfa832523bce80984a700ee687e14cf80a95b9421e78b7b",
           "expected_outputs": [
             5.0,
             10.0
@@ -2953,7 +3021,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:5b340a300be9ed3fcbda35a0212e4be9d94405b89fede817265b2f3cc5c26e32",
+          "equation_version": "sha256:bff439c0322a5077abfa832523bce80984a700ee687e14cf80a95b9421e78b7b",
           "expected_outputs": [
             2.5,
             5.0
@@ -2979,7 +3047,7 @@
         "sharpness_positive:tanh_compression"
       ],
       "equation": "amplitude * (tanh(season_phase_cos * sharpness) if sharpness > 0 else season_phase_cos)",
-      "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202",
+      "equation_version": "sha256:71208df549dc8e472a97342c871aecc3815e39bb90e72d57f4c292d33df21a70",
       "function": "ascend.weather.mechanisms._seasonal_humidity_offset_equation",
       "output": "weather.offset.seasonal_humidity_pp",
       "parameters": [],
@@ -3049,11 +3117,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:e63ea752aa7cb3c86f38cd12f9be29483ccc8f646dea4bfc38673901420dd7bc",
-      "source_dependencies": [],
+      "resolved_version": "sha256:b9cd8bcba0921f2bc4f24e7e7678050cbf85181d9055025236ba45081367a785",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202",
+          "equation_version": "sha256:71208df549dc8e472a97342c871aecc3815e39bb90e72d57f4c292d33df21a70",
           "expected_outputs": [
             4.0,
             8.0
@@ -3073,7 +3146,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202",
+          "equation_version": "sha256:71208df549dc8e472a97342c871aecc3815e39bb90e72d57f4c292d33df21a70",
           "expected_outputs": [
             2.0,
             4.0
@@ -3093,10 +3166,10 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202",
+          "equation_version": "sha256:71208df549dc8e472a97342c871aecc3815e39bb90e72d57f4c292d33df21a70",
           "expected_outputs": [
             2.0,
-            3.3931345598300515
+            3.3931345604360104
           ],
           "inputs_a": {
             "weather.chunk.humidity_sharpness": 0.0,
@@ -3120,7 +3193,7 @@
         "cosine_extremes:plus_minus_amplitude"
       ],
       "equation": "amplitude * season_phase_cos",
-      "equation_version": "sha256:2f3688d219a99f31550fea8a0701cf1e418f9288da5f31788d85aa93428b97c0",
+      "equation_version": "sha256:78574c4b2c6875dc3e4bcee43f47ecca437d4a8c08e4cff1749048bbbef46a70",
       "function": "ascend.weather.mechanisms._seasonal_temperature_offset_equation",
       "output": "weather.offset.seasonal_temperature_c",
       "parameters": [],
@@ -3169,11 +3242,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:f07bcc50356e8799155b5d928745ac1c74dee36239698874ebc1c6f1ae3ed020",
-      "source_dependencies": [],
+      "resolved_version": "sha256:868ea4d7919ed32f4081c1134aa5b9c57ce4c32530f5a07030238a134bf28bee",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:2f3688d219a99f31550fea8a0701cf1e418f9288da5f31788d85aa93428b97c0",
+          "equation_version": "sha256:78574c4b2c6875dc3e4bcee43f47ecca437d4a8c08e4cff1749048bbbef46a70",
           "expected_outputs": [
             10.0,
             20.0
@@ -3191,7 +3269,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:2f3688d219a99f31550fea8a0701cf1e418f9288da5f31788d85aa93428b97c0",
+          "equation_version": "sha256:78574c4b2c6875dc3e4bcee43f47ecca437d4a8c08e4cff1749048bbbef46a70",
           "expected_outputs": [
             5.0,
             10.0
@@ -3340,7 +3418,7 @@
         "trough_hour:cos_minus_one"
       ],
       "equation": "cos((hour - peak_hour) / 24 * 2 * pi)",
-      "equation_version": "sha256:1a528ab898a63c1cfb6adf513e05d55f0726a4fc4deebeb8a621a950cc692271",
+      "equation_version": "sha256:4b7043747546e2679edcce554e5daa1708c29fa8c3a3b49d54df3a36b4a31443",
       "function": "ascend.weather.mechanisms._diurnal_phase_cos_equation",
       "output": "weather.tick.diurnal_phase_cos",
       "parameters": [
@@ -3373,11 +3451,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:6317125db526521eec98ccf64e0354ef815f1b3f2c4c291a5e86c9bf34ebe119",
-      "source_dependencies": [],
+      "resolved_version": "sha256:ba89007aa0e8b59350fdfe73770193d8cc0886f6d5b60e2a82013849e541adec",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:1a528ab898a63c1cfb6adf513e05d55f0726a4fc4deebeb8a621a950cc692271",
+          "equation_version": "sha256:4b7043747546e2679edcce554e5daa1708c29fa8c3a3b49d54df3a36b4a31443",
           "expected_outputs": [
             1.0,
             -1.0
@@ -3400,7 +3483,7 @@
         "day_wraparound:modulo"
       ],
       "equation": "(tick % game_day) / game_hour",
-      "equation_version": "sha256:38f0d8ccb2d139fbcd2d1472e6c76a83dd908e429287c578fb81d5b854b143ca",
+      "equation_version": "sha256:f40b654cec811a6503106ef3c5e9917874c0d83f0e2e9bbf017b31c08d1101d3",
       "function": "ascend.weather.mechanisms._hour_equation",
       "output": "weather.tick.hour_of_day",
       "parameters": [
@@ -3437,11 +3520,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:ccd2e1b1e7fb7b53a26d37a49e8e9c345230bf3b4c548377c1029d17e4b2d11d",
-      "source_dependencies": [],
+      "resolved_version": "sha256:f9468f0a43a871dbee3c163f9650a5b3de4bd0d4cfaf8500d5ab398726ee9bbc",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:38f0d8ccb2d139fbcd2d1472e6c76a83dd908e429287c578fb81d5b854b143ca",
+          "equation_version": "sha256:f40b654cec811a6503106ef3c5e9917874c0d83f0e2e9bbf017b31c08d1101d3",
           "expected_outputs": [
             0.0,
             1.0
@@ -3528,7 +3616,7 @@
         "winter_midpoint:cos_minus_one"
       ],
       "equation": "cos(((((day - 1) // season_length_days % seasons_per_year) + ((day - 1) % season_length_days) / season_length_days) - 1.5) / seasons_per_year * 2 * pi)",
-      "equation_version": "sha256:3a3e85f16fd7350dd457537ef50de89af6c6fa8e120ccc69caf790c75f5cc6ae",
+      "equation_version": "sha256:40a0dfd3857adbdafcd6ba1d1d46c0d760772d2062d730e2f9fce29aed3b31b3",
       "function": "ascend.weather.mechanisms._season_phase_cos_equation",
       "output": "weather.tick.season_phase_cos",
       "parameters": [
@@ -3565,11 +3653,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:eb40458b42e998b872f2e751b4f01b1eb7af06c737982ac2ae575ac30f26fa8c",
-      "source_dependencies": [],
+      "resolved_version": "sha256:3366e9c46415559ef48fbbd74493020d12439f13a6831292a1e3e20565c684a5",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:3a3e85f16fd7350dd457537ef50de89af6c6fa8e120ccc69caf790c75f5cc6ae",
+          "equation_version": "sha256:40a0dfd3857adbdafcd6ba1d1d46c0d760772d2062d730e2f9fce29aed3b31b3",
           "expected_outputs": [
             0.0,
             1.0
@@ -3592,7 +3685,7 @@
         "solstice:max_declination"
       ],
       "equation": "radians(obliquity_deg * sin(2 * pi * (day_of_year - days_per_year / 8) / days_per_year))",
-      "equation_version": "sha256:26ccd4705b264127f6aa3e4a3690d671d4f20e72a1c98afe3ae755759d01b730",
+      "equation_version": "sha256:42682f7c569c51ba7b7f997f18d7640895d062d86e823642aa10e0ae89b06522",
       "function": "ascend.weather.mechanisms._solar_declination_equation",
       "output": "weather.tick.solar_declination_rad",
       "parameters": [
@@ -3629,14 +3722,19 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:dad909e789b62bc007e8cc1b379b516329c158be4018af6358f472a52684e9b1",
-      "source_dependencies": [],
+      "resolved_version": "sha256:a575ced02dd88f42980fe1eab9de85d502bb6a6d7a27a0fb3905a7a999e2141a",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:26ccd4705b264127f6aa3e4a3690d671d4f20e72a1c98afe3ae755759d01b730",
+          "equation_version": "sha256:42682f7c569c51ba7b7f997f18d7640895d062d86e823642aa10e0ae89b06522",
           "expected_outputs": [
             0.0,
-            0.40910517666747087
+            0.4091051733121276
           ],
           "inputs_a": {
             "weather.tick.day_of_year": 45

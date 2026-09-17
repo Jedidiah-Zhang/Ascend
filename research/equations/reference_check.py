@@ -21,7 +21,38 @@ import math
 import random
 from dataclasses import dataclass, field
 
+from ascend.num import diurnal
+
 from mechanism_reference import reference_value, unresolved_names
+
+# 逐机制实现包络容差：生产若为定点/冻表实现，与 float 规范参考的差
+# 必须落在该机制声明的内核误差内（不是放水：容差即声明界，见 #53 P2）
+_TOLERANCES: dict[str, float] = {
+    "weather.tick.derive_hour_of_day.v1": diurnal.HOUR_MAX_ERROR,
+    "weather.tick.derive_diurnal_phase_cos.v1": diurnal.PHASE_MAX_ERROR,
+    "weather.offset.derive_diurnal_temperature.v1": diurnal.OFFSET_MAX_ERROR,
+    "weather.tick.derive_season_phase_cos.v1": diurnal.PHASE_MAX_ERROR,
+    "weather.offset.derive_seasonal_temperature.v1": diurnal.OFFSET_MAX_ERROR,
+    "weather.offset.derive_seasonal_humidity.v1": diurnal.OFFSET_MAX_ERROR,
+    "weather.chunk.derive_precipitation_threshold.v1": 1e-6,
+    "weather.instant.compose_precipitation_intensity.v1": 1e-6,
+    "weather.instant.compose_temperature.v1": 1e-5,
+    "weather.instant.compose_humidity.v1": 1e-5,
+    "weather.instant.compose_sunshine.v1": 1e-5,
+    "weather.instant.compose_wind_speed.v1": 1e-5,
+    "weather.tick.derive_solar_declination.v1": 1e-5,
+    "weather.chunk.derive_solar_latitude_proxy.v1": 1e-5,
+    "weather.chunk.derive_seasonal_temperature_amplitude.v1": 1e-5,
+    "weather.chunk.derive_diurnal_temperature_amplitude.v1": 1e-5,
+    "weather.chunk.derive_seasonal_humidity_amplitude.v1": 1e-5,
+    "weather.chunk.derive_diurnal_humidity_amplitude.v1": 1e-5,
+    "weather.offset.derive_diurnal_humidity.v1": 1e-5,
+    # 日出/日落：acos 端点误差 2e-3 rad + tan 表误差，经 degrees/15 折算；
+    # 取 0.05 h（≈3 分钟游戏时间）上界；昼长为两者之差 → 0.1 h
+    "weather.astronomy.derive_sunrise.v1": 0.05,
+    "weather.astronomy.derive_sunset.v1": 0.05,
+    "weather.astronomy.derive_daylight.v1": 0.1,
+}
 
 
 @dataclass
@@ -41,13 +72,13 @@ class MechanismCheckReport:
         return not self.uncovered and not self.problems
 
 
-def _equal(left: object, right: object) -> bool:
+def _equal(left: object, right: object, tolerance: float = 1e-9) -> bool:
     if isinstance(left, bool) or isinstance(right, bool):
         return left is right
     if isinstance(left, float) and isinstance(right, float):
         if math.isnan(left) or math.isnan(right):
             return math.isnan(left) and math.isnan(right)
-        return math.isclose(left, right, rel_tol=1e-9, abs_tol=1e-9)
+        return math.isclose(left, right, rel_tol=0.0, abs_tol=tolerance)
     return left == right
 
 
@@ -125,7 +156,8 @@ def check_mechanisms(registry, *, samples: int = 24, seed: int = 20260917):
             reference = reference_value(
                 mechanism, context, registry.parameters,
             )
-            if not _equal(production, reference):
+            tolerance = _TOLERANCES.get(mechanism.mechanism_id, 1e-9)
+            if not _equal(production, reference, tolerance):
                 report.problems.append((
                     mechanism.mechanism_id, dict(context),
                     production, reference,

@@ -14,10 +14,13 @@
 
 from __future__ import annotations
 
-from .fixed import round_half_even_div
+from .fixed import div, mul, round_half_even_div
 from .frozen_tables import (
+    ACOS_SEGMENTS,
+    ACOS_TABLE_Q,
     COS_QUARTER_Q,
     HALF_PI_Q,
+    PI_Q,
     SEGMENTS,
     TABLE_BITS,
     TANH_MAX_Q,
@@ -27,7 +30,11 @@ from .frozen_tables import (
     TWO_PI_Q,
 )
 
-__all__ = ["DECLARED_EPSILON", "TANH_MAX_ERROR", "cos_q", "sin_q", "tanh_q"]
+__all__ = [
+    "ACOS_MAX_ERROR", "DECLARED_EPSILON", "DEG_FACTOR_Q",
+    "TANH_MAX_ERROR", "TAN_MAX_ERROR", "acos_q", "cos_q", "degrees_q",
+    "sin_q", "tan_q", "tanh_q",
+]
 
 # 声明误差上界（相对 1 的绝对误差；见模块 docstring 的推导）
 DECLARED_EPSILON: float = 1e-5
@@ -97,3 +104,52 @@ def tanh_q(x_q: int, bits: int = TABLE_BITS) -> int:
     left = TANH_TABLE_Q[index] * (span - remainder)
     right = TANH_TABLE_Q[index + 1] * remainder
     return round_half_even_div(left + right, span)
+
+# acos 声明误差：端点导数无界，均匀采样 16384 段在 |x|→1 处插值误差
+# 实测最坏 ≈ 1.28e-3 rad（密集采样）；取 2e-3 含裕度
+ACOS_MAX_ERROR: float = 2e-3
+# tan 由 sin/cos 表相除；|x| ≤ 1.4 rad（纬度 ≤ 80°）内误差 ≤ ~7e-4
+TAN_MAX_ERROR: float = 1e-3
+
+# degrees(x) = x·180/π；180/π 的 Q 值由 PI_Q 整数半偶除得
+DEG_FACTOR_Q: int = round_half_even_div(180 * (1 << TABLE_BITS) * (1 << TABLE_BITS), PI_Q)
+
+
+def acos_q(x_q: int, bits: int = TABLE_BITS) -> int:
+    """定点反余弦：``x_q`` ∈ [−1, 1] 的 Q(bits)，返回 [0, π] 的 Q(bits)。
+
+    域外输入**钳制**到端点（对应声明中的 clamp 语义）。
+    """
+    if bits != TABLE_BITS:
+        raise ValueError(
+            f"冻表 acos 只支持 Q({TABLE_BITS})，实际 Q({bits})"
+        )
+    scale = 1 << TABLE_BITS
+    span = 2 * scale
+    x = max(-scale, min(scale, x_q))
+    position = (x + scale) * ACOS_SEGMENTS
+    index = position // span
+    if index >= ACOS_SEGMENTS:
+        return ACOS_TABLE_Q[ACOS_SEGMENTS]
+    remainder = position - index * span
+    left = ACOS_TABLE_Q[index] * (span - remainder)
+    right = ACOS_TABLE_Q[index + 1] * remainder
+    return round_half_even_div(left + right, span)
+
+
+def tan_q(x_q: int, bits: int = TABLE_BITS) -> int:
+    """定点正切：tan = sin/cos（两张既有表相除，半偶舍入）。"""
+    if bits != TABLE_BITS:
+        raise ValueError(
+            f"冻表 tan 只支持 Q({TABLE_BITS})，实际 Q({bits})"
+        )
+    return div(sin_q(x_q, bits), cos_q(x_q, bits), bits)
+
+
+def degrees_q(x_q: int, bits: int = TABLE_BITS) -> int:
+    """定点弧度 → 角度：x·180/π（定点乘，半偶舍入）。"""
+    if bits != TABLE_BITS:
+        raise ValueError(
+            f"冻表 degrees 只支持 Q({TABLE_BITS})，实际 Q({bits})"
+        )
+    return mul(x_q, DEG_FACTOR_Q, bits)

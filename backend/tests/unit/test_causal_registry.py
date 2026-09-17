@@ -484,7 +484,13 @@ class TestIndependentReferenceParity:
                     if isinstance(got, int):
                         assert got == want
                     else:
-                        assert got == pytest.approx(want, abs=1e-12)
+                        # 日夜链/季节链已迁定点+冻表（#53 P2/P3）：与 float
+                        # 规范参考的差 = 声明的内核误差（OFFSET_MAX_ERROR
+                        # = 1e-3，经 clamp/加法传播不放大），其余节点仍按
+                        # 旧精度 1e-12 对照。
+                        assert got == pytest.approx(
+                            want, abs=2e-3,
+                        )
 
 
 class TestSourcelessPackagedBuild:
@@ -509,7 +515,7 @@ class TestSourcelessPackagedBuild:
                                        {SEA_LEVEL_TEMPERATURE: 15.0}))
         assert registry.evaluate(
             m.PRECIPITATION_THRESHOLD, {m.ANNUAL_RAINFALL: 100.0},
-        ) == pytest.approx(0.5456521739130435, abs=1e-12)
+        ) == pytest.approx(0.5456521734595299, abs=1e-12)
 
     def test_sourceless_versions_match_embedded_digests(self, monkeypatch):
         """打包身份 == 源码身份（嵌入表逐位一致），两次构造稳定。"""
@@ -599,6 +605,10 @@ class TestSnapshotPortability:
             Path("ascend/space/climate.py"),
             Path("ascend/space/biome.py"),
             Path("ascend/config.py"),
+            Path("ascend/num/fixed.py"),
+            Path("ascend/num/tables.py"),
+            Path("ascend/num/diurnal.py"),
+            Path("ascend/num/frozen_tables.py"),
         ):
             target = mirror_ascend / relative.relative_to("ascend")
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -621,6 +631,13 @@ class TestSnapshotPortability:
             moved_specs.append(replace(spec, source_dependencies=deps))
 
         monkeypatch.setattr(registry, "_ANCHOR", mirror_backend)
+        moved_weather_specs = []
+        for spec in weather_mech.WEATHER_MECHANISM_SPECS:
+            deps = tuple(
+                path_map.get(str(dep), dep) for dep in spec.source_dependencies
+            )
+            moved_weather_specs.append(replace(spec, source_dependencies=deps))
+
         moved = MechanismRegistry(
             schema_version=ASCEND_MECHANISMS.schema_version,
             declaration_id=ASCEND_MECHANISMS.declaration_id,
@@ -634,8 +651,7 @@ class TestSnapshotPortability:
                 + space_mech.WORLD_GEN_PARAMETERS
             ),
             exogenous_sources=(),
-            mechanisms=tuple(moved_specs)
-            + weather_mech.WEATHER_MECHANISM_SPECS,
+            mechanisms=tuple(moved_specs) + tuple(moved_weather_specs),
         )
         after = {
             mid: m["equation_version"]
