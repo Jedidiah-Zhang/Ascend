@@ -325,8 +325,8 @@ class WorldGenerator:
     def _load_continent_cache(self, path: str) -> "ContinentData | None":
         """从磁盘恢复大陆宏观场；无缓存/损坏/版本不符返回 None。
 
-        注意：反序列化已丢弃派生缓存（subdiv_ranges/_chunk_climate），
-        指纹校验与重建入口注入由 _create_continent 统一负责。
+        指纹 fail-closed 与（缺派生段时的）重建入口注入由
+        _create_continent 统一负责。
         """
         if not os.path.isfile(path):
             return None

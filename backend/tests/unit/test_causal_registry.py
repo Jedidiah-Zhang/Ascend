@@ -484,10 +484,10 @@ class TestIndependentReferenceParity:
                     if isinstance(got, int):
                         assert got == want
                     else:
-                        # 日夜链/季节链已迁定点+冻表（#53 P2/P3）：与 float
-                        # 规范参考的差 = 声明的内核误差（OFFSET_MAX_ERROR
-                        # = 1e-3，经 clamp/加法传播不放大），其余节点仍按
-                        # 旧精度 1e-12 对照。
+                        # 全链统一容差 2e-3：迁定点+冻表的节点其差 =
+                        # 声明的内核误差（OFFSET_MAX_ERROR=1e-3，经
+                        # clamp/加法传播不放大）；未迁移节点实际误差
+                        # ≪ 该界（历史为 1e-12）——分节点收紧界列入后续。
                         assert got == pytest.approx(
                             want, abs=2e-3,
                         )

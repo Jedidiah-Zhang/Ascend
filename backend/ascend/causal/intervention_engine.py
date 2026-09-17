@@ -57,7 +57,7 @@ class InterventionEvaluator:
         random_values: Mapping[str, object] | None = None,
         parameter_values: Mapping[str, object] | None = None,
     ) -> object:
-        """按干预解析求值一个节点（值覆盖 > 机制覆盖 > 原机制）。
+        """按干预解析求值一个节点（仅值覆盖；机制替换已废除，WC-1.3）。
 
         Args:
             target: 输出节点 ID。
@@ -131,7 +131,8 @@ class InterventionFrameExecutor:
     """引擎级逐帧求值器（W1/W2 验收 runner 用研究切片）。
 
     按注册表微步偏序逐节点求值，父值从帧状态取用：lag=0 读当帧在
-    步序中的最新值，lag>=1 读 ``prev_state``（上一帧结束快照）。
+    步序中的最新值；lag≥1 优先经 ``FrameHistory`` 解析历史窗口（未提供
+    时 lag=1 回退 ``prev_state``、lag≥2 显式拒绝）。
     值干预命中的节点不消费随机地址（CRN）。追记已消费随机地址供测试断言。
 
     **空间父模板**：声明了多空间偏移的父引用（``len(spatial_offsets) > 1``）

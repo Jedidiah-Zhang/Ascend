@@ -167,6 +167,10 @@ class TestChecks:
         engine = result.engine
         assert tuple(engine["node"]) != tuple(engine["window"])
         assert engine["closed"] is True
+        # 结构变体 = 新世界身份：轨迹互异、参考=引擎（WC-1.3）
+        assert engine["variant_identity_distinct"] is True
+        assert engine["variant_values"] == [100.0, 200.0, 300.0]
+        assert engine["variant_divergence"] is None
 
     def test_w3_unit_perturbation_within_kernel(self):
         result = checks.check_w3()

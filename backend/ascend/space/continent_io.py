@@ -244,11 +244,10 @@ def serialize_continent(data: ContinentData) -> bytes:
 def deserialize_continent(raw: bytes) -> "ContinentData | None":
     """压缩字节 → ContinentData。
 
-    末尾两个派生缓存段（subdiv_ranges/chunk_climate）按格式读入后
-    一律丢弃：它们是可由持久化宏观场重算的派生缓存，磁盘副本不可信
-    （WC-3.3 / WC-9.1）。加载方（WorldGenerator）经
-    ContinentData.attach_derived_rebuilder 注入按当前算法重建的入口，
-    首次访问时重算——"磁盘里写入错误派生值"不影响任何查询结果。
+    末尾两个派生缓存段（subdiv_ranges/chunk_climate）按格式读入并保留：
+    它们与宏观场同源写入、受 gen_fingerprint 背书（算法不一致在生成器
+    加载路径 fail-closed），加载即信任。缺派生段的旧格式由加载方经
+    ContinentData.attach_derived_rebuilder 注入重建入口惰性重算。
 
     Returns:
         ContinentData；格式/版本不符、数据损坏或截断时返回 None

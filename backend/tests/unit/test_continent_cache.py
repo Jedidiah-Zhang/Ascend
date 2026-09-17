@@ -2,7 +2,7 @@
 
 覆盖 ascend/space/continent.py 的 serialize/deserialize 与
 ascend/space/generator.py 的磁盘缓存接入：指纹 fail-closed（WC-1.2/
-WC-9.1）与派生缓存加载后重算（磁盘值不被信任）。
+WC-9.1）与派生缓存语义（指纹背书加载即信任；缺段惰性重建兜底）。
 """
 
 import os

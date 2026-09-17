@@ -378,12 +378,9 @@ def _humidity_sharpness_equation(climate_zone: int) -> float:
 
 # 数值内核依赖（issue #53 P4）：定点/冻表实现源码进方程身份
 _NUM_DEPS = (
-    __import__("pathlib").Path(__file__).resolve().parents[1]
-    / "num" / "fixed.py",
-    __import__("pathlib").Path(__file__).resolve().parents[1]
-    / "num" / "tables.py",
-    __import__("pathlib").Path(__file__).resolve().parents[1]
-    / "num" / "frozen_tables.py",
+    Path(__file__).resolve().parents[1] / "num" / "fixed.py",
+    Path(__file__).resolve().parents[1] / "num" / "tables.py",
+    Path(__file__).resolve().parents[1] / "num" / "frozen_tables.py",
 )
 
 

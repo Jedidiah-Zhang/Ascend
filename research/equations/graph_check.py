@@ -131,9 +131,15 @@ def tainted_pairs(
     静默计入解析界（issue #53 P4 决策）。
     """
     order = graph.toposort()
-    taint: dict[tuple[str, str], bool] = {
-        (v, v): False for v in graph.variables
-    }
+    # 目标自身的零长路径：若其任一声明更新入边为跳变边，则该目标本身
+    # 即"条件成立"（其生成机制无连续界，不可按 0 计入解析界）
+    taint: dict[tuple[str, str], bool] = {}
+    for v in graph.variables:
+        has_jump_in = any(
+            es.role == ROLE_STRUCTURAL and es.L is None
+            for (p, c, es) in graph.edges() if c == v
+        )
+        taint[(v, v)] = has_jump_in
     for t in order:
         for (p, c, es) in graph.edges():
             if c != t or es.role != ROLE_STRUCTURAL:
@@ -345,6 +351,19 @@ def main() -> int:
                     violations.append(
                         f"{mid}←{parent.get('parent')}: jump 边缺 jump_bound"
                     )
+                    continue
+                for witness in mech.get("witnesses", []):
+                    if witness.get("parent") != parent.get("parent"):
+                        continue
+                    outs = witness.get("expected_outputs", [])
+                    if (len(outs) == 2
+                            and all(isinstance(x, (int, float))
+                                    and not isinstance(x, bool) for x in outs)
+                            and abs(outs[1] - outs[0]) > bound * (1 + 1e-6)):
+                        violations.append(
+                            f"{mid}←{parent.get('parent')}: jump_bound="
+                            f"{bound} < 见证跳幅={abs(outs[1] - outs[0]):.6g}"
+                        )
                 continue
             output_kind = (
                 data.get("nodes", {}).get(mech.get("output", ""), {})

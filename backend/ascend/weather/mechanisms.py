@@ -1871,7 +1871,7 @@ _MECHANISMS = (
         ),
         (),
         ("zero_amplitude:zero_offset", "cosine_extremes:plus_minus_amplitude"),
-        (),
+        _NUM_DEPS,
         (
             _w("amplitude_changes_diurnal_temperature_offset",
                DIURNAL_TEMPERATURE_AMPLITUDE,

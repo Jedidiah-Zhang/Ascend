@@ -282,6 +282,30 @@ def w2_registry(bounds: tuple[float, float] = (0.0, 300.0)) -> MechanismRegistry
     )
 
 
+def w2_variant_registry(
+    increment: float = 100.0,
+) -> MechanismRegistry:
+    """W2 结构变体世界：``x_{t+1} = x_t + increment``（新声明 id/函数）。
+
+    WC-1.3：结构变体 = 换世界——编译产物与身份摘要必须不同；与基线世界
+    在同一初始状态下的平行轨迹互异，用于 W2 的"值干预 vs 结构变体"对照。
+    """
+    return registry(
+        "research.w2.variant",
+        steps=_W2_STEPS,
+        nodes=(node("x", bounds=(0.0, 1000.0)),),
+        mechanisms=(
+            mechanism(
+                "w2.variant.inc", "x", lambda x_prev: x_prev + increment,
+                parents=(parent("x", "x_prev", lag=1),),
+                witnesses=(witness("x", (("x", 1.0),), 2.0,
+                                   (101.0, 102.0)),),
+            ),
+        ),
+        wired=frozenset({"x"}),
+    )
+
+
 # ── W3：空间父模板与边界（04 §3.4）────────────────────────────
 
 W3_CELLS: int = 5

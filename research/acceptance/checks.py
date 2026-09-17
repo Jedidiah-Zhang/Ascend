@@ -233,21 +233,19 @@ def check_w1() -> CheckResult:
 # ── W2：动态干预与机制替换关闭（负例）──────────────────────
 
 def check_w2() -> CheckResult:
-    """W2：值(单帧)/值(窗口)两臂互异且可手算；运行内机制替换被拒绝。
-
-    结构变体 = 换世界（WC-1.3）：完整的变体世界双跑检验由 #49 承接，
-    本判据先锁定"运行内机制替换路径已关闭"（单条件负例）。
-    """
+    """W2：值(单帧)/值(窗口)两臂互异且可手算；运行内机制替换被拒绝；
+    结构变体 = 新世界身份（WC-1.3）：变体世界身份不同、轨迹互异且与
+    参考一致（"值干预 vs 结构变体"对照）。"""
     registry = slices.w2_registry()
+    variant = slices.w2_variant_registry()
     initial = {"x": 0.0}
 
-    def run(entries) -> list[float]:
-        table = InterventionTimeline(registry, now=lambda: 0)
+    def run_engine(target_registry, entries) -> list[float]:
+        table = InterventionTimeline(target_registry, now=lambda: 0)
         for entry in entries:
             table.plan(entry)
-        executor = InterventionFrameExecutor(registry, table)
+        executor = InterventionFrameExecutor(target_registry, table)
         state = dict(initial)
-        prev = dict(initial)
         out = []
         for frame in range(3):
             prev = state
@@ -255,11 +253,11 @@ def check_w2() -> CheckResult:
             out.append(state["x"])
         return out
 
-    node = run([PlannedIntervention(
+    node = run_engine(registry, [PlannedIntervention(
         target_space="node", target="x", value=10.0,
         start_frame=0, stop_frame=1, source="acceptance",
     )])
-    window = run([PlannedIntervention(
+    window = run_engine(registry, [PlannedIntervention(
         target_space="node", target="x", value=10.0,
         start_frame=0, stop_frame=2, source="acceptance",
     )])
@@ -274,23 +272,54 @@ def check_w2() -> CheckResult:
     }})
     closed = negative["payload"].get("success") is False
 
-    hand = {"node": [10.0, 11.0, 12.0], "window": [10.0, 10.0, 11.0]}
+    # 结构变体世界（WC-1.3）：身份不同、轨迹互异且参考=引擎
+    base_engine = run_engine(registry, [])
+    # 参考帧 1..3 ↔ 引擎帧 0..2（映射口径同 W0：引擎首帧对应参考首帧）
+    base_ref = reference.ReferenceInterpreter(registry).run(
+        range(1, 4), initial).frames
+    variant_ref = reference.ReferenceInterpreter(variant).run(
+        range(1, 4), initial).frames
+    variant_engine = run_engine(variant, [])
+    divergence = reference.first_divergence(
+        variant_ref,
+        [{"x": value} for value in variant_engine],
+        frames=[0, 1, 2],
+    )
+    base_values = [frame["x"] for frame in base_ref]
+    variant_values = [frame["x"] for frame in variant_ref]
+    identity_distinct = registry.declaration_hash != variant.declaration_hash
+
+    hand = {"node": [10.0, 11.0, 12.0], "window": [10.0, 10.0, 11.0],
+            "variant": [100.0, 200.0, 300.0]}
     checks = {
         "值(单帧)": node == hand["node"],
         "值(窗口)": window == hand["window"],
         "两臂互异": node != window,
         "机制替换路径关闭": closed,
+        "变体身份不同": identity_distinct,
+        "变体轨迹互异": variant_values != base_values,
+        "变体引擎≠基线引擎": variant_engine != base_engine,
+        "变体参考=引擎": divergence is None,
     }
     failed = [name for name, ok in checks.items() if not ok]
     return CheckResult(
-        code="W2", title="动态干预（机制替换关闭）", passed=not failed,
+        code="W2", title="动态干预（替换关闭 + 结构变体）", passed=not failed,
         detail=(
-            f"节点={node} 窗口={window}；运行内机制替换被拒绝（负例）"
+            f"节点={node} 窗口={window}；变体世界={variant_values}"
+            f"（身份不同={identity_distinct}）；运行内机制替换被拒绝"
             if not failed else f"未通过项: {failed}"
         ),
         input={"initial": initial, "hand_computed": hand},
-        reference=hand,
-        engine={"node": node, "window": window, "closed": closed},
+        reference={"node": hand["node"], "window": hand["window"],
+                   "variant": variant_values},
+        engine={
+            "node": node, "window": window, "closed": closed,
+            "variant_values": variant_values,
+            "variant_engine": variant_engine,
+            "baseline_engine": base_engine,
+            "variant_identity_distinct": identity_distinct,
+            "variant_divergence": divergence,
+        },
     )
 
 

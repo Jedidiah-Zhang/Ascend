@@ -7,10 +7,11 @@
 
 派生缓存约定（WC-3.3 / WC-9.1）：``subdiv_ranges`` 与 ``_chunk_climate``
 是可由持久化宏观场重算的派生缓存。生成路径（ContinentGenerator.generate）
-返回前已按当前算法构建；磁盘加载路径（continent_io.deserialize_continent）
-丢弃磁盘副本，必须经 :meth:`ContinentData.attach_derived_rebuilder` 注入
-重建入口，二者在首次访问时按当前算法重建并 memoize——不可信任的磁盘值
-不参与任何查询结果。
+返回前已按当前算法构建；磁盘加载路径保留磁盘副本并**加载即信任**——
+缓存与宏观场同源写入、同一算法，且 gen_fingerprint 已背书算法一致
+（不一致在生成器加载路径 fail-closed）。仅当派生段缺失或显式注入重建
+入口时，才按当前算法惰性重算并 memoize（重算输入不落盘、与生成值非
+逐位一致，故不作为首选路径）。
 """
 
 import threading
@@ -125,11 +126,11 @@ class ContinentData:
     def attach_derived_rebuilder(
         self, rebuilder: "Callable[[ContinentData], None]",
     ) -> None:
-        """注入派生缓存重建入口，并标记派生缓存待重建（加载路径专用）。
+        """注入派生缓存重建入口，并标记待重建（缺派生段的兜底路径）。
 
-        磁盘加载路径反序列化时丢弃 subdiv_ranges/_chunk_climate，必须
-        经此注入按当前算法重建的入口；首次查询在锁内重建一次，此后
-        只读（WC-9.1：不信任无法重算验证的磁盘派生值）。
+        正常加载路径保留磁盘派生段并加载即信任（指纹背书）；仅当缓存
+        缺派生段（手工构造/未来格式）时经此注入按当前算法重建的入口，
+        首次查询在锁内重建一次（WC-9.1：无法验证时以重算兜底）。
         """
         self._derived_rebuilder = rebuilder
         self._derived_ready = False

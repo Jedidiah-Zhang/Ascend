@@ -6,7 +6,7 @@
     对盒内任意采样点 x，生产输出 ∈ Σ(盒)
 
 一旦该检查覆盖全部机制（P4 主体），`Σ` 即可进声明、G3 用包络计算、
-`L` 退出声明面。当前覆盖：合成链 4 + 偏移链 4（首批验证样本）。
+`L` 退出声明面。当前覆盖：全部已迁移机制（26 项，含合成/偏移/降水/派生/天文/模板）。
 """
 
 from __future__ import annotations
@@ -113,7 +113,9 @@ def _precipitation_threshold(env: dict) -> Interval:
     return _point(env["__threshold_wet"]).add(
         _point(env["__threshold_dry"]).sub(
             _point(env["__threshold_wet"]),
-        ).mul(_point(1 << TABLE_BITS).sub(progress)),
+        ).mul(
+            Interval.point(1 << TABLE_BITS, TABLE_BITS).sub(progress),
+        ),
     )
 
 
@@ -185,7 +187,7 @@ def _diurnal_phase_cos(env: dict) -> Interval:
     from ascend.num.enclosure import cos_enclosure
 
     angle = env["hour"].sub(_point(env["__peak_hour"])).scale_by_ratio(
-        TWO_PI_Q, 24,
+        TWO_PI_Q, 24 << TABLE_BITS,
     )
     return cos_enclosure(angle)
 
@@ -198,7 +200,9 @@ def _sunrise(env: dict, sign: int) -> Interval:
     from ascend.num.fixed import round_half_even_div
 
     pi_over_180 = round_half_even_div(TWO_PI_Q, 360)
-    latitude_rad = env["latitude"].mul(_point(pi_over_180))
+    latitude_rad = env["latitude"].mul(
+        Interval.point(pi_over_180, TABLE_BITS),
+    )
     product = tan_enclosure(latitude_rad).mul(
         tan_enclosure(env["solar_declination"]),
     )
@@ -411,6 +415,7 @@ class EnclosureCheckReport:
     skipped: int = 0
     uncovered: list[str] = field(default_factory=list)
     problems: list[tuple] = field(default_factory=list)
+    samples_by_mechanism: dict = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:
@@ -429,7 +434,26 @@ def _boxes_for(mechanism, registry, rng: random.Random):
                 continue
             bounds = node.value.bounds if node.value is not None else None
             if bounds is None:
-                box[parent.parent] = None
+                base = None
+                for witness in mechanism.witnesses:
+                    for node_id, value in witness.inputs:
+                        if node_id == parent.parent:
+                            base = value
+                            break
+                    if base is not None:
+                        break
+                if base is None:
+                    box[parent.parent] = None
+                    continue
+                if node.value is not None and node.value.kind == "integer":
+                    box[parent.parent] = (int(base), int(base) + 3)
+                else:
+                    width = max(1e-3, abs(float(base)) * 0.02)
+                    lo = quantize(float(base) - width, TABLE_BITS)
+                    hi = quantize(float(base) + width, TABLE_BITS)
+                    box[parent.parent] = Interval(
+                        min(lo, hi), max(lo, hi), TABLE_BITS,
+                    )
                 continue
             if node.value.kind == "integer":
                 box[parent.parent] = (int(bounds[0]), int(bounds[1]))
@@ -455,6 +479,7 @@ def check_enclosures(registry, *, seed: int = 20260918) -> EnclosureCheckReport:
     rng = random.Random(seed)
     params = {p.parameter_id: p.value for p in registry.parameters.values()}
     for mechanism_id, builder in ENCLOSURE_BUILDERS.items():
+        report.samples_by_mechanism[mechanism_id] = 0
         mechanism = next(
             (m for m in registry.mechanisms.values()
              if m.mechanism_id == mechanism_id), None,
@@ -490,6 +515,7 @@ def check_enclosures(registry, *, seed: int = 20260918) -> EnclosureCheckReport:
                     kwargs[binding.argument] = params[binding.parameter]
                 value = mechanism.function(**kwargs)
                 report.samples += 1
+                report.samples_by_mechanism[mechanism_id] += 1
                 if not envelope.contains(quantize(value, TABLE_BITS)):
                     report.problems.append((
                         mechanism_id, dict(box), kwargs, value,
