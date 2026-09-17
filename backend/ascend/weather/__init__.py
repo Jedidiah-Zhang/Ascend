@@ -41,7 +41,9 @@ from .features import (FEATURE_TYPES, T_COLD_SNAP, T_FRONT, T_HEAT_WAVE,
                        FeatureField)
 from .field import (CH_HUMIDITY, CH_PRECIPITATION, CH_TEMPERATURE, CH_WIND,
                     UnifiedWeatherField)
-from .region_tracker import RegionEvent, RegionTracker
+from .region_tracker import (
+    DEFAULT_REGION_RADIUS, RegionEvent, RegionTracker,
+)
 from .season import Season
 from .weather_engine import WeatherEngine
 from .weather_field import WeatherField
@@ -52,6 +54,7 @@ __all__ = [
     "Season",
     "TextureField",
     "UnifiedWeatherField",
+    "DEFAULT_REGION_RADIUS",
     "RegionTracker",
     "RegionEvent",
     "FeatureField",

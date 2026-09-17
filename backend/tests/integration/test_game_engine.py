@@ -500,6 +500,33 @@ class TestWorldProcessEntry:
         finally:
             engine.stop()
 
+    def test_region_domain_is_player_window(self, monkeypatch):
+        """区域观察域 = 玩家窗口（观察层参数），与加载集无关。"""
+        _patch_fast_worldgen(monkeypatch)
+        from ascend.space import TILE_MAP_SIZE
+        from ascend.weather import DEFAULT_REGION_RADIUS
+
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            mgr = engine.save_manager
+            world_id = mgr.create_world("区域窗口", seed=7).world_id
+            engine.load_world(world_id=world_id)
+            domain = engine._region_domain()
+            assert domain, "玩家窗口应非空"
+            x, y = engine.player_service.position
+            center = (int(x // TILE_MAP_SIZE), int(y // TILE_MAP_SIZE))
+            assert center in domain
+            assert len(domain) <= (2 * DEFAULT_REGION_RADIUS + 1) ** 2
+            # 气候基线按坐标纯查（含未加载坐标），同坐标结果一致
+            baseline = engine._climate_lookup.baseline(*center)
+            assert len(baseline) == 2
+            assert all(isinstance(value, float) for value in baseline)
+            assert engine._climate_lookup.baseline(0, 0) == \
+                engine._climate_lookup.baseline(0, 0)
+        finally:
+            engine.stop()
+
     def test_load_world_rollback_requires_world_id(self, monkeypatch):
         """回滚必须指定 world_id（进入语义需要目标世界定位血缘）。"""
         _patch_fast_worldgen(monkeypatch)

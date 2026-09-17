@@ -54,26 +54,28 @@ def execute_waves(
     """
     values: dict[tuple[str, tuple], object] = {}
     executed: set[str] = set()
-    for wave in program.waves:
-        tasks: list[tuple[object, str, tuple]] = []
-        for output in wave.outputs:
-            kernel = program.kernels[output]
-            if wired_only and not kernel.wired:
+    pool = (
+        ThreadPoolExecutor(max_workers=workers) if parallel else None
+    )
+    try:
+        for wave in program.waves:
+            tasks: list[tuple[object, str, tuple]] = []
+            for output in wave.outputs:
+                kernel = program.kernels[output]
+                if wired_only and not kernel.wired:
+                    continue
+                executed.add(output)
+                mechanism = registry.mechanisms[kernel.mechanism_id]
+                node = registry.nodes[output]
+                if node.instance_domain.axes:
+                    for instance in instances:
+                        tasks.append((mechanism, output, tuple(instance)))
+                else:
+                    tasks.append((mechanism, output, ()))
+            if not tasks:
                 continue
-            executed.add(output)
-            mechanism = registry.mechanisms[kernel.mechanism_id]
-            node = registry.nodes[output]
-            if node.instance_domain.axes:
-                for instance in instances:
-                    tasks.append((mechanism, output, tuple(instance)))
-            else:
-                tasks.append((mechanism, output, ()))
-        if not tasks:
-            continue
-        if parallel:
-            with ThreadPoolExecutor(
-                max_workers=workers or len(tasks),
-            ) as pool:
+            if pool is not None:
+                # 先全部提交再收集（否则逐个 result 会串行化同波任务）
                 futures = [
                     pool.submit(
                         _run_task, program, registry, frame, evaluate,
@@ -82,16 +84,19 @@ def execute_waves(
                     for task in tasks
                 ]
                 results = [future.result() for future in futures]
-        else:
-            results = [
-                _run_task(
-                    program, registry, frame, evaluate, provide,
-                    values, executed, task,
-                )
-                for task in tasks
-            ]
-        for (output, instance), value in results:
-            values[(output, instance)] = value
+            else:
+                results = [
+                    _run_task(
+                        program, registry, frame, evaluate, provide,
+                        values, executed, task,
+                    )
+                    for task in tasks
+                ]
+            for (output, instance), value in results:
+                values[(output, instance)] = value
+    finally:
+        if pool is not None:
+            pool.shutdown()
     return values
 
 

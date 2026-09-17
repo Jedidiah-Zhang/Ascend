@@ -149,11 +149,10 @@ class TestStateSufficiencyW4:
             engine.force_feature(1, 0, "storm", True)
 
         # A 在 t=5 存档，随后两边各自继续推进到 t=12
+        # （区域降水事件为纯函数派生，无跨帧状态参与轨迹）
         for tick in range(0, 6):
             clock_a.restore(time=tick)
             clock_b.restore(time=tick)
-            engine_a._tracker.update(tick)
-            engine_b._tracker.update(tick)
         state = collect_state(clock_a, _Player(), engine_a, 0)
 
         # 读档到一个全新实例 C（模拟进程重启：缓存全空、状态来自存档）
@@ -163,8 +162,6 @@ class TestStateSufficiencyW4:
         for tick in range(6, 13):
             clock_b.restore(time=tick)
             clock_c.restore(time=tick)
-            engine_b._tracker.update(tick)
-            engine_c._tracker.update(tick)
 
         assert _trajectory(engine_b, range(6, 13)) == \
             _trajectory(engine_c, range(6, 13))

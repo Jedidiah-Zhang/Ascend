@@ -59,6 +59,7 @@ from ascend.net.handlers.entity_handler import make_entity_handlers
 from ascend.net.handlers.save_handler import make_save_handlers
 from ascend.net.handlers.preview_handler import make_preview_handlers
 from ascend.space import WorldGenerator, TileGenerator
+from ascend.space import ChunkClimateLookup, TILE_MAP_SIZE
 from ascend.space.generator import compute_gen_fingerprint
 from ascend.space.chunk_store import ChunkStore
 from ascend.space.chunk_services import (
@@ -67,7 +68,7 @@ from ascend.space.chunk_services import (
     TileStateChunkService,
 )
 from ascend.entity import EntityManager, PlayerService
-from ascend.weather import WeatherEngine
+from ascend.weather import DEFAULT_REGION_RADIUS, WeatherEngine
 from ascend.terminal import CommandExecutor
 from ascend.time import WorldClock, GameCalendar
 from ascend.i18n import I18n, get_default
@@ -144,6 +145,8 @@ class GameEngine:
         self.weather_engine: WeatherEngine | None = None
         self.tile_generator: TileGenerator | None = None
         self.birth_chunk: tuple[int, int] | None = None
+        self._max_chunk: tuple[int, int] | None = None
+        self._climate_lookup = None
         self.chunk_store: ChunkStore | None = None
         self.chunk_services: ChunkServiceRegistry | None = None
         # 存档
@@ -395,6 +398,9 @@ class GameEngine:
         )
         self._world_stack.push(self._unset("tile_generator"))
         logger.info("大陆生成完成: %s", continent)
+        # 2b. 气候基线查询（观察层：区域降水通报的阈值/强度校准输入，
+        # 纯派生 + 缓存；不依赖 chunk 是否加载）
+        self._climate_lookup = ChunkClimateLookup(continent)
 
         # 3. 出生点（读档优先用存档中的出生点）
         if self._manifest is not None and self._manifest.birth_chunk:
@@ -437,12 +443,13 @@ class GameEngine:
 
         # 5a. 权威玩家实体（读档静默恢复，不发布 entity_born）
         # 地图为有界矩形：chunk 坐标 ∈ [0, grid//2)，玩家坐标越界钳制
+        self._max_chunk = (
+            continent.grid_width // 2,
+            continent.grid_height // 2,
+        )
         self.player_service = PlayerService(
             self.entity_manager, self.clock, self.birth_chunk,
-            max_chunk=(
-                continent.grid_width // 2,
-                continent.grid_height // 2,
-            ),
+            max_chunk=self._max_chunk,
         )
         self._world_stack.push(self._unset("player_service"))
         if self._load_state is not None:
@@ -457,7 +464,10 @@ class GameEngine:
         # 干预时间线挂载点：单一线程安全实例注入引擎/终端/研究 API（同源）；
         # 自带时钟（submitted_at 盖章 / 缺省帧）与实例存在性查询。
         from ascend.causal import InterventionTimeline
+        from ascend.causal.program import get_default_program
         from ascend.causal.world import ASCEND_MECHANISMS
+        if self.world_program is None:
+            self.world_program = get_default_program()
         self.intervention_table = InterventionTimeline(
             ASCEND_MECHANISMS,
             now=lambda: self.clock.time,
@@ -468,6 +478,10 @@ class GameEngine:
         self.weather_engine = WeatherEngine(
             self.clock, seed=self.seed,
             intervention_table=self.intervention_table,
+            climate_lookup=self._climate_lookup.baseline,
+            region_domain=self._region_domain,
+            world_program=self.world_program,
+            wave_parallel=True,
         )
         self._world_stack.push(
             self._unset("weather_engine", self.weather_engine.shutdown)
@@ -486,10 +500,7 @@ class GameEngine:
         # 5c'. 世界程序 + 帧调度器：声明编译为执行计划（波次/内核绑定/
         # 更新点/身份），调度器按计划驱动。执行权只来自声明——订阅者
         # 不得回写世界状态（ADR-12/13）。读档路径已在设置校验前取用。
-        from ascend.causal.program import get_default_program
         from ascend.runtime import FrameScheduler, apply_update_points
-        if self.world_program is None:
-            self.world_program = get_default_program()
         self._scheduler = FrameScheduler(
             clock=self.clock, store=self.state_store,
         )
@@ -984,6 +995,27 @@ class GameEngine:
         if self._world_start_monotonic:
             base += _real_time.monotonic() - self._world_start_monotonic
         return base
+
+    def _region_domain(self) -> tuple[tuple[int, int], ...]:
+        """区域降水观察域：玩家所在 chunk 的方形窗口（声明半径）。
+
+        观察层参数（DEFAULT_REGION_RADIUS）：只决定降水通报的观察范围，
+        与加载集/缓存无关（WC-2.3）。玩家服务未就绪时返回空域（不产事件）。
+        """
+        if self.player_service is None or self._max_chunk is None:
+            return ()
+        x, y = self.player_service.position
+        cx = int(x // TILE_MAP_SIZE)
+        cy = int(y // TILE_MAP_SIZE)
+        radius = DEFAULT_REGION_RADIUS
+        max_cx, max_cy = self._max_chunk
+        points: list[tuple[int, int]] = []
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                gx, gy = cx + dx, cy + dy
+                if 0 <= gx < max_cx and 0 <= gy < max_cy:
+                    points.append((gx, gy))
+        return tuple(points)
 
     def _save_state_now(self) -> None:
         """立即将当前状态落盘（周期保存/退出保存共用）。

@@ -5,10 +5,10 @@
 消费本注册表，避免与领域模块的 import 环。
 
 ``WIRED_NODES`` 是干预执行器可达性的事实源：当前引擎真正执行的生成节点
-（weather_engine 的 tick 派生 + chunk 求值，以及 region_tracker 经注入
-求值器复用的两个降水节点）。未列出的已声明节点登记干预时会被拒绝，
+（天气引擎按世界程序波次计划求值的全部 wired 节点，区域观测器经注入
+求值器复用的降水节点亦然）。未列出的已声明节点登记干预时会被拒绝，
 而不是静默无效。漂移由 ``tests/unit/test_intervention_wiring.py`` 的
-求值点巡检锁死（扫描 ``evaluate_node`` 调用与本源比对）。
+运行时覆盖巡检锁死（波次执行器实际求值集合与本源比对）。
 """
 
 from __future__ import annotations

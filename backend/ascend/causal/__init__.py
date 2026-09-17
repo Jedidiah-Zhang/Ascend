@@ -12,14 +12,17 @@ from .intervention import (
     default_duration,
 )
 from .intervention_engine import InterventionEvaluator, InterventionFrameExecutor
+from .kernels import KernelPair, default_kernel_pairs
 from .observe import (
     AGENT_WEATHER_PROTOCOL,
     RESEARCH_PROTOCOL,
     leaks_research_truth,
     observe,
+    protocol_nodes,
 )
 from .program import (
     KernelBinding,
+    PointKernelBinding,
     UpdatePointPlan,
     Wave,
     WorldProgram,
@@ -79,6 +82,7 @@ __all__ = [
     "FateNamespaceRegistry",
     "InstanceDomain",
     "KernelBinding",
+    "KernelPair",
     "MathMetadata",
     "MechanismRegistry",
     "MechanismSpec",
@@ -86,6 +90,7 @@ __all__ = [
     "ParameterBinding",
     "ParameterSpec",
     "ParentSpec",
+    "PointKernelBinding",
     "RandomBinding",
     "SlotDeclaration",
     "StateDeclaration",
@@ -113,12 +118,14 @@ __all__ = [
     "RESEARCH_PROTOCOL",
     "leaks_research_truth",
     "observe",
+    "protocol_nodes",
     "FOREVER",
     "SINGLE",
     "WINDOW",
     "compile_default_program",
     "compile_world_program",
     "default_duration",
+    "default_kernel_pairs",
     "encode_state",
     "get_default_program",
     "load_declaration",

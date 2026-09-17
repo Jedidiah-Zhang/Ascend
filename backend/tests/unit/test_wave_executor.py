@@ -199,6 +199,97 @@ class TestWaveExecution:
         with pytest.raises(NotImplementedError, match="父依赖暂不支持"):
             self._run(registry, parallel=False)
 
+def _hand_sequence(engine, now, boundary, instance, wm):
+    """独立参考序列：按声明依赖逐节点手工求值（不经波次计划）。
+
+    这是节点顺序/父集的事实参考（与旧手工实现同构）；波次执行器结果
+    必须逐位等于它——验证波次分组、父值装配与声明依赖一致。
+    """
+    ev = engine.evaluate_node
+    field = engine._fields[instance]
+    bl = field.baseline
+    b = lambda node: boundary[node]  # noqa: E731
+
+    day = ev(wm.DAY, {wm.CLOCK_TICK: now}, frame=now, instance=())
+    hour = ev(wm.HOUR_OF_DAY, {wm.CLOCK_TICK: now}, frame=now, instance=())
+    doy = ev(wm.DAY_OF_YEAR, {wm.CLOCK_TICK: now}, frame=now, instance=())
+    solar_decl = ev(
+        wm.SOLAR_DECLINATION, {wm.DAY_OF_YEAR: doy}, frame=now, instance=(),
+    )
+    season_cos = ev(
+        wm.SEASON_PHASE_COS, {wm.DAY: day}, frame=now, instance=(),
+    )
+    diurnal_cos = ev(
+        wm.DIURNAL_PHASE_COS, {wm.HOUR_OF_DAY: hour}, frame=now, instance=(),
+    )
+    season_temp = ev(wm.SEASONAL_TEMPERATURE_OFFSET, {
+        wm.SEASONAL_TEMPERATURE_AMPLITUDE: bl.seasonal_amp,
+        wm.SEASON_PHASE_COS: season_cos,
+    }, frame=now, instance=instance)
+    diurnal_temp = ev(wm.DIURNAL_TEMPERATURE_OFFSET, {
+        wm.DIURNAL_TEMPERATURE_AMPLITUDE: bl.diurnal_amp,
+        wm.DIURNAL_PHASE_COS: diurnal_cos,
+    }, frame=now, instance=instance)
+    season_hum = ev(wm.SEASONAL_HUMIDITY_OFFSET, {
+        wm.SEASONAL_HUMIDITY_AMPLITUDE: bl.humidity_seasonal_amp,
+        wm.SEASON_PHASE_COS: season_cos,
+        wm.HUMIDITY_SHARPNESS: bl.humidity_sharpness,
+    }, frame=now, instance=instance)
+    diurnal_hum = ev(wm.DIURNAL_HUMIDITY_OFFSET, {
+        wm.DIURNAL_HUMIDITY_AMPLITUDE: bl.humidity_diurnal_amp,
+        wm.DIURNAL_PHASE_COS: diurnal_cos,
+    }, frame=now, instance=instance)
+    sr = ev(wm.SUNRISE_HOUR, {
+        wm.SOLAR_LATITUDE_PROXY: bl.latitude,
+        wm.SOLAR_DECLINATION: solar_decl,
+    }, frame=now, instance=instance)
+    ss = ev(wm.SUNSET_HOUR, {
+        wm.SOLAR_LATITUDE_PROXY: bl.latitude,
+        wm.SOLAR_DECLINATION: solar_decl,
+    }, frame=now, instance=instance)
+    temperature = ev(wm.INSTANT_TEMPERATURE, {
+        wm.ANNUAL_TEMPERATURE: bl.temperature,
+        wm.SEASONAL_TEMPERATURE_OFFSET: season_temp,
+        wm.DIURNAL_TEMPERATURE_OFFSET: diurnal_temp,
+        wm.FIELD_TEMPERATURE_PERTURBATION: b(
+            wm.FIELD_TEMPERATURE_PERTURBATION),
+    }, frame=now, instance=instance)
+    humidity = ev(wm.INSTANT_HUMIDITY, {
+        wm.BASELINE_HUMIDITY: bl.humidity,
+        wm.SEASONAL_HUMIDITY_OFFSET: season_hum,
+        wm.DIURNAL_HUMIDITY_OFFSET: diurnal_hum,
+        wm.FIELD_HUMIDITY_PERTURBATION: b(wm.FIELD_HUMIDITY_PERTURBATION),
+    }, frame=now, instance=instance)
+    wind_speed = ev(wm.INSTANT_WIND_SPEED, {
+        wm.BASELINE_WIND_SPEED: bl.wind_speed,
+        wm.FIELD_WIND_PERTURBATION: b(wm.FIELD_WIND_PERTURBATION),
+        wm.FIELD_WIND_MULTIPLIER: b(wm.FIELD_WIND_MULTIPLIER),
+    }, frame=now, instance=instance)
+    threshold = ev(wm.PRECIPITATION_THRESHOLD, {
+        wm.ANNUAL_RAINFALL: bl.rainfall,
+    }, frame=now, instance=instance)
+    intensity = ev(wm.INSTANT_PRECIPITATION_INTENSITY, {
+        wm.FIELD_PRECIPITATION_SIGNAL: b(wm.FIELD_PRECIPITATION_SIGNAL),
+        wm.PRECIPITATION_THRESHOLD: threshold,
+        wm.MEAN_PRECIP_INTENSITY: bl.mean_intensity,
+    }, frame=now, instance=instance)
+    daylight = ev(wm.DAYLIGHT_HOURS, {
+        wm.SUNRISE_HOUR: sr, wm.SUNSET_HOUR: ss,
+    }, frame=now, instance=instance)
+    sunshine = ev(wm.INSTANT_SUNSHINE, {
+        wm.DAYLIGHT_HOURS: daylight,
+        wm.FIELD_HUMIDITY_PERTURBATION: b(wm.FIELD_HUMIDITY_PERTURBATION),
+    }, frame=now, instance=instance)
+    return {
+        wm.INSTANT_TEMPERATURE: temperature,
+        wm.INSTANT_HUMIDITY: humidity,
+        wm.INSTANT_WIND_SPEED: wind_speed,
+        wm.INSTANT_PRECIPITATION_INTENSITY: intensity,
+        wm.INSTANT_SUNSHINE: sunshine,
+        wm.SUNRISE_HOUR: sr,
+        wm.SUNSET_HOUR: ss,
+    }
+
 
 class TestWeatherEquivalence:
     """真实天气图：波次执行与引擎手工顺序逐位一致。"""
@@ -255,34 +346,38 @@ class TestWeatherEquivalence:
     @pytest.mark.parametrize(
         "now", [0, 3600, 12 * 3600, 5 * GAME_DAY + 7 * 3600],
     )
-    def test_matches_hand_sequence(self, now):
-        from ascend.causal.world import ASCEND_MECHANISMS
-
+    def test_production_matches_hand_sequence(self, now):
+        """生产路径（波次执行器）逐位等于独立手工序列。"""
         engine = self._engine()
         if now > 0:
             engine._clock.skip(now)
         boundary = self._boundary(engine, now)
-
-        def provide(node_id, instance):
-            if node_id in boundary:
-                return boundary[node_id]
-            raise KeyError(f"未提供边界值: {node_id}")
-
-        values = execute_waves(
-            compile_default_program(), ASCEND_MECHANISMS,
-            frame=now, evaluate=engine.evaluate_node, provide=provide,
-            instances=[(0, 0)],
-        )
+        reference = _hand_sequence(engine, now, boundary, (0, 0), wm)
         params = engine.get_weather(0, 0, now)
         assert params is not None
-        instance = (0, 0)
-        assert values[(wm.INSTANT_TEMPERATURE, instance)] == params.temperature
-        assert values[(wm.INSTANT_HUMIDITY, instance)] == params.humidity
-        assert values[(wm.INSTANT_WIND_SPEED, instance)] == params.wind_speed
-        assert values[(wm.INSTANT_SUNSHINE, instance)] == params.sunshine
-        assert values[
-            (wm.INSTANT_PRECIPITATION_INTENSITY, instance)
-        ] == params.rainfall
+        assert params.temperature == reference[wm.INSTANT_TEMPERATURE]
+        assert params.humidity == reference[wm.INSTANT_HUMIDITY]
+        assert params.wind_speed == reference[wm.INSTANT_WIND_SPEED]
+        assert params.rainfall == reference[
+            wm.INSTANT_PRECIPITATION_INTENSITY]
+        assert params.sunshine == reference[wm.INSTANT_SUNSHINE]
+        report = engine.get_weather_report(0, 0)
+        assert report is not None
+        assert report[1] == reference[wm.SUNRISE_HOUR]
+        assert report[2] == reference[wm.SUNSET_HOUR]
+
+    def test_wave_parallel_matches_serial_engine(self):
+        """引擎并发分区开启后结果逐位一致（trace 未挂载）。"""
+        for now in (7 * 3600, 3 * GAME_DAY + 5 * 3600):
+            serial = self._engine()
+            parallel = self._engine()
+            parallel._wave_parallel = True
+            serial._clock.skip(now)
+            parallel._clock.skip(now)
+            assert serial.get_weather(0, 0, now) == parallel.get_weather(0, 0, now)
+            assert serial.get_weather_report(0, 0) ==                 parallel.get_weather_report(0, 0)
+            serial.shutdown()
+            parallel.shutdown()
 
     def test_serial_equals_parallel_on_real_graph(self):
         from ascend.causal.world import ASCEND_MECHANISMS

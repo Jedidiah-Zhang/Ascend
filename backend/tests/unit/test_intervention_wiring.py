@@ -742,35 +742,36 @@ class TestResearchApi:
 # ── 可达性声明漂移巡检（WIRED_NODES == 实际求值点）──────────
 
 class TestWiringDrift:
-    def test_wired_nodes_match_evaluation_sites(self):
-        """``WIRED_NODES`` 必须等于源码中求值入口实参对应的节点集合。
+    """WIRED_NODES == 波次执行器实际求值集合（可达性声明不腐烂）。"""
 
-        扫描 weather_engine.py / region_tracker.py 中全部
-        ``self.evaluate_node`` / ``self._evaluate`` 调用的首个实参
-        （支持 ``m.X`` 与直接导入的符号），解析为节点 ID 后与声明比对；
-        无法解析的实参直接失败——门禁不静默放行，声明腐烂即红。
+    def test_wired_nodes_evaluated_by_wave_executor(self, weather_engine):
+        """运行时覆盖：波次执行器求值结果节点集合 == WIRED_NODES。
+
+        缺一 = 声明了求值点却没执行（干预静默无效）；多一 = 引擎
+        执行了未声明节点（可达性声明漂移）。
         """
         from ascend.causal.world import WIRED_NODES
-        from ascend.weather import mechanisms as m
 
+        engine, _ = weather_engine
+        key = (0, 0)
+        field = engine._fields[key]
+        values, _ = engine._evaluate(engine._clock.time, {key: field})
+        assert {output for output, _ in values} == set(WIRED_NODES)
+
+    def test_no_hand_sequenced_evaluation_left(self):
+        """天气引擎不得再手工顺序求值（唯一执行路径 = 世界程序波次计划）。"""
         root = Path(__file__).resolve().parents[2] / "ascend" / "weather"
-        pattern = re.compile(
-            r"self\.(?:evaluate_node|_evaluate)\(\s*"
-            r"([A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)?)"
+        source = (root / "weather_engine.py").read_text(encoding="utf-8")
+        pattern = re.compile(r"self\.evaluate_node\(\s*m\.")
+        assert not pattern.search(source), (
+            "weather_engine.py 仍存在手工顺序的节点求值调用；"
+            "所有 wired 节点应经波次执行器求值"
         )
-        actual: set[str] = set()
-        for name in ("weather_engine.py", "region_tracker.py"):
-            source = (root / name).read_text(encoding="utf-8")
-            args = pattern.findall(source)
-            assert args, f"{name} 未发现求值入口调用"
-            for arg in args:
-                symbol = arg[2:] if arg.startswith("m.") else arg
-                value = getattr(m, symbol, None)
-                assert isinstance(value, str), (
-                    f"无法解析求值点实参 {arg!r}（须为机制模块中的节点符号）"
-                )
-                actual.add(value)
-        assert frozenset(actual) == WIRED_NODES
+        # 区域观测器仍以注入求值器消费节点（漂移巡检锚点保留）
+        tracker_source = (root / "region_tracker.py").read_text(
+            encoding="utf-8",
+        )
+        assert re.search(r"self\._evaluate\(\s*\n?\s*m\.", tracker_source)
 
     def test_wired_nodes_subset_of_declared(self):
         from ascend.causal.world import WIRED_NODES
