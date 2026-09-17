@@ -73,6 +73,10 @@ jobs:
         run: python -m pip install -q -r requirements.txt
       - name: Lean 实例漂移巡检（生产声明 → UnrolledDag）
         run: python research/acceptance/run_acceptance.py --check
+      # 见证否证器（issue #53 P0）：声明 L 与见证差商矛盾即红——现状
+      # 20 条矛盾是待清理工作队列，清理前本门禁保持红（不得静默放行）。
+      - name: 声明图与见证一致性巡检（graph_check G7）
+        run: python research/equations/graph_check.py
       - name: 世界验收 runner（C0–C2 / W0–W5 / I0–I1）
         run: python research/acceptance/run_acceptance.py --json acceptance.json
       - name: 上传验收产物

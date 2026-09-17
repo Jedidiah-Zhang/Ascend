@@ -284,6 +284,65 @@ def main() -> int:
         else:
             results.append(("G6 汇聚节点", True, "无多父节点"))
 
+    # ── G7 见证一致性（L 否证器；issue #53 P0）──────
+    # 见证的两点输出由生产实现构造期重跑校验（C1），两点差商若大于声明 L，
+    # 即构成"L 无效"的证明（必要条件）。离散/枚举输出的度量不适用绝对差，
+    # 跳过并计数；缺省 L=0 不享有豁免——差商非零即矛盾。
+    mechanisms = data.get("mechanisms", {})
+    nodes = data.get("nodes", {})
+    violations: list[tuple[str, str, float, float]] = []
+    checked = 0
+    skipped_discrete = 0
+    for mid, mech in sorted(mechanisms.items()):
+        output = mech.get("output", "")
+        kind = nodes.get(output, {}).get("value", {}).get("kind", "float")
+        if kind in ("enum", "string", "boolean"):
+            skipped_discrete += 1
+            continue
+        parents = {p.get("parent"): p for p in mech.get("parents", [])}
+        for witness in mech.get("witnesses", []):
+            parent = parents.get(witness.get("parent"))
+            if parent is None:
+                continue
+            inputs_a = dict(witness.get("inputs_a", ()))
+            inputs_b = dict(witness.get("inputs_b", ()))
+            original = inputs_a.get(witness.get("parent"))
+            alternate = inputs_b.get(witness.get("parent"))
+            outs = witness.get("expected_outputs", [])
+            if (not isinstance(original, (int, float))
+                    or isinstance(original, bool)
+                    or not isinstance(alternate, (int, float))
+                    or isinstance(alternate, bool)
+                    or len(outs) != 2
+                    or not all(isinstance(x, (int, float))
+                               and not isinstance(x, bool) for x in outs)):
+                continue
+            delta = abs(alternate - original)
+            if delta == 0.0:
+                continue
+            checked += 1
+            ratio = abs(outs[1] - outs[0]) / delta
+            declared = float(parent.get("lipschitz", 0.0))
+            if ratio > declared * (1 + 1e-6) + 1e-9:
+                violations.append((mid, parent.get("parent", "?"),
+                                   declared, ratio))
+    if violations:
+        head = "; ".join(
+            f"{mid}←{p}: L={l:g} < 差商={r:.6g}"
+            for mid, p, l, r in violations[:5]
+        )
+        more = f"；…另有 {len(violations) - 5} 条" if len(violations) > 5 else ""
+        results.append((
+            "G7 见证一致性（L 否证器）", False,
+            f"{checked} 条可判定边中 {len(violations)} 条矛盾（离散跳过 "
+            f"{skipped_discrete}）：{head}{more}",
+        ))
+    else:
+        results.append((
+            "G7 见证一致性（L 否证器）", True,
+            f"{checked} 条可判定边一致（离散跳过 {skipped_discrete}）",
+        ))
+
     # ── 汇总 ─────────────────────────────────────────
     passed = sum(1 for _, ok_, _ in results if ok_)
     for name, ok_, detail in results:
