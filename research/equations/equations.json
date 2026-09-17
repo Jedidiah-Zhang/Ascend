@@ -1,7 +1,7 @@
 {
   "comment": "AUTO-GENERATED from the ASCEND_MECHANISMS registry (weather/mechanisms.py + space/mechanisms.py slices); do not edit by hand. variables/edges are the research graph projection.",
   "declaration": {
-    "hash": "sha256:056dd86d3dfbf5d2afee3d6d2906fba0c60db03fef2f8b0d2251fef759492965",
+    "hash": "sha256:77c75675e901eca5b00effadc41c476d54395bb787c9dc96ee0e85369acd4366",
     "id": "ascend.world.scalar_formulas",
     "microstep_order": [
       "world.gen_input",
@@ -2785,7 +2785,7 @@
         "zero_amplitude:zero_offset",
         "cosine_extremes:inverted"
       ],
-      "equation": "diurnal_humidity_amplitude * (-diurnal_phase_cos)",
+      "equation": "amplitude * (-diurnal_phase_cos)",
       "equation_version": "sha256:03f839622dae2e8457aaa21b6ee87264d4bdc65ca4af39a6a266fe4d00022758",
       "function": "ascend.weather.mechanisms._diurnal_humidity_offset_equation",
       "output": "weather.offset.diurnal_humidity_pp",
@@ -2835,7 +2835,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:6e3a56f11e41af96a0164c3f7ee5525125f173a83a270a91da0f4928a5fe1357",
+      "resolved_version": "sha256:4cf3294a0d9a4895f555a4bf70451d3c4dfa2d4e0879c773628d7b8d970ba34f",
       "source_dependencies": [],
       "witnesses": [
         {
@@ -2881,7 +2881,7 @@
         "zero_amplitude:zero_offset",
         "cosine_extremes:plus_minus_amplitude"
       ],
-      "equation": "diurnal_amplitude * diurnal_phase_cos",
+      "equation": "amplitude * diurnal_phase_cos",
       "equation_version": "sha256:5b340a300be9ed3fcbda35a0212e4be9d94405b89fede817265b2f3cc5c26e32",
       "function": "ascend.weather.mechanisms._diurnal_temperature_offset_equation",
       "output": "weather.offset.diurnal_temperature_c",
@@ -2931,7 +2931,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:9cf7656c526d8ca234930c412a28317999585e05e9d348e93898c2a435fbb327",
+      "resolved_version": "sha256:50ec19a615701548f54e741c3ee33bd98bd617716da99e9507d42dcd6b7e399f",
       "source_dependencies": [],
       "witnesses": [
         {
@@ -2978,7 +2978,7 @@
         "sharpness_zero:cosine",
         "sharpness_positive:tanh_compression"
       ],
-      "equation": "seasonal_humidity_amplitude * (tanh(season_phase_cos * sharpness) if sharpness > 0 else season_phase_cos)",
+      "equation": "amplitude * (tanh(season_phase_cos * sharpness) if sharpness > 0 else season_phase_cos)",
       "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202",
       "function": "ascend.weather.mechanisms._seasonal_humidity_offset_equation",
       "output": "weather.offset.seasonal_humidity_pp",
@@ -3049,7 +3049,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:1c48f45d6d5dd310b54c472b9747ffaffc36a723c01e8ee89e16f5338205d8bd",
+      "resolved_version": "sha256:e63ea752aa7cb3c86f38cd12f9be29483ccc8f646dea4bfc38673901420dd7bc",
       "source_dependencies": [],
       "witnesses": [
         {
@@ -3119,7 +3119,7 @@
         "zero_amplitude:zero_offset",
         "cosine_extremes:plus_minus_amplitude"
       ],
-      "equation": "seasonal_amplitude * season_phase_cos",
+      "equation": "amplitude * season_phase_cos",
       "equation_version": "sha256:2f3688d219a99f31550fea8a0701cf1e418f9288da5f31788d85aa93428b97c0",
       "function": "ascend.weather.mechanisms._seasonal_temperature_offset_equation",
       "output": "weather.offset.seasonal_temperature_c",
@@ -3169,7 +3169,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:8e006384e6e47c9b7a5670176bd3c559d6e3277f0e93952ac8d03efb853a3207",
+      "resolved_version": "sha256:f07bcc50356e8799155b5d928745ac1c74dee36239698874ebc1c6f1ae3ed020",
       "source_dependencies": [],
       "witnesses": [
         {
@@ -3339,7 +3339,7 @@
         "peak_hour:cos_one",
         "trough_hour:cos_minus_one"
       ],
-      "equation": "cos((hour - diurnal_peak_hour) / 24 * 2 * pi)",
+      "equation": "cos((hour - peak_hour) / 24 * 2 * pi)",
       "equation_version": "sha256:1a528ab898a63c1cfb6adf513e05d55f0726a4fc4deebeb8a621a950cc692271",
       "function": "ascend.weather.mechanisms._diurnal_phase_cos_equation",
       "output": "weather.tick.diurnal_phase_cos",
@@ -3373,7 +3373,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:e91c25cc85fbc04ea6e278d78b0117c0ec629b8cbacc743c5f3ed61f4586207f",
+      "resolved_version": "sha256:6317125db526521eec98ccf64e0354ef815f1b3f2c4c291a5e86c9bf34ebe119",
       "source_dependencies": [],
       "witnesses": [
         {
@@ -3527,7 +3527,7 @@
         "summer_midpoint:cos_one",
         "winter_midpoint:cos_minus_one"
       ],
-      "equation": "cos(((season + day_of_season / season_length_days) - 1.5) / seasons_per_year * 2 * pi)",
+      "equation": "cos(((((day - 1) // season_length_days % seasons_per_year) + ((day - 1) % season_length_days) / season_length_days) - 1.5) / seasons_per_year * 2 * pi)",
       "equation_version": "sha256:3a3e85f16fd7350dd457537ef50de89af6c6fa8e120ccc69caf790c75f5cc6ae",
       "function": "ascend.weather.mechanisms._season_phase_cos_equation",
       "output": "weather.tick.season_phase_cos",
@@ -3565,7 +3565,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:aa4246cf6797d9742c592362f686a012774261d48531decd7e56a3429c8a2ae9",
+      "resolved_version": "sha256:eb40458b42e998b872f2e751b4f01b1eb7af06c737982ac2ae575ac30f26fa8c",
       "source_dependencies": [],
       "witnesses": [
         {
@@ -4614,8 +4614,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4666,8 +4665,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4718,8 +4716,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4770,8 +4767,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4819,8 +4815,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4868,8 +4863,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4920,8 +4914,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4972,8 +4965,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5024,8 +5016,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5076,8 +5067,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5128,8 +5118,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5180,8 +5169,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5232,8 +5220,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5284,8 +5271,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5336,8 +5322,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5388,8 +5373,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5680,8 +5664,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5732,8 +5715,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5784,8 +5766,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5836,8 +5817,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5888,8 +5868,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5940,8 +5919,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5992,8 +5970,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6044,8 +6021,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6096,8 +6072,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6148,8 +6123,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6200,8 +6174,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6246,8 +6219,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6295,8 +6267,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6344,8 +6315,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6393,8 +6363,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6444,8 +6413,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6493,8 +6461,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6629,8 +6596,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6698,8 +6664,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",

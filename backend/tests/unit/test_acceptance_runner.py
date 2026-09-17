@@ -26,7 +26,7 @@ class TestSlices:
 
     @pytest.mark.parametrize("builder", [
         slices.w0_registry, slices.w1_registry, slices.w2_registry,
-        slices.w3_registry,
+        slices.w3_registry, slices.lag3_registry,
     ])
     def test_slice_passes_registry_validation(self, builder):
         registry = builder()
@@ -195,3 +195,49 @@ class TestChecks:
         assert leaks_research_truth(
             {"temperature": 21.5, "random_addresses": [{"source": "u"}]}
         ) is True
+
+
+class TestLagWindow:
+    """lag>1 历史窗口：参考与执行器语义一致（issue #49）。"""
+
+    _EXPECTED = [1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 3.0]
+
+    def test_reference_uses_true_lag_window(self):
+        """x_t = x_{t−3} + 1：lag>1 不得被静默当作 lag=1。"""
+        registry = slices.lag3_registry()
+        trace = reference.ReferenceInterpreter(registry).run(
+            range(1, 8), {"lag3.x": 0.0},
+        )
+        assert [frame["lag3.x"] for frame in trace.frames] == self._EXPECTED
+
+    def test_engine_history_matches_reference(self):
+        from ascend.causal.frame_history import FrameHistory
+        from ascend.causal.intervention import InterventionTimeline
+        from ascend.causal.intervention_engine import InterventionFrameExecutor
+
+        registry = slices.lag3_registry()
+        ref = reference.ReferenceInterpreter(registry).run(
+            range(1, 8), {"lag3.x": 0.0},
+        ).frames
+        table = InterventionTimeline(registry, now=lambda: 0)
+        engine = InterventionFrameExecutor(registry, table)
+        history = FrameHistory(1, {"lag3.x": 0.0}, max_lag=3)
+        state = {"lag3.x": 0.0}
+        engine_frames = []
+        for frame in range(1, 8):
+            state = engine.run_frame(frame, state, history=history)
+            history.commit(frame, state)
+            engine_frames.append(dict(state))
+        assert reference.first_divergence(ref, engine_frames) is None
+        assert [frame["lag3.x"] for frame in engine_frames] == self._EXPECTED
+
+    def test_engine_without_history_rejects_lag3(self):
+        """未提供历史窗口时 lag≥2 显式拒绝（不静默降级）。"""
+        from ascend.causal.intervention import InterventionTimeline
+        from ascend.causal.intervention_engine import InterventionFrameExecutor
+
+        registry = slices.lag3_registry()
+        table = InterventionTimeline(registry, now=lambda: 0)
+        engine = InterventionFrameExecutor(registry, table)
+        with pytest.raises(ValueError, match="需要 FrameHistory"):
+            engine.run_frame(1, {"lag3.x": 0.0}, {"lag3.x": 0.0})

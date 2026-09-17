@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "contract_version": "v0.1",
+  "digests": [
+    {
+      "mechanism_id": "weather.astronomy.derive_daylight.v1",
+      "output": "weather.astronomy.daylight_hours",
+      "equation_version": "sha256:a9f7c8aa9957b31903073a8b354ef580dc139796701f3c3ff541530c5e95a601"
+    },
+    {
+      "mechanism_id": "weather.astronomy.derive_sunrise.v1",
+      "output": "weather.astronomy.sunrise_hour",
+      "equation_version": "sha256:17e90070f75cc81641f908a85ee41b5159beb89d9f047b087473cdaabcb5335c"
+    },
+    {
+      "mechanism_id": "weather.astronomy.derive_sunset.v1",
+      "output": "weather.astronomy.sunset_hour",
+      "equation_version": "sha256:7cda0d682b92382f16747133c02a308f27356f2e60161699e9b1fa87d73aaed4"
+    },
+    {
+      "mechanism_id": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+      "output": "weather.chunk.diurnal_humidity_amplitude_pp",
+      "equation_version": "sha256:9e2b785f2170f0655ab4a7b85cabd4099625ae597e47253dc5de52ab25b69d35"
+    },
+    {
+      "mechanism_id": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+      "output": "weather.chunk.diurnal_temperature_amplitude_c",
+      "equation_version": "sha256:a1c162d7f5e31c76d9d65163983a974b152f83cac102dacbbcbfd29071f8829d"
+    },
+    {
+      "mechanism_id": "weather.chunk.derive_precipitation_threshold.v1",
+      "output": "weather.chunk.precipitation_threshold",
+      "equation_version": "sha256:29e7b835efca912393e5e9be5c2923e21ae464b1591fe2c770f4d6d9a3cb8c22"
+    },
+    {
+      "mechanism_id": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+      "output": "weather.chunk.seasonal_humidity_amplitude_pp",
+      "equation_version": "sha256:4a101f006e97b11f76b9cd232fdb4bc33141b1e8b290afbd6866845ef537a8b7"
+    },
+    {
+      "mechanism_id": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+      "output": "weather.chunk.seasonal_temperature_amplitude_c",
+      "equation_version": "sha256:688049c3a084318512c08555d7005b312f2f2d06b3d3ea40df2d2417786b419e"
+    },
+    {
+      "mechanism_id": "weather.chunk.derive_solar_latitude_proxy.v1",
+      "output": "weather.chunk.solar_latitude_proxy_deg",
+      "equation_version": "sha256:d19a58ec5326b62a5931450a7e6051604040d840ac99a37b42c35ba6a567c90a"
+    },
+    {
+      "mechanism_id": "weather.instant.classify_precipitation_type.v1",
+      "output": "weather.instant.precipitation_type",
+      "equation_version": "sha256:a46be50823d1b757ec447c5fe7eb5d28ad2cced59bfec5f30ede6399f55a1e86"
+    },
+    {
+      "mechanism_id": "weather.instant.compose_humidity.v1",
+      "output": "weather.instant.relative_humidity_percent",
+      "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3"
+    },
+    {
+      "mechanism_id": "weather.instant.compose_precipitation_intensity.v1",
+      "output": "weather.instant.precipitation_intensity_mm_per_hour",
+      "equation_version": "sha256:45cceac19385262ae7bd0b45884d29bd49df5e1bfc38e88a02402717ecb94174"
+    },
+    {
+      "mechanism_id": "weather.instant.compose_sunshine.v1",
+      "output": "weather.instant.sunshine_hours_per_day",
+      "equation_version": "sha256:9248df20bd195f319cccbd2ed4287a921a537d19070018227b0a6fc051c5d17d"
+    },
+    {
+      "mechanism_id": "weather.instant.compose_temperature.v1",
+      "output": "weather.instant.temperature_c",
+      "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049"
+    },
+    {
+      "mechanism_id": "weather.instant.compose_wind_speed.v1",
+      "output": "weather.instant.wind_speed_mps",
+      "equation_version": "sha256:2374a9e2f18ae7c87aca8f31b6a9bec73cfe430e9963702359fb092d4ce2c150"
+    },
+    {
+      "mechanism_id": "weather.offset.derive_diurnal_humidity.v1",
+      "output": "weather.offset.diurnal_humidity_pp",
+      "equation_version": "sha256:03f839622dae2e8457aaa21b6ee87264d4bdc65ca4af39a6a266fe4d00022758"
+    },
+    {
+      "mechanism_id": "weather.offset.derive_diurnal_temperature.v1",
+      "output": "weather.offset.diurnal_temperature_c",
+      "equation_version": "sha256:5b340a300be9ed3fcbda35a0212e4be9d94405b89fede817265b2f3cc5c26e32"
+    },
+    {
+      "mechanism_id": "weather.offset.derive_seasonal_humidity.v1",
+      "output": "weather.offset.seasonal_humidity_pp",
+      "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202"
+    },
+    {
+      "mechanism_id": "weather.offset.derive_seasonal_temperature.v1",
+      "output": "weather.offset.seasonal_temperature_c",
+      "equation_version": "sha256:2f3688d219a99f31550fea8a0701cf1e418f9288da5f31788d85aa93428b97c0"
+    },
+    {
+      "mechanism_id": "weather.tick.derive_day.v1",
+      "output": "weather.tick.day",
+      "equation_version": "sha256:daf3f067ff69a3026fd48ea159a91de940ae25bc30977ef29cac6b55f8b26941"
+    },
+    {
+      "mechanism_id": "weather.tick.derive_day_of_year.v1",
+      "output": "weather.tick.day_of_year",
+      "equation_version": "sha256:384a37605928172516654ee09ac2111084c251ac47f9e1cae922600e72cd0be6"
+    },
+    {
+      "mechanism_id": "weather.tick.derive_diurnal_phase_cos.v1",
+      "output": "weather.tick.diurnal_phase_cos",
+      "equation_version": "sha256:1a528ab898a63c1cfb6adf513e05d55f0726a4fc4deebeb8a621a950cc692271"
+    },
+    {
+      "mechanism_id": "weather.tick.derive_hour_of_day.v1",
+      "output": "weather.tick.hour_of_day",
+      "equation_version": "sha256:38f0d8ccb2d139fbcd2d1472e6c76a83dd908e429287c578fb81d5b854b143ca"
+    },
+    {
+      "mechanism_id": "weather.tick.derive_season.v1",
+      "output": "weather.tick.season",
+      "equation_version": "sha256:825886aee501558da73471fceb6c88ce6be67c4c657e5df6328de67ff552451d"
+    },
+    {
+      "mechanism_id": "weather.tick.derive_season_phase_cos.v1",
+      "output": "weather.tick.season_phase_cos",
+      "equation_version": "sha256:3a3e85f16fd7350dd457537ef50de89af6c6fa8e120ccc69caf790c75f5cc6ae"
+    },
+    {
+      "mechanism_id": "weather.tick.derive_solar_declination.v1",
+      "output": "weather.tick.solar_declination_rad",
+      "equation_version": "sha256:26ccd4705b264127f6aa3e4a3690d671d4f20e72a1c98afe3ae755759d01b730"
+    },
+    {
+      "mechanism_id": "world.gen.classify_biome.v1",
+      "output": "world.gen.biome",
+      "equation_version": "sha256:f5b5d5f4d9d934a88fd98fdb38d83e5a98d7ec9e09d6e18e7e9010a00eeca2e0"
+    },
+    {
+      "mechanism_id": "world.gen.classify_climate_zone.v1",
+      "output": "world.gen.climate_zone",
+      "equation_version": "sha256:34b946722a01ed3a25cd46e52031acff21fc0e21afa7f975bf03a9b03311214e"
+    },
+    {
+      "mechanism_id": "world.gen.derive_annual_mean_temperature.v1",
+      "output": "weather.chunk.annual_mean_temperature_c",
+      "equation_version": "sha256:4fd0b9908473bf54e56ccaa741c5bc0b582b5f46f6a57943f61cae6c6db71846"
+    },
+    {
+      "mechanism_id": "world.gen.derive_annual_rainfall.v1",
+      "output": "weather.chunk.annual_rainfall_mm_per_year",
+      "equation_version": "sha256:7118fd28f383a6780c0fd686403a71706ae86273f9dbb40a304a939725d42607"
+    },
+    {
+      "mechanism_id": "world.gen.derive_baseline_humidity.v1",
+      "output": "weather.chunk.baseline_humidity_percent",
+      "equation_version": "sha256:4a96fb3058be0a95d653bb8f986d2ab191ff613489941ba114866cb559063d57"
+    },
+    {
+      "mechanism_id": "world.gen.derive_baseline_wind_speed.v1",
+      "output": "weather.chunk.baseline_wind_speed_mps",
+      "equation_version": "sha256:4267a66e128049500a752448c94005db85459be2da0faba48bfd9fe825982875"
+    },
+    {
+      "mechanism_id": "world.gen.derive_humidity_sharpness.v1",
+      "output": "weather.chunk.humidity_sharpness",
+      "equation_version": "sha256:8e1684ad714e8a696c4a3f4f813eeda680458cfc1133d9f7a966e8248b2ee316"
+    },
+    {
+      "mechanism_id": "world.gen.derive_mean_precip_intensity.v1",
+      "output": "weather.chunk.mean_precip_intensity_mm_per_hour",
+      "equation_version": "sha256:120c284783ddc645d3be340b106175340af283a9441c25c7ec86d2d6f12639be"
+    },
+    {
+      "mechanism_id": "world.gen.derive_sea_level_temperature.v1",
+      "output": "weather.chunk.sea_level_temperature_c",
+      "equation_version": "sha256:0dbb66946a13b00da067b9747dc69d9a228d8ceb75020462e208a2ac57bb3ab3"
+    }
+  ]
+}

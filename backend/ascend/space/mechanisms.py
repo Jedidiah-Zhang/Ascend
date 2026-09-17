@@ -106,7 +106,7 @@ _CHUNK_INSTANCE = InstanceDomain(
     destruction="chunk_unregistration",
 )
 _ACCESS = AccessPolicy(
-    interventions=("node", "persistent", "mechanism"),
+    interventions=("node", "persistent"),
     research_trace=True,
     observation_protocols=("research.full.v1", "agent.weather.v1"),
 )

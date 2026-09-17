@@ -59,7 +59,7 @@ def _node(node_id: str, *, microstep: str = _S1) -> NodeSpec:
             writer="single_writer", merge_rule="single_writer",
         ),
         access=AccessPolicy(
-            interventions=("node", "persistent", "mechanism"),
+            interventions=("node", "persistent"),
             research_trace=True,
             observation_protocols=("research.full.v1",),
         ),

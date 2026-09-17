@@ -184,7 +184,7 @@ _GLOBAL_INSTANCE = InstanceDomain(
     destruction="world_teardown",
 )
 _ACCESS = AccessPolicy(
-    interventions=("node", "persistent", "mechanism"),
+    interventions=("node", "persistent"),
     research_trace=True,
     observation_protocols=("research.full.v1", "agent.weather.v1"),
 )
@@ -1510,7 +1510,8 @@ _MECHANISMS = (
     _mechanism(
         "weather.tick.derive_season_phase_cos.v1",
         SEASON_PHASE_COS,
-        "cos(((season + day_of_season / season_length_days) - 1.5) "
+        "cos(((((day - 1) // season_length_days % seasons_per_year) "
+        "+ ((day - 1) % season_length_days) / season_length_days) - 1.5) "
         "/ seasons_per_year * 2 * pi)",
         _season_phase_cos_equation,
         (
@@ -1532,7 +1533,7 @@ _MECHANISMS = (
     _mechanism(
         "weather.tick.derive_diurnal_phase_cos.v1",
         DIURNAL_PHASE_COS,
-        "cos((hour - diurnal_peak_hour) / 24 * 2 * pi)",
+        "cos((hour - peak_hour) / 24 * 2 * pi)",
         _diurnal_phase_cos_equation,
         (
             _parent(HOUR_OF_DAY, "hour", WEATHER_INSTANT_TICK_INPUT, 0.0,
@@ -1573,7 +1574,7 @@ _MECHANISMS = (
     _mechanism(
         "weather.offset.derive_seasonal_temperature.v1",
         SEASONAL_TEMPERATURE_OFFSET,
-        "seasonal_amplitude * season_phase_cos",
+        "amplitude * season_phase_cos",
         _seasonal_temperature_offset_equation,
         (
             _parent(SEASONAL_TEMPERATURE_AMPLITUDE, "amplitude",
@@ -1600,7 +1601,7 @@ _MECHANISMS = (
     _mechanism(
         "weather.offset.derive_diurnal_temperature.v1",
         DIURNAL_TEMPERATURE_OFFSET,
-        "diurnal_amplitude * diurnal_phase_cos",
+        "amplitude * diurnal_phase_cos",
         _diurnal_temperature_offset_equation,
         (
             _parent(DIURNAL_TEMPERATURE_AMPLITUDE, "amplitude",
@@ -1627,7 +1628,7 @@ _MECHANISMS = (
     _mechanism(
         "weather.offset.derive_seasonal_humidity.v1",
         SEASONAL_HUMIDITY_OFFSET,
-        "seasonal_humidity_amplitude * (tanh(season_phase_cos * sharpness) "
+        "amplitude * (tanh(season_phase_cos * sharpness) "
         "if sharpness > 0 else season_phase_cos)",
         _seasonal_humidity_offset_equation,
         (
@@ -1666,7 +1667,7 @@ _MECHANISMS = (
     _mechanism(
         "weather.offset.derive_diurnal_humidity.v1",
         DIURNAL_HUMIDITY_OFFSET,
-        "diurnal_humidity_amplitude * (-diurnal_phase_cos)",
+        "amplitude * (-diurnal_phase_cos)",
         _diurnal_humidity_offset_equation,
         (
             _parent(DIURNAL_HUMIDITY_AMPLITUDE, "amplitude",

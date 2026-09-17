@@ -38,7 +38,7 @@ from .biome import (
     get_template,
 )
 from .chunk import ChunkData, TILE_MAP_SIZE
-from .generator import WorldGenerator
+from .generator import WorldGenerator, ContinentFingerprintMismatch
 from .terrain import (
     TerrainType, TerrainDef, TERRAIN_DEFS,
     get_terrain_def, is_passable, is_buildable,
@@ -64,6 +64,7 @@ from .hydrology import (
 __all__ = [
     # 第一层：大地图
     "WorldGenerator",
+    "ContinentFingerprintMismatch",
     "PerlinNoise",
     "ClimateZone",
     "ClimateTemplate",

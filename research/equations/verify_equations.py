@@ -3,7 +3,8 @@
 运行: .venv/bin/python research/equations/verify_equations.py [--fast]
 
 判据（预注册，05 篇总则风格）：
-  V0 注册表/Lean 生成物漂移：equations.json 与生产注册表一致，且
+  V0 注册表/生成物漂移：equations.json 与生产注册表一致、
+      impl_digests.json 与生产注册表重算一致（issue #49），且
       GenDeclarationData.lean 与 equations.json + config.py 真值一致；
   V1 声明加载 + 结构校验：schema.validate 无问题；
   V2 L_j 对账：声明 L 与 config 常量解析计算一致（容差 1e-12）；
@@ -29,8 +30,10 @@ sys.path.insert(0, str(HERE))                       # 供 import schema
 sys.path.insert(0, str(HERE.parents[1] / "backend"))  # 供 import ascend
 
 import schema
+import export_impl_digests  # noqa: E402  实现内容摘要表漂移巡检（issue #49）
 import export_registry  # noqa: E402  生产注册表 -> JSON 漂移巡检
 import gen_lean  # noqa: E402  V0 巡检用（同目录）
+import reference_check  # noqa: E402  V4 独立参考对拍（issue #49）
 
 from ascend.config import (  # noqa: E402
     LATITUDE_MAX, LATITUDE_MIN, LATITUDE_T_MAX, LATITUDE_T_MIN,
@@ -77,6 +80,8 @@ def main() -> int:
     # 不跟随 --json 的自定义路径，避免对拍临时片段误报入库产物漂移）。
     registry_ok, registry_detail = export_registry.check()
     results.append(("V0 生产注册表快照漂移", registry_ok, registry_detail))
+    digests_ok, digests_detail = export_impl_digests.check()
+    results.append(("V0 实现内容摘要表漂移", digests_ok, digests_detail))
     lean_ok, lean_detail = gen_lean.check()
     results.append(("V0 Lean 生成物漂移", lean_ok, lean_detail))
 
@@ -156,6 +161,29 @@ def main() -> int:
     results.append(("V3 derive_seasonal_amp 界内 + 锚点",
                     sa_ok,
                     f"{len(sa_samples)} 样本，越界 {len(sa_bad)}，{sa_txt}"))
+
+    # ── V4 独立参考对拍（issue #49）──────────────────
+    # 每机制：方程表达式或声明参考实现（覆盖门禁）+ 见证/随机样本
+    # 与生产求值对拍；未覆盖或不一致即 FAIL。
+    from ascend.causal.world import ASCEND_MECHANISMS  # noqa: PLC0415
+    report = reference_check.check_mechanisms(ASCEND_MECHANISMS)
+    v4_detail = (
+        f"机制 {report.mechanisms}（表达式 {len(report.expression_ids)} / "
+        f"参考实现 {len(report.impl_ids)}）；样本 {report.samples}，"
+        f"域外跳过 {report.skipped}"
+    )
+    if report.uncovered:
+        results.append((
+            "V4 独立参考对拍", False,
+            "未覆盖: " + "; ".join(report.uncovered),
+        ))
+    else:
+        results.append((
+            "V4 独立参考对拍", report.passed,
+            v4_detail if report.passed
+            else f"{v4_detail}；不一致 {len(report.problems)}: "
+                 f"{report.problems[:3]}",
+        ))
 
     # ── 汇总 ─────────────────────────────────────────
     passed = sum(1 for _, ok, _ in results if ok)

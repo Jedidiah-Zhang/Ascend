@@ -13,6 +13,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Mapping
 
+from .impl_digests import IMPL_DIGESTS_PATH, get_impl_digests
 from .spec import (
     AccessPolicy,
     DependencyWitness,
@@ -39,7 +40,7 @@ _NODE_ORIGINS = {"slice_boundary", "mechanism"}
 _VALUE_KINDS = {"float", "integer", "enum", "boolean", "string", "tuple"}
 # C1 见证评估的占位随机值（"其余一切不变"含随机源；见证只验证父依赖）
 _WITNESS_RANDOM_VALUE = 0.5
-_INTERVENTIONS = {"node", "persistent", "mechanism"}
+_INTERVENTIONS = {"node", "persistent"}
 _ANALYSIS_ROLES = {"forward", "inverse", "observable"}
 
 # 快照文件依赖的机器无关锚点：仓库布局 backend/（源码模式才生成快照）。
@@ -84,10 +85,11 @@ def _sourceless() -> bool:
 
     打包分发不含 .py/.c（见 AGENTS.md 发行约定）：Nuitka 在每个编译
     模块注入 ``__compiled__`` 全局，仓库源码模式恒为 None。打包模式
-    无法哈希方程源码与依赖文件，若按源码模式构造注册表会在"进入世界"
-    时崩溃 —— 因此打包模式下方程版本**降级**为按名称摘要的
-    "packaged" 版本（见 :func:`_source_version`），而非拒绝构造。
-    源码模式行为不变（缺失来源仍 fail-closed 抛 ValueError）。
+    无法读取方程源码，方程版本从**构建期嵌入的实现摘要表**
+    （``declarations/impl_digests.json``）读取 —— 该表由源码模式按同一
+    算法生成（``research/equations/export_impl_digests.py``），打包身份
+    与源码身份逐位一致；缺表或缺条目即拒绝构造（issue #49，不再有
+    按名称降级的回退）。
 
     ``ASCEND_SOURCELESS=1`` 环境变量仅供打包布局回归测试注入。
     """
@@ -99,26 +101,27 @@ def _sourceless() -> bool:
 def _source_version(
     function: object,
     dependencies: tuple[object, ...],
+    *,
+    mechanism_id: str,
+    output: str,
 ) -> str:
-    """方程/依赖的版本摘要。
+    """方程/依赖的版本摘要（实现内容身份，issue #49）。
 
     源码模式：可调用对象哈希去缩进源码文本，文件依赖哈希文件字节
-    （缺失即 ValueError —— fail-closed，防静默漂移）。
-    打包（无源码）模式：不触碰磁盘与源码，按来源**名称**生成带
-    ``sha256-packaged:`` 前缀的降级摘要 —— 该版本不再可比对源码，
-    仅标记"无来源构建"；注册表可构造、evaluate 语义不变。
+    （缺失即 ValueError —— fail-closed，防静默漂移）；同时与实现摘要表
+    条目交叉校验（表陈旧 = 拒绝）。
+
+    打包（无源码）模式：从构建期嵌入的实现摘要表读取方程版本，
+    条目缺失或与声明错位即 ValueError（fail-closed，拒绝无来源构建）。
     """
     if _sourceless():
-        names = []
-        for item in (function, *dependencies):
-            if isinstance(item, (str, os.PathLike)):
-                names.append(f"file:{Path(item).name}")
-            else:
-                names.append(f"callable:{_callable_name(item)}")
-        payload = _canonical({"sourceless_dependencies": sorted(names)})
-        return "sha256-packaged:" + hashlib.sha256(
-            payload.encode("utf-8")
-        ).hexdigest()
+        entry = get_impl_digests().require(mechanism_id)
+        if entry.output != output:
+            raise ValueError(
+                f"实现摘要表条目与声明错位（{mechanism_id}: "
+                f"表 output={entry.output!r} != 声明 output={output!r}）"
+            )
+        return entry.equation_version
     sources = []
     for item in (function, *dependencies):
         if isinstance(item, (str, os.PathLike)):
@@ -139,7 +142,27 @@ def _source_version(
                 f"无法读取方程源码 {_callable_name(item)}，拒绝生成无来源版本"
             ) from exc
         sources.append({"callable": _callable_name(item), "source": source})
-    return _digest(sources)
+    live = _digest(sources)
+    entry = _impl_digest_or_none(mechanism_id)
+    if entry is not None and (
+        entry.output != output or entry.equation_version != live
+    ):
+        raise ValueError(
+            f"实现内容摘要表与源码不一致（{mechanism_id}）；"
+            f"重新生成: research/equations/export_impl_digests.py"
+        )
+    return live
+
+
+def _impl_digest_or_none(mechanism_id: str):
+    """源码模式取实现摘要条目；表尚未生成时返回 None。
+
+    表缺失只在源码模式（开发/CI，由 ``--check`` 门禁兜底）允许——
+    首次引导生成需要；打包模式的缺表拒绝见 :func:`_source_version`。
+    """
+    if not IMPL_DIGESTS_PATH.is_file():
+        return None
+    return get_impl_digests().get(mechanism_id)
 
 
 def _plain(value: object) -> object:
@@ -164,7 +187,12 @@ def _mechanism_versions(
     构造期算一次（研究 trace 与快照共用），避免每次求值重算源码摘要。
     构造期调用，因此显式接收参数/外生源映射而非注册表实例。
     """
-    equation_version = _source_version(spec.function, spec.source_dependencies)
+    equation_version = _source_version(
+        spec.function,
+        spec.source_dependencies,
+        mechanism_id=spec.mechanism_id,
+        output=spec.output,
+    )
     resolved_version = _digest({
         "mechanism_id": spec.mechanism_id,
         "output": spec.output,
@@ -804,7 +832,12 @@ class MechanismRegistry:
             issues.extend(self._validate_signature(mechanism))
             issues.extend(self._validate_witnesses(mechanism))
             try:
-                _source_version(mechanism.function, mechanism.source_dependencies)
+                _source_version(
+                    mechanism.function,
+                    mechanism.source_dependencies,
+                    mechanism_id=mechanism.mechanism_id,
+                    output=mechanism.output,
+                )
             except ValueError as exc:
                 issues.append(f"{mechanism_id}: {exc}")
 

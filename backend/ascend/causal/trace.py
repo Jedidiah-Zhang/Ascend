@@ -70,7 +70,7 @@ class TraceRecord:
         random_addresses: 消费的结构化随机地址（含实际值，可选）。
         random_values: 地址 → 实际抽取值（重算自包含；无源时为空）。
         intervention: 生效干预的记录视图（无干预时为 None）。
-        rep: 生效替换规格（"value" / "mechanism" / None）。
+        rep: 生效替换规格（仅 "value"；机制替换已废除，见 WC-1.3）。
         output: 实际输出值。
         boundary: 声明边界情况元组（无声明为空元组）。
     """

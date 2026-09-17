@@ -50,7 +50,7 @@ def node(
         interventions = (
             ()
             if role == "readout" or origin == "slice_boundary"
-            else ("node", "persistent", "mechanism")
+            else ("node", "persistent")
         )
     instance_domain = (
         InstanceDomain(
@@ -333,4 +333,30 @@ def w3_registry() -> MechanismRegistry:
             ),
         ),
         wired=frozenset({"u", "v"}),
+    )
+
+
+# ── lag≥2：历史窗口（issue #49）──────────────────────────────
+
+def lag3_registry() -> MechanismRegistry:
+    """lag=3 历史窗口切片：``x_t = x_{t−3} + 1``（自引用回递）。
+
+    首帧之前的 ``x`` 按 ``initial=0`` 稳态；帧 1 起序列
+    ``1, 1, 1, 2, 2, 2, 3, ...``——lag>1 若被静默当作 lag=1，
+    序列会退化为 ``1, 2, 3, ...``，本切片即锁定该语义。
+    """
+    return registry(
+        "research.lag3",
+        steps=(_S1,),
+        nodes=(node("lag3.x", microstep=_S1),),
+        mechanisms=(
+            mechanism(
+                "lag3.step", "lag3.x", lambda x: x + 1.0,
+                parents=(parent("lag3.x", "x", lag=3, source_microstep=_S1),),
+                witnesses=(
+                    witness("lag3.x", (("lag3.x", 0.0),), 1.0, (1.0, 2.0)),
+                ),
+            ),
+        ),
+        wired=frozenset({"lag3.x"}),
     )

@@ -38,8 +38,18 @@ from ascend.config import (
     MOISTURE_TILE_FREQUENCY as _MOISTURE_FREQ,
 )
 
+
+class ContinentFingerprintMismatch(RuntimeError):
+    """大陆缓存指纹与当前生成环境不一致（WC-1.2 / WC-9.1 fail-closed）。
+
+    身份（生成算法/参数）已变即新世界：按当前算法解释旧缓存会静默
+    改变已创建世界的轨迹，必须拒绝加载而不是沿用或静默重算。异常
+    消息携带可执行指引（恢复原环境 / 新建世界 / continent regen /
+    --regen-continent）。
+    """
+
 # 生成环境指纹覆盖的管线源码（相对 backend/ascend/space/）。
-# 开发环境源码在场：任一文件变更 → 指纹变化 → 加载时漂移告警。
+# 开发环境源码在场：任一文件变更 → 指纹变化 → 加载时拒绝（fail-closed）。
 # 打包环境源码缺失：退化为 CONTINENT_GEN_VERSION（发布时递增）。
 _GEN_SOURCE_FILES: tuple[str, ...] = (
     "continent.py", "hydrology.py", "streamlines.py", "climate.py", "noise.py",
@@ -50,10 +60,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def compute_gen_fingerprint() -> str:
-    """当前生成环境的指纹（诊断用途，不参与缓存失效判定）。
+    """当前生成环境的指纹（加载缓存时的一致性判定依据）。
 
     组成：CONTINENT_GEN_CONSTANT_NAMES 所列 config 常量值 + 生成
     管线源码内容（在场时）+ CONTINENT_GEN_VERSION（打包退位）。
+
+    加载路径语义：缓存记录的指纹与当前指纹不一致 → 拒绝加载
+    （ContinentFingerprintMismatch，WC-1.2/WC-9.1）；一致 → 缓存可用。
 
     Returns:
         sha256 十六进制摘要。同环境同结果；任一常量/源码变化即变。
@@ -123,7 +136,8 @@ class WorldGenerator:
             height_km: 大陆南北高度 (km)；None 用默认 60。
             ignore_cache: True 时无视缓存强制重新生成（--regen-continent
                 / continent regen 语义）。对存档世界有破坏性：玩家改动的
-                chunk 数据与新场可能出现接缝不一致。
+                chunk 数据与新场可能出现接缝不一致。也是指纹不一致
+                拒绝加载（ContinentFingerprintMismatch）的显式越过开关。
 
         参数归一化：None 一律落为 ContinentParams() 默认值，大陆是
         (seed, land_ratio, 尺寸) 的确定性函数，缓存校验与生成统一
@@ -204,6 +218,15 @@ class WorldGenerator:
         未命中则生成 + 补充沙漠档 moisture 动态值域 + 落盘缓存。
         保证任何首次触达路径产出同一份 _continent（缓存读写与
         沙漠校准不因路径而异），并发首触由锁收敛为一次生成。
+
+        缓存失败语义（WC-9.1）：
+          - 参数不符（seed/land_ratio/尺寸）：视为未命中重新生成（调参
+            结果混入/错档拷贝）；
+          - 无指纹（旧格式/手工写入）：无法校验生成环境，按未命中
+            重新生成（沿用既有"版本/损坏 → 重新生成"路径）；
+          - 指纹不符：显式拒绝（ContinentFingerprintMismatch）——按
+            当前算法解释旧缓存会静默改变轨迹，不静默沿用也不静默
+            重算；--regen-continent / continent regen 可显式越过。
         """
         # 尺寸由网格数 × cell_size 反推（序列化不存尺寸字段）：
         # 缓存必须与期望尺寸一致，避免同 seed 不同尺寸的调参结果混入
@@ -243,22 +266,47 @@ class WorldGenerator:
                     self._width_km, self._height_km, cache_path,
                 )
                 self._continent = None
-            elif (
-                self._continent is not None
-                and self._continent.gen_fingerprint
-                and self._continent.gen_fingerprint
-                != compute_gen_fingerprint()
-            ):
-                # 生成环境漂移：沿用缓存（世界保持创建时样貌——
-                # 每个存档的大陆在创建时定案），仅告警——调参验证
-                # 请新建世界或 continent regen / --regen-continent
-                # 强制重建。
-                logger.warning(
-                    "大陆缓存生成环境与当前算法/参数不一致（世界保持"
-                    "创建时样貌，派生层按当前算法解释；调参验证请"
-                    "新建世界，或 continent regen 强制重建）: %s",
-                    cache_path,
-                )
+            if self._continent is not None:
+                stored_fp = self._continent.gen_fingerprint
+                if not stored_fp:
+                    # 无指纹缓存（旧格式/手工写入）：没有身份摘要就无法
+                    # 证明它与当前算法一致，按既有"版本/损坏 → 未命中
+                    # 重新生成"路径处理（CONTINENT_CACHE_VERSION 校验
+                    # 兜底格式迁移）；不静默沿用无法验证的派生数据。
+                    logger.warning(
+                        "大陆缓存无生成环境指纹（旧格式/手工写入），"
+                        "无法校验一致性，重新生成: %s", cache_path,
+                    )
+                    self._continent = None
+                else:
+                    current_fp = compute_gen_fingerprint()
+                    if stored_fp != current_fp:
+                        # 生成环境漂移 = 身份变更即新世界（WC-1.2）：
+                        # 沿用旧缓存并按当前算法解释派生层会静默改变
+                        # 轨迹（WC-9.1 定义域 fail-closed），显式拒绝。
+                        # 先清引用：拒绝后不得留下可被复用的缓存对象。
+                        self._continent = None
+                        raise ContinentFingerprintMismatch(
+                            "大陆缓存生成环境与当前算法不一致，拒绝加载"
+                            "（fail-closed：按当前算法解释旧缓存会静默"
+                            "改变轨迹）。缓存: "
+                            f"{cache_path}（缓存指纹 {stored_fp[:12]}…，"
+                            f"当前指纹 {current_fp[:12]}…）。可执行指引："
+                            "① 恢复创建该存档时的代码/参数环境后重试；"
+                            "② 新建世界；③ 在该存档执行 continent regen "
+                            "删除缓存后重新进入；④ 启动世界进程时加 "
+                            "--regen-continent 显式强制重建"
+                            "（③④ 对存档世界有破坏性：玩家已改动的 "
+                            "chunk 与新场可能出现接缝不一致）。"
+                        )
+                    # 指纹一致：缓存可用。派生缓存随缓存持久化且受指纹
+                    # 背书（同一算法、同一宏观场 → 同值），加载即信任；
+                    # 仅当缓存缺少派生段（旧格式）时才注入重建入口惰性
+                    # 重算——重算输入不落盘，与生成值非逐位一致，不能
+                    # 作为首选路径。
+                    if not self._continent._derived_ready:
+                        self._continent.attach_derived_rebuilder(
+                            self._rebuild_derived_caches)
         if self._continent is None:
             self._continent = ContinentGenerator(
                 seed=self._seed, params=self._params,
@@ -275,7 +323,11 @@ class WorldGenerator:
     # ── 大陆磁盘缓存 ──────────────────────────────────────
 
     def _load_continent_cache(self, path: str) -> "ContinentData | None":
-        """从磁盘恢复大陆宏观场；无缓存/损坏/版本不符返回 None。"""
+        """从磁盘恢复大陆宏观场；无缓存/损坏/版本不符返回 None。
+
+        注意：反序列化已丢弃派生缓存（subdiv_ranges/_chunk_climate），
+        指纹校验与重建入口注入由 _create_continent 统一负责。
+        """
         if not os.path.isfile(path):
             return None
         try:
@@ -286,6 +338,42 @@ class WorldGenerator:
         if data is None:
             logger.warning("大陆缓存失效（版本或数据损坏），将重新生成: %s", path)
         return data
+
+    def _rebuild_derived_caches(self, cont: "ContinentData") -> None:
+        """按当前生成算法从持久化宏观场重建派生缓存（加载路径专用）。
+
+        continent_io 反序列化时丢弃磁盘上的 subdiv_ranges/_chunk_climate；
+        二者是 (seed, 参数, 持久化宏观场) 的确定性函数，此处复用
+        generate() 同序的气候/校准/兜底/提取步骤重算，保证"删除磁盘
+        派生值重算"与生成管线同式（WC-3.3 / WC-9.1）。由 ContinentData
+        首次访问（get_chunk_climate / subdiv_ranges）惰性触发一次。
+        """
+        w, h = cont.grid_width, cont.grid_height
+        # 重建参数从缓存宏观场反推（网格×格尺寸）：sample_resolution
+        # 必须取缓存实际值，否则噪声频率/直减率换算与生成时不一致
+        # （WorldGenerator 的默认参数只覆盖 100m 分辨率）。
+        params = ContinentParams(
+            width_km=w * cont.cell_size / 1000.0,
+            height_km=h * cont.cell_size / 1000.0,
+            sample_resolution=cont.cell_size,
+            land_ratio=cont.land_ratio,
+        )
+        # 注入兜底会原地抬升海拔：用副本，不改写持久化宏观场
+        elev = list(cont.elevation_field)
+        gen = ContinentGenerator(seed=self._seed, params=params)
+        temp, rain, climate = gen._compute_climate(elev, cont.land_mask, w, h)
+        gen._calibrate_climate_merged(
+            elev, temp, rain, cont.land_mask, climate, w, h)
+        gen._inject_missing_climates(
+            elev, temp, rain, cont.land_mask, climate, w, h)
+        # 先填 chunk 气候：_supplement_moisture_range 会回查
+        # get_chunk_climate（命中已建缓存，不再触发重建）
+        cont._chunk_climate = ContinentGenerator._extract_chunk_climate(
+            elev, temp, rain, climate, w, h)
+        cont._subdiv_ranges = ContinentGenerator._compute_subdiv_ranges(
+            elev, temp, rain, cont.land_mask, climate, w, h)
+        self._supplement_moisture_range(cont)
+        logger.info("大陆派生缓存已按当前算法重建: %s", cont)
 
     def _save_continent_cache(self, path: str, data: "ContinentData") -> None:
         """序列化大陆宏观场到磁盘（原子写），记录生成环境指纹。"""
@@ -299,12 +387,17 @@ class WorldGenerator:
         os.replace(tmp, path)
         logger.info("大陆缓存已写入: %s", path)
 
-    def _supplement_moisture_range(self) -> None:
+    def _supplement_moisture_range(
+        self, cont: "ContinentData | None" = None,
+    ) -> None:
         """补充沙漠档 moisture 噪声的动态值域。
 
         遍历所有 chunk，取气候档为 DESERT 的 chunk 采样 moisture 噪声。
+        生成路径与加载重建路径共用：cont 缺省取 self._continent（生成
+        路径）；重建路径显式传入（重建器可能晚于 _continent 重新赋值，
+        不能按 self._continent 取）。
         """
-        cont = self._continent
+        cont = cont if cont is not None else self._continent
         if cont is None:
             return
         w, h = cont.grid_width, cont.grid_height

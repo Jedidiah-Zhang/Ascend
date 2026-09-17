@@ -490,9 +490,10 @@ class TestIndependentReferenceParity:
 class TestSourcelessPackagedBuild:
     """打包（Nuitka standalone，无 .py/.c）布局下注册表构造回归测试。
 
-    发行物只有编译产物 + data/*.json + lang/*.json（.c 不分发）。
-    源码模式缺失来源应 fail-closed（见 test_uninspectable...）；
-    打包模式必须降级而非崩溃 —— 否则"进入世界"即崩（review 2026-09-08）。
+    发行物不含源码：方程版本从**构建期嵌入的实现摘要表**读取
+    （declarations/impl_digests.json，issue #49），与源码模式逐位一致；
+    缺表/缺条目即拒绝构造（不再有按名称降级的回退）。
+    源码模式缺失来源应 fail-closed（见 test_uninspectable...）。
     """
 
     def test_build_and_evaluate_in_sourceless_mode(self, monkeypatch):
@@ -510,25 +511,43 @@ class TestSourcelessPackagedBuild:
             m.PRECIPITATION_THRESHOLD, {m.ANNUAL_RAINFALL: 100.0},
         ) == pytest.approx(0.5456521739130435, abs=1e-12)
 
-    def test_sourceless_versions_are_degraded_and_stable(self, monkeypatch):
+    def test_sourceless_versions_match_embedded_digests(self, monkeypatch):
+        """打包身份 == 源码身份（嵌入表逐位一致），两次构造稳定。"""
         monkeypatch.setenv("ASCEND_SOURCELESS", "1")
         from ascend.causal.world import build_registry
 
         registry = build_registry()
-        snapshots = registry.snapshot()["mechanisms"]
-        assert snapshots, "无机制快照"
-        for mechanism_id, snapshot in snapshots.items():
-            assert snapshot["equation_version"].startswith(
-                "sha256-packaged:"
-            ), mechanism_id
+        source = {
+            mid: mechanism["equation_version"]
+            for mid, mechanism
+            in ASCEND_MECHANISMS.snapshot()["mechanisms"].items()
+        }
+        packed = {
+            mid: mechanism["equation_version"]
+            for mid, mechanism in registry.snapshot()["mechanisms"].items()
+        }
+        assert packed == source, "打包模式的方程版本必须等于源码模式"
         again = build_registry()
         assert {
-            mechanism_id: snapshot["equation_version"]
-            for mechanism_id, snapshot in again.snapshot()["mechanisms"].items()
-        } == {
-            mechanism_id: snapshot["equation_version"]
-            for mechanism_id, snapshot in snapshots.items()
-        }
+            mid: mechanism["equation_version"]
+            for mid, mechanism in again.snapshot()["mechanisms"].items()
+        } == packed
+
+    def test_missing_digest_rejected_in_sourceless_mode(self, monkeypatch):
+        """打包模式缺条目即拒绝构造（fail-closed，不按名称降级）。"""
+        monkeypatch.setenv("ASCEND_SOURCELESS", "1")
+        import ascend.causal.registry as registry_module
+        from ascend.causal.impl_digests import ImplementationDigestTable
+        from ascend.causal.world import build_registry
+
+        empty = ImplementationDigestTable(
+            schema_version=1, contract_version="v0.1", entries=(),
+        )
+        monkeypatch.setattr(
+            registry_module, "get_impl_digests", lambda: empty,
+        )
+        with pytest.raises(ValueError, match="实现内容摘要表缺少机制"):
+            build_registry()
 
 
 class TestSnapshotPortability:

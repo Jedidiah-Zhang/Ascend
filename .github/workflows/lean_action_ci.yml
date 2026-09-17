@@ -51,6 +51,10 @@ jobs:
       # lake build 不会变红，必须独立门禁。gen_lean.py 仅用 stdlib + ascend.config（stdlib-only）。
       - name: 声明数据漂移巡检（gen_lean.py --check）
         run: python3 research/equations/gen_lean.py --check
+      # 实现内容摘要表漂移巡检（issue #49）：改实现未重生成 impl_digests.json
+      # 时打包身份会静默漂移，必须独立门禁（verify_equations 亦含该步）。
+      - name: 实现内容摘要表漂移巡检
+        run: python3 research/equations/export_impl_digests.py --check
       - uses: leanprover/lean-action@v1
         with:
           lake-package-directory: research/lean
