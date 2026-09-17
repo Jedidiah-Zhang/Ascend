@@ -500,3 +500,42 @@ class TestVerify:
                 store.verify()
         finally:
             store.close()
+
+
+class _RecordingGuard:
+    """记录进入次数的状态守卫替身（返回空上下文）。"""
+
+    def __init__(self) -> None:
+        from contextlib import nullcontext
+
+        self.entries = 0
+        self._nullcontext = nullcontext
+
+    def __call__(self):
+        self.entries += 1
+        return self._nullcontext()
+
+
+class TestStateGuard:
+    """序列化状态数组时持状态提交锁（WC-7.6：不读半帧）。"""
+
+    def test_persist_holds_state_guard(self, db_path):
+        guard = _RecordingGuard()
+        store = ChunkStore(db_path, max_size=4, state_guard=guard)
+        try:
+            chunk = _make_chunk(0, 0, with_tiles=True)
+            store.put(chunk)
+            store.mark_dirty(0, 0)
+            assert store.flush() == 1
+            assert guard.entries == 1
+        finally:
+            store.close()
+
+    def test_no_guard_by_default(self, db_path):
+        store = ChunkStore(db_path, max_size=4)
+        try:
+            chunk = _make_chunk(0, 0, with_tiles=True)
+            store.put(chunk)
+            store.flush()
+        finally:
+            store.close()

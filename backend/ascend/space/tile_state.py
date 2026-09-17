@@ -13,6 +13,7 @@ to_bytes 已含状态数组；积分游标随 chunk_tiles 落盘）。
 
 import ctypes
 import threading
+from array import array
 from bisect import bisect_right
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,13 +21,14 @@ from typing import ClassVar
 
 from ascend.config import GAME_HOUR
 from ascend.log import get_logger
+from ascend.runtime.state_store import FrameStateStore
 from ascend.weather.derive import precip_type_for
 from ascend.world_tree import AffectedParty, Event, WorldEvent
 from ascend.world_tree import world_tree as _default_wt
 
 from ._cext import load_c_extension
-from .state_defs import STATE_TYPES, state_keys
-from .terrain import TERRAIN_DEFS, TerrainType
+from .state_defs import STATE_TYPES, build_param_tables, state_keys
+from .terrain import TerrainType
 from .tile_grid import TileGrid
 
 logger = get_logger(__name__)
@@ -60,47 +62,10 @@ _STATE.state_evolve.argtypes = [
 _STATE.state_evolve.restype = None
 
 # ── 参数表（注册表 → 256 宽地形索引表，模块级一次性构建） ──
-# 不适用组合 = 系数全 0 → delta 恒 0 → 状态空转（C 内无需适用性分支）。
-# 表是纯数据（矩阵定稿后不可变），构建一次全局复用。
-
-
-def _build_param_tables() -> tuple[
-    list[float], list[float], list[float], list[float],
-    list[float], list[float], list[float],
-]:
-    """从 terrain.TERRAIN_DEFS + STATE_TYPES 构建内核参数表。
-
-    Returns:
-        (deposit, drain, melt, freeze, freeze_below, melt_above,
-        state_max)；前四表为 n_states × 256（terrain id 索引），
-        后三表为 n_states（状态级激活门限）。
-    """
-    n = len(STATE_TYPES)
-    deposit = [0.0] * (n * 256)
-    drain = [0.0] * (n * 256)
-    melt = [0.0] * (n * 256)
-    freeze = [0.0] * (n * 256)
-    for si, key in enumerate(state_keys()):
-        for name, defn in TERRAIN_DEFS.items():
-            params = defn.states[key]
-            if params is None:
-                continue
-            base = si * 256 + defn.value
-            deposit[base] = params.deposit
-            drain[base] = params.drain
-            melt[base] = params.melt
-            freeze[base] = params.freeze
-    freeze_below = [
-        cfg.freeze_below if cfg.freeze_below is not None else -99999.0
-        for cfg in STATE_TYPES.values()
-    ]
-    melt_above = [cfg.melt_above or 0.0 for cfg in STATE_TYPES.values()]
-    state_max = [float(cfg.bounds[1]) for cfg in STATE_TYPES.values()]
-    return deposit, drain, melt, freeze, freeze_below, melt_above, state_max
-
-
+# 表是纯数据（矩阵定稿后不可变），构建一次全局复用；Python 参考实现
+# （state_reference.py）与 C 包装共享同一份表（state_defs.build_param_tables）。
 _DEPOSIT, _DRAIN, _MELT, _FREEZE, _FREEZE_BELOW, _MELT_ABOVE, _STATE_MAX = (
-    _build_param_tables()
+    build_param_tables()
 )
 _N_STATES = len(STATE_TYPES)
 _KEYS = state_keys()
@@ -127,21 +92,62 @@ def state_evolve(
     temp: list[float],
     dt: float = 1.0,
     tile_cover: list[float] | None = None,
+    states: dict[str, array] | None = None,
 ) -> None:
     """统一演化内核入口（见 _state.c；公式注释同源）。
 
-    零拷贝：状态/地形/坡度数组直接映射进 C，原地更新 grid。
+    TileGrid 包装：零拷贝映射网格的状态/地形/坡度数组进 C。
+    数组层入口见 ``state_evolve_arrays``（参考实现见
+    ``state_reference.state_evolve_reference``）。
 
     Args:
-        grid: 目标 TileGrid（状态/地形/坡度数组）。
+        grid: 目标 TileGrid（地形/坡度数组；状态默认取网格数组）。
         precip: 每状态每步降水量 mm/日——行=状态注册序（state_keys()），
             列=步。moisture 行喂雨量、snow 行喂雪量、其余行 0。
         temp: 每步均温 (°C)。
         dt: 步长（游戏日）——声明更新点 = 每游戏小时（1/24）。
         tile_cover: 每 tile 沉积倍率（None=露天 1.0；当前无实体层）。
+        states: 可选状态数组覆盖（长度/类型须与网格一致）——帧事务
+            影子积分传入副本，提交前不触碰网格已提交数组。
 
     Raises:
         ValueError: 步数/状态数不匹配。
+    """
+    state_arrays = (
+        {name: grid.state_raw(name) for name in _KEYS}
+        if states is None else states
+    )
+    state_evolve_arrays(
+        state_arrays,
+        grid.raw_data(),
+        grid.slope_raw(),
+        precip=precip,
+        temp=temp,
+        dt=dt,
+        tile_cover=tile_cover,
+    )
+
+
+def state_evolve_arrays(
+    states: dict[str, array],
+    terrain: array,
+    slope: array,
+    *,
+    precip: list[list[float]],
+    temp: list[float],
+    dt: float = 1.0,
+    tile_cover: list[float] | None = None,
+) -> None:
+    """统一演化内核数组层入口（_state.c 零拷贝包装，原地更新 states）。
+
+    Args:
+        states: 状态 key → array（uint8）映射（按 state_keys() 顺序取行）。
+        terrain: 每 tile 地形 id（array('H')）。
+        slope: 每 tile 坡度（array('f')）。
+        precip/temp/dt/tile_cover: 同 ``state_evolve``。
+
+    Raises:
+        ValueError: 步数/状态数不匹配，或 cover 长度不符。
     """
     n_steps = len(temp)
     if n_steps < 1:
@@ -151,16 +157,16 @@ def state_evolve(
             f"precip 形状须为 {_N_STATES}×{n_steps}，"
             f"实际 {len(precip)}×{len(precip[0]) if precip else 0}"
         )
-    n = len(grid.raw_data())
+    n = len(terrain)
     state_ptrs = (ctypes.POINTER(ctypes.c_uint8) * _N_STATES)()
     views: list = []
     for s, key in enumerate(_KEYS):
-        raw = grid.state_raw(key)
+        raw = states[key]
         view = (ctypes.c_uint8 * len(raw)).from_buffer(raw)
         views.append(view)  # 保活（调用期间）
         state_ptrs[s] = ctypes.cast(view, ctypes.POINTER(ctypes.c_uint8))
-    terrain_ptr = (ctypes.c_uint16 * n).from_buffer(grid.raw_data())
-    slope_ptr = (ctypes.c_float * n).from_buffer(grid.slope_raw())
+    terrain_ptr = (ctypes.c_uint16 * n).from_buffer(terrain)
+    slope_ptr = (ctypes.c_float * n).from_buffer(slope)
     flat_precip = [0.0] * (_N_STATES * n_steps)
     for s in range(_N_STATES):
         base = s * n_steps
@@ -236,17 +242,20 @@ class TileStateEngine:
       - ``aggregates(cx, cy)`` 是状态纯函数（派生缓存，删除重算一致）。
     """
 
-    def __init__(self, clock, weather, wt=None) -> None:
+    def __init__(self, clock, weather, wt=None, store=None) -> None:
         """初始化引擎。
 
         Args:
-            clock: WorldClock（读取当前 tick；订阅 tick/skip 驱动积分）。
+            clock: WorldClock（读取当前 tick）。
             weather: WeatherEngine（解析天气场采样；``get_weather``）。
             wt: 事件发布目标 WorldTree；None = 模块级单例。
+            store: 帧事务状态存储（调度器共享）；None = 引擎内建
+                （独立调用时自成一帧：批内影子写入一次提交）。
         """
         self._clock = clock
         self._weather = weather
         self._wt = wt if wt is not None else _default_wt
+        self._store = store if store is not None else FrameStateStore()
         # (cx, cy) → ChunkData（网格经 chunk.tile_grid 读取，允许晚就绪）
         self._chunks: dict[tuple[int, int], object] = {}
         self._aggregates_cache: dict[tuple[int, int], dict] = {}
@@ -275,16 +284,36 @@ class TileStateEngine:
             self._aggregates_cache.clear()
 
     def on_tiles_ready(self, cx: int, cy: int) -> None:
-        """tile 生成/恢复完成：把状态从游标补齐到当前更新点。"""
+        """tile 生成/恢复完成：把状态从游标补齐到当前更新点。
+
+        无外层帧事务时自成一帧（tile 生成线程/独立调用）。
+        """
         key = (cx, cy)
         with self._lock:
             chunk = self._chunks.get(key)
         if chunk is None or chunk.tile_grid is None:
             return
-        self._advance_chunk(key, self._target_frame(self._clock.time))
+        target = self._target_frame(self._clock.time)
+        if self._store.transaction_open:
+            self._advance_chunk(key, target)
+            return
+        with self._store.frame():
+            self._advance_chunk(key, target)
 
     def advance(self, now: int) -> None:
-        """驱动层每帧调用：跨过更新点时对注册 chunk 积分。"""
+        """驱动层每帧调用：跨过更新点时对注册 chunk 积分。
+
+        无外层帧事务（独立调用/测试）时自成一批：本批全部 chunk 的
+        影子写入一次提交（WC-7.6）。
+        """
+        if self._store.transaction_open:
+            self._advance_due(now)
+            return
+        with self._store.frame():
+            self._advance_due(now)
+
+    def _advance_due(self, now: int) -> None:
+        """对本批到期 chunk 排队影子积分（须在帧事务内调用）。"""
         target = self._target_frame(now)
         with self._lock:
             keys = list(self._chunks)
@@ -337,10 +366,12 @@ class TileStateEngine:
         return (now // GAME_HOUR) * GAME_HOUR
 
     def _advance_chunk(self, key: tuple[int, int], target: int) -> None:
-        """把 chunk 状态从游标逐步积分到 target（含阈值对账）。
+        """把 chunk 状态从游标逐步积分到 target（影子写入，帧边界提交）。
 
         天气采样在锁外完成（锁序：tile_state 锁内不请求 weather 锁）；
         任一步天气未注册则整体不推进游标（fail-closed，待注册后重试）。
+        积分写入状态数组副本，提交时才整组替换（WC-7.6：帧内写影子，
+        帧边界一次性发布）；阈值记录只在提交成功后发布。
         """
         cx, cy = key
         with self._lock:
@@ -368,29 +399,68 @@ class TileStateEngine:
             if chunk.integrated_through != cursor:
                 return
             grid = chunk.tile_grid
-            before = self._tier_snapshot(grid)
-            state_evolve(grid, precip=precip, temp=temps, dt=1.0 / 24.0)
+            live = {name: grid.state_raw(name) for name in _KEYS}
+            before = self._tier_snapshot(live)
+            shadow = {
+                name: array(live[name].typecode, live[name]) for name in _KEYS
+            }
+            state_evolve(
+                grid, precip=precip, temp=temps, dt=1.0 / 24.0,
+                states=shadow,
+            )
+        applied = False
+
+        def _apply() -> None:
+            nonlocal applied
+            applied = self._commit_chunk(key, grid, shadow, target)
+
+        self._store.stage_apply(_apply)
+        self._store.stage_after_commit(
+            lambda: applied and self._publish_thresholds(
+                cx, cy, before, shadow, target,
+            ),
+        )
+
+    def _commit_chunk(
+        self,
+        key: tuple[int, int],
+        grid: TileGrid,
+        states: dict[str, array],
+        target: int,
+    ) -> bool:
+        """帧事务应用动作：整组替换状态数组并推进游标。
+
+        网格已被替换（恢复/重载）或游标已被其他批次推进时跳过，
+        返回是否实际提交。
+        """
+        with self._lock:
+            chunk = self._chunks.get(key)
+            if chunk is None or chunk.tile_grid is not grid:
+                return False
+            if chunk.integrated_through >= target:
+                return False
+            grid.replace_states(states)
             chunk.integrated_through = target
             chunk.dirty = True
             self._aggregates_cache.pop(key, None)
-        self._publish_thresholds(cx, cy, grid, before, target)
+        return True
 
     @staticmethod
-    def _tier_snapshot(grid: TileGrid) -> dict[str, int]:
-        """积分前档位快照（仅带 thresholds 的状态）。"""
+    def _tier_snapshot(states: dict[str, array]) -> dict[str, int]:
+        """档位快照（仅带 thresholds 的状态；取状态数组视图）。"""
         snapshot: dict[str, int] = {}
         for key, cfg in STATE_TYPES.items():
             if not cfg.thresholds:
                 continue
-            snapshot[key] = bisect_right(cfg.thresholds, max(grid.state_raw(key)))
+            snapshot[key] = bisect_right(cfg.thresholds, max(states[key]))
         return snapshot
 
     def _publish_thresholds(
         self,
         cx: int,
         cy: int,
-        grid: TileGrid,
         before: dict[str, int],
+        after: dict[str, array],
         timestamp: int,
     ) -> None:
         """积分前后成对比较，发布净档位变化（记录，不反馈演化）。"""
@@ -398,7 +468,7 @@ class TileStateEngine:
         for key, cfg in STATE_TYPES.items():
             if not cfg.thresholds:
                 continue
-            value = max(grid.state_raw(key))
+            value = max(after[key])
             new_tier = bisect_right(cfg.thresholds, value)
             old_tier = before.get(key, new_tier)
             if new_tier > old_tier:

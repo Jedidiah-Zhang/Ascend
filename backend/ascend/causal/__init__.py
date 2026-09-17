@@ -25,6 +25,7 @@ from .program import (
     WorldProgram,
     compile_default_program,
     compile_world_program,
+    get_default_program,
 )
 from .registry import MechanismRegistry
 from .trace import RandomAddress, TraceLog, TraceRecord
@@ -119,6 +120,7 @@ __all__ = [
     "compile_world_program",
     "default_duration",
     "encode_state",
+    "get_default_program",
     "load_declaration",
     "load_fate_namespaces",
     "load_update_points",

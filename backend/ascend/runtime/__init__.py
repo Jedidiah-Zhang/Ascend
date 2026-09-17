@@ -6,5 +6,13 @@ docs/研究理论/世界基座/13-世界程序编译.md。
 
 from .execution import apply_update_points
 from .frame_scheduler import FrameScheduler, UpdatePoint
+from .state_store import FrameStateStore
+from .wave_executor import execute_waves
 
-__all__ = ["FrameScheduler", "UpdatePoint", "apply_update_points"]
+__all__ = [
+    "FrameScheduler",
+    "FrameStateStore",
+    "UpdatePoint",
+    "apply_update_points",
+    "execute_waves",
+]

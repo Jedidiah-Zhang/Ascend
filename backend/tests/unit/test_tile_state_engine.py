@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from ascend.config import GAME_HOUR
+from ascend.runtime import FrameScheduler, FrameStateStore
 from ascend.space.tile_grid import TileGrid
 from ascend.space.tile_state import TileStateEngine, state_evolve
 from ascend.space.terrain import TerrainType
@@ -216,3 +217,67 @@ class TestThresholdEvents:
         env.engine.register_chunk(_chunk(grid=grid))
         env.engine.advance(GAME_HOUR)
         assert env.events == []
+
+
+class TestFrameCommit:
+    """帧事务提交：影子状态在提交前不可见，失败整帧回滚（WC-7.6）。"""
+
+    def _setup(self):
+        clock = WorldClock(epoch=0)
+        weather = _FakeWeather()
+        weather.hours[1] = (10.0, 5.0)
+        wt = WorldTree()
+        store = FrameStateStore()
+        engine = TileStateEngine(clock, weather, wt=wt, store=store)
+        chunk = _chunk()
+        engine.register_chunk(chunk)
+        engine.on_tiles_ready(0, 0)
+        return clock, weather, wt, store, engine, chunk
+
+    def test_state_invisible_until_batch_commit(self):
+        clock, weather, wt, store, engine, chunk = self._setup()
+        seen: list[tuple[int, int]] = []
+
+        def spy(now: int) -> None:
+            seen.append((
+                chunk.integrated_through,
+                max(chunk.tile_grid.state_raw("moisture")),
+            ))
+
+        scheduler = FrameScheduler(store=store)
+        scheduler.register(
+            "terrain.integrate", period=GAME_HOUR, callback=engine.advance,
+        )
+        scheduler.register("spy", period=GAME_HOUR, callback=spy)
+        scheduler.advance(GAME_HOUR)
+        assert seen == [(0, 0)], "帧内读者必须看到已提交状态"
+        assert chunk.integrated_through == GAME_HOUR
+        assert max(chunk.tile_grid.state_raw("moisture")) > 0
+        engine.shutdown()
+
+    def test_failing_point_aborts_terrain_frame(self):
+        clock, weather, wt, store, engine, chunk = self._setup()
+        committed_version = store.version
+        state = {"fail": True}
+
+        def failing(now: int) -> None:
+            if state["fail"]:
+                raise RuntimeError("boom")
+
+        scheduler = FrameScheduler(store=store)
+        scheduler.register(
+            "terrain.integrate", period=GAME_HOUR, callback=engine.advance,
+        )
+        scheduler.register("failing", period=GAME_HOUR, callback=failing)
+        with pytest.raises(RuntimeError, match="boom"):
+            scheduler.advance(GAME_HOUR)
+        assert chunk.integrated_through == 0
+        assert max(chunk.tile_grid.state_raw("moisture")) == 0
+        assert store.version == committed_version
+        # 下一帧重试：两个更新点都重跑，整帧提交
+        state["fail"] = False
+        scheduler.advance(GAME_HOUR)
+        assert chunk.integrated_through == GAME_HOUR
+        assert max(chunk.tile_grid.state_raw("moisture")) > 0
+        assert store.version == committed_version + 1
+        engine.shutdown()

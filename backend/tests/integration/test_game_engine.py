@@ -462,6 +462,44 @@ class TestWorldProcessEntry:
         finally:
             engine.stop()
 
+    def test_load_world_rejects_program_mismatch(self, monkeypatch):
+        """世界程序身份不一致：拒绝加载（fail-closed，先于世界生成）。"""
+        _patch_fast_worldgen(monkeypatch)
+        from ascend.causal.program import get_default_program
+
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            mgr = engine.save_manager
+            world_id = mgr.create_world("错版程序", seed=7).world_id
+            manifest = mgr.get_manifest(world_id)
+            manifest.world_program = {
+                **get_default_program().settings(),
+                "identity": "sha256:" + "00" * 32,
+            }
+            manifest.write(mgr.manifest_path(world_id))
+            with pytest.raises(ValueError, match="世界程序身份"):
+                engine.load_world(world_id=world_id)
+        finally:
+            engine.stop()
+
+    def test_load_world_backfills_program_identity(self, monkeypatch):
+        """旧存档未记录程序身份：加载放行，落盘时补写（下一次可比对）。"""
+        _patch_fast_worldgen(monkeypatch)
+        engine = GameEngine(seed=42)
+        try:
+            engine.start_service()
+            mgr = engine.save_manager
+            world_id = mgr.create_world("旧档世界", seed=7).world_id
+            assert mgr.get_manifest(world_id).world_program is None
+            engine.load_world(world_id=world_id)
+            engine._persist_manifest()
+            stored = mgr.get_manifest(world_id).world_program
+            assert stored is not None
+            assert stored["identity"] == engine.world_program.identity
+        finally:
+            engine.stop()
+
     def test_load_world_rollback_requires_world_id(self, monkeypatch):
         """回滚必须指定 world_id（进入语义需要目标世界定位血缘）。"""
         _patch_fast_worldgen(monkeypatch)

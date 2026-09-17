@@ -93,6 +93,46 @@ def state_keys() -> tuple[str, ...]:
     return tuple(STATE_TYPES)
 
 
+def build_param_tables() -> tuple[
+    list[float], list[float], list[float], list[float],
+    list[float], list[float], list[float],
+]:
+    """从地形注册表构建统一演化内核参数表（纯数据，只读复用）。
+
+    Returns:
+        (deposit, drain, melt, freeze, freeze_below, melt_above,
+        state_max)；前四表为 n_states × 256（terrain id 索引，
+        不适用组合系数全 0 → delta 恒 0，内核无需适用性分支），
+        后三表为 n_states（状态级激活门限）。
+
+    调用方不得修改返回的列表（C 包装与 Python 参考实现共享）。
+    """
+    from .terrain import TERRAIN_DEFS  # 惰性导入：terrain 反向依赖本模块
+
+    n = len(STATE_TYPES)
+    deposit = [0.0] * (n * 256)
+    drain = [0.0] * (n * 256)
+    melt = [0.0] * (n * 256)
+    freeze = [0.0] * (n * 256)
+    for si, key in enumerate(state_keys()):
+        for defn in TERRAIN_DEFS.values():
+            params = defn.states[key]
+            if params is None:
+                continue
+            base = si * 256 + defn.value
+            deposit[base] = params.deposit
+            drain[base] = params.drain
+            melt[base] = params.melt
+            freeze[base] = params.freeze
+    freeze_below = [
+        cfg.freeze_below if cfg.freeze_below is not None else -99999.0
+        for cfg in STATE_TYPES.values()
+    ]
+    melt_above = [cfg.melt_above or 0.0 for cfg in STATE_TYPES.values()]
+    state_max = [float(cfg.bounds[1]) for cfg in STATE_TYPES.values()]
+    return deposit, drain, melt, freeze, freeze_below, melt_above, state_max
+
+
 # ── 实体遮蔽规格（覆盖度 = 实体层属性，非 tile 状态） ──────────
 # 建筑/树冠下方不按常规沉积：状态引擎查询遮蔽系数后乘以沉积量。
 # 实体标识 = EntityType.name 或实体 data 标记（如 {"canopy": true}）。

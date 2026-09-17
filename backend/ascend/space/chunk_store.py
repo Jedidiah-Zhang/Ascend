@@ -36,6 +36,7 @@ import time as _real_time
 import zlib
 from collections import OrderedDict
 from collections.abc import Callable
+from contextlib import nullcontext
 
 from ascend.config import (
     CHUNK_STORE_DB_PATH as _DEFAULT_DB_PATH,
@@ -88,9 +89,15 @@ class ChunkStore:
     """
 
     def __init__(self, db_path: str = _DEFAULT_DB_PATH, max_size: int = _DEFAULT_MAX_SIZE,
-                 on_evict: Callable[[int, int], None] | None = None) -> None:
+                 on_evict: Callable[[int, int], None] | None = None,
+                 state_guard: Callable[[], object] | None = None) -> None:
         self._max_size = max_size
         self._on_evict = on_evict
+        # 状态提交锁（FrameStateStore.guard）：序列化状态数组时持锁，
+        # 保证读到某已提交版本而非半帧（WC-7.6）；None = 无并发写方。
+        self._state_guard = (
+            state_guard if state_guard is not None else nullcontext
+        )
         self._cache: OrderedDict[tuple[int, int], ChunkData] = OrderedDict()
         self._lock = threading.RLock()
 
@@ -323,10 +330,11 @@ class ChunkStore:
             raise RuntimeError(
                 f"脏 chunk 无网格（不变量破坏）: ({chunk.cx}, {chunk.cy})"
             )
-        self._save_tiles(
-            chunk.cx, chunk.cy, grid,
-            integrated_through=chunk.integrated_through,
-        )
+        with self._state_guard():
+            self._save_tiles(
+                chunk.cx, chunk.cy, grid,
+                integrated_through=chunk.integrated_through,
+            )
         chunk.dirty = False
         self._persisted_coords.add((chunk.cx, chunk.cy))
 

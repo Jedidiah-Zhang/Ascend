@@ -32,11 +32,13 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from functools import lru_cache
 from types import MappingProxyType
 from typing import Callable, Mapping
 
 from .declaration import canonical_bytes
 from .fate_registry import FateNamespaceRegistry, load_fate_namespaces
+from .kernels import KernelPair
 from .state_schema import StateDeclaration, load_declaration
 from .update_points import (
     PERIODS,
@@ -70,6 +72,7 @@ class KernelBinding:
     resolved_version: str
     wired: bool
     accelerated: Callable[..., object] | None = None
+    kernel_version: str | None = None
 
     @property
     def reference_name(self) -> str:
@@ -112,6 +115,28 @@ class UpdatePointPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class PointKernelBinding:
+    """更新点的内核绑定（参考实现 + 加速实现位 + 内核版本）。"""
+
+    anchor: str
+    version: str
+    reference: Callable[..., object]
+    accelerated: Callable[..., object] | None
+
+    @property
+    def reference_name(self) -> str:
+        """参考实现的稳定名称（身份投影用）。"""
+        return _callable_name(self.reference)
+
+    @property
+    def accelerated_name(self) -> str | None:
+        """加速实现的稳定名称；未绑定为 None。"""
+        if self.accelerated is None:
+            return None
+        return _callable_name(self.accelerated)
+
+
+@dataclass(frozen=True, slots=True)
 class WorldProgram:
     """不可变世界程序：声明编译产物（运行一个世界 = 程序 + 种子 + 状态）。"""
 
@@ -126,6 +151,7 @@ class WorldProgram:
     microsteps: tuple[str, ...]
     waves: tuple[Wave, ...]
     kernels: Mapping[str, KernelBinding]
+    point_kernels: Mapping[str, PointKernelBinding]
     update_points: tuple[UpdatePointPlan, ...]
 
     def kernel_for(self, output: str) -> KernelBinding:
@@ -134,6 +160,13 @@ class WorldProgram:
             return self.kernels[output]
         except KeyError as exc:
             raise KeyError(f"世界程序无此内核: {output}") from exc
+
+    def point_kernel_for(self, anchor: str) -> PointKernelBinding:
+        """按更新点取内核绑定；未声明抛 KeyError（fail-closed）。"""
+        try:
+            return self.point_kernels[anchor]
+        except KeyError as exc:
+            raise KeyError(f"世界程序无此更新点内核: {anchor}") from exc
 
     def update_point(self, point_id: str) -> UpdatePointPlan:
         """按标识取更新点计划；未声明抛 KeyError（fail-closed）。"""
@@ -152,6 +185,48 @@ class WorldProgram:
             raise ValueError(f"种子必须为非负整数: {seed!r}")
         return _digest({"program": self.identity, "seed": seed})
 
+    def settings(self) -> dict[str, object]:
+        """世界设置视图（manifest 记录与读档比对用）。
+
+        identity 是全部声明、内核与日历刻度的组合摘要，读档一致性以它
+        为准；各分量摘要只作诊断定位。
+        """
+        return {
+            "identity": self.identity,
+            "schema_version": self.schema_version,
+            "contract_version": self.contract_version,
+            "registry_digest": self.registry_digest,
+            "slots_digest": self.slots_digest,
+            "address_digest": self.address_digest,
+            "update_points_digest": self.update_points_digest,
+            "kernels_digest": _digest([
+                {
+                    "anchor": anchor,
+                    "version": binding.version,
+                    "reference": binding.reference_name,
+                    "accelerated": binding.accelerated_name,
+                }
+                for anchor, binding in sorted(self._all_kernel_pairs().items())
+            ]),
+        }
+
+    def _all_kernel_pairs(
+        self,
+    ) -> dict[str, PointKernelBinding]:
+        """全部内核锚点（机制输出 + 更新点）的统一视图（身份/摘要用）。"""
+        pairs: dict[str, PointKernelBinding] = {}
+        for output, kernel in self.kernels.items():
+            if kernel.kernel_version is None:
+                continue
+            pairs[output] = PointKernelBinding(
+                anchor=output,
+                version=kernel.kernel_version,
+                reference=kernel.reference,
+                accelerated=kernel.accelerated,
+            )
+        pairs.update(self.point_kernels)
+        return pairs
+
 
 def compile_world_program(
     registry: object,
@@ -160,6 +235,7 @@ def compile_world_program(
     addresses: FateNamespaceRegistry,
     points: UpdatePointTable,
     ticks: Mapping[str, int],
+    kernels: tuple[KernelPair, ...] | None = None,
 ) -> WorldProgram:
     """把声明编译为世界程序；静态校验失败抛 ValueError。
 
@@ -169,6 +245,7 @@ def compile_world_program(
         addresses: 已校验的随机地址表。
         points: 已校验的更新点表。
         ticks: 周期符号刻度 → tick 映射（键必须恰为 ``PERIODS``）。
+        kernels: 内核对（None = 生产默认 ``default_kernel_pairs()``）。
 
     Raises:
         ValueError: 任一静态校验失败（错误全量汇总）。
@@ -184,8 +261,24 @@ def compile_world_program(
     )
     update_digest = _declaration_digest(points.digest(), "points", issues)
 
-    microsteps, waves, kernels = _compile_waves(registry, issues)
+    pair_map = _validate_kernel_pairs(
+        kernels if kernels is not None else _default_pairs(), registry,
+        points, issues,
+    )
+    microsteps, waves, kernels_by_output = _compile_waves(
+        registry, pair_map, issues,
+    )
     plan = _compile_update_points(state, points, calendar, issues)
+    point_kernels = {
+        anchor: PointKernelBinding(
+            anchor=anchor,
+            version=pair.version,
+            reference=pair.reference,
+            accelerated=pair.accelerated,
+        )
+        for anchor, pair in pair_map.items()
+        if anchor in {point.id for point in points.points}
+    }
 
     if issues:
         raise ValueError("世界程序编译失败: " + "; ".join(issues))
@@ -211,18 +304,36 @@ def compile_world_program(
                 "kernels": [
                     {
                         "output": output,
-                        "mechanism": kernels[output].mechanism_id,
-                        "microstep": kernels[output].microstep,
-                        "reference": kernels[output].reference_name,
-                        "accelerated": kernels[output].accelerated_name,
-                        "equation_version": kernels[output].equation_version,
-                        "resolved_version": kernels[output].resolved_version,
-                        "wired": kernels[output].wired,
+                        "mechanism": kernels_by_output[output].mechanism_id,
+                        "microstep": kernels_by_output[output].microstep,
+                        "reference": kernels_by_output[output].reference_name,
+                        "accelerated": (
+                            kernels_by_output[output].accelerated_name
+                        ),
+                        "kernel_version": (
+                            kernels_by_output[output].kernel_version
+                        ),
+                        "equation_version": (
+                            kernels_by_output[output].equation_version
+                        ),
+                        "resolved_version": (
+                            kernels_by_output[output].resolved_version
+                        ),
+                        "wired": kernels_by_output[output].wired,
                     }
                     for output in wave.outputs
                 ],
             }
             for wave in waves
+        ],
+        "point_kernels": [
+            {
+                "anchor": anchor,
+                "version": binding.version,
+                "reference": binding.reference_name,
+                "accelerated": binding.accelerated_name,
+            }
+            for anchor, binding in sorted(point_kernels.items())
         ],
         "update_points": [
             {
@@ -245,13 +356,18 @@ def compile_world_program(
         calendar=MappingProxyType(dict(calendar)),
         microsteps=microsteps,
         waves=waves,
-        kernels=MappingProxyType(kernels),
+        kernels=MappingProxyType(kernels_by_output),
+        point_kernels=MappingProxyType(point_kernels),
         update_points=plan,
     )
 
 
 def compile_default_program() -> WorldProgram:
-    """按生产声明编译世界程序（天气 + 空间生成切片）。"""
+    """按生产声明编译世界程序（天气 + 空间生成切片）。
+
+    每次调用都重新读取声明并编译；生产路径用 ``get_default_program``
+    的进程内缓存（声明在进程存续期内视为不可变）。
+    """
     from ascend.config import GAME_DAY, GAME_HOUR, GAME_MINUTE
 
     from .world import ASCEND_MECHANISMS
@@ -269,7 +385,62 @@ def compile_default_program() -> WorldProgram:
     )
 
 
+@lru_cache(maxsize=1)
+def get_default_program() -> WorldProgram:
+    """生产世界程序的进程内缓存（编译只按身份缓存一次）。
+
+    声明文件在进程存续期内不可变；测试若改写声明/日历刻度，
+    调用 ``get_default_program.cache_clear()`` 后重新取用。
+    """
+    return compile_default_program()
+
+
 # ── 编译内部 ──────────────────────────────────────────────
+
+
+def _default_pairs() -> tuple[KernelPair, ...]:
+    """生产内核对（惰性导入领域模块）。"""
+    from .kernels import default_kernel_pairs
+
+    return default_kernel_pairs()
+
+
+def _validate_kernel_pairs(
+    kernels: tuple[KernelPair, ...],
+    registry: object,
+    points: UpdatePointTable,
+    issues: list[str],
+) -> dict[str, KernelPair]:
+    """校验内核对锚点并建映射（fail-closed）。"""
+    outputs = {
+        spec.output for spec in getattr(registry, "mechanisms", {}).values()
+    }
+    point_ids = {point.id for point in points.points}
+    pair_map: dict[str, KernelPair] = {}
+    for pair in kernels:
+        anchor = getattr(pair, "anchor", "")
+        if not isinstance(anchor, str) or not anchor:
+            issues.append(f"内核对锚点非法: {anchor!r}")
+            continue
+        if anchor in pair_map:
+            issues.append(f"内核对重复锚点: {anchor}")
+            continue
+        if anchor not in outputs and anchor not in point_ids:
+            issues.append(
+                f"内核对锚点未声明（既非机制输出也非更新点）: {anchor}"
+            )
+            continue
+        if not getattr(pair, "version", ""):
+            issues.append(f"内核对缺少语义版本: {anchor}")
+            continue
+        if not callable(pair.reference):
+            issues.append(f"内核对缺少参考实现: {anchor}")
+            continue
+        if pair.accelerated is not None and not callable(pair.accelerated):
+            issues.append(f"内核对加速实现不可调用: {anchor}")
+            continue
+        pair_map[anchor] = pair
+    return pair_map
 
 
 def _validate_ticks(
@@ -309,7 +480,9 @@ def _declaration_digest(
 
 
 def _compile_waves(
-    registry: object, issues: list[str],
+    registry: object,
+    pair_map: Mapping[str, KernelPair],
+    issues: list[str],
 ) -> tuple[tuple[str, ...], tuple[Wave, ...], dict[str, KernelBinding]]:
     """按微步分组机制并校验同帧依赖序；返回 (微步序, 波次, 内核表)。"""
     raw_microsteps = tuple(getattr(registry, "microstep_order", ()) or ())
@@ -375,6 +548,7 @@ def _compile_waves(
                     f"（{parent_step} >= {microstep}）"
                 )
         grouped[microstep].append((mechanism_id, output))
+        pair = pair_map.get(output)
         kernels[output] = KernelBinding(
             mechanism_id=mechanism_id,
             output=output,
@@ -383,6 +557,8 @@ def _compile_waves(
             equation_version=registry.equation_version(output),
             resolved_version=registry.resolved_version(output),
             wired=output in wired,
+            accelerated=pair.accelerated if pair is not None else None,
+            kernel_version=pair.version if pair is not None else None,
         )
 
     waves: list[Wave] = []

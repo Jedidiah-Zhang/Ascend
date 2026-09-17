@@ -16,7 +16,7 @@ from .serializer import (
     collect_state,
     require_state_version,
 )
-from .settings import validate_world_settings
+from .settings import validate_world_program, validate_world_settings
 
 __all__ = [
     "SaveKeys",
@@ -32,5 +32,6 @@ __all__ = [
     "apply_player",
     "aligned_time",
     "require_state_version",
+    "validate_world_program",
     "validate_world_settings",
 ]

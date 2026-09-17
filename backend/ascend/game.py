@@ -76,7 +76,7 @@ from ascend.world_tree import world_tree, Event, AffectedParty, WorldEvent
 from ascend.fate import derive
 from ascend.save import (
     SaveManager, collect_state, aligned_time, apply_clock, apply_state,
-    require_state_version, validate_world_settings,
+    require_state_version, validate_world_program, validate_world_settings,
 )
 from ascend.save.manifest import SEED_MAX, seed_to_hex
 
@@ -130,6 +130,12 @@ class GameEngine:
         self.dispatcher: MessageDispatcher | None = None
         self.event_bridge: EventBridge | None = None
         self.clock: WorldClock = WorldClock()
+        # 世界状态提交存储（帧内影子、帧边界原子发布，WC-7.6）：
+        # 调度器/地形引擎/ChunkStore 序列化共享同一提交锁。
+        from ascend.runtime.state_store import FrameStateStore
+        self.state_store: FrameStateStore = FrameStateStore()
+        # 世界程序（声明编译产物；启动/读档时装配，见 13 篇）。
+        self.world_program = None
         self.calendar: GameCalendar | None = None  # start() 时创建（世界存在才需要日历）
         self.i18n: I18n = get_default()  # 进程共享实例：set_lang 全局生效（枚举 label 亦跟随）
         self._executor: CommandExecutor | None = None
@@ -325,10 +331,14 @@ class GameEngine:
             # 世界设置校验（fail-closed，先于昂贵的世界生成）：
             # 声明版本不一致 = 这个世界的生成规律已经变了，用新公式
             # 继续跑旧状态会得到"合法但不属于任何已声明世界"的轨迹。
+            # 世界程序身份覆盖全部声明文件与日历刻度（见 13 篇）。
+            from ascend.causal.program import get_default_program
             from ascend.causal.world import ASCEND_MECHANISMS
+            self.world_program = get_default_program()
             validate_world_settings(
                 manifest, ASCEND_MECHANISMS.declaration_settings(),
             )
+            validate_world_program(manifest, self.world_program.settings())
             # state 文件存在才读档恢复；新世界首次进入尚无 state
             if os.path.isfile(self.save_manager.state_path(world_id)):
                 self._load_state = self.save_manager.read_state(world_id)
@@ -401,6 +411,7 @@ class GameEngine:
         self.chunk_store = ChunkStore(
             db_path, max_size=CHUNK_STORE_MAX_SIZE,
             on_evict=self._on_chunk_evicted,
+            state_guard=self.state_store.guard,
         )
         self._world_stack.push(self._unset("chunk_store", self.chunk_store.close))
         # 读档防篡改（设计文档承诺）：明文 SQLite 靠完整性校验兜底
@@ -467,17 +478,21 @@ class GameEngine:
         from ascend.space.tile_state import TileStateEngine
         self.tile_state_engine = TileStateEngine(
             self.clock, self.weather_engine, wt=world_tree,
+            store=self.state_store,
         )
         self._world_stack.push(
             self._unset("tile_state_engine", self.tile_state_engine.shutdown)
         )
         # 5c'. 世界程序 + 帧调度器：声明编译为执行计划（波次/内核绑定/
         # 更新点/身份），调度器按计划驱动。执行权只来自声明——订阅者
-        # 不得回写世界状态（ADR-12/13）。
-        from ascend.causal.program import compile_default_program
+        # 不得回写世界状态（ADR-12/13）。读档路径已在设置校验前取用。
+        from ascend.causal.program import get_default_program
         from ascend.runtime import FrameScheduler, apply_update_points
-        self.world_program = compile_default_program()
-        self._scheduler = FrameScheduler(clock=self.clock)
+        if self.world_program is None:
+            self.world_program = get_default_program()
+        self._scheduler = FrameScheduler(
+            clock=self.clock, store=self.state_store,
+        )
         apply_update_points(
             self.world_program,
             self._scheduler,
@@ -949,12 +964,14 @@ class GameEngine:
         manifest = self._manifest
         if self.birth_chunk:
             manifest.birth_chunk = self.birth_chunk
-        # 世界设置补写：旧存档首次加载时记录当前声明版本，使下一次
-        # 加载有可比对的事实（校验已在 _start_world 读档前完成）。
+        # 世界设置补写：旧存档首次加载时记录当前声明版本与程序身份，
+        # 使下一次加载有可比对的事实（校验已在 _start_world 读档前完成）。
         from ascend.causal.world import ASCEND_MECHANISMS
         manifest.mechanism_declaration = (
             ASCEND_MECHANISMS.declaration_settings()
         )
+        if self.world_program is not None:
+            manifest.world_program = self.world_program.settings()
         manifest.touch(
             self.save_manager.manifest_path(self.world_id),
             game_time=self.clock.time,

@@ -10,6 +10,7 @@ TerrainType 的 int 值直接存入数组，
 import struct
 import sys
 from array import array
+from collections.abc import Mapping
 
 from .terrain import TerrainType
 from .state_defs import STATE_TYPES, state_keys
@@ -219,6 +220,34 @@ class TileGrid:
             KeyError: 未知状态 key。
         """
         return self._states[key]
+
+    def replace_states(self, states: Mapping[str, array]) -> None:
+        """整组替换状态数组（帧边界提交用；应用动作在提交锁内执行）。
+
+        只做逐 key 引用替换：调用方（状态存储的帧事务）保证同帧一致；
+        形状/类型仍在此 fail-closed 校验。
+
+        Args:
+            states: {状态 key: 长度 40000 的 array}，必须覆盖全部状态。
+
+        Raises:
+            ValueError: 缺少状态、长度不符或类型不匹配。
+        """
+        for key, cfg in STATE_TYPES.items():
+            raw = states.get(key)
+            if not isinstance(raw, array):
+                raise ValueError(f"状态 {key} 替换值必须是 array")
+            if len(raw) != self._length:
+                raise ValueError(
+                    f"状态 {key} 替换数组长度需为 {self._length}，"
+                    f"实际为 {len(raw)}"
+                )
+            if raw.typecode != cfg.dtype:
+                raise ValueError(
+                    f"状态 {key} 替换数组类型需为 {cfg.dtype}，"
+                    f"实际为 {raw.typecode}"
+                )
+            self._states[key] = raw
 
     # ── 区域查询 ──────────────────────────────────────────
 

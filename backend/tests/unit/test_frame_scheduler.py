@@ -4,7 +4,8 @@
 docs/研究理论/世界基座/12-世界树角色与帧调度.md：
 - 世界状态更新只能由声明更新点触发（注册顺序 = 执行顺序）；
 - 驱动信号来自时钟，不经世界树事件；
-- 世界写路径所在包不得订阅世界树或时钟（唯一驱动者是 FrameScheduler）。
+- 世界写路径所在包不得订阅世界树或时钟（唯一驱动者是 FrameScheduler）；
+- 一次推进批次是一个帧事务：写方影子提交，失败整帧回滚（WC-7.6）。
 """
 
 import re
@@ -13,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ascend.runtime import FrameScheduler
+from ascend.runtime import FrameScheduler, FrameStateStore
 from ascend.time import WorldClock
 
 
@@ -130,3 +131,64 @@ class TestWorldTreeRoleGate:
             "世界写路径不得订阅世界树/时钟（应注册到 FrameScheduler）: "
             + "; ".join(offenders)
         )
+
+
+class TestFrameTransaction:
+    """一次推进批次 = 一个帧事务（WC-7.6）。"""
+
+    def test_writes_invisible_until_batch_commit(self):
+        store = FrameStateStore()
+        scheduler = FrameScheduler(store=store)
+        seen: dict[str, object] = {}
+
+        def callback(now: int) -> None:
+            seen["before"] = store.get("k")
+            store.stage("k", now)
+
+        scheduler.register("p", period=1, callback=callback)
+        scheduler.advance(1)
+        assert seen["before"] is None
+        assert store.get("k") == 1
+        assert store.version == 1
+
+    def test_failing_point_rolls_back_and_retries(self):
+        store = FrameStateStore()
+        scheduler = FrameScheduler(store=store)
+        runs: list[str] = []
+        state = {"fail": True}
+
+        def first(now: int) -> None:
+            runs.append("first")
+            store.stage("k", now)
+
+        def flaky(now: int) -> None:
+            runs.append("flaky")
+            if state["fail"]:
+                state["fail"] = False
+                raise RuntimeError("boom")
+
+        scheduler.register("a", period=1, callback=first)
+        scheduler.register("b", period=1, callback=flaky)
+        with pytest.raises(RuntimeError, match="boom"):
+            scheduler.advance(1)
+        # 整帧回滚：影子值丢弃、版本不变
+        assert store.get("k") is None
+        assert store.version == 0
+        # 边界回滚：下一帧两个更新点都重试
+        scheduler.advance(1)
+        assert runs == ["first", "flaky", "first", "flaky"]
+        assert store.get("k") == 1
+
+    def test_records_skipped_on_abort(self):
+        store = FrameStateStore()
+        scheduler = FrameScheduler(store=store)
+        hooks: list[int] = []
+
+        def callback(now: int) -> None:
+            store.stage_after_commit(lambda: hooks.append(now))
+            raise RuntimeError("boom")
+
+        scheduler.register("p", period=1, callback=callback)
+        with pytest.raises(RuntimeError, match="boom"):
+            scheduler.advance(1)
+        assert hooks == []
