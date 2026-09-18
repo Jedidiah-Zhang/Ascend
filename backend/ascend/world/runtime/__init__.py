@@ -9,9 +9,16 @@ from .process import (
     WorldInvalidatedError,
     WorldProcess,
 )
-from .state import LatticeField, StateStore, export_value, load_value
+from .state import (
+    DynamicField,
+    LatticeField,
+    StateStore,
+    export_value,
+    load_value,
+)
 
 __all__ = [
+    "DynamicField",
     "FrameFailure",
     "FrameResult",
     "LatticeField",

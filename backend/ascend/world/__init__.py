@@ -54,6 +54,7 @@ from .research import (
     resolve,
 )
 from .runtime import (
+    DynamicField,
     FrameFailure,
     FrameResult,
     LatticeField,
@@ -68,6 +69,7 @@ __all__ = [
     "Arithmetic",
     "Arm",
     "CompileError",
+    "DynamicField",
     "ExperimentSpec",
     "FrameFailure",
     "FrameResult",

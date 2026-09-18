@@ -101,6 +101,25 @@ class WorldProcess:
             raise TypeError(f"槽位 {slot_id} 不是场")
         return value
 
+    # ── 物化（运行时视图；物化无关，WC-2.3）────────────────────
+
+    def materialize(self, kind: str, coords: tuple[int, ...]) -> None:
+        """物化一个实例（如 chunk）：为动态槽位补初值。"""
+        for slot in self._program.slots.values():
+            if slot.on != kind:
+                continue
+            if slot.persist in ("state", "derived"):
+                self._store.ensure_value(slot.id, coords, slot.initial)
+        self._store.materialize(kind, coords)
+
+    def dematerialize(self, kind: str, coords: tuple[int, ...]) -> None:
+        """卸载实例：丢弃其值（持久化由存档层负责，P2-3）。"""
+        self._store.dematerialize(kind, coords)
+
+    def materialized(self, kind: str) -> tuple[tuple[int, ...], ...]:
+        """已物化实例坐标（升序）。"""
+        return self._store.materialized(kind)
+
     # ── 帧推进 ──────────────────────────────────────────────────
 
     def step(
@@ -194,11 +213,14 @@ class WorldProcess:
                 if slot.persist == "state"
             )
         )
+        snapshot = self._store.snapshot(state_slots)
         return {
             "identity": self._program.world_identity(self._seed),
             "seed": self._seed,
             "tick": self._tick,
-            "states": self._store.snapshot(state_slots),
+            "materialized": self._store.materialized_sets(),
+            "states": snapshot["states"],
+            "history": snapshot["history"],
         }
 
     @classmethod
@@ -230,7 +252,13 @@ class WorldProcess:
             seed=unit_seed,
             tick=int(snapshot["tick"]),  # type: ignore[arg-type]
         )
-        process._store.restore(states)
+        process._store.restore(
+            states,
+            snapshot.get("history"),  # type: ignore[arg-type]
+        )
+        process._store.restore_materialized(
+            dict(snapshot.get("materialized", {}))  # type: ignore[arg-type]
+        )
         return process
 
     # ── 内部 ────────────────────────────────────────────────────
@@ -266,9 +294,7 @@ class WorldProcess:
             instance = self._program.instances[slot.on]
             if instance.kind == "lattice":
                 if instance.size is None:
-                    raise NotImplementedError(
-                        f"槽位 {slot.id}: 流式物化 lattice 在 P1 交付"
-                    )
+                    continue  # 动态实例：物化时补初值
                 values[slot.id] = LatticeField(instance.size, slot.initial)
             elif instance.kind == "global":
                 values[slot.id] = slot.initial

@@ -1,10 +1,16 @@
-"""机制求值 — 模板求值（通用实例循环）与父值解析。
+"""机制求值 — 模板求值（实例循环 / 整场内核）与父值解析。
 
-P0 支持 ``global`` 与固定尺寸 ``lattice`` 实例；跨实例类型归约（全局归约、
-多分辨率下采样）与加速内核绑定在 P1 交付（遇到即显式拒绝，不静默降级）。
+支持四类载体：
 
-父值解析：``same`` 关系取同实例；空间关系按偏移集合 + 边界算子取邻居，
-再按聚合规则合成。``lag`` 语义见 :class:`~ascend.world.runtime.state.StateStore`。
+- ``global``：单次调用；
+- 定尺寸 ``lattice``（``size`` 给定）：逐实例模板求值，空间关系按偏移 +
+  边界算子 + 聚合解析；
+- 动态 ``lattice``（``size=None``，chunk 流式物化）：只对已物化实例求值，
+  逐实例读写（``read_at`` / ``write_at``），外部输入按实例映射提供；
+- ``field`` 作用域（``scope="field"``）：整场内核一次调用，父值为整场
+  序列（定尺寸）或实例映射（动态）。
+
+``accelerated`` 与参考实现同协议，可逐位替换（内核对由测试锁定）。
 """
 
 from __future__ import annotations
@@ -14,7 +20,11 @@ from typing import Mapping
 from ascend.world.kernel import round_half_even_div
 from ascend.world.meta.context import MechanismContext
 from ascend.world.meta.declarations import MechanismDecl, Parent
-from ascend.world.runtime.state import LatticeField, StateStore
+from ascend.world.runtime.state import (
+    DynamicField,
+    LatticeField,
+    StateStore,
+)
 
 __all__ = ["evaluate_mechanism"]
 
@@ -29,11 +39,7 @@ def evaluate_mechanism(
     inputs: Mapping[str, object],
     params: Mapping[str, object],
 ) -> dict[str, object]:
-    """求值一个机制模板，返回 ``{槽位: 值}``（不落 store，由调用方暂存）。
-
-    ``scope="field"``：整场内核一次调用（父值为整场序列，输出为整场）；
-    ``accelerated`` 与参考实现同协议，可逐位替换（内核对由测试锁定）。
-    """
+    """求值一个机制模板，返回 ``{槽位: 值}``（不落 store，由调用方暂存）。"""
     impl = mechanism.accelerated or mechanism.impl
     if mechanism.scope == "field":
         return _evaluate_field(
@@ -61,11 +67,19 @@ def evaluate_mechanism(
             params=params,
         )
         return _collect(mechanism, impl(context))
+    if instance.kind == "lattice" and instance.size is None:
+        return _evaluate_dynamic(
+            program,
+            store,
+            mechanism,
+            impl=impl,
+            root_seed=root_seed,
+            tick=tick,
+            inputs=inputs,
+            params=params,
+            instance_id=instance.id,
+        )
     if instance.kind == "lattice":
-        if instance.size is None:
-            raise NotImplementedError(
-                f"机制 {mechanism.id}: 流式物化 lattice 在 P1 交付"
-            )
         fields = {
             slot: LatticeField(instance.size, 0) for slot in slots
         }
@@ -90,6 +104,39 @@ def evaluate_mechanism(
     )
 
 
+def _evaluate_dynamic(
+    program: object,
+    store: StateStore,
+    mechanism: MechanismDecl,
+    *,
+    impl: object,
+    root_seed: int,
+    tick: int,
+    inputs: Mapping[str, object],
+    params: Mapping[str, object],
+    instance_id: str,
+) -> dict[str, object]:
+    """动态 lattice：只对已物化实例逐点求值。"""
+    slots = mechanism.outputs()
+    fields = {slot: DynamicField() for slot in slots}
+    for coords in store.materialized(instance_id):
+        parent_values = _resolve_parents(
+            program, store, mechanism, inputs=inputs, instance=coords
+        )
+        context = MechanismContext(
+            mechanism=mechanism,
+            root_seed=root_seed,
+            tick=tick,
+            instance=coords,
+            parent_values=parent_values,
+            params=params,
+        )
+        collected = _collect(mechanism, impl(context))
+        for slot, value in collected.items():
+            fields[slot].set(coords, value)
+    return dict(fields)
+
+
 def _evaluate_field(
     program: object,
     store: StateStore,
@@ -107,19 +154,24 @@ def _evaluate_field(
     instance = program.instances[output_slot.on]
     if instance.kind != "lattice" or instance.size is None:
         raise NotImplementedError(
-            f"机制 {mechanism.id}: field 作用域需要固定尺寸 lattice"
+            f"机制 {mechanism.id}: field 作用域需要定尺寸 lattice"
+            f"（动态整场内核在 P2-3 交付）"
         )
     parent_values: dict[str, object] = {}
     for parent in mechanism.parents:
         slot = program.slots[parent.slot]
+        parent_kind = program.instances[slot.on].kind
         if slot.persist == "external":
             parent_values[parent.argument] = _external(inputs, parent.slot)
-            continue
-        value = store.read(parent.slot, parent.lag)
-        if isinstance(value, LatticeField):
-            parent_values[parent.argument] = value.values()
+        elif parent_kind == "global":
+            parent_values[parent.argument] = store.read(
+                parent.slot, parent.lag
+            )
         else:
-            parent_values[parent.argument] = value
+            value = store.read(parent.slot, parent.lag)
+            parent_values[parent.argument] = (
+                value.values() if isinstance(value, LatticeField) else value
+            )
     context = MechanismContext(
         mechanism=mechanism,
         root_seed=root_seed,
@@ -156,15 +208,41 @@ def _resolve_parents(
     values: dict[str, object] = {}
     for parent in mechanism.parents:
         slot = program.slots[parent.slot]
+        parent_kind = program.instances[slot.on].kind
         if slot.persist == "external":
-            values[parent.argument] = _external(inputs, parent.slot)
-        elif instance is None:
+            values[parent.argument] = _read_external(
+                inputs, parent.slot, parent_kind, instance
+            )
+        elif instance is None or parent_kind == "global":
             values[parent.argument] = store.read(parent.slot, parent.lag)
         else:
             values[parent.argument] = _neighbor_value(
                 program, store, parent, instance
             )
     return values
+
+
+def _read_external(
+    inputs: Mapping[str, object],
+    slot_id: str,
+    parent_kind: str,
+    instance: tuple[int, ...] | None,
+) -> object:
+    value = _external(inputs, slot_id)
+    if parent_kind == "global" or instance is None:
+        return value
+    if isinstance(value, LatticeField):
+        return value.get(instance)
+    if isinstance(value, Mapping):
+        try:
+            return value[tuple(instance)]  # type: ignore[index]
+        except KeyError:
+            raise KeyError(
+                f"外部槽位 {slot_id} 缺少实例 {instance!r} 输入"
+            ) from None
+    raise TypeError(
+        f"外部 lattice 槽位 {slot_id} 的输入必须是 LatticeField 或坐标映射"
+    )
 
 
 def _external(inputs: Mapping[str, object], slot_id: str) -> object:
@@ -182,9 +260,9 @@ def _neighbor_value(
     parent: Parent,
     coords: tuple[int, ...],
 ) -> object:
-    field = store.read(parent.slot, parent.lag)
     if parent.relation == "same":
-        return field.get(coords)
+        return store.read_at(parent.slot, coords, parent.lag)
+    field = store.read(parent.slot, parent.lag)
     relation = program.relations[parent.relation]
     collected: list[object] = []
     for offset in relation.offsets:
