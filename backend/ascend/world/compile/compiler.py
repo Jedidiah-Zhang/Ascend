@@ -421,6 +421,10 @@ def _check_mechanisms(
             issues.append(f"机制 {mechanism.id}: 父引用 argument 重复")
 
         output_slot = slots.get(mechanism.outputs()[0])
+        if mechanism.scope == "field":
+            _check_field_scope(
+                mechanism, slots, instances, output_slot, issues,
+            )
         for parent in mechanism.parents:
             slot = slots.get(parent.slot)
             if slot is None:
@@ -429,10 +433,15 @@ def _check_mechanisms(
                 )
                 continue
             if output_slot is not None and slot.on != output_slot.on:
-                issues.append(
-                    f"机制 {mechanism.id}: 跨实例类型父引用在 P1 交付"
-                    f"（{slot.on} → {output_slot.on}）"
-                )
+                parent_instance = instances.get(slot.on)
+                if not (
+                    parent_instance is not None
+                    and parent_instance.kind == "global"
+                ):
+                    issues.append(
+                        f"机制 {mechanism.id}: 跨实例类型父引用仅支持 "
+                        f"global 广播（{slot.on} → {output_slot.on}）"
+                    )
             if parent.relation != "same":
                 relation = relations.get(parent.relation)
                 if relation is None:
@@ -453,7 +462,7 @@ def _check_mechanisms(
                 issues.append(
                     f"机制 {mechanism.id}: same 关系不得聚合"
                 )
-            if parent.slot == mechanism.outputs()[0] and parent.lag == 0:
+            if parent.slot in mechanism.outputs() and parent.lag == 0:
                 issues.append(
                     f"机制 {mechanism.id}: 自引用必须 lag≥1"
                 )
@@ -470,6 +479,36 @@ def _check_mechanisms(
 
         issues.extend(witness_coverage_issues(mechanism))
         issues.extend(run_witnesses(mechanism))
+
+
+def _check_field_scope(
+    mechanism: MechanismDecl,
+    slots: Mapping[str, SlotDecl],
+    instances: Mapping[str, InstanceDecl],
+    output_slot: SlotDecl | None,
+    issues: list[str],
+) -> None:
+    """field 作用域：整场内核（lattice 输出；父引用由内核自管偏移）。"""
+    if output_slot is None:
+        return
+    instance = instances.get(output_slot.on)
+    if instance is None or instance.kind != "lattice":
+        issues.append(
+            f"机制 {mechanism.id}: field 作用域要求 lattice 输出"
+        )
+        return
+    for slot_id in mechanism.outputs():
+        slot = slots.get(slot_id)
+        if slot is not None and slot.on != output_slot.on:
+            issues.append(
+                f"机制 {mechanism.id}: field 作用域多输出必须同实例"
+            )
+    for parent in mechanism.parents:
+        if parent.relation != "same" or parent.aggregation != "identity":
+            issues.append(
+                f"机制 {mechanism.id}: field 作用域父引用不支持空间偏移"
+                f"（内核自管）: {parent.argument}"
+            )
 
 
 def _build_plan(

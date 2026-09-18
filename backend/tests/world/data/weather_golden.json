@@ -1,0 +1,5120 @@
+{
+ "frames": [
+  {
+   "inputs": {
+    "weather.field.humidity_perturbation": -1.3118490776613374,
+    "weather.field.precipitation_signal": 7.244768471148035,
+    "weather.field.temperature_perturbation": -5.024753329287499,
+    "weather.field.wind_multiplier": 54.82444024082155,
+    "weather.field.wind_perturbation": 0.9043868418251608,
+    "world.clock.tick": 4539,
+    "world.gen.altitude_m": 2225.122927883302,
+    "world.gen.humidity_noise": -0.004028406692830222,
+    "world.gen.latitude_noise": -0.7423878011674594,
+    "world.gen.moisture_noise": 0.06423999337663355,
+    "world.gen.rainfall_noise": -0.05771542984443556,
+    "world.gen.wind_noise": -0.5622834598691457
+   },
+   "outputs": {
+    "weather.astronomy.daylight_hours": 0.0,
+    "weather.astronomy.sunrise_hour": 12.0,
+    "weather.astronomy.sunset_hour": 12.0,
+    "weather.chunk.annual_mean_temperature_c": -20.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 1675.4408817738295,
+    "weather.chunk.baseline_humidity_percent": 49.91943188011646,
+    "weather.chunk.baseline_wind_speed_mps": 7.814881939440966,
+    "weather.chunk.diurnal_humidity_amplitude_pp": 11.999999997206032,
+    "weather.chunk.diurnal_temperature_amplitude_c": 15.0,
+    "weather.chunk.humidity_sharpness": 0.0,
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 3.0,
+    "weather.chunk.precipitation_threshold": 0.4086573142558336,
+    "weather.chunk.sea_level_temperature_c": -8.559695035219193,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 12.000000011175871,
+    "weather.chunk.seasonal_temperature_amplitude_c": 30.0,
+    "weather.chunk.solar_latitude_proxy_deg": 80.0,
+    "weather.instant.precipitation_intensity_mm_per_hour": 4.748056115582585,
+    "weather.instant.precipitation_type": "snow",
+    "weather.instant.relative_humidity_percent": 32.99326585792005,
+    "weather.instant.sunshine_hours_per_day": 0.0,
+    "weather.instant.temperature_c": -30.0,
+    "weather.instant.wind_speed_mps": 50.0,
+    "weather.offset.diurnal_humidity_pp": 11.236851518042386,
+    "weather.offset.diurnal_temperature_c": -14.046064401045442,
+    "weather.offset.seasonal_humidity_pp": -8.485281381756067,
+    "weather.offset.seasonal_temperature_c": -21.213203435763717,
+    "weather.tick.day": 1,
+    "weather.tick.day_of_year": 0,
+    "weather.tick.diurnal_phase_cos": -0.9364042934030294,
+    "weather.tick.hour_of_day": 0.6304166670888662,
+    "weather.tick.season": 0,
+    "weather.tick.season_phase_cos": -0.7071067811921239,
+    "weather.tick.solar_declination_rad": -0.2892810422927141,
+    "world.gen.biome": 14,
+    "world.gen.climate_zone": 7
+   }
+  },
+  {
+   "inputs": {
+    "weather.field.humidity_perturbation": 1.8613965395120728,
+    "weather.field.precipitation_signal": 1.1510994304272948,
+    "weather.field.temperature_perturbation": 3.4734953535605726,
+    "weather.field.wind_multiplier": 95.00153121873298,
+    "weather.field.wind_perturbation": -0.07289991275308427,
+    "world.clock.tick": 4160,
+    "world.gen.altitude_m": 2575.00130580147,
+    "world.gen.humidity_noise": -0.38818906461235514,
+    "world.gen.latitude_noise": 0.1929365011894424,
+    "world.gen.moisture_noise": -0.1753732445142402,
+    "world.gen.rainfall_noise": 0.331825555201019,
+    "world.gen.wind_noise": -0.8123983114020199
+   },
+   "outputs": {
+    "weather.astronomy.daylight_hours": 10.04690288938582,
+    "weather.astronomy.sunrise_hour": 6.97654855530709,
+    "weather.astronomy.sunset_hour": 17.02345144469291,
+    "weather.chunk.annual_mean_temperature_c": -8.351599215529859,
+    "weather.chunk.annual_rainfall_mm_per_year": 2347.399081289768,
+    "weather.chunk.baseline_humidity_percent": 42.236218713223934,
+    "weather.chunk.baseline_wind_speed_mps": 5.063618581742048,
+    "weather.chunk.diurnal_humidity_amplitude_pp": 11.793496523983777,
+    "weather.chunk.diurnal_temperature_amplitude_c": 14.74187065847218,
+    "weather.chunk.humidity_sharpness": 0.0,
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 3.0,
+    "weather.chunk.precipitation_threshold": 0.35022616665810347,
+    "weather.chunk.sea_level_temperature_c": 14.823412536643445,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 11.793496537953615,
+    "weather.chunk.seasonal_temperature_amplitude_c": 29.48374131694436,
+    "weather.chunk.solar_latitude_proxy_deg": 40.353174954652786,
+    "weather.instant.precipitation_intensity_mm_per_hour": 4.805239582434297,
+    "weather.instant.precipitation_type": "snow",
+    "weather.instant.relative_humidity_percent": 72.80330591928214,
+    "weather.instant.sunshine_hours_per_day": 12.838997699320316,
+    "weather.instant.temperature_c": -25.564026473090053,
+    "weather.instant.wind_speed_mps": 50.0,
+    "weather.offset.diurnal_humidity_pp": 10.9854004830122,
+    "weather.offset.diurnal_temperature_c": -13.73175060749054,
+    "weather.offset.seasonal_humidity_pp": -8.339261376298964,
+    "weather.offset.seasonal_temperature_c": -20.848153419792652,
+    "weather.tick.day": 1,
+    "weather.tick.day_of_year": 0,
+    "weather.tick.diurnal_phase_cos": -0.9314795201644301,
+    "weather.tick.hour_of_day": 0.5777777777984738,
+    "weather.tick.season": 0,
+    "weather.tick.season_phase_cos": -0.7071067811921239,
+    "weather.tick.solar_declination_rad": -0.2892810422927141,
+    "world.gen.biome": 15,
+    "world.gen.climate_zone": 7
+   }
+  },
+  {
+   "inputs": {
+    "weather.field.humidity_perturbation": -1.570664920653198,
+    "weather.field.precipitation_signal": 6.022003635007685,
+    "weather.field.temperature_perturbation": -0.31180743069042194,
+    "weather.field.wind_multiplier": 99.41620164396578,
+    "weather.field.wind_perturbation": -0.028003094094912306,
+    "world.clock.tick": 8085,
+    "world.gen.altitude_m": 1336.847721293919,
+    "world.gen.humidity_noise": -0.6389582632656481,
+    "world.gen.latitude_noise": -0.7240827758018828,
+    "world.gen.moisture_noise": 0.5442717899830902,
+    "world.gen.rainfall_noise": -0.07073330190189764,
+    "world.gen.wind_noise": -0.2945294645423264
+   },
+   "outputs": {
+    "weather.astronomy.daylight_hours": 0.0,
+    "weather.astronomy.sunrise_hour": 12.0,
+    "weather.astronomy.sunset_hour": 12.0,
+    "weather.chunk.annual_mean_temperature_c": -20.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 1652.9850551858544,
+    "weather.chunk.baseline_humidity_percent": 37.2208347171545,
+    "weather.chunk.baseline_wind_speed_mps": 8.349234823137522,
+    "weather.chunk.diurnal_humidity_amplitude_pp": 11.999999997206032,
+    "weather.chunk.diurnal_temperature_amplitude_c": 15.0,
+    "weather.chunk.humidity_sharpness": 0.0,
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 2.0,
+    "weather.chunk.precipitation_threshold": 0.41060999501496553,
+    "weather.chunk.sea_level_temperature_c": -8.10206938534975,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 12.000000011175871,
+    "weather.chunk.seasonal_temperature_amplitude_c": 30.0,
+    "weather.chunk.solar_latitude_proxy_deg": 80.0,
+    "weather.instant.precipitation_intensity_mm_per_hour": 3.157560020685196,
+    "weather.instant.precipitation_type": "snow",
+    "weather.instant.relative_humidity_percent": 16.8606123868376,
+    "weather.instant.sunshine_hours_per_day": 0.0,
+    "weather.instant.temperature_c": -30.0,
+    "weather.instant.wind_speed_mps": 50.0,
+    "weather.offset.diurnal_humidity_pp": 11.685032864101231,
+    "weather.offset.diurnal_temperature_c": -14.606291083618999,
+    "weather.offset.seasonal_humidity_pp": -8.485281381756067,
+    "weather.offset.seasonal_temperature_c": -21.213203435763717,
+    "weather.tick.day": 1,
+    "weather.tick.day_of_year": 0,
+    "weather.tick.diurnal_phase_cos": -0.9737527389079332,
+    "weather.tick.hour_of_day": 1.122916666790843,
+    "weather.tick.season": 0,
+    "weather.tick.season_phase_cos": -0.7071067811921239,
+    "weather.tick.solar_declination_rad": -0.2892810422927141,
+    "world.gen.biome": 12,
+    "world.gen.climate_zone": 6
+   }
+  },
+  {
+   "inputs": {
+    "weather.field.humidity_perturbation": -0.2267490038432407,
+    "weather.field.precipitation_signal": 3.1623669403393864,
+    "weather.field.temperature_perturbation": -4.823256081845763,
+    "weather.field.wind_multiplier": 17.5118496015611,
+    "weather.field.wind_perturbation": 0.9751934431522824,
+    "world.clock.tick": 6000,
+    "world.gen.altitude_m": 2874.0421903390816,
+    "world.gen.humidity_noise": 0.9684072746507191,
+    "world.gen.latitude_noise": 0.03948351775140213,
+    "world.gen.moisture_noise": 0.4813310823106509,
+    "world.gen.rainfall_noise": 0.871822588829297,
+    "world.gen.wind_noise": -0.2139014193148101
+   },
+   "outputs": {
+    "weather.astronomy.daylight_hours": 9.423939200118184,
+    "weather.astronomy.sunrise_hour": 7.288030399940908,
+    "weather.astronomy.sunset_hour": 16.711969600059092,
+    "weather.chunk.annual_mean_temperature_c": -14.87929177749902,
+    "weather.chunk.annual_rainfall_mm_per_year": 3278.893964551389,
+    "weather.chunk.baseline_humidity_percent": 69.36814546585083,
+    "weather.chunk.baseline_wind_speed_mps": 11.647084388881922,
+    "weather.chunk.diurnal_humidity_amplitude_pp": 11.999999997206032,
+    "weather.chunk.diurnal_temperature_amplitude_c": 15.0,
+    "weather.chunk.humidity_sharpness": 0.0,
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 3.0,
+    "weather.chunk.precipitation_threshold": 0.26922661159187555,
+    "weather.chunk.sea_level_temperature_c": 10.987087935209274,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 12.000000011175871,
+    "weather.chunk.seasonal_temperature_amplitude_c": 30.0,
+    "weather.chunk.solar_latitude_proxy_deg": 48.02582412958145,
+    "weather.instant.precipitation_intensity_mm_per_hour": 5.584640331566334,
+    "weather.instant.precipitation_type": "snow",
+    "weather.instant.relative_humidity_percent": 68.92623109929264,
+    "weather.instant.sunshine_hours_per_day": 9.083815693855286,
+    "weather.instant.temperature_c": -30.0,
+    "weather.instant.wind_speed_mps": 50.0,
+    "weather.offset.diurnal_humidity_pp": 11.444602073170245,
+    "weather.offset.diurnal_temperature_c": -14.305752594955266,
+    "weather.offset.seasonal_humidity_pp": -8.485281381756067,
+    "weather.offset.seasonal_temperature_c": -21.213203435763717,
+    "weather.tick.day": 1,
+    "weather.tick.day_of_year": 0,
+    "weather.tick.diurnal_phase_cos": -0.9537168396636844,
+    "weather.tick.hour_of_day": 0.8333333330228925,
+    "weather.tick.season": 0,
+    "weather.tick.season_phase_cos": -0.7071067811921239,
+    "weather.tick.solar_declination_rad": -0.2892810422927141,
+    "world.gen.biome": 15,
+    "world.gen.climate_zone": 7
+   }
+  },
+  {
+   "inputs": {
+    "weather.field.humidity_perturbation": -0.9362029082234025,
+    "weather.field.precipitation_signal": 7.554002901176685,
+    "weather.field.temperature_perturbation": -13.518267430566194,
+    "weather.field.wind_multiplier": 56.898636662373995,
+    "weather.field.wind_perturbation": 1.4950012573409315,
+    "world.clock.tick": 9504,
+    "world.gen.altitude_m": 95.49866941092512,
+    "world.gen.humidity_noise": 0.011633866798908432,
+    "world.gen.latitude_noise": -0.7448398167284118,
+    "world.gen.moisture_noise": 0.6288549020735494,
+    "world.gen.rainfall_noise": -0.594354693505802,
+    "world.gen.wind_noise": 0.41718930167668167
+   },
+   "outputs": {
+    "weather.astronomy.daylight_hours": 0.0,
+    "weather.astronomy.sunrise_hour": 12.0,
+    "weather.astronomy.sunset_hour": 12.0,
+    "weather.chunk.annual_mean_temperature_c": -9.480483433231711,
+    "weather.chunk.annual_rainfall_mm_per_year": 749.7381548397243,
+    "weather.chunk.baseline_humidity_percent": 50.232677310705185,
+    "weather.chunk.baseline_wind_speed_mps": 14.754703717306256,
+    "weather.chunk.diurnal_humidity_amplitude_pp": 11.999999997206032,
+    "weather.chunk.diurnal_temperature_amplitude_c": 15.0,
+    "weather.chunk.humidity_sharpness": 0.0,
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 2.0,
+    "weather.chunk.precipitation_threshold": 0.48915320355445147,
+    "weather.chunk.sea_level_temperature_c": -8.620995408855379,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 12.000000011175871,
+    "weather.chunk.seasonal_temperature_amplitude_c": 30.0,
+    "weather.chunk.solar_latitude_proxy_deg": 80.0,
+    "weather.instant.precipitation_intensity_mm_per_hour": 2.843387186527252,
+    "weather.instant.precipitation_type": "snow",
+    "weather.instant.relative_humidity_percent": 39.51469890680164,
+    "weather.instant.sunshine_hours_per_day": 0.0,
+    "weather.instant.temperature_c": -30.0,
+    "weather.instant.wind_speed_mps": 50.0,
+    "weather.offset.diurnal_humidity_pp": 11.810346596874297,
+    "weather.offset.diurnal_temperature_c": -14.76293324958533,
+    "weather.offset.seasonal_humidity_pp": -8.485281381756067,
+    "weather.offset.seasonal_temperature_c": -21.213203435763717,
+    "weather.tick.day": 1,
+    "weather.tick.day_of_year": 0,
+    "weather.tick.diurnal_phase_cos": -0.9841955499723554,
+    "weather.tick.hour_of_day": 1.3200000002980232,
+    "weather.tick.season": 0,
+    "weather.tick.season_phase_cos": -0.7071067811921239,
+    "weather.tick.solar_declination_rad": -0.2892810422927141,
+    "world.gen.biome": 12,
+    "world.gen.climate_zone": 6
+   }
+  },
+  {
+   "inputs": {
+    "weather.field.humidity_perturbation": -1.4869257786852725,
+    "weather.field.precipitation_signal": 9.659970100464548,
+    "weather.field.temperature_perturbation": 8.649071653728306,
+    "weather.field.wind_multiplier": 19.64924152930161,
+    "weather.field.wind_perturbation": 0.773275752370401,
+    "world.clock.tick": 5692,
+    "world.gen.altitude_m": 2772.2346931410852,
+    "world.gen.humidity_noise": 0.3464290503691627,
+    "world.gen.latitude_noise": 0.830289299888959,
+    "world.gen.moisture_noise": 0.11841300788127995,
+    "world.gen.rainfall_noise": 0.9568060722802052,
+    "world.gen.wind_noise": 0.7564548097937713
+   },
+   "outputs": {
+    "weather.astronomy.daylight_hours": 11.660664703696966,
+    "weather.astronomy.sunrise_hour": 6.169667648151517,
+    "weather.astronomy.sunset_hour": 17.830332351848483,
+    "weather.chunk.annual_mean_temperature_c": 5.807120251469314,
+    "weather.chunk.annual_rainfall_mm_per_year": 3425.490472652018,
+    "weather.chunk.baseline_humidity_percent": 56.92858099937439,
+    "weather.chunk.baseline_wind_speed_mps": 22.321002915501595,
+    "weather.chunk.diurnal_humidity_amplitude_pp": 7.590148735791445,
+    "weather.chunk.diurnal_temperature_amplitude_c": 9.487685921601951,
+    "weather.chunk.humidity_sharpness": 0.0,
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 3.0,
+    "weather.chunk.precipitation_threshold": 0.2564790891483426,
+    "weather.chunk.sea_level_temperature_c": 30.75723248999566,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 7.590148744173348,
+    "weather.chunk.seasonal_temperature_amplitude_c": 18.975371843203902,
+    "weather.chunk.solar_latitude_proxy_deg": 8.485535010695457,
+    "weather.instant.precipitation_intensity_mm_per_hour": 5.661125466227531,
+    "weather.instant.precipitation_type": "rain",
+    "weather.instant.relative_humidity_percent": 36.47048563975841,
+    "weather.instant.sunshine_hours_per_day": 9.43027603533119,
+    "weather.instant.temperature_c": 26.618818196468055,
+    "weather.instant.wind_speed_mps": 50.0,
+    "weather.offset.diurnal_humidity_pp": 7.212836971506476,
+    "weather.offset.diurnal_temperature_c": -9.01604621578008,
+    "weather.offset.seasonal_humidity_pp": -5.367045647464693,
+    "weather.offset.seasonal_temperature_c": -13.417614106088877,
+    "weather.tick.day": 1,
+    "weather.tick.day_of_year": 0,
+    "weather.tick.diurnal_phase_cos": -0.9502892792224884,
+    "weather.tick.hour_of_day": 0.7905555553734303,
+    "weather.tick.season": 0,
+    "weather.tick.season_phase_cos": -0.7071067811921239,
+    "weather.tick.solar_declination_rad": -0.2892810422927141,
+    "world.gen.biome": 15,
+    "world.gen.climate_zone": 7
+   }
+  }
+ ],
+ "vectors": [
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -5.0
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 80.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 31.072519211976164
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 7.854961603879929
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 30.359215534753254
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 9.28156889975071
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 15.83518064711916
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 38.32963868975639
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 37.89023441960201
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 33.115197859780324
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 3.76960426568985
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 0.4206305564773096
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 69.15873885154724
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 26.60370099875785
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 16.792597994208336
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -1.1318931412872857
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 72.26378627121449
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -10.909215399843585
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 80.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 27.993436461859176
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 14.013127088546753
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -13.645369501170489
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 80.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 14.20952242188089
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 41.580955162644386
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -12.760391044057926
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 80.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -7.373412184122966
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 80.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 29.91681129259807
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 10.166377425193787
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -0.4929886102228771
+   },
+   "mechanism": "weather.chunk.derive_solar_latitude_proxy.v1",
+   "output": 70.98597720265388
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 0.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 800.0
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 27.149999998509884
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 15.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 200.0
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 18.600000001490116
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 502.19964360620816,
+    "weather.chunk.annual_rainfall_mm_per_year": 4196.63569939693
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1092.0810760307456,
+    "weather.chunk.annual_rainfall_mm_per_year": 794.2510197568786
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 2954.4952860233125,
+    "weather.chunk.annual_rainfall_mm_per_year": 2235.7255203217983
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1030.4551836712196,
+    "weather.chunk.annual_rainfall_mm_per_year": 734.1694509362555
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 2504.3031477929985,
+    "weather.chunk.annual_rainfall_mm_per_year": 4960.387999453689
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": -143.3576229486216,
+    "weather.chunk.annual_rainfall_mm_per_year": 361.71990339667343
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 30.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 209.99453847209543,
+    "weather.chunk.annual_rainfall_mm_per_year": 3052.5878950029523
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 373.24878671419015,
+    "weather.chunk.annual_rainfall_mm_per_year": 1578.8374427059416
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1804.1963609922514,
+    "weather.chunk.annual_rainfall_mm_per_year": -168.8400207666234
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1009.7559490338006,
+    "weather.chunk.annual_rainfall_mm_per_year": 2509.3548471457684
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 404.80634524229777,
+    "weather.chunk.annual_rainfall_mm_per_year": -292.95436316530845
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 2571.100722503707,
+    "weather.chunk.annual_rainfall_mm_per_year": 2457.4785003254533
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 3656.772729680728,
+    "weather.chunk.annual_rainfall_mm_per_year": 255.32796846770123
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": -347.90001582287687,
+    "weather.chunk.annual_rainfall_mm_per_year": 406.7118923272069
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 30.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 2284.2530455692936,
+    "weather.chunk.annual_rainfall_mm_per_year": -180.69943287480794
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1787.3079301631456,
+    "weather.chunk.annual_rainfall_mm_per_year": 2913.7934141498176
+   },
+   "mechanism": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 10.0
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 5.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 24.2845494270292
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 12.142274713143706
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 10.267906666784642
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 5.133953332901001
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 9.650931762257184
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 4.8254658812657
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 13.991388120629038
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 6.995694059878588
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 4.4626535809050125
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 2.2313267905265093
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 13.62770194710719
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 6.8138509737327695
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 10.088811044418327
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 5.044405521824956
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 14.027435803020252
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 7.0137179009616375
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 8.109170105931735
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 4.054585052654147
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 29.898375976821914
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 14.94918798841536
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 14.164285153524208
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 7.082142576575279
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 22.900988241489685
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 11.450494120828807
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 23.656979578080286
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 11.828489788807929
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 2.1161043119068923
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 1.0580521561205387
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 11.541374266720677
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 5.770687133073807
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 27.268553048881483
+   },
+   "mechanism": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+   "output": 13.634276524186134
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 10.0
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 4.00000000372529
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 13.224114712692206
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 5.289645889773965
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 21.996636653151164
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 8.798654669895768
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 21.242933673636475
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 8.497173476964235
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 11.631199367027778
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 4.652479751035571
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 15.555619627362118
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 6.222247856669128
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 19.996163661369756
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 7.9984654719009995
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 3.8427432099708376
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 1.537097285501659
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 1.2443770750688308
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 0.49775082990527153
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 14.493466432980238
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 5.797386578284204
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 13.997281189243333
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 5.598912481218576
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 10.437759091503576
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 4.175103640183806
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 14.251695116433483
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 5.7006780514493585
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 6.449227655068287
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 2.579691064544022
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 23.010634501306118
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 9.204253809526563
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 11.902997199086533
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 4.7611988838762045
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 29.625917914531797
+   },
+   "mechanism": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+   "output": 11.85036717634648
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 10.0
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 3.9999999990686774
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 18.524191349300835
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 7.409676537849009
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 9.970440960300158
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 3.988176384009421
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 24.272546141669764
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 9.709018454886973
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 4.819026118719084
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 1.9276104476302862
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 14.181625173029364
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 5.672650068067014
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 23.68401812041597
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 9.473607245832682
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 17.41974017614869
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 6.96789606846869
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 21.000677333554037
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 8.400270930491388
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 20.005366645139535
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 8.002146656624973
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 24.03589355114912
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 9.614357418380678
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 10.128395392853985
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 4.051358156837523
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 11.334001992766694
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 4.5336007960140705
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 25.638890151730795
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 10.255556058138609
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 5.855539378833891
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 2.3422157503664494
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 28.024110363389767
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 11.209644142538309
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 29.22852185820833
+   },
+   "mechanism": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+   "output": 11.691408740356565
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 50.0
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.5499999998137355
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 3415.7429181347193
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.2573267025873065
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 1025.4587862422989
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.46517749689519405
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 732.3905238085613
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.4906616937369108
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": -75.56789614035318
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.5499999998137355
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 4061.108437403843
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.25
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 1936.8500589718656
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.3859260817989707
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 4644.55067861634
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.25
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 1726.689113954843
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.40420094691216946
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": -150.7097065425864
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.5499999998137355
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 4180.467279607417
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.25
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 3949.580370721169
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.25
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 3975.8871944487255
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.25
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": -253.26174514539107
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.5499999998137355
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 2253.3731389832396
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.35840233601629734
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 727.1346583350069
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.49111872538924217
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_rainfall_mm_per_year": 705.0453161664145
+   },
+   "mechanism": "weather.chunk.derive_precipitation_threshold.v1",
+   "output": 0.4930395372211933
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 0
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 512
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 5680
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 3373
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 9384
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 8973
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 3550
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 8761
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 9097
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 2358
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 4068
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 1107
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 895
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 7411
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 4366
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 5218
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 5318
+   },
+   "mechanism": "weather.tick.derive_day.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 0
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 4765
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 8580
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 4186
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 7640
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 8664
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 9514
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 4804
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 5166
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 9963
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 6061
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 1762
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 5399
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 7060
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 4483
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 8505
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 3272
+   },
+   "mechanism": "weather.tick.derive_day_of_year.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 0
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 1751
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.2431944441050291
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 1302
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.1808333331719041
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 3817
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.5301388893276453
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 7243
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 1.0059722224250436
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 1753
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.24347222223877907
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 4209
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.5845833336934447
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 1624
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.2255555558949709
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 2675
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.37152777798473835
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 4547
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.6315277777612209
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 4005
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.556250000372529
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 6844
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.9505555555224419
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 2668
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.37055555544793606
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 3948
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.5483333328738809
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 6909
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.9595833336934447
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 3587
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.4981944439932704
+  },
+  {
+   "inputs": {
+    "world.clock.tick": 289
+   },
+   "mechanism": "weather.tick.derive_hour_of_day.v1",
+   "output": 0.040138889104127884
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 1
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 8564
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 3
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 956
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 2
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 3979
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 4605
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 3
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 4165
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 2
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 1011
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 3
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 4512
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 2
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 439
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 8206
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 3
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 8916
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 3
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 3978
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 546
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 2
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 2470
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 3
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 252
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 2
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 4529
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 2
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 9409
+   },
+   "mechanism": "weather.tick.derive_season.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 46
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 8493
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": 0.2249510334804654
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 3758
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": 0.9271836206316948
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 7682
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": 0.9702954916283488
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 2524
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": -0.669130515307188
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 8638
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": -0.7431447245180607
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 5954
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": 0.5299192136153579
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 1842
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": -0.06975645292550325
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 3039
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": 0.9205046212300658
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 2664
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": 0.9902680432423949
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 5720
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": -0.9975637570023537
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 5692
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": -0.9135453905910254
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 1816
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": -0.499999868683517
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 3918
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": -0.999390609562397
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 8725
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": 0.629320246167481
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 7605
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": -0.017452402040362358
+  },
+  {
+   "inputs": {
+    "weather.tick.day": 7653
+   },
+   "mechanism": "weather.tick.derive_season_phase_cos.v1",
+   "output": 0.7313535427674651
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 14.0
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 1.0
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 4.388271861741347
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": -0.8108176961541176
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 1.8107115090466648
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": -0.9987721228972077
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 19.777953917227624
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 0.058098786510527134
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 15.304599373350625
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 0.9422386148944497
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 20.708848255761716
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": -0.18451270833611488
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 8.673288300870718
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 0.17535510286688805
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 22.71064037345492
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": -0.6515635643154383
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 4.615842600608568
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": -0.7745289020240307
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 12.234067303426201
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 0.8950198339298368
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 19.359976281991457
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 0.16677483450621367
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 11.512273971186083
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 0.7953051570802927
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 11.23295852632656
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 0.7488905368372798
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 9.340441815459316
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 0.34376824274659157
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 18.499769435540692
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 0.3827391816303134
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 8.753605716201005
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 0.19601601641625166
+  },
+  {
+   "inputs": {
+    "weather.tick.hour_of_day": 18.515154888534635
+   },
+   "mechanism": "weather.tick.derive_diurnal_phase_cos.v1",
+   "output": 0.3790147928521037
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 45
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 140
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": 0.407548357732594
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 329
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": -0.39695290569216013
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 202
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": 0.15985008608549833
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 289
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": -0.3677012315019965
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 256
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": -0.21070468984544277
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 241
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": -0.11276466213166714
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 339
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": -0.37373614590615034
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 238
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": -0.09202863182872534
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 290
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": -0.37077509611845016
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 72
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": 0.1857298268005252
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 56
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": 0.07806093525141478
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 344
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": -0.35781142953783274
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 259
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": -0.22876867465674877
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 221
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": 0.028537726029753685
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 293
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": -0.37931561563163996
+  },
+  {
+   "inputs": {
+    "weather.tick.day_of_year": 147
+   },
+   "mechanism": "weather.tick.derive_solar_declination.v1",
+   "output": 0.4001651266589761
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 10.0,
+    "weather.tick.season_phase_cos": 1.0
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": 10.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 10.0,
+    "weather.tick.season_phase_cos": 0.5
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": 5.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 5.29837042845108,
+    "weather.tick.season_phase_cos": -0.4196468314376063
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": -2.2234443612396717
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 15.955804248028228,
+    "weather.tick.season_phase_cos": -0.7381104758573931
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": -11.777146271429956
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 27.166967598019337,
+    "weather.tick.season_phase_cos": -0.6951688617626217
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": -18.885629951953888
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 8.353968867278631,
+    "weather.tick.season_phase_cos": 0.8764709785416154
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": 7.322011265903711
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 8.00846673790795,
+    "weather.tick.season_phase_cos": 0.3675586151164598
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": 2.943580945022404
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 1.4444362429879525,
+    "weather.tick.season_phase_cos": 0.7179209977343493
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": 1.0369911091402173
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 9.059633380546204,
+    "weather.tick.season_phase_cos": 0.008098875894981594
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": 0.07337284833192825
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 18.089692735625448,
+    "weather.tick.season_phase_cos": 0.5885201211736171
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": 10.646148154512048
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 21.498235288934797,
+    "weather.tick.season_phase_cos": -0.75164351033367
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": -16.1590090431273
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 17.73414720078947,
+    "weather.tick.season_phase_cos": -0.5489461205049133
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": -9.735091310925782
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 28.689027512336292,
+    "weather.tick.season_phase_cos": 0.5320546786426921
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": 15.264131310395896
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 6.305211904774929,
+    "weather.tick.season_phase_cos": 0.9450774436690301
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": 5.958913546986878
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 20.14274768866348,
+    "weather.tick.season_phase_cos": -0.7446184233223778
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": -14.99866102449596
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 20.31533115077963,
+    "weather.tick.season_phase_cos": -0.44380619594986337
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": -9.016069831326604
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 10.326312738217354,
+    "weather.tick.season_phase_cos": -0.9422580659027835
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": -9.730051465332508
+  },
+  {
+   "inputs": {
+    "weather.chunk.seasonal_temperature_amplitude_c": 11.181793961840892,
+    "weather.tick.season_phase_cos": 0.4340516285657292
+   },
+   "mechanism": "weather.offset.derive_seasonal_temperature.v1",
+   "output": 4.853475875221193
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 5.0,
+    "weather.tick.diurnal_phase_cos": 1.0
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": 5.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 5.0,
+    "weather.tick.diurnal_phase_cos": 0.5
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": 2.5
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 5.051189168999873,
+    "weather.tick.diurnal_phase_cos": 0.015939149208559655
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": 0.08051165752112865
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 18.8446908453426,
+    "weather.tick.diurnal_phase_cos": -0.9681955906664088
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": -18.245346592739224
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 8.229865881928909,
+    "weather.tick.diurnal_phase_cos": 0.7910229497159276
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": 6.510012786835432
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 9.798640929739227,
+    "weather.tick.diurnal_phase_cos": 0.20313077649517375
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": 1.9904055362567306
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 16.369762769541065,
+    "weather.tick.diurnal_phase_cos": -0.21268278562762788
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": -3.4815667429938912
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 14.973310664564885,
+    "weather.tick.diurnal_phase_cos": -0.13443600960369229
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": -2.012952134013176
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 3.9361521489515616,
+    "weather.tick.diurnal_phase_cos": 0.662049237283276
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": 2.6059265295043588
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 3.830641161268835,
+    "weather.tick.diurnal_phase_cos": 0.9486914545118312
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": 3.6340965358540416
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 11.898323380298896,
+    "weather.tick.diurnal_phase_cos": 0.3588134405990393
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": 4.269278347492218
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 4.096657489364029,
+    "weather.tick.diurnal_phase_cos": -0.8412411478112709
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": -3.4462768463417888
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 4.331315455926141,
+    "weather.tick.diurnal_phase_cos": -0.5689685531445257
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": -2.464382288046181
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 8.71062766897021,
+    "weather.tick.diurnal_phase_cos": 0.2755330070728821
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": 2.400065438821912
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 15.272119084612825,
+    "weather.tick.diurnal_phase_cos": 0.5262503443026836
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": 8.036957932636142
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 8.710086528144751,
+    "weather.tick.diurnal_phase_cos": -0.5238773607616725
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": -4.563017142936587
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 1.8536243083396209,
+    "weather.tick.diurnal_phase_cos": -0.1594762431772221
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": -0.29560904018580914
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_temperature_amplitude_c": 12.73702304495636,
+    "weather.tick.diurnal_phase_cos": -0.24939488221278205
+   },
+   "mechanism": "weather.offset.derive_diurnal_temperature.v1",
+   "output": -3.1765483655035496
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 0.0,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 4.0,
+    "weather.tick.season_phase_cos": 1.0
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": 4.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 0.0,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 4.0,
+    "weather.tick.season_phase_cos": 0.5
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": 2.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 0.0,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 4.0,
+    "weather.tick.season_phase_cos": 0.5
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": 2.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 0.680291037030476,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 16.15231246805893,
+    "weather.tick.season_phase_cos": 0.5532487815965823
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": 5.807535985484719
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 0.6602784033114673,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 14.079106598491943,
+    "weather.tick.season_phase_cos": -0.38542782858214997
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": -3.5075401440262794
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 1.076431618476501,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 2.0399272139573954,
+    "weather.tick.season_phase_cos": -0.4048922496502241
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": -0.836749255657196
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 2.399102407477743,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 6.3617828112654795,
+    "weather.tick.season_phase_cos": -0.67441053145963
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": -5.880385898984969
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 3.750991156053516,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 19.515180817391894,
+    "weather.tick.season_phase_cos": -0.6945933075595725
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": -19.30333556048572
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 1.3632503743134594,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 17.040373260802795,
+    "weather.tick.season_phase_cos": 0.07627360155965701
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": 1.7654771134257317
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 8.444587426002071,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 19.09599959241197,
+    "weather.tick.season_phase_cos": 0.8187821321376241
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": 19.095961888320744
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 8.306421702114585,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 6.330744678695521,
+    "weather.tick.season_phase_cos": -0.7089986834060771
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": -6.330647590570152
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 5.571530465458813,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 13.419540895161624,
+    "weather.tick.season_phase_cos": 0.7577024593532422
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": 13.413761481642723
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 0.8012996075864331,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 2.0710755642305534,
+    "weather.tick.season_phase_cos": -0.6807313836730118
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": -1.0295603526756167
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 6.760281158830609,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 19.868568049864216,
+    "weather.tick.season_phase_cos": -0.12494119840856666
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": -13.674649776890874
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 3.176230692008036,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 12.242011018444385,
+    "weather.tick.season_phase_cos": -0.18885087163092162
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": -6.5730707840994
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 3.6082066717647754,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 16.204818104580735,
+    "weather.tick.season_phase_cos": 0.541148855821977
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": 15.565036419779062
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 6.0902594546472075,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 10.639496986927846,
+    "weather.tick.season_phase_cos": -0.5775545558863409
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": -10.620774916373193
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 6.374270161364583,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 1.2978648300015405,
+    "weather.tick.season_phase_cos": 0.6497383653923632
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": 1.2972089862450957
+  },
+  {
+   "inputs": {
+    "weather.chunk.humidity_sharpness": 3.389243681560509,
+    "weather.chunk.seasonal_humidity_amplitude_pp": 19.762485458726534,
+    "weather.tick.season_phase_cos": 0.6333182907212573
+   },
+   "mechanism": "weather.offset.derive_seasonal_humidity.v1",
+   "output": 19.229657903313637
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 4.0,
+    "weather.tick.diurnal_phase_cos": 1.0
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -4.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 4.0,
+    "weather.tick.diurnal_phase_cos": 0.5
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -2.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 18.64776262041035,
+    "weather.tick.diurnal_phase_cos": -0.23173429689214897
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": 4.321326166391373
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 3.332943964502788,
+    "weather.tick.diurnal_phase_cos": -0.9160335264017849
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": 3.0530884116888046
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 12.598582304118885,
+    "weather.tick.diurnal_phase_cos": 0.6671857819094262
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -8.405594980344176
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 11.234677535359028,
+    "weather.tick.diurnal_phase_cos": 0.2686329076191347
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -3.01800409052521
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 19.137075013140205,
+    "weather.tick.diurnal_phase_cos": 0.22171648149019085
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -4.2430049339309335
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 3.8761126121776535,
+    "weather.tick.diurnal_phase_cos": 0.21272907331174729
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -0.8245618436485529
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 3.6614837545734247,
+    "weather.tick.diurnal_phase_cos": -0.10038326910979367
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": 0.367551707662642
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 8.538158997134078,
+    "weather.tick.diurnal_phase_cos": 0.9924102694876311
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -8.473356671631336
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 5.953665460240421,
+    "weather.tick.diurnal_phase_cos": 0.6552621926218978
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -3.9012118838727474
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 8.064485408900708,
+    "weather.tick.diurnal_phase_cos": 0.2866630369245322
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -2.3117898777127266
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 3.578805915673806,
+    "weather.tick.diurnal_phase_cos": 0.24974975991060244
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -0.8938059192150831
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 5.095547987745417,
+    "weather.tick.diurnal_phase_cos": 0.5419485920396938
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -2.761525059118867
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 7.473476011467186,
+    "weather.tick.diurnal_phase_cos": -0.4126400542789279
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": 3.0838555498048663
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 19.79978682988633,
+    "weather.tick.diurnal_phase_cos": -0.5853290650924492
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": 11.589390714652836
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 8.661328998602686,
+    "weather.tick.diurnal_phase_cos": 0.4255102828974271
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -3.685484549961984
+  },
+  {
+   "inputs": {
+    "weather.chunk.diurnal_humidity_amplitude_pp": 17.538387168871633,
+    "weather.tick.diurnal_phase_cos": 0.9681036602582898
+   },
+   "mechanism": "weather.offset.derive_diurnal_humidity.v1",
+   "output": -16.978976814076304
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 0.0,
+    "weather.tick.solar_declination_rad": 0.4091
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 6.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 80.0,
+    "weather.tick.solar_declination_rad": 0.0
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 6.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 52.87046775389121,
+    "weather.tick.solar_declination_rad": 0.24221217194928168
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 4.7302729627117515
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 7.819545422047867,
+    "weather.tick.solar_declination_rad": 0.3526500360630581
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 5.806860068812966
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 71.29422396658634,
+    "weather.tick.solar_declination_rad": 0.011350708121848574
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 5.871921715326607
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 32.69077967792314,
+    "weather.tick.solar_declination_rad": -0.04565902737402716
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 6.112020057626069
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 64.82164193649571,
+    "weather.tick.solar_declination_rad": -0.042879055379344
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 6.349103828892112
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 1.0059383163959446,
+    "weather.tick.solar_declination_rad": 0.12731625934252622
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 5.991414523683488
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 30.543168093908672,
+    "weather.tick.solar_declination_rad": 0.49581726158204875
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 4.759215128608048
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 27.913989206790326,
+    "weather.tick.solar_declination_rad": 0.24185755977811918
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 5.4993656147271395
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 75.46281009206245,
+    "weather.tick.solar_declination_rad": -0.05065708130918589
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 6.751675359904766
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 2.909619821028464,
+    "weather.tick.solar_declination_rad": 0.19689891692532113
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 5.961271290667355
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 9.641384653790066,
+    "weather.tick.solar_declination_rad": -0.47263272013916435
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 6.332187303341925
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 60.86319341323335,
+    "weather.tick.solar_declination_rad": -0.4947762847251972
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 11.029510388150811
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 29.952107750751253,
+    "weather.tick.solar_declination_rad": -0.36574712039216684
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 6.849955694749951
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 64.89362856284869,
+    "weather.tick.solar_declination_rad": -0.16879775245283957
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 7.421844833530486
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 33.3565065364627,
+    "weather.tick.solar_declination_rad": -0.12518465172735538
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 6.316792295314372
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 2.47212229676669,
+    "weather.tick.solar_declination_rad": 0.08557473299456297
+   },
+   "mechanism": "weather.astronomy.derive_sunrise.v1",
+   "output": 5.985853248275816
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 0.0,
+    "weather.tick.solar_declination_rad": 0.4091
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 18.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 80.0,
+    "weather.tick.solar_declination_rad": 0.0
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 18.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 11.311972743199465,
+    "weather.tick.solar_declination_rad": -0.07723768978465273
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 17.940863827243447
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 45.44006589871646,
+    "weather.tick.solar_declination_rad": -0.23431770804355445
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 17.06479376833886
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 69.2259574060867,
+    "weather.tick.solar_declination_rad": -0.333185171826497
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 13.611404699273407
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 61.95060424925089,
+    "weather.tick.solar_declination_rad": 0.45979380470286735
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 22.555962340906262
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 31.93377448408914,
+    "weather.tick.solar_declination_rad": 0.35646205515177787
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 18.89465291518718
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 35.66967751857231,
+    "weather.tick.solar_declination_rad": 0.04445376820720537
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 18.12197917792946
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 17.979700903224554,
+    "weather.tick.solar_declination_rad": -0.16036142255482144
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 17.79940116778016
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 68.3035955651235,
+    "weather.tick.solar_declination_rad": 0.3464085097298756
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 22.3416661163792
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 50.980758587735984,
+    "weather.tick.solar_declination_rad": -0.38367128453822463
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 16.00812763813883
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 28.002715812740327,
+    "weather.tick.solar_declination_rad": 0.026437851356483133
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 18.053715187124908
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 29.070156319237064,
+    "weather.tick.solar_declination_rad": 0.34551501572749643
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 18.76952990051359
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 30.26978368518727,
+    "weather.tick.solar_declination_rad": -0.08603545937898549
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 17.807639873586595
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 10.350065897099698,
+    "weather.tick.solar_declination_rad": -0.07500052882911168
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 17.947578984312713
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 2.073332131961907,
+    "weather.tick.solar_declination_rad": 0.0393790491619741
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 18.005448252893984
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 69.26879400462438,
+    "weather.tick.solar_declination_rad": 0.08346567406593786
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 18.851324799470603
+  },
+  {
+   "inputs": {
+    "weather.chunk.solar_latitude_proxy_deg": 37.578719076014224,
+    "weather.tick.solar_declination_rad": 0.010155204275442808
+   },
+   "mechanism": "weather.astronomy.derive_sunset.v1",
+   "output": 18.029850723221898
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 6.0,
+    "weather.astronomy.sunset_hour": 18.0
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 12.0
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 6.0,
+    "weather.astronomy.sunset_hour": 18.0
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 12.0
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 8.199222313298534,
+    "weather.astronomy.sunset_hour": 16.64173770817974
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 8.4425153946504
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 5.732693163234064,
+    "weather.astronomy.sunset_hour": 22.60554086940101
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 16.872847706079483
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 8.718532603313925,
+    "weather.astronomy.sunset_hour": 14.088759446205927
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 5.37022684328258
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 7.498565382189854,
+    "weather.astronomy.sunset_hour": 13.870396364793542
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 6.371830982156098
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 9.245845203952596,
+    "weather.astronomy.sunset_hour": 17.2398119788716
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 7.9939667750149965
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 5.841394721435677,
+    "weather.astronomy.sunset_hour": 13.707888900029458
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 7.866494178771973
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 0.12213568993728874,
+    "weather.astronomy.sunset_hour": 20.06619692948868
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 19.944061240181327
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 4.050668285301581,
+    "weather.astronomy.sunset_hour": 21.68519081583964
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 17.63452253025025
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 11.119463399074965,
+    "weather.astronomy.sunset_hour": 21.5432413296734
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 10.423777930438519
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 7.0146839413315485,
+    "weather.astronomy.sunset_hour": 23.88110896542539
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 16.866425024345517
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 8.281098667757142,
+    "weather.astronomy.sunset_hour": 12.261433794202633
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 3.980335126630962
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 5.712766287653352,
+    "weather.astronomy.sunset_hour": 19.681998744428384
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 13.969232456758618
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 6.512300562721231,
+    "weather.astronomy.sunset_hour": 18.66833295731692
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 12.156032394617796
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 2.596636286954082,
+    "weather.astronomy.sunset_hour": 23.018892137351138
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 20.42225585039705
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 10.504462604515503,
+    "weather.astronomy.sunset_hour": 20.507203320865003
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 10.002740716561675
+  },
+  {
+   "inputs": {
+    "weather.astronomy.sunrise_hour": 2.5322321903692617,
+    "weather.astronomy.sunset_hour": 13.268845803799747
+   },
+   "mechanism": "weather.astronomy.derive_daylight.v1",
+   "output": 10.736613613553345
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 10.0,
+    "weather.field.temperature_perturbation": 0.0,
+    "weather.offset.diurnal_temperature_c": 0.0,
+    "weather.offset.seasonal_temperature_c": 0.0
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 10.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 10.0,
+    "weather.field.temperature_perturbation": 0.0,
+    "weather.offset.diurnal_temperature_c": 0.0,
+    "weather.offset.seasonal_temperature_c": 0.0
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 10.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 10.0,
+    "weather.field.temperature_perturbation": 0.0,
+    "weather.offset.diurnal_temperature_c": 0.0,
+    "weather.offset.seasonal_temperature_c": 0.0
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 10.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 10.0,
+    "weather.field.temperature_perturbation": 0.0,
+    "weather.offset.diurnal_temperature_c": 0.0,
+    "weather.offset.seasonal_temperature_c": 0.0
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 10.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 958.4456935466771,
+    "weather.field.temperature_perturbation": -3.3500611337095023,
+    "weather.offset.diurnal_temperature_c": -13.969265301136664,
+    "weather.offset.seasonal_temperature_c": 29.226257526136102
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 4231.0488185956765,
+    "weather.field.temperature_perturbation": -10.264786354440343,
+    "weather.offset.diurnal_temperature_c": 1.8284561564001969,
+    "weather.offset.seasonal_temperature_c": 6.004749273046912
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1960.6172845506744,
+    "weather.field.temperature_perturbation": 5.671159953183846,
+    "weather.offset.diurnal_temperature_c": 18.565581256820643,
+    "weather.offset.seasonal_temperature_c": -22.501347217541714
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 3931.2553377499326,
+    "weather.field.temperature_perturbation": 19.6351429871253,
+    "weather.offset.diurnal_temperature_c": 8.609241195606753,
+    "weather.offset.seasonal_temperature_c": -18.670947708884558
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 4957.313097203455,
+    "weather.field.temperature_perturbation": -14.962071971937814,
+    "weather.offset.diurnal_temperature_c": -4.118179696518549,
+    "weather.offset.seasonal_temperature_c": -5.56069435454399
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 780.2328150160113,
+    "weather.field.temperature_perturbation": -7.321167433713951,
+    "weather.offset.diurnal_temperature_c": 11.881612622932636,
+    "weather.offset.seasonal_temperature_c": 10.534220155403666
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 2592.9168189439365,
+    "weather.field.temperature_perturbation": 9.531046720633721,
+    "weather.offset.diurnal_temperature_c": 8.15945095337554,
+    "weather.offset.seasonal_temperature_c": -28.336199291945235
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1884.7085758150279,
+    "weather.field.temperature_perturbation": -11.062557731224004,
+    "weather.offset.diurnal_temperature_c": -16.466743422831833,
+    "weather.offset.seasonal_temperature_c": -11.826229667315474
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 4945.002062906063,
+    "weather.field.temperature_perturbation": -8.961091532442316,
+    "weather.offset.diurnal_temperature_c": 19.71822381950767,
+    "weather.offset.seasonal_temperature_c": 13.987823876331191
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 890.5704436192452,
+    "weather.field.temperature_perturbation": 15.529365411712483,
+    "weather.offset.diurnal_temperature_c": -3.9757029551085488,
+    "weather.offset.seasonal_temperature_c": 13.681353578509949
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1123.638993933672,
+    "weather.field.temperature_perturbation": 15.203054222721157,
+    "weather.offset.diurnal_temperature_c": 5.548685363977349,
+    "weather.offset.seasonal_temperature_c": 2.3737378444785904
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 3371.285034791869,
+    "weather.field.temperature_perturbation": -3.61044303922273,
+    "weather.offset.diurnal_temperature_c": 8.914466551782635,
+    "weather.offset.seasonal_temperature_c": -10.527207719072408
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 547.2671614088833,
+    "weather.field.temperature_perturbation": 8.76988601366859,
+    "weather.offset.diurnal_temperature_c": -5.326469773044398,
+    "weather.offset.seasonal_temperature_c": 22.104628331203905
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1084.068751349001,
+    "weather.field.temperature_perturbation": 7.169014925487602,
+    "weather.offset.diurnal_temperature_c": 16.27305755942863,
+    "weather.offset.seasonal_temperature_c": -0.6106066082889257
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 3674.34432346656,
+    "weather.field.temperature_perturbation": -5.446156332473983,
+    "weather.offset.diurnal_temperature_c": -14.186320222101273,
+    "weather.offset.seasonal_temperature_c": -2.917118452285006
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 665.7267289394376,
+    "weather.field.temperature_perturbation": 8.65691001254821,
+    "weather.offset.diurnal_temperature_c": -19.77471803251906,
+    "weather.offset.seasonal_temperature_c": -29.511593450468666
+   },
+   "mechanism": "weather.instant.compose_temperature.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 60.0,
+    "weather.field.humidity_perturbation": 0.0,
+    "weather.offset.diurnal_humidity_pp": 0.0,
+    "weather.offset.seasonal_humidity_pp": 0.0
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 60.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 60.0,
+    "weather.field.humidity_perturbation": 0.0,
+    "weather.offset.diurnal_humidity_pp": 0.0,
+    "weather.offset.seasonal_humidity_pp": 0.0
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 60.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 60.0,
+    "weather.field.humidity_perturbation": 0.0,
+    "weather.offset.diurnal_humidity_pp": 0.0,
+    "weather.offset.seasonal_humidity_pp": 0.0
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 60.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 60.0,
+    "weather.field.humidity_perturbation": 0.0,
+    "weather.offset.diurnal_humidity_pp": 0.0,
+    "weather.offset.seasonal_humidity_pp": 0.0
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 60.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 97.59266624405942,
+    "weather.field.humidity_perturbation": 0.20334530956546004,
+    "weather.offset.diurnal_humidity_pp": 5.376926626808029,
+    "weather.offset.seasonal_humidity_pp": -4.184416518172988
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 100.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 51.021886478873654,
+    "weather.field.humidity_perturbation": 0.7972278796754804,
+    "weather.offset.diurnal_humidity_pp": 13.061851229274481,
+    "weather.offset.seasonal_humidity_pp": 9.075709986567698
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 85.11786589492112
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 86.6506560449087,
+    "weather.field.humidity_perturbation": 1.4108743053107267,
+    "weather.offset.diurnal_humidity_pp": 4.9324481620311715,
+    "weather.offset.seasonal_humidity_pp": -8.134377385702486
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 100.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 58.665820237903866,
+    "weather.field.humidity_perturbation": 1.3383657350194555,
+    "weather.offset.diurnal_humidity_pp": -4.9142461196047815,
+    "weather.offset.seasonal_humidity_pp": -18.751021437841466
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 55.0760386986658
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 97.19690386327441,
+    "weather.field.humidity_perturbation": -1.9118142510266574,
+    "weather.offset.diurnal_humidity_pp": 6.180850153444936,
+    "weather.offset.seasonal_humidity_pp": -14.14225098424195
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 60.55828926805407
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 90.01485504653725,
+    "weather.field.humidity_perturbation": -1.4570504029608298,
+    "weather.offset.diurnal_humidity_pp": 4.844174879380123,
+    "weather.offset.seasonal_humidity_pp": -12.553790238821453
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 60.44948364794254
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 2.2769214060643583,
+    "weather.field.humidity_perturbation": -1.697088983436156,
+    "weather.offset.diurnal_humidity_pp": 17.362210164754153,
+    "weather.offset.seasonal_humidity_pp": -0.32000858229087825
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 95.15088462630793,
+    "weather.field.humidity_perturbation": -0.2624042483274729,
+    "weather.offset.diurnal_humidity_pp": 11.005963876245268,
+    "weather.offset.seasonal_humidity_pp": -10.99104540332538
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 91.22973937727511
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 36.9073900966268,
+    "weather.field.humidity_perturbation": -0.19585824624917025,
+    "weather.offset.diurnal_humidity_pp": 19.041915241116698,
+    "weather.offset.seasonal_humidity_pp": 14.12540451191829
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 67.13683614879847
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 26.25726432589549,
+    "weather.field.humidity_perturbation": 1.6851933223194497,
+    "weather.offset.diurnal_humidity_pp": -16.004457681820785,
+    "weather.offset.seasonal_humidity_pp": 18.679366342980714
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 54.210072826594114
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 32.83435684005168,
+    "weather.field.humidity_perturbation": 1.4302976163854972,
+    "weather.offset.diurnal_humidity_pp": -1.630016580804213,
+    "weather.offset.seasonal_humidity_pp": -7.453232162606369
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 45.20557233504951
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 84.17638134238679,
+    "weather.field.humidity_perturbation": -1.6238623100137621,
+    "weather.offset.diurnal_humidity_pp": -5.5306300109731446,
+    "weather.offset.seasonal_humidity_pp": -1.6178281872194589
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 52.66998848877847
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 11.331454022942589,
+    "weather.field.humidity_perturbation": -1.9549062874795804,
+    "weather.offset.diurnal_humidity_pp": 16.70646783501256,
+    "weather.offset.seasonal_humidity_pp": 15.202972523926235
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 13.917300067842007
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 36.665244123271165,
+    "weather.field.humidity_perturbation": -0.8331425821162357,
+    "weather.offset.diurnal_humidity_pp": -1.7526925861818476,
+    "weather.offset.seasonal_humidity_pp": -12.723793214439034
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 9.691619588062167
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 69.21993285587709,
+    "weather.field.humidity_perturbation": 1.4471629262011283,
+    "weather.offset.diurnal_humidity_pp": -17.21364076056334,
+    "weather.offset.seasonal_humidity_pp": 11.789047096773274
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 85.50278308521956
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_humidity_percent": 25.265678939792004,
+    "weather.field.humidity_perturbation": -1.7727452776305501,
+    "weather.offset.diurnal_humidity_pp": -9.571481532288416,
+    "weather.offset.seasonal_humidity_pp": 13.908953601727447
+   },
+   "mechanism": "weather.instant.compose_humidity.v1",
+   "output": 3.011971842497587
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 5.0,
+    "weather.field.wind_multiplier": 1.0,
+    "weather.field.wind_perturbation": 0.0
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 5.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 5.0,
+    "weather.field.wind_multiplier": 1.0,
+    "weather.field.wind_perturbation": 0.0
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 5.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 5.0,
+    "weather.field.wind_multiplier": 1.0,
+    "weather.field.wind_perturbation": 0.0
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 5.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 30.85798278992513,
+    "weather.field.wind_multiplier": 90.6540061220484,
+    "weather.field.wind_perturbation": 1.4622030427078676
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 26.4235129860271,
+    "weather.field.wind_multiplier": 80.16980381117466,
+    "weather.field.wind_perturbation": 0.76219206571488
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 1.9988260986737838,
+    "weather.field.wind_multiplier": 49.053450363161375,
+    "weather.field.wind_perturbation": -0.4223010035147037
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 15.188031518831849
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 43.969063986486326,
+    "weather.field.wind_multiplier": 29.150677444463668,
+    "weather.field.wind_perturbation": -1.0150848334019256
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 34.572926821944876,
+    "weather.field.wind_multiplier": 51.87266972663744,
+    "weather.field.wind_perturbation": 1.0726514548826462
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 18.963197276381937,
+    "weather.field.wind_multiplier": 92.4458124093064,
+    "weather.field.wind_perturbation": 1.0944294587675722
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 38.77823695297672,
+    "weather.field.wind_multiplier": 32.3554731618404,
+    "weather.field.wind_perturbation": -0.7244539401636718
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 1.572335405601405,
+    "weather.field.wind_multiplier": 84.49788005973552,
+    "weather.field.wind_perturbation": 0.8855665343325381
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 23.264372596999483,
+    "weather.field.wind_multiplier": 16.72579497137714,
+    "weather.field.wind_perturbation": -0.22151325502565244
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 42.29414130011814,
+    "weather.field.wind_multiplier": 93.90638263808376,
+    "weather.field.wind_perturbation": -1.279712551678331
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 45.592624659879135,
+    "weather.field.wind_multiplier": 25.556636389267172,
+    "weather.field.wind_perturbation": 0.7174444497077896
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 37.60032213016336,
+    "weather.field.wind_multiplier": 94.58729296794446,
+    "weather.field.wind_perturbation": 1.812876858729083
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 25.418249234763856,
+    "weather.field.wind_multiplier": 91.48907317664717,
+    "weather.field.wind_perturbation": -0.7500135128207295
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 16.586269387779158,
+    "weather.field.wind_multiplier": 63.48182937190496,
+    "weather.field.wind_perturbation": -0.4078085222227874
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 38.94381795965605,
+    "weather.field.wind_multiplier": 71.14770404667529,
+    "weather.field.wind_perturbation": 1.02156746654249
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.baseline_wind_speed_mps": 35.61328273719563,
+    "weather.field.wind_multiplier": 82.19766297101359,
+    "weather.field.wind_perturbation": 1.6530714209104937
+   },
+   "mechanism": "weather.instant.compose_wind_speed.v1",
+   "output": 50.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 5.0,
+    "weather.chunk.precipitation_threshold": 0.4,
+    "weather.field.precipitation_signal": 0.5
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 0.9999999962747097
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 5.0,
+    "weather.chunk.precipitation_threshold": 0.4,
+    "weather.field.precipitation_signal": 0.5
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 0.9999999962747097
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 5.0,
+    "weather.chunk.precipitation_threshold": 0.4,
+    "weather.field.precipitation_signal": 0.5
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 0.9999999962747097
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 8.29176830457179,
+    "weather.chunk.precipitation_threshold": 0.48115089115544785,
+    "weather.field.precipitation_signal": 9.579592402172192
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 11.921060523949564
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 7.625257881502067,
+    "weather.chunk.precipitation_threshold": 0.48340051444835197,
+    "weather.field.precipitation_signal": 6.838046642200773
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 10.928511754609644
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 8.496638490248149,
+    "weather.chunk.precipitation_threshold": 0.44508694915668967,
+    "weather.field.precipitation_signal": 7.656985740018797
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 12.82844656612724
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 7.3046097016794675,
+    "weather.chunk.precipitation_threshold": 0.25691454481921977,
+    "weather.field.precipitation_signal": 0.7065603134506493
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 6.5689736912027
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 8.969519784965275,
+    "weather.chunk.precipitation_threshold": 0.3495534290680461,
+    "weather.field.precipitation_signal": 3.1732475513374094
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 15.256194682791829
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 4.763634175526481,
+    "weather.chunk.precipitation_threshold": 0.265227226318684,
+    "weather.field.precipitation_signal": 1.8088936099102326
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 8.905831061303616
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 7.781772698251766,
+    "weather.chunk.precipitation_threshold": 0.47771780545118725,
+    "weather.field.precipitation_signal": 9.972537898944623
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 11.241271723993123
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 3.740349034278874,
+    "weather.chunk.precipitation_threshold": 0.39599691788567404,
+    "weather.field.precipitation_signal": 7.043911414961707
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 6.014504303224385
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 7.532316113965922,
+    "weather.chunk.precipitation_threshold": 0.3004618020742307,
+    "weather.field.precipitation_signal": 3.4935202047711544
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 13.551212134771049
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 6.392657322354177,
+    "weather.chunk.precipitation_threshold": 0.36543625680684555,
+    "weather.field.precipitation_signal": 2.678792887474316
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 10.67016005050391
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 6.53156694134151,
+    "weather.chunk.precipitation_threshold": 0.4628776349357996,
+    "weather.field.precipitation_signal": 4.997299697627637
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 9.629128145053983
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 7.757812744427467,
+    "weather.chunk.precipitation_threshold": 0.3857771311678836,
+    "weather.field.precipitation_signal": 3.1693449485345826
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 12.633177106268704
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 7.05117615455855,
+    "weather.chunk.precipitation_threshold": 0.28999658191511346,
+    "weather.field.precipitation_signal": 2.9727246165135943
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 12.83318880572915
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 8.987761007642991,
+    "weather.chunk.precipitation_threshold": 0.25210337111962516,
+    "weather.field.precipitation_signal": 8.224927467514147
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 17.038936716504395
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 2.2725981100717947,
+    "weather.chunk.precipitation_threshold": 0.44533982740915395,
+    "weather.field.precipitation_signal": 1.8787543733689227
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 3.4300785632804036
+  },
+  {
+   "inputs": {
+    "weather.chunk.mean_precip_intensity_mm_per_hour": 4.876653965861273,
+    "weather.chunk.precipitation_threshold": 0.490127710552343,
+    "weather.field.precipitation_signal": 6.466157481304147
+   },
+   "mechanism": "weather.instant.compose_precipitation_intensity.v1",
+   "output": 6.923603031784296
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 12.0,
+    "weather.field.humidity_perturbation": 0.0
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 12.0
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 12.0,
+    "weather.field.humidity_perturbation": 0.0
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 12.0
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 22.03218840949452,
+    "weather.field.humidity_perturbation": 0.1791702484592843
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 22.300943782553077
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 22.146647012483978,
+    "weather.field.humidity_perturbation": 1.8427968507452075
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 24.0
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 12.492974484938312,
+    "weather.field.humidity_perturbation": -1.4169435010649658
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 10.36755923461169
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 12.58926830299839,
+    "weather.field.humidity_perturbation": 0.8984262831449206
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 13.936907727271318
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 0.7877208857680635,
+    "weather.field.humidity_perturbation": 0.6864432364057196
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 1.8173857415094972
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 16.003622898941018,
+    "weather.field.humidity_perturbation": 1.7515503736496463
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 18.630948459729552
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 8.9358317730461,
+    "weather.field.humidity_perturbation": 1.626239105867921
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 11.375190432183444
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 1.9014203353310908,
+    "weather.field.humidity_perturbation": 0.14196549709328687
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 2.114368581213057
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 6.7677591234546455,
+    "weather.field.humidity_perturbation": -0.6413190759563823
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 5.805780510418117
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 22.026816172986504,
+    "weather.field.humidity_perturbation": -1.0184824323104693
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 20.499092523008585
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 21.344867008116463,
+    "weather.field.humidity_perturbation": 1.0858480372941934
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 22.97363906353712
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 1.0084226183034763,
+    "weather.field.humidity_perturbation": -0.23038699540079888
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 0.6628421247005463
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 21.68976703375752,
+    "weather.field.humidity_perturbation": 0.1490439413086455
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 21.913332945667207
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 21.19132141804547,
+    "weather.field.humidity_perturbation": -1.045807961653252
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 19.62260947562754
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 1.5873516612535408,
+    "weather.field.humidity_perturbation": -1.8590858387063864
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "weather.astronomy.daylight_hours": 14.388696738539352,
+    "weather.field.humidity_perturbation": 1.3047959293532045
+   },
+   "mechanism": "weather.instant.compose_sunshine.v1",
+   "output": 16.34589063283056
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": -1.0
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "snow"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": 48.32954133034124
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "rain"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": 23.497652175003225
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "rain"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": -29.353134211426095
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "snow"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": -16.401848565239312
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "snow"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": 17.356975167583727
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "rain"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": -14.018442455659583
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "snow"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": -27.374535158640896
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "snow"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": 6.880652230883449
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "rain"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": -3.046381975610906
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "snow"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": 26.80439821196589
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "rain"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": 3.7284638884541152
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "rain"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": -19.895025826199557
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "snow"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": -14.581372955935139
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "snow"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": 28.100882908492935
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "rain"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": -15.894670062633667
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "snow"
+  },
+  {
+   "inputs": {
+    "weather.instant.temperature_c": -10.486939336354475
+   },
+   "mechanism": "weather.instant.classify_precipitation_type.v1",
+   "output": "snow"
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": 0.0
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 10.0
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": -0.6295364384525339
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": -5.738410968333483
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": 0.03056060902945479
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 10.764015223830938
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": 0.23643643702824302
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 15.91091092210263
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": 0.9604749197648814
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 34.01187298819423
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": -0.008821081336447767
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 9.779472965747118
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": -0.6625928453916519
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": -6.564821125939488
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": 0.45347491141884366
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 21.33687279652804
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": -0.7538224632909483
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": -8.845561589114368
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": 0.5096161656832305
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 22.74040413554758
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": -0.5476961745575675
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": -3.6924043530598283
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": 0.2649860852034991
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 16.624652119353414
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": -0.7920618487914624
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": -9.801546214148402
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": 0.8790771441854055
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 31.97692859917879
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": -0.05060181237376238
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 8.734954698011279
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": 0.28891308095087775
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 17.22282703500241
+  },
+  {
+   "inputs": {
+    "world.gen.latitude_noise": -0.32870549638343927
+   },
+   "mechanism": "world.gen.derive_sea_level_temperature.v1",
+   "output": 1.7823625961318612
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": 0.0
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 1775.0
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": 0.8332539891119994
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 3212.3631310183555
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": -0.7877701215804758
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 416.09653905034065
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": -0.708836417361441
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 552.2571795620024
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": -0.9502837451588002
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 135.76053935103118
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": -0.45875921905114425
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 983.6403481662273
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": -0.5167297887331559
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 883.6411142256111
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": 0.5187252695451707
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 2669.8010882362723
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": -0.3232553527364408
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 1217.384516634047
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": -0.41253834305693293
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 1063.371359743178
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": -0.24495932425153488
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 1352.4451650679111
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": 0.1542906635298742
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 2041.1513938102871
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": -0.6861331708307825
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 591.420280886814
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": -0.4358139083242265
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 1023.22100950405
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": 0.620489770226929
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 2845.3448541928083
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": -0.7276286826838805
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 519.8405238799751
+  },
+  {
+   "inputs": {
+    "world.gen.rainfall_noise": 0.3628081083958359
+   },
+   "mechanism": "world.gen.derive_annual_rainfall.v1",
+   "output": 2400.8439868688583
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 10.0,
+    "world.gen.altitude_m": 0.0
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": 10.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 10.0,
+    "world.gen.altitude_m": 0.0
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": 10.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 17.484758877365266,
+    "world.gen.altitude_m": 2515.592521152522
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": -5.1555738132447
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -6.67082132586798,
+    "world.gen.altitude_m": 872.9670538404655
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": -14.527524810284376
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 12.794635186520729,
+    "world.gen.altitude_m": 1070.5952208897556
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": 3.1592781990766525
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 33.29359595017106,
+    "world.gen.altitude_m": 1749.0204893032578
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": 17.552411545999348
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 35.8722313493174,
+    "world.gen.altitude_m": 3900.9626543955173
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": 0.763567459769547
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 2.4205765945641033,
+    "world.gen.altitude_m": 1535.6108653868769
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": -11.39992119371891
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 17.038067884223977,
+    "world.gen.altitude_m": 3874.0133750949326
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": -17.828052491880953
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -18.20093531968943,
+    "world.gen.altitude_m": 3936.1275772488434
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": -20.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -17.512024948339825,
+    "world.gen.altitude_m": 74.40632524704222
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": -18.181681875139475
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -13.506472825392217,
+    "world.gen.altitude_m": 2122.3143656138345
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": -20.0
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 31.868533813411993,
+    "world.gen.altitude_m": 4819.785480302364
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": -11.509535509161651
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 34.11144914355773,
+    "world.gen.altitude_m": 3326.3004311672853
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": 4.174745263531804
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": -0.36766355913431426,
+    "world.gen.altitude_m": 2004.5980139943786
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": -18.409045685082674
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 2.7713263245573145,
+    "world.gen.altitude_m": 975.3082923773188
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": -6.006448306143284
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 26.40584090646672,
+    "world.gen.altitude_m": 1168.4309867345398
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": 15.889962025918067
+  },
+  {
+   "inputs": {
+    "weather.chunk.sea_level_temperature_c": 21.18246824463848,
+    "world.gen.altitude_m": 2026.54037362923
+   },
+   "mechanism": "world.gen.derive_annual_mean_temperature.v1",
+   "output": 2.943604881875217
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 10.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 800.0,
+    "world.gen.altitude_m": 100.0
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 4
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 10.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 800.0,
+    "world.gen.altitude_m": 100.0
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 4
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 10.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 800.0,
+    "world.gen.altitude_m": 100.0
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 4
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1648.2170996601062,
+    "weather.chunk.annual_rainfall_mm_per_year": 2516.32037215508,
+    "world.gen.altitude_m": 1951.4968014515448
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 3346.328403979724,
+    "weather.chunk.annual_rainfall_mm_per_year": 463.41701133054335,
+    "world.gen.altitude_m": 1772.2466976947444
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 3
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 3088.963877323499,
+    "weather.chunk.annual_rainfall_mm_per_year": 802.0756376296165,
+    "world.gen.altitude_m": 4807.127734240153
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 7
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 837.4463522834317,
+    "weather.chunk.annual_rainfall_mm_per_year": 867.4100829788879,
+    "world.gen.altitude_m": 870.4852354520992
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 3686.110723823389,
+    "weather.chunk.annual_rainfall_mm_per_year": 3011.758673877209,
+    "world.gen.altitude_m": 2462.599372133284
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 7
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 4212.963906057518,
+    "weather.chunk.annual_rainfall_mm_per_year": 985.682842404135,
+    "world.gen.altitude_m": 569.9979142458828
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 450.4681674913561,
+    "weather.chunk.annual_rainfall_mm_per_year": 3057.139161495161,
+    "world.gen.altitude_m": 1198.4221531812025
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 3862.7055488462956,
+    "weather.chunk.annual_rainfall_mm_per_year": 3233.2646328111828,
+    "world.gen.altitude_m": 2641.658472036948
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 7
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 251.7983818303711,
+    "weather.chunk.annual_rainfall_mm_per_year": 42.02160034926965,
+    "world.gen.altitude_m": 4906.66069027177
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 7
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 4791.871325306821,
+    "weather.chunk.annual_rainfall_mm_per_year": 3416.1100943132196,
+    "world.gen.altitude_m": 1569.5111905695544
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 813.3939880000853,
+    "weather.chunk.annual_rainfall_mm_per_year": 4821.704386416331,
+    "world.gen.altitude_m": 364.03340416181754
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 3282.2637920401826,
+    "weather.chunk.annual_rainfall_mm_per_year": 3244.609639672947,
+    "world.gen.altitude_m": 1615.4135681683083
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 679.4289769461207,
+    "weather.chunk.annual_rainfall_mm_per_year": 904.2278422165964,
+    "world.gen.altitude_m": 4908.098976822112
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 7
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 2455.915512347302,
+    "weather.chunk.annual_rainfall_mm_per_year": 4646.774461930375,
+    "world.gen.altitude_m": 4982.515628202494
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 7
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 2526.450741540068,
+    "weather.chunk.annual_rainfall_mm_per_year": 3221.428938105544,
+    "world.gen.altitude_m": -357.1629260841163
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 0
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1481.6908036803438,
+    "weather.chunk.annual_rainfall_mm_per_year": 134.4026140131723,
+    "world.gen.altitude_m": -4.4094876125722635
+   },
+   "mechanism": "world.gen.classify_climate_zone.v1",
+   "output": 2
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 15.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 800.0,
+    "weather.chunk.sea_level_temperature_c": 10.0,
+    "world.gen.altitude_m": 100.0,
+    "world.gen.moisture_noise": 0.0
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 9
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 15.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 1000.0,
+    "weather.chunk.sea_level_temperature_c": 10.0,
+    "world.gen.altitude_m": 100.0,
+    "world.gen.moisture_noise": 0.0
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 9
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 15.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 800.0,
+    "weather.chunk.sea_level_temperature_c": 10.0,
+    "world.gen.altitude_m": 100.0,
+    "world.gen.moisture_noise": 0.0
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 9
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 15.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 800.0,
+    "weather.chunk.sea_level_temperature_c": 10.0,
+    "world.gen.altitude_m": -100.0,
+    "world.gen.moisture_noise": 0.0
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 17
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 15.0,
+    "weather.chunk.annual_rainfall_mm_per_year": 100.0,
+    "weather.chunk.sea_level_temperature_c": 10.0,
+    "world.gen.altitude_m": 100.0,
+    "world.gen.moisture_noise": 0.0
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 4
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 2509.1507048449575,
+    "weather.chunk.annual_rainfall_mm_per_year": 2183.730871650611,
+    "weather.chunk.sea_level_temperature_c": -3.973531749006007,
+    "world.gen.altitude_m": 2667.3412100659025,
+    "world.gen.moisture_noise": -0.6444413186539022
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 15
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 999.0292331173175,
+    "weather.chunk.annual_rainfall_mm_per_year": 2168.0507715197236,
+    "weather.chunk.sea_level_temperature_c": -15.872076172896122,
+    "world.gen.altitude_m": 697.4843178313042,
+    "world.gen.moisture_noise": -0.3986800741593124
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 4431.770237515302,
+    "weather.chunk.annual_rainfall_mm_per_year": 1243.9343004056698,
+    "weather.chunk.sea_level_temperature_c": 20.284262999519484,
+    "world.gen.altitude_m": 155.92570628779458,
+    "world.gen.moisture_noise": -0.6554763655311271
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 3
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 320.516038325561,
+    "weather.chunk.annual_rainfall_mm_per_year": -489.34811665557794,
+    "weather.chunk.sea_level_temperature_c": -8.354787670989028,
+    "world.gen.altitude_m": 3423.565196579156,
+    "world.gen.moisture_noise": 0.6585797465060179
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 15
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 4863.64182134083,
+    "weather.chunk.annual_rainfall_mm_per_year": 4901.384912908076,
+    "weather.chunk.sea_level_temperature_c": 21.915806307316743,
+    "world.gen.altitude_m": 1938.6617946066026,
+    "world.gen.moisture_noise": -0.819476854734319
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 3055.6355442081235,
+    "weather.chunk.annual_rainfall_mm_per_year": 1921.867668613298,
+    "weather.chunk.sea_level_temperature_c": -7.111511474210982,
+    "world.gen.altitude_m": 789.618432193271,
+    "world.gen.moisture_noise": 0.7382035275260028
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 4289.234514980656,
+    "weather.chunk.annual_rainfall_mm_per_year": 576.1114658183535,
+    "weather.chunk.sea_level_temperature_c": 16.18301572206117,
+    "world.gen.altitude_m": 2422.2246642524083,
+    "world.gen.moisture_noise": -0.6609158472515186
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 15
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 4640.149566919237,
+    "weather.chunk.annual_rainfall_mm_per_year": 2442.8791027720686,
+    "weather.chunk.sea_level_temperature_c": -3.4520218068807758,
+    "world.gen.altitude_m": -373.5542827531031,
+    "world.gen.moisture_noise": -0.4690033356567884
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 18
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 772.2753704297111,
+    "weather.chunk.annual_rainfall_mm_per_year": 288.59983592691447,
+    "weather.chunk.sea_level_temperature_c": 21.702314101825614,
+    "world.gen.altitude_m": 2737.2068151334406,
+    "world.gen.moisture_noise": -0.7517772038057495
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 15
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 539.0407882360037,
+    "weather.chunk.annual_rainfall_mm_per_year": 2607.2530010533583,
+    "weather.chunk.sea_level_temperature_c": -10.074050554031675,
+    "world.gen.altitude_m": 719.1685137509266,
+    "world.gen.moisture_noise": 0.8366875285703836
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 3229.642898337096,
+    "weather.chunk.annual_rainfall_mm_per_year": 4790.1252950977705,
+    "weather.chunk.sea_level_temperature_c": 18.79703861423024,
+    "world.gen.altitude_m": -366.50944001468065,
+    "world.gen.moisture_noise": -0.5051776545512385
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 17
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 2702.0173774620853,
+    "weather.chunk.annual_rainfall_mm_per_year": 4026.097708917736,
+    "weather.chunk.sea_level_temperature_c": -19.52305317952984,
+    "world.gen.altitude_m": 3417.037657840575,
+    "world.gen.moisture_noise": 0.4035089920115922
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 15
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 4976.97456132074,
+    "weather.chunk.annual_rainfall_mm_per_year": 2611.10455821834,
+    "weather.chunk.sea_level_temperature_c": -6.923622955986888,
+    "world.gen.altitude_m": 4826.260986838356,
+    "world.gen.moisture_noise": -0.929160818257672
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 15
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 457.0423173101044,
+    "weather.chunk.annual_rainfall_mm_per_year": -67.59776444271074,
+    "weather.chunk.sea_level_temperature_c": -6.154069599481417,
+    "world.gen.altitude_m": 4995.453384577586,
+    "world.gen.moisture_noise": 0.5727717869377451
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 15
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": 1120.6505746524438,
+    "weather.chunk.annual_rainfall_mm_per_year": 4918.326422402984,
+    "weather.chunk.sea_level_temperature_c": -14.830406064926901,
+    "world.gen.altitude_m": 1715.2507799818782,
+    "world.gen.moisture_noise": -0.3113995213324432
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 1
+  },
+  {
+   "inputs": {
+    "weather.chunk.annual_mean_temperature_c": -156.36684892804612,
+    "weather.chunk.annual_rainfall_mm_per_year": 2189.8190194765857,
+    "weather.chunk.sea_level_temperature_c": -17.931542116167222,
+    "world.gen.altitude_m": 4198.325820593072,
+    "world.gen.moisture_noise": 0.8736565602070008
+   },
+   "mechanism": "world.gen.classify_biome.v1",
+   "output": 15
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 4,
+    "world.gen.humidity_noise": 0.0
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 62.5
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 4,
+    "world.gen.humidity_noise": 0.0
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 62.5
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 6,
+    "world.gen.humidity_noise": -0.899572234708337
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 32.00855530798435
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 5,
+    "world.gen.humidity_noise": -0.07299409529323708
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 56.22260334901512
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 4,
+    "world.gen.humidity_noise": 0.2827723208048245
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 67.44851562194526
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 2,
+    "world.gen.humidity_noise": 0.3647682132615122
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 22.059602681547403
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 1,
+    "world.gen.humidity_noise": 0.40494907829439875
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 64.58660887088627
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 2,
+    "world.gen.humidity_noise": -0.8351575690178843
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 7.060530381277204
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 5,
+    "world.gen.humidity_noise": 0.5824622620365087
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 67.69308959133923
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 5,
+    "world.gen.humidity_noise": 0.3694960781878749
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 63.966181352734566
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 2,
+    "world.gen.humidity_noise": 0.4436705796171254
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 23.04588222876191
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 0,
+    "world.gen.humidity_noise": 0.26264012541355397
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 87.62640126049519
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 2,
+    "world.gen.humidity_noise": 0.9867958348987418
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 29.83494793996215
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 6,
+    "world.gen.humidity_noise": -0.004060748931196789
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 49.91878502070904
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 1,
+    "world.gen.humidity_noise": 0.5435034480374352
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 67.01131034642458
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 2,
+    "world.gen.humidity_noise": -0.1458371312369573
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 15.67703585140407
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 3,
+    "world.gen.humidity_noise": -0.40930508639654706
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 28.860423704609275
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 6,
+    "world.gen.humidity_noise": 0.7875806649597912
+   },
+   "mechanism": "world.gen.derive_baseline_humidity.v1",
+   "output": 65.75161330401897
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 4,
+    "world.gen.wind_noise": 0.0
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 6.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 4,
+    "world.gen.wind_noise": 0.0
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 6.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 5,
+    "world.gen.wind_noise": -0.515124846998902
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 5.151688499376178
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 1,
+    "world.gen.wind_noise": -0.4670177277211245
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 2.865437949076295
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 2,
+    "world.gen.wind_noise": 0.9389677511697239
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 14.603290383704007
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 5,
+    "world.gen.wind_noise": 0.5033932043739062
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 11.772055819630623
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 0,
+    "world.gen.wind_noise": -0.6410462734290614
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 1.0768611766397953
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 0,
+    "world.gen.wind_noise": 0.9338206297236886
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 5.801461888477206
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 7,
+    "world.gen.wind_noise": -0.013907746659504339
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 13.847014799714088
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 5,
+    "world.gen.wind_noise": -0.12815871684407587
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 7.666968342848122
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 7,
+    "world.gen.wind_noise": 0.029455225003129026
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 14.324007485061884
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 0,
+    "world.gen.wind_noise": 0.18272771681342403
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 3.548183150589466
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 7,
+    "world.gen.wind_noise": 0.4775487979838917
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 19.25303676351905
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 2,
+    "world.gen.wind_noise": 0.804556641184075
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 13.729618171229959
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 0,
+    "world.gen.wind_noise": -0.37235353550475025
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 1.8829393945634365
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 7,
+    "world.gen.wind_noise": 0.046110237534005005
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 14.50721262767911
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 0,
+    "world.gen.wind_noise": -0.5374124107716982
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 1.3877627681940794
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 6,
+    "world.gen.wind_noise": 0.060883668986474015
+   },
+   "mechanism": "world.gen.derive_baseline_wind_speed.v1",
+   "output": 11.547953022643924
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 4
+   },
+   "mechanism": "world.gen.derive_mean_precip_intensity.v1",
+   "output": 5.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 7
+   },
+   "mechanism": "world.gen.derive_mean_precip_intensity.v1",
+   "output": 3.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 1
+   },
+   "mechanism": "world.gen.derive_mean_precip_intensity.v1",
+   "output": 8.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 6
+   },
+   "mechanism": "world.gen.derive_mean_precip_intensity.v1",
+   "output": 2.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 2
+   },
+   "mechanism": "world.gen.derive_mean_precip_intensity.v1",
+   "output": 2.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 0
+   },
+   "mechanism": "world.gen.derive_mean_precip_intensity.v1",
+   "output": 10.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 5
+   },
+   "mechanism": "world.gen.derive_mean_precip_intensity.v1",
+   "output": 3.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 3
+   },
+   "mechanism": "world.gen.derive_mean_precip_intensity.v1",
+   "output": 4.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 4
+   },
+   "mechanism": "world.gen.derive_humidity_sharpness.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 7
+   },
+   "mechanism": "world.gen.derive_humidity_sharpness.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 6
+   },
+   "mechanism": "world.gen.derive_humidity_sharpness.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 0
+   },
+   "mechanism": "world.gen.derive_humidity_sharpness.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 2
+   },
+   "mechanism": "world.gen.derive_humidity_sharpness.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 1
+   },
+   "mechanism": "world.gen.derive_humidity_sharpness.v1",
+   "output": 2.5
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 4
+   },
+   "mechanism": "world.gen.derive_humidity_sharpness.v1",
+   "output": 0.0
+  },
+  {
+   "inputs": {
+    "world.gen.climate_zone": 5
+   },
+   "mechanism": "world.gen.derive_humidity_sharpness.v1",
+   "output": 0.0
+  }
+ ]
+}

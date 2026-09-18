@@ -92,7 +92,10 @@ class TestMechanismRules:
     def test_non_callable_impl(self):
         with pytest.raises(ValueError):
             MechanismDecl(
-                id="m.a", output="t.a", parents=(), impl="nope",  # type: ignore[arg-type]
+                id="m.a",
+                output="t.a",
+                parents=(),
+                impl="nope",  # type: ignore[arg-type]
             )
 
     def test_negative_lag(self):

@@ -324,6 +324,7 @@ class MechanismDecl:
     witnesses: tuple[Witness, ...] = ()
     params: tuple[str, ...] = ()
     accelerated: Callable[..., object] | None = None
+    scope: str = "instance"
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -334,6 +335,8 @@ class MechanismDecl:
             raise ValueError("机制必须绑定参考实现 impl")
         if self.accelerated is not None and not callable(self.accelerated):
             raise ValueError("accelerated 必须可调用")
+        if self.scope not in ("instance", "field"):
+            raise ValueError(f"未知机制作用域: {self.scope!r}")
         for parameter_id in self.params:
             _require_ident(parameter_id, "机制参数 id")
 

@@ -1,7 +1,15 @@
-"""世界模块包 — P0 提供时钟与玩具模块；真实世界模块在 P1 接入。"""
+"""世界模块包 — 时钟/玩具（P0）与生产切片移植（P1）。"""
 
 from __future__ import annotations
 
-from . import clock, primitives, toy
+from . import clock, pipeline, primitives, terrain, toy, weather, worldgen
 
-__all__ = ["clock", "primitives", "toy"]
+__all__ = [
+    "clock",
+    "pipeline",
+    "primitives",
+    "terrain",
+    "toy",
+    "weather",
+    "worldgen",
+]

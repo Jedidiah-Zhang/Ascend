@@ -29,10 +29,22 @@ def evaluate_mechanism(
     inputs: Mapping[str, object],
     params: Mapping[str, object],
 ) -> dict[str, object]:
-    """求值一个机制模板，返回 ``{槽位: 值}``（不落 store，由调用方暂存）。"""
-    if mechanism.accelerated is not None:
-        raise NotImplementedError(
-            f"机制 {mechanism.id}: 加速内核绑定在 P1 交付"
+    """求值一个机制模板，返回 ``{槽位: 值}``（不落 store，由调用方暂存）。
+
+    ``scope="field"``：整场内核一次调用（父值为整场序列，输出为整场）；
+    ``accelerated`` 与参考实现同协议，可逐位替换（内核对由测试锁定）。
+    """
+    impl = mechanism.accelerated or mechanism.impl
+    if mechanism.scope == "field":
+        return _evaluate_field(
+            program,
+            store,
+            mechanism,
+            impl=impl,
+            root_seed=root_seed,
+            tick=tick,
+            inputs=inputs,
+            params=params,
         )
     slots = mechanism.outputs()
     instance = program.instances[program.slots[slots[0]].on]
@@ -48,7 +60,7 @@ def evaluate_mechanism(
             parent_values=parent_values,
             params=params,
         )
-        return _collect(mechanism, mechanism.impl(context))
+        return _collect(mechanism, impl(context))
     if instance.kind == "lattice":
         if instance.size is None:
             raise NotImplementedError(
@@ -69,13 +81,65 @@ def evaluate_mechanism(
                 parent_values=parent_values,
                 params=params,
             )
-            collected = _collect(mechanism, mechanism.impl(context))
+            collected = _collect(mechanism, impl(context))
             for slot, value in collected.items():
                 fields[slot].set(coords, value)
         return dict(fields)
     raise NotImplementedError(
         f"机制 {mechanism.id}: 实例类型 {instance.kind} 的运行时支持在 P4 交付"
     )
+
+
+def _evaluate_field(
+    program: object,
+    store: StateStore,
+    mechanism: MechanismDecl,
+    *,
+    impl: object,
+    root_seed: int,
+    tick: int,
+    inputs: Mapping[str, object],
+    params: Mapping[str, object],
+) -> dict[str, object]:
+    """整场内核求值：一次调用，父值为整场序列（或 global 广播标量）。"""
+    slots = mechanism.outputs()
+    output_slot = program.slots[slots[0]]
+    instance = program.instances[output_slot.on]
+    if instance.kind != "lattice" or instance.size is None:
+        raise NotImplementedError(
+            f"机制 {mechanism.id}: field 作用域需要固定尺寸 lattice"
+        )
+    parent_values: dict[str, object] = {}
+    for parent in mechanism.parents:
+        slot = program.slots[parent.slot]
+        if slot.persist == "external":
+            parent_values[parent.argument] = _external(inputs, parent.slot)
+            continue
+        value = store.read(parent.slot, parent.lag)
+        if isinstance(value, LatticeField):
+            parent_values[parent.argument] = value.values()
+        else:
+            parent_values[parent.argument] = value
+    context = MechanismContext(
+        mechanism=mechanism,
+        root_seed=root_seed,
+        tick=tick,
+        instance=(),
+        parent_values=parent_values,
+        params=params,
+    )
+    result = impl(context)  # type: ignore[operator]
+    if not isinstance(result, Mapping):
+        raise TypeError(
+            f"机制 {mechanism.id} 为 field 作用域，必须返回槽位映射"
+        )
+    fields: dict[str, object] = {}
+    for slot in slots:
+        field = LatticeField(instance.size, 0)
+        for coords, value in zip(field.coordinates(), result[slot]):
+            field.set(coords, value)
+        fields[slot] = field
+    return fields
 
 
 # ── 父值解析 ─────────────────────────────────────────────────────
