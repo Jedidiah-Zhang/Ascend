@@ -1,15 +1,9 @@
-"""世界模块包 — 时钟/玩具（P0）与生产切片移植（P1）。"""
+"""世界模块包 — 子模块按需导入（不在此处聚合，避免导入环与启动开销）。
 
-from __future__ import annotations
+- ``primitives``：共享实例原语；``ids``：节点/参数 ID 单一事实源；
+- ``pipeline``：世界生成 → 天气链阶段序；
+- ``clock`` / ``toy``：P0 玩具模块；
+- ``weather`` / ``worldgen`` / ``terrain``：生产切片模块（P1/P2）。
 
-from . import clock, pipeline, primitives, terrain, toy, weather, worldgen
-
-__all__ = [
-    "clock",
-    "pipeline",
-    "primitives",
-    "terrain",
-    "toy",
-    "weather",
-    "worldgen",
-]
+用法：``from ascend.world.modules import weather`` 或直接导入子模块。
+"""

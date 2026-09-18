@@ -196,6 +196,15 @@ class SlotDecl:
     writer: str | None = None
     recompute: str = ""
     initial: object = 0
+    # 研究投影元数据（P3b；缺省 = 未认证，投影期 fail-closed）
+    role: str = ""
+    schedule: str = ""
+    quantization: str = ""
+    metric: str = "absolute_difference"
+    epsilon: float | None = None
+    access_interventions: tuple[str, ...] = ()
+    research_trace: bool = False
+    observation_protocols: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _require_ident(self.id, "槽位 id")
@@ -208,11 +217,18 @@ class SlotDecl:
             raise ValueError("derived 槽位必须声明 recompute")
         if self.persist in ("parameter", "external") and self.writer:
             raise ValueError(f"{self.persist} 槽位不得声明 writer")
+        if self.epsilon is not None and self.epsilon < 0:
+            raise ValueError(f"ε 必须非负: {self.epsilon!r}")
+        if self.metric not in ("absolute_difference", "discrete"):
+            raise ValueError(f"未知误差度量: {self.metric!r}")
+        for kind in self.access_interventions:
+            if kind not in ("node", "persistent", "parameter", "field_feature"):
+                raise ValueError(f"未知干预种类: {kind!r}")
 
 
 @dataclass(frozen=True, slots=True)
 class Parent:
-    """机制的一条父引用。
+    """机制的一条父引用（含研究侧模数元数据）。
 
     Attributes:
         slot: 父槽位 ID。
@@ -220,6 +236,12 @@ class Parent:
         lag: 0 = 同帧读取（本帧更早写入，否则帧初值）；k≥1 = 帧初 k 帧前的值。
         relation: ``same``（同实例）或关系 ID（按偏移取邻居）。
         aggregation: 邻居聚合（``AGGREGATIONS``）。
+        analysis_role: 分析角色（forward/inverse/...；研究投影用）。
+        valid_domain: 父值有效域描述（研究投影用）。
+        modulus_kind: ``linear``（Lipschitz 界）或 ``jump``（有界跳变）。
+        lipschitz: 线性边的 Lipschitz 常数；``None`` = 未认证。
+        jump_bound: 跳变边的跳幅上界（jump 边必填）。
+        metric: 误差度量（``absolute_difference`` / ``discrete``）。
     """
 
     slot: str
@@ -227,6 +249,12 @@ class Parent:
     lag: int = 0
     relation: str = "same"
     aggregation: str = "identity"
+    analysis_role: str = "forward"
+    valid_domain: str = ""
+    modulus_kind: str = "linear"
+    lipschitz: float | None = None
+    jump_bound: float | None = None
+    metric: str = "absolute_difference"
 
     def __post_init__(self) -> None:
         _require_ident(self.slot, "父槽位 id")
@@ -236,6 +264,24 @@ class Parent:
             raise ValueError(f"lag 必须为非负整数: {self.lag!r}")
         if self.aggregation not in AGGREGATIONS:
             raise ValueError(f"未知聚合: {self.aggregation!r}")
+        if self.modulus_kind not in ("linear", "jump"):
+            raise ValueError(f"未知模数类型: {self.modulus_kind!r}")
+        if self.modulus_kind == "linear":
+            if self.jump_bound is not None:
+                raise ValueError("linear 边不得携带 jump_bound")
+            if self.lipschitz is not None and self.lipschitz < 0:
+                raise ValueError(
+                    f"Lipschitz 常数必须非负: {self.lipschitz!r}"
+                )
+        else:
+            if self.lipschitz is not None:
+                raise ValueError("jump 边不得携带 lipschitz")
+            if self.jump_bound is None or self.jump_bound <= 0:
+                raise ValueError(
+                    f"jump 边必须给出正 jump_bound: {self.jump_bound!r}"
+                )
+        if self.metric not in ("absolute_difference", "discrete"):
+            raise ValueError(f"未知误差度量: {self.metric!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +371,7 @@ class MechanismDecl:
     params: tuple[str, ...] = ()
     accelerated: Callable[..., object] | None = None
     scope: str = "instance"
+    boundary_cases: tuple[str, ...] = ()
     notes: str = ""
 
     def __post_init__(self) -> None:
