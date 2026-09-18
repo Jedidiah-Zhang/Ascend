@@ -119,6 +119,26 @@ class TestWorldStateRoundTrip:
         assert engine2.field.features.get_injected(1, 0, "storm") is not None
         assert engine2.field.features.get_injected(0, 1, "cold_snap") is None
 
+    def test_feature_core_projected_with_spec_fidelity(self):
+        """注入核经时间线投影重建，规格逐字段一致（WC-6.5 / #51）。"""
+        clock, engine = _build_world()
+        engine.force_feature(1, 0, "storm", True)
+        original = engine.field.features.get_injected(1, 0, "storm")
+        assert original is not None
+        state = json.loads(json.dumps(collect_state(clock, _Player(), engine, 0)))
+        assert "feature_cores" not in state["weather"], \
+            "注入核不作为状态入档（时间线投影）"
+
+        clock2, engine2 = _build_world()
+        apply_state(state, clock2, _Player(), engine2)
+        restored = engine2.field.features.get_injected(1, 0, "storm")
+        assert restored is not None
+        for name in (
+            "type_name", "born_tick", "duration", "center_x", "center_y",
+            "radius", "magnitude", "vel_x", "vel_y", "no_ramp",
+        ):
+            assert getattr(restored, name) == getattr(original, name), name
+
     def test_intervention_provenance_preserved(self):
         """干预的 seq/applied_at 随存档往返（研究溯源不可重编号）。"""
         clock, engine = _build_world()
@@ -174,10 +194,9 @@ class TestStateSufficiencyW4:
 
         clock_b, engine_b = _build_world()
         state_without = dict(state)
-        # 模拟旧版存档（P4 之前）：只有时钟与玩家，干预与注入核丢失
+        # 模拟旧版存档（P4 之前）：只有时钟与玩家，干预时间线为空
         state_without["weather"] = {
             "interventions": {"plan": [], "records": []},
-            "feature_cores": [],
         }
         apply_state(state_without, clock_b, _Player(), engine_b)
 
@@ -231,21 +250,30 @@ class TestFailClosedLoad:
             apply_state(state, clock2, _Player(), engine2)
 
     def test_unknown_feature_type_rejected_on_restore(self):
+        """未注册特征类型：读档投影 fail-closed（不静默跳过）。"""
         clock, engine = _build_world()
         engine.force_feature(1, 0, "storm", True)
         state = collect_state(clock, _Player(), engine, 0)
-        state["weather"]["feature_cores"][0]["type_name"] = "tsunami"
+        spec = state["weather"]["interventions"]["plan"][0]["value"]["spec"]
+        state["weather"]["interventions"]["plan"][0] = {
+            "target_space": "field_feature", "target": "tsunami",
+            "instance": [1, 0],
+            "value": {"active": True, "spec": spec},
+            "start_frame": 0, "stop_frame": None, "source": "test",
+            "version": "", "seq": 1, "submitted_at": 0,
+        }
         clock2, engine2 = _build_world()
         with pytest.raises(ValueError, match="未注册"):
             apply_state(state, clock2, _Player(), engine2)
 
-    def test_nan_core_field_rejected_on_restore(self):
+    def test_feature_plan_without_spec_rejected_on_restore(self):
+        """active=True 缺核规格：读档校验 fail-closed（投影事实源缺失）。"""
         clock, engine = _build_world()
         engine.force_feature(1, 0, "storm", True)
         state = collect_state(clock, _Player(), engine, 0)
-        state["weather"]["feature_cores"][0]["radius"] = float("nan")
+        state["weather"]["interventions"]["plan"][0]["value"] = {"active": True}
         clock2, engine2 = _build_world()
-        with pytest.raises(ValueError, match="有限值"):
+        with pytest.raises(ValueError, match="核规格"):
             apply_state(state, clock2, _Player(), engine2)
 
     def test_rejected_payload_leaves_no_partial_table(self):
@@ -264,4 +292,4 @@ class TestFailClosedLoad:
         }
 
     def test_state_version_constant_is_current(self):
-        assert STATE_VERSION == 2
+        assert STATE_VERSION == 3

@@ -57,13 +57,14 @@ def _stub_registry(
     mechanisms: list,
     nodes: dict,
     microsteps: tuple = ("a", "b", "c"),
+    wired: frozenset = frozenset(),
 ) -> SimpleNamespace:
     return SimpleNamespace(
         microstep_order=microsteps,
         nodes={node_id: _node(step) for node_id, step in nodes.items()},
         mechanisms={m.mechanism_id: m for m in mechanisms},
         declaration_hash="sha256:" + "ab" * 32,
-        wired_nodes=frozenset(),
+        wired_nodes=wired,
         equation_version=lambda output: f"eq:{output}",
         resolved_version=lambda output: f"res:{output}",
     )

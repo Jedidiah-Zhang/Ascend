@@ -127,6 +127,28 @@ class TestEngineTracing:
         assert entry.intervention["seq"] == 1
         assert log.verify(entry) is True
 
+    def test_past_query_marked_recompute(self, engine, clock):
+        """历史查询记"重算"，不冒充世界推进时的"发生"（#50 双账分离）。"""
+        weather, _ = engine
+        log = weather.enable_trace()
+        weather.get_weather(*_CHUNK)
+        eval_count = log.counts()["eval"]
+        assert eval_count > 0
+
+        weather.get_weather(*_CHUNK, clock.time - 1)
+        assert log.counts()["eval"] == eval_count, "历史查询不得计入发生"
+        assert log.counts()["recompute"] > 0
+        assert log.verify_all() == [], "重算记录同样可重算"
+
+    def test_day_summary_marked_recompute(self, engine):
+        """日摘要采样是事后重算：不伪造"发生"记录。"""
+        weather, _ = engine
+        log = weather.enable_trace()
+        summary = weather.get_day_summary(_CHUNK[0], _CHUNK[1], day=1)
+        assert summary is not None
+        assert log.counts()["recompute"] > 0
+        assert log.counts()["eval"] == 0
+
 
 class TestTraceIsSeparateFromGameplayEvents:
     """研究日志与玩法事件分库（事件载荷不得泄露 trace 字段）。"""
@@ -181,7 +203,16 @@ class TestTerminalTraceCommands:
         shown = executor.execute(f"trace show {INSTANT_TEMPERATURE}")
         assert shown.success
         assert "方程版本" in shown.output
+        assert "记录性质" in shown.output
         assert "边界处理" in shown.output
+
+    def test_status_reports_ledger(self, executor, engine):
+        """status 显示双账与丢失报告（#50）。"""
+        weather, _ = engine
+        executor.execute("trace on")
+        weather.get_weather(*_CHUNK)
+        output = executor.execute("trace status").output
+        assert "发生" in output and "重算" in output
 
     def test_list_filters_by_frame(self, executor, engine):
         weather, _ = engine
@@ -252,6 +283,33 @@ class TestResearchTraceApi:
         })
         assert replayed["payload"]["success"] is True
         assert replayed["payload"]["consistent"] is True
+
+    def test_list_kind_filter_and_ledger(self, engine, clock):
+        """研究 API：kind 筛选 + 双账计数 + 丢失报告（#50）。"""
+        weather, _ = engine
+        weather.enable_trace()
+        weather.get_weather(*_CHUNK)
+        weather.get_weather(*_CHUNK, clock.time - 1)
+        handler = self._handler(engine)
+
+        listed = handler["research_trace_list"]({"payload": {}})
+        payload = listed["payload"]
+        assert payload["success"] is True
+        assert payload["counts"]["eval"] > 0
+        assert payload["counts"]["recompute"] > 0
+        assert payload["dropped"] == 0
+
+        filtered = handler["research_trace_list"](
+            {"payload": {"kind": "recompute"}},
+        )
+        assert filtered["payload"]["success"] is True
+        assert filtered["payload"]["records"]
+        assert all(
+            record["kind"] == "recompute"
+            for record in filtered["payload"]["records"]
+        )
+        bad = handler["research_trace_list"]({"payload": {"kind": "ghost"}})
+        assert bad["payload"]["success"] is False
 
     def test_replay_missing_node_rejected(self, engine):
         weather, _ = engine

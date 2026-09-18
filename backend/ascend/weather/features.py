@@ -224,6 +224,19 @@ class FeatureCore:
                 self.center_y + self.vel_y * dt)
 
 
+def _canonical_order(cores: list[FeatureCore]) -> list[FeatureCore]:
+    """核的规范顺序：算术合成前的稳定排序（WC-3.2 / #52）。
+
+    浮点求和/叠乘对顺序敏感：同一 W_t（核集合相同）若插入或恢复顺序
+    不同，逐点合成可能出现末位差异并翻转阈值判定。按核的稳定身份
+    （类型、出生、core_id）排序，使"同一状态重算"与插入历史解耦。
+    """
+    return sorted(
+        cores,
+        key=lambda core: (core.type_name, core.born_tick, core.core_id),
+    )
+
+
 def _block_of(x: float, y: float) -> tuple[int, int]:
     """世界坐标 → 空间块坐标（floor 语义，负坐标正确）。"""
     return (math.floor(x / FEATURE_BLOCK_SIZE),
@@ -579,13 +592,36 @@ class FeatureField:
         with self._lock:
             return self._injected.get((cx, cy, type_name))
 
+    # ── 注入核集合操作（时间线投影用；#51）────────────────────
+
+    def clear_injected(self) -> int:
+        """清空全部注入核并返回移除数量（整体替换的第一步）。
+
+        供时间线投影使用：读档时先清空，再按生效计划重建，
+        目标世界的残留核不得存活。
+        """
+        with self._lock:
+            count = len(self._injected)
+            self._injected.clear()
+        return count
+
+    @property
+    def injected_count(self) -> int:
+        """当前注入核数量（诊断/日志用）。"""
+        with self._lock:
+            return len(self._injected)
+
     # ── 注入核持久化（P4 完整存档：W_t 的不可重算部分）────────
 
     def persist_injected(self) -> list[dict[str, object]]:
         """注入核的确定性列表（存档载荷，按 chunk 坐标 + 类型排序）。
 
-        自然核时间线不落盘（由 seed 派生可重算）；注入核由研究者施加，
-        是 W_t 中必须携带的运行时状态。
+        自然核时间线不落盘（由 seed 派生可重算）；注入核由研究者施加。
+
+        **引擎状态载荷不再使用本方法**（#51 / WC-6.5）：注入核是外部
+        输入的时间线投影，读档由 ``WeatherEngine._project_injected_features``
+        从干预时间线重建。本方法保留为工具/测试路径（低层 ``inject_core``
+        直连场景）。
         """
         with self._lock:
             items = sorted(
@@ -731,7 +767,7 @@ class FeatureField:
                         cx, cy = core.center_at(t)
                         if (cx - x) ** 2 + (cy - y) ** 2 <= radius_limit ** 2:
                             out.append(core)
-        return out
+        return _canonical_order(out)
 
     # ── 采样（合成值）───────────────────────────────────────
 
@@ -788,7 +824,7 @@ class FeatureField:
             总温度偏移 (°C)。
         """
         total = 0.0
-        for core in cores:
+        for core in _canonical_order(cores):
             cfg = FEATURE_TYPES[core.type_name]
             if cfg.effect != EFFECT_TEMPERATURE:
                 continue
@@ -827,7 +863,7 @@ class FeatureField:
             倍率（≥1.0）。
         """
         mult = 1.0
-        for core in cores:
+        for core in _canonical_order(cores):
             cfg = FEATURE_TYPES[core.type_name]
             if cfg.effect != EFFECT_MULTIPLIER:
                 continue
@@ -866,7 +902,7 @@ class FeatureField:
             降水信号增量（≥0）。
         """
         total = 0.0
-        for core in cores:
+        for core in _canonical_order(cores):
             cfg = FEATURE_TYPES[core.type_name]
             if cfg.precip_boost <= 0:
                 continue
@@ -947,7 +983,7 @@ class FeatureField:
                         near_y = max(min(y0, y1), min(max(y0, y1), cy))
                         if (cx - near_x) ** 2 + (cy - near_y) ** 2 <= core.radius ** 2:
                             out.append(core)
-        return out
+        return _canonical_order(out)
 
     def start_event(self, core: FeatureCore, now: int, time_of_day: int):
         """构造特征核 start 事件（区域级，字段按事件类驱动）。

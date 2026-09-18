@@ -188,16 +188,24 @@ class TestWaveExecution:
             self._run(_graph(), parallel=False, provide=provide)
 
     def test_unsupported_parent_rejected(self):
+        """执行器运行时兜底：lag≠0 父依赖显式拒绝（装配期亦拒绝 wired）。"""
         extra = (
             _mechanism(
                 "m.lag", "n.lag",
                 [_parent("n.in", lag=1, source_microstep="in")],
             ),
         )
-        registry = _graph(extra=extra, wired=("n.x", "n.y", "n.z", "n.lag"))
+        registry = _graph(extra=extra)   # n.lag 不在 wired：装配期允许声明
         registry.nodes["n.lag"] = _node("b")
+        program = _build_program(registry)
         with pytest.raises(NotImplementedError, match="父依赖暂不支持"):
-            self._run(registry, parallel=False)
+            execute_waves(
+                program, registry, frame=7,
+                evaluate=lambda node_id, parents, *, frame, instance: node_id,
+                provide=lambda node_id, instance: 1,
+                instances=[(0, 0)],
+                wired_only=False,
+            )
 
     def test_single_nonzero_offset_parent_rejected(self):
         """单偏移但非 (0,0)：不得静默退回同实例取值（fail-closed）。"""

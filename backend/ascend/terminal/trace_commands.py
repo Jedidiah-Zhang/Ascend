@@ -99,9 +99,18 @@ class TraceCommandsMixin:
             return CommandResult(
                 success=True, output=t("console.trace_status_off"),
             )
+        counts = log.counts()
         return CommandResult(
             success=True,
-            output=t("console.trace_status_on", count=len(log)),
+            output="\n".join((
+                t("console.trace_status_on", count=len(log)),
+                t(
+                    "console.trace_status_counts",
+                    eval=counts.get("eval", 0),
+                    recompute=counts.get("recompute", 0),
+                    dropped=log.dropped,
+                ),
+            )),
         )
 
     def _cmd_trace_list(self, args: list[str]) -> CommandResult:
@@ -119,7 +128,7 @@ class TraceCommandsMixin:
         lines = [t("console.trace_list_header", count=len(page))]
         for entry in page:
             lines.append(
-                f"  [{entry.frame}] {entry.node_id} "
+                f"  [{entry.frame}][{entry.kind}] {entry.node_id} "
                 f"{entry.mechanism_id or t('console.trace_value_rep')} "
                 f"= {entry.output!r} "
                 f"{t('console.trace_parents', count=len(entry.parents))}"
@@ -159,6 +168,7 @@ class TraceCommandsMixin:
             f"  {t('console.trace_field_mechanism')}: "
             f"{view['mechanism_id'] or t('console.trace_value_rep')}",
             f"  {t('console.trace_field_equation')}: {view['equation_version']}",
+            f"  {t('console.trace_field_kind')}: {view['kind']}",
             f"  {t('console.trace_field_parents')}: {view['parents']}",
             f"  {t('console.trace_field_parameters')}: {view['parameters']}",
             f"  {t('console.trace_field_random')}: "

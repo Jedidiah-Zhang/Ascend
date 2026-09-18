@@ -707,6 +707,42 @@ class TestFeatureField:
         assert f.remove_injected(0, 0, "storm") is True
         assert f.sample_multiplier(100.0, 100.0, t) == 1.0
 
+    def test_synthesis_independent_of_insertion_order(self):
+        """同一核集合、不同插入顺序 → 合成值逐位一致（#52 稳定求和）。
+
+        判别力前提：该量级组合在未排序时 float 求和确实分叉
+        （1e16 与 1 相加丢小项），因此本测试不是恒真。
+        """
+        from ascend.weather.features import FEATURE_TYPES, FeatureField
+
+        base = FEATURE_TYPES["cold_snap"].base_intensity
+        magnitudes = (1.0, 1.0, 1e16)
+        raw_a = 0.0
+        for magnitude in magnitudes:
+            raw_a += base * magnitude
+        raw_b = 0.0
+        for magnitude in (magnitudes[2], magnitudes[0], magnitudes[1]):
+            raw_b += base * magnitude
+        assert raw_a != raw_b, "前提：未排序时该组合确实分叉"
+
+        def build(order: tuple[int, ...]) -> FeatureField:
+            field = FeatureField(seed=42)
+            for index in order:
+                field.inject_core(
+                    index, 0, "cold_snap",
+                    center_x=100.0, center_y=100.0, radius=3000.0,
+                    born_tick=0, duration=None,
+                    magnitude=magnitudes[index],
+                )
+            return field
+
+        t = 5000000
+        a = build((0, 1, 2))
+        b = build((2, 0, 1))
+        assert a.sample_temperature_offset(100.0, 100.0, t) == \
+            b.sample_temperature_offset(100.0, 100.0, t), \
+            "合成顺序必须与插入/恢复顺序无关（规范顺序）"
+
     def test_inject_unknown_type_raises(self):
         from ascend.weather.features import FeatureField
         f = FeatureField(seed=42)

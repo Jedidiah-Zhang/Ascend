@@ -7,11 +7,16 @@
   按状态游标补齐（义务即槽位，WC-3.3）；
 - 世界树只承担记录/观测分发，订阅者不得回写世界状态；
 - 一次推进批次是**一个帧事务**（WC-7.6）：写方在事务内只写影子，
-  批次末尾原子提交；任一更新点抛错则整帧回滚（状态与边界都回退，
-  下一帧重试）——记录回调只在提交成功后执行；
-- 失败语义（ADR-12 D5）：首次失败在下一帧重试；连续失败按指数退避
-  节流（2 的幂次 tick，上限 64），退避期间推进直接跳过（不执行、
-  不重抛）——持久失败的世界停步可见、重试代价可控。
+  批次末尾原子提交——记录回调只在提交成功后执行；
+- 失败语义分两级（WC-9.2 / #51）：
+  - **提交前失败**（更新点回调抛错）：整帧回滚（状态与边界都回退），
+    首次失败下一帧重试；连续失败按指数退避节流（2 的幂次 tick，
+    上限 64），退避期间推进直接跳过（不执行、不重抛）；
+  - **提交相位失败**（应用动作或提交后记录回调抛错，见
+    :class:`~ascend.runtime.state_store.WorldInvalidatedError`）：
+    状态可能已部分应用或已提交，回滚边界无意义且重放会破坏
+    "同一逻辑帧只更新一次"——调度器转入**世界失效**：标记
+    :attr:`FrameScheduler.invalidated`，拒绝后续推进，不重试。
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from typing import Callable
 from ascend.log import get_logger
 from ascend.world_tree import SubscriptionScope
 
-from .state_store import FrameStateStore
+from .state_store import FrameStateStore, WorldInvalidatedError
 
 logger = get_logger(__name__)
 
@@ -57,6 +62,8 @@ class FrameScheduler:
         # 连续失败计数与下一次允许重试的时刻（退避；推进锁内读写）。
         self._consecutive_failures = 0
         self._retry_not_before = 0
+        # 世界失效原因（提交相位失败；WC-9.2 / #51）。
+        self._invalidated: str | None = None
         # 帧事务存储：一次推进批次的原子提交点（WC-7.6）。
         self.store = store if store is not None else FrameStateStore()
         # 推进串行锁：tick 线程与直接 skip 调用可能并发进入推进。
@@ -103,12 +110,17 @@ class FrameScheduler:
 
         边界在回调成功后推进；任一回调抛错即整帧回滚——影子写入
         丢弃、本批边界恢复，下一帧从头重试（fail-closed）。
-        失败语义（ADR-12 D5）：首次失败下一帧重试；连续失败按指数
+        提交前失败（ADR-12 D5）：首次失败下一帧重试；连续失败按指数
         退避节流（2 的幂次 tick，上限 ``_RETRY_BACKOFF_CAP``），退避
         期间推进直接跳过（不执行、不重抛）。
+        提交相位失败（应用动作/记录回调，WC-9.2 / #51）：世界失效，
+        本方法此后一律抛 :class:`WorldInvalidatedError`（不推进、
+        不重试）。
         跨线程调用（tick 线程与 skip 调用方）由推进锁串行化。
         """
         with self._advance_lock:
+            if self._invalidated is not None:
+                raise WorldInvalidatedError(self._invalidated)
             self._advance_locked(now)
 
     @property
@@ -116,6 +128,12 @@ class FrameScheduler:
         """当前连续帧失败次数（提交成功后清零）。"""
         with self._advance_lock:
             return self._consecutive_failures
+
+    @property
+    def invalidated(self) -> str | None:
+        """世界失效原因；None = 正常（提交相位失败后不再推进）。"""
+        with self._advance_lock:
+            return self._invalidated
 
     def _backoff_ticks(self) -> int:
         """连续失败 n 次的退避 tick 数：首次下一帧重试，其后 2 的幂、封顶。"""
@@ -149,10 +167,19 @@ class FrameScheduler:
                 self._last_boundary[point.name] = boundary
             self.store.commit()
         except BaseException:
-            # 帧失败（回调抛错或提交失败）：本批边界恢复，下一帧重试；
-            # 提交失败时事务已摘下（应用动作为幂等，可安全重放）
+            # 帧失败：先摘事务（若仍打开）
             if self.store.transaction_open:
                 self.store.abort()
+            invalidated = self.store.invalidated
+            if invalidated is not None:
+                # 提交相位失败：状态可能已部分应用或已提交，回滚边界
+                # 无意义；重放会破坏"同一逻辑帧只更新一次"（WC-9.2/P1）。
+                self._invalidated = invalidated
+                logger.error(
+                    "世界失效（帧推进至 %d）：%s", now, invalidated,
+                )
+                raise
+            # 提交前失败：边界回滚，下一帧重试（影子已丢弃，状态未变）
             for point, last in previous:
                 self._last_boundary[point.name] = last
             self._consecutive_failures += 1

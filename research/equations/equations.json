@@ -1,7 +1,7 @@
 {
   "comment": "AUTO-GENERATED from the ASCEND_MECHANISMS registry (weather/mechanisms.py + space/mechanisms.py slices); do not edit by hand. variables/edges are the research graph projection.",
   "declaration": {
-    "hash": "sha256:056dd86d3dfbf5d2afee3d6d2906fba0c60db03fef2f8b0d2251fef759492965",
+    "hash": "sha256:1707ac04f8de5de13d2f3cb95d614faf6ce83b323f3a9409cb8fb2b633837b74",
     "id": "ascend.world.scalar_formulas",
     "microstep_order": [
       "world.gen_input",
@@ -50,7 +50,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.astronomy.daylight_hours",
       "equation": "weather.astronomy.derive_daylight.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.astronomy.sunrise_hour",
       "role": "structural",
       "source_microstep": "weather.instant_offset",
@@ -67,7 +69,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.astronomy.daylight_hours",
       "equation": "weather.astronomy.derive_daylight.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.astronomy.sunset_hour",
       "role": "structural",
       "source_microstep": "weather.instant_offset",
@@ -84,7 +88,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.astronomy.sunrise_hour",
       "equation": "weather.astronomy.derive_sunrise.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.solar_latitude_proxy_deg",
       "role": "structural",
       "source_microstep": "weather.chunk_derived_a",
@@ -96,12 +102,14 @@
       ]
     },
     {
-      "L": 1.0,
+      "L": null,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.astronomy.sunrise_hour",
       "equation": "weather.astronomy.derive_sunrise.v1",
+      "jump_bound": 12.0,
       "lag": 0,
+      "modulus_kind": "jump",
       "parent": "weather.tick.solar_declination_rad",
       "role": "structural",
       "source_microstep": "weather.instant_tick_derived",
@@ -118,7 +126,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.astronomy.sunset_hour",
       "equation": "weather.astronomy.derive_sunset.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.solar_latitude_proxy_deg",
       "role": "structural",
       "source_microstep": "weather.chunk_derived_a",
@@ -130,12 +140,14 @@
       ]
     },
     {
-      "L": 1.0,
+      "L": null,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.astronomy.sunset_hour",
       "equation": "weather.astronomy.derive_sunset.v1",
+      "jump_bound": 12.0,
       "lag": 0,
+      "modulus_kind": "jump",
       "parent": "weather.tick.solar_declination_rad",
       "role": "structural",
       "source_microstep": "weather.instant_tick_derived",
@@ -152,7 +164,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.diurnal_humidity_amplitude_pp",
       "equation": "weather.chunk.derive_diurnal_humidity_amplitude.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.seasonal_temperature_amplitude_c",
       "role": "structural",
       "source_microstep": "weather.chunk_derived_a",
@@ -169,7 +183,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.diurnal_temperature_amplitude_c",
       "equation": "weather.chunk.derive_diurnal_temperature_amplitude.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.seasonal_temperature_amplitude_c",
       "role": "structural",
       "source_microstep": "weather.chunk_derived_a",
@@ -181,12 +197,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": 8.695652173913045e-05,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.precipitation_threshold",
       "equation": "weather.chunk.derive_precipitation_threshold.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.annual_rainfall_mm_per_year",
       "role": "structural",
       "source_microstep": "world.gen_derived_a",
@@ -203,7 +221,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.seasonal_humidity_amplitude_pp",
       "equation": "weather.chunk.derive_seasonal_humidity_amplitude.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.seasonal_temperature_amplitude_c",
       "role": "structural",
       "source_microstep": "weather.chunk_derived_a",
@@ -220,7 +240,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.seasonal_temperature_amplitude_c",
       "equation": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.annual_mean_temperature_c",
       "role": "structural",
       "source_microstep": "world.gen_derived_b",
@@ -237,7 +259,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.seasonal_temperature_amplitude_c",
       "equation": "weather.chunk.derive_seasonal_temperature_amplitude.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.annual_rainfall_mm_per_year",
       "role": "structural",
       "source_microstep": "world.gen_derived_a",
@@ -254,7 +278,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.solar_latitude_proxy_deg",
       "equation": "weather.chunk.derive_solar_latitude_proxy.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.sea_level_temperature_c",
       "role": "structural",
       "source_microstep": "world.gen_derived_a",
@@ -271,7 +297,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.precipitation_type",
       "equation": "weather.instant.classify_precipitation_type.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.instant.temperature_c",
       "role": "structural",
       "source_microstep": "weather.instant_composite",
@@ -288,7 +316,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.relative_humidity_percent",
       "equation": "weather.instant.compose_humidity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.baseline_humidity_percent",
       "role": "structural",
       "source_microstep": "world.gen_derived_d",
@@ -305,7 +335,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.relative_humidity_percent",
       "equation": "weather.instant.compose_humidity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.offset.seasonal_humidity_pp",
       "role": "structural",
       "source_microstep": "weather.instant_offset",
@@ -322,7 +354,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.relative_humidity_percent",
       "equation": "weather.instant.compose_humidity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.offset.diurnal_humidity_pp",
       "role": "structural",
       "source_microstep": "weather.instant_offset",
@@ -339,7 +373,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.relative_humidity_percent",
       "equation": "weather.instant.compose_humidity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.field.humidity_perturbation",
       "role": "structural",
       "source_microstep": "weather.frame_input",
@@ -351,12 +387,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": 20.0,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.precipitation_intensity_mm_per_hour",
       "equation": "weather.instant.compose_precipitation_intensity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.field.precipitation_signal",
       "role": "structural",
       "source_microstep": "weather.frame_input",
@@ -368,12 +406,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": 20.0,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.precipitation_intensity_mm_per_hour",
       "equation": "weather.instant.compose_precipitation_intensity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.precipitation_threshold",
       "role": "structural",
       "source_microstep": "weather.chunk_derived_a",
@@ -385,12 +425,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": 1.9,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.precipitation_intensity_mm_per_hour",
       "equation": "weather.instant.compose_precipitation_intensity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.mean_precip_intensity_mm_per_hour",
       "role": "structural",
       "source_microstep": "world.gen_derived_d",
@@ -407,7 +449,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.sunshine_hours_per_day",
       "equation": "weather.instant.compose_sunshine.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.astronomy.daylight_hours",
       "role": "structural",
       "source_microstep": "weather.instant_composite",
@@ -424,7 +468,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.sunshine_hours_per_day",
       "equation": "weather.instant.compose_sunshine.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.field.humidity_perturbation",
       "role": "structural",
       "source_microstep": "weather.frame_input",
@@ -441,7 +487,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.temperature_c",
       "equation": "weather.instant.compose_temperature.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.annual_mean_temperature_c",
       "role": "structural",
       "source_microstep": "world.gen_derived_b",
@@ -458,7 +506,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.temperature_c",
       "equation": "weather.instant.compose_temperature.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.offset.seasonal_temperature_c",
       "role": "structural",
       "source_microstep": "weather.instant_offset",
@@ -475,7 +525,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.temperature_c",
       "equation": "weather.instant.compose_temperature.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.offset.diurnal_temperature_c",
       "role": "structural",
       "source_microstep": "weather.instant_offset",
@@ -492,7 +544,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.temperature_c",
       "equation": "weather.instant.compose_temperature.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.field.temperature_perturbation",
       "role": "structural",
       "source_microstep": "weather.frame_input",
@@ -509,7 +563,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.wind_speed_mps",
       "equation": "weather.instant.compose_wind_speed.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.baseline_wind_speed_mps",
       "role": "structural",
       "source_microstep": "world.gen_derived_d",
@@ -526,7 +582,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.wind_speed_mps",
       "equation": "weather.instant.compose_wind_speed.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.field.wind_perturbation",
       "role": "structural",
       "source_microstep": "weather.frame_input",
@@ -538,12 +596,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": 50.0,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.instant.wind_speed_mps",
       "equation": "weather.instant.compose_wind_speed.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.field.wind_multiplier",
       "role": "structural",
       "source_microstep": "weather.frame_input",
@@ -560,7 +620,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.offset.diurnal_humidity_pp",
       "equation": "weather.offset.derive_diurnal_humidity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.diurnal_humidity_amplitude_pp",
       "role": "structural",
       "source_microstep": "weather.chunk_derived_b",
@@ -577,7 +639,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.offset.diurnal_humidity_pp",
       "equation": "weather.offset.derive_diurnal_humidity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.tick.diurnal_phase_cos",
       "role": "structural",
       "source_microstep": "weather.instant_tick_derived",
@@ -594,7 +658,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.offset.diurnal_temperature_c",
       "equation": "weather.offset.derive_diurnal_temperature.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.diurnal_temperature_amplitude_c",
       "role": "structural",
       "source_microstep": "weather.chunk_derived_b",
@@ -611,7 +677,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.offset.diurnal_temperature_c",
       "equation": "weather.offset.derive_diurnal_temperature.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.tick.diurnal_phase_cos",
       "role": "structural",
       "source_microstep": "weather.instant_tick_derived",
@@ -628,7 +696,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.offset.seasonal_humidity_pp",
       "equation": "weather.offset.derive_seasonal_humidity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.seasonal_humidity_amplitude_pp",
       "role": "structural",
       "source_microstep": "weather.chunk_derived_b",
@@ -645,7 +715,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.offset.seasonal_humidity_pp",
       "equation": "weather.offset.derive_seasonal_humidity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.tick.season_phase_cos",
       "role": "structural",
       "source_microstep": "weather.instant_tick_derived",
@@ -657,12 +729,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": 20.0,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.offset.seasonal_humidity_pp",
       "equation": "weather.offset.derive_seasonal_humidity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.humidity_sharpness",
       "role": "structural",
       "source_microstep": "world.gen_derived_d",
@@ -679,7 +753,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.offset.seasonal_temperature_c",
       "equation": "weather.offset.derive_seasonal_temperature.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.seasonal_temperature_amplitude_c",
       "role": "structural",
       "source_microstep": "weather.chunk_derived_a",
@@ -696,7 +772,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.offset.seasonal_temperature_c",
       "equation": "weather.offset.derive_seasonal_temperature.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.tick.season_phase_cos",
       "role": "structural",
       "source_microstep": "weather.instant_tick_derived",
@@ -708,12 +786,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": null,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.tick.day",
       "equation": "weather.tick.derive_day.v1",
+      "jump_bound": 1.0,
       "lag": 0,
+      "modulus_kind": "jump",
       "parent": "world.clock.tick",
       "role": "structural",
       "source_microstep": "weather.frame_input",
@@ -725,12 +805,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": null,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.tick.day_of_year",
       "equation": "weather.tick.derive_day_of_year.v1",
+      "jump_bound": 1.0,
       "lag": 0,
+      "modulus_kind": "jump",
       "parent": "world.clock.tick",
       "role": "structural",
       "source_microstep": "weather.frame_input",
@@ -742,12 +824,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": 0.2617993877991494,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.tick.diurnal_phase_cos",
       "equation": "weather.tick.derive_diurnal_phase_cos.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.tick.hour_of_day",
       "role": "structural",
       "source_microstep": "weather.instant_tick_input",
@@ -759,12 +843,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": null,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.tick.hour_of_day",
       "equation": "weather.tick.derive_hour_of_day.v1",
+      "jump_bound": 24.0,
       "lag": 0,
+      "modulus_kind": "jump",
       "parent": "world.clock.tick",
       "role": "structural",
       "source_microstep": "weather.frame_input",
@@ -781,7 +867,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.tick.season",
       "equation": "weather.tick.derive_season.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.tick.day",
       "role": "structural",
       "source_microstep": "weather.instant_tick_input",
@@ -793,12 +881,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": 0.017453292519943295,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.tick.season_phase_cos",
       "equation": "weather.tick.derive_season_phase_cos.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.tick.day",
       "role": "structural",
       "source_microstep": "weather.instant_tick_input",
@@ -810,12 +900,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": 0.00714023231980045,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.tick.solar_declination_rad",
       "equation": "weather.tick.derive_solar_declination.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.tick.day_of_year",
       "role": "structural",
       "source_microstep": "weather.instant_tick_input",
@@ -832,7 +924,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "world.gen.biome",
       "equation": "world.gen.classify_biome.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.annual_mean_temperature_c",
       "role": "structural",
       "source_microstep": "world.gen_derived_b",
@@ -849,7 +943,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "world.gen.biome",
       "equation": "world.gen.classify_biome.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.annual_rainfall_mm_per_year",
       "role": "structural",
       "source_microstep": "world.gen_derived_a",
@@ -866,7 +962,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "world.gen.biome",
       "equation": "world.gen.classify_biome.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "world.gen.altitude_m",
       "role": "structural",
       "source_microstep": "world.gen_input",
@@ -883,7 +981,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "world.gen.biome",
       "equation": "world.gen.classify_biome.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.sea_level_temperature_c",
       "role": "structural",
       "source_microstep": "world.gen_derived_a",
@@ -900,7 +1000,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "world.gen.biome",
       "equation": "world.gen.classify_biome.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "world.gen.moisture_noise",
       "role": "structural",
       "source_microstep": "world.gen_input",
@@ -917,7 +1019,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "world.gen.climate_zone",
       "equation": "world.gen.classify_climate_zone.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.annual_mean_temperature_c",
       "role": "structural",
       "source_microstep": "world.gen_derived_b",
@@ -934,7 +1038,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "world.gen.climate_zone",
       "equation": "world.gen.classify_climate_zone.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.annual_rainfall_mm_per_year",
       "role": "structural",
       "source_microstep": "world.gen_derived_a",
@@ -951,7 +1057,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "world.gen.climate_zone",
       "equation": "world.gen.classify_climate_zone.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "world.gen.altitude_m",
       "role": "structural",
       "source_microstep": "world.gen_input",
@@ -968,7 +1076,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.annual_mean_temperature_c",
       "equation": "world.gen.derive_annual_mean_temperature.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "weather.chunk.sea_level_temperature_c",
       "role": "structural",
       "source_microstep": "world.gen_derived_a",
@@ -985,7 +1095,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.annual_mean_temperature_c",
       "equation": "world.gen.derive_annual_mean_temperature.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "world.gen.altitude_m",
       "role": "structural",
       "source_microstep": "world.gen_input",
@@ -1002,7 +1114,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.annual_rainfall_mm_per_year",
       "equation": "world.gen.derive_annual_rainfall.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "world.gen.rainfall_noise",
       "role": "structural",
       "source_microstep": "world.gen_input",
@@ -1014,12 +1128,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": null,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.baseline_humidity_percent",
       "equation": "world.gen.derive_baseline_humidity.v1",
+      "jump_bound": 90.0,
       "lag": 0,
+      "modulus_kind": "jump",
       "parent": "world.gen.climate_zone",
       "role": "structural",
       "source_microstep": "world.gen_derived_c",
@@ -1031,12 +1147,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": 20.0,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.baseline_humidity_percent",
       "equation": "world.gen.derive_baseline_humidity.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "world.gen.humidity_noise",
       "role": "structural",
       "source_microstep": "world.gen_input",
@@ -1048,12 +1166,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": null,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.baseline_wind_speed_mps",
       "equation": "world.gen.derive_baseline_wind_speed.v1",
+      "jump_bound": 25.0,
       "lag": 0,
+      "modulus_kind": "jump",
       "parent": "world.gen.climate_zone",
       "role": "structural",
       "source_microstep": "world.gen_derived_c",
@@ -1065,12 +1185,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": 11.0,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.baseline_wind_speed_mps",
       "equation": "world.gen.derive_baseline_wind_speed.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "world.gen.wind_noise",
       "role": "structural",
       "source_microstep": "world.gen_input",
@@ -1082,12 +1204,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": null,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.humidity_sharpness",
       "equation": "world.gen.derive_humidity_sharpness.v1",
+      "jump_bound": 2.5,
       "lag": 0,
+      "modulus_kind": "jump",
       "parent": "world.gen.climate_zone",
       "role": "structural",
       "source_microstep": "world.gen_derived_c",
@@ -1099,12 +1223,14 @@
       ]
     },
     {
-      "L": 0.0,
+      "L": null,
       "analysis_role": "forward",
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.mean_precip_intensity_mm_per_hour",
       "equation": "world.gen.derive_mean_precip_intensity.v1",
+      "jump_bound": 8.0,
       "lag": 0,
+      "modulus_kind": "jump",
       "parent": "world.gen.climate_zone",
       "role": "structural",
       "source_microstep": "world.gen_derived_c",
@@ -1121,7 +1247,9 @@
       "boundary_operator": "identity_same_chunk",
       "child": "weather.chunk.sea_level_temperature_c",
       "equation": "world.gen.derive_sea_level_temperature.v1",
+      "jump_bound": null,
       "lag": 0,
+      "modulus_kind": "linear",
       "parent": "world.gen.latitude_noise",
       "role": "structural",
       "source_microstep": "world.gen_input",
@@ -1141,7 +1269,7 @@
         "polar_day:twenty_four_hours"
       ],
       "equation": "sunset - sunrise",
-      "equation_version": "sha256:a9f7c8aa9957b31903073a8b354ef580dc139796701f3c3ff541530c5e95a601",
+      "equation_version": "sha256:161d1c7f329a5483a67079fb19d3175a9dd41f0c34925d1bb7e8bd14a4a35185",
       "function": "ascend.weather.mechanisms._daylight_equation",
       "output": "weather.astronomy.daylight_hours",
       "parameters": [],
@@ -1154,9 +1282,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.astronomy.sunrise_hour",
           "source_microstep": "weather.instant_offset",
           "spatial_offsets": [
@@ -1175,9 +1305,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.astronomy.sunset_hour",
           "source_microstep": "weather.instant_offset",
           "spatial_offsets": [
@@ -1190,11 +1322,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:c15f06f96882692a3c4f305f2f20c2118f2ae0ef451abdc3064ef7b2a1fc7e33",
-      "source_dependencies": [],
+      "resolved_version": "sha256:2fc136cc73dbd6b33efa3168097f55bb81dbc609d9c5e62024a4a330e5076a98",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:a9f7c8aa9957b31903073a8b354ef580dc139796701f3c3ff541530c5e95a601",
+          "equation_version": "sha256:161d1c7f329a5483a67079fb19d3175a9dd41f0c34925d1bb7e8bd14a4a35185",
           "expected_outputs": [
             12.0,
             10.0
@@ -1212,7 +1349,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a9f7c8aa9957b31903073a8b354ef580dc139796701f3c3ff541530c5e95a601",
+          "equation_version": "sha256:161d1c7f329a5483a67079fb19d3175a9dd41f0c34925d1bb7e8bd14a4a35185",
           "expected_outputs": [
             12.0,
             14.0
@@ -1238,7 +1375,7 @@
         "polar_night:sunrise_twelve"
       ],
       "equation": "12 - degrees(acos(-clamp(tan(radians(latitude)) * tan(solar_declination), -1, 1))) / 15",
-      "equation_version": "sha256:17e90070f75cc81641f908a85ee41b5159beb89d9f047b087473cdaabcb5335c",
+      "equation_version": "sha256:d44df91bd33cf11e00962770d0551a0d2a7b05c2514c849bed771fae20259ef4",
       "function": "ascend.weather.mechanisms._sunrise_equation",
       "output": "weather.astronomy.sunrise_hour",
       "parameters": [],
@@ -1251,9 +1388,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.5,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.solar_latitude_proxy_deg",
           "source_microstep": "weather.chunk_derived_a",
           "spatial_offsets": [
@@ -1272,9 +1411,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": 12.0,
           "lag": 0,
-          "lipschitz": 1.0,
+          "lipschitz": null,
           "metric": "absolute_difference",
+          "modulus_kind": "jump",
           "parent": "weather.tick.solar_declination_rad",
           "source_microstep": "weather.instant_tick_derived",
           "spatial_offsets": [
@@ -1287,11 +1428,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:fee2f675ad87496b8c7a67916d337acbbea21088169500dc73144bad93f80c6b",
-      "source_dependencies": [],
+      "resolved_version": "sha256:4787b82c59214a988f8539957af6f92365b8cee779b9da7a1b79a7d835b6d064",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:17e90070f75cc81641f908a85ee41b5159beb89d9f047b087473cdaabcb5335c",
+          "equation_version": "sha256:d44df91bd33cf11e00962770d0551a0d2a7b05c2514c849bed771fae20259ef4",
           "expected_outputs": [
             6.0,
             0.0
@@ -1309,7 +1455,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:17e90070f75cc81641f908a85ee41b5159beb89d9f047b087473cdaabcb5335c",
+          "equation_version": "sha256:d44df91bd33cf11e00962770d0551a0d2a7b05c2514c849bed771fae20259ef4",
           "expected_outputs": [
             6.0,
             0.0
@@ -1335,7 +1481,7 @@
         "polar_night:sunset_twelve"
       ],
       "equation": "12 + degrees(acos(-clamp(tan(radians(latitude)) * tan(solar_declination), -1, 1))) / 15",
-      "equation_version": "sha256:7cda0d682b92382f16747133c02a308f27356f2e60161699e9b1fa87d73aaed4",
+      "equation_version": "sha256:29cfb2a6352a282f0e823f64280fa9d092faaf8665658b379ee75801a1cffc36",
       "function": "ascend.weather.mechanisms._sunset_equation",
       "output": "weather.astronomy.sunset_hour",
       "parameters": [],
@@ -1348,9 +1494,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.5,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.solar_latitude_proxy_deg",
           "source_microstep": "weather.chunk_derived_a",
           "spatial_offsets": [
@@ -1369,9 +1517,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": 12.0,
           "lag": 0,
-          "lipschitz": 1.0,
+          "lipschitz": null,
           "metric": "absolute_difference",
+          "modulus_kind": "jump",
           "parent": "weather.tick.solar_declination_rad",
           "source_microstep": "weather.instant_tick_derived",
           "spatial_offsets": [
@@ -1384,11 +1534,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:e7f50c678d8b65e1c58d9855cb6fcd97af2e0620599ff961362d3071c0469000",
-      "source_dependencies": [],
+      "resolved_version": "sha256:5d47eed3ec00725adddb1a6a3d846014f61c7223f60801bf0a099491a2c9ce44",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:7cda0d682b92382f16747133c02a308f27356f2e60161699e9b1fa87d73aaed4",
+          "equation_version": "sha256:29cfb2a6352a282f0e823f64280fa9d092faaf8665658b379ee75801a1cffc36",
           "expected_outputs": [
             18.0,
             24.0
@@ -1406,7 +1561,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:7cda0d682b92382f16747133c02a308f27356f2e60161699e9b1fa87d73aaed4",
+          "equation_version": "sha256:29cfb2a6352a282f0e823f64280fa9d092faaf8665658b379ee75801a1cffc36",
           "expected_outputs": [
             18.0,
             24.0
@@ -1431,7 +1586,7 @@
         "positive_amplitude:linear_scaling"
       ],
       "equation": "seasonal_amplitude * diurnal_to_seasonal_ratio * humidity_diurnal_scale",
-      "equation_version": "sha256:9e2b785f2170f0655ab4a7b85cabd4099625ae597e47253dc5de52ab25b69d35",
+      "equation_version": "sha256:072dbde8b65db1e6e122fa6423ea6a4b0072dbbb4784deb621b106849aec05e2",
       "function": "ascend.weather.mechanisms._humidity_diurnal_amplitude_equation",
       "output": "weather.chunk.diurnal_humidity_amplitude_pp",
       "parameters": [
@@ -1453,9 +1608,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.4,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.seasonal_temperature_amplitude_c",
           "source_microstep": "weather.chunk_derived_a",
           "spatial_offsets": [
@@ -1468,14 +1625,19 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:59d248bfcdfbdd905c073f3f016c050ae49b19d9d875b0ef3efac6bd82489a12",
-      "source_dependencies": [],
+      "resolved_version": "sha256:af0e1559e8286d45b86d2c33b0e7dc638ffc881cc9d983312be8b4b14d70cf66",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:9e2b785f2170f0655ab4a7b85cabd4099625ae597e47253dc5de52ab25b69d35",
+          "equation_version": "sha256:072dbde8b65db1e6e122fa6423ea6a4b0072dbbb4784deb621b106849aec05e2",
           "expected_outputs": [
-            4.0,
-            8.0
+            3.9999999990686774,
+            7.999999998137355
           ],
           "inputs_a": {
             "weather.chunk.seasonal_temperature_amplitude_c": 10.0
@@ -1495,7 +1657,7 @@
         "positive_amplitude:linear_scaling"
       ],
       "equation": "seasonal_amplitude * diurnal_to_seasonal_ratio",
-      "equation_version": "sha256:a1c162d7f5e31c76d9d65163983a974b152f83cac102dacbbcbfd29071f8829d",
+      "equation_version": "sha256:62aa0e822f1fb9addf9c857c907946c91ab7131497389ee61d2882edb1f52a6e",
       "function": "ascend.weather.mechanisms._diurnal_amplitude_equation",
       "output": "weather.chunk.diurnal_temperature_amplitude_c",
       "parameters": [
@@ -1513,9 +1675,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.5,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.seasonal_temperature_amplitude_c",
           "source_microstep": "weather.chunk_derived_a",
           "spatial_offsets": [
@@ -1528,11 +1692,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:a0ccbdd63a575ac204355ae8cec133bd9c0fe2006b8a4d59e75926fb7d704cf8",
-      "source_dependencies": [],
+      "resolved_version": "sha256:594be82d3dc51f07d810a35de3bbe8164b94c54b476511684cad7aa6a9fe6723",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:a1c162d7f5e31c76d9d65163983a974b152f83cac102dacbbcbfd29071f8829d",
+          "equation_version": "sha256:62aa0e822f1fb9addf9c857c907946c91ab7131497389ee61d2882edb1f52a6e",
           "expected_outputs": [
             5.0,
             10.0
@@ -1556,7 +1725,7 @@
         "finite_interior_input:linear_interpolation"
       ],
       "equation": "threshold_wet + (threshold_dry - threshold_wet) * (1 - clamp((annual_rainfall - annual_dry) / (annual_wet - annual_dry), 0, 1))",
-      "equation_version": "sha256:29e7b835efca912393e5e9be5c2923e21ae464b1591fe2c770f4d6d9a3cb8c22",
+      "equation_version": "sha256:f69d15dcac8b85f841612f7ec7f551828b268f4b0da9bb9419ee4235e0fe464c",
       "function": "ascend.weather.mechanisms._precip_threshold_equation",
       "output": "weather.chunk.precipitation_threshold",
       "parameters": [
@@ -1586,9 +1755,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": 8.695652173913045e-05,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.annual_rainfall_mm_per_year",
           "source_microstep": "world.gen_derived_a",
           "spatial_offsets": [
@@ -1601,15 +1772,19 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:0ee235f3df2e7a1d4121362f326f362d8716c50fa49c09ea13b05b553a0141a8",
+      "resolved_version": "sha256:0dc9fdd8cda597c1b8e010a79a90f554c64cf646011683eed332b0db9434d4bb",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:29e7b835efca912393e5e9be5c2923e21ae464b1591fe2c770f4d6d9a3cb8c22",
+          "equation_version": "sha256:f69d15dcac8b85f841612f7ec7f551828b268f4b0da9bb9419ee4235e0fe464c",
           "expected_outputs": [
-            0.55,
+            0.5499999998137355,
             0.25
           ],
           "inputs_a": {
@@ -1630,7 +1805,7 @@
         "positive_amplitude:linear_scaling"
       ],
       "equation": "seasonal_amplitude * humidity_seasonal_scale",
-      "equation_version": "sha256:4a101f006e97b11f76b9cd232fdb4bc33141b1e8b290afbd6866845ef537a8b7",
+      "equation_version": "sha256:c77faf9b634292afef0a9433ddc19e9355330ec21b5a45a5096615d90ccd63ab",
       "function": "ascend.weather.mechanisms._humidity_seasonal_amplitude_equation",
       "output": "weather.chunk.seasonal_humidity_amplitude_pp",
       "parameters": [
@@ -1648,9 +1823,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.4,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.seasonal_temperature_amplitude_c",
           "source_microstep": "weather.chunk_derived_a",
           "spatial_offsets": [
@@ -1663,14 +1840,19 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:cee25901bf2fd346c9881a7ad5c8f8ce6ff69658f41db2389d90a472900df7c9",
-      "source_dependencies": [],
+      "resolved_version": "sha256:272455084f3bc83ffc58c20de23ef713d359c5d5b0ee6f8c0b4648030eb8fd0d",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:4a101f006e97b11f76b9cd232fdb4bc33141b1e8b290afbd6866845ef537a8b7",
+          "equation_version": "sha256:c77faf9b634292afef0a9433ddc19e9355330ec21b5a45a5096615d90ccd63ab",
           "expected_outputs": [
-            4.0,
-            8.0
+            4.00000000372529,
+            8.00000000745058
           ],
           "inputs_a": {
             "weather.chunk.seasonal_temperature_amplitude_c": 10.0
@@ -1693,7 +1875,7 @@
         "finite_interior_inputs:continuous_formula"
       ],
       "equation": "clamp(cold_endpoint - (annual_temperature - input_temp_min) / (input_temp_max - input_temp_min) * (cold_endpoint - hot_endpoint) + clamp((rain_reference - annual_rainfall) / rain_reference, -0.5, 1.0) * rain_bonus_scale, output_min, output_max)",
-      "equation_version": "sha256:688049c3a084318512c08555d7005b312f2f2d06b3d3ea40df2d2417786b419e",
+      "equation_version": "sha256:f6f5d5840bdd294ac3fa50742e29bb270bfd8c7db43dc8cc58bdc9e2db39316b",
       "function": "ascend.weather.mechanisms._derive_seasonal_amplitude_equation",
       "output": "weather.chunk.seasonal_temperature_amplitude_c",
       "parameters": [
@@ -1739,9 +1921,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.65,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.annual_mean_temperature_c",
           "source_microstep": "world.gen_derived_b",
           "spatial_offsets": [
@@ -1760,9 +1944,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.002,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.annual_rainfall_mm_per_year",
           "source_microstep": "world.gen_derived_a",
           "spatial_offsets": [
@@ -1775,16 +1961,20 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:fc23cb0478d865bcfb51fc895b73eb341e85b1e9c6e093b2edb1f67527be1a47",
+      "resolved_version": "sha256:2b6ae175b3e3c6436c9c2aa864bc561b2d45e87222b909779dc4dade64e25ea2",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:688049c3a084318512c08555d7005b312f2f2d06b3d3ea40df2d2417786b419e",
+          "equation_version": "sha256:f6f5d5840bdd294ac3fa50742e29bb270bfd8c7db43dc8cc58bdc9e2db39316b",
           "expected_outputs": [
-            27.15,
-            14.15
+            27.149999998509884,
+            14.149999998509884
           ],
           "inputs_a": {
             "weather.chunk.annual_mean_temperature_c": 0.0,
@@ -1799,9 +1989,9 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:688049c3a084318512c08555d7005b312f2f2d06b3d3ea40df2d2417786b419e",
+          "equation_version": "sha256:f6f5d5840bdd294ac3fa50742e29bb270bfd8c7db43dc8cc58bdc9e2db39316b",
           "expected_outputs": [
-            18.6,
+            18.600000001490116,
             15.0
           ],
           "inputs_a": {
@@ -1825,7 +2015,7 @@
         "finite_interior_input:linear_interpolation"
       ],
       "equation": "clamp(output_max - (sea_level_temperature - input_min) / (input_max - input_min) * (output_max - output_min), output_min, output_max)",
-      "equation_version": "sha256:d19a58ec5326b62a5931450a7e6051604040d840ac99a37b42c35ba6a567c90a",
+      "equation_version": "sha256:ae78cfc8a2640abb8ba15cb23240d41cb218f3eca08e2415599559c3e228dc00",
       "function": "ascend.weather.mechanisms._derive_latitude_equation",
       "output": "weather.chunk.solar_latitude_proxy_deg",
       "parameters": [
@@ -1855,9 +2045,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 2.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.sea_level_temperature_c",
           "source_microstep": "world.gen_derived_a",
           "spatial_offsets": [
@@ -1870,13 +2062,17 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:a20b9697d06d121edc1d204e298753625ecf8192ff7ab9238ee4826f88f42323",
+      "resolved_version": "sha256:cc851dd2607015fd877297e5a7468ace05300ac4788dba76bdc70b66c44d7678",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:d19a58ec5326b62a5931450a7e6051604040d840ac99a37b42c35ba6a567c90a",
+          "equation_version": "sha256:ae78cfc8a2640abb8ba15cb23240d41cb218f3eca08e2415599559c3e228dc00",
           "expected_outputs": [
             80.0,
             0.0
@@ -1912,9 +2108,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.instant.temperature_c",
           "source_microstep": "weather.instant_composite",
           "spatial_offsets": [
@@ -1927,7 +2125,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:bff88c78262d548620b29ba887553f2a008425cd9f0c6baa86748fb9d18bac67",
+      "resolved_version": "sha256:5dab8e654d5da1fecc5d57fa840c5eba1bd6fd0d67a3dab1d20a8c2ab7a27b5c",
       "source_dependencies": [],
       "witnesses": [
         {
@@ -1955,7 +2153,7 @@
         "finite_interior:no_clamp"
       ],
       "equation": "clamp(baseline + seasonal_offset + diurnal_offset + perturbation * perturb_scale, lower_bound, upper_bound)",
-      "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
+      "equation_version": "sha256:99003c86c81df134667a649f5408f72b87c5cae1277f39ea567b573364c07b75",
       "function": "ascend.weather.mechanisms._humidity_equation",
       "output": "weather.instant.relative_humidity_percent",
       "parameters": [
@@ -1981,9 +2179,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.baseline_humidity_percent",
           "source_microstep": "world.gen_derived_d",
           "spatial_offsets": [
@@ -2002,9 +2202,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.offset.seasonal_humidity_pp",
           "source_microstep": "weather.instant_offset",
           "spatial_offsets": [
@@ -2023,9 +2225,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.offset.diurnal_humidity_pp",
           "source_microstep": "weather.instant_offset",
           "spatial_offsets": [
@@ -2044,9 +2248,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 15.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.field.humidity_perturbation",
           "source_microstep": "weather.frame_input",
           "spatial_offsets": [
@@ -2059,13 +2265,17 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:23db8540213629d50e233f26dedee2e7a2469ce228f6e0405d06e8dfbaaa0f4b",
+      "resolved_version": "sha256:a6329f7469834462d6953d365083cc816f04ec06ba7eea9b52df3ca8db36ca8f",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
+          "equation_version": "sha256:99003c86c81df134667a649f5408f72b87c5cae1277f39ea567b573364c07b75",
           "expected_outputs": [
             60.0,
             70.0
@@ -2087,7 +2297,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
+          "equation_version": "sha256:99003c86c81df134667a649f5408f72b87c5cae1277f39ea567b573364c07b75",
           "expected_outputs": [
             60.0,
             65.0
@@ -2109,7 +2319,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
+          "equation_version": "sha256:99003c86c81df134667a649f5408f72b87c5cae1277f39ea567b573364c07b75",
           "expected_outputs": [
             60.0,
             65.0
@@ -2131,7 +2341,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:990ac8b9e910fedc9170b483c21dfd1351a20c885547d618e156b8010575f1f3",
+          "equation_version": "sha256:99003c86c81df134667a649f5408f72b87c5cae1277f39ea567b573364c07b75",
           "expected_outputs": [
             60.0,
             75.0
@@ -2161,7 +2371,7 @@
         "finite_interior:linear_scaling"
       ],
       "equation": "0 if signal <= threshold else (min(signal, signal_max) - threshold) * intensity_scale * mean_intensity",
-      "equation_version": "sha256:45cceac19385262ae7bd0b45884d29bd49df5e1bfc38e88a02402717ecb94174",
+      "equation_version": "sha256:702d70ba421e55b6606a1860f1861102676aa2b67a1e71cc06a302ee59c34e39",
       "function": "ascend.weather.mechanisms._precipitation_intensity_equation",
       "output": "weather.instant.precipitation_intensity_mm_per_hour",
       "parameters": [
@@ -2183,9 +2393,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": 20.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.field.precipitation_signal",
           "source_microstep": "weather.frame_input",
           "spatial_offsets": [
@@ -2204,9 +2416,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": 20.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.precipitation_threshold",
           "source_microstep": "weather.chunk_derived_a",
           "spatial_offsets": [
@@ -2225,9 +2439,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": 1.9,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.mean_precip_intensity_mm_per_hour",
           "source_microstep": "world.gen_derived_d",
           "spatial_offsets": [
@@ -2240,14 +2456,19 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:726434ed3c9690b35096e1c13f4ffa848ea7b0a2f3c109acc256d600aac96b22",
-      "source_dependencies": [],
+      "resolved_version": "sha256:9727fc6b5636e6d0f285e16662c3c38cd4268e7af0c4eec4fce2f92f492e6268",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:45cceac19385262ae7bd0b45884d29bd49df5e1bfc38e88a02402717ecb94174",
+          "equation_version": "sha256:702d70ba421e55b6606a1860f1861102676aa2b67a1e71cc06a302ee59c34e39",
           "expected_outputs": [
-            1.0,
-            6.0
+            0.9999999962747097,
+            5.99999999627471
           ],
           "inputs_a": {
             "weather.chunk.mean_precip_intensity_mm_per_hour": 5.0,
@@ -2264,10 +2485,10 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:45cceac19385262ae7bd0b45884d29bd49df5e1bfc38e88a02402717ecb94174",
+          "equation_version": "sha256:702d70ba421e55b6606a1860f1861102676aa2b67a1e71cc06a302ee59c34e39",
           "expected_outputs": [
-            1.0,
-            0.5
+            0.9999999962747097,
+            0.49999999813735485
           ],
           "inputs_a": {
             "weather.chunk.mean_precip_intensity_mm_per_hour": 5.0,
@@ -2284,10 +2505,10 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:45cceac19385262ae7bd0b45884d29bd49df5e1bfc38e88a02402717ecb94174",
+          "equation_version": "sha256:702d70ba421e55b6606a1860f1861102676aa2b67a1e71cc06a302ee59c34e39",
           "expected_outputs": [
-            1.0,
-            2.0
+            0.9999999962747097,
+            1.9999999925494194
           ],
           "inputs_a": {
             "weather.chunk.mean_precip_intensity_mm_per_hour": 5.0,
@@ -2312,7 +2533,7 @@
         "finite_interior:no_clamp"
       ],
       "equation": "clamp(daylight_hours + perturbation * perturb_scale, lower_bound, upper_bound)",
-      "equation_version": "sha256:9248df20bd195f319cccbd2ed4287a921a537d19070018227b0a6fc051c5d17d",
+      "equation_version": "sha256:29101717171b82c5f069b184eba5a23a3fd6232ac2bc5f1874ff5656bc84f1bf",
       "function": "ascend.weather.mechanisms._sunshine_equation",
       "output": "weather.instant.sunshine_hours_per_day",
       "parameters": [
@@ -2338,9 +2559,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.astronomy.daylight_hours",
           "source_microstep": "weather.instant_composite",
           "spatial_offsets": [
@@ -2359,9 +2582,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.5,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.field.humidity_perturbation",
           "source_microstep": "weather.frame_input",
           "spatial_offsets": [
@@ -2374,13 +2599,17 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:9ffee2d952aa2a75023fd75126caa11bb727031637e0e8e73920606cf5507c45",
+      "resolved_version": "sha256:1c052d0ac601ad8ec7b8e034614af46ece6346edd1d64564ad7afa79d45d5d24",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:9248df20bd195f319cccbd2ed4287a921a537d19070018227b0a6fc051c5d17d",
+          "equation_version": "sha256:29101717171b82c5f069b184eba5a23a3fd6232ac2bc5f1874ff5656bc84f1bf",
           "expected_outputs": [
             12.0,
             16.0
@@ -2398,7 +2627,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:9248df20bd195f319cccbd2ed4287a921a537d19070018227b0a6fc051c5d17d",
+          "equation_version": "sha256:29101717171b82c5f069b184eba5a23a3fd6232ac2bc5f1874ff5656bc84f1bf",
           "expected_outputs": [
             12.0,
             13.5
@@ -2424,7 +2653,7 @@
         "finite_interior:no_clamp"
       ],
       "equation": "clamp(annual_temperature + seasonal_offset + diurnal_offset + perturbation * perturb_scale, lower_bound, upper_bound)",
-      "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
+      "equation_version": "sha256:fcc1964c36e66f889661c81b466e35d4b11c131482629163c5d496a6efd91fbb",
       "function": "ascend.weather.mechanisms._temperature_equation",
       "output": "weather.instant.temperature_c",
       "parameters": [
@@ -2450,9 +2679,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.annual_mean_temperature_c",
           "source_microstep": "world.gen_derived_b",
           "spatial_offsets": [
@@ -2471,9 +2702,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.offset.seasonal_temperature_c",
           "source_microstep": "weather.instant_offset",
           "spatial_offsets": [
@@ -2492,9 +2725,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.offset.diurnal_temperature_c",
           "source_microstep": "weather.instant_offset",
           "spatial_offsets": [
@@ -2513,9 +2748,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 5.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.field.temperature_perturbation",
           "source_microstep": "weather.frame_input",
           "spatial_offsets": [
@@ -2528,13 +2765,17 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:b1239de7bda2fa0d9220887a43b0528a8499de8feca75927d71bcfabe33f39b7",
+      "resolved_version": "sha256:3a211ca0f839a0bfd8e0928cdf4b0e260a2731132493b8ce9ad088940d323934",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
+          "equation_version": "sha256:fcc1964c36e66f889661c81b466e35d4b11c131482629163c5d496a6efd91fbb",
           "expected_outputs": [
             10.0,
             20.0
@@ -2556,7 +2797,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
+          "equation_version": "sha256:fcc1964c36e66f889661c81b466e35d4b11c131482629163c5d496a6efd91fbb",
           "expected_outputs": [
             10.0,
             15.0
@@ -2578,7 +2819,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
+          "equation_version": "sha256:fcc1964c36e66f889661c81b466e35d4b11c131482629163c5d496a6efd91fbb",
           "expected_outputs": [
             10.0,
             15.0
@@ -2600,7 +2841,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a5282e5d9b7b57bb653f98f94ae948baf6189d1bf85dd261aa90b83061de7049",
+          "equation_version": "sha256:fcc1964c36e66f889661c81b466e35d4b11c131482629163c5d496a6efd91fbb",
           "expected_outputs": [
             10.0,
             15.0
@@ -2630,7 +2871,7 @@
         "product_above_upper_bound:second_clamp"
       ],
       "equation": "clamp(clamp(baseline + perturbation * perturb_scale, lower_bound, upper_bound) * multiplier, lower_bound, upper_bound)",
-      "equation_version": "sha256:2374a9e2f18ae7c87aca8f31b6a9bec73cfe430e9963702359fb092d4ce2c150",
+      "equation_version": "sha256:0d12f6717c9bae0ad15599477ce8a012cafc6e3369dd6583aa16a5d6265e5578",
       "function": "ascend.weather.mechanisms._wind_equation",
       "output": "weather.instant.wind_speed_mps",
       "parameters": [
@@ -2656,9 +2897,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.baseline_wind_speed_mps",
           "source_microstep": "world.gen_derived_d",
           "spatial_offsets": [
@@ -2677,9 +2920,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 4.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.field.wind_perturbation",
           "source_microstep": "weather.frame_input",
           "spatial_offsets": [
@@ -2698,9 +2943,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": 50.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.field.wind_multiplier",
           "source_microstep": "weather.frame_input",
           "spatial_offsets": [
@@ -2713,13 +2960,17 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:d2e30f6c428a72b4b0c7d07a192a9dfd548cfec7dddcad9c344b57d0cb477e3f",
+      "resolved_version": "sha256:9433d5dd249990bf0c7e5e273c42426c95462c4c0b0601a6232cae9641bca925",
       "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py",
         "ascend.mathutil.clamp"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:2374a9e2f18ae7c87aca8f31b6a9bec73cfe430e9963702359fb092d4ce2c150",
+          "equation_version": "sha256:0d12f6717c9bae0ad15599477ce8a012cafc6e3369dd6583aa16a5d6265e5578",
           "expected_outputs": [
             5.0,
             10.0
@@ -2739,7 +2990,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:2374a9e2f18ae7c87aca8f31b6a9bec73cfe430e9963702359fb092d4ce2c150",
+          "equation_version": "sha256:0d12f6717c9bae0ad15599477ce8a012cafc6e3369dd6583aa16a5d6265e5578",
           "expected_outputs": [
             5.0,
             9.0
@@ -2759,7 +3010,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:2374a9e2f18ae7c87aca8f31b6a9bec73cfe430e9963702359fb092d4ce2c150",
+          "equation_version": "sha256:0d12f6717c9bae0ad15599477ce8a012cafc6e3369dd6583aa16a5d6265e5578",
           "expected_outputs": [
             5.0,
             10.0
@@ -2785,8 +3036,8 @@
         "zero_amplitude:zero_offset",
         "cosine_extremes:inverted"
       ],
-      "equation": "diurnal_humidity_amplitude * (-diurnal_phase_cos)",
-      "equation_version": "sha256:03f839622dae2e8457aaa21b6ee87264d4bdc65ca4af39a6a266fe4d00022758",
+      "equation": "amplitude * (-diurnal_phase_cos)",
+      "equation_version": "sha256:1f2874e42a742cc30ded2be19dfe589dff84ab7b42b82a23d73c993991d9cfc0",
       "function": "ascend.weather.mechanisms._diurnal_humidity_offset_equation",
       "output": "weather.offset.diurnal_humidity_pp",
       "parameters": [],
@@ -2799,9 +3050,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.diurnal_humidity_amplitude_pp",
           "source_microstep": "weather.chunk_derived_b",
           "spatial_offsets": [
@@ -2820,9 +3073,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 20.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.tick.diurnal_phase_cos",
           "source_microstep": "weather.instant_tick_derived",
           "spatial_offsets": [
@@ -2835,11 +3090,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:6e3a56f11e41af96a0164c3f7ee5525125f173a83a270a91da0f4928a5fe1357",
-      "source_dependencies": [],
+      "resolved_version": "sha256:c7dd5532c432087fd887c1412beeaee5abb2cc31ef64fa70ca6b6deb09e78e5a",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:03f839622dae2e8457aaa21b6ee87264d4bdc65ca4af39a6a266fe4d00022758",
+          "equation_version": "sha256:1f2874e42a742cc30ded2be19dfe589dff84ab7b42b82a23d73c993991d9cfc0",
           "expected_outputs": [
             -4.0,
             -8.0
@@ -2857,7 +3117,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:03f839622dae2e8457aaa21b6ee87264d4bdc65ca4af39a6a266fe4d00022758",
+          "equation_version": "sha256:1f2874e42a742cc30ded2be19dfe589dff84ab7b42b82a23d73c993991d9cfc0",
           "expected_outputs": [
             -2.0,
             -4.0
@@ -2881,8 +3141,8 @@
         "zero_amplitude:zero_offset",
         "cosine_extremes:plus_minus_amplitude"
       ],
-      "equation": "diurnal_amplitude * diurnal_phase_cos",
-      "equation_version": "sha256:5b340a300be9ed3fcbda35a0212e4be9d94405b89fede817265b2f3cc5c26e32",
+      "equation": "amplitude * diurnal_phase_cos",
+      "equation_version": "sha256:d413bf2a7e82d4a3a174bdc912ef0030ffee2d22b4e7b4f2db076ffd033bd727",
       "function": "ascend.weather.mechanisms._diurnal_temperature_offset_equation",
       "output": "weather.offset.diurnal_temperature_c",
       "parameters": [],
@@ -2895,9 +3155,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.diurnal_temperature_amplitude_c",
           "source_microstep": "weather.chunk_derived_b",
           "spatial_offsets": [
@@ -2916,9 +3178,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 20.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.tick.diurnal_phase_cos",
           "source_microstep": "weather.instant_tick_derived",
           "spatial_offsets": [
@@ -2931,11 +3195,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:9cf7656c526d8ca234930c412a28317999585e05e9d348e93898c2a435fbb327",
-      "source_dependencies": [],
+      "resolved_version": "sha256:e646078155c4cf20088e5bc33c5ae9a9f9561e7cff8fbb7264409ae2639bc56e",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:5b340a300be9ed3fcbda35a0212e4be9d94405b89fede817265b2f3cc5c26e32",
+          "equation_version": "sha256:d413bf2a7e82d4a3a174bdc912ef0030ffee2d22b4e7b4f2db076ffd033bd727",
           "expected_outputs": [
             5.0,
             10.0
@@ -2953,7 +3222,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:5b340a300be9ed3fcbda35a0212e4be9d94405b89fede817265b2f3cc5c26e32",
+          "equation_version": "sha256:d413bf2a7e82d4a3a174bdc912ef0030ffee2d22b4e7b4f2db076ffd033bd727",
           "expected_outputs": [
             2.5,
             5.0
@@ -2978,8 +3247,8 @@
         "sharpness_zero:cosine",
         "sharpness_positive:tanh_compression"
       ],
-      "equation": "seasonal_humidity_amplitude * (tanh(season_phase_cos * sharpness) if sharpness > 0 else season_phase_cos)",
-      "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202",
+      "equation": "amplitude * (tanh(season_phase_cos * sharpness) if sharpness > 0 else season_phase_cos)",
+      "equation_version": "sha256:4502a11d225054e9ebc2f780a13528dd02b37271d4105df96d823cb4f1d33e48",
       "function": "ascend.weather.mechanisms._seasonal_humidity_offset_equation",
       "output": "weather.offset.seasonal_humidity_pp",
       "parameters": [],
@@ -2992,9 +3261,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.seasonal_humidity_amplitude_pp",
           "source_microstep": "weather.chunk_derived_b",
           "spatial_offsets": [
@@ -3013,9 +3284,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 20.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.tick.season_phase_cos",
           "source_microstep": "weather.instant_tick_derived",
           "spatial_offsets": [
@@ -3034,9 +3307,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": 20.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.humidity_sharpness",
           "source_microstep": "world.gen_derived_d",
           "spatial_offsets": [
@@ -3049,11 +3324,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:1c48f45d6d5dd310b54c472b9747ffaffc36a723c01e8ee89e16f5338205d8bd",
-      "source_dependencies": [],
+      "resolved_version": "sha256:9f899ada3d67acf4b02c8246bac17a1355fb473441bc78c49cbaf9eba0520b21",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202",
+          "equation_version": "sha256:4502a11d225054e9ebc2f780a13528dd02b37271d4105df96d823cb4f1d33e48",
           "expected_outputs": [
             4.0,
             8.0
@@ -3073,7 +3353,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202",
+          "equation_version": "sha256:4502a11d225054e9ebc2f780a13528dd02b37271d4105df96d823cb4f1d33e48",
           "expected_outputs": [
             2.0,
             4.0
@@ -3093,10 +3373,10 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:dcdf03ece242420161168da8802dda8ed6460052700b7a570154d6b6aac1b202",
+          "equation_version": "sha256:4502a11d225054e9ebc2f780a13528dd02b37271d4105df96d823cb4f1d33e48",
           "expected_outputs": [
             2.0,
-            3.3931345598300515
+            3.3931345604360104
           ],
           "inputs_a": {
             "weather.chunk.humidity_sharpness": 0.0,
@@ -3119,8 +3399,8 @@
         "zero_amplitude:zero_offset",
         "cosine_extremes:plus_minus_amplitude"
       ],
-      "equation": "seasonal_amplitude * season_phase_cos",
-      "equation_version": "sha256:2f3688d219a99f31550fea8a0701cf1e418f9288da5f31788d85aa93428b97c0",
+      "equation": "amplitude * season_phase_cos",
+      "equation_version": "sha256:e1a36ec546c56282b3e3b5c190978082890c88891a9ee69ff18eb3fae7ecb5e9",
       "function": "ascend.weather.mechanisms._seasonal_temperature_offset_equation",
       "output": "weather.offset.seasonal_temperature_c",
       "parameters": [],
@@ -3133,9 +3413,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.seasonal_temperature_amplitude_c",
           "source_microstep": "weather.chunk_derived_a",
           "spatial_offsets": [
@@ -3154,9 +3436,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 30.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.tick.season_phase_cos",
           "source_microstep": "weather.instant_tick_derived",
           "spatial_offsets": [
@@ -3169,11 +3453,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:8e006384e6e47c9b7a5670176bd3c559d6e3277f0e93952ac8d03efb853a3207",
-      "source_dependencies": [],
+      "resolved_version": "sha256:d5e5167a38a1ea4ba0b79093855b1b8c5c76e176d47c194ee4455a26f76e7e13",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:2f3688d219a99f31550fea8a0701cf1e418f9288da5f31788d85aa93428b97c0",
+          "equation_version": "sha256:e1a36ec546c56282b3e3b5c190978082890c88891a9ee69ff18eb3fae7ecb5e9",
           "expected_outputs": [
             10.0,
             20.0
@@ -3191,7 +3480,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:2f3688d219a99f31550fea8a0701cf1e418f9288da5f31788d85aa93428b97c0",
+          "equation_version": "sha256:e1a36ec546c56282b3e3b5c190978082890c88891a9ee69ff18eb3fae7ecb5e9",
           "expected_outputs": [
             5.0,
             10.0
@@ -3234,9 +3523,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": 1.0,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": null,
           "metric": "absolute_difference",
+          "modulus_kind": "jump",
           "parent": "world.clock.tick",
           "source_microstep": "weather.frame_input",
           "spatial_offsets": [
@@ -3249,7 +3540,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:f5d871431bae1b5a8f9b2252ca8c9120a70ea63201c27061b17806d1d6678832",
+      "resolved_version": "sha256:18deb2bb14149716da5824bf868a1548e82826bd11c02a5b91c1060d01b15025",
       "source_dependencies": [],
       "witnesses": [
         {
@@ -3298,9 +3589,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": 1.0,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": null,
           "metric": "absolute_difference",
+          "modulus_kind": "jump",
           "parent": "world.clock.tick",
           "source_microstep": "weather.frame_input",
           "spatial_offsets": [
@@ -3313,7 +3606,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:d976afa9733f7a204c808e9a1730bed4fb2fd11a0b919402773558599bdef90c",
+      "resolved_version": "sha256:443f6256e407ee9997e1a7716396e1b1df7694b04bb31ae9f1446177e2f73ca0",
       "source_dependencies": [],
       "witnesses": [
         {
@@ -3339,8 +3632,8 @@
         "peak_hour:cos_one",
         "trough_hour:cos_minus_one"
       ],
-      "equation": "cos((hour - diurnal_peak_hour) / 24 * 2 * pi)",
-      "equation_version": "sha256:1a528ab898a63c1cfb6adf513e05d55f0726a4fc4deebeb8a621a950cc692271",
+      "equation": "cos((hour - peak_hour) / 24 * 2 * pi)",
+      "equation_version": "sha256:028db2292378932cca19d3ad934ddc85ed7766441bc6ab81430ac970409df3fa",
       "function": "ascend.weather.mechanisms._diurnal_phase_cos_equation",
       "output": "weather.tick.diurnal_phase_cos",
       "parameters": [
@@ -3358,9 +3651,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": 0.2617993877991494,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.tick.hour_of_day",
           "source_microstep": "weather.instant_tick_input",
           "spatial_offsets": [
@@ -3373,11 +3668,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:e91c25cc85fbc04ea6e278d78b0117c0ec629b8cbacc743c5f3ed61f4586207f",
-      "source_dependencies": [],
+      "resolved_version": "sha256:b4013218a8e3d70e61ea028966c9170150c2f367ca4d4daea9c1152d0ea85b5c",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:1a528ab898a63c1cfb6adf513e05d55f0726a4fc4deebeb8a621a950cc692271",
+          "equation_version": "sha256:028db2292378932cca19d3ad934ddc85ed7766441bc6ab81430ac970409df3fa",
           "expected_outputs": [
             1.0,
             -1.0
@@ -3400,7 +3700,7 @@
         "day_wraparound:modulo"
       ],
       "equation": "(tick % game_day) / game_hour",
-      "equation_version": "sha256:38f0d8ccb2d139fbcd2d1472e6c76a83dd908e429287c578fb81d5b854b143ca",
+      "equation_version": "sha256:6e95de4371f53acdac9fa6ace336e185b9f31335c1e1eb15a94b751e8b487edd",
       "function": "ascend.weather.mechanisms._hour_equation",
       "output": "weather.tick.hour_of_day",
       "parameters": [
@@ -3422,9 +3722,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": 24.0,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": null,
           "metric": "absolute_difference",
+          "modulus_kind": "jump",
           "parent": "world.clock.tick",
           "source_microstep": "weather.frame_input",
           "spatial_offsets": [
@@ -3437,11 +3739,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:ccd2e1b1e7fb7b53a26d37a49e8e9c345230bf3b4c548377c1029d17e4b2d11d",
-      "source_dependencies": [],
+      "resolved_version": "sha256:64afb796834a2ec74d1e55c53d94679af9e7d6ef95d6bdc84f9b248e62f1fecf",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:38f0d8ccb2d139fbcd2d1472e6c76a83dd908e429287c578fb81d5b854b143ca",
+          "equation_version": "sha256:6e95de4371f53acdac9fa6ace336e185b9f31335c1e1eb15a94b751e8b487edd",
           "expected_outputs": [
             0.0,
             1.0
@@ -3486,9 +3793,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.tick.day",
           "source_microstep": "weather.instant_tick_input",
           "spatial_offsets": [
@@ -3501,7 +3810,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:cacd12dfd3f95e608a00028f558194636295815eacdc941f8f96c97d01a741c9",
+      "resolved_version": "sha256:3938a0b251faf583fe1989845ecc7efa4db5a3b4aa55a3cd07444414eedc6890",
       "source_dependencies": [],
       "witnesses": [
         {
@@ -3527,8 +3836,8 @@
         "summer_midpoint:cos_one",
         "winter_midpoint:cos_minus_one"
       ],
-      "equation": "cos(((season + day_of_season / season_length_days) - 1.5) / seasons_per_year * 2 * pi)",
-      "equation_version": "sha256:3a3e85f16fd7350dd457537ef50de89af6c6fa8e120ccc69caf790c75f5cc6ae",
+      "equation": "cos(((((day - 1) // season_length_days % seasons_per_year) + ((day - 1) % season_length_days) / season_length_days) - 1.5) / seasons_per_year * 2 * pi)",
+      "equation_version": "sha256:49d9ad649b46647edfb344960f64a666d88fa270f5b3c06e77fabd9973995858",
       "function": "ascend.weather.mechanisms._season_phase_cos_equation",
       "output": "weather.tick.season_phase_cos",
       "parameters": [
@@ -3550,9 +3859,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": 0.017453292519943295,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.tick.day",
           "source_microstep": "weather.instant_tick_input",
           "spatial_offsets": [
@@ -3565,11 +3876,16 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:aa4246cf6797d9742c592362f686a012774261d48531decd7e56a3429c8a2ae9",
-      "source_dependencies": [],
+      "resolved_version": "sha256:1e66d56548401502f404c742c648d8082dd3f9816cad1d6910dc820308250b9b",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:3a3e85f16fd7350dd457537ef50de89af6c6fa8e120ccc69caf790c75f5cc6ae",
+          "equation_version": "sha256:49d9ad649b46647edfb344960f64a666d88fa270f5b3c06e77fabd9973995858",
           "expected_outputs": [
             0.0,
             1.0
@@ -3592,7 +3908,7 @@
         "solstice:max_declination"
       ],
       "equation": "radians(obliquity_deg * sin(2 * pi * (day_of_year - days_per_year / 8) / days_per_year))",
-      "equation_version": "sha256:26ccd4705b264127f6aa3e4a3690d671d4f20e72a1c98afe3ae755759d01b730",
+      "equation_version": "sha256:81c6b7370d96a7cd227510823652083525cc15e4f599e6c48abfbb5af76d6966",
       "function": "ascend.weather.mechanisms._solar_declination_equation",
       "output": "weather.tick.solar_declination_rad",
       "parameters": [
@@ -3614,9 +3930,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": 0.00714023231980045,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.tick.day_of_year",
           "source_microstep": "weather.instant_tick_input",
           "spatial_offsets": [
@@ -3629,14 +3947,19 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:dad909e789b62bc007e8cc1b379b516329c158be4018af6358f472a52684e9b1",
-      "source_dependencies": [],
+      "resolved_version": "sha256:0cfd1b6875daf8ae3ce06283295695e6cc6eb0f2bee29f79e1ef6eebae507012",
+      "source_dependencies": [
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/diurnal.py",
+        "ascend/num/frozen_tables.py"
+      ],
       "witnesses": [
         {
-          "equation_version": "sha256:26ccd4705b264127f6aa3e4a3690d671d4f20e72a1c98afe3ae755759d01b730",
+          "equation_version": "sha256:81c6b7370d96a7cd227510823652083525cc15e4f599e6c48abfbb5af76d6966",
           "expected_outputs": [
             0.0,
-            0.40910517666747087
+            0.4091051733121276
           ],
           "inputs_a": {
             "weather.tick.day_of_year": 45
@@ -3656,8 +3979,8 @@
         "land:climate_subdivision_membership",
         "no_subdivision_config:temperate_deciduous_fallback"
       ],
-      "equation": "海洋按海面温度三档；陆地按气候档 + 细分维度三角隶属取主型（静态细分值域；大陆动态 subdiv_ranges 不在本切片）",
-      "equation_version": "sha256:f5b5d5f4d9d934a88fd98fdb38d83e5a98d7ec9e09d6e18e7e9010a00eeca2e0",
+      "equation": "海洋按海面温度三档；陆地按气候档 + 细分维度三角隶属取主型（定点 Q30；静态细分值域，动态 subdiv_ranges 属大陆管线边界）",
+      "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
       "function": "ascend.space.mechanisms._biome_equation",
       "output": "world.gen.biome",
       "parameters": [],
@@ -3670,9 +3993,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.annual_mean_temperature_c",
           "source_microstep": "world.gen_derived_b",
           "spatial_offsets": [
@@ -3691,9 +4016,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.annual_rainfall_mm_per_year",
           "source_microstep": "world.gen_derived_a",
           "spatial_offsets": [
@@ -3712,9 +4039,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "world.gen.altitude_m",
           "source_microstep": "world.gen_input",
           "spatial_offsets": [
@@ -3733,9 +4062,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.sea_level_temperature_c",
           "source_microstep": "world.gen_derived_a",
           "spatial_offsets": [
@@ -3754,9 +4085,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "world.gen.moisture_noise",
           "source_microstep": "world.gen_input",
           "spatial_offsets": [
@@ -3769,18 +4102,21 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:3b39bdf6aad19c809c8f6c47babc08e264ca66f2e8d73773b0d86200afbc5b8b",
+      "resolved_version": "sha256:587821f70e4e0a61d9c86e5dfd3e4e65ea28810c9d21c949767efea048db6a25",
       "source_dependencies": [
+        "ascend/space/gen_fixed.py",
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/frozen_tables.py",
         "ascend/space/biome.py",
         "ascend/space/climate.py",
-        "ascend/space/_hydrology.c",
-        "ascend/space/hydrology.py",
         "ascend/config.py",
-        "world.json"
+        "world.json",
+        "biome.json"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:f5b5d5f4d9d934a88fd98fdb38d83e5a98d7ec9e09d6e18e7e9010a00eeca2e0",
+          "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
           "expected_outputs": [
             9,
             17
@@ -3804,7 +4140,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:f5b5d5f4d9d934a88fd98fdb38d83e5a98d7ec9e09d6e18e7e9010a00eeca2e0",
+          "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
           "expected_outputs": [
             9,
             4
@@ -3828,7 +4164,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:f5b5d5f4d9d934a88fd98fdb38d83e5a98d7ec9e09d6e18e7e9010a00eeca2e0",
+          "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
           "expected_outputs": [
             9,
             2
@@ -3852,7 +4188,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:f5b5d5f4d9d934a88fd98fdb38d83e5a98d7ec9e09d6e18e7e9010a00eeca2e0",
+          "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
           "expected_outputs": [
             17,
             16
@@ -3876,7 +4212,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:f5b5d5f4d9d934a88fd98fdb38d83e5a98d7ec9e09d6e18e7e9010a00eeca2e0",
+          "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
           "expected_outputs": [
             4,
             5
@@ -3908,8 +4244,8 @@
         "rainfall_below_desert_threshold:DESERT",
         "decision_tree_priority_order"
       ],
-      "equation": "8 档静态决策树（C 单源，阈值由 config 经 hydrology 注入）",
-      "equation_version": "sha256:34b946722a01ed3a25cd46e52031acff21fc0e21afa7f975bf03a9b03311214e",
+      "equation": "8 档静态决策树（定点量化域整数比较，阈值由 config 注入）",
+      "equation_version": "sha256:6cda37520de5fabe7f08a436a1037d4d7e92002335aaa254b97d2b60521e4330",
       "function": "ascend.space.mechanisms._climate_zone_equation",
       "output": "world.gen.climate_zone",
       "parameters": [],
@@ -3922,9 +4258,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.annual_mean_temperature_c",
           "source_microstep": "world.gen_derived_b",
           "spatial_offsets": [
@@ -3943,9 +4281,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.annual_rainfall_mm_per_year",
           "source_microstep": "world.gen_derived_a",
           "spatial_offsets": [
@@ -3964,9 +4304,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "world.gen.altitude_m",
           "source_microstep": "world.gen_input",
           "spatial_offsets": [
@@ -3979,17 +4321,18 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:be333c8e7abf842a8bd58691bc98cbb3f45738bdb3a7952c1a46ce6e3adc5355",
+      "resolved_version": "sha256:e5be26f6b99dad6908eb667b1eb0588a856187523a1fbb595134c5e673751858",
       "source_dependencies": [
-        "ascend/space/_hydrology.c",
-        "ascend/space/hydrology.py",
-        "ascend/space/climate.py",
+        "ascend/space/gen_fixed.py",
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/frozen_tables.py",
         "ascend/config.py",
         "world.json"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:34b946722a01ed3a25cd46e52031acff21fc0e21afa7f975bf03a9b03311214e",
+          "equation_version": "sha256:6cda37520de5fabe7f08a436a1037d4d7e92002335aaa254b97d2b60521e4330",
           "expected_outputs": [
             4,
             7
@@ -4009,7 +4352,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:34b946722a01ed3a25cd46e52031acff21fc0e21afa7f975bf03a9b03311214e",
+          "equation_version": "sha256:6cda37520de5fabe7f08a436a1037d4d7e92002335aaa254b97d2b60521e4330",
           "expected_outputs": [
             4,
             2
@@ -4029,7 +4372,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:34b946722a01ed3a25cd46e52031acff21fc0e21afa7f975bf03a9b03311214e",
+          "equation_version": "sha256:6cda37520de5fabe7f08a436a1037d4d7e92002335aaa254b97d2b60521e4330",
           "expected_outputs": [
             4,
             1
@@ -4057,8 +4400,8 @@
         "temperature_below_-20:clamp",
         "temperature_above_36:clamp"
       ],
-      "equation": "sea_level_temperature - altitude * lapse_rate / 1000 for altitude > 0 else sea_level_temperature, clamp [-20, 36]（C 单源）",
-      "equation_version": "sha256:4fd0b9908473bf54e56ccaa741c5bc0b582b5f46f6a57943f61cae6c6db71846",
+      "equation": "sea_level_temperature - altitude * lapse_rate / 1000 for altitude > 0 else sea_level_temperature, clamp [-20, 36]（定点 Q30）",
+      "equation_version": "sha256:d6d2d2ac504fb70b3489afa8a02384c16ee98bea780e414510a341606c816de6",
       "function": "ascend.space.mechanisms._lapse_rate_equation",
       "output": "weather.chunk.annual_mean_temperature_c",
       "parameters": [],
@@ -4071,9 +4414,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "weather.chunk.sea_level_temperature_c",
           "source_microstep": "world.gen_derived_a",
           "spatial_offsets": [
@@ -4092,9 +4437,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 0.009,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "world.gen.altitude_m",
           "source_microstep": "world.gen_input",
           "spatial_offsets": [
@@ -4107,17 +4454,18 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:0eae30a42d3c980e41572542e046f99bc9b0d8bd004db1ad280d0582ba0bab60",
+      "resolved_version": "sha256:e6cde19b78c52fde684a0c9f89b0bb543f030b44d2c6a61b7704e000465af8fe",
       "source_dependencies": [
-        "ascend/space/_hydrology.c",
-        "ascend/space/hydrology.py",
-        "ascend/space/climate.py",
+        "ascend/space/gen_fixed.py",
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/frozen_tables.py",
         "ascend/config.py",
         "world.json"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:4fd0b9908473bf54e56ccaa741c5bc0b582b5f46f6a57943f61cae6c6db71846",
+          "equation_version": "sha256:d6d2d2ac504fb70b3489afa8a02384c16ee98bea780e414510a341606c816de6",
           "expected_outputs": [
             10.0,
             20.0
@@ -4135,7 +4483,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:4fd0b9908473bf54e56ccaa741c5bc0b582b5f46f6a57943f61cae6c6db71846",
+          "equation_version": "sha256:d6d2d2ac504fb70b3489afa8a02384c16ee98bea780e414510a341606c816de6",
           "expected_outputs": [
             10.0,
             1.0
@@ -4160,8 +4508,8 @@
         "noise_plus_one:rainfall_max",
         "finite_interior:linear_mapping"
       ],
-      "equation": "clamp(rainfall_min + (noise + 1) * 0.5 * (rainfall_max - rainfall_min), 0, 5000)（C 单源，min/max 由 config 注入）",
-      "equation_version": "sha256:7118fd28f383a6780c0fd686403a71706ae86273f9dbb40a304a939725d42607",
+      "equation": "clamp(rainfall_min + (noise + 1) * 0.5 * (rainfall_max - rainfall_min), 0, 5000)（定点 Q30，min/max 由 config 注入）",
+      "equation_version": "sha256:eaa74cd2ad9c8d1f4c7265bcdb094f52ea54f615c808856ad18764fe4cf67dd0",
       "function": "ascend.space.mechanisms._rainfall_equation",
       "output": "weather.chunk.annual_rainfall_mm_per_year",
       "parameters": [],
@@ -4174,9 +4522,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 1725.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "world.gen.rainfall_noise",
           "source_microstep": "world.gen_input",
           "spatial_offsets": [
@@ -4189,20 +4539,21 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:8a3dbd5e401e829b935176249cf602523289cb1a6590850fb9aa7863c532c900",
+      "resolved_version": "sha256:4d5c7de52222ebca778e044ad9a3f30da9506056509573fb49b4b37eae21c66b",
       "source_dependencies": [
-        "ascend/space/_hydrology.c",
-        "ascend/space/hydrology.py",
-        "ascend/space/climate.py",
+        "ascend/space/gen_fixed.py",
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/frozen_tables.py",
         "ascend/config.py",
         "world.json"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:7118fd28f383a6780c0fd686403a71706ae86273f9dbb40a304a939725d42607",
+          "equation_version": "sha256:eaa74cd2ad9c8d1f4c7265bcdb094f52ea54f615c808856ad18764fe4cf67dd0",
           "expected_outputs": [
             1775.0,
-            2465.0
+            2465.0000006426126
           ],
           "inputs_a": {
             "world.gen.rainfall_noise": 0.0
@@ -4223,7 +4574,7 @@
         "finite_interior:linear_interpolation"
       ],
       "equation": "clamp(template_humidity_lo + (noise + 1) * 0.5 * (template_humidity_hi - template_humidity_lo), 0, 100)（模板数据 data/climate.json）",
-      "equation_version": "sha256:4a96fb3058be0a95d653bb8f986d2ab191ff613489941ba114866cb559063d57",
+      "equation_version": "sha256:aa2dc9b8bb353d700d39ef60ac049d874d01314e224ee2e1b29f70192fb4968e",
       "function": "ascend.space.mechanisms._baseline_humidity_equation",
       "output": "weather.chunk.baseline_humidity_percent",
       "parameters": [],
@@ -4236,9 +4587,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": 90.0,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": null,
           "metric": "absolute_difference",
+          "modulus_kind": "jump",
           "parent": "world.gen.climate_zone",
           "source_microstep": "world.gen_derived_c",
           "spatial_offsets": [
@@ -4257,9 +4610,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": 20.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "world.gen.humidity_noise",
           "source_microstep": "world.gen_input",
           "spatial_offsets": [
@@ -4272,18 +4627,21 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:7bc9868c84ef4d3cad2be90b21160596023106fc0b398d8a4355e5bfdf93a8f6",
+      "resolved_version": "sha256:4a5fb9adc34abae48d79ad2c225a5e7e59d0ef92e3db7fea1cb365b5056f1856",
       "source_dependencies": [
         "ascend/space/climate.py",
         "climate.json",
         "ascend/config.py",
         "world.json",
         "ascend.mathutil.clamp",
-        "ascend.space.climate.get_climate_template"
+        "ascend.space.climate.get_climate_template",
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/frozen_tables.py"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:4a96fb3058be0a95d653bb8f986d2ab191ff613489941ba114866cb559063d57",
+          "equation_version": "sha256:aa2dc9b8bb353d700d39ef60ac049d874d01314e224ee2e1b29f70192fb4968e",
           "expected_outputs": [
             62.5,
             80.0
@@ -4301,7 +4659,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:4a96fb3058be0a95d653bb8f986d2ab191ff613489941ba114866cb559063d57",
+          "equation_version": "sha256:aa2dc9b8bb353d700d39ef60ac049d874d01314e224ee2e1b29f70192fb4968e",
           "expected_outputs": [
             62.5,
             17.5
@@ -4327,7 +4685,7 @@
         "finite_interior:linear_interpolation"
       ],
       "equation": "clamp(template_wind_lo + (noise + 1) * 0.5 * (template_wind_hi - template_wind_lo), 0, 50)（模板数据 data/climate.json）",
-      "equation_version": "sha256:4267a66e128049500a752448c94005db85459be2da0faba48bfd9fe825982875",
+      "equation_version": "sha256:ebc4995f3f2cfb6b740cb9dfaf75efa698d9f8ea35806bb8aeb0814d88916549",
       "function": "ascend.space.mechanisms._baseline_wind_speed_equation",
       "output": "weather.chunk.baseline_wind_speed_mps",
       "parameters": [],
@@ -4340,9 +4698,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": 25.0,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": null,
           "metric": "absolute_difference",
+          "modulus_kind": "jump",
           "parent": "world.gen.climate_zone",
           "source_microstep": "world.gen_derived_c",
           "spatial_offsets": [
@@ -4361,9 +4721,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": 11.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "world.gen.wind_noise",
           "source_microstep": "world.gen_input",
           "spatial_offsets": [
@@ -4376,18 +4738,21 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:8fed005a4e9174391eb0cf3c01abd8e275095e26d1fc77c2eb3cdc8c5e1fbbd9",
+      "resolved_version": "sha256:fce180ceb50e99188f1c25401a758e3e200948d0a58938dd20e1743e9c8b4c00",
       "source_dependencies": [
         "ascend/space/climate.py",
         "climate.json",
         "ascend/config.py",
         "world.json",
         "ascend.mathutil.clamp",
-        "ascend.space.climate.get_climate_template"
+        "ascend.space.climate.get_climate_template",
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/frozen_tables.py"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:4267a66e128049500a752448c94005db85459be2da0faba48bfd9fe825982875",
+          "equation_version": "sha256:ebc4995f3f2cfb6b740cb9dfaf75efa698d9f8ea35806bb8aeb0814d88916549",
           "expected_outputs": [
             6.0,
             12.0
@@ -4405,7 +4770,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:4267a66e128049500a752448c94005db85459be2da0faba48bfd9fe825982875",
+          "equation_version": "sha256:ebc4995f3f2cfb6b740cb9dfaf75efa698d9f8ea35806bb8aeb0814d88916549",
           "expected_outputs": [
             6.0,
             3.0
@@ -4429,7 +4794,7 @@
         "per_zone_lookup:data_contract"
       ],
       "equation": "climate_template.humidity_sharpness（数据契约）",
-      "equation_version": "sha256:8e1684ad714e8a696c4a3f4f813eeda680458cfc1133d9f7a966e8248b2ee316",
+      "equation_version": "sha256:5f0b0ff0def3be84ddd21271c71531f41295e452fbdd5aa091a7fc1752678bc8",
       "function": "ascend.space.mechanisms._humidity_sharpness_equation",
       "output": "weather.chunk.humidity_sharpness",
       "parameters": [],
@@ -4442,9 +4807,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": 2.5,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": null,
           "metric": "absolute_difference",
+          "modulus_kind": "jump",
           "parent": "world.gen.climate_zone",
           "source_microstep": "world.gen_derived_c",
           "spatial_offsets": [
@@ -4457,18 +4824,21 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:f7a0b9d08b6c6c3659501621ba49e4952438e8b611f30efc062cdce20f27741b",
+      "resolved_version": "sha256:b80a5f74a9de4b91abb8aa91de3bc27f5f603b20876a51ca6d2ac4a8dc686309",
       "source_dependencies": [
         "ascend/space/climate.py",
         "climate.json",
         "ascend/config.py",
         "world.json",
         "ascend.mathutil.clamp",
-        "ascend.space.climate.get_climate_template"
+        "ascend.space.climate.get_climate_template",
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/frozen_tables.py"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:8e1684ad714e8a696c4a3f4f813eeda680458cfc1133d9f7a966e8248b2ee316",
+          "equation_version": "sha256:5f0b0ff0def3be84ddd21271c71531f41295e452fbdd5aa091a7fc1752678bc8",
           "expected_outputs": [
             0.0,
             2.5
@@ -4490,7 +4860,7 @@
         "per_zone_lookup:data_contract"
       ],
       "equation": "climate_template.mean_precip_intensity（数据契约）",
-      "equation_version": "sha256:120c284783ddc645d3be340b106175340af283a9441c25c7ec86d2d6f12639be",
+      "equation_version": "sha256:224a2e3efb5860e128e5380ddd616f37f9bd9271cea5bf9d93c9f8fb14cae484",
       "function": "ascend.space.mechanisms._mean_precip_intensity_equation",
       "output": "weather.chunk.mean_precip_intensity_mm_per_hour",
       "parameters": [],
@@ -4503,9 +4873,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": 8.0,
           "lag": 0,
-          "lipschitz": 0.0,
+          "lipschitz": null,
           "metric": "absolute_difference",
+          "modulus_kind": "jump",
           "parent": "world.gen.climate_zone",
           "source_microstep": "world.gen_derived_c",
           "spatial_offsets": [
@@ -4518,18 +4890,21 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:2869f55a4ee44311f283e05f451d2caef07a0790446f0dee6fa588773daf00a4",
+      "resolved_version": "sha256:1f7ddde1c870a412a7afe4e6eacea1b73ea1e153b909931758a922c7ea531890",
       "source_dependencies": [
         "ascend/space/climate.py",
         "climate.json",
         "ascend/config.py",
         "world.json",
         "ascend.mathutil.clamp",
-        "ascend.space.climate.get_climate_template"
+        "ascend.space.climate.get_climate_template",
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/frozen_tables.py"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:120c284783ddc645d3be340b106175340af283a9441c25c7ec86d2d6f12639be",
+          "equation_version": "sha256:224a2e3efb5860e128e5380ddd616f37f9bd9271cea5bf9d93c9f8fb14cae484",
           "expected_outputs": [
             5.0,
             10.0
@@ -4552,8 +4927,8 @@
         "noise_above_1.12:clamp_to_38",
         "finite_interior:linear_mapping"
       ],
-      "equation": "clamp(latitude_noise * 25 + 10, -20, 38)（C 单源 _hydrology.c）",
-      "equation_version": "sha256:0dbb66946a13b00da067b9747dc69d9a228d8ceb75020462e208a2ac57bb3ab3",
+      "equation": "clamp(latitude_noise * 25 + 10, -20, 38)（定点 Q30，issue #52）",
+      "equation_version": "sha256:77967088f3226859a74c9b9aebed3269fe5d2b25efcc0370264b094f7b7f8f49",
       "function": "ascend.space.mechanisms._sea_level_temperature_equation",
       "output": "weather.chunk.sea_level_temperature_c",
       "parameters": [],
@@ -4566,9 +4941,11 @@
           "broadcast": "same_instance",
           "entity_relation": "same_chunk",
           "guard": "always",
+          "jump_bound": null,
           "lag": 0,
           "lipschitz": 25.0,
           "metric": "absolute_difference",
+          "modulus_kind": "linear",
           "parent": "world.gen.latitude_noise",
           "source_microstep": "world.gen_input",
           "spatial_offsets": [
@@ -4581,20 +4958,21 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:896968d40ed4b159aa4afcb7e62e0025bcfb63458f3e8def69895ed7353b5a4e",
+      "resolved_version": "sha256:cdb6354610476974d907d657132cef00906a054a04892337eca8a7182f5f1d90",
       "source_dependencies": [
-        "ascend/space/_hydrology.c",
-        "ascend/space/hydrology.py",
-        "ascend/space/climate.py",
+        "ascend/space/gen_fixed.py",
+        "ascend/num/fixed.py",
+        "ascend/num/tables.py",
+        "ascend/num/frozen_tables.py",
         "ascend/config.py",
         "world.json"
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:0dbb66946a13b00da067b9747dc69d9a228d8ceb75020462e208a2ac57bb3ab3",
+          "equation_version": "sha256:77967088f3226859a74c9b9aebed3269fe5d2b25efcc0370264b094f7b7f8f49",
           "expected_outputs": [
             10.0,
-            20.0
+            20.000000009313226
           ],
           "inputs_a": {
             "world.gen.latitude_noise": 0.0
@@ -4614,8 +4992,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4666,8 +5043,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4718,8 +5094,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4770,8 +5145,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4819,8 +5193,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4868,8 +5241,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4920,8 +5292,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -4972,8 +5343,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5024,8 +5394,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5076,8 +5445,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5128,8 +5496,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5166,8 +5533,8 @@
       },
       "value": {
         "bounds": [
-          0.0,
-          100.0
+          2.0,
+          10.0
         ],
         "choices": [],
         "kind": "float",
@@ -5180,8 +5547,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5199,7 +5565,7 @@
         "kind": "spatial_field"
       },
       "math": {
-        "error_budget": 0.01,
+        "error_budget": 0.0,
         "metric": "absolute_difference",
         "valid_domain": "closed_interval_wet_to_dry"
       },
@@ -5232,8 +5598,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5284,8 +5649,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5336,8 +5700,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5388,8 +5751,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5680,8 +6042,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5732,8 +6093,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5784,8 +6144,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5836,8 +6195,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5888,8 +6246,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5940,8 +6297,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -5992,8 +6348,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6044,8 +6399,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6096,8 +6450,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6148,8 +6501,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6200,8 +6552,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6246,8 +6597,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6295,8 +6645,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6344,8 +6693,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6393,8 +6741,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6444,8 +6791,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6493,8 +6839,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6629,8 +6974,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -6698,8 +7042,7 @@
       "access": {
         "interventions": [
           "node",
-          "persistent",
-          "mechanism"
+          "persistent"
         ],
         "observation_protocols": [
           "research.full.v1",
@@ -7755,8 +8098,8 @@
     },
     "weather.chunk.mean_precip_intensity_mm_per_hour": {
       "bounds": [
-        0.0,
-        100.0
+        2.0,
+        10.0
       ],
       "domain": "continuous",
       "eps": 0.1,
@@ -7768,7 +8111,7 @@
         0.55
       ],
       "domain": "continuous",
-      "eps": 0.01,
+      "eps": 0.0,
       "exogenous": false
     },
     "weather.chunk.sea_level_temperature_c": {

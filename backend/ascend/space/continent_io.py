@@ -19,15 +19,14 @@ logger = get_logger(__name__)
 
 # 大陆缓存格式版本：仅标识当前二进制格式，不追溯历史版本——
 # 格式变更时保持递增，任何版本字节不匹配的旧缓存一律
-# 反序列化失败 → 重新生成。生成算法/调参变化不使缓存失效
-# （每个存档的大陆在创建时定案），头部 gen_fingerprint 字段
-# 仅用于加载时的漂移诊断（告警 + continent status 查询）。
+# 反序列化失败 → 重新生成。头部 gen_fingerprint 字段标识生成环境，
+# 加载时与当前指纹不一致即拒绝加载（fail-closed，见 generator）。
 CONTINENT_CACHE_VERSION: int = 1
 
 # ── 二进制序列化（显式 schema，非 pickle） ────────────────
 # 布局（小端）:
 #   magic "ASCNT" + version u8
-#   gen_fingerprint  u32 字节长度 + utf-8 字节（生成环境指纹，诊断用）
+#   gen_fingerprint  u32 字节长度 + utf-8 字节（生成环境指纹，加载校验用）
 #   seed 32B 大端（256-bit 世界种子，0..2**256-1 全量序列化）
 #   grid_width i32, grid_height i32, cell_size f64
 #   land_ratio f64
@@ -47,7 +46,9 @@ CONTINENT_CACHE_VERSION: int = 1
 #         + i32 source_idx + i32 outlet_idx + u32 pn + pn×i32
 #       node_grid u32 count; each: i32 key, i32 x, i32 y
 #   subdiv_ranges  u32 count; each: i32 zone, f64 p10, f64 p90
+#                （派生缓存：读入后丢弃，见 deserialize_continent）
 #   chunk_climate  u32 count; each: i32 cx, i32 cy, f64×3, i32 zone
+#                （派生缓存：读入后丢弃，见 deserialize_continent）
 # 网格字段（land_mask/elevation/river_width/flow_acc/directions/
 # filled_dem）长度须 == grid_width × grid_height（防截断/篡改）。
 _MAGIC: bytes = b"ASCNT"
@@ -174,7 +175,11 @@ def serialize_continent(data: ContinentData) -> bytes:
     落盘缓存后读档直接反序列化恢复，秒级完成。
 
     显式二进制 schema（见模块注释）：无代码执行面，随档分发安全。
+
+    末尾两个派生缓存段（subdiv_ranges/chunk_climate）在加载时被丢弃
+    并重算；此处仍写出，保持格式兼容（旧构建可读，字段不缩水）。
     """
+    data.ensure_derived_caches()  # 加载后回写：先按当前算法补建，不写空段
     buf = io.BytesIO()
     buf.write(_MAGIC)
     _w_u8(buf, CONTINENT_CACHE_VERSION)
@@ -238,6 +243,11 @@ def serialize_continent(data: ContinentData) -> bytes:
 
 def deserialize_continent(raw: bytes) -> "ContinentData | None":
     """压缩字节 → ContinentData。
+
+    末尾两个派生缓存段（subdiv_ranges/chunk_climate）按格式读入并保留：
+    它们与宏观场同源写入、受 gen_fingerprint 背书（算法不一致在生成器
+    加载路径 fail-closed），加载即信任。缺派生段的旧格式由加载方经
+    ContinentData.attach_derived_rebuilder 注入重建入口惰性重算。
 
     Returns:
         ContinentData；格式/版本不符、数据损坏或截断时返回 None
@@ -340,18 +350,20 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
         subdiv_count = r.i32()
         if subdiv_count < 0:
             return None
-        subdiv_ranges = {}
+        subdiv_ranges: dict[int, tuple[float, float]] = {}
         for _ in range(subdiv_count):
             zone = r.i32()
             subdiv_ranges[zone] = (r.f64(), r.f64())
         climate_count = r.i32()
         if climate_count < 0:
             return None
-        chunk_climate = {}
+        chunk_climate: dict = {}
         for _ in range(climate_count):
             cx = r.i32()
             cy = r.i32()
-            chunk_climate[(cx, cy)] = (r.f64(), r.f64(), r.f64(), r.i32())
+            chunk_climate[(cx, cy)] = (
+                r.f64(), r.f64(), r.f64(), r.i32(),
+            )
         return ContinentData(
             seed=int(seed),
             grid_width=width, grid_height=height, cell_size=cell_size,
@@ -360,7 +372,14 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
             land_mask=land_mask, elevation_field=elevation,
             river_width=river_width, water_distance=water_distance,
             hydrology=hydrology,
-            subdiv_ranges=subdiv_ranges, _chunk_climate=chunk_climate,
+            # 派生缓存随缓存持久化：写入时与宏观场同源、同一算法，且
+            # gen_fingerprint 已背书算法一致（不一致在生成器加载路径
+            # fail-closed）。加载即信任，不做"按当前算法重算"——重算
+            # 输入（侵蚀前气候场）不落盘，与生成值非逐位一致，会静默
+            # 改变读档后的轨迹。缺派生段的旧格式由加载路径注入重建入口。
+            _subdiv_ranges=subdiv_ranges,
+            _chunk_climate=chunk_climate,
+            _derived_ready=True,
         )
     except (struct.error, zlib.error, ValueError, IndexError) as exc:
         # 截断/篡改数据 → 缓存失效重新生成（有日志，便于区分真 bug）

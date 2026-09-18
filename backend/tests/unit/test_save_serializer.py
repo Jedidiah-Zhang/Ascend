@@ -66,7 +66,6 @@ class TestCollectState:
         state = collect_state(clock, player, None, archive_max_timestamp=0)
         assert state["weather"] == {
             "interventions": {"plan": [], "records": []},
-            "feature_cores": [],
         }
 
 

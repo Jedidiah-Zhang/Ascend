@@ -310,14 +310,17 @@ class TestWorldProcessEntry:
             engine.weather_engine.force_feature(
                 chunk[0], chunk[1], "storm", True,
             )
-            engine._save_state_now()
+            engine._final_pulse()
             state = engine.save_manager.read_state(world_id)
-            # 节点干预 + 特征核控制各一条（后者由 force_feature 登记）
-            assert [
-                plan["target_space"]
-                for plan in state["weather"]["interventions"]["plan"]
-            ] == ["node", "field_feature"]
-            assert len(state["weather"]["feature_cores"]) == 1
+            # 节点干预 + 特征核控制各一条（后者由 force_feature 登记；
+            # 注入核由时间线投影，不作为状态入档：#51/WC-6.5）
+            plan = state["weather"]["interventions"]["plan"]
+            assert [entry["target_space"] for entry in plan] == [
+                "node", "field_feature",
+            ]
+            assert "feature_cores" not in state["weather"]
+            assert plan[1]["value"]["active"] is True
+            assert "spec" in plan[1]["value"]
             assert engine.save_manager.get_manifest(
                 world_id,
             ).mechanism_declaration["declaration_hash"] == \
@@ -369,7 +372,7 @@ class TestWorldProcessEntry:
             engine.chunk_store._cache.pop(chunk, None)
             engine._on_chunk_evicted(*chunk)
             assert not engine.weather_engine.has_chunk(*chunk)
-            engine._save_state_now()
+            engine._final_pulse()
         finally:
             engine.stop()
 
@@ -414,7 +417,7 @@ class TestWorldProcessEntry:
             assert chunk.integrated_through == 30 * GAME_DAY, \
                 "前提：chunk 已积分到 day 31"
             state_before = bytes(chunk.tile_grid.state_raw("snow"))
-            engine._save_state_now()
+            engine._final_pulse()
         finally:
             engine.stop()
 
@@ -745,10 +748,11 @@ class TestWorldProcessEntry:
 
 
 class TestSavePulseEndToEnd:
-    """保存脉搏端到端（Issue #40）：事件跨重启持久化 + 快照含近期事件。
+    """保存脉搏端到端（Issue #40 / #51）：事件跨重启持久化 + 快照含近期事件。
 
-    _final_pulse() 同步执行完整脉搏（事件 flush → state → chunk），
-    确定性模拟保存线程的落盘（不等真实 SAVE_PULSE_INTERVAL）。
+    `_final_pulse()` 同步执行完整脉搏（帧边界捕获 + 事件 flush → state
+    → chunk 提交 → manifest，任一步失败即失败），确定性模拟保存线程的
+    落盘（不等真实 SAVE_PULSE_INTERVAL）。
     """
 
     def _publish_chain(self):

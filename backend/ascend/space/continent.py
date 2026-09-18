@@ -244,18 +244,9 @@ class ContinentGenerator:
         )
 
         # Step 8: 提取 chunk 级气候缓存（校准后值，供 tile_gen 等模块使用）
-        chunk_climate: dict = {}
-        for cy in range(h // 2):
-            for cx in range(w // 2):
-                idx = (cy * 2 + 1) * w + (cx * 2 + 1)
-                alt = elevation[idx]
-                temp = temp_field[idx]
-                rain = rain_field[idx]
-                zone = climate_field[idx]
-                # 海平面温度 = 地表温度 + 海拔×直减率（直减率仅作用于
-                # 陆地；海域 alt<0，sea_temp = 地表温度 = 海面温度）
-                sea_temp = temp + max(0.0, alt) * LAPSE_RATE / 1000.0
-                chunk_climate[(cx, cy)] = (temp, rain, sea_temp, zone)
+        chunk_climate = self._extract_chunk_climate(
+            elevation, temp_field, rain_field, climate_field, w, h,
+        )
 
         _report(self.STAGE_DONE)
         return ContinentData(
@@ -268,7 +259,7 @@ class ContinentGenerator:
             river_width=array('d', river_width),
             water_distance=water_distance,
             hydrology=hydrology,
-            subdiv_ranges=subdiv_ranges,
+            _subdiv_ranges=subdiv_ranges,
             _chunk_climate=chunk_climate,
         )
 
@@ -602,6 +593,37 @@ class ContinentGenerator:
                             climate_field[ni] = int(mzone)
 
     # ── 群系细分动态值域 ────────────────────────────────────
+
+    @staticmethod
+    def _extract_chunk_climate(
+        elevation: list[float],
+        temp: list[float],
+        rain: list[float],
+        climate_field: list[int],
+        w: int, h: int,
+    ) -> dict:
+        """从校准后场提取 chunk 中心气候缓存。
+
+        生成（generate Step 8）与加载重建（WorldGenerator.
+        _rebuild_derived_caches）共用——派生缓存重算必须与生成同式。
+
+        Returns:
+            {(cx, cy): (mean_temp, annual_rainfall, sea_level_temp, zone)}；
+            海平面温度 = 地表温度 + 海拔×直减率（直减率仅作用于陆地；
+            海域 alt<0，sea_temp = 地表温度 = 海面温度）。
+        """
+        chunk_climate: dict = {}
+        for cy in range(h // 2):
+            for cx in range(w // 2):
+                idx = (cy * 2 + 1) * w + (cx * 2 + 1)
+                alt = elevation[idx]
+                temp_v = temp[idx]
+                rain_v = rain[idx]
+                sea_temp = temp_v + max(0.0, alt) * LAPSE_RATE / 1000.0
+                chunk_climate[(cx, cy)] = (
+                    temp_v, rain_v, sea_temp, climate_field[idx],
+                )
+        return chunk_climate
 
     @staticmethod
     def _compute_subdiv_ranges(

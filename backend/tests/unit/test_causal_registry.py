@@ -484,15 +484,22 @@ class TestIndependentReferenceParity:
                     if isinstance(got, int):
                         assert got == want
                     else:
-                        assert got == pytest.approx(want, abs=1e-12)
+                        # 全链统一容差 2e-3：迁定点+冻表的节点其差 =
+                        # 声明的内核误差（OFFSET_MAX_ERROR=1e-3，经
+                        # clamp/加法传播不放大）；未迁移节点实际误差
+                        # ≪ 该界（历史为 1e-12）——分节点收紧界列入后续。
+                        assert got == pytest.approx(
+                            want, abs=2e-3,
+                        )
 
 
 class TestSourcelessPackagedBuild:
     """打包（Nuitka standalone，无 .py/.c）布局下注册表构造回归测试。
 
-    发行物只有编译产物 + data/*.json + lang/*.json（.c 不分发）。
-    源码模式缺失来源应 fail-closed（见 test_uninspectable...）；
-    打包模式必须降级而非崩溃 —— 否则"进入世界"即崩（review 2026-09-08）。
+    发行物不含源码：方程版本从**构建期嵌入的实现摘要表**读取
+    （declarations/impl_digests.json，issue #49），与源码模式逐位一致；
+    缺表/缺条目即拒绝构造（不再有按名称降级的回退）。
+    源码模式缺失来源应 fail-closed（见 test_uninspectable...）。
     """
 
     def test_build_and_evaluate_in_sourceless_mode(self, monkeypatch):
@@ -508,27 +515,45 @@ class TestSourcelessPackagedBuild:
                                        {SEA_LEVEL_TEMPERATURE: 15.0}))
         assert registry.evaluate(
             m.PRECIPITATION_THRESHOLD, {m.ANNUAL_RAINFALL: 100.0},
-        ) == pytest.approx(0.5456521739130435, abs=1e-12)
+        ) == pytest.approx(0.5456521734595299, abs=1e-12)
 
-    def test_sourceless_versions_are_degraded_and_stable(self, monkeypatch):
+    def test_sourceless_versions_match_embedded_digests(self, monkeypatch):
+        """打包身份 == 源码身份（嵌入表逐位一致），两次构造稳定。"""
         monkeypatch.setenv("ASCEND_SOURCELESS", "1")
         from ascend.causal.world import build_registry
 
         registry = build_registry()
-        snapshots = registry.snapshot()["mechanisms"]
-        assert snapshots, "无机制快照"
-        for mechanism_id, snapshot in snapshots.items():
-            assert snapshot["equation_version"].startswith(
-                "sha256-packaged:"
-            ), mechanism_id
+        source = {
+            mid: mechanism["equation_version"]
+            for mid, mechanism
+            in ASCEND_MECHANISMS.snapshot()["mechanisms"].items()
+        }
+        packed = {
+            mid: mechanism["equation_version"]
+            for mid, mechanism in registry.snapshot()["mechanisms"].items()
+        }
+        assert packed == source, "打包模式的方程版本必须等于源码模式"
         again = build_registry()
         assert {
-            mechanism_id: snapshot["equation_version"]
-            for mechanism_id, snapshot in again.snapshot()["mechanisms"].items()
-        } == {
-            mechanism_id: snapshot["equation_version"]
-            for mechanism_id, snapshot in snapshots.items()
-        }
+            mid: mechanism["equation_version"]
+            for mid, mechanism in again.snapshot()["mechanisms"].items()
+        } == packed
+
+    def test_missing_digest_rejected_in_sourceless_mode(self, monkeypatch):
+        """打包模式缺条目即拒绝构造（fail-closed，不按名称降级）。"""
+        monkeypatch.setenv("ASCEND_SOURCELESS", "1")
+        import ascend.causal.registry as registry_module
+        from ascend.causal.impl_digests import ImplementationDigestTable
+        from ascend.causal.world import build_registry
+
+        empty = ImplementationDigestTable(
+            schema_version=1, contract_version="v0.1", entries=(),
+        )
+        monkeypatch.setattr(
+            registry_module, "get_impl_digests", lambda: empty,
+        )
+        with pytest.raises(ValueError, match="实现内容摘要表缺少机制"):
+            build_registry()
 
 
 class TestSnapshotPortability:
@@ -579,14 +604,19 @@ class TestSnapshotPortability:
             Path("ascend/space/hydrology.py"),
             Path("ascend/space/climate.py"),
             Path("ascend/space/biome.py"),
+            Path("ascend/space/gen_fixed.py"),
             Path("ascend/config.py"),
+            Path("ascend/num/fixed.py"),
+            Path("ascend/num/tables.py"),
+            Path("ascend/num/diurnal.py"),
+            Path("ascend/num/frozen_tables.py"),
         ):
             target = mirror_ascend / relative.relative_to("ascend")
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(backend_root / relative, target)
             path_map[str(backend_root / relative)] = target
         mirror_data.mkdir(parents=True, exist_ok=True)
-        for data_name in ("world.json", "climate.json"):
+        for data_name in ("world.json", "climate.json", "biome.json"):
             shutil.copy2(repo_root / "data" / data_name,
                          mirror_data / data_name)
             path_map[str(repo_root / "data" / data_name)] = (
@@ -602,6 +632,13 @@ class TestSnapshotPortability:
             moved_specs.append(replace(spec, source_dependencies=deps))
 
         monkeypatch.setattr(registry, "_ANCHOR", mirror_backend)
+        moved_weather_specs = []
+        for spec in weather_mech.WEATHER_MECHANISM_SPECS:
+            deps = tuple(
+                path_map.get(str(dep), dep) for dep in spec.source_dependencies
+            )
+            moved_weather_specs.append(replace(spec, source_dependencies=deps))
+
         moved = MechanismRegistry(
             schema_version=ASCEND_MECHANISMS.schema_version,
             declaration_id=ASCEND_MECHANISMS.declaration_id,
@@ -615,8 +652,7 @@ class TestSnapshotPortability:
                 + space_mech.WORLD_GEN_PARAMETERS
             ),
             exogenous_sources=(),
-            mechanisms=tuple(moved_specs)
-            + weather_mech.WEATHER_MECHANISM_SPECS,
+            mechanisms=tuple(moved_specs) + tuple(moved_weather_specs),
         )
         after = {
             mid: m["equation_version"]

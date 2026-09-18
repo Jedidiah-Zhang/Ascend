@@ -36,13 +36,21 @@ class _FakeWeather:
 
 
 def _chunk(cx: int = 0, cy: int = 0, grid: TileGrid | None = None):
-    """引擎级最小 chunk 替身（引擎只用坐标/网格/游标/脏标记）。"""
-    return SimpleNamespace(
+    """引擎级最小 chunk 替身（引擎只用坐标/网格/游标/脏标记/版本）。"""
+    chunk = SimpleNamespace(
         cx=cx, cy=cy,
         tile_grid=grid if grid is not None else TileGrid(),
         integrated_through=0,
         dirty=False,
+        revision=0,
     )
+
+    def mark_modified() -> None:
+        chunk.dirty = True
+        chunk.revision += 1
+
+    chunk.mark_modified = mark_modified
+    return chunk
 
 
 @pytest.fixture

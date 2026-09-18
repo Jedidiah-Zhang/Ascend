@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Callable, Mapping
 
+from .frame_history import FrameHistory
 from .intervention import InterventionRecord, InterventionTimeline, NodeResolution
 from .registry import MechanismRegistry
 
@@ -55,8 +56,9 @@ class InterventionEvaluator:
         instance: tuple = (),
         random_values: Mapping[str, object] | None = None,
         parameter_values: Mapping[str, object] | None = None,
+        trace_kind: str = "eval",
     ) -> object:
-        """按干预解析求值一个节点（值覆盖 > 机制覆盖 > 原机制）。
+        """按干预解析求值一个节点（仅值覆盖；机制替换已废除，WC-1.3）。
 
         Args:
             target: 输出节点 ID。
@@ -65,6 +67,7 @@ class InterventionEvaluator:
             instance: 实例坐标（全局分量用空元组）。
             random_values: 随机源值（值覆盖命中时不消费，直接返回）。
             parameter_values: 参数槽位覆盖（干预表内联解析）。
+            trace_kind: 记录性质（"eval" 发生 / "recompute" 重算；#50）。
         """
         table = self._table
         trace = self._trace
@@ -77,6 +80,7 @@ class InterventionEvaluator:
                 trace=trace,
                 frame=frame,
                 instance=instance,
+                trace_kind=trace_kind,
             )
         resolution = table.resolve_node(target, instance, frame)
         if resolution.record is not None:
@@ -91,6 +95,7 @@ class InterventionEvaluator:
                     parameters=None,
                     random_values=None,
                     output=resolution.value,
+                    kind=trace_kind,
                 ))
             return resolution.value
         merged_parameters = self._parameter_overrides(
@@ -105,6 +110,7 @@ class InterventionEvaluator:
             resolution=resolution,
             frame=frame,
             instance=instance,
+            trace_kind=trace_kind,
         )
 
     def _parameter_overrides(
@@ -130,7 +136,8 @@ class InterventionFrameExecutor:
     """引擎级逐帧求值器（W1/W2 验收 runner 用研究切片）。
 
     按注册表微步偏序逐节点求值，父值从帧状态取用：lag=0 读当帧在
-    步序中的最新值，lag>=1 读 ``prev_state``（上一帧结束快照）。
+    步序中的最新值；lag≥1 优先经 ``FrameHistory`` 解析历史窗口（未提供
+    时 lag=1 回退 ``prev_state``、lag≥2 显式拒绝）。
     值干预命中的节点不消费随机地址（CRN）。追记已消费随机地址供测试断言。
 
     **空间父模板**：声明了多空间偏移的父引用（``len(spatial_offsets) > 1``）
@@ -183,10 +190,16 @@ class InterventionFrameExecutor:
         prev_state: dict[str, object] | None = None,
         *,
         instance: tuple = (),
+        history: FrameHistory | None = None,
     ) -> dict[str, object]:
         """推进一帧；返回新的帧状态（新 dict，不就地修改）。
 
         空间切片下：空间节点的值是 ``{位置: 值}``，其余节点为标量。
+
+        lag 语义（WC-4.2；issue #49）：``lag=0`` 读本帧已求值值；
+        ``lag≥1`` 优先经 ``history``（``FrameHistory``，调用方在每帧
+        结束后 ``commit``）解析任意历史窗口；未提供 ``history`` 时
+        ``lag=1`` 回退 ``prev_state``，``lag≥2`` 显式拒绝（不静默降级）。
         """
         prev_state = prev_state if prev_state is not None else state
         next_state = dict(state)
@@ -195,7 +208,8 @@ class InterventionFrameExecutor:
                 output = mechanism.output
                 if output in self._spatial_nodes:
                     next_state[output] = self._run_spatial(
-                        mechanism, next_state, prev_state, frame, instance,
+                        mechanism, next_state, prev_state, history,
+                        frame, instance,
                     )
                     continue
                 resolution = (
@@ -207,7 +221,7 @@ class InterventionFrameExecutor:
                     next_state[output] = resolution.value
                     continue
                 parents = self._parents(
-                    mechanism.parents, next_state, prev_state,
+                    mechanism.parents, next_state, prev_state, history,
                     frame, instance,
                 )
                 random_values: dict[str, object] = {}
@@ -231,6 +245,7 @@ class InterventionFrameExecutor:
         mechanism,
         state: dict[str, object],
         prev_state: dict[str, object],
+        history: FrameHistory | None,
         frame: int,
         instance: tuple,
     ) -> dict[int, object]:
@@ -242,10 +257,9 @@ class InterventionFrameExecutor:
         for cell in cells:
             parents: dict[str, object] = {}
             for parent in mechanism.parents:
-                source = prev_state if parent.lag >= 1 else state
-                if parent.parent not in source:
-                    raise KeyError(f"帧状态缺少父值: {parent.parent}")
-                raw = source[parent.parent]
+                raw = self._lagged_value(
+                    parent, state, prev_state, history, frame,
+                )
                 if len(parent.spatial_offsets) <= 1:
                     parents[parent.parent] = raw[cell]
                     continue
@@ -256,6 +270,30 @@ class InterventionFrameExecutor:
                 mechanism.output, parents, frame=frame, instance=instance,
             )
         return output
+
+    def _lagged_value(
+        self,
+        parent,
+        state: dict[str, object],
+        prev_state: dict[str, object],
+        history: FrameHistory | None,
+        frame: int,
+    ):
+        """按声明的 lag 解析父值（fail-closed，不静默降级）。"""
+        if parent.lag == 0:
+            if parent.parent not in state:
+                raise KeyError(f"帧状态缺少父值: {parent.parent}")
+            return state[parent.parent]
+        if history is not None:
+            return history.lookup(parent.parent, parent.lag, frame)
+        if parent.lag == 1:
+            if parent.parent not in prev_state:
+                raise KeyError(f"上帧状态缺少父值: {parent.parent}")
+            return prev_state[parent.parent]
+        raise ValueError(
+            f"lag={parent.lag} 需要 FrameHistory（未提供时仅支持 lag∈{{0,1}}）: "
+            f"{parent.parent}"
+        )
 
     @staticmethod
     def _neighbours(
@@ -278,24 +316,15 @@ class InterventionFrameExecutor:
         parents,
         state: dict[str, object],
         prev_state: dict[str, object],
+        history: FrameHistory | None,
         frame: int,
         instance: tuple,
     ) -> dict[str, object]:
         values: dict[str, object] = {}
         for parent in parents:
-            if parent.lag == 0:
-                if parent.parent not in state:
-                    raise KeyError(f"帧状态缺少父值: {parent.parent}")
-                values[parent.parent] = state[parent.parent]
-            elif parent.lag == 1:
-                if parent.parent not in prev_state:
-                    raise KeyError(f"上帧状态缺少父值: {parent.parent}")
-                values[parent.parent] = prev_state[parent.parent]
-            else:
-                raise ValueError(
-                    f"研究切片执行器仅支持 lag∈{0,1}: "
-                    f"{parent.parent} lag={parent.lag}"
-                )
+            values[parent.parent] = self._lagged_value(
+                parent, state, prev_state, history, frame,
+            )
             self.reads.add((parent.parent, frame, instance))
         return values
 

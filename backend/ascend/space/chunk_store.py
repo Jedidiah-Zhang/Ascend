@@ -37,6 +37,7 @@ import zlib
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import nullcontext
+from dataclasses import dataclass
 
 from ascend.config import (
     CHUNK_STORE_DB_PATH as _DEFAULT_DB_PATH,
@@ -55,6 +56,31 @@ logger = get_logger(__name__)
 # 存储 BLOB 前缀：压缩（"ZC" + zlib 数据）/ 旧版明文（无前缀），
 # 读取按前缀自动分流，旧库兼容。
 _BLOB_ZLIB: bytes = b"ZC"
+
+
+@dataclass(frozen=True, slots=True)
+class CapturedChunk:
+    """帧边界捕获的 chunk 落盘载荷（内存快照，不写库、不清脏）。
+
+    Attributes:
+        cx, cy: chunk 坐标。
+        blob: 压缩后的 tile 数据（含状态数组）。
+        integrated_through: 捕获时的积分游标。
+        revision: 捕获时的内容版本（提交时比对，变化即保留脏标记）。
+    """
+
+    cx: int
+    cy: int
+    blob: bytes
+    integrated_through: int
+    revision: int
+
+
+def _serialize_tiles(grid: TileGrid) -> bytes:
+    """TileGrid → 库内 BLOB（zlib 压缩 + 前缀）。"""
+    return _BLOB_ZLIB + zlib.compress(
+        grid.to_bytes(), zlib.Z_DEFAULT_COMPRESSION,
+    )
 
 
 class ChunkStore:
@@ -237,7 +263,7 @@ class ChunkStore:
                 raise ValueError(f"chunk 不在缓存中: ({cx}, {cy})")
             if chunk.tile_grid is None:
                 raise ValueError(f"chunk 尚未生成 tile 网格: ({cx}, {cy})")
-            chunk.dirty = True
+            chunk.mark_modified()
 
     # ── SQLite 持久化 ───────────────────────────────────
 
@@ -308,10 +334,10 @@ class ChunkStore:
         self, cx: int, cy: int, grid: TileGrid, integrated_through: int = 0,
     ) -> None:
         """将单个 chunk 的 TileGrid 写入 SQLite（zlib 压缩，INSERT OR REPLACE）。"""
-        blob = _BLOB_ZLIB + zlib.compress(grid.to_bytes(), zlib.Z_DEFAULT_COMPRESSION)
         self._db.execute(
             "INSERT OR REPLACE INTO chunk_tiles VALUES (?, ?, ?, ?)",
-            (cx, cy, sqlite3.Binary(blob), int(integrated_through)),
+            (cx, cy, sqlite3.Binary(_serialize_tiles(grid)),
+             int(integrated_through)),
         )
 
     def _persist(self, chunk: ChunkData) -> None:
@@ -338,40 +364,88 @@ class ChunkStore:
         chunk.dirty = False
         self._persisted_coords.add((chunk.cx, chunk.cy))
 
-    def _flush_persistable(self) -> int:
-        """落盘缓存中所有待落盘 chunk（dirty 或首次加载）并更新状态。
+    def capture_pending(self) -> list[CapturedChunk]:
+        """帧边界捕获：把待落盘 chunk 序列化为内存载荷（不写库、不清脏）。
 
-        无网格的 chunk（详细层未生成）无可落盘数据，跳过。
+        在游戏线程的帧边界调用（与同一帧的世界状态捕获同点，见
+        ``GameEngine._capture_pulse``）；序列化在状态提交锁内进行，
+        保证读到某一已提交版本而非半帧（WC-7.6）。写库由
+        :meth:`commit_captured` 在保存线程执行。
+
+        Returns:
+            待落盘 chunk 的载荷列表（无网格者跳过）。
+        """
+        with self._lock, self._state_guard():
+            captured: list[CapturedChunk] = []
+            for chunk in self._cache.values():
+                if chunk.tile_grid is None:
+                    continue
+                if (
+                    not chunk.dirty
+                    and (chunk.cx, chunk.cy) in self._persisted_coords
+                ):
+                    continue
+                captured.append(CapturedChunk(
+                    cx=chunk.cx,
+                    cy=chunk.cy,
+                    blob=_serialize_tiles(chunk.tile_grid),
+                    integrated_through=int(chunk.integrated_through),
+                    revision=chunk.revision,
+                ))
+            return captured
+
+    def commit_captured(self, captured: list[CapturedChunk]) -> int:
+        """把帧边界捕获的 chunk 载荷写入 SQLite（单事务）并清脏。
+
+        提交时按捕获的 ``revision`` 判断：捕获后又被修改的 chunk
+        保留脏标记（新内容留给下一次脉搏），未变化的才清除。写入
+        失败即整体回滚并向上抛错（载荷不可部分落盘，#51/WC-8.2）。
+
+        Args:
+            captured: :meth:`capture_pending` 的返回值。
 
         Returns:
             实际写入的 chunk 数。
         """
+        if not captured:
+            return 0
+        rows = [
+            (item.cx, item.cy, sqlite3.Binary(item.blob),
+             int(item.integrated_through))
+            for item in captured
+        ]
         with self._lock:
-            count = 0
-            for chunk in self._cache.values():
-                if chunk.tile_grid is None:
-                    continue
-                if chunk.dirty or (chunk.cx, chunk.cy) not in self._persisted_coords:
-                    self._persist(chunk)
-                    count += 1
-            return count
+            try:
+                self._db.executemany(
+                    "INSERT OR REPLACE INTO chunk_tiles VALUES (?, ?, ?, ?)",
+                    rows,
+                )
+                self._db.commit()
+            except Exception:
+                self._db.rollback()
+                raise
+            for item in captured:
+                self._persisted_coords.add((item.cx, item.cy))
+                chunk = self._cache.get((item.cx, item.cy))
+                if chunk is not None and chunk.revision == item.revision:
+                    chunk.dirty = False
+        logger.info("已提交 %d 个 chunk（帧边界捕获）", len(captured))
+        return len(captured)
 
     def flush(self) -> int:
         """将缓存中所有待落盘 chunk 写回 SQLite 并提交。
 
+        等价于"立即捕获 + 提交"（退出/快照前的同步路径）。保存
+        脉搏走帧边界捕获 + 异步提交（#51）：捕获在游戏线程完成，
+        此处供 close/快照等同步场景使用。
+
         待落盘 = 玩家改动（dirty）或首次加载（坐标不在已落盘集合）。
-        已落盘 chunk 跳过（重访内容不变不重写）。正常退出、保存
-        脉搏与快照前调用，确保已加载 chunk 与玩家改动持久化。
+        已落盘 chunk 跳过（重访内容不变不重写）。
 
         Returns:
             实际写入的 chunk 数。
         """
-        count = self._flush_persistable()
-        if count:
-            with self._lock:
-                self._db.commit()
-            logger.info("已 flush %d 个 chunk", count)
-        return count
+        return self.commit_captured(self.capture_pending())
 
     def checkpoint(self) -> None:
         """WAL 强制写回主库（快照打包前调用，保证文件副本完整）。

@@ -147,9 +147,41 @@ class TestPlanValidation:
             ))
         entry = timeline.plan(PlannedIntervention(
             target_space="field_feature", target="storm",
-            instance=(1, 2), value={"active": True},
+            instance=(1, 2),
+            value={"active": True, "spec": {
+                "center_x": 100.0, "center_y": 200.0, "radius": 3000.0,
+                "magnitude": 1.0, "born_tick": 0, "duration": None,
+                "vel_x": 0.0, "vel_y": 0.0,
+            }},
         ))
         assert entry.seq == 1
+
+    def test_feature_active_requires_spec(self):
+        """active=True 必须携带核规格（读档投影事实源，WC-6.5 / #51）。"""
+        timeline = _timeline()
+        with pytest.raises(ValueError, match="核规格"):
+            timeline.plan(PlannedIntervention(
+                target_space="field_feature", target="storm",
+                instance=(1, 2), value={"active": True},
+            ))
+        with pytest.raises(ValueError, match="核规格"):
+            timeline.plan(PlannedIntervention(
+                target_space="field_feature", target="storm",
+                instance=(1, 2), value={"active": bool("x"), "spec": {}},
+            ))
+
+    def test_feature_spec_rejects_non_finite(self):
+        timeline = _timeline()
+        with pytest.raises(ValueError, match="有限值"):
+            timeline.plan(PlannedIntervention(
+                target_space="field_feature", target="storm",
+                instance=(1, 2),
+                value={"active": True, "spec": {
+                    "center_x": 0.0, "center_y": 0.0, "radius": float("nan"),
+                    "magnitude": 1.0, "born_tick": 0, "duration": None,
+                    "vel_x": 0.0, "vel_y": 0.0,
+                }},
+            ))
 
     def test_mechanism_replacement_is_gone(self):
         field_names = {

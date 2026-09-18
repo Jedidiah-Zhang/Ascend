@@ -8,7 +8,7 @@ import AscendLean.CausalVerification.Declarations
 巡检接入：research/equations/verify_equations.py 主流程 V0 步
 
 来源与指纹（sha256 前 16 位）：
-- research/equations/equations.json   sha256:014ce65dfb883afc
+- research/equations/equations.json   sha256:cb04a9ae8fa58d09
 - backend/ascend/config.py            sha256:023c2028c5d2d2e6
 
 防漂移三层闭环：
@@ -52,18 +52,16 @@ def edgeWeatherAstronomySunriseHourWeatherAstronomyDaylightHoursL : ℝ := 1
 def edgeWeatherAstronomySunsetHourWeatherAstronomyDaylightHoursL : ℝ := 1
 -- weather.chunk.solar_latitude_proxy_deg → weather.astronomy.sunrise_hour | role=structural | equation=weather.astronomy.derive_sunrise.v1
 def edgeWeatherChunkSolarLatitudeProxyDegWeatherAstronomySunriseHourL : ℝ := 0.5
--- weather.tick.solar_declination_rad → weather.astronomy.sunrise_hour | role=structural | equation=weather.astronomy.derive_sunrise.v1
-def edgeWeatherTickSolarDeclinationRadWeatherAstronomySunriseHourL : ℝ := 1
+-- jump edge weather.tick.solar_declination_rad → weather.astronomy.sunrise_hour（L 不适用，jump_bound=12.0）
 -- weather.chunk.solar_latitude_proxy_deg → weather.astronomy.sunset_hour | role=structural | equation=weather.astronomy.derive_sunset.v1
 def edgeWeatherChunkSolarLatitudeProxyDegWeatherAstronomySunsetHourL : ℝ := 0.5
--- weather.tick.solar_declination_rad → weather.astronomy.sunset_hour | role=structural | equation=weather.astronomy.derive_sunset.v1
-def edgeWeatherTickSolarDeclinationRadWeatherAstronomySunsetHourL : ℝ := 1
+-- jump edge weather.tick.solar_declination_rad → weather.astronomy.sunset_hour（L 不适用，jump_bound=12.0）
 -- weather.chunk.seasonal_temperature_amplitude_c → weather.chunk.diurnal_humidity_amplitude_pp | role=structural | equation=weather.chunk.derive_diurnal_humidity_amplitude.v1
 def edgeWeatherChunkSeasonalTemperatureAmplitudeCWeatherChunkDiurnalHumidityAmplitudePpL : ℝ := 0.4
 -- weather.chunk.seasonal_temperature_amplitude_c → weather.chunk.diurnal_temperature_amplitude_c | role=structural | equation=weather.chunk.derive_diurnal_temperature_amplitude.v1
 def edgeWeatherChunkSeasonalTemperatureAmplitudeCWeatherChunkDiurnalTemperatureAmplitudeCL : ℝ := 0.5
 -- weather.chunk.annual_rainfall_mm_per_year → weather.chunk.precipitation_threshold | role=structural | equation=weather.chunk.derive_precipitation_threshold.v1
-def edgeWeatherChunkAnnualRainfallMmPerYearWeatherChunkPrecipitationThresholdL : ℝ := 0
+def edgeWeatherChunkAnnualRainfallMmPerYearWeatherChunkPrecipitationThresholdL : ℝ := 8.695652173913045e-05
 -- weather.chunk.seasonal_temperature_amplitude_c → weather.chunk.seasonal_humidity_amplitude_pp | role=structural | equation=weather.chunk.derive_seasonal_humidity_amplitude.v1
 def edgeWeatherChunkSeasonalTemperatureAmplitudeCWeatherChunkSeasonalHumidityAmplitudePpL : ℝ := 0.4
 -- weather.chunk.annual_mean_temperature_c → weather.chunk.seasonal_temperature_amplitude_c | role=structural | equation=weather.chunk.derive_seasonal_temperature_amplitude.v1
@@ -83,11 +81,11 @@ def edgeWeatherOffsetDiurnalHumidityPpWeatherInstantRelativeHumidityPercentL : �
 -- weather.field.humidity_perturbation → weather.instant.relative_humidity_percent | role=structural | equation=weather.instant.compose_humidity.v1
 def edgeWeatherFieldHumidityPerturbationWeatherInstantRelativeHumidityPercentL : ℝ := 15
 -- weather.field.precipitation_signal → weather.instant.precipitation_intensity_mm_per_hour | role=structural | equation=weather.instant.compose_precipitation_intensity.v1
-def edgeWeatherFieldPrecipitationSignalWeatherInstantPrecipitationIntensityMmPerHourL : ℝ := 0
+def edgeWeatherFieldPrecipitationSignalWeatherInstantPrecipitationIntensityMmPerHourL : ℝ := 20
 -- weather.chunk.precipitation_threshold → weather.instant.precipitation_intensity_mm_per_hour | role=structural | equation=weather.instant.compose_precipitation_intensity.v1
-def edgeWeatherChunkPrecipitationThresholdWeatherInstantPrecipitationIntensityMmPerHourL : ℝ := 0
+def edgeWeatherChunkPrecipitationThresholdWeatherInstantPrecipitationIntensityMmPerHourL : ℝ := 20
 -- weather.chunk.mean_precip_intensity_mm_per_hour → weather.instant.precipitation_intensity_mm_per_hour | role=structural | equation=weather.instant.compose_precipitation_intensity.v1
-def edgeWeatherChunkMeanPrecipIntensityMmPerHourWeatherInstantPrecipitationIntensityMmPerHourL : ℝ := 0
+def edgeWeatherChunkMeanPrecipIntensityMmPerHourWeatherInstantPrecipitationIntensityMmPerHourL : ℝ := 1.9
 -- weather.astronomy.daylight_hours → weather.instant.sunshine_hours_per_day | role=structural | equation=weather.instant.compose_sunshine.v1
 def edgeWeatherAstronomyDaylightHoursWeatherInstantSunshineHoursPerDayL : ℝ := 1
 -- weather.field.humidity_perturbation → weather.instant.sunshine_hours_per_day | role=structural | equation=weather.instant.compose_sunshine.v1
@@ -105,7 +103,7 @@ def edgeWeatherChunkBaselineWindSpeedMpsWeatherInstantWindSpeedMpsL : ℝ := 1
 -- weather.field.wind_perturbation → weather.instant.wind_speed_mps | role=structural | equation=weather.instant.compose_wind_speed.v1
 def edgeWeatherFieldWindPerturbationWeatherInstantWindSpeedMpsL : ℝ := 4
 -- weather.field.wind_multiplier → weather.instant.wind_speed_mps | role=structural | equation=weather.instant.compose_wind_speed.v1
-def edgeWeatherFieldWindMultiplierWeatherInstantWindSpeedMpsL : ℝ := 0
+def edgeWeatherFieldWindMultiplierWeatherInstantWindSpeedMpsL : ℝ := 50
 -- weather.chunk.diurnal_humidity_amplitude_pp → weather.offset.diurnal_humidity_pp | role=structural | equation=weather.offset.derive_diurnal_humidity.v1
 def edgeWeatherChunkDiurnalHumidityAmplitudePpWeatherOffsetDiurnalHumidityPpL : ℝ := 1
 -- weather.tick.diurnal_phase_cos → weather.offset.diurnal_humidity_pp | role=structural | equation=weather.offset.derive_diurnal_humidity.v1
@@ -119,25 +117,22 @@ def edgeWeatherChunkSeasonalHumidityAmplitudePpWeatherOffsetSeasonalHumidityPpL 
 -- weather.tick.season_phase_cos → weather.offset.seasonal_humidity_pp | role=structural | equation=weather.offset.derive_seasonal_humidity.v1
 def edgeWeatherTickSeasonPhaseCosWeatherOffsetSeasonalHumidityPpL : ℝ := 20
 -- weather.chunk.humidity_sharpness → weather.offset.seasonal_humidity_pp | role=structural | equation=weather.offset.derive_seasonal_humidity.v1
-def edgeWeatherChunkHumiditySharpnessWeatherOffsetSeasonalHumidityPpL : ℝ := 0
+def edgeWeatherChunkHumiditySharpnessWeatherOffsetSeasonalHumidityPpL : ℝ := 20
 -- weather.chunk.seasonal_temperature_amplitude_c → weather.offset.seasonal_temperature_c | role=structural | equation=weather.offset.derive_seasonal_temperature.v1
 def edgeWeatherChunkSeasonalTemperatureAmplitudeCWeatherOffsetSeasonalTemperatureCL : ℝ := 1
 -- weather.tick.season_phase_cos → weather.offset.seasonal_temperature_c | role=structural | equation=weather.offset.derive_seasonal_temperature.v1
 def edgeWeatherTickSeasonPhaseCosWeatherOffsetSeasonalTemperatureCL : ℝ := 30
--- world.clock.tick → weather.tick.day | role=structural | equation=weather.tick.derive_day.v1
-def edgeWorldClockTickWeatherTickDayL : ℝ := 0
--- world.clock.tick → weather.tick.day_of_year | role=structural | equation=weather.tick.derive_day_of_year.v1
-def edgeWorldClockTickWeatherTickDayOfYearL : ℝ := 0
+-- jump edge world.clock.tick → weather.tick.day（L 不适用，jump_bound=1.0）
+-- jump edge world.clock.tick → weather.tick.day_of_year（L 不适用，jump_bound=1.0）
 -- weather.tick.hour_of_day → weather.tick.diurnal_phase_cos | role=structural | equation=weather.tick.derive_diurnal_phase_cos.v1
-def edgeWeatherTickHourOfDayWeatherTickDiurnalPhaseCosL : ℝ := 0
--- world.clock.tick → weather.tick.hour_of_day | role=structural | equation=weather.tick.derive_hour_of_day.v1
-def edgeWorldClockTickWeatherTickHourOfDayL : ℝ := 0
+def edgeWeatherTickHourOfDayWeatherTickDiurnalPhaseCosL : ℝ := 0.2617993877991494
+-- jump edge world.clock.tick → weather.tick.hour_of_day（L 不适用，jump_bound=24.0）
 -- weather.tick.day → weather.tick.season | role=structural | equation=weather.tick.derive_season.v1
 def edgeWeatherTickDayWeatherTickSeasonL : ℝ := 0
 -- weather.tick.day → weather.tick.season_phase_cos | role=structural | equation=weather.tick.derive_season_phase_cos.v1
-def edgeWeatherTickDayWeatherTickSeasonPhaseCosL : ℝ := 0
+def edgeWeatherTickDayWeatherTickSeasonPhaseCosL : ℝ := 0.017453292519943295
 -- weather.tick.day_of_year → weather.tick.solar_declination_rad | role=structural | equation=weather.tick.derive_solar_declination.v1
-def edgeWeatherTickDayOfYearWeatherTickSolarDeclinationRadL : ℝ := 0
+def edgeWeatherTickDayOfYearWeatherTickSolarDeclinationRadL : ℝ := 0.00714023231980045
 -- weather.chunk.annual_mean_temperature_c → world.gen.biome | role=structural | equation=world.gen.classify_biome.v1
 def edgeWeatherChunkAnnualMeanTemperatureCWorldGenBiomeL : ℝ := 0
 -- weather.chunk.annual_rainfall_mm_per_year → world.gen.biome | role=structural | equation=world.gen.classify_biome.v1
@@ -160,18 +155,14 @@ def edgeWeatherChunkSeaLevelTemperatureCWeatherChunkAnnualMeanTemperatureCL : �
 def edgeWorldGenAltitudeMWeatherChunkAnnualMeanTemperatureCL : ℝ := 0.009
 -- world.gen.rainfall_noise → weather.chunk.annual_rainfall_mm_per_year | role=structural | equation=world.gen.derive_annual_rainfall.v1
 def edgeWorldGenRainfallNoiseWeatherChunkAnnualRainfallMmPerYearL : ℝ := 1725
--- world.gen.climate_zone → weather.chunk.baseline_humidity_percent | role=structural | equation=world.gen.derive_baseline_humidity.v1
-def edgeWorldGenClimateZoneWeatherChunkBaselineHumidityPercentL : ℝ := 0
+-- jump edge world.gen.climate_zone → weather.chunk.baseline_humidity_percent（L 不适用，jump_bound=90.0）
 -- world.gen.humidity_noise → weather.chunk.baseline_humidity_percent | role=structural | equation=world.gen.derive_baseline_humidity.v1
-def edgeWorldGenHumidityNoiseWeatherChunkBaselineHumidityPercentL : ℝ := 0
--- world.gen.climate_zone → weather.chunk.baseline_wind_speed_mps | role=structural | equation=world.gen.derive_baseline_wind_speed.v1
-def edgeWorldGenClimateZoneWeatherChunkBaselineWindSpeedMpsL : ℝ := 0
+def edgeWorldGenHumidityNoiseWeatherChunkBaselineHumidityPercentL : ℝ := 20
+-- jump edge world.gen.climate_zone → weather.chunk.baseline_wind_speed_mps（L 不适用，jump_bound=25.0）
 -- world.gen.wind_noise → weather.chunk.baseline_wind_speed_mps | role=structural | equation=world.gen.derive_baseline_wind_speed.v1
-def edgeWorldGenWindNoiseWeatherChunkBaselineWindSpeedMpsL : ℝ := 0
--- world.gen.climate_zone → weather.chunk.humidity_sharpness | role=structural | equation=world.gen.derive_humidity_sharpness.v1
-def edgeWorldGenClimateZoneWeatherChunkHumiditySharpnessL : ℝ := 0
--- world.gen.climate_zone → weather.chunk.mean_precip_intensity_mm_per_hour | role=structural | equation=world.gen.derive_mean_precip_intensity.v1
-def edgeWorldGenClimateZoneWeatherChunkMeanPrecipIntensityMmPerHourL : ℝ := 0
+def edgeWorldGenWindNoiseWeatherChunkBaselineWindSpeedMpsL : ℝ := 11
+-- jump edge world.gen.climate_zone → weather.chunk.humidity_sharpness（L 不适用，jump_bound=2.5）
+-- jump edge world.gen.climate_zone → weather.chunk.mean_precip_intensity_mm_per_hour（L 不适用，jump_bound=8.0）
 -- world.gen.latitude_noise → weather.chunk.sea_level_temperature_c | role=structural | equation=world.gen.derive_sea_level_temperature.v1
 def edgeWorldGenLatitudeNoiseWeatherChunkSeaLevelTemperatureCL : ℝ := 25
 
@@ -201,9 +192,9 @@ def varWeatherChunkDiurnalTemperatureAmplitudeCHi : ℝ := 20
 -- weather.chunk.humidity_sharpness: bounds=[0, 10]
 def varWeatherChunkHumiditySharpnessLo : ℝ := 0
 def varWeatherChunkHumiditySharpnessHi : ℝ := 10
--- weather.chunk.mean_precip_intensity_mm_per_hour: bounds=[0, 100]
-def varWeatherChunkMeanPrecipIntensityMmPerHourLo : ℝ := 0
-def varWeatherChunkMeanPrecipIntensityMmPerHourHi : ℝ := 100
+-- weather.chunk.mean_precip_intensity_mm_per_hour: bounds=[2, 10]
+def varWeatherChunkMeanPrecipIntensityMmPerHourLo : ℝ := 2
+def varWeatherChunkMeanPrecipIntensityMmPerHourHi : ℝ := 10
 -- weather.chunk.precipitation_threshold: bounds=[0.25, 0.55]
 def varWeatherChunkPrecipitationThresholdLo : ℝ := 0.25
 def varWeatherChunkPrecipitationThresholdHi : ℝ := 0.55

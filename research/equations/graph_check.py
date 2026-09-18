@@ -110,12 +110,46 @@ def path_weights(
             if c == t and es.role == ROLE_STRUCTURAL
         ]
         for (p, l) in in_edges:
+            if l is None:
+                # 跳变边（modulus_kind=jump）：不参与线性路径乘积，
+                # 下游条件性由 tainted_pairs 标记
+                continue
             for (k, wup) in [(k, v) for (k, v) in w.items() if k[1] == p]:
                 u = k[0]
                 w[(u, t)] = w.get((u, t), 0.0) + wup * l
                 depth[(u, t)] = max(depth.get((u, t), 0),
                                     depth.get((u, p), 0) + 1)
     return w, depth
+
+
+def tainted_pairs(
+    graph: VariableGraph,
+) -> dict[tuple[str, str], bool]:
+    """路径污染标记：经过 None-L（跳变）边的 (u,t) 对。
+
+    跳变边不参与线性路径乘积，其下游目标只能报"条件成立"，不得按 0
+    静默计入解析界（issue #53 P4 决策）。
+    """
+    order = graph.toposort()
+    # 目标自身的零长路径：若其任一声明更新入边为跳变边，则该目标本身
+    # 即"条件成立"（其生成机制无连续界，不可按 0 计入解析界）
+    taint: dict[tuple[str, str], bool] = {}
+    for v in graph.variables:
+        has_jump_in = any(
+            es.role == ROLE_STRUCTURAL and es.L is None
+            for (p, c, es) in graph.edges() if c == v
+        )
+        taint[(v, v)] = has_jump_in
+    for t in order:
+        for (p, c, es) in graph.edges():
+            if c != t or es.role != ROLE_STRUCTURAL:
+                continue
+            contaminated = es.L is None
+            for (u, node), flag in list(taint.items()):
+                if node != p:
+                    continue
+                taint[(u, t)] = taint.get((u, t), False) or flag or contaminated
+    return taint
 
 
 def main() -> int:
@@ -148,7 +182,8 @@ def main() -> int:
         if es.role == ROLE_STRUCTURAL
     ]
     for (p, c, es) in structural_edges:
-        adj_all[p].append((c, es.L))
+        # 跳变边无 L：环收缩不可认证，记 ∞（有环即红）
+        adj_all[p].append((c, float("inf") if es.L is None else es.L))
     results.append(("G0 图规模", True,
                     f"{len(nodes)} 节点 / {len(structural_edges)} 结构边 / "
                     f"拓扑序 {' -> '.join(graph.toposort())}"))
@@ -204,9 +239,11 @@ def main() -> int:
             results.append(("G3 反事实误差界", False,
                             f"{len(missing_eps)} 个变量缺 eps，跳过"))
         else:
+            taint = tainted_pairs(graph)
             worst = 0.0
             worst_t = None
             checked = 0
+            conditional = 0
             for t in nodes:
                 spec = graph.get_variable(t)
                 if spec.bounds is None:
@@ -215,6 +252,8 @@ def main() -> int:
                             for (u, tt), val in w.items() if tt == t)
                 rel = REL_CTF * (spec.bounds[1] - spec.bounds[0])
                 checked += 1
+                if any(taint.get((u, t), True) for (u, tt) in w if tt == t):
+                    conditional += 1
                 if bound > worst:
                     worst, worst_t = bound, t
                 if bound > rel:
@@ -224,10 +263,14 @@ def main() -> int:
                         f"{t}: Σ ε_u·W(u,·) = {bound:.3g} > 5%×范围 {rel:.3g}"))
             if not any(name.startswith("G3") and not ok_
                        for name, ok_, _ in results):
+                cond_txt = (
+                    f"；{conditional} 个为条件目标（路径含跳变边）"
+                    if conditional else ""
+                )
                 results.append((
                     "G3 反事实误差界",
                     True,
-                    f"全部 {checked} 个有界目标 ≤ 5%×范围；"
+                    f"全部 {checked} 个有界目标 ≤ 5%×范围{cond_txt}；"
                     f"最紧 @{worst_t} = {worst:.3g}"))
 
         # ── G4 遗忘深度（报告型）────────────────────
@@ -254,7 +297,7 @@ def main() -> int:
         amps = [
             (p, c, es.L)
             for (p, c, es) in structural_edges
-            if es.L > 1.0
+            if es.L is not None and es.L > 1.0
         ]
         if amps:
             info = []
@@ -272,7 +315,8 @@ def main() -> int:
         # ── G6 汇聚节点（报告型）────────────────────
         indeg: dict[str, list[tuple[str, float]]] = {}
         for (p, c, es) in structural_edges:
-            indeg.setdefault(c, []).append((p, es.L))
+            indeg.setdefault(c, []).append(
+                (p, float("inf") if es.L is None else es.L))
         sinks = [(c, ps) for (c, ps) in indeg.items() if len(ps) >= 2]
         if sinks:
             txt = "; ".join(
@@ -283,6 +327,94 @@ def main() -> int:
                 f"{len(sinks)} 个多父节点，须按求和语义（命题 2.5/S4）: {txt}"))
         else:
             results.append(("G6 汇聚节点", True, "无多父节点"))
+
+    # ── G7 模数一致性（issue #53 P0/P4）──────────────
+    # 线性边：见证差商必须 ≤ 声明 L（否证器，L 不得为 None）；跳变边：
+    # 必须声明正 jump_bound（有界跳变），不做连续差商核验。矛盾即红。
+    mechanisms = data.get("mechanisms", {})
+    edge_meta = {
+        (e["parent"], e["child"]): e for e in data.get("edges", [])
+    }
+    violations: list[str] = []
+    checked_linear = 0
+    declared_jump = 0
+    for mid, mech in sorted(mechanisms.items()):
+        for parent in mech.get("parents", []):
+            edge = edge_meta.get((parent.get("parent"), mech.get("output")))
+            if edge is None:
+                continue
+            if edge.get("modulus_kind") == "jump":
+                declared_jump += 1
+                bound = edge.get("jump_bound")
+                if (not isinstance(bound, (int, float))
+                        or isinstance(bound, bool) or bound <= 0):
+                    violations.append(
+                        f"{mid}←{parent.get('parent')}: jump 边缺 jump_bound"
+                    )
+                    continue
+                for witness in mech.get("witnesses", []):
+                    if witness.get("parent") != parent.get("parent"):
+                        continue
+                    outs = witness.get("expected_outputs", [])
+                    if (len(outs) == 2
+                            and all(isinstance(x, (int, float))
+                                    and not isinstance(x, bool) for x in outs)
+                            and abs(outs[1] - outs[0]) > bound * (1 + 1e-6)):
+                        violations.append(
+                            f"{mid}←{parent.get('parent')}: jump_bound="
+                            f"{bound} < 见证跳幅={abs(outs[1] - outs[0]):.6g}"
+                        )
+                continue
+            output_kind = (
+                data.get("nodes", {}).get(mech.get("output", ""), {})
+                .get("value", {}).get("kind", "float")
+            )
+            if (parent.get("metric") == "discrete"
+                    or output_kind in ("enum", "string", "boolean")):
+                # 离散度量：绝对差商不是有效度量，不做数值核验
+                # （此类边须显式声明 metric=discrete / 输出为离散类型）
+                continue
+            declared = edge.get("L")
+            for witness in mech.get("witnesses", []):
+                if witness.get("parent") != parent.get("parent"):
+                    continue
+                original = dict(witness.get("inputs_a", ())).get(
+                    witness.get("parent"))
+                alternate = dict(witness.get("inputs_b", ())).get(
+                    witness.get("parent"))
+                outs = witness.get("expected_outputs", [])
+                if (not isinstance(original, (int, float))
+                        or isinstance(original, bool)
+                        or not isinstance(alternate, (int, float))
+                        or isinstance(alternate, bool)
+                        or len(outs) != 2
+                        or not all(isinstance(x, (int, float))
+                                   and not isinstance(x, bool) for x in outs)):
+                    continue
+                delta = abs(alternate - original)
+                if delta == 0.0:
+                    continue
+                checked_linear += 1
+                ratio = abs(outs[1] - outs[0]) / delta
+                if declared is None or ratio > declared * (1 + 1e-6) + 1e-9:
+                    violations.append(
+                        f"{mid}←{parent.get('parent')}: "
+                        f"L={declared} < 差商={ratio:.6g}"
+                    )
+    if violations:
+        head = "；".join(violations[:4])
+        more = f"；…另有 {len(violations) - 4} 条" if len(violations) > 4 else ""
+        results.append((
+            "G7 模数一致性", False,
+            f"{checked_linear} 线性边 / {declared_jump} 跳变边；"
+            f"矛盾 {len(violations)}：{head}{more}",
+        ))
+    else:
+        results.append((
+            "G7 模数一致性", True,
+            f"{checked_linear} 线性边差商 ≤ L；"
+            f"{declared_jump} 跳变边已声明 jump_bound",
+        ))
 
     # ── 汇总 ─────────────────────────────────────────
     passed = sum(1 for _, ok_, _ in results if ok_)

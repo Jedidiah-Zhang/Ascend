@@ -63,12 +63,13 @@ class EdgeSpec:
 
     Attributes:
         role: 边角色（structural / inverse / observable）。
-        L: Lipschitz 常数估计（≥0；文档记 Λ_{u,v}，02 篇误差传播界的必填元数据）。
+        L: Lipschitz 常数（≥0）；None = 跳变边（modulus_kind=jump，无连续
+            性声明，不参与线性路径乘积）。
         equation: 方程引用（函数名或声明键），可选。
     """
 
     role: str
-    L: float
+    L: float | None
     equation: str | None = None
 
 
@@ -155,7 +156,7 @@ class VariableGraph(DirectedGraph):
         child: str,
         *,
         role: str,
-        L: float,
+        L: float | None,
         equation: str | None = None,
     ) -> EdgeSpec:
         """声明一条结构方程边 parent → child。
@@ -167,7 +168,7 @@ class VariableGraph(DirectedGraph):
             parent: 父变量名。
             child: 子变量名。
             role: 边角色（structural / inverse / observable）。
-            L: Lipschitz 常数估计（≥0）。
+            L: Lipschitz 常数（≥0）或 None（跳变边）。
             equation: 方程引用，可选。
 
         Returns:
@@ -184,8 +185,8 @@ class VariableGraph(DirectedGraph):
             raise KeyError(f"子变量未声明: {child}")
         if role not in ROLES:
             raise ValueError(f"非法 role: {role!r}，应为 {ROLES}")
-        if L < 0:
-            raise ValueError(f"L 必须 ≥ 0，收到 {L}")
+        if L is not None and L < 0:
+            raise ValueError(f"L 必须 ≥ 0 或 None，收到 {L}")
         key = (parent, child)
         if key in self._edge_meta:
             raise ValueError(f"边重复声明: {parent} -> {child}")

@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 from ascend.config import GAME_DAY, GAME_YEAR
 from ascend.space import ClimateZone, WeatherParams

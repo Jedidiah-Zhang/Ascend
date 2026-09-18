@@ -106,7 +106,7 @@ _CHUNK_INSTANCE = InstanceDomain(
     destruction="chunk_unregistration",
 )
 _ACCESS = AccessPolicy(
-    interventions=("node", "persistent", "mechanism"),
+    interventions=("node", "persistent"),
     research_trace=True,
     observation_protocols=("research.full.v1", "agent.weather.v1"),
 )
@@ -223,9 +223,12 @@ def _parent(
     parent: str,
     argument: str,
     source_microstep: str,
-    lipschitz: float,
+    lipschitz: float | None,
     valid_domain: str,
     analysis_role: str,
+    *,
+    modulus_kind: str = "linear",
+    jump_bound: float | None = None,
 ) -> ParentSpec:
     return ParentSpec(
         parent=parent,
@@ -242,34 +245,39 @@ def _parent(
         metric="absolute_difference",
         valid_domain=valid_domain,
         analysis_role=analysis_role,
+        modulus_kind=modulus_kind,
+        jump_bound=jump_bound,
     )
 
 
 # ── 方程实现（唯一事实源）───────────────────────────────────────
+# 空间生成 5 机制（3 C 单源标量 + climate/biome 决策树）为定点实现
+# （issue #52）：纯整数语义核，跨平台逐位一致；与 float 参考的已登记
+# 差异见 ascend/space/gen_fixed.py 与 reference_check._TOLERANCES。
 
 
 def _sea_level_temperature_equation(latitude_noise: float) -> float:
-    """C 端：t = lat_n*25 + 10，clamp [-20, 38]（单源 _hydrology.c）。"""
-    from .hydrology import sea_level_temperature_c
+    """定点实现（issue #52）：Q30 乘加 + clamp [-20, 38]。"""
+    from .gen_fixed import sea_level_temperature
 
-    return sea_level_temperature_c(latitude_noise)
+    return sea_level_temperature(latitude_noise)
 
 
 def _rainfall_equation(rainfall_noise: float) -> float:
-    """C 端：r = min + (n+1)/2*(max-min)，clamp [0, 5000]。"""
-    from .hydrology import rainfall_from_noise_c
+    """定点实现（issue #52）：min + (n+1)/2*(max-min) 的 Q30 定点等价。"""
+    from .gen_fixed import rainfall_from_noise
 
-    return rainfall_from_noise_c(rainfall_noise)
+    return rainfall_from_noise(rainfall_noise)
 
 
 def _lapse_rate_equation(
     sea_level_temperature: float,
     altitude: float,
 ) -> float:
-    """C 端：陆地按海拔直减率降温，clamp [-20, 36]。"""
-    from .hydrology import apply_lapse_rate_c
+    """定点实现（issue #52）：陆地直减率 + clamp [-20, 36]；海域恒等。"""
+    from .gen_fixed import apply_lapse_rate
 
-    return apply_lapse_rate_c(sea_level_temperature, altitude)
+    return apply_lapse_rate(sea_level_temperature, altitude)
 
 
 def _climate_zone_equation(
@@ -277,9 +285,10 @@ def _climate_zone_equation(
     annual_rainfall: float,
     altitude: float,
 ) -> int:
-    from .hydrology import classify_climate_c
+    """定点实现（issue #52）：量化域整数决策树（判定顺序同 C）。"""
+    from .gen_fixed import classify_climate
 
-    return int(classify_climate_c(mean_temperature, annual_rainfall, altitude))
+    return classify_climate(mean_temperature, annual_rainfall, altitude)
 
 
 def _biome_equation(
@@ -289,43 +298,103 @@ def _biome_equation(
     sea_level_temperature: float,
     moisture_noise: float,
 ) -> int:
-    """群系主隶属（静态细分值域；大陆动态 subdiv_ranges 不在本切片）。"""
-    from .biome import biome_from_attrs
+    """群系主隶属（issue #52 定点实现；静态细分值域）。"""
+    from .gen_fixed import biome_from_attrs
 
-    biome = biome_from_attrs(
+    return biome_from_attrs(
         mean_temperature, annual_rainfall, altitude, sea_level_temperature,
         moisture_noise,
     )
-    return int(biome)
 
 
 def _baseline_humidity_equation(
     climate_zone: int,
     humidity_noise: float,
 ) -> float:
+    """定点实现（issue #53 P4）：模板/噪声量化 + 定点乘加 + 定点 clamp。"""
+    from ascend.num.fixed import clamp as fixed_clamp, mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
     template = get_climate_template(ClimateZone(climate_zone))
     lo, hi = template.humidity_range
-    return clamp(lo + (humidity_noise + 1.0) * 0.5 * (hi - lo), 0.0, 100.0)
+    bits = TABLE_BITS
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    value = q(lo) + mul(
+        mul(q(humidity_noise) + q(1.0), q(0.5), bits),
+        q(hi) - q(lo), bits,
+    )
+    return to_float(
+        fixed_clamp(value, q(0.0), q(100.0)), bits,
+    )
 
 
 def _baseline_wind_speed_equation(
     climate_zone: int,
     wind_noise: float,
 ) -> float:
+    """定点实现（issue #53 P4）：模板/噪声量化 + 定点乘加 + 定点 clamp。"""
+    from ascend.num.fixed import clamp as fixed_clamp, mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
     template = get_climate_template(ClimateZone(climate_zone))
     lo, hi = template.wind_speed_range
-    return clamp(lo + (wind_noise + 1.0) * 0.5 * (hi - lo), 0.0, 50.0)
+    bits = TABLE_BITS
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    value = q(lo) + mul(
+        mul(q(wind_noise) + q(1.0), q(0.5), bits),
+        q(hi) - q(lo), bits,
+    )
+    return to_float(
+        fixed_clamp(value, q(0.0), q(50.0)), bits,
+    )
 
 
 def _mean_precip_intensity_equation(climate_zone: int) -> float:
-    return get_climate_template(ClimateZone(climate_zone)).mean_precip_intensity
+    """定点实现（issue #53 P4）：模板值量化往返（数据契约）。"""
+    from ascend.num.fixed import quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    value = get_climate_template(
+        ClimateZone(climate_zone),
+    ).mean_precip_intensity
+    return to_float(quantize(value, TABLE_BITS), TABLE_BITS)
 
 
 def _humidity_sharpness_equation(climate_zone: int) -> float:
-    return get_climate_template(ClimateZone(climate_zone)).humidity_sharpness
+    """定点实现（issue #53 P4）：模板值量化往返（数据契约）。"""
+    from ascend.num.fixed import quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    value = get_climate_template(
+        ClimateZone(climate_zone),
+    ).humidity_sharpness
+    return to_float(quantize(value, TABLE_BITS), TABLE_BITS)
 
 
 # ── 节点 ────────────────────────────────────────────────────────
+
+# 数值内核依赖（issue #53 P4）：定点/冻表实现源码进方程身份
+_NUM_DEPS = (
+    Path(__file__).resolve().parents[1] / "num" / "fixed.py",
+    Path(__file__).resolve().parents[1] / "num" / "tables.py",
+    Path(__file__).resolve().parents[1] / "num" / "frozen_tables.py",
+)
+
+# 定点空间生成依赖（issue #52）：实现本体 + 数值内核 + 常量/数据源
+_GEN_FIXED = _HERE / "gen_fixed.py"
+_BIOME_JSON = _HERE.parents[2] / "data" / "biome.json"
+_FIXED_GEN_DEPS = (_GEN_FIXED, *_NUM_DEPS, _CONFIG_PY, _WORLD_JSON)
+_FIXED_BIOME_DEPS = (
+    _GEN_FIXED, *_NUM_DEPS, _BIOME_PY, _CLIMATE_PY, _CONFIG_PY, _WORLD_JSON,
+    _BIOME_JSON,
+)
+
 
 
 def _boundary(
@@ -503,7 +572,9 @@ _NODES = (
         MEAN_PRECIP_INTENSITY,
         kind="float",
         unit="mm_per_hour",
-        bounds=(0.0, 100.0),
+        # 值域 = data/climate.json 模板实际范围（2..10）；原先的 [0,100]
+        # 是未加论证的名义界，会虚增下游 Lipschitz 界（#53 P4 G3 审计）
+        bounds=(2.0, 10.0),
         choices=(),
         reconstruction="world.gen.derive_mean_precip_intensity.v1",
         microstep=WORLD_GEN_DERIVED_D,
@@ -590,19 +661,16 @@ def _w(
     )
 
 
-# C 公式的机制版本同时覆盖包装源码与 C 源码 + 注入常量来源。
-_C_DEPS = (_HYDRO_C, _HYDRO_PY, _CLIMATE_PY, _CONFIG_PY, _WORLD_JSON)
+# 定点空间生成机制版本依赖见 `_FIXED_GEN_DEPS` / `_FIXED_BIOME_DEPS`。
 _TEMPLATE_DEPS = (_CLIMATE_PY, _CLIMATE_JSON, _CONFIG_PY, _WORLD_JSON, clamp,
                   get_climate_template)
-_BIOME_DEPS = (_BIOME_PY, _CLIMATE_PY, _HYDRO_C, _HYDRO_PY, _CONFIG_PY,
-               _WORLD_JSON)
 
 
 _MECHANISMS = (
     _mechanism(
         "world.gen.derive_sea_level_temperature.v1",
         SEA_LEVEL_TEMPERATURE,
-        "clamp(latitude_noise * 25 + 10, -20, 38)（C 单源 _hydrology.c）",
+        "clamp(latitude_noise * 25 + 10, -20, 38)（定点 Q30，issue #52）",
         _sea_level_temperature_equation,
         (
             _parent(LATITUDE_NOISE, "latitude_noise", WORLD_GEN_INPUT, 25.0,
@@ -614,18 +682,19 @@ _MECHANISMS = (
             "noise_above_1.12:clamp_to_38",
             "finite_interior:linear_mapping",
         ),
-        _C_DEPS,
+        _FIXED_GEN_DEPS,
         (
             _w("latitude_noise_changes_sea_level_temperature",
                LATITUDE_NOISE,
-               ((LATITUDE_NOISE, 0.0),), 0.4, (10.0, 20.0)),
+               ((LATITUDE_NOISE, 0.0),), 0.4,
+               (10.0, 20.000000009313226)),
         ),
     ),
     _mechanism(
         "world.gen.derive_annual_rainfall.v1",
         ANNUAL_RAINFALL,
         "clamp(rainfall_min + (noise + 1) * 0.5 * (rainfall_max - "
-        "rainfall_min), 0, 5000)（C 单源，min/max 由 config 注入）",
+        "rainfall_min), 0, 5000)（定点 Q30，min/max 由 config 注入）",
         _rainfall_equation,
         (
             _parent(RAINFALL_NOISE, "rainfall_noise", WORLD_GEN_INPUT,
@@ -637,11 +706,12 @@ _MECHANISMS = (
             "noise_plus_one:rainfall_max",
             "finite_interior:linear_mapping",
         ),
-        _C_DEPS,
+        _FIXED_GEN_DEPS,
         (
             _w("rainfall_noise_changes_annual_rainfall",
                RAINFALL_NOISE,
-               ((RAINFALL_NOISE, 0.0),), 0.4, (1775.0, 2465.0)),
+               ((RAINFALL_NOISE, 0.0),), 0.4,
+               (1775.0, 2465.0000006426126)),
         ),
     ),
     _mechanism(
@@ -649,7 +719,7 @@ _MECHANISMS = (
         ANNUAL_TEMPERATURE,
         "sea_level_temperature - altitude * lapse_rate / 1000 for "
         "altitude > 0 else sea_level_temperature, clamp [-20, 36]"
-        "（C 单源）",
+        "（定点 Q30）",
         _lapse_rate_equation,
         (
             _parent(SEA_LEVEL_TEMPERATURE, "sea_level_temperature",
@@ -665,7 +735,7 @@ _MECHANISMS = (
             "temperature_below_-20:clamp",
             "temperature_above_36:clamp",
         ),
-        _C_DEPS,
+        _FIXED_GEN_DEPS,
         (
             _w("sea_level_temperature_changes_annual_mean_temperature",
                SEA_LEVEL_TEMPERATURE,
@@ -680,7 +750,7 @@ _MECHANISMS = (
     _mechanism(
         "world.gen.classify_climate_zone.v1",
         CLIMATE_ZONE,
-        "8 档静态决策树（C 单源，阈值由 config 经 hydrology 注入）",
+        "8 档静态决策树（定点量化域整数比较，阈值由 config 注入）",
         _climate_zone_equation,
         (
             _parent(ANNUAL_TEMPERATURE, "mean_temperature",
@@ -699,7 +769,7 @@ _MECHANISMS = (
             "rainfall_below_desert_threshold:DESERT",
             "decision_tree_priority_order",
         ),
-        _C_DEPS,
+        _FIXED_GEN_DEPS,
         (
             _w("altitude_changes_climate_zone",
                ALTITUDE,
@@ -722,7 +792,7 @@ _MECHANISMS = (
         "world.gen.classify_biome.v1",
         BIOME,
         "海洋按海面温度三档；陆地按气候档 + 细分维度三角隶属取主型"
-        "（静态细分值域；大陆动态 subdiv_ranges 不在本切片）",
+        "（定点 Q30；静态细分值域，动态 subdiv_ranges 属大陆管线边界）",
         _biome_equation,
         (
             _parent(ANNUAL_TEMPERATURE, "mean_temperature",
@@ -745,7 +815,7 @@ _MECHANISMS = (
             "land:climate_subdivision_membership",
             "no_subdivision_config:temperate_deciduous_fallback",
         ),
-        _BIOME_DEPS,
+        _FIXED_BIOME_DEPS,
         (
             _w("altitude_changes_biome_ocean_land",
                ALTITUDE,
@@ -792,9 +862,10 @@ _MECHANISMS = (
         "（模板数据 data/climate.json）",
         _baseline_humidity_equation,
         (
-            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, 0.0,
-                    "climate_zone_enum_0_7", "forward"),
-            _parent(HUMIDITY_NOISE, "humidity_noise", WORLD_GEN_INPUT, 0.0,
+            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, None,
+                    "climate_zone_enum_0_7", "forward",
+                    modulus_kind="jump", jump_bound=90.0),
+            _parent(HUMIDITY_NOISE, "humidity_noise", WORLD_GEN_INPUT, 20.0,
                     "closed_interval_-1_1", "forward"),
         ),
         (),
@@ -803,7 +874,7 @@ _MECHANISMS = (
             "noise_plus_one:template_high",
             "finite_interior:linear_interpolation",
         ),
-        _TEMPLATE_DEPS,
+        _TEMPLATE_DEPS + _NUM_DEPS,
         (
             _w("humidity_noise_changes_baseline_humidity",
                HUMIDITY_NOISE,
@@ -823,9 +894,10 @@ _MECHANISMS = (
         "（模板数据 data/climate.json）",
         _baseline_wind_speed_equation,
         (
-            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, 0.0,
-                    "climate_zone_enum_0_7", "forward"),
-            _parent(WIND_NOISE, "wind_noise", WORLD_GEN_INPUT, 0.0,
+            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, None,
+                    "climate_zone_enum_0_7", "forward",
+                    modulus_kind="jump", jump_bound=25.0),
+            _parent(WIND_NOISE, "wind_noise", WORLD_GEN_INPUT, 11.0,
                     "closed_interval_-1_1", "forward"),
         ),
         (),
@@ -834,7 +906,7 @@ _MECHANISMS = (
             "noise_plus_one:template_high",
             "finite_interior:linear_interpolation",
         ),
-        _TEMPLATE_DEPS,
+        _TEMPLATE_DEPS + _NUM_DEPS,
         (
             _w("wind_noise_changes_baseline_wind_speed",
                WIND_NOISE,
@@ -852,12 +924,13 @@ _MECHANISMS = (
         "climate_template.mean_precip_intensity（数据契约）",
         _mean_precip_intensity_equation,
         (
-            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, 0.0,
-                    "climate_zone_enum_0_7", "forward"),
+            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, None,
+                    "climate_zone_enum_0_7", "forward",
+                    modulus_kind="jump", jump_bound=8.0),
         ),
         (),
         ("per_zone_lookup:data_contract",),
-        _TEMPLATE_DEPS,
+        _TEMPLATE_DEPS + _NUM_DEPS,
         (
             _w("climate_zone_changes_mean_precip_intensity",
                CLIMATE_ZONE,
@@ -870,12 +943,13 @@ _MECHANISMS = (
         "climate_template.humidity_sharpness（数据契约）",
         _humidity_sharpness_equation,
         (
-            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, 0.0,
-                    "climate_zone_enum_0_7", "forward"),
+            _parent(CLIMATE_ZONE, "climate_zone", WORLD_GEN_DERIVED_C, None,
+                    "climate_zone_enum_0_7", "forward",
+                    modulus_kind="jump", jump_bound=2.5),
         ),
         (),
         ("per_zone_lookup:data_contract",),
-        _TEMPLATE_DEPS,
+        _TEMPLATE_DEPS + _NUM_DEPS,
         (
             _w("climate_zone_changes_humidity_sharpness",
                CLIMATE_ZONE,

@@ -547,6 +547,15 @@ def _compile_waves(
                     f"{parent_step!r}"
                 )
             if parent.lag != 0:
+                # lag≠0 的父读历史帧；生产波次执行路径是同帧求值，
+                # wired 机制声明 lag≠0 无法执行——装配期拒绝（issue #49，
+                # 不再等到运行时才抛错）。
+                if output in wired:
+                    issues.append(
+                        f"{mechanism_id}: wired 机制的父 {parent.parent} "
+                        f"声明 lag={parent.lag}；生产波次执行不支持 lag≠0"
+                        f"（装配期拒绝）"
+                    )
                 continue
             source = index.get(parent_step)
             if source is None:

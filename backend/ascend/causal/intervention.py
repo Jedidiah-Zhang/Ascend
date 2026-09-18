@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -405,6 +406,7 @@ class InterventionTimeline:
         payload: object,
         *,
         instance_loader: Callable[[str, tuple], bool] | None = None,
+        replace: bool = False,
     ) -> int:
         """从存档载荷恢复（读档路径，fail-closed，全量校验后落表）。
 
@@ -415,6 +417,9 @@ class InterventionTimeline:
         Args:
             payload: :meth:`persist` 输出的映射。
             instance_loader: 可选实例装载器；仅本调用期间生效。
+            replace: True = **整体替换**（清空现有计划/记录后落表；
+                读档以载荷为唯一事实源，WC-8.1）。False = 合并落表
+                （工具/测试路径的旧语义）。
 
         Returns:
             实际恢复的条目数（计划 + 记录）。
@@ -462,6 +467,10 @@ class InterventionTimeline:
                 for record in records:
                     self._validate_record(record)
                 # 阶段二：统一落表（此后不再有失败点）
+                if replace:
+                    self._plan.clear()
+                    self._records.clear()
+                    self._record_list.clear()
                 for entry in plans:
                     self._plan_seq = max(self._plan_seq, entry.seq or 0)
                     self._plan.append(entry)
@@ -751,6 +760,49 @@ class InterventionTimeline:
             for axis in entry.instance
         ):
             raise ValueError("特征核控制干预必须指明整数 (cx, cy) 实例")
+        value = entry.value
+        if not isinstance(value, Mapping):
+            raise ValueError(
+                "特征核控制干预必须提供 {'active': bool, 'spec': {...}}"
+            )
+        if not isinstance(value.get("active"), bool):
+            raise ValueError("特征核控制干预 active 必须为布尔值")
+        if not value["active"]:
+            return
+        spec = value.get("spec")
+        if not isinstance(spec, Mapping):
+            raise ValueError(
+                "特征核控制干预 active=True 时必须携带核规格 spec"
+                "（读档投影的事实源，WC-6.5）"
+            )
+        required = (
+            "center_x", "center_y", "radius", "magnitude",
+            "born_tick", "duration", "vel_x", "vel_y",
+        )
+        missing = [name for name in required if name not in spec]
+        if missing:
+            raise ValueError(f"特征核核规格缺少字段: {missing}")
+        for name in ("center_x", "center_y", "radius", "magnitude",
+                     "vel_x", "vel_y"):
+            item = spec[name]
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                raise ValueError(f"特征核核规格 {name} 必须为数值: {item!r}")
+            if not math.isfinite(float(item)):
+                raise ValueError(f"特征核核规格 {name} 必须为有限值: {item!r}")
+        born = spec["born_tick"]
+        if not isinstance(born, int) or isinstance(born, bool) or born < 0:
+            raise ValueError(
+                f"特征核核规格 born_tick 必须为非负整数: {born!r}"
+            )
+        duration = spec["duration"]
+        if duration is not None and (
+            not isinstance(duration, int)
+            or isinstance(duration, bool)
+            or duration < 0
+        ):
+            raise ValueError(
+                f"特征核核规格 duration 必须为非负整数或 None: {duration!r}"
+            )
 
     def _validate_record(self, record: InterventionRecord) -> None:
         """恢复记录时校验目标与值域（存档不是绕过校验的后门）。"""

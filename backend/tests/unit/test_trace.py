@@ -59,7 +59,7 @@ def _node(node_id: str, *, microstep: str = _S1) -> NodeSpec:
             writer="single_writer", merge_rule="single_writer",
         ),
         access=AccessPolicy(
-            interventions=("node", "persistent", "mechanism"),
+            interventions=("node", "persistent"),
             research_trace=True,
             observation_protocols=("research.full.v1",),
         ),
@@ -339,3 +339,52 @@ class TestEvaluatorTracing:
         evaluator = InterventionEvaluator(registry)
         evaluator.evaluate("x", {"x": 1.0}, frame=1)
         assert evaluator.trace is None
+
+
+class TestLedgerSeparation:
+    """双账分离与丢失报告（#50）：发生（eval）/ 重算（recompute）。"""
+
+    def test_kind_defaults_to_eval(self, registry):
+        log = TraceLog(registry)
+        evaluator = InterventionEvaluator(registry, trace=log)
+        evaluator.evaluate("x", {"x": 1.0}, frame=1)
+        assert log.records()[-1].kind == "eval"
+        assert log.counts() == {"eval": 1, "recompute": 0}
+
+    def test_recompute_kind_recorded_and_filterable(self, registry):
+        log = TraceLog(registry)
+        evaluator = InterventionEvaluator(registry, trace=log)
+        evaluator.evaluate("x", {"x": 1.0}, frame=1)                 # eval
+        evaluator.evaluate(
+            "x", {"x": 1.0}, frame=1, trace_kind="recompute",
+        )                                                            # recompute
+        assert len(log.records(kind="eval")) == 1
+        assert len(log.records(kind="recompute")) == 1
+        assert log.counts() == {"eval": 1, "recompute": 1}
+        page, total = log.page(kind="recompute")
+        assert total == 1 and page[0].kind == "recompute"
+        assert log.verify_all() == [], "重算记录同样可重算"
+
+    def test_invalid_kind_rejected(self, registry):
+        log = TraceLog(registry)
+        entry = _record()
+        object.__setattr__(entry, "kind", "ghost")
+        with pytest.raises(ValueError, match="性质非法"):
+            log.record(entry)
+
+    def test_kind_in_plain(self, registry):
+        log = TraceLog(registry)
+        evaluator = InterventionEvaluator(registry, trace=log)
+        evaluator.evaluate(
+            "x", {"x": 1.0}, frame=1, trace_kind="recompute",
+        )
+        assert log.records()[-1].plain()["kind"] == "recompute"
+
+    def test_capacity_eviction_reported(self, registry):
+        """容量淘汰必须可见（丢失报告）：dropped 计数与保留数一致。"""
+        log = TraceLog(registry, capacity=2)
+        for frame in range(1, 5):
+            log.record(_record(frame=frame))
+        assert len(log) == 2
+        assert log.dropped == 2
+        assert log.counts() == {"eval": 2, "recompute": 0}

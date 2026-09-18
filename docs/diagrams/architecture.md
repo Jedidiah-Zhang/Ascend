@@ -54,7 +54,7 @@ graph TD
     REG -->|"方程版本（构造期预计算）"| TRC
     IVT -->|"求值点留痕（fail-closed）"| TRC
     IVT -->|"persist / restore（生效干预）"| SER
-    WEA -->|"persist_state / restore_state（注入核）"| SER
+    WEA -->|"persist_state / restore_state（时间线 + 注入核投影）"| SER
     REG -->|"declaration_settings（世界设置比对）"| SER
     SM --> SER
 

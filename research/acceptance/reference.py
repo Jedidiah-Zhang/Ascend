@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
+from ascend.causal.frame_history import FrameHistory
 from ascend.causal.registry import MechanismRegistry
 
 
@@ -52,7 +53,8 @@ class ReferenceInterpreter:
         registry: 不可变机制注册表。
         overrides: 值覆盖列表（按登记顺序，后者覆盖前者）。
         exogenous: 随机源取值 ``fn(source_id, frame, instance) -> value``；
-            None = 使用声明分布的中位数近似（0.0），仅用于确定性切片。
+            None 且机制声明了随机源时求值即拒绝（fail-closed，不引入
+            未声明随机性）。
     """
 
     def __init__(
@@ -69,6 +71,14 @@ class ReferenceInterpreter:
         for mechanism in registry.mechanisms.values():
             step = registry.nodes[mechanism.output].update.microstep
             self._by_step.setdefault(step, []).append(mechanism)
+        self._max_lag = max(
+            (
+                parent.lag
+                for mechanism in registry.mechanisms.values()
+                for parent in mechanism.parents
+            ),
+            default=0,
+        )
 
     def _override(self, node_id: str, frame: int):
         """最后一条生效的值覆盖（后到覆盖先到）。"""
@@ -95,10 +105,13 @@ class ReferenceInterpreter:
         Returns:
             :class:`ReferenceTrace`（frames 按帧序）。
         """
+        if len(frames) == 0:
+            return ReferenceTrace()
+        first_frame = frames[0]
+        history = FrameHistory(first_frame, initial, max_lag=self._max_lag)
         state = dict(initial)
         trace = ReferenceTrace()
         for frame in frames:
-            prev = dict(state)
             current = dict(state)
             for step in self._registry.microstep_order:
                 for mechanism in self._by_step.get(step, ()):
@@ -109,13 +122,17 @@ class ReferenceInterpreter:
                         continue
                     parents: dict[str, object] = {}
                     for parent in mechanism.parents:
-                        source = prev if parent.lag >= 1 else current
-                        if parent.parent not in source:
-                            raise KeyError(
-                                f"参考解释器缺父值: {parent.parent} "
-                                f"（lag={parent.lag}, frame={frame}）"
+                        if parent.lag == 0:
+                            if parent.parent not in current:
+                                raise KeyError(
+                                    f"参考解释器缺父值: {parent.parent} "
+                                    f"（frame={frame}）"
+                                )
+                            parents[parent.parent] = current[parent.parent]
+                        else:
+                            parents[parent.parent] = history.lookup(
+                                parent.parent, parent.lag, frame,
                             )
-                        parents[parent.parent] = source[parent.parent]
                     random_values = {}
                     for binding in mechanism.random_sources:
                         if self._exogenous is None:
@@ -130,6 +147,7 @@ class ReferenceInterpreter:
                         mechanism, parents, random_values=random_values,
                     )
             state = current
+            history.commit(frame, state)
             trace.frames.append(dict(state))
         return trace
 
@@ -157,34 +175,57 @@ class SpatialReferenceInterpreter:
         for mechanism in registry.mechanisms.values():
             step = registry.nodes[mechanism.output].update.microstep
             self._by_step.setdefault(step, []).append(mechanism)
+        self._max_lag = max(
+            (
+                parent.lag
+                for mechanism in registry.mechanisms.values()
+                for parent in mechanism.parents
+            ),
+            default=0,
+        )
 
-    def _value(self, state: Mapping, node_id: str, position: int):
-        if position in state[node_id]:
-            return state[node_id][position]
+    @staticmethod
+    def _position_value(raw: Mapping, node_id: str, position: int):
+        if position in raw:
+            return raw[position]
         raise KeyError(f"参考解释器缺位置 {position}: {node_id}")
 
-    def _parents(self, mechanism, prev, current) -> dict[str, object]:
+    def _parents(self, mechanism, history: FrameHistory, frame: int,
+                 current) -> dict[str, object]:
         values: dict[str, object] = {}
         for parent in mechanism.parents:
-            source = prev if parent.lag >= 1 else current
+            if parent.lag == 0:
+                if parent.parent not in current:
+                    raise KeyError(
+                        f"参考解释器缺父值: {parent.parent}（frame={frame}）"
+                    )
+                raw = current[parent.parent]
+            else:
+                raw = history.lookup(parent.parent, parent.lag, frame)
             if len(parent.spatial_offsets) <= 1:
-                values[parent.parent] = source[parent.parent][self._cell]
+                values[parent.parent] = self._position_value(
+                    raw, parent.parent, self._cell,
+                )
                 continue
             out = []
             for offset in parent.spatial_offsets:
                 position = self._cell + offset[0]
                 if parent.boundary_operator == "replicate":
                     position = min(max(position, self._cells[0]), self._cells[-1])
-                out.append(self._value(source, parent.parent, position))
+                out.append(self._position_value(raw, parent.parent, position))
             values[parent.parent] = tuple(out)
         return values
 
     def run(self, frames: range, initial: Mapping[int, object]) -> list[dict]:
         """逐帧推进；返回每帧的 节点→位置元组 快照。"""
+        if len(frames) == 0:
+            return []
+        history = FrameHistory(
+            frames[0], initial, max_lag=self._max_lag,
+        )
         state = {node_id: dict(values) for node_id, values in initial.items()}
         out = []
         for frame in frames:
-            prev = {node_id: dict(values) for node_id, values in state.items()}
             current = {
                 node_id: dict(values) for node_id, values in state.items()
             }
@@ -194,10 +235,12 @@ class SpatialReferenceInterpreter:
                         self._cell = cell
                         current[mechanism.output][cell] = (
                             self._registry.evaluate_mechanism(
-                                mechanism, self._parents(mechanism, prev, current),
+                                mechanism,
+                                self._parents(mechanism, history, frame, current),
                             )
                         )
             state = current
+            history.commit(frame, state)
             out.append({
                 node_id: tuple(values[cell] for cell in self._cells)
                 for node_id, values in state.items()

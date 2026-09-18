@@ -5,7 +5,8 @@ docs/研究理论/世界基座/12-世界树角色与帧调度.md：
 - 世界状态更新只能由声明更新点触发（注册顺序 = 执行顺序）；
 - 驱动信号来自时钟，不经世界树事件；
 - 世界写路径所在包不得订阅世界树或时钟（唯一驱动者是 FrameScheduler）；
-- 一次推进批次是一个帧事务：写方影子提交，失败整帧回滚（WC-7.6）。
+- 一次推进批次是一个帧事务：写方影子提交，提交前失败整帧回滚重试，
+  提交相位失败世界失效（WC-7.6 / WC-9.2 / #51）。
 """
 
 import re
@@ -14,7 +15,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from ascend.runtime import FrameScheduler, FrameStateStore
+from ascend.runtime import (
+    FrameScheduler,
+    FrameStateStore,
+    WorldInvalidatedError,
+)
 from ascend.time import WorldClock
 
 
@@ -194,32 +199,59 @@ class TestFrameTransaction:
         assert hooks == []
 
 
-    def test_commit_failure_rolls_back_boundary(self):
-        """提交阶段失败：边界回滚，下一帧重试（幂等动作重放）。"""
+    def test_applier_failure_invalidates_world_without_replay(self):
+        """提交中失败：世界失效——不重放、不重试（#51 三相位语义）。"""
         store = FrameStateStore()
         scheduler = FrameScheduler(store=store)
         runs: list = []
-        state = {"fail": True}
 
         def callback(now: int) -> None:
             runs.append(now)
 
             def apply() -> None:
-                if state["fail"]:
-                    raise ValueError("applier boom")
-                runs.append("applied")
+                raise ValueError("applier boom")
 
             store.stage_apply(apply)
 
         scheduler.register("p", period=1, callback=callback)
-        with pytest.raises(RuntimeError, match="帧提交失败"):
+        with pytest.raises(WorldInvalidatedError, match="帧提交失败"):
             scheduler.advance(1)
         assert runs == [1]
         assert store.version == 0
-        state["fail"] = False
-        scheduler.advance(1)
-        assert runs == [1, 1, "applied"]
+        assert scheduler.invalidated is not None
+        # 不重试：再次推进直接拒绝，回调不再执行（同一帧不重复更新）
+        with pytest.raises(WorldInvalidatedError):
+            scheduler.advance(1)
+        assert runs == [1]
+
+    def test_record_failure_after_commit_does_not_replay_frame(self):
+        """提交后记录回调失败：状态已提交一次，世界失效且不重放。
+
+        旧语义会把边界回退并重放同一帧（计数 1 → 2）；新语义下
+        第二次推进必须直接拒绝，计数保持 1。
+        """
+        store = FrameStateStore()
+        scheduler = FrameScheduler(store=store)
+        runs: list[int] = []
+
+        def callback(now: int) -> None:
+            runs.append(now)
+            store.stage("n", len(runs))
+
+            def bad_hook() -> None:
+                raise RuntimeError("record boom")
+
+            store.stage_after_commit(bad_hook)
+
+        scheduler.register("p", period=1, callback=callback)
+        with pytest.raises(WorldInvalidatedError, match="已提交"):
+            scheduler.advance(1)
+        assert store.get("n") == 1, "已提交状态保持一次"
         assert store.version == 1
+        assert scheduler.invalidated is not None
+        with pytest.raises(WorldInvalidatedError):
+            scheduler.advance(1)
+        assert runs == [1], "同一逻辑帧不得重复执行"
 
     def test_persistent_failure_backs_off_then_recovers(self):
         """连续失败指数退避：退避窗口内不重试，恢复后重试并清零。"""

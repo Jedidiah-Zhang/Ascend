@@ -94,10 +94,12 @@ class ParentSpec:
     broadcast: str
     boundary_operator: str
     guard: str
-    lipschitz: float
+    lipschitz: float | None
     metric: str
     valid_domain: str
     analysis_role: str
+    modulus_kind: str = "linear"
+    jump_bound: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

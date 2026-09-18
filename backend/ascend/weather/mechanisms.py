@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import hashlib
 import json
 import math
@@ -184,7 +186,7 @@ _GLOBAL_INSTANCE = InstanceDomain(
     destruction="world_teardown",
 )
 _ACCESS = AccessPolicy(
-    interventions=("node", "persistent", "mechanism"),
+    interventions=("node", "persistent"),
     research_trace=True,
     observation_protocols=("research.full.v1", "agent.weather.v1"),
 )
@@ -305,9 +307,12 @@ def _parent(
     parent: str,
     argument: str,
     source_microstep: str,
-    lipschitz: float,
+    lipschitz: float | None,
     valid_domain: str,
     analysis_role: str,
+    *,
+    modulus_kind: str = "linear",
+    jump_bound: float | None = None,
 ) -> ParentSpec:
     return ParentSpec(
         parent=parent,
@@ -324,6 +329,8 @@ def _parent(
         metric="absolute_difference",
         valid_domain=valid_domain,
         analysis_role=analysis_role,
+        modulus_kind=modulus_kind,
+        jump_bound=jump_bound,
     )
 
 
@@ -337,9 +344,25 @@ def _derive_latitude_equation(
     output_min: float,
     output_max: float,
 ) -> float:
-    ratio = (sea_level_temperature - input_min) / (input_max - input_min)
-    latitude = output_max - ratio * (output_max - output_min)
-    return clamp(latitude, output_min, output_max)
+    """定点实现（issue #53 P3）：量化 + 定点除/乘 + 定点 clamp。"""
+    from ascend.num.fixed import clamp as fixed_clamp, div, mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    ratio = div(
+        q(sea_level_temperature) - q(input_min),
+        q(input_max) - q(input_min), bits,
+    )
+    latitude = q(output_max) - mul(
+        ratio, q(output_max) - q(output_min), bits,
+    )
+    return to_float(
+        fixed_clamp(latitude, q(output_min), q(output_max)), bits,
+    )
 
 
 def _derive_seasonal_amplitude_equation(
@@ -354,21 +377,29 @@ def _derive_seasonal_amplitude_equation(
     output_min: float,
     output_max: float,
 ) -> float:
-    temperature_ratio = (annual_temperature - input_temp_min) / (
-        input_temp_max - input_temp_min
+    """定点实现（issue #53 P3）：量化 + 定点除/乘 + 两处定点 clamp。"""
+    from ascend.num.fixed import clamp as fixed_clamp, div, mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    temperature_ratio = div(
+        q(annual_temperature) - q(input_temp_min),
+        q(input_temp_max) - q(input_temp_min), bits,
     )
-    base_amplitude = cold_endpoint - temperature_ratio * (
-        cold_endpoint - hot_endpoint
+    base_amplitude = q(cold_endpoint) - mul(
+        temperature_ratio, q(cold_endpoint) - q(hot_endpoint), bits,
     )
-    rain_factor = clamp(
-        (rain_reference - annual_rainfall) / rain_reference,
-        -0.5,
-        1.0,
+    rain_factor = fixed_clamp(
+        div(q(rain_reference) - q(annual_rainfall), q(rain_reference), bits),
+        q(-0.5), q(1.0),
     )
-    return clamp(
-        base_amplitude + rain_factor * rain_bonus_scale,
-        output_min,
-        output_max,
+    total = base_amplitude + mul(rain_factor, q(rain_bonus_scale), bits)
+    return to_float(
+        fixed_clamp(total, q(output_min), q(output_max)), bits,
     )
 
 
@@ -376,14 +407,32 @@ def _diurnal_amplitude_equation(
     seasonal_amplitude: float,
     diurnal_to_seasonal_ratio: float,
 ) -> float:
-    return seasonal_amplitude * diurnal_to_seasonal_ratio
+    """定点实现（issue #53 P3）：量化 + 定点乘（半偶舍入）。"""
+    from ascend.num.fixed import mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+    return to_float(
+        mul(quantize(seasonal_amplitude, bits),
+            quantize(diurnal_to_seasonal_ratio, bits), bits),
+        bits,
+    )
 
 
 def _humidity_seasonal_amplitude_equation(
     seasonal_amplitude: float,
     humidity_seasonal_scale: float,
 ) -> float:
-    return seasonal_amplitude * humidity_seasonal_scale
+    """定点实现（issue #53 P3）：量化 + 定点乘（半偶舍入）。"""
+    from ascend.num.fixed import mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+    return to_float(
+        mul(quantize(seasonal_amplitude, bits),
+            quantize(humidity_seasonal_scale, bits), bits),
+        bits,
+    )
 
 
 def _humidity_diurnal_amplitude_equation(
@@ -391,11 +440,16 @@ def _humidity_diurnal_amplitude_equation(
     diurnal_to_seasonal_ratio: float,
     humidity_diurnal_scale: float,
 ) -> float:
-    return (
-        seasonal_amplitude
-        * diurnal_to_seasonal_ratio
-        * humidity_diurnal_scale
+    """定点实现（issue #53 P3）：量化 + 定点乘链（左结合，半偶舍入）。"""
+    from ascend.num.fixed import mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+    value = mul(
+        quantize(seasonal_amplitude, bits),
+        quantize(diurnal_to_seasonal_ratio, bits), bits,
     )
+    return to_float(mul(value, quantize(humidity_diurnal_scale, bits), bits), bits)
 
 
 def _precip_threshold_equation(
@@ -405,9 +459,25 @@ def _precip_threshold_equation(
     threshold_dry: float,
     threshold_wet: float,
 ) -> float:
-    progress = (annual_rainfall - annual_dry) / (annual_wet - annual_dry)
-    progress = clamp(progress, 0.0, 1.0)
-    return threshold_wet + (threshold_dry - threshold_wet) * (1.0 - progress)
+    """定点实现（issue #53 P3）：量化 + 定点除/乘 + clamp（半偶舍入）。"""
+    from ascend.num.fixed import clamp as fixed_clamp, div, mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+    scale = 1 << bits
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    progress = fixed_clamp(
+        div(q(annual_rainfall) - q(annual_dry),
+            q(annual_wet) - q(annual_dry), bits),
+        0, scale,
+    )
+    value = q(threshold_wet) + mul(
+        q(threshold_dry) - q(threshold_wet), scale - progress, bits,
+    )
+    return to_float(value, bits)
 
 
 def _day_equation(tick: int, game_day: int) -> int:
@@ -419,7 +489,12 @@ def _day_of_year_equation(tick: int, game_day: int, days_per_year: int) -> int:
 
 
 def _hour_equation(tick: int, game_day: int, game_hour: int) -> float:
-    return (tick % game_day) / game_hour
+    """定点实现（issue #53 P2）：整数日历除法 + Q30 半偶舍入。"""
+    from ascend.num.diurnal import hour_of_day_q
+    from ascend.num.fixed import to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    return to_float(hour_of_day_q(tick, game_day, game_hour), TABLE_BITS)
 
 
 def _season_equation(
@@ -435,14 +510,38 @@ def _season_phase_cos_equation(
     season_length_days: int,
     seasons_per_year: int,
 ) -> float:
+    """冻表实现（issue #53 P3）：整数日算术 + 冻表 cos + 半偶舍入。
+
+    progress = season + day_of_season/L；angle = (progress − 1.5)/S · 2π；
+    angle_q = (2·p_num − 3·L) · TWO_PI_Q / (2·L·S)。
+    """
+    from ascend.num.fixed import round_half_even_div, to_float
+    from ascend.num.frozen_tables import TABLE_BITS, TWO_PI_Q
+    from ascend.num.tables import cos_q
+
     season = (day - 1) // season_length_days % seasons_per_year
     day_of_season = (day - 1) % season_length_days
-    progress = season + day_of_season / season_length_days
-    return math.cos((progress - 1.5) / seasons_per_year * 2.0 * math.pi)
+    p_num = season * season_length_days + day_of_season
+    numerator = (2 * p_num - 3 * season_length_days) * TWO_PI_Q
+    denominator = 2 * season_length_days * seasons_per_year
+    return to_float(
+        cos_q(round_half_even_div(numerator, denominator), TABLE_BITS),
+        TABLE_BITS,
+    )
 
 
 def _diurnal_phase_cos_equation(hour: float, peak_hour: float) -> float:
-    return math.cos((hour - peak_hour) / 24.0 * 2.0 * math.pi)
+    """冻表实现（issue #53 P2）：输入量化 + 冻表 cos + 半偶舍入。"""
+    from ascend.num.diurnal import diurnal_phase_cos_q
+    from ascend.num.fixed import quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    return to_float(
+        diurnal_phase_cos_q(
+            quantize(hour, TABLE_BITS), quantize(peak_hour, TABLE_BITS),
+        ),
+        TABLE_BITS,
+    )
 
 
 def _solar_declination_equation(
@@ -450,24 +549,56 @@ def _solar_declination_equation(
     obliquity_deg: float,
     days_per_year: int,
 ) -> float:
-    return math.radians(
-        obliquity_deg
-        * math.sin(2.0 * math.pi * (day_of_year - days_per_year // 8) / days_per_year)
-    )
+    """冻表实现（issue #53 P3）：整数日算术 + 冻表 sin + 定点乘。
+
+    radians(x) = x·π/180；π/180 的 Q 值由 TWO_PI_Q 整数半偶除得。
+    """
+    from ascend.num.fixed import mul, quantize, round_half_even_div, to_float
+    from ascend.num.frozen_tables import TABLE_BITS, TWO_PI_Q
+    from ascend.num.tables import sin_q
+
+    bits = TABLE_BITS
+    step = day_of_year - days_per_year // 8
+    angle_q = round_half_even_div(step * TWO_PI_Q, days_per_year)
+    pi_over_180_q = round_half_even_div(TWO_PI_Q, 360)
+    value = mul(quantize(obliquity_deg, bits), sin_q(angle_q, bits), bits)
+    return to_float(mul(value, pi_over_180_q, bits), bits)
 
 
 def _seasonal_temperature_offset_equation(
     amplitude: float,
     season_phase_cos: float,
 ) -> float:
-    return amplitude * season_phase_cos
+    """定点实现（issue #53 P3）：定点乘（半偶舍入）。"""
+    from ascend.num.fixed import mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    return to_float(
+        mul(
+            quantize(amplitude, TABLE_BITS),
+            quantize(season_phase_cos, TABLE_BITS),
+            TABLE_BITS,
+        ),
+        TABLE_BITS,
+    )
 
 
 def _diurnal_temperature_offset_equation(
     amplitude: float,
     diurnal_phase_cos: float,
 ) -> float:
-    return amplitude * diurnal_phase_cos
+    """定点实现（issue #53 P2）：定点乘（半偶舍入）。"""
+    from ascend.num.diurnal import diurnal_temperature_offset_q
+    from ascend.num.fixed import quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    return to_float(
+        diurnal_temperature_offset_q(
+            quantize(amplitude, TABLE_BITS),
+            quantize(diurnal_phase_cos, TABLE_BITS),
+        ),
+        TABLE_BITS,
+    )
 
 
 def _seasonal_humidity_offset_equation(
@@ -475,34 +606,98 @@ def _seasonal_humidity_offset_equation(
     season_phase_cos: float,
     sharpness: float,
 ) -> float:
+    """定点/冻表实现（issue #53 P3）：sharpness>0 走冻表 tanh，否则恒等。"""
+    from ascend.num.fixed import mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+    from ascend.num.tables import tanh_q
+
+    amplitude_q = quantize(amplitude, TABLE_BITS)
+    phase_q = quantize(season_phase_cos, TABLE_BITS)
     if sharpness > 0:
-        return amplitude * math.tanh(season_phase_cos * sharpness)
-    return amplitude * season_phase_cos
+        inner = tanh_q(
+            mul(phase_q, quantize(sharpness, TABLE_BITS), TABLE_BITS),
+            TABLE_BITS,
+        )
+    else:
+        inner = phase_q
+    return to_float(mul(amplitude_q, inner, TABLE_BITS), TABLE_BITS)
 
 
 def _diurnal_humidity_offset_equation(
     amplitude: float,
     diurnal_phase_cos: float,
 ) -> float:
-    return amplitude * (-diurnal_phase_cos)
+    """定点实现（issue #53 P3）：量化 + 定点乘 + 取负（半偶舍入）。"""
+    from ascend.num.fixed import mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+    return to_float(
+        -mul(quantize(amplitude, bits), quantize(diurnal_phase_cos, bits), bits),
+        bits,
+    )
 
 
 def _sunrise_equation(latitude: float, solar_declination: float) -> float:
-    lat = math.radians(latitude)
-    tan_product = max(-1.0, min(1.0, math.tan(lat) * math.tan(solar_declination)))
-    half_day_deg = math.degrees(math.acos(-tan_product))
-    return 12.0 - half_day_deg / 15.0
+    """冻表实现（issue #53 P3）：tan=sin/cos 表相除 + acos 冻表 + degrees。
+
+    注意：acos 在端点附近误差声明为 2e-3 rad（见 tables.ACOS_MAX_ERROR），
+    对应日出/日落时刻误差上界 ~0.008 h。
+    """
+    from ascend.num.fixed import (
+        clamp as fixed_clamp, div, mul, quantize, round_half_even_div, to_float,
+    )
+    from ascend.num.frozen_tables import TABLE_BITS, TWO_PI_Q
+    from ascend.num.tables import acos_q, degrees_q, tan_q
+
+    bits = TABLE_BITS
+    scale = 1 << bits
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    pi_over_180 = round_half_even_div(TWO_PI_Q, 360)
+    latitude_rad = mul(q(latitude), pi_over_180, bits)
+    product = mul(tan_q(latitude_rad, bits), tan_q(q(solar_declination), bits), bits)
+    angle = acos_q(-fixed_clamp(product, -scale, scale), bits)
+    half_day_hours = div(degrees_q(angle, bits), q(15.0), bits)
+    return to_float(q(12.0) - half_day_hours, bits)
 
 
 def _sunset_equation(latitude: float, solar_declination: float) -> float:
-    lat = math.radians(latitude)
-    tan_product = max(-1.0, min(1.0, math.tan(lat) * math.tan(solar_declination)))
-    half_day_deg = math.degrees(math.acos(-tan_product))
-    return 12.0 + half_day_deg / 15.0
+    """冻表实现（issue #53 P3）：tan=sin/cos 表相除 + acos 冻表 + degrees。
+
+    与 sunrise 同构（12 + 半昼长），误差声明同 tables.ACOS_MAX_ERROR。
+    """
+    from ascend.num.fixed import (
+        clamp as fixed_clamp, div, mul, quantize, round_half_even_div, to_float,
+    )
+    from ascend.num.frozen_tables import TABLE_BITS, TWO_PI_Q
+    from ascend.num.tables import acos_q, degrees_q, tan_q
+
+    bits = TABLE_BITS
+    scale = 1 << bits
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    pi_over_180 = round_half_even_div(TWO_PI_Q, 360)
+    latitude_rad = mul(q(latitude), pi_over_180, bits)
+    product = mul(tan_q(latitude_rad, bits), tan_q(q(solar_declination), bits), bits)
+    angle = acos_q(-fixed_clamp(product, -scale, scale), bits)
+    half_day_hours = div(degrees_q(angle, bits), q(15.0), bits)
+    return to_float(q(12.0) + half_day_hours, bits)
 
 
 def _daylight_equation(sunrise: float, sunset: float) -> float:
-    return sunset - sunrise
+    """定点实现（issue #53 P3）：量化后整数相减（精确）。"""
+    from ascend.num.fixed import quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+    return to_float(
+        quantize(sunset, bits) - quantize(sunrise, bits), bits,
+    )
 
 
 def _temperature_equation(
@@ -514,12 +709,20 @@ def _temperature_equation(
     lower_bound: float,
     upper_bound: float,
 ) -> float:
-    return clamp(
-        annual_temperature + seasonal_offset + diurnal_offset
-        + perturbation * perturb_scale,
-        lower_bound,
-        upper_bound,
+    """定点实现（issue #53 P3）：量化 + 整数加 + 定点乘 + 定点 clamp。"""
+    from ascend.num.fixed import clamp as fixed_clamp, mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    total = (
+        q(annual_temperature) + q(seasonal_offset) + q(diurnal_offset)
+        + mul(q(perturbation), q(perturb_scale), bits)
     )
+    return to_float(fixed_clamp(total, q(lower_bound), q(upper_bound)), bits)
 
 
 def _humidity_equation(
@@ -531,12 +734,20 @@ def _humidity_equation(
     lower_bound: float,
     upper_bound: float,
 ) -> float:
-    return clamp(
-        baseline + seasonal_offset + diurnal_offset
-        + perturbation * perturb_scale,
-        lower_bound,
-        upper_bound,
+    """定点实现（issue #53 P3）：量化 + 整数加 + 定点乘 + 定点 clamp。"""
+    from ascend.num.fixed import clamp as fixed_clamp, mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    total = (
+        q(baseline) + q(seasonal_offset) + q(diurnal_offset)
+        + mul(q(perturbation), q(perturb_scale), bits)
     )
+    return to_float(fixed_clamp(total, q(lower_bound), q(upper_bound)), bits)
 
 
 def _wind_equation(
@@ -547,8 +758,20 @@ def _wind_equation(
     lower_bound: float,
     upper_bound: float,
 ) -> float:
-    base = clamp(baseline + perturbation * perturb_scale, lower_bound, upper_bound)
-    return clamp(base * multiplier, lower_bound, upper_bound)
+    """定点实现（issue #53 P3）：量化 + 定点乘 + 双层定点 clamp。"""
+    from ascend.num.fixed import clamp as fixed_clamp, mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    lo, hi = q(lower_bound), q(upper_bound)
+    base = fixed_clamp(
+        q(baseline) + mul(q(perturbation), q(perturb_scale), bits), lo, hi,
+    )
+    return to_float(fixed_clamp(mul(base, q(multiplier), bits), lo, hi), bits)
 
 
 def _precipitation_intensity_equation(
@@ -558,10 +781,24 @@ def _precipitation_intensity_equation(
     signal_max: float,
     intensity_scale: float,
 ) -> float:
-    if signal <= threshold:
+    """定点实现（issue #53 P3）：分段判据 + 定点乘（半偶舍入）。"""
+    from ascend.num.fixed import mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    signal_q = q(signal)
+    threshold_q = q(threshold)
+    if signal_q <= threshold_q:
         return 0.0
-    excess = min(signal, signal_max) - threshold
-    return excess * intensity_scale * mean_intensity
+    excess = min(signal_q, q(signal_max)) - threshold_q
+    return to_float(
+        mul(mul(excess, q(intensity_scale), bits), q(mean_intensity), bits),
+        bits,
+    )
 
 
 def _sunshine_equation(
@@ -571,11 +808,17 @@ def _sunshine_equation(
     lower_bound: float,
     upper_bound: float,
 ) -> float:
-    return clamp(
-        daylight_hours + perturbation * perturb_scale,
-        lower_bound,
-        upper_bound,
-    )
+    """定点实现（issue #53 P3）：量化 + 定点乘 + 定点 clamp。"""
+    from ascend.num.fixed import clamp as fixed_clamp, mul, quantize, to_float
+    from ascend.num.frozen_tables import TABLE_BITS
+
+    bits = TABLE_BITS
+
+    def q(value: float) -> int:
+        return quantize(value, bits)
+
+    total = q(daylight_hours) + mul(q(perturbation), q(perturb_scale), bits)
+    return to_float(fixed_clamp(total, q(lower_bound), q(upper_bound)), bits)
 
 
 def _precipitation_type_equation(instant_temperature: float) -> str:
@@ -752,7 +995,10 @@ _NODES = (
         schedule="on_chunk_registration",
         microstep=WEATHER_CHUNK_DERIVED_A,
         writer="weather.chunk.derive_precipitation_threshold.v1",
-        error_budget=0.01,
+        # 确定性派生量：阈值 = 声明参数 + 年降雨的精确 ramp，无独立模型
+        # 误差；其不确定性全部经父节点（年降雨 ε=100mm × 斜坡）传播。
+        # 原 0.01 与父节点传播项构成双重计数（#53 G3 审计）。
+        error_budget=0.0,
         valid_domain="closed_interval_wet_to_dry",
     ),
     # ── chunk 派生（b 层）────────────────────────────────
@@ -1218,6 +1464,15 @@ _PARAMETERS = (
 # ── 机制 ────────────────────────────────────────────────────────
 
 
+# 数值内核依赖（issue #53 P2）：定点/冻表实现的源码进方程身份
+_NUM_DEPS = (
+    Path(__file__).resolve().parents[1] / "num" / "fixed.py",
+    Path(__file__).resolve().parents[1] / "num" / "tables.py",
+    Path(__file__).resolve().parents[1] / "num" / "diurnal.py",
+    Path(__file__).resolve().parents[1] / "num" / "frozen_tables.py",
+)
+
+
 def _mechanism(
     mechanism_id: str,
     output: str,
@@ -1283,7 +1538,7 @@ _MECHANISMS = (
             "sea_level_temperature_at_or_above_input_max:output_min",
             "finite_interior_input:linear_interpolation",
         ),
-        (clamp,),
+        _NUM_DEPS + (clamp,),
         (
             _w("sea_level_temperature_changes_latitude",
                SEA_LEVEL_TEMPERATURE,
@@ -1323,16 +1578,16 @@ _MECHANISMS = (
             "amplitude_above_output_max:clamp_to_output_max",
             "finite_interior_inputs:continuous_formula",
         ),
-        (clamp,),
+        _NUM_DEPS + (clamp,),
         (
             _w("annual_temperature_changes_amplitude",
                ANNUAL_TEMPERATURE,
                ((ANNUAL_TEMPERATURE, 0.0), (ANNUAL_RAINFALL, 800.0)),
-               20.0, (27.15, 14.15)),
+               20.0, (27.149999998509884, 14.149999998509884)),
             _w("annual_rainfall_changes_amplitude",
                ANNUAL_RAINFALL,
                ((ANNUAL_TEMPERATURE, 15.0), (ANNUAL_RAINFALL, 200.0)),
-               2000.0, (18.6, 15.0)),
+               2000.0, (18.600000001490116, 15.0)),
         ),
     ),
     _mechanism(
@@ -1348,7 +1603,7 @@ _MECHANISMS = (
         (ParameterBinding(_P_DIURNAL_TO_SEASONAL_RATIO,
                           "diurnal_to_seasonal_ratio"),),
         ("zero_amplitude:zero_output", "positive_amplitude:linear_scaling"),
-        (),
+        _NUM_DEPS,
         (
             _w("seasonal_amplitude_changes_diurnal_amplitude",
                SEASONAL_TEMPERATURE_AMPLITUDE,
@@ -1367,11 +1622,11 @@ _MECHANISMS = (
         ),
         (ParameterBinding(_P_HUMIDITY_SEASONAL_SCALE, "humidity_seasonal_scale"),),
         ("zero_amplitude:zero_output", "positive_amplitude:linear_scaling"),
-        (),
+        _NUM_DEPS,
         (
             _w("seasonal_amplitude_changes_humidity_amplitude",
                SEASONAL_TEMPERATURE_AMPLITUDE,
-               ((SEASONAL_TEMPERATURE_AMPLITUDE, 10.0),), 20.0, (4.0, 8.0)),
+               ((SEASONAL_TEMPERATURE_AMPLITUDE, 10.0),), 20.0, (4.00000000372529, 8.00000000745058)),
         ),
     ),
     _mechanism(
@@ -1390,11 +1645,11 @@ _MECHANISMS = (
             ParameterBinding(_P_HUMIDITY_DIURNAL_SCALE, "humidity_diurnal_scale"),
         ),
         ("zero_amplitude:zero_output", "positive_amplitude:linear_scaling"),
-        (),
+        _NUM_DEPS,
         (
             _w("seasonal_amplitude_changes_diurnal_humidity_amplitude",
                SEASONAL_TEMPERATURE_AMPLITUDE,
-               ((SEASONAL_TEMPERATURE_AMPLITUDE, 10.0),), 20.0, (4.0, 8.0)),
+               ((SEASONAL_TEMPERATURE_AMPLITUDE, 10.0),), 20.0, (3.9999999990686774, 7.999999998137355)),
         ),
     ),
     _mechanism(
@@ -1405,7 +1660,7 @@ _MECHANISMS = (
         _precip_threshold_equation,
         (
             _parent(ANNUAL_RAINFALL, "annual_rainfall",
-                    "world.gen_derived_a", 0.0,
+                    "world.gen_derived_a", 8.695652173913045e-05,
                     "annual_rainfall_in_declared_bounds", "forward"),
         ),
         (
@@ -1419,11 +1674,11 @@ _MECHANISMS = (
             "annual_rainfall_at_or_above_wet_reference:wet_threshold",
             "finite_interior_input:linear_interpolation",
         ),
-        (clamp,),
+        _NUM_DEPS + (clamp,),
         (
             _w("annual_rainfall_changes_threshold",
                ANNUAL_RAINFALL,
-               ((ANNUAL_RAINFALL, 50.0),), 3500.0, (0.55, 0.25)),
+               ((ANNUAL_RAINFALL, 50.0),), 3500.0, (0.5499999998137355, 0.25)),
         ),
     ),
     _mechanism(
@@ -1432,8 +1687,9 @@ _MECHANISMS = (
         "tick // game_day + 1",
         _day_equation,
         (
-            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, 0.0,
-                    "nonnegative_integer_tick", "forward"),
+            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, None,
+                    "nonnegative_integer_tick", "forward",
+                    modulus_kind="jump", jump_bound=1.0),
         ),
         (ParameterBinding(_P_GAME_DAY, "game_day"),),
         ("zero_tick:day_one", "positive_tick:monotonic_day"),
@@ -1450,8 +1706,9 @@ _MECHANISMS = (
         "(tick // game_day) % days_per_year",
         _day_of_year_equation,
         (
-            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, 0.0,
-                    "nonnegative_integer_tick", "forward"),
+            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, None,
+                    "nonnegative_integer_tick", "forward",
+                    modulus_kind="jump", jump_bound=1.0),
         ),
         (
             ParameterBinding(_P_GAME_DAY, "game_day"),
@@ -1471,15 +1728,16 @@ _MECHANISMS = (
         "(tick % game_day) / game_hour",
         _hour_equation,
         (
-            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, 0.0,
-                    "nonnegative_integer_tick", "forward"),
+            _parent(CLOCK_TICK, "tick", WEATHER_FRAME_INPUT, None,
+                    "nonnegative_integer_tick", "forward",
+                    modulus_kind="jump", jump_bound=24.0),
         ),
         (
             ParameterBinding(_P_GAME_DAY, "game_day"),
             ParameterBinding(_P_GAME_HOUR, "game_hour"),
         ),
         ("midnight:zero", "day_wraparound:modulo"),
-        (),
+        _NUM_DEPS,
         (
             _w("tick_changes_hour",
                CLOCK_TICK,
@@ -1510,11 +1768,12 @@ _MECHANISMS = (
     _mechanism(
         "weather.tick.derive_season_phase_cos.v1",
         SEASON_PHASE_COS,
-        "cos(((season + day_of_season / season_length_days) - 1.5) "
+        "cos(((((day - 1) // season_length_days % seasons_per_year) "
+        "+ ((day - 1) % season_length_days) / season_length_days) - 1.5) "
         "/ seasons_per_year * 2 * pi)",
         _season_phase_cos_equation,
         (
-            _parent(DAY, "day", WEATHER_INSTANT_TICK_INPUT, 0.0,
+            _parent(DAY, "day", WEATHER_INSTANT_TICK_INPUT, 0.017453292519943295,
                     "positive_game_day", "forward"),
         ),
         (
@@ -1522,7 +1781,7 @@ _MECHANISMS = (
             ParameterBinding(_P_SEASONS_PER_YEAR, "seasons_per_year"),
         ),
         ("summer_midpoint:cos_one", "winter_midpoint:cos_minus_one"),
-        (),
+        _NUM_DEPS,
         (
             _w("day_changes_season_phase_cos",
                DAY,
@@ -1532,15 +1791,15 @@ _MECHANISMS = (
     _mechanism(
         "weather.tick.derive_diurnal_phase_cos.v1",
         DIURNAL_PHASE_COS,
-        "cos((hour - diurnal_peak_hour) / 24 * 2 * pi)",
+        "cos((hour - peak_hour) / 24 * 2 * pi)",
         _diurnal_phase_cos_equation,
         (
-            _parent(HOUR_OF_DAY, "hour", WEATHER_INSTANT_TICK_INPUT, 0.0,
+            _parent(HOUR_OF_DAY, "hour", WEATHER_INSTANT_TICK_INPUT, 0.2617993877991494,
                     "half_open_interval_0_24_hours", "forward"),
         ),
         (ParameterBinding(_P_DIURNAL_PEAK_HOUR, "peak_hour"),),
         ("peak_hour:cos_one", "trough_hour:cos_minus_one"),
-        (),
+        _NUM_DEPS,
         (
             _w("hour_changes_diurnal_phase_cos",
                HOUR_OF_DAY,
@@ -1554,7 +1813,7 @@ _MECHANISMS = (
         "days_per_year / 8) / days_per_year))",
         _solar_declination_equation,
         (
-            _parent(DAY_OF_YEAR, "day_of_year", WEATHER_INSTANT_TICK_INPUT, 0.0,
+            _parent(DAY_OF_YEAR, "day_of_year", WEATHER_INSTANT_TICK_INPUT, 0.00714023231980045,
                     "zero_based_day_of_year", "forward"),
         ),
         (
@@ -1562,18 +1821,18 @@ _MECHANISMS = (
             ParameterBinding(_P_DAYS_PER_YEAR, "days_per_year"),
         ),
         ("equinox:zero", "solstice:max_declination"),
-        (),
+        _NUM_DEPS,
         (
             _w("day_of_year_changes_declination",
                DAY_OF_YEAR,
                ((DAY_OF_YEAR, 45),), 135,
-               (0.0, math.radians(OBLIQUITY_DEG))),
+               (0.0, 0.4091051733121276)),
         ),
     ),
     _mechanism(
         "weather.offset.derive_seasonal_temperature.v1",
         SEASONAL_TEMPERATURE_OFFSET,
-        "seasonal_amplitude * season_phase_cos",
+        "amplitude * season_phase_cos",
         _seasonal_temperature_offset_equation,
         (
             _parent(SEASONAL_TEMPERATURE_AMPLITUDE, "amplitude",
@@ -1585,7 +1844,7 @@ _MECHANISMS = (
         ),
         (),
         ("zero_amplitude:zero_offset", "cosine_extremes:plus_minus_amplitude"),
-        (),
+        _NUM_DEPS,
         (
             _w("amplitude_changes_seasonal_temperature_offset",
                SEASONAL_TEMPERATURE_AMPLITUDE,
@@ -1600,7 +1859,7 @@ _MECHANISMS = (
     _mechanism(
         "weather.offset.derive_diurnal_temperature.v1",
         DIURNAL_TEMPERATURE_OFFSET,
-        "diurnal_amplitude * diurnal_phase_cos",
+        "amplitude * diurnal_phase_cos",
         _diurnal_temperature_offset_equation,
         (
             _parent(DIURNAL_TEMPERATURE_AMPLITUDE, "amplitude",
@@ -1612,7 +1871,7 @@ _MECHANISMS = (
         ),
         (),
         ("zero_amplitude:zero_offset", "cosine_extremes:plus_minus_amplitude"),
-        (),
+        _NUM_DEPS,
         (
             _w("amplitude_changes_diurnal_temperature_offset",
                DIURNAL_TEMPERATURE_AMPLITUDE,
@@ -1627,7 +1886,7 @@ _MECHANISMS = (
     _mechanism(
         "weather.offset.derive_seasonal_humidity.v1",
         SEASONAL_HUMIDITY_OFFSET,
-        "seasonal_humidity_amplitude * (tanh(season_phase_cos * sharpness) "
+        "amplitude * (tanh(season_phase_cos * sharpness) "
         "if sharpness > 0 else season_phase_cos)",
         _seasonal_humidity_offset_equation,
         (
@@ -1638,13 +1897,13 @@ _MECHANISMS = (
                     WEATHER_INSTANT_TICK_DERIVED, 20.0,
                     "cosine_range", "forward"),
             _parent(HUMIDITY_SHARPNESS, "sharpness",
-                    "world.gen_derived_d", 0.0,
+                    "world.gen_derived_d", 20.0,
                     "nonnegative_sharpness", "forward"),
         ),
         (),
         ("zero_amplitude:zero_offset", "sharpness_zero:cosine",
          "sharpness_positive:tanh_compression"),
-        (),
+        _NUM_DEPS,
         (
             _w("amplitude_changes_seasonal_humidity_offset",
                SEASONAL_HUMIDITY_AMPLITUDE,
@@ -1660,13 +1919,13 @@ _MECHANISMS = (
                HUMIDITY_SHARPNESS,
                ((SEASONAL_HUMIDITY_AMPLITUDE, 4.0),
                 (SEASON_PHASE_COS, 0.5), (HUMIDITY_SHARPNESS, 0.0)),
-               2.5, (2.0, 4.0 * math.tanh(0.5 * 2.5))),
+               2.5, (2.0, 3.3931345604360104)),
         ),
     ),
     _mechanism(
         "weather.offset.derive_diurnal_humidity.v1",
         DIURNAL_HUMIDITY_OFFSET,
-        "diurnal_humidity_amplitude * (-diurnal_phase_cos)",
+        "amplitude * (-diurnal_phase_cos)",
         _diurnal_humidity_offset_equation,
         (
             _parent(DIURNAL_HUMIDITY_AMPLITUDE, "amplitude",
@@ -1678,7 +1937,7 @@ _MECHANISMS = (
         ),
         (),
         ("zero_amplitude:zero_offset", "cosine_extremes:inverted"),
-        (),
+        _NUM_DEPS,
         (
             _w("amplitude_changes_diurnal_humidity_offset",
                DIURNAL_HUMIDITY_AMPLITUDE,
@@ -1701,13 +1960,14 @@ _MECHANISMS = (
                     WEATHER_CHUNK_DERIVED_A, 0.5,
                     "closed_interval_0_80_degrees", "forward"),
             _parent(SOLAR_DECLINATION, "solar_declination",
-                    WEATHER_INSTANT_TICK_DERIVED, 1.0,
-                    "solar_declination_range", "forward"),
+                    WEATHER_INSTANT_TICK_DERIVED, None,
+                    "solar_declination_range", "forward",
+                    modulus_kind="jump", jump_bound=12.0),
         ),
         (),
         ("equinox:twelve_noon_correction_zero", "polar_day:sunrise_zero",
          "polar_night:sunrise_twelve"),
-        (),
+        _NUM_DEPS,
         (
             _w("latitude_changes_sunrise",
                SOLAR_LATITUDE_PROXY,
@@ -1730,13 +1990,14 @@ _MECHANISMS = (
                     WEATHER_CHUNK_DERIVED_A, 0.5,
                     "closed_interval_0_80_degrees", "forward"),
             _parent(SOLAR_DECLINATION, "solar_declination",
-                    WEATHER_INSTANT_TICK_DERIVED, 1.0,
-                    "solar_declination_range", "forward"),
+                    WEATHER_INSTANT_TICK_DERIVED, None,
+                    "solar_declination_range", "forward",
+                    modulus_kind="jump", jump_bound=12.0),
         ),
         (),
         ("equinox:twelve_noon_correction_zero", "polar_day:sunset_twenty_four",
          "polar_night:sunset_twelve"),
-        (),
+        _NUM_DEPS,
         (
             _w("latitude_changes_sunset",
                SOLAR_LATITUDE_PROXY,
@@ -1761,7 +2022,7 @@ _MECHANISMS = (
         ),
         (),
         ("polar_night:zero_daylight", "polar_day:twenty_four_hours"),
-        (),
+        _NUM_DEPS,
         (
             _w("sunrise_changes_daylight",
                SUNRISE_HOUR,
@@ -1800,7 +2061,7 @@ _MECHANISMS = (
         ),
         ("sum_below_lower_bound:clamp_low", "sum_above_upper_bound:clamp_high",
          "finite_interior:no_clamp"),
-        (clamp,),
+        _NUM_DEPS + (clamp,),
         (
             _w("annual_temperature_changes_instant_temperature",
                ANNUAL_TEMPERATURE,
@@ -1858,7 +2119,7 @@ _MECHANISMS = (
         ),
         ("sum_below_lower_bound:clamp_low", "sum_above_upper_bound:clamp_high",
          "finite_interior:no_clamp"),
-        (clamp,),
+        _NUM_DEPS + (clamp,),
         (
             _w("baseline_changes_instant_humidity",
                BASELINE_HUMIDITY,
@@ -1903,7 +2164,7 @@ _MECHANISMS = (
                     WEATHER_FRAME_INPUT, 4.0,
                     "unified_field_channel_composite", "forward"),
             _parent(FIELD_WIND_MULTIPLIER, "multiplier",
-                    WEATHER_FRAME_INPUT, 0.0,
+                    WEATHER_FRAME_INPUT, 50.0,
                     "at_least_one_multiplier", "forward"),
         ),
         (
@@ -1913,7 +2174,7 @@ _MECHANISMS = (
         ),
         ("base_below_lower_bound:clamp_low", "base_above_upper_bound:clamp_high",
          "product_above_upper_bound:second_clamp"),
-        (clamp,),
+        _NUM_DEPS + (clamp,),
         (
             _w("baseline_changes_instant_wind",
                BASELINE_WIND_SPEED,
@@ -1944,13 +2205,13 @@ _MECHANISMS = (
         _precipitation_intensity_equation,
         (
             _parent(FIELD_PRECIPITATION_SIGNAL, "signal",
-                    WEATHER_FRAME_INPUT, 0.0,
+                    WEATHER_FRAME_INPUT, 20.0,
                     "unified_field_channel_composite", "forward"),
             _parent(PRECIPITATION_THRESHOLD, "threshold",
-                    WEATHER_CHUNK_DERIVED_A, 0.0,
+                    WEATHER_CHUNK_DERIVED_A, 20.0,
                     "closed_interval_wet_to_dry", "forward"),
             _parent(MEAN_PRECIP_INTENSITY, "mean_intensity",
-                    "world.gen_derived_d", 0.0,
+                    "world.gen_derived_d", 1.9,
                     "positive_mean_intensity", "forward"),
         ),
         (
@@ -1959,26 +2220,26 @@ _MECHANISMS = (
         ),
         ("signal_at_or_below_threshold:zero", "signal_above_signal_max:cap",
          "finite_interior:linear_scaling"),
-        (),
+        _NUM_DEPS,
         (
             _w("signal_changes_precipitation_intensity",
                FIELD_PRECIPITATION_SIGNAL,
                 ((FIELD_PRECIPITATION_SIGNAL, 0.5),
                  (PRECIPITATION_THRESHOLD, 0.4),
                  (MEAN_PRECIP_INTENSITY, 5.0)),
-               1.0, (1.0, 6.0)),
+               1.0, (0.9999999962747097, 5.99999999627471)),
             _w("threshold_changes_precipitation_intensity",
                PRECIPITATION_THRESHOLD,
                ((FIELD_PRECIPITATION_SIGNAL, 0.5),
                 (PRECIPITATION_THRESHOLD, 0.4),
                 (MEAN_PRECIP_INTENSITY, 5.0)),
-               0.45, (1.0, 0.5)),
+               0.45, (0.9999999962747097, 0.49999999813735485)),
             _w("mean_intensity_changes_precipitation_intensity",
                MEAN_PRECIP_INTENSITY,
                ((FIELD_PRECIPITATION_SIGNAL, 0.5),
                 (PRECIPITATION_THRESHOLD, 0.4),
                 (MEAN_PRECIP_INTENSITY, 5.0)),
-               10.0, (1.0, 2.0)),
+               10.0, (0.9999999962747097, 1.9999999925494194)),
         ),
     ),
     _mechanism(
@@ -2002,7 +2263,7 @@ _MECHANISMS = (
         ),
         ("sum_below_lower_bound:clamp_low", "sum_above_upper_bound:clamp_high",
          "finite_interior:no_clamp"),
-        (clamp,),
+        _NUM_DEPS + (clamp,),
         (
             _w("daylight_changes_sunshine",
                DAYLIGHT_HOURS,
