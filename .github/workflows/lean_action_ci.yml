@@ -77,8 +77,12 @@ jobs:
       # 跳变边 jump_bound；G3 复核反事实误差界（含跳变条件标注）。
       - name: 声明图与见证一致性巡检（graph_check G7）
         run: python research/equations/graph_check.py
-      - name: 世界验收 runner（C0–C2 / W0–W5 / I0–I1）
+      - name: 世界验收 runner（C0–C2 / W0–W5 / I0–I1 / L3）
         run: python research/acceptance/run_acceptance.py --json acceptance.json
+      # 变异探针（issue #50）：破坏一处生产实现（观测不量化 / 泄露检测恒真 /
+      # 边界算子环绕 / 注入核投影置空），对应判据必须变红——防止判据徒有其表。
+      - name: 生产实现变异探针
+        run: python research/acceptance/run_acceptance.py --mutation
       - name: 上传验收产物
         if: always()
         uses: actions/upload-artifact@v4

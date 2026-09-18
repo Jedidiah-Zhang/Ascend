@@ -56,6 +56,7 @@ class InterventionEvaluator:
         instance: tuple = (),
         random_values: Mapping[str, object] | None = None,
         parameter_values: Mapping[str, object] | None = None,
+        trace_kind: str = "eval",
     ) -> object:
         """按干预解析求值一个节点（仅值覆盖；机制替换已废除，WC-1.3）。
 
@@ -66,6 +67,7 @@ class InterventionEvaluator:
             instance: 实例坐标（全局分量用空元组）。
             random_values: 随机源值（值覆盖命中时不消费，直接返回）。
             parameter_values: 参数槽位覆盖（干预表内联解析）。
+            trace_kind: 记录性质（"eval" 发生 / "recompute" 重算；#50）。
         """
         table = self._table
         trace = self._trace
@@ -78,6 +80,7 @@ class InterventionEvaluator:
                 trace=trace,
                 frame=frame,
                 instance=instance,
+                trace_kind=trace_kind,
             )
         resolution = table.resolve_node(target, instance, frame)
         if resolution.record is not None:
@@ -92,6 +95,7 @@ class InterventionEvaluator:
                     parameters=None,
                     random_values=None,
                     output=resolution.value,
+                    kind=trace_kind,
                 ))
             return resolution.value
         merged_parameters = self._parameter_overrides(
@@ -106,6 +110,7 @@ class InterventionEvaluator:
             resolution=resolution,
             frame=frame,
             instance=instance,
+            trace_kind=trace_kind,
         )
 
     def _parameter_overrides(

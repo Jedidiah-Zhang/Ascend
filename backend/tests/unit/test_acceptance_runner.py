@@ -106,9 +106,10 @@ class TestChecks:
         assert result.detail
         payload = result.plain()
         assert set(payload) >= {
-            "code", "title", "passed", "detail", "input",
+            "code", "title", "layer", "passed", "detail", "input",
             "reference", "engine", "first_divergence",
         }
+        assert payload["layer"] in {"L0", "L1", "L2", "L3"}
         assert json.loads(json.dumps(payload)) == payload
 
     def test_all_checks_pass(self):
@@ -187,6 +188,72 @@ class TestChecks:
         assert set(reference_view["subject_visible"]) < set(
             reference_view["research_visible"]
         )
+
+    def test_w5_rejects_broken_observe(self):
+        """W5′ 判别力自检：空观测 / 越权泄露必须被判红（#50）。"""
+        result = checks.check_w5_rejects_broken_observe()
+        assert result.passed, result.detail
+
+    def test_w5_fails_when_observe_returns_empty(self):
+        """空观测破坏：键集 ≠ 授予集 → 判据红（不再绕过 observe 直读 world）。"""
+        outcome = checks.check_w5(observe_fn=lambda *_args, **_kwargs: {})
+        assert not outcome.passed
+
+    def test_w3_edge_response_discriminates_wrap(self):
+        """W3 边界判别力：边缘扰动响应必须是 replicate（¾/¼），拒绝环绕。"""
+        from ascend.causal.intervention_engine import InterventionFrameExecutor
+
+        registry = slices.w3_registry()
+        cells = tuple(range(slices.W3_CELLS))
+        engine = InterventionFrameExecutor(registry, spatial_cells=cells)
+        base = {"u": {i: 1.0 for i in cells}, "v": {i: 0.0 for i in cells}}
+        left = {
+            "u": {i: (2.0 if i == 0 else 1.0) for i in cells},
+            "v": {i: 0.0 for i in cells},
+        }
+        base_out = engine.run_frame(0, base)
+        left_out = engine.run_frame(0, left)
+        response = tuple(
+            left_out["v"][i] - base_out["v"][i] for i in cells
+        )
+        assert response == (0.75, 0.25, 0.0, 0.0, 0.0)
+        assert response != (0.5, 0.25, 0.0, 0.0, 0.25), "环绕会给出该响应"
+
+    def test_w4_single_factor_negative_arms(self):
+        """W4 单因子负例在判据内生效（仅缺干预 / 仅缺注入核各自分叉）。"""
+        result = checks.check_w4()
+        assert result.passed
+        assert "仅缺干预" in result.detail
+        assert "仅缺注入核" in result.detail
+
+    def test_l3_checks_report(self):
+        """L3 判据（历史不可改写 / CRN 配对 / 状态闭合）可执行且通过。"""
+        for check in (
+            checks.check_l3_history_immutable,
+            checks.check_l3_crn_pairing,
+            checks.check_l3_state_closure,
+        ):
+            result = check()
+            assert result.passed, f"{result.code}: {result.detail}"
+            assert result.plain()["layer"] == "L3"
+
+    def test_run_acceptance_manifest(self):
+        """产物 manifest 绑定身份与代码版本（#50）。"""
+        import run_acceptance
+
+        manifest = run_acceptance.build_manifest()
+        assert manifest["contract_version"]
+        assert manifest["world_program_identity"].startswith("sha256:")
+        assert manifest["registry"]["declaration_hash"]
+        assert manifest["impl_digests_digest"]
+        assert "python" in manifest and "platform" in manifest
+        assert "git_commit" in manifest
+
+    def test_mutation_probes_all_caught(self):
+        """生产实现变异探针：四处破坏必须全部被对应判据检出（#50）。"""
+        import run_acceptance
+
+        assert run_acceptance.run_mutation() == 0
 
     def test_w5_leak_detector_is_discriminative(self):
         """W5 的泄露检测真能失败（此前恒空）。"""

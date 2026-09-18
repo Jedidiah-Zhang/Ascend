@@ -396,6 +396,7 @@ class MechanismRegistry:
         resolution: object | None = None,
         frame: int = 0,
         instance: tuple = (),
+        trace_kind: str = "eval",
     ) -> object:
         """以显式父值和随机源值执行一个注册方程。
 
@@ -409,6 +410,7 @@ class MechanismRegistry:
             trace: 研究日志；非 None 时记录本次求值（fail-closed）。
             resolution: 干预解析结果（记录用）；None = 空解析。
             frame, instance: 记录用的逻辑帧与实例坐标。
+            trace_kind: 记录性质（"eval" 发生 / "recompute" 重算；#50）。
         """
         mechanism = self.mechanisms.get(target)
         if mechanism is None:
@@ -422,6 +424,7 @@ class MechanismRegistry:
             resolution=resolution,
             frame=frame,
             instance=instance,
+            trace_kind=trace_kind,
         )
 
     def evaluate_mechanism(
@@ -435,6 +438,7 @@ class MechanismRegistry:
         resolution: object | None = None,
         frame: int = 0,
         instance: tuple = (),
+        trace_kind: str = "eval",
     ) -> object:
         """以显式父值和随机源值执行一条结构方程（单一求值实现）。
 
@@ -448,6 +452,7 @@ class MechanismRegistry:
             resolution: 干预解析结果（``NodeResolution``）；缺省为空解析
                 （无干预）。
             frame, instance: 记录用的逻辑帧与实例坐标。
+            trace_kind: 记录性质（"eval"/"recompute"；#50）。
         """
         if mechanism.output not in self.nodes:
             raise KeyError(
@@ -528,6 +533,7 @@ class MechanismRegistry:
                 parameters=effective_parameters,
                 random_values=supplied_sources,
                 output=output,
+                kind=trace_kind,
             ))
         return output
 
@@ -543,6 +549,7 @@ class MechanismRegistry:
         parameters: Mapping[str, object] | None,
         random_values: Mapping[str, object] | None,
         output: object,
+        kind: str = "eval",
     ) -> TraceRecord:
         """按求值过程组装一条 trace 记录（唯一组装点）。
 
@@ -589,6 +596,7 @@ class MechanismRegistry:
             boundary=(
                 mechanism.boundary_cases if mechanism is not None else ()
             ),
+            kind=kind,
         )
 
     @staticmethod

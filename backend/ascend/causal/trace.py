@@ -90,6 +90,11 @@ class TraceRecord:
     rep: str | None = None
     output: object = None
     boundary: tuple[str, ...] = ()
+    #: 记录性质（#50 双账分离）：
+    #: - "eval" = 世界推进时的**发生**求值（唯一具有真值地位的一账）；
+    #: - "recompute" = 事后重算（历史查询 / 日摘要采样 / 诊断回放），
+    #:   只作参考，不得当作世界推进时发生过的求值。
+    kind: str = "eval"
 
     def plain(self) -> dict[str, object]:
         """可序列化视图（研究 API / 终端 / 落盘共用）。"""
@@ -111,6 +116,7 @@ class TraceRecord:
             "rep": self.rep,
             "output": self.output,
             "boundary": list(self.boundary),
+            "kind": self.kind,
         }
 
 
@@ -149,6 +155,9 @@ class TraceLog:
         self._registry = registry
         self._capacity = capacity
         self._records: list[TraceRecord] = []
+        # 容量淘汰计数（丢失报告；#50）：有界内存意味着超量记录会被丢弃，
+        # 研究侧必须知道丢了多少，而不是把"看不到"当成"没发生"。
+        self._dropped = 0
 
     def __repr__(self) -> str:
         return (
@@ -173,20 +182,40 @@ class TraceLog:
         self._validate(entry)
         self._records.append(entry)
         if len(self._records) > self._capacity:
-            del self._records[: len(self._records) - self._capacity]
+            overflow = len(self._records) - self._capacity
+            del self._records[:overflow]
+            self._dropped += overflow
         return entry
+
+    @property
+    def dropped(self) -> int:
+        """因容量上界被淘汰的记录数（丢失报告；只增不减）。"""
+        return self._dropped
+
+    def counts(self) -> dict[str, int]:
+        """按记录性质计数：``{"eval": n, "recompute": m}``（#50 双账）。"""
+        counts = {"eval": 0, "recompute": 0}
+        for entry in self._records:
+            counts[entry.kind] = counts.get(entry.kind, 0) + 1
+        return counts
 
     def records(
         self,
         *,
         frame: int | None = None,
         node_id: str | None = None,
+        kind: str | None = None,
     ) -> tuple[TraceRecord, ...]:
-        """按帧/节点筛选记录（登记顺序）。"""
+        """按帧/节点/记录性质筛选记录（登记顺序）。
+
+        ``kind``：``"eval"``（发生）或 ``"recompute"``（重算）；
+        None = 不筛选。
+        """
         return tuple(
             entry for entry in self._records
             if (frame is None or entry.frame == frame)
             and (node_id is None or entry.node_id == node_id)
+            and (kind is None or entry.kind == kind)
         )
 
     def page(
@@ -194,6 +223,7 @@ class TraceLog:
         *,
         frame: int | None = None,
         node_id: str | None = None,
+        kind: str | None = None,
         offset: int = 0,
         limit: int = 200,
     ) -> tuple[tuple[TraceRecord, ...], int]:
@@ -207,7 +237,7 @@ class TraceLog:
             raise ValueError(f"offset 必须 ≥ 0: {offset}")
         if limit < 1:
             raise ValueError(f"limit 必须为正整数: {limit}")
-        matched = self.records(frame=frame, node_id=node_id)
+        matched = self.records(frame=frame, node_id=node_id, kind=kind)
         return matched[offset : offset + limit], len(matched)
 
     def clear(self) -> int:
@@ -249,6 +279,10 @@ class TraceLog:
     def _validate(self, entry: TraceRecord) -> None:
         if not entry.node_id:
             raise ValueError("trace 记录缺少节点 ID")
+        if entry.kind not in ("eval", "recompute"):
+            raise ValueError(
+                f"trace 记录性质非法（应为 eval/recompute）: {entry.kind!r}"
+            )
         node = self._registry.nodes.get(entry.node_id)
         if node is None:
             raise ValueError(f"trace 记录节点未声明: {entry.node_id}")

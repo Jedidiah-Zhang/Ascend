@@ -41,10 +41,21 @@ RandomAddress   source / frame / instance / draw_index
 TraceRecord     node_id / frame / instance / microstep /
                 mechanism_id / equation_version / resolved_version /
                 parents / parameters / random_addresses / random_values /
-                intervention / rep / output / boundary
-TraceLog        record() / records(frame,node_id) / clear() / replay() / verify()
+                intervention / rep / output / boundary / kind
+TraceLog        record() / records(frame,node_id,kind) / clear() /
+                replay() / verify() / counts() / dropped
 ```
 
+- **双账分离（#50）**：`kind ∈ {"eval", "recompute"}`——`"eval"` 是世界推进
+  时的**发生**求值（唯一具有"这一步真的发生过"地位的一账）；`"recompute"`
+  是事后重算（历史查询 `get_weather(t<now)`、日摘要采样、诊断回放）。
+  两者都留痕、都可重算，但**不得混为一账**：研究统计"发生"时必须用
+  `records(kind="eval")`。历史查询经 `WeatherEngine.get_weather` 的过去时刻
+  路径自动标记，日摘要采样整段标记为重算。
+- **丢失报告（#50）**：`TraceLog` 有界（环形缓冲），容量淘汰累计进
+  `dropped`；`counts()` 给出 eval/recompute 各多少。研究 API
+  （`research_trace_list`）返回 `counts` 与 `dropped`——"看不到"不得被
+  当成"没发生"。
 - **方程版本零开销**：`MechanismRegistry` 在构造期预计算每个节点的
   `equation_version`（方程源码 + 显式依赖摘要）与 `resolved_version`
   （方程 + 参数 + 边界组合摘要），trace 与声明快照共用同一份。求值点
@@ -88,9 +99,9 @@ verify(record) = replay(record) == record.output     # 精确相等，无容差
 | --- | --- |
 | `trace on [capacity]` | 开启研究日志（缺省容量 4096） |
 | `trace off` | 关闭（已记录内容保留） |
-| `trace status` | 开关与记录数 |
-| `trace list [frame N] [node ID]` | 按帧/节点筛选记录 |
-| `trace show <node> [frame N]` | 打印单条记录全部字段 |
+| `trace status` | 开关、记录数、双账计数与容量淘汰数 |
+| `trace list [frame N] [node ID]` | 按帧/节点筛选记录（行首标注 eval/recompute） |
+| `trace show <node> [frame N]` | 打印单条记录全部字段（含记录性质） |
 | `trace verify` | 全部记录重算校验，列出不一致项 |
 | `trace clear` | 清空记录 |
 
@@ -98,7 +109,7 @@ verify(record) = replay(record) == record.output     # 精确相等，无容差
 
 | 请求 | 载荷 | 成功响应 |
 | --- | --- | --- |
-| `research_trace_list` | `{frame?, node_id?, offset?, limit?}` | `{success, records, offset, limit, returned, total}` |
+| `research_trace_list` | `{frame?, node_id?, kind?, offset?, limit?}` | `{success, records, offset, limit, returned, total, counts, dropped}` |
 | `research_trace_replay` | `{node_id, frame?}` | `{success, record, replayed, consistent}` |
 | `research_trace_clear` | — | `{success, cleared}` |
 
@@ -118,8 +129,8 @@ verify(record) = replay(record) == record.output     # 精确相等，无容差
   （实施定义 §6.1 的标准处置是"让同一个显式外生源被多个方程消费"）。
   把天气场噪声登记为共享外生源是下一篇工作（会改声明 hash 并重生成
   两份生成物），trace 的地址接口为此就绪。
-- **不落盘**：日志是研究期内存缓冲；跨会话复现由 P4 的完整状态 + 随机
-  地址重算承担。
+- **不落盘**：日志是研究期内存缓冲（有界 + `dropped` 丢失报告，见 §2）；
+  跨会话复现由 P4 的完整状态 + 随机地址重算承担。
 - **未覆盖的求值点**：`registry.evaluate` 的直接调用（不经
   `InterventionEvaluator`）不带 trace；生产求值点全部经评估器，已接线。
   研究切片 `InterventionFrameExecutor` 的记录留待 P5 runner 按需接线。
@@ -127,11 +138,13 @@ verify(record) = replay(record) == record.output     # 精确相等，无容差
 ## 6. 验证
 
 - `tests/unit/test_trace.py`：记录字段与 JSON 视图、fail-closed 负例
-  （未声明节点/缺阶段/缺版本/父集不符/值覆盖缺输出）、容量淘汰、
+  （未声明节点/缺阶段/缺版本/父集不符/值覆盖缺输出/非法记录性质）、
+  容量淘汰与 `dropped` 丢失报告、双账计数与 `kind` 筛选、
   `replay`/`verify` 一致与不一致、值覆盖重算、注册表变化后重算报错、
-  评估器接线（正常/值干预/不改变输出）。
+  评估器接线（正常/值干预/不改变输出/重算标记）。
 - `tests/unit/test_trace_wiring.py`：引擎挂载（默认关闭、幂等、关闭后停止、
-  不改变天气读数、值干预留痕）、**事件载荷无 trace 字段**门禁、终端指令组
-  （中英）、研究 API（负例与成功路径）。
+  不改变天气读数、值干预留痕）、**历史查询/日摘要记"重算"且不计入发生**、
+  **事件载荷无 trace 字段**门禁、终端指令组（中英、双账 status、show 含
+  记录性质）、研究 API（kind 筛选、counts/dropped、负例与成功路径）。
 - 全链：pytest 全量（单元 + 集成）、`export_registry --check`、
   `gen_lean --check`、`verify_equations`、`graph_check`、Lean `lake build`。

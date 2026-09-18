@@ -398,6 +398,7 @@ class WeatherEngine:
         *,
         frame: int,
         instance: tuple = (),
+        trace_kind: str = "eval",
     ) -> object:
         """节点求值唯一入口（含干预覆盖）。
 
@@ -411,10 +412,12 @@ class WeatherEngine:
             parent_values: 父值（按调用方已解析的实例与帧提供）。
             frame: 当前世界 tick。
             instance: 实例坐标（全局分量用空元组）。
+            trace_kind: 记录性质（"eval" 发生 / "recompute" 重算；#50）。
         """
         evaluator, _ = self._intervention()
         return evaluator.evaluate(
             node_id, parent_values, frame=frame, instance=instance,
+            trace_kind=trace_kind,
         )
 
     def has_chunk(self, cx: int, cy: int) -> bool:
@@ -570,6 +573,7 @@ class WeatherEngine:
 
     def _evaluate(
         self, now: int, fields: dict[tuple[int, int], WeatherField],
+        *, trace_kind: str = "eval",
     ) -> "tuple[dict[tuple[str, tuple], object], dict[tuple[int, int], float]]":
         """按世界程序波次计划求值全部 wired 节点（生产唯一执行路径）。
 
@@ -578,9 +582,13 @@ class WeatherEngine:
         开启时同波并发（结果逐位一致）；挂载研究 trace 时强制串行
         （记录顺序确定性优先）。
 
+        ``trace_kind``（#50）：驱动推进 = "eval"；历史查询/日摘要采样等
+        事后重算 = "recompute"（记录仍然留痕，但不冒充"发生"）。
+
         Args:
             now: 目标时刻（tick）。
             fields: 参与求值的 chunk 快照（key → WeatherField）。
+            trace_kind: 记录性质（"eval"/"recompute"）。
 
         Returns:
             (values, hum_perturb)：``{(节点, 实例): 值}`` 与湿度合成值。
@@ -594,9 +602,16 @@ class WeatherEngine:
         parallel = self._wave_parallel and self._trace is None
         if parallel:
             self._intervention()  # 预初始化挂载点（避免并发首建）
+
+        def evaluate_cb(node_id, parent_values, *, frame, instance):
+            return self.evaluate_node(
+                node_id, parent_values, frame=frame, instance=instance,
+                trace_kind=trace_kind,
+            )
+
         values = execute_waves(
             self._mechanism_program(), _registry(), frame=now,
-            evaluate=self.evaluate_node,
+            evaluate=evaluate_cb,
             provide=lambda node_id, instance: boundary[(node_id, instance)],
             instances=list(fields),
             parallel=parallel,
@@ -659,7 +674,11 @@ class WeatherEngine:
             field = self._fields.get(key)
         if field is None:
             return None
-        values, hum = self._evaluate(time, {key: field})
+        # 历史查询是"重算"（#50）：记录仍然留痕，但不冒充世界推进时的发生
+        trace_kind = "eval" if time >= self._clock.time else "recompute"
+        values, hum = self._evaluate(
+            time, {key: field}, trace_kind=trace_kind,
+        )
         params, _, _, _ = self._params_from_values(
             field, values, hum.get(key, 0.0),
         )
@@ -707,7 +726,10 @@ class WeatherEngine:
             return None
         for k in range(samples_per_day):
             tick = t0 + k * step
-            values, hum = self._evaluate(tick, {key: field})
+            # 日摘要采样是事后重算（#50）：与推进时的"发生"分账
+            values, hum = self._evaluate(
+                tick, {key: field}, trace_kind="recompute",
+            )
             params, _, _, _ = self._params_from_values(
                 field, values, hum.get(key, 0.0),
             )

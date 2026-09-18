@@ -157,6 +157,11 @@ def make_research_handler(
             node_id = payload.get("node_id")
             if node_id is not None and not isinstance(node_id, str):
                 raise ValueError(f"node_id 必须为字符串: {node_id!r}")
+            kind = payload.get("kind")
+            if kind is not None and kind not in ("eval", "recompute"):
+                raise ValueError(
+                    f"kind 必须为 eval/recompute（#50 双账分离）: {kind!r}"
+                )
             offset = _optional_int(payload, "offset") or 0
             limit = _optional_int(payload, "limit") or TRACE_PAGE_DEFAULT
             if limit < 1 or limit > TRACE_PAGE_MAX:
@@ -166,7 +171,8 @@ def make_research_handler(
             if offset < 0:
                 raise ValueError(f"offset 必须 ≥ 0: {offset}")
             page, total = log.page(
-                frame=frame, node_id=node_id, offset=offset, limit=limit,
+                frame=frame, node_id=node_id, kind=kind,
+                offset=offset, limit=limit,
             )
         except ValueError as exc:
             return _fail("research_trace_list", str(exc))
@@ -179,6 +185,9 @@ def make_research_handler(
                 "limit": limit,
                 "returned": len(page),
                 "total": total,
+                # 双账与丢失报告（#50）：发生/重算各多少、容量上界丢了多少
+                "counts": log.counts(),
+                "dropped": log.dropped,
             },
         )
 
