@@ -236,16 +236,22 @@ class TestClimateZone:
         """C 侧气候常量由 config 注入：运行时修改即刻生效，可重置。
 
         防护：C 不再内置阈值副本——改 config 常量无需重编译，
-        classify/lapse_rate 行为随注入值变化。
+        C 管线（``classify_climate_c`` / ``apply_lapse_rate_c``）行为随注入值变化。
+
+        注（#52）：注册表机制（``climate.classify`` 等）已改为定点实现，
+        阈值单一事实源 = ``ascend.config``（不读 C 注入）；本测试验证 C/bulk
+        管线的注入语义，并断言注册表机制不受 C 注入影响。
         """
         from ascend.space.hydrology import (
             apply_config_climate_constants,
             apply_lapse_rate_c,
+            classify_climate_c,
             set_climate_constants,
         )
         try:
             # 高山阈值哨兵：2000 → 3000 后原 ALPINE 点落回热带档
-            assert classify(25.0, 1000.0, 2500.0) == ClimateZone.ALPINE
+            assert classify_climate_c(25.0, 1000.0, 2500.0) == \
+                int(ClimateZone.ALPINE)
             set_climate_constants(
                 lapse_rate=9.0, rainfall_min=50.0, rainfall_max=3500.0,
                 alpine_altitude=3000.0, polar_temp=-5.0, desert_rainfall=200.0,
@@ -253,7 +259,10 @@ class TestClimateZone:
                 temperate_temp=5.0, rainforest_rainfall=1500.0,
                 taiga_rainfall=400.0,
             )
-            assert classify(25.0, 1000.0, 2500.0) == ClimateZone.TROPICAL_SAVANNA
+            assert classify_climate_c(25.0, 1000.0, 2500.0) == \
+                int(ClimateZone.TROPICAL_SAVANNA)
+            # 注册表机制读 config（单一事实源），不受 C 注入影响
+            assert classify(25.0, 1000.0, 2500.0) == ClimateZone.ALPINE
 
             # 直减率哨兵：0 → 温度不随海拔下降
             assert abs(apply_lapse_rate_c(20.0, 1000.0) - 11.0) < 1e-9
@@ -267,7 +276,8 @@ class TestClimateZone:
             assert abs(apply_lapse_rate_c(20.0, 1000.0) - 20.0) < 1e-9
         finally:
             apply_config_climate_constants()
-        assert classify(25.0, 1000.0, 2500.0) == ClimateZone.ALPINE
+        assert classify_climate_c(25.0, 1000.0, 2500.0) == \
+            int(ClimateZone.ALPINE)
 
     def test_polar_overrides_desert(self):
         """极地严寒优先于沙漠干旱判定。"""

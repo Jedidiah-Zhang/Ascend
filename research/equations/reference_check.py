@@ -56,6 +56,13 @@ _TOLERANCES: dict[str, float] = {
     "world.gen.derive_baseline_wind_speed.v1": 1e-5,
     "world.gen.derive_humidity_sharpness.v1": 1e-5,
     "world.gen.derive_mean_precip_intensity.v1": 1e-5,
+    # 空间生成定点实现（#52）：输入量化 2⁻³¹ × 放大系数 + 乘加舍入传播。
+    # sst：≤ 25×2⁻³¹ + 舍入 ≈ 1.3e-8；rainfall：≤ (1+3450/2)×2⁻³¹ ≈ 2.4e-6；
+    # lapse：≤ 9e-3×范围×2⁻³¹ + 除法舍入 ≈ 3e-8。决策树为离散输出
+    # （阈值邻域 2⁻³¹ 才可能翻转）。
+    "world.gen.derive_sea_level_temperature.v1": 1e-7,
+    "world.gen.derive_annual_rainfall.v1": 5e-6,
+    "world.gen.derive_annual_mean_temperature.v1": 1e-6,
 }
 
 

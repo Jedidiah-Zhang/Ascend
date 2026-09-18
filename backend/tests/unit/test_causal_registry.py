@@ -604,6 +604,7 @@ class TestSnapshotPortability:
             Path("ascend/space/hydrology.py"),
             Path("ascend/space/climate.py"),
             Path("ascend/space/biome.py"),
+            Path("ascend/space/gen_fixed.py"),
             Path("ascend/config.py"),
             Path("ascend/num/fixed.py"),
             Path("ascend/num/tables.py"),
@@ -615,7 +616,7 @@ class TestSnapshotPortability:
             shutil.copy2(backend_root / relative, target)
             path_map[str(backend_root / relative)] = target
         mirror_data.mkdir(parents=True, exist_ok=True)
-        for data_name in ("world.json", "climate.json"):
+        for data_name in ("world.json", "climate.json", "biome.json"):
             shutil.copy2(repo_root / "data" / data_name,
                          mirror_data / data_name)
             path_map[str(repo_root / "data" / data_name)] = (
