@@ -72,6 +72,11 @@ class ChunkData:
     # _persisted_coords 集合负责（不在此处维护状态）。
     dirty: bool = False
 
+    # 内容版本号（置脏入口 +1）：帧边界捕获载荷后，提交时只有
+    # revision 未变的 chunk 才清除脏标记——捕获与提交之间又被
+    # 修改的内容留给下一次脉搏（#51 存档原子性）。
+    revision: int = 0
+
     # 状态层积分游标（地形状态引擎维护）：tile_grid 的状态数组
     # 已积分到该 tick 的声明更新点；0=未积分（从世界开端补算）。
     # 随 chunk_tiles 持久化——LRU 淘汰/读档后按此续算缺口，防止
@@ -95,6 +100,15 @@ class ChunkData:
             True 表示 tile_grid 非空。
         """
         return self.tile_grid is not None
+
+    def mark_modified(self) -> None:
+        """标记内容已修改：置脏 + 版本 +1（所有内容写路径统一入口）。
+
+        dirty 不变量（dirty ⇒ 持有网格）由调用方保证；置脏后由
+        ChunkStore 持久化并在提交时按 revision 判断是否清除。
+        """
+        self.dirty = True
+        self.revision += 1
 
     def generate_tiles(self, grid: TileGrid) -> None:
         """写入详细 tile 数据（seed 确定性生成，clean）。

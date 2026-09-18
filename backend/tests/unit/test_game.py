@@ -7,6 +7,8 @@
 import threading
 import time
 
+import pytest
+
 from ascend.game import GameEngine
 
 
@@ -108,30 +110,51 @@ class TestSelectBirthPoint:
 
 
 class TestSavePulse:
-    """保存脉搏：调度入队 / 执行顺序 / 失败隔离 / 线程生命周期。"""
+    """保存脉搏：帧边界捕获 / 整体提交 / 失败可见 / 线程生命周期（#51）。"""
 
     class _FakeChunkStore:
-        """最小 chunk_store 替身（仅记录 flush 调用）。"""
+        """最小 chunk_store 替身（记录 capture/commit 调用）。"""
 
         def __init__(self):
-            self.flush_calls = 0
-            self.fail = False
+            self.capture_calls = 0
+            self.commit_calls = 0
+            self.fail_commit = False
 
-        def flush(self) -> int:
-            self.flush_calls += 1
-            if self.fail:
-                raise RuntimeError("chunk flush boom")
-            return 0
+        def capture_pending(self) -> list:
+            self.capture_calls += 1
+            return [object()]
+
+        def commit_captured(self, captured) -> int:
+            self.commit_calls += 1
+            if self.fail_commit:
+                raise RuntimeError("chunk commit boom")
+            return len(captured)
+
+    class _FakeClock:
+        time = 0
+        speed = 1.0
+        paused = False
+
+        def pause(self) -> None:
+            self.paused = True
+
+    class _FakePlayer:
+        position = (0.0, 0.0)
+        entity = None
 
     def _engine(self) -> GameEngine:
-        """最小引擎：无网络/无世界，仅脉搏相关字段。"""
+        """最小引擎：无网络/无世界，但世界状态可捕获（帧边界路径）。"""
         engine = GameEngine(seed=1)
         engine.chunk_store = self._FakeChunkStore()
+        engine.clock = self._FakeClock()
+        engine.player_service = self._FakePlayer()
+        engine.world_id = "a" * 32
+        engine.save_manager = object()  # 非 None 即视为已就位（未真正写盘）
         engine._save_thread = threading.Thread()  # 占位：触发入队逻辑
         return engine
 
     def test_maybe_save_pulse_enqueues_when_due(self):
-        """到点（距上次脉搏 ≥ SAVE_PULSE_INTERVAL）入队，不阻塞。"""
+        """到点（距上次脉搏 ≥ SAVE_PULSE_INTERVAL）捕获入队，不阻塞。"""
         from ascend.config import SAVE_PULSE_INTERVAL
         engine = self._engine()
         engine._last_pulse = time.monotonic() - SAVE_PULSE_INTERVAL - 1
@@ -139,6 +162,7 @@ class TestSavePulse:
         engine._maybe_save_pulse()
 
         assert engine._save_queue.qsize() == 1
+        assert engine.chunk_store.capture_calls == 1, "捕获在游戏线程完成"
         assert engine._last_pulse > time.monotonic() - 1, "入队后刷新计时"
 
     def test_maybe_save_pulse_skips_before_interval(self):
@@ -155,11 +179,12 @@ class TestSavePulse:
         from ascend.config import SAVE_PULSE_INTERVAL
         engine = self._engine()
         engine._last_pulse = time.monotonic() - SAVE_PULSE_INTERVAL - 1
-        engine._save_queue.put_nowait(None)  # 模拟在途脉搏
+        engine._save_queue.put_nowait(object())  # 模拟在途脉搏
 
         engine._maybe_save_pulse()
 
         assert engine._save_queue.qsize() == 1, "在途脉搏不叠加"
+        assert engine.chunk_store.capture_calls == 0, "在途时不做无谓捕获"
 
     def test_maybe_save_pulse_no_thread_noop(self):
         """无保存线程（服务模式）时直接跳过。"""
@@ -170,8 +195,36 @@ class TestSavePulse:
 
         assert engine._save_queue.qsize() == 0
 
+    def test_maybe_save_pulse_capture_failure_recorded(self, monkeypatch):
+        """捕获失败：记录失败并可见（不入队、不静默）。"""
+        from ascend.config import SAVE_PULSE_INTERVAL
+        engine = self._engine()
+        engine._last_pulse = time.monotonic() - SAVE_PULSE_INTERVAL - 1
+
+        def _bad_capture():
+            raise RuntimeError("capture boom")
+
+        monkeypatch.setattr(engine, "_capture_pulse", _bad_capture)
+        engine._maybe_save_pulse()
+
+        assert engine._save_queue.qsize() == 0
+        assert engine.save_pulse_failures == 1
+        assert "capture boom" in (engine.last_pulse_error or "")
+
+    def test_maybe_save_pulse_skips_invalidated_world(self):
+        """世界失效后不再保存（轨迹作废，WC-9.2）。"""
+        from ascend.config import SAVE_PULSE_INTERVAL
+        engine = self._engine()
+        engine._last_pulse = time.monotonic() - SAVE_PULSE_INTERVAL - 1
+        engine._world_invalidated = "帧提交失败"
+
+        engine._maybe_save_pulse()
+
+        assert engine._save_queue.qsize() == 0
+        assert engine.chunk_store.capture_calls == 0
+
     def test_run_pulse_order(self, monkeypatch):
-        """脉搏执行顺序：事件 flush → state 写入 → chunk flush。"""
+        """脉搏提交顺序：事件 flush → state 写入 → chunk 提交 → manifest。"""
         engine = self._engine()
         calls: list[str] = []
 
@@ -180,17 +233,19 @@ class TestSavePulse:
             world_tree, "archive_pending",
             lambda: calls.append("events") or 0,
         )
-        monkeypatch.setattr(engine, "_save_state_now", lambda: calls.append("state"))
-        monkeypatch.setattr(engine.chunk_store, "flush",
-                            lambda: calls.append("chunk") or 0)
+        monkeypatch.setattr(engine, "_save_state_now",
+                            lambda state: calls.append("state"))
+        monkeypatch.setattr(engine.chunk_store, "commit_captured",
+                            lambda captured: calls.append("chunk") or 0)
+        monkeypatch.setattr(engine, "_persist_manifest",
+                            lambda: calls.append("manifest"))
 
-        engine._run_pulse()
+        engine._run_pulse(engine._capture_pulse())
 
-        assert calls == ["events", "state", "chunk"]
-        assert engine.chunk_store.flush_calls == 0, "flush 已被 mock"
+        assert calls == ["events", "state", "chunk", "manifest"]
 
-    def test_run_pulse_step_failure_isolated(self, monkeypatch):
-        """单步失败不阻断其余步骤（下一次脉搏重试）。"""
+    def test_run_pulse_failure_aborts_remaining_steps(self, monkeypatch):
+        """任一步失败即失败：后续步骤不再执行，异常向上传播（#51）。"""
         engine = self._engine()
         calls: list[str] = []
 
@@ -201,14 +256,96 @@ class TestSavePulse:
             raise RuntimeError("archive boom")
 
         monkeypatch.setattr(world_tree, "archive_pending", _bad_archive)
-        monkeypatch.setattr(engine, "_save_state_now", lambda: calls.append("state"))
-        engine.chunk_store.fail = True
-        monkeypatch.setattr(engine.chunk_store, "flush",
-                            lambda: calls.append("chunk") or 0)
+        monkeypatch.setattr(engine, "_save_state_now",
+                            lambda state: calls.append("state"))
+        monkeypatch.setattr(engine.chunk_store, "commit_captured",
+                            lambda captured: calls.append("chunk") or 0)
 
-        engine._run_pulse()  # 不抛异常
+        with pytest.raises(RuntimeError, match="archive boom"):
+            engine._run_pulse(engine._capture_pulse())
 
-        assert calls == ["events", "state", "chunk"], "三步全部执行，失败仅记录"
+        assert calls == ["events"], "失败即中止：不得静默部分成功"
+
+    def test_run_pulse_chunk_failure_keeps_state_newer(self, monkeypatch):
+        """chunk 提交失败：state 已先行写入（可恢复组合），异常向上抛。"""
+        engine = self._engine()
+        calls: list[str] = []
+
+        from ascend.world_tree import world_tree
+        monkeypatch.setattr(
+            world_tree, "archive_pending", lambda: calls.append("events") or 0,
+        )
+        monkeypatch.setattr(engine, "_save_state_now",
+                            lambda state: calls.append("state"))
+        engine.chunk_store.fail_commit = True
+
+        with pytest.raises(RuntimeError, match="chunk commit boom"):
+            engine._run_pulse(engine._capture_pulse())
+
+        assert calls == ["events", "state"], "state 先于 chunk（读档可补齐）"
+
+    def test_run_pulse_debug_mode_flushes_without_state(self, monkeypatch):
+        """无存档位（调试模式）：仍 flush 事件/chunk，跳过 state/manifest。"""
+        engine = self._engine()
+        engine.world_id = None
+        calls: list[str] = []
+
+        from ascend.world_tree import world_tree
+        monkeypatch.setattr(
+            world_tree, "archive_pending", lambda: calls.append("events") or 0,
+        )
+        monkeypatch.setattr(engine, "_save_state_now",
+                            lambda state: calls.append("state"))
+        monkeypatch.setattr(engine, "_persist_manifest",
+                            lambda: calls.append("manifest"))
+        monkeypatch.setattr(engine.chunk_store, "commit_captured",
+                            lambda captured: calls.append("chunk") or 0)
+
+        payload = engine._capture_pulse()
+        assert payload.state is None, "无存档位不采集 state"
+        engine._run_pulse(payload)
+
+        assert calls == ["events", "chunk"]
+
+    def test_run_pulse_refuses_invalidated_world(self, monkeypatch):
+        """失效世界拒绝保存：最后有效检查点不得被作废轨迹覆盖。"""
+        from ascend.runtime import WorldInvalidatedError
+
+        engine = self._engine()
+        engine._world_invalidated = "帧提交失败"
+        calls: list[str] = []
+
+        from ascend.world_tree import world_tree
+        monkeypatch.setattr(
+            world_tree, "archive_pending", lambda: calls.append("events") or 0,
+        )
+        monkeypatch.setattr(engine, "_save_state_now",
+                            lambda state: calls.append("state"))
+
+        with pytest.raises(WorldInvalidatedError, match="拒绝保存"):
+            engine._run_pulse(engine._capture_pulse())
+        assert calls == [], "失效：事件/state 都不得提交"
+
+    def test_save_worker_records_failure_and_continues(self, monkeypatch):
+        """保存线程：单次脉搏失败记录计数，线程继续服务下一次。"""
+        engine = self._engine()
+
+        def _bad_pulse(payload) -> None:
+            raise RuntimeError("pulse boom")
+
+        monkeypatch.setattr(engine, "_run_pulse", _bad_pulse)
+        engine._running.set()
+        engine._save_queue.put_nowait(object())
+        thread = threading.Thread(target=engine._save_worker)
+        thread.start()
+        deadline = time.monotonic() + 3.0
+        while engine.save_pulse_failures == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        engine._running.clear()
+        thread.join(timeout=3.0)
+
+        assert engine.save_pulse_failures == 1
+        assert "pulse boom" in (engine.last_pulse_error or "")
 
     def test_final_pulse_runs_full_pulse(self, monkeypatch):
         """退出/快照排空：_final_pulse 执行完整脉搏。"""
@@ -219,6 +356,20 @@ class TestSavePulse:
         engine._final_pulse()
         assert called == ["pulse"]
 
+    def test_final_pulse_failure_visible_and_optional_raise(self, monkeypatch):
+        """收尾脉搏失败：默认记录不打断清理；快照路径要求抛出。"""
+        engine = self._engine()
+
+        def _bad_pulse() -> None:
+            raise RuntimeError("final boom")
+
+        monkeypatch.setattr(engine, "_run_pulse", _bad_pulse)
+        engine._final_pulse()  # 不抛
+        assert engine.save_pulse_failures == 1
+        with pytest.raises(RuntimeError, match="final boom"):
+            engine._final_pulse(raise_on_failure=True)
+        assert engine.save_pulse_failures == 2
+
     def test_save_worker_exits_after_running_cleared(self):
         """保存线程在 _running 清除后退出（心跳超时）。"""
         engine = self._engine()
@@ -228,3 +379,55 @@ class TestSavePulse:
         engine._running.clear()
         thread.join(timeout=3.0)
         assert not thread.is_alive(), "保存线程应自行退出"
+
+
+class TestWorldInvalidation:
+    """世界失效接线（#51）：停表、停止保存、标记可查询。"""
+
+    class _FakeScheduler:
+        def __init__(self, reason):
+            self._reason = reason
+
+        @property
+        def invalidated(self):
+            return self._reason
+
+    class _FakeClock:
+        paused = False
+
+        def tick(self) -> None:
+            pass
+
+        def pause(self) -> None:
+            self.paused = True
+
+    def _engine(self, reason):
+        engine = GameEngine(seed=1)
+        engine.clock = self._FakeClock()
+        engine._scheduler = self._FakeScheduler(reason)
+        engine._save_thread = None
+        return engine
+
+    def test_tick_pauses_clock_and_marks_invalidated(self):
+        engine = self._engine("帧提交失败（应用动作 1/1 抛错）")
+
+        engine._tick()
+
+        assert engine.world_invalidated is not None
+        assert "帧提交失败" in engine.world_invalidated
+        assert engine.clock.paused is True, "失效后停表（时间不得继续走）"
+
+    def test_tick_keeps_running_when_valid(self):
+        engine = self._engine(None)
+
+        engine._tick()
+
+        assert engine.world_invalidated is None
+        assert engine.clock.paused is False
+
+    def test_invalidation_marked_once(self):
+        engine = self._engine("boom")
+        engine._tick()
+        first = engine.world_invalidated
+        engine._tick()
+        assert engine.world_invalidated == first

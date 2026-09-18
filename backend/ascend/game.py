@@ -102,6 +102,20 @@ class WorldInitialized(WorldEvent):
     world_id: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class _PulsePayload:
+    """保存脉搏载荷：帧边界捕获的世界状态 + chunk 载荷（#51）。
+
+    `state`（时钟/玩家/干预时间线/注入核）与 `chunks` 在**同一游戏
+    线程帧边界**采集（`GameEngine._capture_pulse`），因此载荷内部
+    同属一个一致时刻；写盘由保存线程异步完成，不再边跑边采集。
+    无存档位（调试模式）时 `state=None`：只 flush 事件/chunk。
+    """
+
+    state: dict | None
+    chunks: tuple
+
+
 class GameEngine:
     """游戏引擎。在后台线程中运行，管理网络通信 + 世界生成。
 
@@ -137,6 +151,7 @@ class GameEngine:
         self.state_store: FrameStateStore = FrameStateStore()
         # 世界程序（声明编译产物；启动/读档时装配，见 13 篇）。
         self.world_program = None
+        self._scheduler = None                # 帧调度器（world 启动时装配）
         self.calendar: GameCalendar | None = None  # start() 时创建（世界存在才需要日历）
         self.i18n: I18n = get_default()  # 进程共享实例：set_lang 全局生效（枚举 label 亦跟随）
         self._executor: CommandExecutor | None = None
@@ -158,6 +173,11 @@ class GameEngine:
         self._last_pulse: float = 0.0         # 上次保存脉搏时刻（monotonic）
         self._save_queue: queue.Queue = queue.Queue(maxsize=1)  # 单槽位防堆积
         self._save_thread: threading.Thread | None = None
+        # 保存脉搏失败可见性（#51）：任一步失败即失败，不静默部分成功
+        self._save_pulse_failures: int = 0
+        self._last_pulse_error: str | None = None
+        # 世界失效（WC-9.2 / #51）：提交相位失败后停止推进、拒绝保存
+        self._world_invalidated: str | None = None
         self._world_start_monotonic: float = 0.0
         self._service_mode: bool = False      # 服务模式：仅网络+存档，无世界
         self._running: threading.Event = threading.Event()
@@ -543,10 +563,10 @@ class GameEngine:
             weather_state = self._load_state.get("weather") or {}
             interventions = weather_state.get("interventions") or {}
             logger.info(
-                "存档状态已恢复: 干预计划 %d 条 / 记录 %d 条, 注入核 %d 个",
+                "存档状态已恢复: 干预计划 %d 条 / 记录 %d 条, 注入核 %d 个（时间线投影）",
                 len(interventions.get("plan") or []),
                 len(interventions.get("records") or []),
-                len(weather_state.get("feature_cores") or []),
+                self.weather_engine.field.features.injected_count,
             )
 
         # 8. 终端指令执行器
@@ -1018,39 +1038,99 @@ class GameEngine:
                     points.append((gx, gy))
         return tuple(points)
 
-    def _save_state_now(self) -> None:
-        """立即将当前状态落盘（周期保存/退出保存共用）。
+    def _capture_pulse(self) -> "_PulsePayload":
+        """帧边界捕获保存载荷（游戏线程调用；只做内存读取）。
 
-        世界外元操作：不产生历史、不进因果图。
+        捕获点是 tick 末尾（世界推进已完成、下一次推进未开始），
+        所以 state（时钟/玩家/干预时间线/注入核）与 chunk 载荷同属
+        一个一致时刻——不再由保存线程边跑边采集（#51/WC-8.1）。
+
+        无存档位（调试模式）时 ``state=None``：仍按脉搏 flush 事件与
+        chunk（临时数据根），只跳过 state 写入与 manifest 回写。
+
+        Returns:
+            载荷（state 可为 None；chunks 无 chunk_store 时为空）。
+        """
+        state: dict | None = None
+        if (
+            self.world_id and self.save_manager
+            and self.player_service is not None and self.clock is not None
+        ):
+            state = collect_state(
+                self.clock, self.player_service, self.weather_engine,
+                world_tree.archived_max_timestamp(),
+            )
+        chunks = (
+            tuple(self.chunk_store.capture_pending())
+            if self.chunk_store is not None else ()
+        )
+        return _PulsePayload(state=state, chunks=chunks)
+
+    def _record_pulse_failure(self, stage: str, exc: BaseException) -> None:
+        """记录一次保存脉搏失败（计数 + 最近错误可查询；#51）。
+
+        失败不等于世界损坏：未提交的内容保留在原处（chunk 脏标记
+        未清、state 未写），下一次脉搏重试；但绝不静默当作成功。
+        """
+        self._save_pulse_failures += 1
+        self._last_pulse_error = f"{stage}: {type(exc).__name__}: {exc}"
+        logger.exception(
+            "保存脉搏失败（%s，累计 %d 次；未提交，下一次脉搏重试）",
+            stage, self._save_pulse_failures,
+        )
+
+    @property
+    def save_pulse_failures(self) -> int:
+        """保存脉搏累计失败次数（可查询；0 = 从未失败）。"""
+        return self._save_pulse_failures
+
+    @property
+    def last_pulse_error(self) -> str | None:
+        """最近一次保存脉搏失败描述；None = 未曾失败。"""
+        return self._last_pulse_error
+
+    @property
+    def world_invalidated(self) -> str | None:
+        """世界失效原因；None = 正常（提交相位失败后不再推进/保存）。"""
+        return self._world_invalidated
+
+    def _save_state_now(self, state: dict) -> None:
+        """将帧边界捕获的世界状态写入 state.json.enc（保存脉搏步骤）。
+
+        `state` 是 `_capture_pulse` 的捕获结果——本方法不再自行采集，
+        避免保存线程边跑边采集（#51）。
         """
         if not self.world_id or not self.save_manager:
             return
-        if self.player_service is None or self.clock is None:
-            return
-        state = collect_state(
-            self.clock, self.player_service, self.weather_engine,
-            world_tree.archived_max_timestamp(),
-        )
         self.save_manager.write_state(self.world_id, state)
-        self._persist_manifest()
 
     def _maybe_save_pulse(self) -> None:
-        """保存脉搏调度（tick 线程调用）：到点入队，零 I/O 阻塞。
+        """保存脉搏调度（tick 线程调用）：到点**捕获**入队，零 I/O 阻塞。
 
-        单槽位防堆积：上一脉搏在途时跳过本次（脉搏天然可合并，
-        数据由在途或下一次脉搏落盘，滞后 ≤ 脉搏时长 + SAVE_PULSE_INTERVAL；
-        退出时最终脉搏兜底）。
+        捕获在游戏线程帧边界完成（`_capture_pulse`），保存线程只负责
+        写盘——state 与 chunk 载荷同点、不撕裂（#51）。
+        单槽位防堆积：上一脉搏在途时跳过本次（脉搏天然可合并）。
+        捕获失败即记录并可见，不在保存线程里静默重算。
         """
         if self._save_thread is None:
             return
+        if self._world_invalidated is not None:
+            return  # 失效世界不保存：轨迹作废（WC-9.2）
         now = _real_time.monotonic()
         if now - self._last_pulse < SAVE_PULSE_INTERVAL:
             return
+        if self._save_queue.full():
+            return  # 上一脉搏在途，本次合并
         self._last_pulse = now
         try:
-            self._save_queue.put_nowait(None)
+            payload = self._capture_pulse()
+        except Exception as exc:
+            self._record_pulse_failure("捕获", exc)
+            return
+        try:
+            self._save_queue.put_nowait(payload)
         except queue.Full:
-            pass  # 上一脉搏在途，本次合并
+            pass  # 与 full() 检查的竞态：上一脉搏恰在途，本次合并
 
     def _ensure_save_thread(self) -> None:
         """确保保存脉搏线程存活（世界进程常驻线程）。"""
@@ -1062,41 +1142,67 @@ class GameEngine:
         self._save_thread.start()
 
     def _save_worker(self) -> None:
-        """保存线程主体：串行执行脉搏（退出时最多等 0.5s 心跳退出）。"""
+        """保存线程主体：串行提交脉搏（退出时最多等 0.5s 心跳退出）。
+
+        任一步失败 → 记录失败（`save_pulse_failures` / `last_pulse_error`
+        可查询）并保留待落盘数据，下一次脉搏重试；绝不静默部分成功（#51）。
+        """
         while self._running.is_set():
             try:
-                self._save_queue.get(timeout=0.5)
+                payload = self._save_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
             try:
-                self._run_pulse()
-            except Exception:
-                logger.exception("保存脉搏执行失败")
+                self._run_pulse(payload)
+            except Exception as exc:
+                self._record_pulse_failure("提交", exc)
 
-    def _run_pulse(self) -> None:
-        """单个保存脉搏：事件 flush → state 写入 → chunk flush。
+    def _run_pulse(self, payload: "_PulsePayload | None" = None) -> None:
+        """单个保存脉搏：整体提交，任一步失败即失败（#51 / WC-8.2）。
 
-        顺序保证 state 的 archive_max_timestamp 新鲜（事件先落盘）；
-        任一步失败不阻断其余步骤，下一次脉搏重试（事件丢失 ≤1 窗口
-        由 archive_pending 语义兜底）。
+        步骤顺序 = 提交顺序：事件 flush → state 写入 → chunk 提交 →
+        manifest 回写。任一步抛错立即中止其余步骤并向调用方传播——
+        不得静默部分成功。
+
+        state 先于 chunk 提交：中途失败得到"state 新于 chunk"的
+        **可恢复组合**（读档按积分游标把 chunk 补齐到 state 时刻），
+        而不是 chunk 超前于 state 的隐藏状态（其后果无法由 W_t 重算）。
+
+        `payload=None` 时现场捕获（退出/快照的同步路径）。
+        无存档位（调试模式）：仍 flush 事件/chunk，跳过 state/manifest。
+        世界失效（轨迹作废）时拒绝提交：磁盘保留**最后有效检查点**，
+        作废轨迹不得覆盖它（WC-9.2）。
+        """
+        if self._world_invalidated is not None:
+            from ascend.runtime import WorldInvalidatedError
+
+            raise WorldInvalidatedError(
+                f"世界已失效，拒绝保存（轨迹作废）: {self._world_invalidated}"
+            )
+        if payload is None:
+            payload = self._capture_pulse()
+        world_tree.archive_pending()
+        if payload.state is not None:
+            self._save_state_now(payload.state)
+        if self.chunk_store is not None:
+            self.chunk_store.commit_captured(list(payload.chunks))
+        if payload.state is not None:
+            self._persist_manifest()
+
+    def _final_pulse(self, *, raise_on_failure: bool = False) -> None:
+        """排空：同步执行完整脉搏（退出/快照强一致点）。
+
+        - 退出清理（`raise_on_failure=False`）：失败记录并可见，
+          不阻断资源释放；
+        - 快照打包（`raise_on_failure=True`）：失败必须抛出——
+          否则会把不一致的活目录当作有效快照打包。
         """
         try:
-            world_tree.archive_pending()
-        except Exception:
-            logger.exception("保存脉搏: 事件 flush 失败")
-        try:
-            self._save_state_now()
-        except Exception:
-            logger.exception("保存脉搏: state 写入失败")
-        if self.chunk_store is not None:
-            try:
-                self.chunk_store.flush()
-            except Exception:
-                logger.exception("保存脉搏: chunk flush 失败")
-
-    def _final_pulse(self) -> None:
-        """排空：同步执行完整脉搏（退出/快照强一致点）。"""
-        self._run_pulse()
+            self._run_pulse()
+        except Exception as exc:
+            self._record_pulse_failure("收尾脉搏", exc)
+            if raise_on_failure:
+                raise
 
     def snapshot_current(self, world_id: str | None = None, suffix: str = "manual") -> str:
         """创建一致性快照：flush 全部缓存 → 两库 WAL checkpoint → 打包。
@@ -1125,10 +1231,10 @@ class GameEngine:
             raise ValueError("当前无存档位，无法创建快照")
         if world_id == self.world_id:
             # 当前加载的世界：DB 打开中，先同步完整脉搏（事件 flush →
-            # state 写入 → chunk flush）再 checkpoint，否则打包的 .db 缺
-            # WAL 内数据、快照缺近期事件（注：is not None——ChunkStore
-            # 定义 __len__，空缓存时 bool 为 False）
-            self._final_pulse()
+            # state 写入 → chunk 提交 → manifest）再 checkpoint，否则打包
+            # 的 .db 缺 WAL 内数据、快照缺近期事件。脉搏失败必须抛出
+            # （raise_on_failure）：不得把不一致活目录当作有效快照打包。
+            self._final_pulse(raise_on_failure=True)
             if self.chunk_store is not None:
                 self.chunk_store.checkpoint()
             world_tree.checkpoint_archive()
@@ -1177,10 +1283,13 @@ class GameEngine:
                 _real_time.sleep(sleep_time)
 
     def _tick(self) -> None:
-        """单个 tick：推进时钟 + 处理所有排队消息。
+        """单个 tick：推进时钟 + 检查世界失效 + 处理所有排队消息。
 
         属性先抓局部快照再使用，避免 stop() 在其他线程将属性
         置 None 时出现 check-then-use 竞态。
+
+        世界失效（提交相位失败，WC-9.2 / #51）：停表并停止保存——
+        时间继续走而世界不推进会让"失效"看起来像"正常运行"。
         """
         clock = self.clock
         executor = self._executor
@@ -1189,6 +1298,22 @@ class GameEngine:
             clock.tick()
             if executor is not None:
                 executor.add_active_time(TICK_DT)
+        self._check_world_invalidated(clock)
         if dispatcher:
             dispatcher.process()
         self._maybe_save_pulse()
+
+    def _check_world_invalidated(self, clock) -> None:
+        """检查调度器失效标记：停表 + 记录一次（可查询；#51）。"""
+        scheduler = self._scheduler
+        if scheduler is None or self._world_invalidated is not None:
+            return
+        reason = scheduler.invalidated
+        if reason is None:
+            return
+        self._world_invalidated = reason
+        if clock is not None:
+            clock.pause()
+        logger.critical(
+            "世界失效：已停表并停止保存（轨迹作废，WC-9.2）: %s", reason,
+        )

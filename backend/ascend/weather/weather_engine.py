@@ -41,6 +41,7 @@ from .events import (HumidityChange, PrecipitationStart, PrecipitationStop,
                      SeasonChange, Sunrise, Sunset, SunshineChange,
                      TemperatureChange, WindChange)
 from .field import (CH_HUMIDITY, CH_TEMPERATURE, CH_WIND, UnifiedWeatherField)
+from .features import FEATURE_TYPES
 from . import mechanisms as _mechanisms
 from .region_tracker import RegionEvent, RegionTracker
 from .weather_field import WeatherField
@@ -219,23 +220,28 @@ class WeatherEngine:
     # ── 完整世界状态（P4）：不可重算部分 ────────────────────────
 
     def persist_state(self) -> dict:
-        """天气侧 W_t 载荷：干预时间线（计划 + 已发生记录）+ 注入特征核。
+        """天气侧 W_t 载荷：干预时间线（计划 + 已发生记录）。
 
         可重算量（统一天气场、气候代理、自然核时间线、区域跟踪器、
         chunk 基线）一律不落盘——它们由 seed + 时钟 + 声明重建，
         漏存它们不会改变轨迹，多存它们则掩盖"状态充分性"的真问题。
+
+        **注入特征核不作为状态**（#51 / WC-6.5）：它是外部输入
+        （``field_feature`` 计划）的时间线投影，读档由
+        :meth:`restore_state` 按生效计划重建。
         """
         return {
             "interventions": self.intervention_table.persist(),
-            "feature_cores": self._field.features.persist_injected(),
         }
 
     def restore_state(self, payload, *, instance_loader=None) -> None:
         """从存档载荷恢复天气侧 W_t（fail-closed）。
 
-        干预时间线全量重走登记校验（``InterventionTimeline.restore``），
-        注入核逐条校验字段与身份（``FeatureField.restore_injected``）；
-        任一条非法即抛 ValueError，不留下半成品状态。
+        干预时间线全量重走登记校验（``InterventionTimeline.restore``）；
+        注入核不来自载荷，而由**时间线投影**重建
+        （:meth:`_project_injected_features`，WC-6.5）：读档时先清空
+        注入核，再按当前帧生效的 ``field_feature`` 计划注入。任一条
+        非法即抛 ValueError，不留下半成品状态。
 
         Args:
             payload: ``persist_state`` 输出的载荷。
@@ -249,10 +255,70 @@ class WeatherEngine:
         self.intervention_table.restore(
             payload.get("interventions") or {},
             instance_loader=instance_loader,
+            replace=True,
         )
-        self._field.features.restore_injected(
-            payload.get("feature_cores") or []
-        )
+        self._project_injected_features()
+
+    def _project_injected_features(self) -> int:
+        """按时间线投影注入核（WC-6.5 / #51）：外部输入投影，不入状态。
+
+        投影 = 整体替换：先校验全部生效计划，再清空注入核并逐条注入
+        （校验先于改动——失败不留半成品状态）。撤销已固化为
+        ``stop_frame``，失效计划天然被 ``active_plans`` 排除。
+
+        Returns:
+            注入的核数。
+
+        Raises:
+            ValueError: 计划缺核规格或特征类型未注册（fail-closed）。
+        """
+        now = self._clock.time
+        entries = []
+        for entry in self.intervention_table.active_plans(now):
+            if entry.target_space != "field_feature":
+                continue
+            value = entry.value
+            if not isinstance(value, Mapping) or not value.get("active"):
+                continue
+            if entry.target not in FEATURE_TYPES:
+                raise ValueError(
+                    f"未注册的特征类型（读档投影）: {entry.target!r}"
+                )
+            spec = value.get("spec")
+            if not isinstance(spec, Mapping):
+                raise ValueError(
+                    f"特征核计划缺少核规格（读档投影）: {entry.target}"
+                )
+            missing = [
+                name for name in (
+                    "center_x", "center_y", "radius", "magnitude",
+                    "born_tick", "duration", "vel_x", "vel_y",
+                ) if name not in spec
+            ]
+            if missing:
+                raise ValueError(
+                    f"特征核规格缺少字段（读档投影）: {entry.target} {missing}"
+                )
+            entries.append((entry, spec))
+
+        features = self._field.features
+        features.clear_injected()
+        for entry, spec in entries:
+            features.inject_core(
+                entry.instance[0], entry.instance[1], entry.target,
+                center_x=float(spec["center_x"]),
+                center_y=float(spec["center_y"]),
+                radius=float(spec["radius"]),
+                magnitude=float(spec["magnitude"]),
+                born_tick=int(spec["born_tick"]),
+                duration=(
+                    None if spec["duration"] is None
+                    else int(spec["duration"])
+                ),
+                vel_x=float(spec["vel_x"]),
+                vel_y=float(spec["vel_y"]),
+            )
+        return len(entries)
 
     def __repr__(self) -> str:
         return (
@@ -771,29 +837,38 @@ class WeatherEngine:
             if active:
                 if core is not None and core.is_active(now):
                     return False
+                cfg = FEATURE_TYPES[type_name]
+                wx = (cx + 0.5) * TILE_MAP_SIZE
+                wy = (cy + 0.5) * TILE_MAP_SIZE
+                # front（带形）需要移动矢量；其余核静止即可。
+                # 核规格进计划值（读档投影的事实源，WC-6.5 / #51）：
+                # 恢复不依赖 data/weather.json 的当前配置，避免配置漂移
+                # 悄悄改写旧世界的注入核。
+                spec = {
+                    "center_x": wx,
+                    "center_y": wy,
+                    "radius": cfg.radius_range[1],
+                    "magnitude": 1.0,
+                    "born_tick": now,
+                    "duration": None,   # 与计划同语义：强制控制长期有效
+                    "vel_x": 0.5 if type_name == "front" else 0.0,
+                    "vel_y": 0.3 if type_name == "front" else 0.0,
+                }
                 table.plan(PlannedIntervention(
                     target_space="field_feature",
                     target=type_name,
                     instance=(cx, cy),
-                    value={"active": True},
+                    value={"active": True, "spec": spec},
                     start_frame=now,
                     stop_frame=None,
                     source="feature",
                 ))
-                cfg = FEATURE_TYPES[type_name]
-                wx = (cx + 0.5) * TILE_MAP_SIZE
-                wy = (cy + 0.5) * TILE_MAP_SIZE
-                # front（带形）需要移动矢量；其余核静止即可
-                vel_x = 0.5 if type_name == "front" else 0.0
-                vel_y = 0.3 if type_name == "front" else 0.0
                 features.inject_core(
                     cx, cy, type_name,
-                    center_x=wx, center_y=wy,
-                    radius=cfg.radius_range[1],
-                    magnitude=1.0,
-                    born_tick=now,
-                    duration=None,   # 与记录同语义：强制控制长期有效
-                    vel_x=vel_x, vel_y=vel_y,
+                    center_x=spec["center_x"], center_y=spec["center_y"],
+                    radius=spec["radius"], magnitude=spec["magnitude"],
+                    born_tick=spec["born_tick"], duration=spec["duration"],
+                    vel_x=spec["vel_x"], vel_y=spec["vel_y"],
                 )
             else:
                 if core is None:

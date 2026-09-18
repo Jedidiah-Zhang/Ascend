@@ -539,3 +539,86 @@ class TestStateGuard:
             store.flush()
         finally:
             store.close()
+
+
+class _FailingDb:
+    """executemany 抛错的数据库代理（提交失败注入；其余方法透传）。"""
+
+    def __init__(self, real) -> None:
+        object.__setattr__(self, "_real", real)
+
+    def executemany(self, *args, **kwargs):
+        raise RuntimeError("disk full")
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_real"), name)
+
+
+class TestFrameBoundaryCapture:
+    """帧边界捕获 + 提交流程（#51 存档原子性）。"""
+
+    def test_capture_does_not_write_or_clear_dirty(self, db_path):
+        """捕获只做内存序列化：不写库、不清脏；提交才落盘。"""
+        store = ChunkStore(db_path, max_size=4)
+        try:
+            chunk = _make_chunk(0, 0, with_tiles=True)
+            store.put(chunk)
+            store.mark_dirty(0, 0)
+            captured = store.capture_pending()
+            assert len(captured) == 1
+            assert chunk.dirty is True, "捕获阶段不得清脏"
+            assert not store.contains_tiles(0, 0), "捕获阶段不得写库"
+            assert store.commit_captured(captured) == 1
+            assert chunk.dirty is False
+            assert store.contains_tiles(0, 0)
+        finally:
+            store.close()
+
+    def test_commit_keeps_dirty_when_modified_after_capture(self, db_path):
+        """捕获后又被修改：按 revision 保留脏标记，新内容留给下一次。"""
+        store = ChunkStore(db_path, max_size=4)
+        try:
+            chunk = _make_chunk(0, 0, with_tiles=True)
+            store.put(chunk)
+            captured = store.capture_pending()
+            store.mark_dirty(0, 0)  # 捕获后被修改（revision +1）
+            store.commit_captured(captured)
+            assert chunk.dirty is True, "修订号变化 → 保留脏标记"
+            store.commit_captured(store.capture_pending())
+            assert chunk.dirty is False, "下一次脉搏落盘新内容"
+        finally:
+            store.close()
+
+    def test_commit_failure_raises_and_keeps_dirty(self, db_path):
+        """提交失败：整体回滚、脏标记保留、异常向上抛（不静默）。"""
+        store = ChunkStore(db_path, max_size=4)
+        real_db = store._db
+        try:
+            chunk = _make_chunk(0, 0, with_tiles=True)
+            store.put(chunk)
+            store.mark_dirty(0, 0)
+            captured = store.capture_pending()
+            store._db = _FailingDb(real_db)
+            with pytest.raises(RuntimeError, match="disk full"):
+                store.commit_captured(captured)
+            assert chunk.dirty is True, "失败后脏标记保留，下一次脉搏重试"
+            store._db = real_db
+            assert store.commit_captured(store.capture_pending()) == 1
+            assert chunk.dirty is False, "恢复后重试成功（下一次脉搏）"
+        finally:
+            store._db = real_db
+            store.close()
+
+    def test_mark_dirty_bumps_revision(self, db_path):
+        """置脏入口统一走 mark_modified：dirty 与 revision 同步变化。"""
+        store = ChunkStore(db_path, max_size=4)
+        try:
+            chunk = _make_chunk(0, 0, with_tiles=True)
+            store.put(chunk)
+            assert chunk.revision == 0
+            store.mark_dirty(0, 0)
+            store.mark_dirty(0, 0)
+            assert chunk.dirty is True
+            assert chunk.revision == 2
+        finally:
+            store.close()

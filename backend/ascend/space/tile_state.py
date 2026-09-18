@@ -441,7 +441,7 @@ class TileStateEngine:
                 return False
             grid.replace_states(states)
             chunk.integrated_through = target
-            chunk.dirty = True
+            chunk.mark_modified()
             self._aggregates_cache.pop(key, None)
         return True
 

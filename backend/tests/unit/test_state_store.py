@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from ascend.runtime import FrameStateStore
+from ascend.runtime import FrameStateStore, WorldInvalidatedError
 
 
 class TestLifecycle:
@@ -194,13 +194,15 @@ class TestThreadIsolation:
         assert sorted(results.values()) == [1, 2]
 
 
-class TestCommitFailure:
-    """应用动作抛错：异常向调用方传播，帧可重试（幂等动作安全重放）。
+class TestCommitPhaseFailure:
+    """提交相位失败 → 世界失效、不重放（WC-9.2 / #51）。
 
-    已执行动作不回滚、记录回调不执行——重试帧重新登记后再执行（文档化语义）。
+    与提交前失败（回调抛错，可回滚重试）不同：应用动作/记录回调位于
+    提交相位，状态可能已部分应用或已提交——此时回滚不可行，世界失效
+    （轨迹作废），写路径一律 fail-closed。
     """
 
-    def test_applier_failure_propagates(self):
+    def test_applier_failure_invalidates_world(self):
         store = FrameStateStore()
         applied: list[str] = []
 
@@ -210,50 +212,51 @@ class TestCommitFailure:
         store.begin_frame()
         store.stage_apply(lambda: applied.append("first"))
         store.stage_apply(failing)
-        with pytest.raises(RuntimeError, match="帧提交失败"):
+        with pytest.raises(WorldInvalidatedError, match="帧提交失败"):
             store.commit()
-        assert applied == ["first"], "已执行动作不回滚（文档化语义）"
+        assert applied == ["first"], "已执行动作不回滚（失效前副作用保留）"
         assert store.version == 0
-        assert not store.transaction_open, "失败后事务已摘下"
+        assert not store.transaction_open
+        assert store.invalidated is not None
+        # 失效后：读仍可诊断；写/提交一律拒绝
+        assert store.get("k") is None
+        with pytest.raises(WorldInvalidatedError):
+            store.begin_frame()
+        with pytest.raises(WorldInvalidatedError):
+            store.stage("k", 1)
 
-    def test_after_commit_hooks_dropped_on_commit_failure(self):
-        """提交失败：已登记记录回调一律不执行；重试帧重新登记后执行。"""
+    def test_record_hook_failure_invalidates_after_publish(self):
+        """记录回调失败：状态已提交可见（不得回滚），世界失效且不重放。"""
         store = FrameStateStore()
         hooks: list[str] = []
-        state = {"fail": True}
 
-        def apply() -> None:
-            if state["fail"]:
-                raise ValueError("applier boom")
+        def bad_hook() -> None:
+            raise RuntimeError("hook boom")
 
         store.begin_frame()
-        store.stage_apply(apply)
-        store.stage_after_commit(lambda: hooks.append("first"))
-        with pytest.raises(RuntimeError, match="帧提交失败"):
+        store.stage("k", 1)
+        store.stage_after_commit(bad_hook)
+        store.stage_after_commit(lambda: hooks.append("after"))
+        with pytest.raises(WorldInvalidatedError, match="已提交"):
             store.commit()
-        assert hooks == [], "失败帧的记录回调不得执行"
-        state["fail"] = False
-        store.begin_frame()
-        store.stage_apply(apply)
-        store.stage_after_commit(lambda: hooks.append("retry"))
-        store.commit()
-        assert hooks == ["retry"]
-
-    def test_frame_retry_succeeds(self):
-        store = FrameStateStore()
-        state = {"fail": True}
-        applied: list[str] = []
-
-        def flaky() -> None:
-            if state["fail"]:
-                state["fail"] = False
-                raise ValueError("boom")
-            applied.append("ok")
-
-        with pytest.raises(RuntimeError):
-            with store.frame():
-                store.stage_apply(flaky)
-        with store.frame():
-            store.stage_apply(flaky)
-        assert applied == ["ok"]
+        assert store.get("k") == 1, "已发布的状态不得被回滚"
         assert store.version == 1
+        assert store.invalidated is not None
+        assert hooks == [], "失败点之后的记录回调不再执行"
+
+    def test_auto_commit_paths_refused_after_invalidation(self):
+        store = FrameStateStore()
+
+        def failing() -> None:
+            raise ValueError("boom")
+
+        store.begin_frame()
+        store.stage_apply(failing)
+        with pytest.raises(WorldInvalidatedError):
+            store.commit()
+        with pytest.raises(WorldInvalidatedError):
+            store.stage("x", 1)
+        with pytest.raises(WorldInvalidatedError):
+            store.stage_apply(lambda: None)
+        with pytest.raises(WorldInvalidatedError):
+            store.stage_after_commit(lambda: None)
