@@ -15,6 +15,7 @@ on:
       - "backend/ascend/weather/features.py"
       - "backend/ascend/space/climate.py"
       - "backend/ascend/space/mechanisms.py"
+      - "backend/ascend/world/**"
       - "backend/ascend/game.py"
       - "backend/ascend/config.py"
       - "backend/tests/**"
@@ -33,6 +34,7 @@ on:
       - "backend/ascend/weather/features.py"
       - "backend/ascend/space/climate.py"
       - "backend/ascend/space/mechanisms.py"
+      - "backend/ascend/world/**"
       - "backend/ascend/game.py"
       - "backend/ascend/config.py"
       - "backend/tests/**"
@@ -90,3 +92,18 @@ jobs:
           name: acceptance-report
           path: acceptance.json
           if-no-files-found: ignore
+
+  # 世界核心（新架构）门禁：元模型/编译器/运行时/研究层/新核心验收。
+  # 与旧链并行，直到 P2 生产切换时旧链整体删除。
+  world-core:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: 安装后端依赖
+        run: python -m pip install -q -r requirements.txt
+      - name: 世界核心测试（tests/world）
+        run: cd backend && PYTHONPATH=. python -m pytest tests/world -q
