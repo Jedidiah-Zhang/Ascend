@@ -338,7 +338,12 @@ class StateStore:
             ) from None
 
     def write(self, slot_id: str, value: object) -> None:
-        """写影子（提交前不可见）。"""
+        """写影子（提交前不可见）；动态场与既有影子合并（新值优先）。"""
+        if isinstance(value, DynamicField):
+            existing = self._shadow.get(slot_id)
+            if isinstance(existing, DynamicField):
+                self._shadow[slot_id] = existing.merged(value)
+                return
         self._shadow[slot_id] = value
 
     def write_at(

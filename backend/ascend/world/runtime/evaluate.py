@@ -38,8 +38,12 @@ def evaluate_mechanism(
     tick: int,
     inputs: Mapping[str, object],
     params: Mapping[str, object],
+    skip: Mapping[str, frozenset[tuple[int, ...]]] | None = None,
 ) -> dict[str, object]:
-    """求值一个机制模板，返回 ``{槽位: 值}``（不落 store，由调用方暂存）。"""
+    """求值一个机制模板，返回 ``{槽位: 值}``（不落 store，由调用方暂存）。
+
+    ``skip``：被逐实例干预替换的坐标（按槽位），对应实例不参与求值。
+    """
     impl = mechanism.accelerated or mechanism.impl
     if mechanism.scope == "field":
         return _evaluate_field(
@@ -78,6 +82,7 @@ def evaluate_mechanism(
             inputs=inputs,
             params=params,
             instance_id=instance.id,
+            skip=skip or {},
         )
     if instance.kind == "lattice":
         fields = {
@@ -115,11 +120,14 @@ def _evaluate_dynamic(
     inputs: Mapping[str, object],
     params: Mapping[str, object],
     instance_id: str,
+    skip: Mapping[str, frozenset[tuple[int, ...]]],
 ) -> dict[str, object]:
-    """动态 lattice：只对已物化实例逐点求值。"""
+    """动态 lattice：只对已物化实例逐点求值（被干预实例跳过）。"""
     slots = mechanism.outputs()
     fields = {slot: DynamicField() for slot in slots}
     for coords in store.materialized(instance_id):
+        if all(coords in skip.get(slot, frozenset()) for slot in slots):
+            continue
         parent_values = _resolve_parents(
             program, store, mechanism, inputs=inputs, instance=coords
         )
@@ -133,6 +141,8 @@ def _evaluate_dynamic(
         )
         collected = _collect(mechanism, impl(context))
         for slot, value in collected.items():
+            if coords in skip.get(slot, frozenset()):
+                continue
             fields[slot].set(coords, value)
     return dict(fields)
 

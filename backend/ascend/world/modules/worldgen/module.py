@@ -37,6 +37,7 @@ SLOT_WEATHER_CHUNK_ANNUAL_MEAN_TEMPERATURE_C = SlotDecl(
     domain=ValueDomain(kind="float", minimum=None, maximum=None, unit='degC'),
     writer='world.gen.derive_annual_mean_temperature.v1',
     recompute='机制 world.gen.derive_annual_mean_temperature.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
 )
 SLOT_WEATHER_CHUNK_ANNUAL_RAINFALL_MM_PER_YEAR = SlotDecl(
     id='weather.chunk.annual_rainfall_mm_per_year',
@@ -45,6 +46,7 @@ SLOT_WEATHER_CHUNK_ANNUAL_RAINFALL_MM_PER_YEAR = SlotDecl(
     domain=ValueDomain(kind="float", minimum=None, maximum=None, unit='mm_per_year'),
     writer='world.gen.derive_annual_rainfall.v1',
     recompute='机制 world.gen.derive_annual_rainfall.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
 )
 SLOT_WEATHER_CHUNK_BASELINE_HUMIDITY_PERCENT = SlotDecl(
     id='weather.chunk.baseline_humidity_percent',
@@ -53,6 +55,7 @@ SLOT_WEATHER_CHUNK_BASELINE_HUMIDITY_PERCENT = SlotDecl(
     domain=ValueDomain(kind="float", minimum=0.0, maximum=100.0, unit='percent'),
     writer='world.gen.derive_baseline_humidity.v1',
     recompute='机制 world.gen.derive_baseline_humidity.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
 )
 SLOT_WEATHER_CHUNK_BASELINE_WIND_SPEED_MPS = SlotDecl(
     id='weather.chunk.baseline_wind_speed_mps',
@@ -61,6 +64,7 @@ SLOT_WEATHER_CHUNK_BASELINE_WIND_SPEED_MPS = SlotDecl(
     domain=ValueDomain(kind="float", minimum=0.0, maximum=50.0, unit='mps'),
     writer='world.gen.derive_baseline_wind_speed.v1',
     recompute='机制 world.gen.derive_baseline_wind_speed.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
 )
 SLOT_WEATHER_CHUNK_HUMIDITY_SHARPNESS = SlotDecl(
     id='weather.chunk.humidity_sharpness',
@@ -69,6 +73,7 @@ SLOT_WEATHER_CHUNK_HUMIDITY_SHARPNESS = SlotDecl(
     domain=ValueDomain(kind="float", minimum=0.0, maximum=10.0, unit='dimensionless'),
     writer='world.gen.derive_humidity_sharpness.v1',
     recompute='机制 world.gen.derive_humidity_sharpness.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
 )
 SLOT_WEATHER_CHUNK_MEAN_PRECIP_INTENSITY_MM_PER_HOUR = SlotDecl(
     id='weather.chunk.mean_precip_intensity_mm_per_hour',
@@ -77,6 +82,7 @@ SLOT_WEATHER_CHUNK_MEAN_PRECIP_INTENSITY_MM_PER_HOUR = SlotDecl(
     domain=ValueDomain(kind="float", minimum=2.0, maximum=10.0, unit='mm_per_hour'),
     writer='world.gen.derive_mean_precip_intensity.v1',
     recompute='机制 world.gen.derive_mean_precip_intensity.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
 )
 SLOT_WEATHER_CHUNK_SEA_LEVEL_TEMPERATURE_C = SlotDecl(
     id='weather.chunk.sea_level_temperature_c',
@@ -85,6 +91,7 @@ SLOT_WEATHER_CHUNK_SEA_LEVEL_TEMPERATURE_C = SlotDecl(
     domain=ValueDomain(kind="float", minimum=-20.0, maximum=38.0, unit='degC'),
     writer='world.gen.derive_sea_level_temperature.v1',
     recompute='机制 world.gen.derive_sea_level_temperature.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
 )
 SLOT_WORLD_GEN_BIOME = SlotDecl(
     id='world.gen.biome',
@@ -93,6 +100,7 @@ SLOT_WORLD_GEN_BIOME = SlotDecl(
     domain=ValueDomain(kind="enum", choices=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)),
     writer='world.gen.classify_biome.v1',
     recompute='机制 world.gen.classify_biome.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
 )
 SLOT_WORLD_GEN_CLIMATE_ZONE = SlotDecl(
     id='world.gen.climate_zone',
@@ -101,48 +109,49 @@ SLOT_WORLD_GEN_CLIMATE_ZONE = SlotDecl(
     domain=ValueDomain(kind="enum", choices=(0, 1, 2, 3, 4, 5, 6, 7)),
     writer='world.gen.classify_climate_zone.v1',
     recompute='机制 world.gen.classify_climate_zone.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
 )
 SLOT_WORLD_GEN_ALTITUDE_M = SlotDecl(
     id='world.gen.altitude_m',
     on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=None, maximum=None, unit='meter'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
 )
 SLOT_WORLD_GEN_HUMIDITY_NOISE = SlotDecl(
     id='world.gen.humidity_noise',
     on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
 )
 SLOT_WORLD_GEN_LATITUDE_NOISE = SlotDecl(
     id='world.gen.latitude_noise',
     on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
 )
 SLOT_WORLD_GEN_MOISTURE_NOISE = SlotDecl(
     id='world.gen.moisture_noise',
     on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
 )
 SLOT_WORLD_GEN_RAINFALL_NOISE = SlotDecl(
     id='world.gen.rainfall_noise',
     on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
 )
 SLOT_WORLD_GEN_WIND_NOISE = SlotDecl(
     id='world.gen.wind_noise',
     on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
 )
 
 # ── 实现包装（ctx → 方程关键字参数）─────────────────────

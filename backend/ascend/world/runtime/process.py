@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Callable, Mapping
 
 from ascend.world.runtime.evaluate import evaluate_mechanism
-from ascend.world.runtime.state import LatticeField, StateStore
+from ascend.world.runtime.state import DynamicField, LatticeField, StateStore
 
 __all__ = [
     "FrameFailure",
@@ -127,13 +127,16 @@ class WorldProcess:
         *,
         inputs: Mapping[str, object] | None = None,
         interventions: Mapping[str, object] | None = None,
+        parameters: Mapping[str, object] | None = None,
         events: tuple[str, ...] = (),
         record: Callable[[FrameResult], None] | None = None,
     ) -> FrameResult:
-        """推进一帧；``interventions`` 为本帧值替换（WC-6.1）。
+        """推进一帧。
 
-        被干预的槽位断开原入边：其写者机制本帧不执行（不消费其随机地址，
-        但地址是纯函数，其他机制取值不受影响，WC-5.2）。
+        ``interventions`` 为本帧值替换（WC-6.1）：标量槽位给值，动态槽位给
+        ``{坐标: 值}`` 映射。被替换实例断开原入边（其写者本帧不为该实例
+        求值；不消费随机地址，地址纯函数保证其他机制不受影响）。
+        ``parameters`` 为本帧参数覆盖（环境变化，独立报告）。
         """
         tick = self._tick + 1
         if self._invalidated:
@@ -144,18 +147,36 @@ class WorldProcess:
         if _CLOCK_SLOT in self._program.slots:
             frame_inputs.setdefault(_CLOCK_SLOT, tick)
         replaced = dict(interventions or {})
-        self._validate_interventions(replaced)
+        scalar_replaced = {
+            slot: value
+            for slot, value in replaced.items()
+            if not isinstance(value, Mapping)
+        }
+        dynamic_replaced = {
+            slot: {tuple(coords): item for coords, item in value.items()}
+            for slot, value in replaced.items()
+            if isinstance(value, Mapping)
+        }
+        self._validate_interventions(scalar_replaced, dynamic_replaced)
+        frame_params = dict(self._program.parameters)
+        frame_params.update(parameters or {})
         due = self._program.due_groups(tick, tuple(events))
-        writes: dict[str, object] = {
-            slot: value for slot, value in replaced.items()
+        writes: dict[str, object] = {}
+        skip = {
+            slot: frozenset(mapping)
+            for slot, mapping in dynamic_replaced.items()
         }
         try:
-            for slot, value in replaced.items():
+            for slot, value in scalar_replaced.items():
                 self._store.write(slot, value)
+            for slot, mapping in dynamic_replaced.items():
+                for coords, item in mapping.items():
+                    self._store.write_at(slot, coords, item)
             for group in due:
                 for mechanism in group.mechanisms:
                     if all(
-                        slot in replaced for slot in mechanism.outputs()
+                        slot in scalar_replaced
+                        for slot in mechanism.outputs()
                     ):
                         continue
                     for slot, value in evaluate_mechanism(
@@ -165,10 +186,20 @@ class WorldProcess:
                         root_seed=self._seed,
                         tick=tick,
                         inputs=frame_inputs,
-                        params=self._program.parameters,
+                        params=frame_params,
+                        skip=skip,
                     ).items():
                         writes[slot] = value
                         self._store.write(slot, value)
+            for slot, value in scalar_replaced.items():
+                writes[slot] = value
+            for slot, mapping in dynamic_replaced.items():
+                field = writes.get(slot)
+                if not isinstance(field, DynamicField):
+                    field = DynamicField()
+                for coords, item in mapping.items():
+                    field.set(coords, item)
+                writes[slot] = field
             violations = self._check_invariants(writes)
         except FrameFailure:
             self._store.abort()
@@ -265,19 +296,37 @@ class WorldProcess:
 
     def _validate_interventions(
         self,
-        replaced: Mapping[str, object],
+        scalar_replaced: Mapping[str, object],
+        dynamic_replaced: Mapping[str, Mapping[tuple[int, ...], object]],
     ) -> None:
-        """干预目标校验（WC-6.3）：存在、状态槽位、允许干预，否则拒绝。"""
-        for slot_id in replaced:
-            slot = self._program.slots.get(slot_id)
-            if slot is None:
-                raise FrameFailure(f"干预目标未声明: {slot_id}")
-            if slot.persist != "state":
+        """干预目标校验（WC-6.3）：存在、状态/派生槽位、允许干预、实例已物化。"""
+        for slot_id in scalar_replaced:
+            self._check_target(slot_id)
+        for slot_id, mapping in dynamic_replaced.items():
+            slot = self._check_target(slot_id)
+            instance = self._program.instances[slot.on]
+            if instance.kind != "lattice" or instance.size is not None:
                 raise FrameFailure(
-                    f"干预目标必须是状态槽位: {slot_id}（{slot.persist}）"
+                    f"槽位 {slot_id} 不是动态实例槽位，不能按实例替换"
                 )
-            if not slot.permissions.intervene:
-                raise FrameFailure(f"槽位不允许干预: {slot_id}")
+            materialized = set(self._store.materialized(instance.id))
+            for coords in mapping:
+                if coords not in materialized:
+                    raise FrameFailure(
+                        f"干预实例未物化: {slot_id}@{coords!r}"
+                    )
+
+    def _check_target(self, slot_id: str) -> object:
+        slot = self._program.slots.get(slot_id)
+        if slot is None:
+            raise FrameFailure(f"干预目标未声明: {slot_id}")
+        if slot.persist not in ("state", "derived"):
+            raise FrameFailure(
+                f"干预目标必须是状态/派生槽位: {slot_id}（{slot.persist}）"
+            )
+        if not slot.permissions.intervene:
+            raise FrameFailure(f"槽位不允许干预: {slot_id}")
+        return slot
 
     def _initial_values(
         self,

@@ -167,6 +167,7 @@ class WeatherEngine:
         self._region_domain = region_domain
         self._world_program = world_program
         self._wave_parallel = wave_parallel
+        self._core = None
         self._state_store = state_store
         self._last_season: int | None = None
         # 上一帧观察域（域移动语义：前后帧各用当时的域比较；帧事务内推
@@ -575,13 +576,15 @@ class WeatherEngine:
         self, now: int, fields: dict[tuple[int, int], WeatherField],
         *, trace_kind: str = "eval",
     ) -> "tuple[dict[tuple[str, tuple], object], dict[tuple[int, int], float]]":
-        """按世界程序波次计划求值全部 wired 节点（生产唯一执行路径）。
+        """求值全部 wired 节点（P2-2：默认走新核心无状态求值）。
 
-        查询路径与驱动路径共用：同一时刻同一输入下，结果与节点顺序无关
-        （波次由微步/依赖声明导出，编译期静态校验）。``wave_parallel``
-        开启时同波并发（结果逐位一致）；挂载研究 trace 时强制串行
-        （记录顺序确定性优先）。
+        - **默认路径**：``WeatherCore``（新核心，声明式世界工具包）——
+          物化 chunk、注入边界与干预覆盖、一帧求值、读回机制输出；
+        - **trace 挂载路径**：旧波次执行器（研究记录/重算依赖旧记录格式，
+          P2-3 重建记录后删除；两条路径对同一输入逐位一致，见
+          ``tests/world/test_engine_switch.py``）。
 
+        查询路径与驱动路径共用：同一时刻同一输入下，结果与节点顺序无关。
         ``trace_kind``（#50）：驱动推进 = "eval"；历史查询/日摘要采样等
         事后重算 = "recompute"（记录仍然留痕，但不冒充"发生"）。
 
@@ -596,9 +599,80 @@ class WeatherEngine:
         Raises:
             KeyError: 边界值/父值缺失（声明漂移，fail-closed）。
         """
+        boundary, hum_perturb = self._boundary_values(now, fields)
+        if self._trace is not None:
+            return self._evaluate_legacy(
+                now, fields, boundary=boundary, hum_perturb=hum_perturb,
+                trace_kind=trace_kind,
+            )
+        node_overrides, instance_overrides, parameter_overrides = (
+            self._active_overrides(now, fields)
+        )
+        values = self._weather_core().evaluate(
+            now=now,
+            boundary=boundary,
+            instances=list(fields),
+            node_overrides=node_overrides,
+            instance_overrides=instance_overrides,
+            parameter_overrides=parameter_overrides,
+        )
+        return values, hum_perturb
+
+    def _weather_core(self):
+        """新核心适配器（进程内一次编译缓存）。"""
+        if self._core is None:
+            from ascend.world.modules.weather.core import WeatherCore
+            self._core = WeatherCore()
+        return self._core
+
+    def _active_overrides(
+        self, now: int, fields: dict[tuple[int, int], WeatherField],
+    ) -> "tuple[dict[str, object], dict[str, dict[tuple, object]], dict[str, object]]":
+        """本帧生效干预：按 wired 目标逐实例解析（与旧求值点同语义）。
+
+        逐目标调用 ``resolve_node`` 会为生效帧物化记录；已撤销的干预在
+        历史帧仍命中当时记录（revoke 不改写过去，WC-6.2）。
+        """
+        _, timeline = self._intervention()
+        core = self._weather_core()
+        node_overrides: dict[str, object] = {}
+        instance_overrides: dict[str, dict[tuple, object]] = {}
+        instances = list(fields)
+        for target in core.wired_outputs:
+            slot = core.program.slots.get(target)
+            if slot is None:
+                continue
+            if slot.on == "global":
+                resolution = timeline.resolve_node(target, (), now)
+                if resolution.rep == "value":
+                    node_overrides[target] = resolution.value
+                continue
+            for coords in instances:
+                instance = (coords[0], coords[1])
+                resolution = timeline.resolve_node(target, instance, now)
+                if resolution.rep == "value":
+                    instance_overrides.setdefault(target, {})[
+                        instance
+                    ] = resolution.value
+        parameter_overrides: dict[str, object] = {}
+        for parameter_id in timeline.registry.parameters:
+            hit, value = timeline.resolve_parameter(parameter_id, now)
+            if hit:
+                parameter_overrides[parameter_id] = value
+        return node_overrides, instance_overrides, parameter_overrides
+
+    def _evaluate_legacy(
+        self,
+        now: int,
+        fields: dict[tuple[int, int], WeatherField],
+        *,
+        boundary: "dict[tuple[str, tuple], object]",
+        hum_perturb: "dict[tuple[int, int], float]",
+        trace_kind: str,
+    ) -> "tuple[dict[tuple[str, tuple], object], dict[tuple[int, int], float]]":
+        """旧波次执行器路径（仅 trace 挂载时保留；P2-3 删除）。"""
         from ascend.runtime import execute_waves
 
-        boundary, hum_perturb = self._boundary_values(now, fields)
         parallel = self._wave_parallel and self._trace is None
         if parallel:
             self._intervention()  # 预初始化挂载点（避免并发首建）

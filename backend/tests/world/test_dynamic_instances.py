@@ -14,6 +14,7 @@ from ascend.world import (
     InstanceDecl,
     MechanismDecl,
     ModulePack,
+    ParameterDecl,
     Parent,
     Permissions,
     Schedule,
@@ -45,6 +46,10 @@ def _sum_impl(ctx: object) -> int:
     return ctx.parent("x") + ctx.parent("base")
 
 
+def _offset_impl(ctx: object) -> int:
+    return ctx.parent("x") + ctx.param("t.offset")
+
+
 def _pack() -> ModulePack:
     return ModulePack(
         id="test.dyn",
@@ -53,6 +58,7 @@ def _pack() -> ModulePack:
         slots=(
             SlotDecl(
                 id="t.a", on="lattice.dyn", persist="state", domain=_INT,
+                permissions=Permissions(intervene=True, observe=True),
                 writer="t.a.hold", initial=7,
             ),
             SlotDecl(
@@ -62,6 +68,10 @@ def _pack() -> ModulePack:
             SlotDecl(
                 id="t.c", on="lattice.dyn", persist="derived", domain=_INT,
                 writer="t.c.calc", recompute="c = x + base",
+            ),
+            SlotDecl(
+                id="t.p", on="lattice.dyn", persist="derived", domain=_INT,
+                writer="t.p.calc", recompute="p = x + offset",
             ),
             SlotDecl(
                 id="t.x", on="lattice.dyn", persist="external", domain=_INT,
@@ -109,6 +119,24 @@ def _pack() -> ModulePack:
                     Witness("a", {"a": 1}, (2,)),
                     Witness("b", {"a": 2}, (4,)),
                 ),
+            ),
+            MechanismDecl(
+                id="t.p.calc",
+                output="t.p",
+                parents=(Parent("t.x", "x"),),
+                impl=_offset_impl,
+                when=When("phase", "one"),
+                params=("t.offset",),
+                witnesses=(
+                    Witness("a", {"x": 1}, (1,), {"t.offset": 0}),
+                    Witness("b", {"x": 2}, (2,), {"t.offset": 0}),
+                    Witness("c", {"x": 1}, (6,), {"t.offset": 5}),
+                ),
+            ),
+        ),
+        parameters=(
+            ParameterDecl(
+                id="t.offset", default=0, minimum=0, maximum=100,
             ),
         ),
         evidence=("动态实例运行时测试",),
@@ -168,6 +196,44 @@ class TestDynamicEvaluation:
         process.materialize("lattice.dyn", (0, 0))
         with pytest.raises(FrameFailure):
             process.step(inputs=_inputs({}))
+
+    def test_per_instance_intervention_cuts_edges(self, program):
+        process = WorldProcess(program)
+        process.materialize("lattice.dyn", (0, 0))
+        process.materialize("lattice.dyn", (1, 0))
+        process.step(
+            inputs=_inputs({(0, 0): 1, (1, 0): 2}),
+            interventions={"t.a": {(0, 0): 100}},
+        )
+        assert process.committed("t.a").get((0, 0)) == 100
+        assert process.committed("t.a").get((1, 0)) == 8
+        assert process.committed("t.b").get((0, 0)) == 200
+        assert process.committed("t.b").get((1, 0)) == 16
+
+    def test_intervention_validation(self, program):
+        process = WorldProcess(program)
+        process.materialize("lattice.dyn", (0, 0))
+        with pytest.raises(FrameFailure):
+            process.step(
+                inputs=_inputs({(0, 0): 1}),
+                interventions={"t.base": 1},
+            )
+        with pytest.raises(FrameFailure):
+            process.step(
+                inputs=_inputs({(0, 0): 1}),
+                interventions={"t.a": {(5, 5): 1}},
+            )
+
+    def test_parameter_override(self, program):
+        process = WorldProcess(program)
+        process.materialize("lattice.dyn", (0, 0))
+        process.step(
+            inputs=_inputs({(0, 0): 1}),
+            parameters={"t.offset": 5},
+        )
+        assert process.committed("t.p").get((0, 0)) == 6
+        process.step(inputs=_inputs({(0, 0): 1}))
+        assert process.committed("t.p").get((0, 0)) == 1
 
     def test_materialization_independent(self, program):
         first = WorldProcess(program)
