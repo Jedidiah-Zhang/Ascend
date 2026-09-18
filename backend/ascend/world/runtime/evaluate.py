@@ -158,14 +158,29 @@ def _evaluate_field(
     inputs: Mapping[str, object],
     params: Mapping[str, object],
 ) -> dict[str, object]:
-    """整场内核求值：一次调用，父值为整场序列（或 global 广播标量）。"""
+    """整场内核求值：一次调用，父值为整场序列（或 global 广播标量）。
+
+    定尺寸 lattice：一次求值覆盖全场；动态 lattice：逐实例求值，实例值
+    本身可以是场（chunk 内 tile 场，P2-2b）。
+    """
     slots = mechanism.outputs()
     output_slot = program.slots[slots[0]]
     instance = program.instances[output_slot.on]
-    if instance.kind != "lattice" or instance.size is None:
+    if instance.kind != "lattice":
         raise NotImplementedError(
-            f"机制 {mechanism.id}: field 作用域需要定尺寸 lattice"
-            f"（动态整场内核在 P2-3 交付）"
+            f"机制 {mechanism.id}: field 作用域要求 lattice 输出"
+        )
+    if instance.size is None:
+        return _evaluate_field_dynamic(
+            program,
+            store,
+            mechanism,
+            impl=impl,
+            root_seed=root_seed,
+            tick=tick,
+            inputs=inputs,
+            params=params,
+            instance_id=instance.id,
         )
     parent_values: dict[str, object] = {}
     for parent in mechanism.parents:
@@ -202,6 +217,78 @@ def _evaluate_field(
             field.set(coords, value)
         fields[slot] = field
     return fields
+
+
+def _evaluate_field_dynamic(
+    program: object,
+    store: StateStore,
+    mechanism: MechanismDecl,
+    *,
+    impl: object,
+    root_seed: int,
+    tick: int,
+    inputs: Mapping[str, object],
+    params: Mapping[str, object],
+    instance_id: str,
+) -> dict[str, object]:
+    """动态 lattice 的整场内核：逐实例求值，实例值可为场。"""
+    slots = mechanism.outputs()
+    fields = {slot: DynamicField() for slot in slots}
+    for coords in store.materialized(instance_id):
+        parent_values: dict[str, object] = {}
+        for parent in mechanism.parents:
+            slot = program.slots[parent.slot]
+            parent_kind = program.instances[slot.on].kind
+            if slot.persist == "external":
+                parent_values[parent.argument] = _read_external(
+                    inputs, parent.slot, parent_kind, coords
+                )
+            elif parent_kind == "global":
+                parent_values[parent.argument] = store.read(
+                    parent.slot, parent.lag
+                )
+            else:
+                parent_values[parent.argument] = store.read_at(
+                    parent.slot, coords, parent.lag
+                )
+        context = MechanismContext(
+            mechanism=mechanism,
+            root_seed=root_seed,
+            tick=tick,
+            instance=coords,
+            parent_values=parent_values,
+            params=params,
+        )
+        result = impl(context)  # type: ignore[operator]
+        if not isinstance(result, Mapping):
+            raise TypeError(
+                f"机制 {mechanism.id} 为 field 作用域，必须返回槽位映射"
+            )
+        for slot in slots:
+            fields[slot].set(
+                coords, _wrap_field(result[slot], parent_values)
+            )
+    return dict(fields)
+
+
+def _wrap_field(values: object, parent_values: Mapping[str, object]) -> LatticeField:
+    """内核返回序列 → 场（形状取自同实例场父值；无则按长度一维）。"""
+    if isinstance(values, LatticeField):
+        return values
+    data = list(values)  # type: ignore[arg-type]
+    shape: tuple[int, ...] | None = None
+    for value in parent_values.values():
+        if isinstance(value, LatticeField):
+            shape = value.size
+            break
+    if shape is None:
+        shape = (len(data),)
+    total = 1
+    for extent in shape:
+        total *= extent
+    if total != len(data):
+        shape = (len(data),)
+    return LatticeField.from_values(data, shape)
 
 
 # ── 父值解析 ─────────────────────────────────────────────────────

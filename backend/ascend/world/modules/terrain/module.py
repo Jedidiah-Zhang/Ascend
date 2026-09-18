@@ -27,8 +27,8 @@ from . import kernel as _kernel
 
 __all__ = ["MODULE"]
 
-TILE = InstanceDecl(
-    id="lattice.tile", kind="lattice", identity="xy", size=(4,),
+CHUNK = InstanceDecl(
+    id="lattice.chunk", kind="lattice", identity="xy", size=None,
 )
 
 _INTERVENE = Permissions(intervene=True, observe=True, record=True)
@@ -36,7 +36,7 @@ _OBSERVE = Permissions(observe=True, record=True)
 
 SLOT_TERRAIN_MOISTURE = SlotDecl(
     id='terrain.moisture',
-    on='lattice.tile',
+    on='lattice.chunk',
     persist='state',
     domain=ValueDomain(kind='int', bits=8, minimum=0, maximum=100),
     permissions=_INTERVENE,
@@ -45,7 +45,7 @@ SLOT_TERRAIN_MOISTURE = SlotDecl(
 
 SLOT_TERRAIN_SNOW = SlotDecl(
     id='terrain.snow',
-    on='lattice.tile',
+    on='lattice.chunk',
     persist='state',
     domain=ValueDomain(kind='int', bits=8, minimum=0, maximum=255),
     permissions=_INTERVENE,
@@ -54,7 +54,7 @@ SLOT_TERRAIN_SNOW = SlotDecl(
 
 SLOT_TERRAIN_ICE = SlotDecl(
     id='terrain.ice',
-    on='lattice.tile',
+    on='lattice.chunk',
     persist='state',
     domain=ValueDomain(kind='int', bits=8, minimum=0, maximum=255),
     permissions=_INTERVENE,
@@ -63,7 +63,7 @@ SLOT_TERRAIN_ICE = SlotDecl(
 
 SLOT_TERRAIN_TERRAIN_ID = SlotDecl(
     id='terrain.terrain_id',
-    on='lattice.tile',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind='int', bits=16, minimum=0, maximum=255),
     permissions=_OBSERVE,
@@ -71,7 +71,7 @@ SLOT_TERRAIN_TERRAIN_ID = SlotDecl(
 
 SLOT_TERRAIN_SLOPE = SlotDecl(
     id='terrain.slope',
-    on='lattice.tile',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind='float', minimum=0.0, maximum=1.0),
     permissions=_OBSERVE,
@@ -79,7 +79,7 @@ SLOT_TERRAIN_SLOPE = SlotDecl(
 
 SLOT_TERRAIN_COVER = SlotDecl(
     id='terrain.cover',
-    on='lattice.tile',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind='float', minimum=0.0, maximum=1.0),
     permissions=_OBSERVE,
@@ -87,7 +87,7 @@ SLOT_TERRAIN_COVER = SlotDecl(
 
 SLOT_WEATHER_PRECIP_MOISTURE = SlotDecl(
     id='weather.precip_moisture',
-    on='lattice.tile',
+    on='global',
     persist='external',
     domain=ValueDomain(kind='float', minimum=0.0, maximum=100.0),
     permissions=_OBSERVE,
@@ -95,7 +95,7 @@ SLOT_WEATHER_PRECIP_MOISTURE = SlotDecl(
 
 SLOT_WEATHER_PRECIP_SNOW = SlotDecl(
     id='weather.precip_snow',
-    on='lattice.tile',
+    on='global',
     persist='external',
     domain=ValueDomain(kind='float', minimum=0.0, maximum=100.0),
     permissions=_OBSERVE,
@@ -103,7 +103,7 @@ SLOT_WEATHER_PRECIP_SNOW = SlotDecl(
 
 SLOT_WEATHER_STEP_TEMP = SlotDecl(
     id='weather.step_temp',
-    on='lattice.tile',
+    on='global',
     persist='external',
     domain=ValueDomain(kind='float', minimum=-100.0, maximum=100.0),
     permissions=_OBSERVE,
@@ -111,7 +111,7 @@ SLOT_WEATHER_STEP_TEMP = SlotDecl(
 
 SLOT_TERRAIN_DT = SlotDecl(
     id='terrain.dt',
-    on='lattice.tile',
+    on='global',
     persist='external',
     domain=ValueDomain(kind='float', minimum=0.0, maximum=10.0),
     permissions=_OBSERVE,
@@ -311,7 +311,7 @@ _WITNESSES = (
 MODULE = ModulePack(
     id='terrain',
     version='1',
-    instances=(GLOBAL, TILE),
+    instances=(GLOBAL, CHUNK),
     slots=(
         SLOT_TERRAIN_MOISTURE,
         SLOT_TERRAIN_SNOW,

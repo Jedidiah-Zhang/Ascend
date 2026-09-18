@@ -120,6 +120,23 @@ class WorldProcess:
         """已物化实例坐标（升序）。"""
         return self._store.materialized(kind)
 
+    def seed_at(
+        self,
+        slot_id: str,
+        coords: tuple[int, ...],
+        value: object,
+    ) -> None:
+        """装载外部状态到已物化实例（适配器导入引擎数组用；提交语义）。"""
+        slot = self._program.slots.get(slot_id)
+        if slot is None:
+            raise ValueError(f"槽位未声明: {slot_id}")
+        instance = self._program.instances[slot.on]
+        if instance.kind != "lattice" or instance.size is not None:
+            raise ValueError(f"槽位 {slot_id} 不是动态实例槽位")
+        if tuple(coords) not in self._store.materialized(instance.id):
+            raise ValueError(f"实例未物化: {slot_id}@{coords!r}")
+        self._store.set_committed_at(slot_id, tuple(coords), value)
+
     # ── 帧推进 ──────────────────────────────────────────────────
 
     def step(

@@ -94,38 +94,47 @@ def state_evolve(
     tile_cover: list[float] | None = None,
     states: dict[str, array] | None = None,
 ) -> None:
-    """统一演化内核入口（见 _state.c；公式注释同源）。
+    """统一演化内核入口（P2-2b：生产路径经新核心 ``TerrainCore``）。
 
-    TileGrid 包装：零拷贝映射网格的状态/地形/坡度数组进 C。
-    数组层入口见 ``state_evolve_arrays``（参考实现见
-    ``state_reference.state_evolve_reference``）。
+    把网格状态/地形/坡度数组交给声明式地形模块的 field 机制求值，原地
+    回写状态数组（与旧 C 直调同语义）。内核（参考实现 / C 加速）在模块内
+    逐位对拍；``state_evolve_arrays`` 保留为旧内核直调路径（测试/内核对，
+    P2-3 删除）。
 
     Args:
         grid: 目标 TileGrid（地形/坡度数组；状态默认取网格数组）。
-        precip: 每状态每步降水量 mm/日——行=状态注册序（state_keys()），
-            列=步。moisture 行喂雨量、snow 行喂雪量、其余行 0。
+        precip: 每状态每步降水量 mm/日（行=状态注册序；moisture 喂雨、
+            snow 喂雪、ice 行无沉积——模块未声明该父引用）。
         temp: 每步均温 (°C)。
         dt: 步长（游戏日）——声明更新点 = 每游戏小时（1/24）。
         tile_cover: 每 tile 沉积倍率（None=露天 1.0；当前无实体层）。
-        states: 可选状态数组覆盖（长度/类型须与网格一致）——帧事务
-            影子积分传入副本，提交前不触碰网格已提交数组。
-
-    Raises:
-        ValueError: 步数/状态数不匹配。
+        states: 可选状态数组覆盖（帧事务影子积分传入副本）。
     """
     state_arrays = (
         {name: grid.state_raw(name) for name in _KEYS}
         if states is None else states
     )
-    state_evolve_arrays(
+    _terrain_core().evolve_into(
         state_arrays,
         grid.raw_data(),
         grid.slope_raw(),
         precip=precip,
         temp=temp,
         dt=dt,
-        tile_cover=tile_cover,
+        cover=tile_cover,
     )
+
+
+_TERRAIN_CORE = None
+
+
+def _terrain_core():
+    """新核心地形适配器（进程内一次编译缓存）。"""
+    global _TERRAIN_CORE
+    if _TERRAIN_CORE is None:
+        from ascend.world.modules.terrain.core import TerrainCore
+        _TERRAIN_CORE = TerrainCore()
+    return _TERRAIN_CORE
 
 
 def state_evolve_arrays(

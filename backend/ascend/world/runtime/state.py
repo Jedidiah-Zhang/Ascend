@@ -81,6 +81,12 @@ class LatticeField:
     def values(self) -> tuple[int | float, ...]:
         return tuple(self._values)
 
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __iter__(self):
+        return iter(self._values)
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, LatticeField):
             return NotImplemented
@@ -98,6 +104,27 @@ class LatticeField:
         size = tuple(int(n) for n in payload["size"])  # type: ignore[arg-type]
         field = cls(size)
         field._values = list(payload["values"])  # type: ignore[arg-type]
+        return field
+
+    @classmethod
+    def from_values(
+        cls,
+        values: object,
+        size: tuple[int, ...] | None = None,
+    ) -> "LatticeField":
+        """从扁平序列构造场（形状缺省为一维；元素数不符即拒绝）。"""
+        data = list(values)  # type: ignore[arg-type]
+        if size is None:
+            size = (len(data),)
+        total = 1
+        for extent in size:
+            total *= extent
+        if total != len(data):
+            raise ValueError(
+                f"场形状 {size!r} 与元素数 {len(data)} 不符"
+            )
+        field = cls(size)
+        field._values = data
         return field
 
 
@@ -259,6 +286,19 @@ class StateStore:
                 history[coords] = deque(
                     [default] * self._max_lag, maxlen=self._max_lag,
                 )
+
+    def set_committed_at(
+        self,
+        slot_id: str,
+        coords: tuple[int, ...],
+        value: object,
+    ) -> None:
+        """装载外部状态到已物化实例（适配器导入引擎数组用；提交语义）。"""
+        field = self._committed.get(slot_id)
+        if not isinstance(field, DynamicField):
+            field = DynamicField()
+            self._committed[slot_id] = field
+        field.set(coords, value)
 
     # ── 读写 ────────────────────────────────────────────────────
 
