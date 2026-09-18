@@ -135,7 +135,7 @@
     {
       "mechanism_id": "world.gen.classify_biome.v1",
       "output": "world.gen.biome",
-      "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be"
+      "equation_version": "sha256:38cef02aa0d2febbd3c71ceb886813d59307c4526a80b764e0102a72820d8e44"
     },
     {
       "mechanism_id": "world.gen.classify_climate_zone.v1",
@@ -155,22 +155,22 @@
     {
       "mechanism_id": "world.gen.derive_baseline_humidity.v1",
       "output": "weather.chunk.baseline_humidity_percent",
-      "equation_version": "sha256:aa2dc9b8bb353d700d39ef60ac049d874d01314e224ee2e1b29f70192fb4968e"
+      "equation_version": "sha256:16e7037c147fe2a2276ff4efef1013794564bedfd279380dcc9f2baade7213be"
     },
     {
       "mechanism_id": "world.gen.derive_baseline_wind_speed.v1",
       "output": "weather.chunk.baseline_wind_speed_mps",
-      "equation_version": "sha256:ebc4995f3f2cfb6b740cb9dfaf75efa698d9f8ea35806bb8aeb0814d88916549"
+      "equation_version": "sha256:1e4fa6098254d0c8687ed7689aaccfe3c9d8bafb82d50728eae6429a36f34258"
     },
     {
       "mechanism_id": "world.gen.derive_humidity_sharpness.v1",
       "output": "weather.chunk.humidity_sharpness",
-      "equation_version": "sha256:5f0b0ff0def3be84ddd21271c71531f41295e452fbdd5aa091a7fc1752678bc8"
+      "equation_version": "sha256:0a227d5dff901d8b0d9a95ad4d98a52db7f5663fa9ec6f14b33bfbb80d6239d7"
     },
     {
       "mechanism_id": "world.gen.derive_mean_precip_intensity.v1",
       "output": "weather.chunk.mean_precip_intensity_mm_per_hour",
-      "equation_version": "sha256:224a2e3efb5860e128e5380ddd616f37f9bd9271cea5bf9d93c9f8fb14cae484"
+      "equation_version": "sha256:58ab68fb2981ce5a85a588ee2e2609d8cdb8d49b4170976679b77710697827db"
     },
     {
       "mechanism_id": "world.gen.derive_sea_level_temperature.v1",

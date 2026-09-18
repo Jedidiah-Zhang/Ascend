@@ -1,7 +1,7 @@
 {
   "comment": "AUTO-GENERATED from the ASCEND_MECHANISMS registry (weather/mechanisms.py + space/mechanisms.py slices); do not edit by hand. variables/edges are the research graph projection.",
   "declaration": {
-    "hash": "sha256:1707ac04f8de5de13d2f3cb95d614faf6ce83b323f3a9409cb8fb2b633837b74",
+    "hash": "sha256:21148382eae309cb851b4e71a23ecfcedcc59127bc037be983e286e5566b06c2",
     "id": "ascend.world.scalar_formulas",
     "microstep_order": [
       "world.gen_input",
@@ -3980,7 +3980,7 @@
         "no_subdivision_config:temperate_deciduous_fallback"
       ],
       "equation": "海洋按海面温度三档；陆地按气候档 + 细分维度三角隶属取主型（定点 Q30；静态细分值域，动态 subdiv_ranges 属大陆管线边界）",
-      "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
+      "equation_version": "sha256:38cef02aa0d2febbd3c71ceb886813d59307c4526a80b764e0102a72820d8e44",
       "function": "ascend.space.mechanisms._biome_equation",
       "output": "world.gen.biome",
       "parameters": [],
@@ -4102,7 +4102,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:587821f70e4e0a61d9c86e5dfd3e4e65ea28810c9d21c949767efea048db6a25",
+      "resolved_version": "sha256:a38f12b0c938f4ac83d783558bc4898a6b6b011967da520be91a9ecc2573675e",
       "source_dependencies": [
         "ascend/space/gen_fixed.py",
         "ascend/num/fixed.py",
@@ -4116,7 +4116,7 @@
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
+          "equation_version": "sha256:38cef02aa0d2febbd3c71ceb886813d59307c4526a80b764e0102a72820d8e44",
           "expected_outputs": [
             9,
             17
@@ -4140,7 +4140,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
+          "equation_version": "sha256:38cef02aa0d2febbd3c71ceb886813d59307c4526a80b764e0102a72820d8e44",
           "expected_outputs": [
             9,
             4
@@ -4164,7 +4164,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
+          "equation_version": "sha256:38cef02aa0d2febbd3c71ceb886813d59307c4526a80b764e0102a72820d8e44",
           "expected_outputs": [
             9,
             2
@@ -4188,7 +4188,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
+          "equation_version": "sha256:38cef02aa0d2febbd3c71ceb886813d59307c4526a80b764e0102a72820d8e44",
           "expected_outputs": [
             17,
             16
@@ -4212,7 +4212,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:a4bf283faa0889dc14839d3c9bf8392e7cbff833fe966821b8160059a197b1be",
+          "equation_version": "sha256:38cef02aa0d2febbd3c71ceb886813d59307c4526a80b764e0102a72820d8e44",
           "expected_outputs": [
             4,
             5
@@ -4574,7 +4574,7 @@
         "finite_interior:linear_interpolation"
       ],
       "equation": "clamp(template_humidity_lo + (noise + 1) * 0.5 * (template_humidity_hi - template_humidity_lo), 0, 100)（模板数据 data/climate.json）",
-      "equation_version": "sha256:aa2dc9b8bb353d700d39ef60ac049d874d01314e224ee2e1b29f70192fb4968e",
+      "equation_version": "sha256:16e7037c147fe2a2276ff4efef1013794564bedfd279380dcc9f2baade7213be",
       "function": "ascend.space.mechanisms._baseline_humidity_equation",
       "output": "weather.chunk.baseline_humidity_percent",
       "parameters": [],
@@ -4627,7 +4627,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:4a5fb9adc34abae48d79ad2c225a5e7e59d0ef92e3db7fea1cb365b5056f1856",
+      "resolved_version": "sha256:2bb5b176fab02eb14fd794cf6f479a7b3c11808f0a23652e5849776a3e6cd8c6",
       "source_dependencies": [
         "ascend/space/climate.py",
         "climate.json",
@@ -4641,7 +4641,7 @@
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:aa2dc9b8bb353d700d39ef60ac049d874d01314e224ee2e1b29f70192fb4968e",
+          "equation_version": "sha256:16e7037c147fe2a2276ff4efef1013794564bedfd279380dcc9f2baade7213be",
           "expected_outputs": [
             62.5,
             80.0
@@ -4659,7 +4659,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:aa2dc9b8bb353d700d39ef60ac049d874d01314e224ee2e1b29f70192fb4968e",
+          "equation_version": "sha256:16e7037c147fe2a2276ff4efef1013794564bedfd279380dcc9f2baade7213be",
           "expected_outputs": [
             62.5,
             17.5
@@ -4685,7 +4685,7 @@
         "finite_interior:linear_interpolation"
       ],
       "equation": "clamp(template_wind_lo + (noise + 1) * 0.5 * (template_wind_hi - template_wind_lo), 0, 50)（模板数据 data/climate.json）",
-      "equation_version": "sha256:ebc4995f3f2cfb6b740cb9dfaf75efa698d9f8ea35806bb8aeb0814d88916549",
+      "equation_version": "sha256:1e4fa6098254d0c8687ed7689aaccfe3c9d8bafb82d50728eae6429a36f34258",
       "function": "ascend.space.mechanisms._baseline_wind_speed_equation",
       "output": "weather.chunk.baseline_wind_speed_mps",
       "parameters": [],
@@ -4738,7 +4738,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:fce180ceb50e99188f1c25401a758e3e200948d0a58938dd20e1743e9c8b4c00",
+      "resolved_version": "sha256:563d315bc694095c9d3a0a0f6153d4ce54128a5ede717124d122529a6eba6da0",
       "source_dependencies": [
         "ascend/space/climate.py",
         "climate.json",
@@ -4752,7 +4752,7 @@
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:ebc4995f3f2cfb6b740cb9dfaf75efa698d9f8ea35806bb8aeb0814d88916549",
+          "equation_version": "sha256:1e4fa6098254d0c8687ed7689aaccfe3c9d8bafb82d50728eae6429a36f34258",
           "expected_outputs": [
             6.0,
             12.0
@@ -4770,7 +4770,7 @@
           "random_values": {}
         },
         {
-          "equation_version": "sha256:ebc4995f3f2cfb6b740cb9dfaf75efa698d9f8ea35806bb8aeb0814d88916549",
+          "equation_version": "sha256:1e4fa6098254d0c8687ed7689aaccfe3c9d8bafb82d50728eae6429a36f34258",
           "expected_outputs": [
             6.0,
             3.0
@@ -4794,7 +4794,7 @@
         "per_zone_lookup:data_contract"
       ],
       "equation": "climate_template.humidity_sharpness（数据契约）",
-      "equation_version": "sha256:5f0b0ff0def3be84ddd21271c71531f41295e452fbdd5aa091a7fc1752678bc8",
+      "equation_version": "sha256:0a227d5dff901d8b0d9a95ad4d98a52db7f5663fa9ec6f14b33bfbb80d6239d7",
       "function": "ascend.space.mechanisms._humidity_sharpness_equation",
       "output": "weather.chunk.humidity_sharpness",
       "parameters": [],
@@ -4824,7 +4824,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:b80a5f74a9de4b91abb8aa91de3bc27f5f603b20876a51ca6d2ac4a8dc686309",
+      "resolved_version": "sha256:c52956b5f68978108a16231e9181f96fa702d9c1ca87cdebdb9d9dd98ead5eb1",
       "source_dependencies": [
         "ascend/space/climate.py",
         "climate.json",
@@ -4838,7 +4838,7 @@
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:5f0b0ff0def3be84ddd21271c71531f41295e452fbdd5aa091a7fc1752678bc8",
+          "equation_version": "sha256:0a227d5dff901d8b0d9a95ad4d98a52db7f5663fa9ec6f14b33bfbb80d6239d7",
           "expected_outputs": [
             0.0,
             2.5
@@ -4860,7 +4860,7 @@
         "per_zone_lookup:data_contract"
       ],
       "equation": "climate_template.mean_precip_intensity（数据契约）",
-      "equation_version": "sha256:224a2e3efb5860e128e5380ddd616f37f9bd9271cea5bf9d93c9f8fb14cae484",
+      "equation_version": "sha256:58ab68fb2981ce5a85a588ee2e2609d8cdb8d49b4170976679b77710697827db",
       "function": "ascend.space.mechanisms._mean_precip_intensity_equation",
       "output": "weather.chunk.mean_precip_intensity_mm_per_hour",
       "parameters": [],
@@ -4890,7 +4890,7 @@
         }
       ],
       "random_sources": [],
-      "resolved_version": "sha256:1f7ddde1c870a412a7afe4e6eacea1b73ea1e153b909931758a922c7ea531890",
+      "resolved_version": "sha256:97b1e4cfdfa88599406be7dc82bdd8e60304079ee68afa6041456205d907ebbf",
       "source_dependencies": [
         "ascend/space/climate.py",
         "climate.json",
@@ -4904,7 +4904,7 @@
       ],
       "witnesses": [
         {
-          "equation_version": "sha256:224a2e3efb5860e128e5380ddd616f37f9bd9271cea5bf9d93c9f8fb14cae484",
+          "equation_version": "sha256:58ab68fb2981ce5a85a588ee2e2609d8cdb8d49b4170976679b77710697827db",
           "expected_outputs": [
             5.0,
             10.0

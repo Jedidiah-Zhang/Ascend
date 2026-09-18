@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .evaluate import evaluate_mechanism
+from .evaluate import evaluate_direct, evaluate_mechanism
 from .process import (
     FrameFailure,
     FrameResult,
@@ -25,6 +25,7 @@ __all__ = [
     "StateStore",
     "WorldInvalidatedError",
     "WorldProcess",
+    "evaluate_direct",
     "evaluate_mechanism",
     "export_value",
     "load_value",

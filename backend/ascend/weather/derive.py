@@ -22,7 +22,8 @@ from ascend.config import (HUMIDITY_TIER_BOUNDARIES,
                            SUNSHINE_TIER_BOUNDARIES, TEMP_TIER_BOUNDARIES,
                            WIND_TIER_BOUNDARIES)
 
-from .mechanisms import (
+from ascend.world.runtime import evaluate_direct
+from ascend.world.modules.ids import (
     ANNUAL_RAINFALL,
     ANNUAL_TEMPERATURE,
     DIURNAL_HUMIDITY_AMPLITUDE,
@@ -36,11 +37,24 @@ from .mechanisms import (
 )
 
 
-def _registry():
-    """惰性导入全局注册表（避免 ascend.space ↔ ascend.weather 的 import 环）。"""
-    from ascend.causal.world import ASCEND_MECHANISMS
+_WEATHER_PROGRAM = None
 
-    return ASCEND_MECHANISMS
+
+def _weather_program():
+    """惰性编译天气程序（新核心；避免导入环与进程启动开销）。"""
+    global _WEATHER_PROGRAM
+    if _WEATHER_PROGRAM is None:
+        from ascend.world import Schedule, WorldSpec, compile_world
+        from ascend.world.modules import weather, worldgen
+        from ascend.world.modules.pipeline import PIPELINE_PHASES
+
+        _WEATHER_PROGRAM = compile_world(
+            WorldSpec(
+                modules=(worldgen.MODULE, weather.MODULE),
+                schedule=Schedule(phases=PIPELINE_PHASES),
+            )
+        )
+    return _WEATHER_PROGRAM
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +89,7 @@ def precip_type_for(temperature: float) -> str:
     Raises:
         ValueError: temperature 越出声明值域 [-30, 50]（fail-closed）。
     """
-    return cast(str, _registry().evaluate(
+    return cast(str, evaluate_direct(_weather_program(), 
         INSTANT_PRECIPITATION_TYPE,
         {INSTANT_TEMPERATURE: temperature},
     ))
@@ -193,7 +207,7 @@ def derive_seasonal_amp(temperature: float, rainfall: float) -> float:
     Raises:
         ValueError: 输入越出声明值域（fail-closed）。
     """
-    return cast(float, _registry().evaluate(
+    return cast(float, evaluate_direct(_weather_program(), 
         SEASONAL_TEMPERATURE_AMPLITUDE,
         {
             ANNUAL_TEMPERATURE: temperature,
@@ -218,7 +232,7 @@ def derive_diurnal_amp(seasonal_amp: float) -> float:
     Raises:
         ValueError: 输入越出声明值域（fail-closed）。
     """
-    return cast(float, _registry().evaluate(
+    return cast(float, evaluate_direct(_weather_program(), 
         DIURNAL_TEMPERATURE_AMPLITUDE,
         {SEASONAL_TEMPERATURE_AMPLITUDE: seasonal_amp},
     ))
@@ -236,7 +250,7 @@ def derive_humidity_seasonal_amp(seasonal_amp: float) -> float:
     Raises:
         ValueError: 输入越出声明值域（fail-closed）。
     """
-    return cast(float, _registry().evaluate(
+    return cast(float, evaluate_direct(_weather_program(), 
         SEASONAL_HUMIDITY_AMPLITUDE,
         {SEASONAL_TEMPERATURE_AMPLITUDE: seasonal_amp},
     ))
@@ -254,7 +268,7 @@ def derive_humidity_diurnal_amp(seasonal_amp: float) -> float:
     Raises:
         ValueError: 输入越出声明值域（fail-closed）。
     """
-    return cast(float, _registry().evaluate(
+    return cast(float, evaluate_direct(_weather_program(), 
         DIURNAL_HUMIDITY_AMPLITUDE,
         {SEASONAL_TEMPERATURE_AMPLITUDE: seasonal_amp},
     ))
@@ -277,7 +291,7 @@ def derive_latitude(sea_level_temp: float) -> float:
     Raises:
         ValueError: sea_level_temp 越出声明值域 [-30, 50]（fail-closed）。
     """
-    return cast(float, _registry().evaluate(
+    return cast(float, evaluate_direct(_weather_program(), 
         SOLAR_LATITUDE_PROXY,
         {SEA_LEVEL_TEMPERATURE: sea_level_temp},
     ))

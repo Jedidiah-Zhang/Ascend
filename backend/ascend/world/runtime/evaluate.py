@@ -291,6 +291,67 @@ def _wrap_field(values: object, parent_values: Mapping[str, object]) -> LatticeF
     return LatticeField.from_values(data, shape)
 
 
+def evaluate_direct(
+    program: object,
+    mechanism_id: str,
+    inputs: Mapping[str, object],
+    *,
+    tick: int = 0,
+    params: Mapping[str, object] | None = None,
+) -> object:
+    """按机制 ID 用父值直接求值（研究/领域适配器用；无状态、无 store）。
+
+    输入按父槽位 ID 给出；参数缺省取程序解析值。输入按声明值域做边界
+    校验（fail-closed；越界即 ``ValueError``），与旧注册表求值语义一致。
+    """
+    mechanism = program.mechanisms.get(mechanism_id)
+    if mechanism is None:
+        for candidate in program.mechanisms.values():
+            if mechanism_id in candidate.outputs():
+                mechanism = candidate
+                break
+    if mechanism is None:
+        raise KeyError(f"未声明的机制/输出: {mechanism_id}")
+    argument_of = {parent.slot: parent.argument for parent in mechanism.parents}
+    parent_values = {
+        argument_of[slot]: value for slot, value in inputs.items()
+    }
+    _validate_inputs(program, mechanism, parent_values)
+    context = MechanismContext(
+        mechanism=mechanism,
+        root_seed=program.seed,
+        tick=tick,
+        parent_values=parent_values,
+        params=dict(program.parameters if params is None else params),
+    )
+    return mechanism.impl(context)
+
+
+def _validate_inputs(
+    program: object,
+    mechanism: MechanismDecl,
+    parent_values: Mapping[str, object],
+) -> None:
+    """父值边界校验（仅数值；越界即拒绝，与旧注册表 fail-closed 一致）。"""
+    for parent in mechanism.parents:
+        if parent.argument not in parent_values:
+            continue
+        value = parent_values[parent.argument]
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        domain = program.slots[parent.slot].domain
+        if domain.minimum is not None and value < domain.minimum:
+            raise ValueError(
+                f"{mechanism.id}/{parent.argument}: {value!r} 低于下界 "
+                f"{domain.minimum!r}"
+            )
+        if domain.maximum is not None and value > domain.maximum:
+            raise ValueError(
+                f"{mechanism.id}/{parent.argument}: {value!r} 高于上界 "
+                f"{domain.maximum!r}"
+            )
+
+
 # ── 父值解析 ─────────────────────────────────────────────────────
 
 

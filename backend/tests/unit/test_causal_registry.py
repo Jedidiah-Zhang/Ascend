@@ -292,17 +292,17 @@ class TestWeatherMechanisms:
             ),
         ],
     )
-    def test_public_weather_functions_delegate_to_registry(
+    def test_public_weather_functions_delegate_to_core(
         self, monkeypatch, function_name, output, inputs, expected,
     ):
         calls = []
 
-        class FakeRegistry:
-            def evaluate(self, target, parent_values):
-                calls.append((target, parent_values))
-                return expected
+        def fake_evaluate(program, target, parent_values, **kwargs):
+            calls.append((target, parent_values))
+            return expected
 
-        monkeypatch.setattr(derive, "_registry", lambda: FakeRegistry())
+        monkeypatch.setattr(derive, "evaluate_direct", fake_evaluate)
+        monkeypatch.setattr(derive, "_weather_program", lambda: None)
         result = getattr(derive, function_name)(*inputs.values())
         assert result == expected
         assert calls == [(output, inputs)]

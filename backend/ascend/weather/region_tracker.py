@@ -33,7 +33,7 @@ from typing import Callable, Iterable
 from ascend.config import GAME_MINUTE, PRECIP_SIGNAL_MAX
 from ascend.space import TILE_MAP_SIZE
 
-from . import mechanisms as m
+from ascend.world.modules import ids as m
 from .field import UnifiedWeatherField, CH_PRECIPITATION
 
 # 降水信号最大可信值（超过视同饱和，防止校准溢出）

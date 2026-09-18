@@ -42,7 +42,7 @@ from .events import (HumidityChange, PrecipitationStart, PrecipitationStop,
                      TemperatureChange, WindChange)
 from .field import (CH_HUMIDITY, CH_TEMPERATURE, CH_WIND, UnifiedWeatherField)
 from .features import FEATURE_TYPES
-from . import mechanisms as _mechanisms
+from ascend.world.modules import ids as _mechanisms
 from .region_tracker import RegionEvent, RegionTracker
 from .weather_field import WeatherField
 
