@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成冻表数据模块（backend/ascend/num/frozen_tables.py；issue #53 P1）。
+"""生成冻表数据模块（backend/ascend/world/kernel/frozen_tables.py；issue #53 P1）。
 
 生成物禁止手改：表内容即真值，测试锁定"表 == 入库摘要"。生成使用
 标准库数学函数，因此**重新生成可能产生末位差异**——请只在明确需要
@@ -19,7 +19,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-OUT = ROOT / "backend" / "ascend" / "num" / "frozen_tables.py"
+OUT = ROOT / "backend" / "ascend" / "world" / "kernel" / "frozen_tables.py"
 
 BITS = 30
 SCALE = 1 << BITS

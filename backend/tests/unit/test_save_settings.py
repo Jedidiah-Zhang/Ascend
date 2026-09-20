@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from ascend.causal.world import ASCEND_MECHANISMS
+from ascend.world.assembly import build_game_program
 from ascend.save.manifest import Manifest, SaveFormatError
 from ascend.save.settings import validate_world_program, validate_world_settings
 
@@ -25,30 +25,30 @@ class TestWorldSettings:
         )
 
     def test_matching_declaration_accepted(self):
-        settings = ASCEND_MECHANISMS.declaration_settings()
+        settings = build_game_program().declaration_settings()
         validate_world_settings(self._manifest(settings), settings)
 
     def test_absent_declaration_accepted_for_backfill(self):
         """旧存档未记录声明版本：放行，由调用方随后补写。"""
         validate_world_settings(
-            self._manifest(None), ASCEND_MECHANISMS.declaration_settings(),
+            self._manifest(None), build_game_program().declaration_settings(),
         )
 
     def test_hash_mismatch_rejected(self):
-        settings = ASCEND_MECHANISMS.declaration_settings()
+        settings = build_game_program().declaration_settings()
         stored = {**settings, "declaration_hash": "sha256:deadbeef"}
         with pytest.raises(ValueError, match="declaration_hash"):
             validate_world_settings(self._manifest(stored), settings)
 
     def test_protocol_version_mismatch_rejected(self):
-        settings = ASCEND_MECHANISMS.declaration_settings()
+        settings = build_game_program().declaration_settings()
         stored = {**settings, "observation_protocol_version": "sha256:0"}
         with pytest.raises(ValueError, match="observation_protocol_version"):
             validate_world_settings(self._manifest(stored), settings)
 
     def test_partial_declaration_rejected(self):
         """记录存在但字段不全 = 损坏，不是"未记录"。"""
-        settings = ASCEND_MECHANISMS.declaration_settings()
+        settings = build_game_program().declaration_settings()
         stored = {
             key: value for key, value in settings.items()
             if key != "observation_protocol_version"
@@ -61,7 +61,7 @@ class TestWorldSettings:
         with pytest.raises(ValueError, match="必须为映射"):
             validate_world_settings(
                 self._manifest("sha256:0"),
-                ASCEND_MECHANISMS.declaration_settings(),
+                build_game_program().declaration_settings(),
             )
 
     def test_incomplete_current_view_rejected(self):
@@ -70,10 +70,9 @@ class TestWorldSettings:
             validate_world_settings(self._manifest(None), {"declaration_id": ""})
 
     def test_declaration_view_has_required_fields(self):
-        settings = ASCEND_MECHANISMS.declaration_settings()
-        assert settings["declaration_hash"] == \
-            ASCEND_MECHANISMS.declaration_hash
-        assert settings["declaration_id"] == "ascend.world.scalar_formulas"
+        settings = build_game_program().declaration_settings()
+        assert settings["declaration_hash"].startswith("sha256:")
+        assert settings["declaration_id"] == "world-arch-v0.1"
         assert settings["observation_protocol_version"].startswith("sha256:")
 
     def test_manifest_rejects_non_dict_declaration_on_read(self):
@@ -89,9 +88,7 @@ class TestWorldProgram:
     """manifest 世界程序身份校验（不一致即拒绝加载）。"""
 
     def _program(self) -> dict:
-        from ascend.causal.program import get_default_program
-
-        return get_default_program().settings()
+        return build_game_program().settings()
 
     def _manifest(self, program=None) -> Manifest:
         return Manifest(
@@ -129,16 +126,13 @@ class TestWorldProgram:
         with pytest.raises(ValueError, match="世界程序视图缺少字段"):
             validate_world_program(self._manifest(None), {"schema_version": 1})
 
-    def test_program_view_matches_registry(self):
-        from ascend.causal.program import get_default_program
-
-        program = get_default_program()
+    def test_program_view_matches_game_program(self):
+        program = build_game_program()
         view = program.settings()
         assert view["identity"] == program.identity
-        assert view["registry_digest"] == program.registry_digest
-        assert view["slots_digest"] == program.slots_digest
-        assert view["address_digest"] == program.address_digest
-        assert view["update_points_digest"] == program.update_points_digest
+        assert view["contract"] == program.contract
+        assert view["kernel"] == program.kernel
+        assert view["module_digests"] == dict(program.module_digests)
 
     def test_manifest_rejects_non_dict_program_on_read(self, tmp_path):
         """manifest 读取期就拒绝非对象程序视图（不等读档校验）。"""

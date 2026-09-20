@@ -6,7 +6,7 @@ import AscendLean.CausalVerification.UnrolledDag
 生成命令：.venv/bin/python research/acceptance/gen_unrolled_dag.py
 巡检命令：.venv/bin/python research/acceptance/gen_unrolled_dag.py --check
 
-来源：backend/ascend/causal/world.py 的 ASCEND_MECHANISMS 生产声明
+来源：backend/ascend/world/ 的世界声明投影（export_world.py）
 规模：47 节点 / 35 机制 / 64 条父引用
 
 角色边界：本文件只把声明**数据**实例化为 UnrolledDag.Decl 并给出
@@ -33,7 +33,7 @@ abbrev PSpec : Type :=
 
 -- ═══ 第二节 生产声明的父模板表（有限索引，可计算）═══
 
-/-- 分量模板索引按节点 ID 排序（与注册表 `sorted(nodes)` 同序）。 -/
+/-- 分量模板索引按节点 ID 排序（与声明投影同序）。 -/
 def nodeweather_astronomy_daylight_hours : ℕ := 0
 def nodeweather_astronomy_sunrise_hour : ℕ := 1
 def nodeweather_astronomy_sunset_hour : ℕ := 2

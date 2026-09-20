@@ -34,12 +34,15 @@ def config_constants() -> dict[str, object]:
 
 def reference_value(
     mechanism,
-    parent_values: Mapping[str, object],
+    arguments: Mapping[str, object],
     parameters: Mapping[str, object],
 ) -> object:
-    """独立参考求值：先查参考实现，再按方程表达式求值。"""
-    env = bind_arguments(mechanism, parent_values, parameters)
-    impl = REFERENCE_IMPLS.get(mechanism.mechanism_id)
+    """独立参考求值：先查参考实现，再按方程表达式求值。
+
+    ``arguments`` 按父 argument 名给出；``parameters`` 按参数 ID 给出值。
+    """
+    env = bind_arguments(mechanism, arguments, parameters)
+    impl = REFERENCE_IMPLS.get(mechanism.id)
     if impl is not None:
         return impl(env)
     variables = config_constants()
@@ -47,7 +50,7 @@ def reference_value(
     missing = sorted(set(referenced_names(mechanism.equation)) - set(variables))
     if missing:
         raise ExpressionError(
-            f"{mechanism.mechanism_id}: 方程字符串引用未绑定名 {missing}；"
+            f"{mechanism.id}: 方程字符串引用未绑定名 {missing}；"
             f"请改写为可执行表达式或登记 REFERENCE_IMPLS"
         )
     return evaluate(mechanism.equation, variables)
@@ -55,12 +58,12 @@ def reference_value(
 
 def unresolved_names(mechanism) -> list[str]:
     """方程字符串中无法解析的名字（覆盖门禁用；参考实现覆盖则返回空）。"""
-    if mechanism.mechanism_id in REFERENCE_IMPLS:
+    if mechanism.id in REFERENCE_IMPLS:
         return []
     args = {
         parent.argument for parent in mechanism.parents
     } | {
-        binding.argument for binding in mechanism.parameters
+        argument for _, argument in mechanism.param_arguments
     }
     try:
         names = referenced_names(mechanism.equation)

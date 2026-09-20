@@ -33,6 +33,7 @@ from ascend.world.meta.declarations import (
     RelationDecl,
     Schedule,
     SlotDecl,
+    Witness,
     WorldSpec,
 )
 from ascend.world.meta.validate import (
@@ -115,6 +116,38 @@ class WorldProgram:
         return digest_object(
             {"program": self.identity, "seed": self.seed if seed is None else seed}
         )
+
+    def observation_protocol_version(self) -> str:
+        """观测协议版本 = 全部槽位观测协议集合的摘要（存档比对用）。"""
+        return digest_object({
+            slot.id: list(slot.observation_protocols)
+            for slot in sorted(self.slots.values(), key=lambda item: item.id)
+            if slot.observation_protocols
+        })
+
+    def settings(self) -> dict[str, object]:
+        """世界设置视图（manifest 记录与读档比对；``identity`` 为准）。
+
+        各分量摘要只作诊断定位：模块摘要、内核摘要、契约版本。
+        """
+        return {
+            "identity": self.identity,
+            "contract": self.contract,
+            "kernel": self.kernel,
+            "module_digests": dict(self.module_digests),
+        }
+
+    def declaration_settings(self) -> dict[str, str]:
+        """声明视图（manifest 比对：声明 ID + 摘要 + 观测协议版本）。
+
+        声明视图刻意不含槽位/机制明细——摘要已经覆盖全部声明内容，
+        存档层不需要认识世界内部结构（``save/settings.py``）。
+        """
+        return {
+            "declaration_id": self.contract,
+            "declaration_hash": self.identity,
+            "observation_protocol_version": self.observation_protocol_version(),
+        }
 
 
 def compile_world(spec: WorldSpec) -> WorldProgram:
@@ -479,6 +512,84 @@ def _check_mechanisms(
 
         issues.extend(witness_coverage_issues(mechanism))
         issues.extend(run_witnesses(mechanism))
+        _check_modulus(mechanism, slots, issues)
+
+
+def _witness_pairs(
+    mechanism: MechanismDecl,
+    argument: str,
+) -> list[tuple[Witness, Witness]]:
+    """只变指定 argument 的见证对（与覆盖检查同语义）。"""
+    pairs: list[tuple[Witness, Witness]] = []
+    for first in mechanism.witnesses:
+        for second in mechanism.witnesses:
+            if first is second:
+                continue
+            if first.inputs.get(argument) == second.inputs.get(argument):
+                continue
+            keys = set(first.inputs) | set(second.inputs)
+            if all(
+                key == argument
+                or first.inputs.get(key) == second.inputs.get(key)
+                for key in keys
+            ):
+                pairs.append((first, second))
+    return pairs
+
+
+def _check_modulus(
+    mechanism: MechanismDecl,
+    slots: Mapping[str, SlotDecl],
+    issues: list[str],
+) -> None:
+    """模数一致性（G7 语义）：线性边见证差商 ≤ L；跳变边跳幅 ≤ jump_bound。"""
+    output_slot = slots.get(mechanism.outputs()[0])
+    output_kind = output_slot.domain.kind if output_slot else "any"
+    for parent in mechanism.parents:
+        pairs = _witness_pairs(mechanism, parent.argument)
+        if parent.modulus_kind == "jump":
+            bound = parent.jump_bound
+            for first, second in pairs:
+                values = (first.outputs[0], second.outputs[0])
+                if not all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    for value in values
+                ):
+                    continue
+                amplitude = abs(values[1] - values[0])
+                if bound is not None and amplitude > bound * (1 + 1e-6):
+                    issues.append(
+                        f"机制 {mechanism.id}←{parent.slot}: "
+                        f"jump_bound={bound} < 见证跳幅={amplitude:.6g}"
+                    )
+            continue
+        if parent.metric == "discrete" or output_kind in (
+            "enum", "bool", "string",
+        ):
+            continue
+        declared = parent.lipschitz
+        if declared is None:
+            continue  # 未认证：由研究投影 fail-closed 拒绝
+        for first, second in pairs:
+            original = first.inputs.get(parent.argument)
+            alternate = second.inputs.get(parent.argument)
+            values = (first.outputs[0], second.outputs[0])
+            if not all(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                for value in (original, alternate, *values)
+            ):
+                continue
+            delta = abs(float(alternate) - float(original))
+            if delta == 0.0:
+                continue
+            ratio = abs(float(values[1]) - float(values[0])) / delta
+            if ratio > declared * (1 + 1e-6) + 1e-9:
+                issues.append(
+                    f"机制 {mechanism.id}←{parent.slot}: "
+                    f"L={declared} < 见证差商={ratio:.6g}"
+                )
 
 
 def _check_field_scope(

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""生产声明 → Lean UnrolledDag 实例生成器（issue #46 P5）。
+"""世界声明 → Lean UnrolledDag 实例生成器（P2-3c-2）。
 
-把**真实生产声明**（`ASCEND_MECHANISMS`）实例化为
-`AscendLean.CausalVerification.UnrolledDag.Decl`，并生成：
+把**生产世界声明**（``WorldProgram`` 投影，``export_world.project``）实例化为
+``AscendLean.CausalVerification.UnrolledDag.Decl``，并生成：
 
   数据段 —— 微步序索引、节点索引、每个节点的父模板表（父节点索引 + 滞后 +
             父阶段）；
-  定理段 —— `wellFormed_real`：生产声明满足 `WellFormed`（机器可判）；
-            `unroll_acyclic_real`：由 `unroll_acyclic` 得到时间展开无环。
+  定理段 —— ``wellFormed_real``：生产声明满足 ``WellFormed``（机器可判）；
+            ``unroll_acyclic_real``：由 ``unroll_acyclic`` 得到时间展开无环。
 
-为什么需要它：`UnrolledDag.lean` 证明的是"任何合法声明展开无环"，但**从未
+为什么需要它：``UnrolledDag.lean`` 证明的是"任何合法声明展开无环"，但**从未
 与真实声明对上**。本生成器把"生产声明合法"也变成机器可判的命题，C2 于是
 同时具备理论内核与实例见证。
 
@@ -30,14 +30,17 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent            # research/acceptance
 ROOT = HERE.parents[1]                            # 仓库根
 sys.path.insert(0, str(ROOT / "backend"))
+sys.path.insert(0, str(ROOT / "research" / "equations"))
 
 OUT_PATH = (ROOT / "research" / "lean" / "AscendLean" / "CausalVerification"
             / "GenUnrolledDag.lean")
 
 
-def _load_registry():
-    from ascend.causal.world import ASCEND_MECHANISMS
-    return ASCEND_MECHANISMS
+def _load_declaration() -> dict:
+    """生产世界声明的研究投影（唯一事实源）。"""
+    import export_world
+
+    return export_world.project(export_world.build_program())
 
 
 def _sanitize(name: str) -> str:
@@ -48,28 +51,27 @@ def _sanitize(name: str) -> str:
     return "".join(out)
 
 
-def _lag_bound() -> int:
+def _lag_bound(declaration: dict) -> int:
     """滞后上界 K：实际用到的最大滞后 + 1（至少 2）。"""
-    registry = _load_registry()
     max_lag = 0
-    for mechanism in registry.mechanisms.values():
-        for parent in mechanism.parents:
-            max_lag = max(max_lag, parent.lag)
+    for mechanism in declaration["mechanisms"].values():
+        for parent in mechanism["parents"]:
+            max_lag = max(max_lag, parent["lag"])
     return max(2, max_lag + 1)
 
 
 def _render() -> str:
-    registry = _load_registry()
-    lag_count = _lag_bound()
-    order = list(registry.microstep_order)
+    declaration = _load_declaration()
+    lag_count = _lag_bound(declaration)
+    order = list(declaration["declaration"]["microstep_order"])
     steps = {name: index for index, name in enumerate(order)}
-    nodes = sorted(registry.nodes)
+    nodes = sorted(declaration["nodes"])
     node_index = {node_id: index for index, node_id in enumerate(nodes)}
-
-    # 每个节点的父模板（父节点索引, 滞后, 父阶段）；无写者节点为空
-    by_output = {}
-    for mechanism in registry.mechanisms.values():
-        by_output[mechanism.output] = mechanism
+    mechanisms = declaration["mechanisms"]
+    by_output = {
+        mechanism["output"]: mechanism
+        for mechanism in mechanisms.values()
+    }
 
     lines: list[str] = []
     lines.append("import AscendLean.CausalVerification.UnrolledDag")
@@ -80,9 +82,9 @@ def _render() -> str:
     lines.append("生成命令：.venv/bin/python research/acceptance/gen_unrolled_dag.py")
     lines.append("巡检命令：.venv/bin/python research/acceptance/gen_unrolled_dag.py --check")
     lines.append("")
-    lines.append("来源：backend/ascend/causal/world.py 的 ASCEND_MECHANISMS 生产声明")
-    lines.append(f"规模：{len(nodes)} 节点 / {len(registry.mechanisms)} 机制 / "
-                 f"{sum(len(m.parents) for m in registry.mechanisms.values())} 条父引用")
+    lines.append("来源：backend/ascend/world/ 的世界声明投影（export_world.py）")
+    lines.append(f"规模：{len(nodes)} 节点 / {len(mechanisms)} 机制 / "
+                 f"{sum(len(m['parents']) for m in mechanisms.values())} 条父引用")
     lines.append("")
     lines.append("角色边界：本文件只把声明**数据**实例化为 UnrolledDag.Decl 并给出")
     lines.append("`WellFormed` 的机器可判证明；无环定理本身在 UnrolledDag.lean。 -/")
@@ -93,7 +95,7 @@ def _render() -> str:
     lines.append("")
     lines.append("-- ═══ 第一节 规模常量 ═══")
     lines.append("")
-    lines.append(f"/-- 分量模板数（生产声明节点数）。 -/")
+    lines.append("/-- 分量模板数（生产声明节点数）。 -/")
     lines.append(f"def nodeCount : ℕ := {len(nodes)}")
     lines.append("")
     lines.append("/-- 更新阶段数（微步序长度）。 -/")
@@ -108,7 +110,7 @@ def _render() -> str:
     lines.append("")
     lines.append("-- ═══ 第二节 生产声明的父模板表（有限索引，可计算）═══")
     lines.append("")
-    lines.append("/-- 分量模板索引按节点 ID 排序（与注册表 `sorted(nodes)` 同序）。 -/")
+    lines.append("/-- 分量模板索引按节点 ID 排序（与声明投影同序）。 -/")
     for index, node_id in enumerate(nodes):
         lines.append(f"def node{_sanitize(node_id)} : ℕ := {index}")
     lines.append("")
@@ -116,16 +118,15 @@ def _render() -> str:
     lines.append("def realParents : ℕ → ℕ → List PSpec := fun v r =>")
     lines.append("  match v, r with")
     for node_id in nodes:
-        spec = registry.nodes[node_id]
-        stage = steps[spec.update.microstep]
+        stage = steps[declaration["nodes"][node_id]["update"]["microstep"]]
         mechanism = by_output.get(node_id)
-        parents = mechanism.parents if mechanism is not None else ()
+        parents = mechanism["parents"] if mechanism is not None else ()
         rendered = ", ".join(
             "({ par := ⟨%d, by decide⟩, lag := ⟨%d, by decide⟩,"
             " pr := ⟨%d, by decide⟩ } : PSpec)" % (
-                node_index[parent.parent],
-                parent.lag,
-                steps[parent.source_microstep],
+                node_index[parent["parent"]],
+                parent["lag"],
+                steps[parent["source_microstep"]],
             )
             for parent in parents
         )

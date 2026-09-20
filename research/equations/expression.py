@@ -123,32 +123,32 @@ def evaluate_tree(
 
 def bind_arguments(
     mechanism,
-    parent_values: Mapping[str, object],
+    arguments: Mapping[str, object],
     parameters: Mapping[str, object],
 ) -> dict[str, object]:
-    """把父值（按节点 ID）与参数默认值绑定为表达式变量（按 argument 名）。
+    """把父值（按 argument 名）与参数值绑定为表达式变量（按 argument 名）。
 
     Args:
-        mechanism: ``MechanismSpec``（含 parents/parameters）。
-        parent_values: ``{父节点 ID: 值}``（调用方按声明语义解析）。
-        parameters: 注册表参数表 ``{参数 ID: ParameterSpec}``。
+        mechanism: ``MechanismDecl``（含 parents/param_arguments）。
+        arguments: ``{父 argument: 值}``（调用方按声明语义解析）。
+        parameters: 程序参数值表 ``{参数 ID: 值}``。
 
     Raises:
         KeyError: 父值缺失或参数未声明（fail-closed）。
     """
     bound: dict[str, object] = {}
     for parent in mechanism.parents:
-        if parent.parent not in parent_values:
+        if parent.argument not in arguments:
             raise KeyError(
-                f"表达式绑定缺父值: {parent.parent}（{mechanism.mechanism_id}）"
+                f"表达式绑定缺父值: {parent.slot}（{mechanism.id}）"
             )
-        bound[parent.argument] = parent_values[parent.parent]
-    for binding in mechanism.parameters:
-        if binding.parameter not in parameters:
+        bound[parent.argument] = arguments[parent.argument]
+    for parameter_id, argument in mechanism.param_arguments:
+        if parameter_id not in parameters:
             raise KeyError(
-                f"表达式绑定缺参数: {binding.parameter}"
+                f"表达式绑定缺参数: {parameter_id}"
             )
-        bound[binding.argument] = parameters[binding.parameter].value
+        bound[argument] = parameters[parameter_id]
     return bound
 
 

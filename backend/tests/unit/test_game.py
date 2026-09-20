@@ -309,7 +309,7 @@ class TestSavePulse:
 
     def test_run_pulse_refuses_invalidated_world(self, monkeypatch):
         """失效世界拒绝保存：最后有效检查点不得被作废轨迹覆盖。"""
-        from ascend.runtime import WorldInvalidatedError
+        from ascend.world.runtime import WorldInvalidatedError
 
         engine = self._engine()
         engine._world_invalidated = "帧提交失败"

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from ascend.world.meta.declarations import (
+    InstanceDecl,
     Arithmetic,
     MechanismDecl,
     ModulePack,
@@ -21,123 +22,326 @@ from ascend.world.meta.declarations import (
 )
 from ascend.world.modules.primitives import GLOBAL
 
+CHUNK = InstanceDecl(
+    id='lattice.chunk', kind='lattice', identity='xy', size=None,
+    axes=('chunk_x', 'chunk_y'),
+)
+
 from . import equations as _eq
 
 
 # ── 槽位（输出 derived + 边界 external）─────────────────
 SLOT_WEATHER_CHUNK_ANNUAL_MEAN_TEMPERATURE_C = SlotDecl(
     id='weather.chunk.annual_mean_temperature_c',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=None, maximum=None, unit='degC'),
     writer='world.gen.derive_annual_mean_temperature.v1',
     recompute='机制 world.gen.derive_annual_mean_temperature.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_generation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.05,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='finite_temperature_after_continent_calibration_no_prior_closed_bound',
+
 )
 SLOT_WEATHER_CHUNK_ANNUAL_RAINFALL_MM_PER_YEAR = SlotDecl(
     id='weather.chunk.annual_rainfall_mm_per_year',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=None, maximum=None, unit='mm_per_year'),
     writer='world.gen.derive_annual_rainfall.v1',
     recompute='机制 world.gen.derive_annual_rainfall.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_generation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=100.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='finite_nonnegative_annual_rainfall_after_continent_calibration',
+
 )
 SLOT_WEATHER_CHUNK_BASELINE_HUMIDITY_PERCENT = SlotDecl(
     id='weather.chunk.baseline_humidity_percent',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=100.0, unit='percent'),
     writer='world.gen.derive_baseline_humidity.v1',
     recompute='机制 world.gen.derive_baseline_humidity.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_generation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=1.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_0_100_percent',
+
 )
 SLOT_WEATHER_CHUNK_BASELINE_WIND_SPEED_MPS = SlotDecl(
     id='weather.chunk.baseline_wind_speed_mps',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=50.0, unit='mps'),
     writer='world.gen.derive_baseline_wind_speed.v1',
     recompute='机制 world.gen.derive_baseline_wind_speed.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_generation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.5,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_0_50_mps',
+
 )
 SLOT_WEATHER_CHUNK_HUMIDITY_SHARPNESS = SlotDecl(
     id='weather.chunk.humidity_sharpness',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=10.0, unit='dimensionless'),
     writer='world.gen.derive_humidity_sharpness.v1',
     recompute='机制 world.gen.derive_humidity_sharpness.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_generation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='nonnegative_sharpness',
+
 )
 SLOT_WEATHER_CHUNK_MEAN_PRECIP_INTENSITY_MM_PER_HOUR = SlotDecl(
     id='weather.chunk.mean_precip_intensity_mm_per_hour',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=2.0, maximum=10.0, unit='mm_per_hour'),
     writer='world.gen.derive_mean_precip_intensity.v1',
     recompute='机制 world.gen.derive_mean_precip_intensity.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_generation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.1,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='climate_template_contract',
+
 )
 SLOT_WEATHER_CHUNK_SEA_LEVEL_TEMPERATURE_C = SlotDecl(
     id='weather.chunk.sea_level_temperature_c',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=-20.0, maximum=38.0, unit='degC'),
     writer='world.gen.derive_sea_level_temperature.v1',
     recompute='机制 world.gen.derive_sea_level_temperature.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_generation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.2,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_-20_38_degC',
+
 )
 SLOT_WORLD_GEN_BIOME = SlotDecl(
     id='world.gen.biome',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
-    domain=ValueDomain(kind="enum", choices=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)),
+    domain=ValueDomain(kind='enum', choices=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18), unit='biome_index'),
     writer='world.gen.classify_biome.v1',
     recompute='机制 world.gen.classify_biome.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_generation',
+    quantization='exact',
+    metric='discrete',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='biome_enum',
+
 )
 SLOT_WORLD_GEN_CLIMATE_ZONE = SlotDecl(
     id='world.gen.climate_zone',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
-    domain=ValueDomain(kind="enum", choices=(0, 1, 2, 3, 4, 5, 6, 7)),
+    domain=ValueDomain(kind='enum', choices=(0, 1, 2, 3, 4, 5, 6, 7), unit='climate_zone_index'),
     writer='world.gen.classify_climate_zone.v1',
     recompute='机制 world.gen.classify_climate_zone.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_generation',
+    quantization='exact',
+    metric='discrete',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='climate_zone_enum_0_7',
+
 )
 SLOT_WORLD_GEN_ALTITUDE_M = SlotDecl(
     id='world.gen.altitude_m',
-    on='global',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=None, maximum=None, unit='meter'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='provided_by_external_writer',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=1.0,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='elevation_after_terrain_calibration_no_prior_closed_bound',
+
+    external_source='not_applicable:space.terrain_generator_output',
+
+    external_writer='space.terrain_generator',
+
 )
 SLOT_WORLD_GEN_HUMIDITY_NOISE = SlotDecl(
     id='world.gen.humidity_noise',
-    on='global',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='provided_by_external_writer',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_-1_1',
+
+    external_source='not_applicable:space.terrain_generator_output',
+
+    external_writer='space.terrain_generator',
+
 )
 SLOT_WORLD_GEN_LATITUDE_NOISE = SlotDecl(
     id='world.gen.latitude_noise',
-    on='global',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='provided_by_external_writer',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_-1_1',
+
+    external_source='not_applicable:space.continent_generator_output',
+
+    external_writer='space.continent_generator',
+
 )
 SLOT_WORLD_GEN_MOISTURE_NOISE = SlotDecl(
     id='world.gen.moisture_noise',
-    on='global',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='provided_by_external_writer',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_-1_1',
+
+    external_source='not_applicable:space.terrain_generator_output',
+
+    external_writer='space.terrain_generator',
+
 )
 SLOT_WORLD_GEN_RAINFALL_NOISE = SlotDecl(
     id='world.gen.rainfall_noise',
-    on='global',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='provided_by_external_writer',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_-1_1',
+
+    external_source='not_applicable:space.continent_generator_output',
+
+    external_writer='space.continent_generator',
+
 )
 SLOT_WORLD_GEN_WIND_NOISE = SlotDecl(
     id='world.gen.wind_noise',
-    on='global',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='provided_by_external_writer',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_-1_1',
+
+    external_source='not_applicable:space.terrain_generator_output',
+
+    external_writer='space.terrain_generator',
+
 )
 
 # ── 实现包装（ctx → 方程关键字参数）─────────────────────
@@ -489,6 +693,12 @@ MECHANISM_0 = MechanismDecl(
             slot='world.gen.latitude_noise',
             argument='latitude_noise',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_-1_1',
+            modulus_kind='linear',
+            lipschitz=25.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_0,
@@ -499,6 +709,12 @@ MECHANISM_0 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_0,
+    boundary_cases=(
+        'noise_below_-1.2:clamp_to_-20',
+        'noise_above_1.12:clamp_to_38',
+        'finite_interior:linear_mapping',
+    ),
+
 )
 
 MECHANISM_1 = MechanismDecl(
@@ -509,6 +725,12 @@ MECHANISM_1 = MechanismDecl(
             slot='world.gen.rainfall_noise',
             argument='rainfall_noise',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_-1_1',
+            modulus_kind='linear',
+            lipschitz=1725.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_1,
@@ -520,6 +742,12 @@ MECHANISM_1 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_1,
+    boundary_cases=(
+        'noise_minus_one:rainfall_min',
+        'noise_plus_one:rainfall_max',
+        'finite_interior:linear_mapping',
+    ),
+
 )
 
 MECHANISM_2 = MechanismDecl(
@@ -530,11 +758,23 @@ MECHANISM_2 = MechanismDecl(
             slot='weather.chunk.sea_level_temperature_c',
             argument='sea_level_temperature',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_-20_38_degC',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='world.gen.altitude_m',
             argument='altitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='elevation_range',
+            modulus_kind='linear',
+            lipschitz=0.009,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_2,
@@ -547,6 +787,13 @@ MECHANISM_2 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_2,
+    boundary_cases=(
+        'sea_surface:altitude_nonpositive_identity',
+        'land:linear_lapse_rate',
+        'temperature_below_-20:clamp',
+        'temperature_above_36:clamp',
+    ),
+
 )
 
 MECHANISM_3 = MechanismDecl(
@@ -557,16 +804,34 @@ MECHANISM_3 = MechanismDecl(
             slot='weather.chunk.annual_mean_temperature_c',
             argument='mean_temperature',
             lag=0,
+            analysis_role='forward',
+            valid_domain='finite_temperature_within_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=0.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.chunk.annual_rainfall_mm_per_year',
             argument='annual_rainfall',
             lag=0,
+            analysis_role='forward',
+            valid_domain='finite_nonnegative_annual_rainfall',
+            modulus_kind='linear',
+            lipschitz=0.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='world.gen.altitude_m',
             argument='altitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='elevation_range',
+            modulus_kind='linear',
+            lipschitz=0.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_3,
@@ -577,6 +842,13 @@ MECHANISM_3 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_3,
+    boundary_cases=(
+        'altitude_above_alpine_threshold:ALPINE',
+        'temperature_below_polar_threshold:POLAR_TUNDRA',
+        'rainfall_below_desert_threshold:DESERT',
+        'decision_tree_priority_order',
+    ),
+
 )
 
 MECHANISM_4 = MechanismDecl(
@@ -587,26 +859,56 @@ MECHANISM_4 = MechanismDecl(
             slot='weather.chunk.annual_mean_temperature_c',
             argument='mean_temperature',
             lag=0,
+            analysis_role='forward',
+            valid_domain='finite_temperature_within_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=0.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.chunk.annual_rainfall_mm_per_year',
             argument='annual_rainfall',
             lag=0,
+            analysis_role='forward',
+            valid_domain='finite_nonnegative_annual_rainfall',
+            modulus_kind='linear',
+            lipschitz=0.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='world.gen.altitude_m',
             argument='altitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='elevation_range',
+            modulus_kind='linear',
+            lipschitz=0.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.chunk.sea_level_temperature_c',
             argument='sea_level_temperature',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_-20_38_degC',
+            modulus_kind='linear',
+            lipschitz=0.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='world.gen.moisture_noise',
             argument='moisture_noise',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_-1_1',
+            modulus_kind='linear',
+            lipschitz=0.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_4,
@@ -617,6 +919,12 @@ MECHANISM_4 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_4,
+    boundary_cases=(
+        'altitude_below_sea_level:ocean_by_sea_temperature',
+        'land:climate_subdivision_membership',
+        'no_subdivision_config:temperate_deciduous_fallback',
+    ),
+
 )
 
 MECHANISM_5 = MechanismDecl(
@@ -627,11 +935,23 @@ MECHANISM_5 = MechanismDecl(
             slot='world.gen.climate_zone',
             argument='climate_zone',
             lag=0,
+            analysis_role='forward',
+            valid_domain='climate_zone_enum_0_7',
+            modulus_kind='jump',
+            lipschitz=None,
+            jump_bound=90.0,
+            metric='absolute_difference',
         ),
         Parent(
             slot='world.gen.humidity_noise',
             argument='humidity_noise',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_-1_1',
+            modulus_kind='linear',
+            lipschitz=20.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_5,
@@ -644,6 +964,12 @@ MECHANISM_5 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_5,
+    boundary_cases=(
+        'noise_minus_one:template_low',
+        'noise_plus_one:template_high',
+        'finite_interior:linear_interpolation',
+    ),
+
 )
 
 MECHANISM_6 = MechanismDecl(
@@ -654,11 +980,23 @@ MECHANISM_6 = MechanismDecl(
             slot='world.gen.climate_zone',
             argument='climate_zone',
             lag=0,
+            analysis_role='forward',
+            valid_domain='climate_zone_enum_0_7',
+            modulus_kind='jump',
+            lipschitz=None,
+            jump_bound=25.0,
+            metric='absolute_difference',
         ),
         Parent(
             slot='world.gen.wind_noise',
             argument='wind_noise',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_-1_1',
+            modulus_kind='linear',
+            lipschitz=11.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_6,
@@ -670,6 +1008,12 @@ MECHANISM_6 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_6,
+    boundary_cases=(
+        'noise_minus_one:template_low',
+        'noise_plus_one:template_high',
+        'finite_interior:linear_interpolation',
+    ),
+
 )
 
 MECHANISM_7 = MechanismDecl(
@@ -680,6 +1024,12 @@ MECHANISM_7 = MechanismDecl(
             slot='world.gen.climate_zone',
             argument='climate_zone',
             lag=0,
+            analysis_role='forward',
+            valid_domain='climate_zone_enum_0_7',
+            modulus_kind='jump',
+            lipschitz=None,
+            jump_bound=8.0,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_7,
@@ -690,6 +1040,8 @@ MECHANISM_7 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_7,
+    boundary_cases=('per_zone_lookup:data_contract',),
+
 )
 
 MECHANISM_8 = MechanismDecl(
@@ -700,6 +1052,12 @@ MECHANISM_8 = MechanismDecl(
             slot='world.gen.climate_zone',
             argument='climate_zone',
             lag=0,
+            analysis_role='forward',
+            valid_domain='climate_zone_enum_0_7',
+            modulus_kind='jump',
+            lipschitz=None,
+            jump_bound=2.5,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_8,
@@ -710,14 +1068,160 @@ MECHANISM_8 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_8,
+    boundary_cases=('per_zone_lookup:data_contract',),
+
 )
 
 # ── 模块包 ──────────────────────────────────────────────
 MODULE = ModulePack(
     id='worldgen',
     version='1',
-    instances=(GLOBAL,),
+    instances=(GLOBAL, CHUNK),
     parameters=(
+        ParameterDecl(
+            id='world.parameter.alpine_altitude_m',
+            default=2000.0,
+            minimum=0.0,
+            maximum=100000.0,
+            unit='meter',
+            source='data/world.json#climate.ALPINE_ALTITUDE',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.desert_rainfall_mm',
+            default=200.0,
+            minimum=0.0,
+            maximum=1000000.0,
+            unit='mm_per_year',
+            source='data/world.json#climate.DESERT_RAINFALL',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.lapse_rate_c_per_1000m',
+            default=9.0,
+            minimum=0.0,
+            maximum=100.0,
+            unit='degC_per_1000m',
+            source='data/world.json#climate.LAPSE_RATE',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.polar_temp_c',
+            default=-5.0,
+            minimum=-273.15,
+            maximum=100.0,
+            unit='degC',
+            source='data/world.json#climate.POLAR_TEMP',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.rainfall_max_mm',
+            default=3500.0,
+            minimum=0.0,
+            maximum=1000000.0,
+            unit='mm_per_year',
+            source='data/world.json#climate.RAINFALL_MAX',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.rainfall_min_mm',
+            default=50.0,
+            minimum=0.0,
+            maximum=1000000.0,
+            unit='mm_per_year',
+            source='data/world.json#climate.RAINFALL_MIN',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.rainforest_rainfall_mm',
+            default=1500.0,
+            minimum=0.0,
+            maximum=1000000.0,
+            unit='mm_per_year',
+            source='data/world.json#climate.RAINFOREST_RAINFALL',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.sea_temperature_max_c',
+            default=38.0,
+            minimum=-273.15,
+            maximum=1000.0,
+            unit='degC',
+            source='code-only:sea_temperature_max_c（内嵌 _hydrology.c，由 C 文件哈希覆盖）',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.sea_temperature_min_c',
+            default=-20.0,
+            minimum=-273.15,
+            maximum=1000.0,
+            unit='degC',
+            source='code-only:sea_temperature_min_c（内嵌 _hydrology.c，由 C 文件哈希覆盖）',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.sea_temperature_offset_c',
+            default=10.0,
+            minimum=-273.15,
+            maximum=1000.0,
+            unit='degC',
+            source='code-only:sea_temperature_offset_c（内嵌 _hydrology.c，由 C 文件哈希覆盖）',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.sea_temperature_scale_c',
+            default=25.0,
+            minimum=0.0,
+            maximum=1000.0,
+            unit='degC',
+            source='code-only:sea_temperature_scale_c（内嵌 _hydrology.c，由 C 文件哈希覆盖）',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.steppe_min_temp_c',
+            default=5.0,
+            minimum=-273.15,
+            maximum=100.0,
+            unit='degC',
+            source='data/world.json#climate.STEPPE_MIN_TEMP',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.steppe_rainfall_mm',
+            default=600.0,
+            minimum=0.0,
+            maximum=1000000.0,
+            unit='mm_per_year',
+            source='data/world.json#climate.STEPPE_RAINFALL',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.taiga_rainfall_mm',
+            default=400.0,
+            minimum=0.0,
+            maximum=1000000.0,
+            unit='mm_per_year',
+            source='data/world.json#climate.TAIGA_RAINFALL',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.temperate_temp_c',
+            default=5.0,
+            minimum=-273.15,
+            maximum=100.0,
+            unit='degC',
+            source='data/world.json#climate.TEMPERATE_TEMP',
+            intervention_allowed=True,
+        ),
+        ParameterDecl(
+            id='world.parameter.tropical_temp_c',
+            default=20.0,
+            minimum=-273.15,
+            maximum=100.0,
+            unit='degC',
+            source='data/world.json#climate.TROPICAL_TEMP',
+            intervention_allowed=True,
+        ),
     ),
     slots=(
         SLOT_WEATHER_CHUNK_ANNUAL_MEAN_TEMPERATURE_C,

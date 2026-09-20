@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from ascend.causal import InterventionTimeline, PlannedIntervention
-from ascend.causal.world import ASCEND_MECHANISMS
+from ascend.world.research.timeline import PlannedIntervention
 from ascend.i18n import I18n
 from ascend.space import ClimateZone, WeatherParams
 from ascend.time import GameCalendar, WorldClock
 from ascend.weather import WeatherEngine
-from ascend.weather.mechanisms import INSTANT_TEMPERATURE
+from ascend.world.modules.ids import INSTANT_TEMPERATURE
 from ascend.world_tree import WorldTree
 
 _CHUNK = (0, 0)
@@ -33,22 +32,14 @@ def i18n() -> I18n:
 
 @pytest.fixture()
 def engine(clock):
-    """含 chunk (0,0) 的天气引擎（独立世界树 + 独立干预表）。"""
+    """含 chunk (0,0) 的天气引擎（独立世界树 + 引擎自建干预表）。"""
     wt = WorldTree()
     engine = WeatherEngine(clock, seed=42, world_tree_arg=wt)
-    table = InterventionTimeline(
-        ASCEND_MECHANISMS,
-        now=lambda: clock.time,
-        instance_exists=lambda _node, inst: engine.has_chunk(*inst),
-    )
-    engine = WeatherEngine(
-        clock, seed=42, world_tree_arg=wt, intervention_table=table,
-    )
     engine.register_chunk(
         *_CHUNK, WeatherParams(20.0, 800.0, 12.0, 100.0, 60.0, 5.0),
         ClimateZone.TEMPERATE_FOREST, 15.0,
     )
-    yield engine, table
+    yield engine, engine.intervention_table
     engine.shutdown()
 
 

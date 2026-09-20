@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from ascend.causal import PlannedIntervention
+from ascend.world.research.timeline import PlannedIntervention
 from ascend.save import (
     STATE_VERSION,
     apply_state,
@@ -25,7 +25,7 @@ from ascend.save import (
 from ascend.space import ClimateZone, WeatherParams
 from ascend.time import WorldClock
 from ascend.weather import WeatherEngine
-from ascend.weather.mechanisms import (
+from ascend.world.modules.ids import (
     INSTANT_HUMIDITY,
     INSTANT_TEMPERATURE,
     PRECIPITATION_THRESHOLD,
@@ -238,8 +238,8 @@ class TestFailClosedLoad:
         state["weather"]["interventions"] = {
             "plan": [{
                 "target_space": "node",
-                "target": "weather.instant.precipitation_type",  # 未接线
-                "instance": [0, 0], "value": "rain",
+                "target": "weather.chunk.annual_mean_temperature_c",
+                "instance": [0, 0], "value": 20.0,
                 "start_frame": 0, "stop_frame": None, "source": "test",
                 "version": "", "seq": 1, "submitted_at": 0,
             }],

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from ascend.world.meta.declarations import (
+    InstanceDecl,
     Arithmetic,
     MechanismDecl,
     ModulePack,
@@ -21,161 +22,394 @@ from ascend.world.meta.declarations import (
 )
 from ascend.world.modules.primitives import GLOBAL
 
+CHUNK = InstanceDecl(
+    id='lattice.chunk', kind='lattice', identity='xy', size=None,
+    axes=('chunk_x', 'chunk_y'),
+)
+
 from . import equations as _eq
 
 
 # ── 槽位（输出 derived + 边界 external）─────────────────
 SLOT_WEATHER_ASTRONOMY_DAYLIGHT_HOURS = SlotDecl(
     id='weather.astronomy.daylight_hours',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=24.0, unit='hour'),
     writer='weather.astronomy.derive_daylight.v1',
     recompute='机制 weather.astronomy.derive_daylight.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.05,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_0_24_hours',
+
 )
 SLOT_WEATHER_ASTRONOMY_SUNRISE_HOUR = SlotDecl(
     id='weather.astronomy.sunrise_hour',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=12.0, unit='hour'),
     writer='weather.astronomy.derive_sunrise.v1',
     recompute='机制 weather.astronomy.derive_sunrise.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.05,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='half_open_interval_0_12_hours',
+
 )
 SLOT_WEATHER_ASTRONOMY_SUNSET_HOUR = SlotDecl(
     id='weather.astronomy.sunset_hour',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=12.0, maximum=24.0, unit='hour'),
     writer='weather.astronomy.derive_sunset.v1',
     recompute='机制 weather.astronomy.derive_sunset.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.05,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='half_open_interval_12_24_hours',
+
 )
 SLOT_WEATHER_CHUNK_DIURNAL_HUMIDITY_AMPLITUDE_PP = SlotDecl(
     id='weather.chunk.diurnal_humidity_amplitude_pp',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=20.0, unit='pp'),
     writer='weather.chunk.derive_diurnal_humidity_amplitude.v1',
     recompute='机制 weather.chunk.derive_diurnal_humidity_amplitude.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_registration',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.1,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='nonnegative_humidity_amplitude',
+
 )
 SLOT_WEATHER_CHUNK_DIURNAL_TEMPERATURE_AMPLITUDE_C = SlotDecl(
     id='weather.chunk.diurnal_temperature_amplitude_c',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=20.0, unit='degC'),
     writer='weather.chunk.derive_diurnal_temperature_amplitude.v1',
     recompute='机制 weather.chunk.derive_diurnal_temperature_amplitude.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_registration',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.1,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='nonnegative_diurnal_amplitude',
+
 )
 SLOT_WEATHER_CHUNK_PRECIPITATION_THRESHOLD = SlotDecl(
     id='weather.chunk.precipitation_threshold',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.25, maximum=0.55, unit='dimensionless'),
     writer='weather.chunk.derive_precipitation_threshold.v1',
     recompute='机制 weather.chunk.derive_precipitation_threshold.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_registration',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_wet_to_dry',
+
 )
 SLOT_WEATHER_CHUNK_SEASONAL_HUMIDITY_AMPLITUDE_PP = SlotDecl(
     id='weather.chunk.seasonal_humidity_amplitude_pp',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=20.0, unit='pp'),
     writer='weather.chunk.derive_seasonal_humidity_amplitude.v1',
     recompute='机制 weather.chunk.derive_seasonal_humidity_amplitude.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_registration',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.1,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='nonnegative_humidity_amplitude',
+
 )
 SLOT_WEATHER_CHUNK_SEASONAL_TEMPERATURE_AMPLITUDE_C = SlotDecl(
     id='weather.chunk.seasonal_temperature_amplitude_c',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=1.0, maximum=30.0, unit='degC'),
     writer='weather.chunk.derive_seasonal_temperature_amplitude.v1',
     recompute='机制 weather.chunk.derive_seasonal_temperature_amplitude.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_registration',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.1,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_1_30_degC',
+
 )
 SLOT_WEATHER_CHUNK_SOLAR_LATITUDE_PROXY_DEG = SlotDecl(
     id='weather.chunk.solar_latitude_proxy_deg',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=80.0, unit='degree_north'),
     writer='weather.chunk.derive_solar_latitude_proxy.v1',
     recompute='机制 weather.chunk.derive_solar_latitude_proxy.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_chunk_registration',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.5,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_0_80_degrees',
+
 )
 SLOT_WEATHER_INSTANT_PRECIPITATION_INTENSITY_MM_PER_HOUR = SlotDecl(
     id='weather.instant.precipitation_intensity_mm_per_hour',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=100.0, unit='mm_per_hour'),
     writer='weather.instant.compose_precipitation_intensity.v1',
     recompute='机制 weather.instant.compose_precipitation_intensity.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=1.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='nonnegative_precipitation_intensity',
+
 )
 SLOT_WEATHER_INSTANT_PRECIPITATION_TYPE = SlotDecl(
     id='weather.instant.precipitation_type',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
-    domain=ValueDomain(kind="enum", choices=('snow', 'rain')),
+    domain=ValueDomain(kind='enum', choices=('snow', 'rain'), unit='category'),
     writer='weather.instant.classify_precipitation_type.v1',
     recompute='机制 weather.instant.classify_precipitation_type.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='round_half_even_to_0.1_degC_then_threshold_at_0',
+    metric='discrete',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='snow_or_rain',
+
 )
 SLOT_WEATHER_INSTANT_RELATIVE_HUMIDITY_PERCENT = SlotDecl(
     id='weather.instant.relative_humidity_percent',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=100.0, unit='percent'),
     writer='weather.instant.compose_humidity.v1',
     recompute='机制 weather.instant.compose_humidity.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=1.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_0_100_percent',
+
 )
 SLOT_WEATHER_INSTANT_SUNSHINE_HOURS_PER_DAY = SlotDecl(
     id='weather.instant.sunshine_hours_per_day',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=24.0, unit='hour_per_day'),
     writer='weather.instant.compose_sunshine.v1',
     recompute='机制 weather.instant.compose_sunshine.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.05,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_0_24_hours_per_day',
+
 )
 SLOT_WEATHER_INSTANT_TEMPERATURE_C = SlotDecl(
     id='weather.instant.temperature_c',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=-30.0, maximum=50.0, unit='degC'),
     writer='weather.instant.compose_temperature.v1',
     recompute='机制 weather.instant.compose_temperature.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.05,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='finite_temperature_within_declared_bounds',
+
 )
 SLOT_WEATHER_INSTANT_WIND_SPEED_MPS = SlotDecl(
     id='weather.instant.wind_speed_mps',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=50.0, unit='mps'),
     writer='weather.instant.compose_wind_speed.v1',
     recompute='机制 weather.instant.compose_wind_speed.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.5,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='closed_interval_0_50_mps',
+
 )
 SLOT_WEATHER_OFFSET_DIURNAL_HUMIDITY_PP = SlotDecl(
     id='weather.offset.diurnal_humidity_pp',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=-20.0, maximum=20.0, unit='pp'),
     writer='weather.offset.derive_diurnal_humidity.v1',
     recompute='机制 weather.offset.derive_diurnal_humidity.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.1,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='bounded_by_humidity_amplitude',
+
 )
 SLOT_WEATHER_OFFSET_DIURNAL_TEMPERATURE_C = SlotDecl(
     id='weather.offset.diurnal_temperature_c',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=-20.0, maximum=20.0, unit='degC'),
     writer='weather.offset.derive_diurnal_temperature.v1',
     recompute='机制 weather.offset.derive_diurnal_temperature.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.1,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='bounded_by_diurnal_amplitude',
+
 )
 SLOT_WEATHER_OFFSET_SEASONAL_HUMIDITY_PP = SlotDecl(
     id='weather.offset.seasonal_humidity_pp',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=-20.0, maximum=20.0, unit='pp'),
     writer='weather.offset.derive_seasonal_humidity.v1',
     recompute='机制 weather.offset.derive_seasonal_humidity.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.1,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='bounded_by_humidity_amplitude',
+
 )
 SLOT_WEATHER_OFFSET_SEASONAL_TEMPERATURE_C = SlotDecl(
     id='weather.offset.seasonal_temperature_c',
-    on='global',
+    on='lattice.chunk',
     persist='derived',
     domain=ValueDomain(kind="float", minimum=-30.0, maximum=30.0, unit='degC'),
     writer='weather.offset.derive_seasonal_temperature.v1',
     recompute='机制 weather.offset.derive_seasonal_temperature.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.1,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='bounded_by_seasonal_amplitude',
+
 )
 SLOT_WEATHER_TICK_DAY = SlotDecl(
     id='weather.tick.day',
@@ -184,6 +418,18 @@ SLOT_WEATHER_TICK_DAY = SlotDecl(
     domain=ValueDomain(kind="int", bits=64, minimum=None, maximum=None, unit='game_day'),
     writer='weather.tick.derive_day.v1',
     recompute='机制 weather.tick.derive_day.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='exact_integer',
+    metric='discrete',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='positive_game_day',
+
 )
 SLOT_WEATHER_TICK_DAY_OF_YEAR = SlotDecl(
     id='weather.tick.day_of_year',
@@ -192,6 +438,18 @@ SLOT_WEATHER_TICK_DAY_OF_YEAR = SlotDecl(
     domain=ValueDomain(kind="int", bits=64, minimum=0, maximum=360, unit='game_day'),
     writer='weather.tick.derive_day_of_year.v1',
     recompute='机制 weather.tick.derive_day_of_year.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='exact_integer',
+    metric='discrete',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='zero_based_day_of_year',
+
 )
 SLOT_WEATHER_TICK_DIURNAL_PHASE_COS = SlotDecl(
     id='weather.tick.diurnal_phase_cos',
@@ -200,6 +458,18 @@ SLOT_WEATHER_TICK_DIURNAL_PHASE_COS = SlotDecl(
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
     writer='weather.tick.derive_diurnal_phase_cos.v1',
     recompute='机制 weather.tick.derive_diurnal_phase_cos.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='cosine_range',
+
 )
 SLOT_WEATHER_TICK_HOUR_OF_DAY = SlotDecl(
     id='weather.tick.hour_of_day',
@@ -208,14 +478,38 @@ SLOT_WEATHER_TICK_HOUR_OF_DAY = SlotDecl(
     domain=ValueDomain(kind="float", minimum=0.0, maximum=24.0, unit='hour'),
     writer='weather.tick.derive_hour_of_day.v1',
     recompute='机制 weather.tick.derive_hour_of_day.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='half_open_interval_0_24_hours',
+
 )
 SLOT_WEATHER_TICK_SEASON = SlotDecl(
     id='weather.tick.season',
     on='global',
     persist='derived',
-    domain=ValueDomain(kind="enum", choices=(0, 1, 2, 3)),
+    domain=ValueDomain(kind='enum', choices=(0, 1, 2, 3), unit='season_index'),
     writer='weather.tick.derive_season.v1',
     recompute='机制 weather.tick.derive_season.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='exact_enum',
+    metric='discrete',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='spring_summer_autumn_winter',
+
 )
 SLOT_WEATHER_TICK_SEASON_PHASE_COS = SlotDecl(
     id='weather.tick.season_phase_cos',
@@ -224,6 +518,18 @@ SLOT_WEATHER_TICK_SEASON_PHASE_COS = SlotDecl(
     domain=ValueDomain(kind="float", minimum=-1.0, maximum=1.0, unit='dimensionless'),
     writer='weather.tick.derive_season_phase_cos.v1',
     recompute='机制 weather.tick.derive_season_phase_cos.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='cosine_range',
+
 )
 SLOT_WEATHER_TICK_SOLAR_DECLINATION_RAD = SlotDecl(
     id='weather.tick.solar_declination_rad',
@@ -232,48 +538,150 @@ SLOT_WEATHER_TICK_SOLAR_DECLINATION_RAD = SlotDecl(
     domain=ValueDomain(kind="float", minimum=-0.5, maximum=0.5, unit='radian'),
     writer='weather.tick.derive_solar_declination.v1',
     recompute='机制 weather.tick.derive_solar_declination.v1',
+    permissions=Permissions(intervene=True, observe=True, record=True),
+    role='mechanism_state',
+    schedule='on_weather_evaluation',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=('node', 'persistent'),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='solar_declination_range',
+
 )
 SLOT_WEATHER_FIELD_HUMIDITY_PERTURBATION = SlotDecl(
     id='weather.field.humidity_perturbation',
-    on='global',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-2.0, maximum=2.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='provided_by_external_writer',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.05,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='unified_field_channel_composite',
+
+    external_source='outside_slice:unified_weather_field.humidity_channel',
+
+    external_writer='outside_slice:unified_weather_field.humidity_channel',
+
 )
 SLOT_WEATHER_FIELD_PRECIPITATION_SIGNAL = SlotDecl(
     id='weather.field.precipitation_signal',
-    on='global',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=0.0, maximum=10.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='provided_by_external_writer',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.05,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='unified_field_channel_composite',
+
+    external_source='outside_slice:unified_weather_field.precipitation_channel',
+
+    external_writer='outside_slice:unified_weather_field.precipitation_channel',
+
 )
 SLOT_WEATHER_FIELD_TEMPERATURE_PERTURBATION = SlotDecl(
     id='weather.field.temperature_perturbation',
-    on='global',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-20.0, maximum=20.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='provided_by_external_writer',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.05,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='unified_field_channel_composite',
+
+    external_source='outside_slice:unified_weather_field.temperature_channel',
+
+    external_writer='outside_slice:unified_weather_field.temperature_channel',
+
 )
 SLOT_WEATHER_FIELD_WIND_MULTIPLIER = SlotDecl(
     id='weather.field.wind_multiplier',
-    on='global',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=1.0, maximum=100.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='provided_by_external_writer',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.0,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='at_least_one_multiplier',
+
+    external_source='outside_slice:unified_weather_field.feature_multiplier',
+
+    external_writer='outside_slice:unified_weather_field.feature_multiplier',
+
 )
 SLOT_WEATHER_FIELD_WIND_PERTURBATION = SlotDecl(
     id='weather.field.wind_perturbation',
-    on='global',
+    on='lattice.chunk',
     persist='external',
     domain=ValueDomain(kind="float", minimum=-2.0, maximum=2.0, unit='dimensionless'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='provided_by_external_writer',
+    quantization='ieee754_binary64',
+    metric='absolute_difference',
+    epsilon=0.05,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='unified_field_channel_composite',
+
+    external_source='outside_slice:unified_weather_field.wind_channel',
+
+    external_writer='outside_slice:unified_weather_field.wind_channel',
+
 )
 SLOT_WORLD_CLOCK_TICK = SlotDecl(
     id='world.clock.tick',
     on='global',
     persist='external',
     domain=ValueDomain(kind="int", bits=64, minimum=None, maximum=None, unit='tick'),
-    permissions=Permissions(observe=True),
+    permissions=Permissions(intervene=False, observe=True, record=True),
+    role='persistent_state',
+    schedule='on_clock_advance',
+    quantization='exact_integer',
+    metric='discrete',
+    epsilon=0.0,
+    access_interventions=(),
+    research_trace=True,
+    observation_protocols=('research.full.v1', 'agent.weather.v1'),
+
+    valid_domain='nonnegative_integer_tick',
+
+    external_source='not_applicable:world_clock_state',
+
+    external_writer='time.world_clock',
+
 )
 
 # ── 实现包装（ctx → 方程关键字参数）─────────────────────
@@ -1278,6 +1686,12 @@ MECHANISM_0 = MechanismDecl(
             slot='weather.chunk.sea_level_temperature_c',
             argument='sea_level_temperature',
             lag=0,
+            analysis_role='inverse',
+            valid_domain='temperature_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=2.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_0,
@@ -1295,6 +1709,19 @@ MECHANISM_0 = MechanismDecl(
         'weather.parameter.latitude.output_max_deg',
     ),
     witnesses=WITNESSES_0,
+    boundary_cases=(
+        'sea_level_temperature_at_or_below_input_min:output_max',
+        'sea_level_temperature_at_or_above_input_max:output_min',
+        'finite_interior_input:linear_interpolation',
+    ),
+
+    param_arguments=(
+        ('weather.parameter.latitude.input_min_c', 'input_min'),
+        ('weather.parameter.latitude.input_max_c', 'input_max'),
+        ('weather.parameter.latitude.output_min_deg', 'output_min'),
+        ('weather.parameter.latitude.output_max_deg', 'output_max'),
+    ),
+
 )
 
 MECHANISM_1 = MechanismDecl(
@@ -1305,11 +1732,23 @@ MECHANISM_1 = MechanismDecl(
             slot='weather.chunk.annual_mean_temperature_c',
             argument='annual_temperature',
             lag=0,
+            analysis_role='inverse',
+            valid_domain='temperature_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=0.65,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.chunk.annual_rainfall_mm_per_year',
             argument='annual_rainfall',
             lag=0,
+            analysis_role='inverse',
+            valid_domain='annual_rainfall_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=0.002,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_1,
@@ -1333,6 +1772,25 @@ MECHANISM_1 = MechanismDecl(
         'weather.parameter.seasonal_amplitude.output_max_c',
     ),
     witnesses=WITNESSES_1,
+    boundary_cases=(
+        'rain_factor_below_-0.5:clamp_to_-0.5',
+        'rain_factor_above_1.0:clamp_to_1.0',
+        'amplitude_below_output_min:clamp_to_output_min',
+        'amplitude_above_output_max:clamp_to_output_max',
+        'finite_interior_inputs:continuous_formula',
+    ),
+
+    param_arguments=(
+        ('weather.parameter.seasonal_amplitude.input_min_c', 'input_temp_min'),
+        ('weather.parameter.seasonal_amplitude.input_max_c', 'input_temp_max'),
+        ('weather.parameter.seasonal_amplitude.cold_endpoint_c', 'cold_endpoint'),
+        ('weather.parameter.seasonal_amplitude.hot_endpoint_c', 'hot_endpoint'),
+        ('weather.parameter.seasonal_amplitude.rain_reference_mm_per_year', 'rain_reference'),
+        ('weather.parameter.seasonal_amplitude.rain_bonus_c', 'rain_bonus_scale'),
+        ('weather.parameter.seasonal_amplitude.output_min_c', 'output_min'),
+        ('weather.parameter.seasonal_amplitude.output_max_c', 'output_max'),
+    ),
+
 )
 
 MECHANISM_2 = MechanismDecl(
@@ -1343,6 +1801,12 @@ MECHANISM_2 = MechanismDecl(
             slot='weather.chunk.seasonal_temperature_amplitude_c',
             argument='seasonal_amplitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='seasonal_amplitude_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=0.5,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_2,
@@ -1353,6 +1817,15 @@ MECHANISM_2 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=('world.parameter.diurnal_to_seasonal_ratio',),
     witnesses=WITNESSES_2,
+    boundary_cases=(
+        'zero_amplitude:zero_output',
+        'positive_amplitude:linear_scaling',
+    ),
+
+    param_arguments=(
+        ('world.parameter.diurnal_to_seasonal_ratio', 'diurnal_to_seasonal_ratio'),
+    ),
+
 )
 
 MECHANISM_3 = MechanismDecl(
@@ -1363,6 +1836,12 @@ MECHANISM_3 = MechanismDecl(
             slot='weather.chunk.seasonal_temperature_amplitude_c',
             argument='seasonal_amplitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='seasonal_amplitude_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=0.4,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_3,
@@ -1373,6 +1852,15 @@ MECHANISM_3 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=('world.parameter.humidity_seasonal_scale',),
     witnesses=WITNESSES_3,
+    boundary_cases=(
+        'zero_amplitude:zero_output',
+        'positive_amplitude:linear_scaling',
+    ),
+
+    param_arguments=(
+        ('world.parameter.humidity_seasonal_scale', 'humidity_seasonal_scale'),
+    ),
+
 )
 
 MECHANISM_4 = MechanismDecl(
@@ -1383,6 +1871,12 @@ MECHANISM_4 = MechanismDecl(
             slot='weather.chunk.seasonal_temperature_amplitude_c',
             argument='seasonal_amplitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='seasonal_amplitude_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=0.4,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_4,
@@ -1397,6 +1891,16 @@ MECHANISM_4 = MechanismDecl(
         'world.parameter.humidity_diurnal_scale',
     ),
     witnesses=WITNESSES_4,
+    boundary_cases=(
+        'zero_amplitude:zero_output',
+        'positive_amplitude:linear_scaling',
+    ),
+
+    param_arguments=(
+        ('world.parameter.diurnal_to_seasonal_ratio', 'diurnal_to_seasonal_ratio'),
+        ('world.parameter.humidity_diurnal_scale', 'humidity_diurnal_scale'),
+    ),
+
 )
 
 MECHANISM_5 = MechanismDecl(
@@ -1407,6 +1911,12 @@ MECHANISM_5 = MechanismDecl(
             slot='weather.chunk.annual_rainfall_mm_per_year',
             argument='annual_rainfall',
             lag=0,
+            analysis_role='forward',
+            valid_domain='annual_rainfall_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=8.695652173913045e-05,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_5,
@@ -1424,6 +1934,19 @@ MECHANISM_5 = MechanismDecl(
         'world.parameter.precip_threshold_wet',
     ),
     witnesses=WITNESSES_5,
+    boundary_cases=(
+        'annual_rainfall_at_or_below_dry_reference:dry_threshold',
+        'annual_rainfall_at_or_above_wet_reference:wet_threshold',
+        'finite_interior_input:linear_interpolation',
+    ),
+
+    param_arguments=(
+        ('world.parameter.precip_annual_dry_mm', 'annual_dry'),
+        ('world.parameter.precip_annual_wet_mm', 'annual_wet'),
+        ('world.parameter.precip_threshold_dry', 'threshold_dry'),
+        ('world.parameter.precip_threshold_wet', 'threshold_wet'),
+    ),
+
 )
 
 MECHANISM_6 = MechanismDecl(
@@ -1434,6 +1957,12 @@ MECHANISM_6 = MechanismDecl(
             slot='world.clock.tick',
             argument='tick',
             lag=0,
+            analysis_role='forward',
+            valid_domain='nonnegative_integer_tick',
+            modulus_kind='jump',
+            lipschitz=None,
+            jump_bound=1.0,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_6,
@@ -1444,6 +1973,12 @@ MECHANISM_6 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=('world.parameter.game_day_ticks',),
     witnesses=WITNESSES_6,
+    boundary_cases=('zero_tick:day_one', 'positive_tick:monotonic_day'),
+
+    param_arguments=(
+        ('world.parameter.game_day_ticks', 'game_day'),
+    ),
+
 )
 
 MECHANISM_7 = MechanismDecl(
@@ -1454,6 +1989,12 @@ MECHANISM_7 = MechanismDecl(
             slot='world.clock.tick',
             argument='tick',
             lag=0,
+            analysis_role='forward',
+            valid_domain='nonnegative_integer_tick',
+            modulus_kind='jump',
+            lipschitz=None,
+            jump_bound=1.0,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_7,
@@ -1464,6 +2005,13 @@ MECHANISM_7 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=('world.parameter.game_day_ticks', 'world.parameter.days_per_year'),
     witnesses=WITNESSES_7,
+    boundary_cases=('zero_tick:zero', 'year_wraparound:modulo'),
+
+    param_arguments=(
+        ('world.parameter.game_day_ticks', 'game_day'),
+        ('world.parameter.days_per_year', 'days_per_year'),
+    ),
+
 )
 
 MECHANISM_8 = MechanismDecl(
@@ -1474,6 +2022,12 @@ MECHANISM_8 = MechanismDecl(
             slot='world.clock.tick',
             argument='tick',
             lag=0,
+            analysis_role='forward',
+            valid_domain='nonnegative_integer_tick',
+            modulus_kind='jump',
+            lipschitz=None,
+            jump_bound=24.0,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_8,
@@ -1484,6 +2038,13 @@ MECHANISM_8 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=('world.parameter.game_day_ticks', 'world.parameter.game_hour_ticks'),
     witnesses=WITNESSES_8,
+    boundary_cases=('midnight:zero', 'day_wraparound:modulo'),
+
+    param_arguments=(
+        ('world.parameter.game_day_ticks', 'game_day'),
+        ('world.parameter.game_hour_ticks', 'game_hour'),
+    ),
+
 )
 
 MECHANISM_9 = MechanismDecl(
@@ -1494,6 +2055,12 @@ MECHANISM_9 = MechanismDecl(
             slot='weather.tick.day',
             argument='day',
             lag=0,
+            analysis_role='forward',
+            valid_domain='positive_game_day',
+            modulus_kind='linear',
+            lipschitz=0.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_9,
@@ -1504,6 +2071,13 @@ MECHANISM_9 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=('world.parameter.season_length_days', 'world.parameter.seasons_per_year'),
     witnesses=WITNESSES_9,
+    boundary_cases=('day_one:spring', 'season_boundary:index_step'),
+
+    param_arguments=(
+        ('world.parameter.season_length_days', 'season_length_days'),
+        ('world.parameter.seasons_per_year', 'seasons_per_year'),
+    ),
+
 )
 
 MECHANISM_10 = MechanismDecl(
@@ -1514,6 +2088,12 @@ MECHANISM_10 = MechanismDecl(
             slot='weather.tick.day',
             argument='day',
             lag=0,
+            analysis_role='forward',
+            valid_domain='positive_game_day',
+            modulus_kind='linear',
+            lipschitz=0.017453292519943295,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_10,
@@ -1526,6 +2106,13 @@ MECHANISM_10 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=('world.parameter.season_length_days', 'world.parameter.seasons_per_year'),
     witnesses=WITNESSES_10,
+    boundary_cases=('summer_midpoint:cos_one', 'winter_midpoint:cos_minus_one'),
+
+    param_arguments=(
+        ('world.parameter.season_length_days', 'season_length_days'),
+        ('world.parameter.seasons_per_year', 'seasons_per_year'),
+    ),
+
 )
 
 MECHANISM_11 = MechanismDecl(
@@ -1536,6 +2123,12 @@ MECHANISM_11 = MechanismDecl(
             slot='weather.tick.hour_of_day',
             argument='hour',
             lag=0,
+            analysis_role='forward',
+            valid_domain='half_open_interval_0_24_hours',
+            modulus_kind='linear',
+            lipschitz=0.2617993877991494,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_11,
@@ -1546,6 +2139,12 @@ MECHANISM_11 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=('world.parameter.diurnal_peak_hour',),
     witnesses=WITNESSES_11,
+    boundary_cases=('peak_hour:cos_one', 'trough_hour:cos_minus_one'),
+
+    param_arguments=(
+        ('world.parameter.diurnal_peak_hour', 'peak_hour'),
+    ),
+
 )
 
 MECHANISM_12 = MechanismDecl(
@@ -1556,6 +2155,12 @@ MECHANISM_12 = MechanismDecl(
             slot='weather.tick.day_of_year',
             argument='day_of_year',
             lag=0,
+            analysis_role='forward',
+            valid_domain='zero_based_day_of_year',
+            modulus_kind='linear',
+            lipschitz=0.00714023231980045,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_12,
@@ -1567,6 +2172,13 @@ MECHANISM_12 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=('world.parameter.obliquity_deg', 'world.parameter.days_per_year'),
     witnesses=WITNESSES_12,
+    boundary_cases=('equinox:zero', 'solstice:max_declination'),
+
+    param_arguments=(
+        ('world.parameter.obliquity_deg', 'obliquity_deg'),
+        ('world.parameter.days_per_year', 'days_per_year'),
+    ),
+
 )
 
 MECHANISM_13 = MechanismDecl(
@@ -1577,11 +2189,23 @@ MECHANISM_13 = MechanismDecl(
             slot='weather.chunk.seasonal_temperature_amplitude_c',
             argument='amplitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='seasonal_amplitude_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.tick.season_phase_cos',
             argument='season_phase_cos',
             lag=0,
+            analysis_role='forward',
+            valid_domain='cosine_range',
+            modulus_kind='linear',
+            lipschitz=30.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_13,
@@ -1592,6 +2216,11 @@ MECHANISM_13 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_13,
+    boundary_cases=(
+        'zero_amplitude:zero_offset',
+        'cosine_extremes:plus_minus_amplitude',
+    ),
+
 )
 
 MECHANISM_14 = MechanismDecl(
@@ -1602,11 +2231,23 @@ MECHANISM_14 = MechanismDecl(
             slot='weather.chunk.diurnal_temperature_amplitude_c',
             argument='amplitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='diurnal_amplitude_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.tick.diurnal_phase_cos',
             argument='diurnal_phase_cos',
             lag=0,
+            analysis_role='forward',
+            valid_domain='cosine_range',
+            modulus_kind='linear',
+            lipschitz=20.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_14,
@@ -1617,6 +2258,11 @@ MECHANISM_14 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_14,
+    boundary_cases=(
+        'zero_amplitude:zero_offset',
+        'cosine_extremes:plus_minus_amplitude',
+    ),
+
 )
 
 MECHANISM_15 = MechanismDecl(
@@ -1627,16 +2273,34 @@ MECHANISM_15 = MechanismDecl(
             slot='weather.chunk.seasonal_humidity_amplitude_pp',
             argument='amplitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='humidity_amplitude_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.tick.season_phase_cos',
             argument='season_phase_cos',
             lag=0,
+            analysis_role='forward',
+            valid_domain='cosine_range',
+            modulus_kind='linear',
+            lipschitz=20.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.chunk.humidity_sharpness',
             argument='sharpness',
             lag=0,
+            analysis_role='forward',
+            valid_domain='nonnegative_sharpness',
+            modulus_kind='linear',
+            lipschitz=20.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_15,
@@ -1648,6 +2312,12 @@ MECHANISM_15 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_15,
+    boundary_cases=(
+        'zero_amplitude:zero_offset',
+        'sharpness_zero:cosine',
+        'sharpness_positive:tanh_compression',
+    ),
+
 )
 
 MECHANISM_16 = MechanismDecl(
@@ -1658,11 +2328,23 @@ MECHANISM_16 = MechanismDecl(
             slot='weather.chunk.diurnal_humidity_amplitude_pp',
             argument='amplitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='humidity_amplitude_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.tick.diurnal_phase_cos',
             argument='diurnal_phase_cos',
             lag=0,
+            analysis_role='forward',
+            valid_domain='cosine_range',
+            modulus_kind='linear',
+            lipschitz=20.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_16,
@@ -1673,6 +2355,8 @@ MECHANISM_16 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_16,
+    boundary_cases=('zero_amplitude:zero_offset', 'cosine_extremes:inverted'),
+
 )
 
 MECHANISM_17 = MechanismDecl(
@@ -1683,11 +2367,23 @@ MECHANISM_17 = MechanismDecl(
             slot='weather.chunk.solar_latitude_proxy_deg',
             argument='latitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_0_80_degrees',
+            modulus_kind='linear',
+            lipschitz=0.5,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.tick.solar_declination_rad',
             argument='solar_declination',
             lag=0,
+            analysis_role='forward',
+            valid_domain='solar_declination_range',
+            modulus_kind='jump',
+            lipschitz=None,
+            jump_bound=12.0,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_17,
@@ -1699,6 +2395,12 @@ MECHANISM_17 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_17,
+    boundary_cases=(
+        'equinox:twelve_noon_correction_zero',
+        'polar_day:sunrise_zero',
+        'polar_night:sunrise_twelve',
+    ),
+
 )
 
 MECHANISM_18 = MechanismDecl(
@@ -1709,11 +2411,23 @@ MECHANISM_18 = MechanismDecl(
             slot='weather.chunk.solar_latitude_proxy_deg',
             argument='latitude',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_0_80_degrees',
+            modulus_kind='linear',
+            lipschitz=0.5,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.tick.solar_declination_rad',
             argument='solar_declination',
             lag=0,
+            analysis_role='forward',
+            valid_domain='solar_declination_range',
+            modulus_kind='jump',
+            lipschitz=None,
+            jump_bound=12.0,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_18,
@@ -1725,6 +2439,12 @@ MECHANISM_18 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_18,
+    boundary_cases=(
+        'equinox:twelve_noon_correction_zero',
+        'polar_day:sunset_twenty_four',
+        'polar_night:sunset_twelve',
+    ),
+
 )
 
 MECHANISM_19 = MechanismDecl(
@@ -1735,11 +2455,23 @@ MECHANISM_19 = MechanismDecl(
             slot='weather.astronomy.sunrise_hour',
             argument='sunrise',
             lag=0,
+            analysis_role='forward',
+            valid_domain='half_open_interval_0_12_hours',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.astronomy.sunset_hour',
             argument='sunset',
             lag=0,
+            analysis_role='forward',
+            valid_domain='half_open_interval_12_24_hours',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_19,
@@ -1750,6 +2482,8 @@ MECHANISM_19 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_19,
+    boundary_cases=('polar_night:zero_daylight', 'polar_day:twenty_four_hours'),
+
 )
 
 MECHANISM_20 = MechanismDecl(
@@ -1760,21 +2494,45 @@ MECHANISM_20 = MechanismDecl(
             slot='weather.chunk.annual_mean_temperature_c',
             argument='annual_temperature',
             lag=0,
+            analysis_role='forward',
+            valid_domain='temperature_in_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.offset.seasonal_temperature_c',
             argument='seasonal_offset',
             lag=0,
+            analysis_role='forward',
+            valid_domain='bounded_by_seasonal_amplitude',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.offset.diurnal_temperature_c',
             argument='diurnal_offset',
             lag=0,
+            analysis_role='forward',
+            valid_domain='bounded_by_diurnal_amplitude',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.field.temperature_perturbation',
             argument='perturbation',
             lag=0,
+            analysis_role='forward',
+            valid_domain='unified_field_channel_composite',
+            modulus_kind='linear',
+            lipschitz=5.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_20,
@@ -1790,6 +2548,18 @@ MECHANISM_20 = MechanismDecl(
         'world.parameter.temp_bound_max_c',
     ),
     witnesses=WITNESSES_20,
+    boundary_cases=(
+        'sum_below_lower_bound:clamp_low',
+        'sum_above_upper_bound:clamp_high',
+        'finite_interior:no_clamp',
+    ),
+
+    param_arguments=(
+        ('world.parameter.temp_perturb_scale_c', 'perturb_scale'),
+        ('world.parameter.temp_bound_min_c', 'lower_bound'),
+        ('world.parameter.temp_bound_max_c', 'upper_bound'),
+    ),
+
 )
 
 MECHANISM_21 = MechanismDecl(
@@ -1800,21 +2570,45 @@ MECHANISM_21 = MechanismDecl(
             slot='weather.chunk.baseline_humidity_percent',
             argument='baseline',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_0_100_percent',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.offset.seasonal_humidity_pp',
             argument='seasonal_offset',
             lag=0,
+            analysis_role='forward',
+            valid_domain='bounded_by_humidity_amplitude',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.offset.diurnal_humidity_pp',
             argument='diurnal_offset',
             lag=0,
+            analysis_role='forward',
+            valid_domain='bounded_by_humidity_amplitude',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.field.humidity_perturbation',
             argument='perturbation',
             lag=0,
+            analysis_role='forward',
+            valid_domain='unified_field_channel_composite',
+            modulus_kind='linear',
+            lipschitz=15.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_21,
@@ -1830,6 +2624,18 @@ MECHANISM_21 = MechanismDecl(
         'world.parameter.humidity_bound_max_pp',
     ),
     witnesses=WITNESSES_21,
+    boundary_cases=(
+        'sum_below_lower_bound:clamp_low',
+        'sum_above_upper_bound:clamp_high',
+        'finite_interior:no_clamp',
+    ),
+
+    param_arguments=(
+        ('world.parameter.humidity_perturb_scale_pp', 'perturb_scale'),
+        ('world.parameter.humidity_bound_min_pp', 'lower_bound'),
+        ('world.parameter.humidity_bound_max_pp', 'upper_bound'),
+    ),
+
 )
 
 MECHANISM_22 = MechanismDecl(
@@ -1840,16 +2646,34 @@ MECHANISM_22 = MechanismDecl(
             slot='weather.chunk.baseline_wind_speed_mps',
             argument='baseline',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_0_50_mps',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.field.wind_perturbation',
             argument='perturbation',
             lag=0,
+            analysis_role='forward',
+            valid_domain='unified_field_channel_composite',
+            modulus_kind='linear',
+            lipschitz=4.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.field.wind_multiplier',
             argument='multiplier',
             lag=0,
+            analysis_role='forward',
+            valid_domain='at_least_one_multiplier',
+            modulus_kind='linear',
+            lipschitz=50.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_22,
@@ -1865,6 +2689,18 @@ MECHANISM_22 = MechanismDecl(
         'world.parameter.wind_bound_max_mps',
     ),
     witnesses=WITNESSES_22,
+    boundary_cases=(
+        'base_below_lower_bound:clamp_low',
+        'base_above_upper_bound:clamp_high',
+        'product_above_upper_bound:second_clamp',
+    ),
+
+    param_arguments=(
+        ('world.parameter.wind_perturb_scale_mps', 'perturb_scale'),
+        ('world.parameter.wind_bound_min_mps', 'lower_bound'),
+        ('world.parameter.wind_bound_max_mps', 'upper_bound'),
+    ),
+
 )
 
 MECHANISM_23 = MechanismDecl(
@@ -1875,16 +2711,34 @@ MECHANISM_23 = MechanismDecl(
             slot='weather.field.precipitation_signal',
             argument='signal',
             lag=0,
+            analysis_role='forward',
+            valid_domain='unified_field_channel_composite',
+            modulus_kind='linear',
+            lipschitz=20.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.chunk.precipitation_threshold',
             argument='threshold',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_wet_to_dry',
+            modulus_kind='linear',
+            lipschitz=20.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.chunk.mean_precip_intensity_mm_per_hour',
             argument='mean_intensity',
             lag=0,
+            analysis_role='forward',
+            valid_domain='positive_mean_intensity',
+            modulus_kind='linear',
+            lipschitz=1.9,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_23,
@@ -1899,6 +2753,17 @@ MECHANISM_23 = MechanismDecl(
         'world.parameter.precip_intensity_scale',
     ),
     witnesses=WITNESSES_23,
+    boundary_cases=(
+        'signal_at_or_below_threshold:zero',
+        'signal_above_signal_max:cap',
+        'finite_interior:linear_scaling',
+    ),
+
+    param_arguments=(
+        ('world.parameter.precip_signal_max', 'signal_max'),
+        ('world.parameter.precip_intensity_scale', 'intensity_scale'),
+    ),
+
 )
 
 MECHANISM_24 = MechanismDecl(
@@ -1909,11 +2774,23 @@ MECHANISM_24 = MechanismDecl(
             slot='weather.astronomy.daylight_hours',
             argument='daylight_hours',
             lag=0,
+            analysis_role='forward',
+            valid_domain='closed_interval_0_24_hours',
+            modulus_kind='linear',
+            lipschitz=1.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
         Parent(
             slot='weather.field.humidity_perturbation',
             argument='perturbation',
             lag=0,
+            analysis_role='forward',
+            valid_domain='unified_field_channel_composite',
+            modulus_kind='linear',
+            lipschitz=1.5,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_24,
@@ -1929,6 +2806,18 @@ MECHANISM_24 = MechanismDecl(
         'world.parameter.sunshine_bound_max_h',
     ),
     witnesses=WITNESSES_24,
+    boundary_cases=(
+        'sum_below_lower_bound:clamp_low',
+        'sum_above_upper_bound:clamp_high',
+        'finite_interior:no_clamp',
+    ),
+
+    param_arguments=(
+        ('world.parameter.sunshine_perturb_scale_h', 'perturb_scale'),
+        ('world.parameter.sunshine_bound_min_h', 'lower_bound'),
+        ('world.parameter.sunshine_bound_max_h', 'upper_bound'),
+    ),
+
 )
 
 MECHANISM_25 = MechanismDecl(
@@ -1939,6 +2828,12 @@ MECHANISM_25 = MechanismDecl(
             slot='weather.instant.temperature_c',
             argument='instant_temperature',
             lag=0,
+            analysis_role='forward',
+            valid_domain='finite_temperature_within_declared_bounds',
+            modulus_kind='linear',
+            lipschitz=0.0,
+            jump_bound=None,
+            metric='absolute_difference',
         ),
     ),
     impl=_impl_25,
@@ -1949,13 +2844,18 @@ MECHANISM_25 = MechanismDecl(
     arithmetic=Arithmetic(domain='fixed', bits=30),
     params=(),
     witnesses=WITNESSES_25,
+    boundary_cases=(
+        'rounded_temperature_at_or_below_0:snow',
+        'rounded_temperature_above_0:rain',
+    ),
+
 )
 
 # ── 模块包 ──────────────────────────────────────────────
 MODULE = ModulePack(
     id='weather',
     version='1',
-    instances=(GLOBAL,),
+    instances=(GLOBAL, CHUNK),
     parameters=(
         ParameterDecl(
             id='weather.parameter.latitude.input_min_c',
@@ -1963,6 +2863,8 @@ MODULE = ModulePack(
             minimum=-273.15,
             maximum=100.0,
             unit='degC',
+            source='data/world.json#weather.LATITUDE_T_MIN',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='weather.parameter.latitude.input_max_c',
@@ -1970,6 +2872,8 @@ MODULE = ModulePack(
             minimum=-273.15,
             maximum=100.0,
             unit='degC',
+            source='data/world.json#weather.LATITUDE_T_MAX',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='weather.parameter.latitude.output_min_deg',
@@ -1977,6 +2881,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=90.0,
             unit='degree_north',
+            source='data/world.json#weather.LATITUDE_MIN',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='weather.parameter.latitude.output_max_deg',
@@ -1984,6 +2890,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=90.0,
             unit='degree_north',
+            source='data/world.json#weather.LATITUDE_MAX',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='weather.parameter.seasonal_amplitude.input_min_c',
@@ -1991,6 +2899,8 @@ MODULE = ModulePack(
             minimum=-273.15,
             maximum=100.0,
             unit='degC',
+            source='data/world.json#weather.SEASONAL_AMP_T_MIN',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='weather.parameter.seasonal_amplitude.input_max_c',
@@ -1998,6 +2908,8 @@ MODULE = ModulePack(
             minimum=-273.15,
             maximum=100.0,
             unit='degC',
+            source='data/world.json#weather.SEASONAL_AMP_T_MAX',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='weather.parameter.seasonal_amplitude.cold_endpoint_c',
@@ -2005,6 +2917,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=100.0,
             unit='degC',
+            source='data/world.json#weather.SEASONAL_AMP_MAX',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='weather.parameter.seasonal_amplitude.hot_endpoint_c',
@@ -2012,6 +2926,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=100.0,
             unit='degC',
+            source='data/world.json#weather.SEASONAL_AMP_MIN',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='weather.parameter.seasonal_amplitude.rain_reference_mm_per_year',
@@ -2019,6 +2935,8 @@ MODULE = ModulePack(
             minimum=1.0,
             maximum=100000.0,
             unit='mm_per_year',
+            source='data/world.json#weather.SEASONAL_AMP_R_REF',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='weather.parameter.seasonal_amplitude.rain_bonus_c',
@@ -2026,6 +2944,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=100.0,
             unit='degC',
+            source='data/world.json#weather.SEASONAL_AMP_R_BONUS',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='weather.parameter.seasonal_amplitude.output_min_c',
@@ -2033,6 +2953,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=100.0,
             unit='degC',
+            source='data/world.json#weather.SEASONAL_AMP_BOUNDS[0]',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='weather.parameter.seasonal_amplitude.output_max_c',
@@ -2040,6 +2962,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=100.0,
             unit='degC',
+            source='data/world.json#weather.SEASONAL_AMP_BOUNDS[1]',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.diurnal_to_seasonal_ratio',
@@ -2047,6 +2971,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=10.0,
             unit='dimensionless',
+            source='data/world.json#weather.DIURNAL_TO_SEASONAL_RATIO',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.humidity_seasonal_scale',
@@ -2054,6 +2980,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=10.0,
             unit='dimensionless',
+            source='data/world.json#weather.HUMIDITY_SEASONAL_SCALE',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.humidity_diurnal_scale',
@@ -2061,6 +2989,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=10.0,
             unit='dimensionless',
+            source='data/world.json#weather.HUMIDITY_DIURNAL_SCALE',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.precip_annual_dry_mm',
@@ -2068,6 +2998,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=1000000.0,
             unit='mm_per_year',
+            source='data/world.json#weather.PRECIP_ANNUAL_DRY',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.precip_annual_wet_mm',
@@ -2075,6 +3007,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=1000000.0,
             unit='mm_per_year',
+            source='data/world.json#weather.PRECIP_ANNUAL_WET',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.precip_threshold_dry',
@@ -2082,6 +3016,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=1.0,
             unit='dimensionless',
+            source='data/world.json#weather.PRECIP_THRESHOLD_DRY',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.precip_threshold_wet',
@@ -2089,6 +3025,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=1.0,
             unit='dimensionless',
+            source='data/world.json#weather.PRECIP_THRESHOLD_WET',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.game_day_ticks',
@@ -2096,6 +3034,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=1000000000000.0,
             unit='tick',
+            source='code-only:ascend.config.GAME_DAY（ascend.config 代码常量）',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.days_per_year',
@@ -2103,6 +3043,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=1000000000000.0,
             unit='game_day',
+            source='derived:SEASON_LENGTH_DAYS * SEASONS_PER_YEAR',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.game_hour_ticks',
@@ -2110,6 +3052,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=1000000000000.0,
             unit='tick',
+            source='code-only:ascend.config.GAME_HOUR（ascend.config 代码常量）',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.season_length_days',
@@ -2117,6 +3061,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=1000000000000.0,
             unit='game_day',
+            source='data/world.json#weather.SEASON_LENGTH_DAYS',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.seasons_per_year',
@@ -2124,6 +3070,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=1000000000000.0,
             unit='dimensionless',
+            source='data/world.json#weather.SEASONS_PER_YEAR',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.diurnal_peak_hour',
@@ -2131,6 +3079,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=1000000000000.0,
             unit='hour',
+            source='data/world.json#weather.DIURNAL_PEAK_HOUR',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.obliquity_deg',
@@ -2138,6 +3088,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=90.0,
             unit='degree',
+            source='data/world.json#weather.OBLIQUITY_DEG',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.temp_perturb_scale_c',
@@ -2145,6 +3097,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=100.0,
             unit='degC',
+            source='data/world.json#weather.TEMP_PERTURB_SCALE',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.temp_bound_min_c',
@@ -2152,6 +3106,8 @@ MODULE = ModulePack(
             minimum=-1000000000000.0,
             maximum=1000000000000.0,
             unit='degC',
+            source='data/world.json#weather.TEMP_BOUNDS[0]',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.temp_bound_max_c',
@@ -2159,6 +3115,8 @@ MODULE = ModulePack(
             minimum=-1000000000000.0,
             maximum=1000000000000.0,
             unit='degC',
+            source='data/world.json#weather.TEMP_BOUNDS[1]',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.humidity_perturb_scale_pp',
@@ -2166,6 +3124,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=100.0,
             unit='pp',
+            source='data/world.json#weather.HUMIDITY_PERTURB_SCALE',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.humidity_bound_min_pp',
@@ -2173,6 +3133,8 @@ MODULE = ModulePack(
             minimum=-1000000000000.0,
             maximum=1000000000000.0,
             unit='pp',
+            source='data/world.json#weather.HUMIDITY_BOUNDS[0]',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.humidity_bound_max_pp',
@@ -2180,6 +3142,8 @@ MODULE = ModulePack(
             minimum=-1000000000000.0,
             maximum=1000000000000.0,
             unit='pp',
+            source='data/world.json#weather.HUMIDITY_BOUNDS[1]',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.wind_perturb_scale_mps',
@@ -2187,6 +3151,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=100.0,
             unit='mps',
+            source='data/world.json#weather.WIND_PERTURB_SCALE',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.wind_bound_min_mps',
@@ -2194,6 +3160,8 @@ MODULE = ModulePack(
             minimum=-1000000000000.0,
             maximum=1000000000000.0,
             unit='mps',
+            source='data/world.json#weather.WIND_BOUNDS[0]',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.wind_bound_max_mps',
@@ -2201,6 +3169,8 @@ MODULE = ModulePack(
             minimum=-1000000000000.0,
             maximum=1000000000000.0,
             unit='mps',
+            source='data/world.json#weather.WIND_BOUNDS[1]',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.precip_signal_max',
@@ -2208,6 +3178,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=10.0,
             unit='dimensionless',
+            source='data/world.json#weather.PRECIP_SIGNAL_MAX',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.precip_intensity_scale',
@@ -2215,6 +3187,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=100.0,
             unit='dimensionless',
+            source='data/world.json#weather.PRECIP_INTENSITY_SCALE',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.sunshine_perturb_scale_h',
@@ -2222,6 +3196,8 @@ MODULE = ModulePack(
             minimum=0.0,
             maximum=100.0,
             unit='hour',
+            source='data/world.json#weather.SUNSHINE_PERTURB_SCALE',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.sunshine_bound_min_h',
@@ -2229,6 +3205,8 @@ MODULE = ModulePack(
             minimum=-1000000000000.0,
             maximum=1000000000000.0,
             unit='hour',
+            source='data/world.json#weather.SUNSHINE_BOUNDS[0]',
+            intervention_allowed=True,
         ),
         ParameterDecl(
             id='world.parameter.sunshine_bound_max_h',
@@ -2236,6 +3214,8 @@ MODULE = ModulePack(
             minimum=-1000000000000.0,
             maximum=1000000000000.0,
             unit='hour',
+            source='data/world.json#weather.SUNSHINE_BOUNDS[1]',
+            intervention_allowed=True,
         ),
     ),
     slots=(

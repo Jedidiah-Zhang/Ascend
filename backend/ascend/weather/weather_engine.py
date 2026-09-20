@@ -21,14 +21,15 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from ascend.config import (GAME_DAY, GAME_HOUR, TILE_MAP_SIZE)
-from ascend.causal import (
-    InterventionEvaluator, InterventionTimeline,
-    PlannedIntervention, TraceLog,
-)
 from ascend.log import get_logger
 from ascend.space import (ClimateZone, WeatherParams,
                           get_climate_template)
 from ascend.time import WorldClock
+from ascend.world.research.records import TraceLog, record_from_trace
+from ascend.world.research.timeline import (
+    InterventionTimeline,
+    PlannedIntervention,
+)
 from ascend.world_tree import (AffectedParty, Event, WorldEvent)
 from ascend.world_tree import world_tree as _default_wt
 
@@ -42,7 +43,7 @@ from .events import (HumidityChange, PrecipitationStart, PrecipitationStop,
                      TemperatureChange, WindChange)
 from .field import (CH_HUMIDITY, CH_TEMPERATURE, CH_WIND, UnifiedWeatherField)
 from .features import FEATURE_TYPES
-from . import mechanisms as _mechanisms
+from ascend.world.modules import ids as _mechanisms
 from .region_tracker import RegionEvent, RegionTracker
 from .weather_field import WeatherField
 
@@ -82,13 +83,6 @@ class _ChunkWeatherBaseline:
     latitude: float
 
 
-def _registry():
-    """惰性导入全局机制注册表（打破 ascend.space ↔ ascend.weather 的 import 环）。"""
-    from ascend.causal.world import ASCEND_MECHANISMS
-
-    return ASCEND_MECHANISMS
-
-
 class WeatherEngine:
     """天气引擎 — 统一天气场解析算 + 感知层事件 + 查询 API。
 
@@ -119,8 +113,6 @@ class WeatherEngine:
         intervention_table: InterventionTimeline | None = None,
         climate_lookup=None,
         region_domain=None,
-        world_program=None,
-        wave_parallel: bool = False,
         state_store=None,
     ) -> None:
         """初始化天气引擎。
@@ -129,17 +121,13 @@ class WeatherEngine:
             clock: 世界时钟，用于读取当前 tick。
             seed: 统一天气场种子（纹理/特征/气候代理派生）。
             world_tree_arg: 可选的 WorldTree 实例（测试注入隔离）。
-            intervention_table: 干预表（干预执行器挂载点）；None = 引擎
-                惰性自建（无记录时行为与直通注册表一致）。
+            intervention_table: 干预时间线；None = 引擎惰性自建
+                （无记录时行为与直通求值一致）。
             climate_lookup: 区域观测的气候基线查询
                 ``(cx, cy) -> (年降雨量, 基准强度)``（纯派生；None = 不接
                 区域观测，未随生产装配时零事件）。
             region_domain: 区域观测的域提供者 ``() -> chunk 坐标序列``
                 （观察者声明，如玩家窗口）；None = 不产区域事件。
-            world_program: 世界程序（求值计划的唯一事实源）；None = 惰性取
-                进程内编译缓存（测试/独立使用）。
-            wave_parallel: 同波并发求值（结果与串行逐位一致；挂载研究
-                trace 时自动降级串行，保证记录顺序确定）。
             state_store: 共享帧事务存储（``runtime.state_store``）；注入后
                 ``advance`` 的事件发布与观察缓存经 ``stage_after_commit``
                 挂入帧事务（回滚的帧不留事件、不推进缓存）；None = 立即
@@ -149,8 +137,7 @@ class WeatherEngine:
         self._seed = seed
         self._wt = world_tree_arg if world_tree_arg is not None else _default_wt
         self._intervention_table = intervention_table
-        self._intervention_eval: InterventionEvaluator | None = None
-        # 研究 trace（默认关闭：未挂载 = 零开销；研究通道按需开启）
+        # 研究记录（默认关闭：未挂载 = 零开销；研究通道按需开启）
         self._trace: TraceLog | None = None
         # 查询/写入互斥：handler 线程查询（get_weather 系）与游戏线程
         # 推进（advance / register / unregister）并发安全。
@@ -165,8 +152,7 @@ class WeatherEngine:
             climate_baseline=climate_lookup,
         )
         self._region_domain = region_domain
-        self._world_program = world_program
-        self._wave_parallel = wave_parallel
+        self._core = None
         self._state_store = state_store
         self._last_season: int | None = None
         # 上一帧观察域（域移动语义：前后帧各用当时的域比较；帧事务内推
@@ -187,7 +173,7 @@ class WeatherEngine:
     @property
     def intervention_table(self) -> InterventionTimeline:
         """挂载的干预表（存档/研究 API 共用同一实例；未挂载时惰性自建）。"""
-        _, table = self._intervention()
+        table = self._intervention()
         return table
 
     @property
@@ -196,26 +182,20 @@ class WeatherEngine:
         return self._trace
 
     def enable_trace(self, capacity: int = 4096) -> TraceLog:
-        """开启研究 trace（研究者通道；与玩法事件分库）。
+        """开启研究记录（研究者通道；与玩法事件分库）。
 
-        开启后 ``evaluate_node`` 的每次求值都留下一条完整记录，
-        fail-closed：记录不完整即拒绝求值。重复调用返回同一实例。
+        开启后每次求值都留下逐机制记录（父值/阶段/输出），可重算校验。
+        重复调用返回同一实例。
         """
         if self._trace is None:
-            # 经 _intervention() 取表：它会按需建表（无注入表的引擎路径），
-            # 直接读 self._intervention_table 会跳过建表分支，导致该引擎
-            # 此后永久没有干预表（属性返回 None、commit 抛 AttributeError）。
-            _, table = self._intervention()
-            self._trace = TraceLog(_registry(), capacity=capacity)
-            self._intervention_eval = InterventionEvaluator(
-                _registry(), table, trace=self._trace,
+            self._trace = TraceLog(
+                self._weather_core().program, capacity=capacity,
             )
         return self._trace
 
     def disable_trace(self) -> None:
-        """关闭研究 trace（已记录的内容保留在日志实例上）。"""
+        """关闭研究记录（已记录的内容保留在日志实例上）。"""
         self._trace = None
-        self._intervention_eval = None
 
     # ── 完整世界状态（P4）：不可重算部分 ────────────────────────
 
@@ -400,24 +380,38 @@ class WeatherEngine:
         instance: tuple = (),
         trace_kind: str = "eval",
     ) -> object:
-        """节点求值唯一入口（含干预覆盖）。
+        """单节点求值（区域通报等回调；含干预覆盖）。
 
-        引擎内所有注册表求值（tick 派生 / chunk 合成 / 降水阈值与强度）
-        都经本方法，``region_tracker`` 亦以本方法为注入回调——同一节点
-        在任何消费路径上只有一个求值点。``WIRED_NODES`` 声明与本方法的
-        调用点由漂移巡检锁死。
+        区域通报只需要少数节点的即时值：本入口用声明直接求值
+        （``evaluate_direct``），干预覆盖按时间线解析——与主路径
+        （``_evaluate``）同一语义，但只算一个节点。
 
         Args:
-            node_id: 输出节点 ID。
-            parent_values: 父值（按调用方已解析的实例与帧提供）。
+            node_id: 输出节点/机制 ID。
+            parent_values: 父值（按父槽位 ID；调用方已解析实例与帧）。
             frame: 当前世界 tick。
             instance: 实例坐标（全局分量用空元组）。
-            trace_kind: 记录性质（"eval" 发生 / "recompute" 重算；#50）。
+            trace_kind: 记录性质（保留参数；单点求值不写记录）。
         """
-        evaluator, _ = self._intervention()
-        return evaluator.evaluate(
-            node_id, parent_values, frame=frame, instance=instance,
-            trace_kind=trace_kind,
+        del trace_kind
+        from ascend.world.runtime import evaluate_direct
+
+        timeline = self._intervention()
+        resolution = timeline.resolve_node(node_id, tuple(instance), frame)
+        if resolution.rep == "value":
+            return resolution.value
+        core = self._weather_core()
+        params = dict(core.program.parameters)
+        for parameter_id in timeline.consumed_parameters:
+            hit, value = timeline.resolve_parameter(parameter_id, frame)
+            if hit:
+                params[parameter_id] = value
+        return evaluate_direct(
+            core.program,
+            node_id,
+            parent_values,
+            tick=frame,
+            params=params,
         )
 
     def has_chunk(self, cx: int, cy: int) -> bool:
@@ -435,25 +429,21 @@ class WeatherEngine:
             return False
         return self.has_chunk(instance[0], instance[1])
 
-    def _intervention(self) -> tuple[InterventionEvaluator, InterventionTimeline]:
-        """干预执行器挂载点：覆盖感知求值器 + 干预表（惰性创建）。
+    def _intervention(self) -> InterventionTimeline:
+        """干预时间线挂载点（惰性创建；无表时引擎自建）。
 
-        无干预表时引擎自建（无记录 → 行为与直通注册表一致），并注入
-        时钟与实例存在性查询，使自建表与生产注入表行为一致。
-        惰性初始化非原子：由游戏线程单线程驱动（server/dispatcher 同线程），
-        首次调用仅在此线程发生，无需加锁。
+        绑定引擎 wired 程序（求值面 = 可干预面；校验以编译声明为唯一
+        事实源），注入时钟与实例存在性查询，使自建表与生产注入表行为
+        一致。惰性初始化非原子：由游戏线程单线程驱动（server/dispatcher
+        同线程），首次调用仅在此线程发生，无需加锁。
         """
-        if self._intervention_eval is None:
-            if self._intervention_table is None:
-                self._intervention_table = InterventionTimeline(
-                    _registry(),
-                    now=lambda: self._clock.time,
-                    instance_exists=self.instance_exists,
-                )
-            self._intervention_eval = InterventionEvaluator(
-                _registry(), self._intervention_table, trace=self._trace,
+        if self._intervention_table is None:
+            self._intervention_table = InterventionTimeline(
+                self._weather_core().program,
+                now=lambda: self._clock.time,
+                instance_exists=self.instance_exists,
             )
-        return self._intervention_eval, self._intervention_table
+        return self._intervention_table
 
     def _validate_time(self, time: "int | None") -> int:
         """校验并解析查询时刻。
@@ -507,15 +497,6 @@ class WeatherEngine:
         if hum_perturb is None:
             hum_perturb = self._field.sample(CH_HUMIDITY, world_x, world_y, now)
         return max(0.0, min(1.0, intensity + hum_perturb * 0.05))
-
-    # ── 机制图执行（生产唯一求值路径：世界程序波次计划）─────────
-
-    def _mechanism_program(self):
-        """世界程序（注入优先；未注入时取进程内编译缓存）。"""
-        if self._world_program is None:
-            from ascend.causal.program import get_default_program
-            self._world_program = get_default_program()
-        return self._world_program
 
     def _boundary_values(
         self, now: int, fields: dict[tuple[int, int], WeatherField],
@@ -575,15 +556,14 @@ class WeatherEngine:
         self, now: int, fields: dict[tuple[int, int], WeatherField],
         *, trace_kind: str = "eval",
     ) -> "tuple[dict[tuple[str, tuple], object], dict[tuple[int, int], float]]":
-        """按世界程序波次计划求值全部 wired 节点（生产唯一执行路径）。
+        """求值全部 wired 节点（新核心无状态求值；唯一执行路径）。
 
-        查询路径与驱动路径共用：同一时刻同一输入下，结果与节点顺序无关
-        （波次由微步/依赖声明导出，编译期静态校验）。``wave_parallel``
-        开启时同波并发（结果逐位一致）；挂载研究 trace 时强制串行
-        （记录顺序确定性优先）。
+        物化 chunk、注入边界与干预覆盖、一帧求值、读回机制输出；挂载研究
+        记录时逐机制捕获并登记（可重算校验）。查询路径与驱动路径共用：
+        同一时刻同一输入下结果与节点顺序无关。
 
-        ``trace_kind``（#50）：驱动推进 = "eval"；历史查询/日摘要采样等
-        事后重算 = "recompute"（记录仍然留痕，但不冒充"发生"）。
+        ``trace_kind``：驱动推进 = "eval"；历史查询/日摘要采样等事后重算
+        = "recompute"（记录仍然留痕，但不冒充"发生"）。
 
         Args:
             now: 目标时刻（tick）。
@@ -596,27 +576,121 @@ class WeatherEngine:
         Raises:
             KeyError: 边界值/父值缺失（声明漂移，fail-closed）。
         """
-        from ascend.runtime import execute_waves
-
         boundary, hum_perturb = self._boundary_values(now, fields)
-        parallel = self._wave_parallel and self._trace is None
-        if parallel:
-            self._intervention()  # 预初始化挂载点（避免并发首建）
-
-        def evaluate_cb(node_id, parent_values, *, frame, instance):
-            return self.evaluate_node(
-                node_id, parent_values, frame=frame, instance=instance,
-                trace_kind=trace_kind,
-            )
-
-        values = execute_waves(
-            self._mechanism_program(), _registry(), frame=now,
-            evaluate=evaluate_cb,
-            provide=lambda node_id, instance: boundary[(node_id, instance)],
-            instances=list(fields),
-            parallel=parallel,
+        node_overrides, instance_overrides, parameter_overrides = (
+            self._active_overrides(now, fields)
         )
+        core = self._weather_core()
+        values, traces = core.evaluate_frame(
+            now=now,
+            boundary=boundary,
+            instances=list(fields),
+            node_overrides=node_overrides,
+            instance_overrides=instance_overrides,
+            parameter_overrides=parameter_overrides,
+            trace=self._trace is not None,
+        )
+        if self._trace is not None:
+            for captured in traces:
+                self._trace.record(
+                    record_from_trace(
+                        core.program, captured, frame=now,
+                        kind=trace_kind,
+                    )
+                )
+            timeline = self._intervention()
+            for target, value in node_overrides.items():
+                self._trace.record(
+                    self._value_record(
+                        target, (), value, now, timeline, core,
+                    )
+                )
+            for target, mapping in instance_overrides.items():
+                for instance, value in mapping.items():
+                    self._trace.record(
+                        self._value_record(
+                            target, tuple(instance), value, now,
+                            timeline, core,
+                        )
+                    )
         return values, hum_perturb
+
+    def _value_record(
+        self,
+        target: str,
+        instance: tuple,
+        value: object,
+        frame: int,
+        timeline: InterventionTimeline,
+        core: object,
+    ):
+        """值干预记录（provenance 来自时间线；生成结果被替换无方程可重算）。"""
+        from ascend.world.research.records import TraceRecord
+
+        slot = core.program.slots.get(target)
+        microstep = ""
+        if slot is not None and slot.writer:
+            writer = core.program.mechanisms.get(slot.writer)
+            if writer is not None:
+                microstep = writer.when.key
+        resolution = timeline.resolve_node(target, instance, frame)
+        return TraceRecord(
+            node_id=target,
+            frame=frame,
+            instance=instance,
+            microstep=microstep,
+            mechanism_id="",
+            rep="value",
+            intervention=(
+                resolution.record.plain()
+                if resolution.record is not None
+                else None
+            ),
+            output=value,
+        )
+
+    def _weather_core(self):
+        """新核心适配器（进程内一次编译缓存）。"""
+        if self._core is None:
+            from ascend.world.modules.weather.core import WeatherCore
+            self._core = WeatherCore()
+        return self._core
+
+    def _active_overrides(
+        self, now: int, fields: dict[tuple[int, int], WeatherField],
+    ) -> "tuple[dict[str, object], dict[str, dict[tuple, object]], dict[str, object]]":
+        """本帧生效干预：按 wired 目标逐实例解析（与旧求值点同语义）。
+
+        逐目标调用 ``resolve_node`` 会为生效帧物化记录；已撤销的干预在
+        历史帧仍命中当时记录（revoke 不改写过去，WC-6.2）。
+        """
+        timeline = self._intervention()
+        core = self._weather_core()
+        node_overrides: dict[str, object] = {}
+        instance_overrides: dict[str, dict[tuple, object]] = {}
+        instances = list(fields)
+        for target in core.wired_outputs:
+            slot = core.program.slots.get(target)
+            if slot is None:
+                continue
+            if slot.on == "global":
+                resolution = timeline.resolve_node(target, (), now)
+                if resolution.rep == "value":
+                    node_overrides[target] = resolution.value
+                continue
+            for coords in instances:
+                instance = (coords[0], coords[1])
+                resolution = timeline.resolve_node(target, instance, now)
+                if resolution.rep == "value":
+                    instance_overrides.setdefault(target, {})[
+                        instance
+                    ] = resolution.value
+        parameter_overrides: dict[str, object] = {}
+        for parameter_id in timeline.consumed_parameters:
+            hit, value = timeline.resolve_parameter(parameter_id, now)
+            if hit:
+                parameter_overrides[parameter_id] = value
+        return node_overrides, instance_overrides, parameter_overrides
 
     def _params_from_values(
         self,
@@ -852,7 +926,7 @@ class WeatherEngine:
                 return None
             now = self._clock.time
             features = self._field.features
-            _, table = self._intervention()
+            table = self._intervention()
             # 单一事实源 = 注入核本身（记录只做校验/历史/回溯），
             # 因此核自然过期后 stop 仍可解除，do clear 后核也不会成为孤儿。
             core = features.get_injected(cx, cy, type_name)

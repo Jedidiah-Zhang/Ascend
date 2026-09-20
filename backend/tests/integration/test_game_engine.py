@@ -288,9 +288,9 @@ class TestWorldProcessEntry:
         monkeypatch.setattr(
             GameEngine, "_generate_initial_chunks", _REAL_GENERATE_INITIAL,
         )
-        from ascend.causal import PlannedIntervention
-        from ascend.causal.world import ASCEND_MECHANISMS
-        from ascend.weather.mechanisms import INSTANT_TEMPERATURE
+        from ascend.world.assembly import build_game_program
+        from ascend.world.research.timeline import PlannedIntervention
+        from ascend.world.modules.ids import INSTANT_TEMPERATURE
 
         engine = GameEngine(seed=42)
         try:
@@ -324,7 +324,9 @@ class TestWorldProcessEntry:
             assert engine.save_manager.get_manifest(
                 world_id,
             ).mechanism_declaration["declaration_hash"] == \
-                ASCEND_MECHANISMS.declaration_hash
+                build_game_program().declaration_settings()[
+                    "declaration_hash"
+                ]
         finally:
             engine.stop()
 
@@ -354,8 +356,8 @@ class TestWorldProcessEntry:
         monkeypatch.setattr(
             GameEngine, "_generate_initial_chunks", _REAL_GENERATE_INITIAL,
         )
-        from ascend.causal import PlannedIntervention
-        from ascend.weather.mechanisms import INSTANT_TEMPERATURE
+        from ascend.world.research.timeline import PlannedIntervention
+        from ascend.world.modules.ids import INSTANT_TEMPERATURE
 
         engine = GameEngine(seed=42)
         try:
@@ -436,7 +438,7 @@ class TestWorldProcessEntry:
     def test_load_world_rejects_declaration_mismatch(self, monkeypatch):
         """世界设置不一致：拒绝加载（fail-closed，先于昂贵的世界生成）。"""
         _patch_fast_worldgen(monkeypatch)
-        from ascend.causal.world import ASCEND_MECHANISMS
+        from ascend.world.assembly import build_game_program
 
         engine = GameEngine(seed=42)
         try:
@@ -445,7 +447,7 @@ class TestWorldProcessEntry:
             world_id = mgr.create_world("错版世界", seed=7).world_id
             manifest = mgr.get_manifest(world_id)
             manifest.mechanism_declaration = {
-                **ASCEND_MECHANISMS.declaration_settings(),
+                **build_game_program().declaration_settings(),
                 "declaration_hash": "sha256:0000",
             }
             manifest.write(mgr.manifest_path(world_id))
@@ -468,7 +470,7 @@ class TestWorldProcessEntry:
     def test_load_world_rejects_program_mismatch(self, monkeypatch):
         """世界程序身份不一致：拒绝加载（fail-closed，先于世界生成）。"""
         _patch_fast_worldgen(monkeypatch)
-        from ascend.causal.program import get_default_program
+        from ascend.world.assembly import build_game_program
 
         engine = GameEngine(seed=42)
         try:
@@ -477,7 +479,7 @@ class TestWorldProcessEntry:
             world_id = mgr.create_world("错版程序", seed=7).world_id
             manifest = mgr.get_manifest(world_id)
             manifest.world_program = {
-                **get_default_program().settings(),
+                **build_game_program().settings(),
                 "identity": "sha256:" + "00" * 32,
             }
             manifest.write(mgr.manifest_path(world_id))

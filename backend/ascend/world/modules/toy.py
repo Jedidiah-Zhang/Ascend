@@ -63,7 +63,8 @@ W0 = ModulePack(
     slots=(
         SlotDecl(
             id="toy.x", on="global", persist="state", domain=_INT,
-            permissions=_INTERVENE, writer="toy.x.advance", initial=1,
+            permissions=_INTERVENE, access_interventions=("node", "persistent"),
+            writer="toy.x.advance", initial=1,
         ),
         SlotDecl(
             id="toy.mid1", on="global", persist="state", domain=_INT,
@@ -147,7 +148,8 @@ W1 = ModulePack(
         ),
         SlotDecl(
             id="toy.med", on="global", persist="state", domain=_INT,
-            permissions=_INTERVENE, writer="toy.med.update",
+            permissions=_INTERVENE, access_interventions=("node", "persistent"),
+            writer="toy.med.update",
         ),
         SlotDecl(
             id="toy.out", on="global", persist="state", domain=_INT,
@@ -248,7 +250,7 @@ SPATIAL = ModulePack(
     instances=(
         GLOBAL,
         InstanceDecl(id="lattice.line", kind="lattice", identity="xy",
-                     size=(5,)),
+                     size=(5,), axes=("x",)),
     ),
     relations=(
         RelationDecl(
@@ -267,7 +269,8 @@ SPATIAL = ModulePack(
     slots=(
         SlotDecl(
             id="toy.u", on="lattice.line", persist="state", domain=_INT,
-            permissions=_INTERVENE, writer="toy.u.hold", initial=0,
+            permissions=_INTERVENE, access_interventions=("node", "persistent"),
+            writer="toy.u.hold", initial=0,
         ),
         SlotDecl(
             id="toy.v", on="lattice.line", persist="state", domain=_INT,

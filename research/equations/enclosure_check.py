@@ -7,6 +7,8 @@
 
 一旦该检查覆盖全部机制（P4 主体），`Σ` 即可进声明、G3 用包络计算、
 `L` 退出声明面。当前覆盖：全部已迁移机制（26 项，含合成/偏移/降水/派生/天文/模板）。
+
+生产侧 = 新核心声明程序（``export_world.build_program()``）。
 """
 
 from __future__ import annotations
@@ -14,11 +16,11 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
-from ascend.num import enclosure
-from ascend.num.enclosure import Interval
-from ascend.num.fixed import quantize
-from ascend.num.frozen_tables import TABLE_BITS
-from ascend.num.enclosure import tanh_enclosure
+from ascend.world.kernel.fixed import quantize
+from ascend.world.kernel.frozen_tables import TABLE_BITS
+from ascend.world.runtime import evaluate_direct
+
+from enclosure import Interval, tanh_enclosure
 
 
 
@@ -183,8 +185,8 @@ def _diurnal_humidity_amplitude(env: dict) -> Interval:
 
 
 def _diurnal_phase_cos(env: dict) -> Interval:
-    from ascend.num.frozen_tables import TWO_PI_Q
-    from ascend.num.enclosure import cos_enclosure
+    from ascend.world.kernel.frozen_tables import TWO_PI_Q
+    from enclosure import cos_enclosure
 
     angle = env["hour"].sub(_point(env["__peak_hour"])).scale_by_ratio(
         TWO_PI_Q, 24 << TABLE_BITS,
@@ -193,11 +195,11 @@ def _diurnal_phase_cos(env: dict) -> Interval:
 
 
 def _sunrise(env: dict, sign: int) -> Interval:
-    from ascend.num.frozen_tables import TWO_PI_Q
-    from ascend.num.enclosure import (
+    from ascend.world.kernel.frozen_tables import TWO_PI_Q
+    from enclosure import (
         acos_enclosure, degrees_enclosure, tan_enclosure,
     )
-    from ascend.num.fixed import round_half_even_div
+    from ascend.world.kernel.fixed import round_half_even_div
 
     pi_over_180 = round_half_even_div(TWO_PI_Q, 360)
     latitude_rad = env["latitude"].mul(
@@ -226,7 +228,7 @@ def _daylight(env: dict) -> Interval:
 
 def _hour_of_day(env: dict) -> Interval:
     """hour = (tick % game_day)/game_hour：整数锯齿 → 端点包络。"""
-    from ascend.num.fixed import round_half_even_div
+    from ascend.world.kernel.fixed import round_half_even_div
 
     lo, hi = env["tick"]
     gd, gh = int(env["__game_day"]), int(env["__game_hour"])
@@ -245,9 +247,9 @@ def _hour_of_day(env: dict) -> Interval:
 
 def _season_phase_cos(env: dict) -> Interval:
     """cos((progress−1.5)/S·2π)，progress = season + dos/L（整数锯齿）。"""
-    from ascend.num.enclosure import cos_enclosure
-    from ascend.num.fixed import round_half_even_div
-    from ascend.num.frozen_tables import TWO_PI_Q
+    from enclosure import cos_enclosure
+    from ascend.world.kernel.fixed import round_half_even_div
+    from ascend.world.kernel.frozen_tables import TWO_PI_Q
 
     lo, hi = env["day"]
     L = int(env["__season_length_days"])
@@ -269,9 +271,9 @@ def _season_phase_cos(env: dict) -> Interval:
 
 def _solar_declination_box(env: dict) -> Interval:
     """declination = radians(ob·sin(2π(doy − D/8)/D))，doy 整数。"""
-    from ascend.num.enclosure import sin_enclosure
-    from ascend.num.fixed import mul, quantize, round_half_even_div
-    from ascend.num.frozen_tables import TWO_PI_Q
+    from enclosure import sin_enclosure
+    from ascend.world.kernel.fixed import mul, quantize, round_half_even_div
+    from ascend.world.kernel.frozen_tables import TWO_PI_Q
 
     lo, hi = env["day_of_year"]
     D = int(env["__days_per_year"])
@@ -293,7 +295,7 @@ def _template_range(
 ) -> Interval:
     """模板查表 + 噪声线性 ramp 的包络（跨候选气候档取凸包）。"""
     from ascend.space.climate import ClimateZone, get_climate_template
-    from ascend.num.fixed import clamp as fixed_clamp, mul, quantize
+    from ascend.world.kernel.fixed import clamp as fixed_clamp, mul, quantize
 
     bits = TABLE_BITS
 
@@ -338,7 +340,7 @@ def _baseline_wind_box(env: dict) -> Interval:
 
 
 def _mean_precip_box(env: dict) -> Interval:
-    from ascend.num.fixed import quantize
+    from ascend.world.kernel.fixed import quantize
 
     from ascend.space.climate import ClimateZone, get_climate_template
 
@@ -354,7 +356,7 @@ def _mean_precip_box(env: dict) -> Interval:
 
 
 def _sharpness_box(env: dict) -> Interval:
-    from ascend.num.fixed import quantize
+    from ascend.world.kernel.fixed import quantize
 
     from ascend.space.climate import ClimateZone, get_climate_template
 
@@ -422,44 +424,43 @@ class EnclosureCheckReport:
         return not self.uncovered and not self.problems
 
 
-def _boxes_for(mechanism, registry, rng: random.Random):
-    """为机制的父节点生成随机输入盒（点盒 + 随机宽度）。"""
+def _boxes_for(mechanism, program, rng: random.Random):
+    """为机制的父槽位生成随机输入盒（点盒 + 随机宽度）。"""
     boxes: list[dict] = []
     for _ in range(24):
         box: dict = {}
         for parent in mechanism.parents:
-            node = registry.nodes[parent.parent]
-            if node.value is not None and node.value.choices:
-                box[parent.parent] = EnumBox(tuple(node.value.choices))
+            domain = program.slots[parent.slot].domain
+            if domain.choices:
+                box[parent.slot] = EnumBox(tuple(domain.choices))
                 continue
-            bounds = node.value.bounds if node.value is not None else None
+            bounds = (
+                (domain.minimum, domain.maximum)
+                if domain.minimum is not None and domain.maximum is not None
+                else None
+            )
             if bounds is None:
                 base = None
                 for witness in mechanism.witnesses:
-                    for node_id, value in witness.inputs:
-                        if node_id == parent.parent:
-                            base = value
-                            break
-                    if base is not None:
+                    value = witness.inputs.get(parent.argument)
+                    if value is not None:
+                        base = value
                         break
                 if base is None:
-                    box[parent.parent] = None
+                    box[parent.slot] = None
                     continue
-                if node.value is not None and node.value.kind == "integer":
-                    box[parent.parent] = (int(base), int(base) + 3)
+                if domain.kind == "int":
+                    box[parent.slot] = (int(base), int(base) + 3)
                 else:
                     width = max(1e-3, abs(float(base)) * 0.02)
                     lo = quantize(float(base) - width, TABLE_BITS)
                     hi = quantize(float(base) + width, TABLE_BITS)
-                    box[parent.parent] = Interval(
+                    box[parent.slot] = Interval(
                         min(lo, hi), max(lo, hi), TABLE_BITS,
                     )
                 continue
-            if node.value.kind == "integer":
-                box[parent.parent] = (int(bounds[0]), int(bounds[1]))
-                continue
-            if node.value.choices:
-                box[parent.parent] = EnumBox(tuple(node.value.choices))
+            if domain.kind == "int":
+                box[parent.slot] = (int(bounds[0]), int(bounds[1]))
                 continue
             lo, hi = bounds
             width = max(1e-6, (hi - lo) * rng.uniform(0.0, 0.05))
@@ -467,58 +468,60 @@ def _boxes_for(mechanism, registry, rng: random.Random):
             low = min(center, hi - width)
             raw_lo = quantize(low, TABLE_BITS)
             raw_hi = quantize(min(hi, low + width), TABLE_BITS)
-            box[parent.parent] = Interval(min(raw_lo, raw_hi),
-                                          max(raw_lo, raw_hi), TABLE_BITS)
+            box[parent.slot] = Interval(min(raw_lo, raw_hi),
+                                        max(raw_lo, raw_hi), TABLE_BITS)
         boxes.append(box)
     return boxes
 
 
-def check_enclosures(registry, *, seed: int = 20260918) -> EnclosureCheckReport:
+def check_enclosures(program, *, seed: int = 20260918) -> EnclosureCheckReport:
     """逐机制做包含对拍；返回报告。"""
     report = EnclosureCheckReport()
     rng = random.Random(seed)
-    params = {p.parameter_id: p.value for p in registry.parameters.values()}
+    params = dict(program.parameters)
     for mechanism_id, builder in ENCLOSURE_BUILDERS.items():
         report.samples_by_mechanism[mechanism_id] = 0
-        mechanism = next(
-            (m for m in registry.mechanisms.values()
-             if m.mechanism_id == mechanism_id), None,
-        )
+        mechanism = program.mechanisms.get(mechanism_id)
         if mechanism is None:
             report.uncovered.append(mechanism_id)
             continue
         report.checked += 1
-        for box in _boxes_for(mechanism, registry, rng):
+        for box in _boxes_for(mechanism, program, rng):
             if any(value is None for value in box.values()):
                 report.skipped += 1
                 continue
-            env = {p.argument: box[p.parent] for p in mechanism.parents}
-            for binding in mechanism.parameters:
-                env[f"__{binding.argument}"] = params[binding.parameter]
+            env = {parent.argument: box[parent.slot]
+                   for parent in mechanism.parents}
+            for parameter_id, argument in mechanism.param_arguments:
+                env[f"__{argument}"] = params[parameter_id]
             try:
                 envelope = builder(env)
             except (ZeroDivisionError, ValueError):
                 report.skipped += 1
                 continue
             for _ in range(6):
-                kwargs = {}
+                sample = {}
                 for parent in mechanism.parents:
-                    interval = box[parent.parent]
+                    interval = box[parent.slot]
                     if isinstance(interval, EnumBox):
-                        kwargs[parent.argument] = rng.choice(interval.values)
+                        sample[parent.slot] = rng.choice(interval.values)
                     elif isinstance(interval, tuple):
-                        kwargs[parent.argument] = rng.randint(*interval)
+                        sample[parent.slot] = rng.randint(*interval)
                     else:
                         raw = rng.randint(interval.lo, interval.hi)
-                        kwargs[parent.argument] = raw / (1 << TABLE_BITS)
-                for binding in mechanism.parameters:
-                    kwargs[binding.argument] = params[binding.parameter]
-                value = mechanism.function(**kwargs)
+                        sample[parent.slot] = raw / (1 << TABLE_BITS)
+                try:
+                    value = evaluate_direct(
+                        program, mechanism_id, sample, tick=0,
+                    )
+                except ValueError:
+                    report.skipped += 1
+                    continue
                 report.samples += 1
                 report.samples_by_mechanism[mechanism_id] += 1
                 if not envelope.contains(quantize(value, TABLE_BITS)):
                     report.problems.append((
-                        mechanism_id, dict(box), kwargs, value,
+                        mechanism_id, dict(box), sample, value,
                         (envelope.lo, envelope.hi),
                     ))
     return report

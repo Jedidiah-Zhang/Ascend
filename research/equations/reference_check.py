@@ -5,13 +5,13 @@
 1. **覆盖门禁**：方程字符串可求值（表达式或 ``REFERENCE_IMPLS``），
    否则报"未覆盖"（fail-closed，不允许静默跳过）；
 2. **对拍**：在 C1 见证上下文 + 见证点附近的随机抖动上，比较
-   ``registry.evaluate_mechanism``（生产）与 ``reference_value``（独立
-   参考）。类型必须一致，浮点按 1e-9 相对/绝对容差，离散输出必须相等；
-3. 引擎因域外拒绝的采样计为跳过（不掩盖：跳过数会报告）。
+   ``evaluate_direct``（新核心生产求值）与 ``reference_value``（独立
+   参考）。类型必须一致，浮点按声明容差，离散输出必须相等；
+3. 生产因域外拒绝的采样计为跳过（不掩盖：跳过数会报告）。
 
 用法：
     from reference_check import check_mechanisms
-    report = check_mechanisms(ASCEND_MECHANISMS)
+    report = check_mechanisms(export_world.build_program())
     report.problems  # [] 即通过
 """
 
@@ -21,7 +21,8 @@ import math
 import random
 from dataclasses import dataclass, field
 
-from ascend.num import diurnal
+from ascend.world.kernel import diurnal
+from ascend.world.runtime import evaluate_direct
 
 from mechanism_reference import reference_value, unresolved_names
 
@@ -93,84 +94,98 @@ def _equal(left: object, right: object, tolerance: float = 1e-9) -> bool:
     return left == right
 
 
-def _contexts(mechanism, registry, rng: random.Random, samples: int):
-    """对拍上下文：每条见证的输入 + 见证点附近的随机抖动。"""
-    contexts: list[dict] = []
+def _to_slots(mechanism, arguments: dict) -> dict:
+    """argument 视图 → 槽位视图（生产求值按父槽位 ID 给出）。"""
+    slot_of = {parent.argument: parent.slot for parent in mechanism.parents}
+    return {
+        slot_of[argument]: value
+        for argument, value in arguments.items()
+        if argument in slot_of
+    }
+
+
+def _contexts(mechanism, program, rng: random.Random, samples: int):
+    """对拍上下文：每条见证的输入 + 见证点附近的随机抖动。
+
+    返回 ``(arguments, slots)`` 对：前者按 argument 名（独立参考用），
+    后者按父槽位 ID（生产求值用）。
+    """
+    contexts: list[tuple[dict, dict]] = []
     for witness in mechanism.witnesses:
-        contexts.append(dict(witness.inputs))
+        arguments = dict(witness.inputs)
+        contexts.append((arguments, _to_slots(mechanism, arguments)))
     for _ in range(samples):
-        context: dict = {}
+        arguments: dict = {}
         for parent in mechanism.parents:
-            node = registry.nodes[parent.parent]
-            value = node.value
-            choices = tuple(value.choices) if value is not None else ()
+            domain = program.slots[parent.slot].domain
+            choices = tuple(domain.choices)
             if choices:
-                context[parent.parent] = rng.choice(choices)
+                arguments[parent.argument] = rng.choice(choices)
                 continue
-            bounds = value.bounds if value is not None else None
-            if bounds is not None:
-                lo, hi = bounds
-                if value.kind == "integer":
-                    context[parent.parent] = rng.randint(
+            lo, hi = domain.minimum, domain.maximum
+            if lo is not None and hi is not None:
+                if domain.kind == "int":
+                    arguments[parent.argument] = rng.randint(
                         math.ceil(lo), math.floor(hi),
                     )
                 elif lo == hi:
-                    context[parent.parent] = lo
+                    arguments[parent.argument] = lo
                 else:
-                    context[parent.parent] = rng.uniform(lo, hi)
+                    arguments[parent.argument] = rng.uniform(lo, hi)
                 continue
             # 无界输入：以该父在见证中的取值为中心抖动
             base = 0.0
             for witness in mechanism.witnesses:
-                for node_id, witness_value in witness.inputs:
-                    if node_id == parent.parent and isinstance(
-                            witness_value, (int, float)):
-                        base = float(witness_value)
-                        break
+                witness_value = witness.inputs.get(parent.argument)
+                if isinstance(witness_value, (int, float)):
+                    base = float(witness_value)
+                    break
             scale = max(1.0, abs(base) * 0.5)
             jitter = rng.uniform(-3.0 * scale, 3.0 * scale)
-            if value is not None and value.kind == "integer":
-                context[parent.parent] = int(base) + int(jitter)
+            if domain.kind == "int":
+                arguments[parent.argument] = int(base) + int(jitter)
             else:
-                context[parent.parent] = base + jitter
-        contexts.append(context)
+                arguments[parent.argument] = base + jitter
+        contexts.append((arguments, _to_slots(mechanism, arguments)))
     return contexts
 
 
-def check_mechanisms(registry, *, samples: int = 24, seed: int = 20260917):
+def check_mechanisms(program, *, samples: int = 24, seed: int = 20260917):
     """逐机制对拍；返回 :class:`MechanismCheckReport`。"""
     from mechanism_reference import REFERENCE_IMPLS
 
     report = MechanismCheckReport()
     rng = random.Random(seed)
     for mechanism in sorted(
-        registry.mechanisms.values(), key=lambda spec: spec.mechanism_id,
+        program.mechanisms.values(), key=lambda item: item.id,
     ):
         report.mechanisms += 1
         missing = unresolved_names(mechanism)
         if missing:
             report.uncovered.append(
-                f"{mechanism.mechanism_id}: {', '.join(missing)}"
+                f"{mechanism.id}: {', '.join(missing)}"
             )
             continue
-        if mechanism.mechanism_id in REFERENCE_IMPLS:
-            report.impl_ids.append(mechanism.mechanism_id)
+        if mechanism.id in REFERENCE_IMPLS:
+            report.impl_ids.append(mechanism.id)
         else:
-            report.expression_ids.append(mechanism.mechanism_id)
-        for context in _contexts(mechanism, registry, rng, samples):
+            report.expression_ids.append(mechanism.id)
+        for arguments, slots in _contexts(mechanism, program, rng, samples):
             report.samples += 1
             try:
-                production = registry.evaluate_mechanism(mechanism, context)
+                production = evaluate_direct(
+                    program, mechanism.id, slots, tick=0,
+                )
             except ValueError:
                 report.skipped += 1
                 continue
             reference = reference_value(
-                mechanism, context, registry.parameters,
+                mechanism, arguments, program.parameters,
             )
-            tolerance = _TOLERANCES.get(mechanism.mechanism_id, 1e-9)
+            tolerance = _TOLERANCES.get(mechanism.id, 1e-9)
             if not _equal(production, reference, tolerance):
                 report.problems.append((
-                    mechanism.mechanism_id, dict(context),
+                    mechanism.id, dict(arguments),
                     production, reference,
                 ))
     return report

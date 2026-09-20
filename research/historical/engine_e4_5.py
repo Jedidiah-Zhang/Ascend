@@ -172,7 +172,7 @@ def _e5(fast=False):
 
     # ── 2. 同 seed 双跑：基线 vs do 干预 ──
     from ascend.config import GAME_DAY, GAME_MINUTE, GAME_YEAR
-    from ascend.fate import FateAddress, address_value
+    from ascend.world.kernel import Address, address_value
     from ascend.time import WorldClock
     from ascend.weather.weather_engine import WeatherEngine
 
@@ -192,7 +192,7 @@ def _e5(fast=False):
             for purpose in ("decision", "reproduction", "social"):
                 address_value(
                     42,
-                    FateAddress("npc", purpose, ("bob",), time=5),
+                    Address("npc", purpose, ("bob",), time=5),
                     minimum=0,
                     maximum=2**32 - 1,
                 )

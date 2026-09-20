@@ -443,6 +443,18 @@ class TestSnapshot:
         with pytest.raises(ValueError):
             WorldProcess.restore(program, snapshot)
 
+    def test_restore_continues_identically_with_lag_two(self):
+        program = compile_world(
+            WorldSpec(modules=(_lag_pack(),), schedule=Schedule())
+        )
+        process = WorldProcess(program)
+        for _ in range(4):
+            process.step()
+        restored = WorldProcess.restore(program, process.snapshot())
+        process.step()
+        restored.step()
+        assert restored.committed("t.h") == process.committed("t.h")
+
     def test_snapshot_excludes_derived(self):
         program = compile_world(
             WorldSpec(

@@ -19,14 +19,39 @@ from ascend.weather.events import (
 )
 
 
+_WEATHER_PROGRAM = None
+_FULL_PROGRAM = None
+
+
 def _node_evaluate(node_id, parents, *, frame=0, instance=()):
-    """测试用节点求值入口（直连注册表；生产路径见 WeatherEngine.evaluate_node）。"""
-    from ascend.causal.world import ASCEND_MECHANISMS
-    return ASCEND_MECHANISMS.evaluate(node_id, parents)
+    """测试用节点求值入口（直连 wired 声明程序；生产路径见 evaluate_node）。"""
+    global _WEATHER_PROGRAM
+    from ascend.world.modules.weather.core import WeatherCore
+    from ascend.world.runtime import evaluate_direct
+
+    if _WEATHER_PROGRAM is None:
+        _WEATHER_PROGRAM = WeatherCore().program
+    return evaluate_direct(_WEATHER_PROGRAM, node_id, parents, tick=frame)
+
+
+def _full_evaluate(node_id, parents, *, frame=0, instance=()):
+    """完整声明切片求值（世界生成 + 天气；审计基线机制用）。"""
+    global _FULL_PROGRAM
+    from ascend.world import Schedule, WorldSpec, compile_world
+    from ascend.world.modules import weather, worldgen
+    from ascend.world.modules.pipeline import PIPELINE_PHASES
+    from ascend.world.runtime import evaluate_direct
+
+    if _FULL_PROGRAM is None:
+        _FULL_PROGRAM = compile_world(WorldSpec(
+            modules=(worldgen.MODULE, weather.MODULE),
+            schedule=Schedule(phases=PIPELINE_PHASES),
+        ))
+    return evaluate_direct(_FULL_PROGRAM, node_id, parents, tick=frame)
 
 
 def _precip_threshold(annual_rainfall: float) -> float:
-    from ascend.weather import mechanisms as m
+    from ascend.world.modules import ids as m
     return _node_evaluate(
         m.PRECIPITATION_THRESHOLD, {m.ANNUAL_RAINFALL: annual_rainfall},
     )
@@ -36,7 +61,7 @@ def _calibrate_precip(
     signal: float, annual_rainfall: float, mean_intensity: float = 5.0,
     threshold: float | None = None,
 ) -> float:
-    from ascend.weather import mechanisms as m
+    from ascend.world.modules import ids as m
     if threshold is None:
         threshold = _precip_threshold(annual_rainfall)
     return _node_evaluate(m.INSTANT_PRECIPITATION_INTENSITY, {
@@ -63,7 +88,7 @@ def _find_dry_chunk(engine, now: int, annual: float = 800.0):
     要求：自然阈值下干燥（信号 < 阈 − 裕度），但信号 > 0.25（阈值下界）
     ——干预把阈值压到 0.25 后该 chunk 即变成降雨。
     """
-    from ascend.weather import mechanisms as m
+    from ascend.world.modules import ids as m
     from ascend.weather.field import CH_PRECIPITATION
 
     threshold = engine.evaluate_node(
@@ -1188,7 +1213,7 @@ class TestFrameDeferredRecords:
 
     def test_rollback_leaves_no_events_and_retries(self):
         """回滚的帧不留事件、不推进观察缓存；重试帧提交后发布（不丢事件）。"""
-        from ascend.runtime.state_store import FrameStateStore
+        from ascend.world.runtime import FrameStateStore
         store = FrameStateStore()
         engine, clock, events = self._engine(store)
         _advance_weather(engine, clock.time)  # 首刻静默初始化
@@ -1381,8 +1406,8 @@ class TestWeatherEngine:
         上一分钟尚未生效，因此派生出 start。
         """
         from ascend.config import GAME_MINUTE
-        from ascend.causal import PlannedIntervention
-        from ascend.weather import mechanisms as m
+        from ascend.world.research.timeline import PlannedIntervention
+        from ascend.world.modules import ids as m
         from ascend.weather.weather_engine import WeatherEngine
 
         wt = WorldTree()
@@ -1424,8 +1449,8 @@ class TestWeatherEngine:
         当前帧阈恢复（自然干燥）、上一分钟干预生效（降雨）→ stop。
         """
         from ascend.config import GAME_MINUTE
-        from ascend.causal import PlannedIntervention
-        from ascend.weather import mechanisms as m
+        from ascend.world.research.timeline import PlannedIntervention
+        from ascend.world.modules import ids as m
         from ascend.weather.weather_engine import WeatherEngine
 
         wt = WorldTree()
@@ -1464,8 +1489,8 @@ class TestWeatherEngine:
     def test_domain_move_emits_region_start_and_stop(self):
         """观察域移动：走入既有雨带 → start；走出 → stop（各用当时的域）。"""
         from ascend.config import GAME_MINUTE
-        from ascend.causal import PlannedIntervention
-        from ascend.weather import mechanisms as m
+        from ascend.world.research.timeline import PlannedIntervention
+        from ascend.world.modules import ids as m
         from ascend.weather.weather_engine import WeatherEngine
 
         wt = WorldTree()
@@ -1508,8 +1533,8 @@ class TestWeatherEngine:
     def test_precip_type_snow_when_cold(self):
         """温度 ≤ 0°C 时降水形态为 snow。"""
         from ascend.config import GAME_MINUTE
-        from ascend.causal import PlannedIntervention
-        from ascend.weather import mechanisms as m
+        from ascend.world.research.timeline import PlannedIntervention
+        from ascend.world.modules import ids as m
         from ascend.weather.weather_engine import WeatherEngine
 
         wt = WorldTree()
@@ -2521,8 +2546,7 @@ class TestRegistryProductionAudit:
     def test_register_chunk_amplitudes_flow_through_registry(self):
         """register_chunk 落盘的振幅族 == 注册表链式求值结果。"""
         from ascend.weather.weather_engine import WeatherEngine
-        from ascend.weather import mechanisms as m
-        from ascend.causal.world import ASCEND_MECHANISMS as reg
+        from ascend.world.modules import ids as m
 
         wt = WorldTree()
         clock = WorldClock()
@@ -2531,7 +2555,7 @@ class TestRegistryProductionAudit:
             e.register_chunk(0, 0, _make_baseline(temp=5.0, rain=1000.0),
                              ClimateZone.TEMPERATE_FOREST, 10.0)
             bl = e._fields[(0, 0)].baseline
-            seasonal = reg.evaluate(m.SEASONAL_TEMPERATURE_AMPLITUDE, {
+            seasonal = _full_evaluate(m.SEASONAL_TEMPERATURE_AMPLITUDE, {
                 m.ANNUAL_TEMPERATURE: bl.temperature,
                 m.ANNUAL_RAINFALL: bl.rainfall,
             })
@@ -2541,7 +2565,7 @@ class TestRegistryProductionAudit:
                 (bl.humidity_seasonal_amp, m.SEASONAL_HUMIDITY_AMPLITUDE),
                 (bl.humidity_diurnal_amp, m.DIURNAL_HUMIDITY_AMPLITUDE),
             ):
-                expected = reg.evaluate(node, {
+                expected = _full_evaluate(node, {
                     m.SEASONAL_TEMPERATURE_AMPLITUDE: seasonal,
                 })
                 assert got == pytest.approx(expected, abs=1e-12)
@@ -2551,14 +2575,13 @@ class TestRegistryProductionAudit:
     def test_region_tracker_uses_injected_evaluator(self):
         """区域事件路径与查询路径共用注入的求值入口（无旁路公式）。"""
         from ascend.weather import UnifiedWeatherField, RegionTracker
-        from ascend.weather import mechanisms as m
-        from ascend.causal.world import ASCEND_MECHANISMS as reg
+        from ascend.world.modules import ids as m
 
         calls: list[str] = []
 
         def spy(node_id, parents, *, frame=0, instance=()):
             calls.append(node_id)
-            return reg.evaluate(node_id, parents)
+            return _node_evaluate(node_id, parents)
 
         tr = RegionTracker(
             UnifiedWeatherField(seed=42), evaluate=spy,

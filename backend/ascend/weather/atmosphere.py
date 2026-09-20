@@ -24,7 +24,7 @@ from ascend.config import (
     TEXTURE_LACUNARITY,
     TEXTURE_DRIFT_RATE,
 )
-from ascend.fate import derive
+from ascend.world.kernel import Address, address_seed
 from ascend.space import PerlinNoise
 
 # 通道标识（采样入口参数）
@@ -75,19 +75,27 @@ class TextureField:
         self._lacunarity = lacunarity
         self._drift_rate = drift_rate
         wl = wavelengths or _DEFAULT_WAVELENGTHS
-        # 每通道独立 PerlinNoise（fate 派生去相关）+ 频率（1/波长）。
-        # 派生经 ascend.fate.derive——禁止裸 seed 偏移（见
+        # 每通道独立 PerlinNoise（内核地址随机去相关）+ 频率（1/波长）。
+        # 派生经 ascend.world.kernel 的地址随机——禁止裸 seed 偏移（见
         # docs/世界框架/随机系统/设计.md 的 namespace 约定）。
         self._channels: dict[str, tuple[PerlinNoise, float]] = {}
         for i, (name, wlen) in enumerate(sorted(wl.items())):
             self._channels[name] = (
-                PerlinNoise(seed=derive(seed, "weather", "texture", "channel", name, i)),
+                PerlinNoise(seed=address_seed(seed, Address(
+                    "weather", "texture", ("channel", name, i),
+                ))),
                 1.0 / wlen,
             )
-        self._wind_noise = PerlinNoise(seed=derive(seed, "weather", "texture", "wind"))
+        self._wind_noise = PerlinNoise(seed=address_seed(
+            seed, Address("weather", "texture", ("wind",)),
+        ))
         # 空间风向扰动（低频双通道，波长 = 风波长）
-        self._wind_dir_x = PerlinNoise(seed=derive(seed, "weather", "texture", "wind_dir", 0))
-        self._wind_dir_y = PerlinNoise(seed=derive(seed, "weather", "texture", "wind_dir", 1))
+        self._wind_dir_x = PerlinNoise(seed=address_seed(
+            seed, Address("weather", "texture", ("wind_dir", 0)),
+        ))
+        self._wind_dir_y = PerlinNoise(seed=address_seed(
+            seed, Address("weather", "texture", ("wind_dir", 1)),
+        ))
 
     def __repr__(self) -> str:
         channels = ",".join(self._channels)

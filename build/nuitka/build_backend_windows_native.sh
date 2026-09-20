@@ -41,7 +41,7 @@ python -m nuitka \
   --include-package=cryptography \
   --include-data-files="$WIN_ROOT/backend/ascend/space/*.dll=ascend/space/" \
   --include-data-files="$WIN_ROOT/backend/ascend/world_tree/schema.sqlite.sql=ascend/world_tree/" \
-  --include-data-files="$WIN_ROOT/backend/ascend/causal/declarations/*.json=ascend/causal/declarations/" \
+  --include-data-files="$WIN_ROOT/backend/ascend/world/declarations/*.json=ascend/world/declarations/" \
   --nofollow-import-to=pytest \
   --nofollow-import-to=tests \
   --product-name="Ascend" \

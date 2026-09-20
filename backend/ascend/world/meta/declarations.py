@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Callable, Mapping
 
@@ -23,6 +24,7 @@ __all__ = [
     "INSTANCE_KINDS",
     "PERSIST_CLASSES",
     "TIME_MODES",
+    "VALUE_KINDS",
     "AddressUse",
     "Arithmetic",
     "InstanceDecl",
@@ -40,6 +42,7 @@ __all__ = [
     "When",
     "Witness",
     "WorldSpec",
+    "accepts_value",
 ]
 
 INSTANCE_KINDS = ("lattice", "entity", "global")
@@ -55,6 +58,48 @@ def _require_ident(value: object, label: str) -> None:
         raise ValueError(f"{label} 必须为非空字符串: {value!r}")
     if not all(part and part[0].islower() for part in value.split(".")):
         raise ValueError(f"{label} 必须为点分小写标识: {value!r}")
+
+
+VALUE_KINDS = ("any", "int", "float", "bool", "enum")
+
+
+def accepts_value(
+    value: object,
+    *,
+    kind: str,
+    minimum: object | None = None,
+    maximum: object | None = None,
+    choices: tuple[object, ...] = (),
+) -> bool:
+    """值域判定（槽位 ValueDomain 与参数声明共用的单一实现）。
+
+    类型 + 有限性 + 范围 + 枚举；``any`` 只接受 JSON 标量（容器与缺失值
+    不属于标量值域）。
+    """
+    if kind == "int":
+        if not isinstance(value, int) or isinstance(value, bool):
+            return False
+    elif kind == "float":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        if not math.isfinite(float(value)):
+            return False
+    elif kind == "bool":
+        if not isinstance(value, bool):
+            return False
+    elif kind == "enum":
+        if value not in choices:
+            return False
+    else:  # any
+        if not isinstance(value, (int, float, bool, str)):
+            return False
+        if isinstance(value, float) and not math.isfinite(value):
+            return False
+    if minimum is not None and value < minimum:
+        return False
+    if maximum is not None and value > maximum:
+        return False
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +131,16 @@ class ValueDomain:
                 f"值域上下界倒置: [{self.minimum}, {self.maximum}]"
             )
 
+    def accepts(self, value: object) -> bool:
+        """值是否属于本值域（类型 + 有限性 + 范围 + 枚举；fail-closed）。
+
+        干预/参数覆盖的登记校验与终端值解析共用同一判据。
+        """
+        return accepts_value(
+            value, kind=self.kind, minimum=self.minimum,
+            maximum=self.maximum, choices=self.choices,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class Permissions:
@@ -105,6 +160,7 @@ class InstanceDecl:
         kind: 三类之一（``INSTANCE_KINDS``）。
         identity: 身份规则说明（坐标 / 稳定派生 ID / 单例）。
         size: lattice 的固定尺寸；``None`` 表示按 chunk 流式物化。
+        axes: lattice 的坐标轴名（维度 = 坐标元数）；流式 lattice 必填。
         parent: 层级父实例 ID（多分辨率）；``None`` 表示顶层。
         ratio: 相对父实例的细化倍率（``parent`` 非空时为正整数）。
         lifecycle: 实体生命期规则说明（创建/销毁条件；实体专用）。
@@ -114,6 +170,7 @@ class InstanceDecl:
     kind: str = "global"
     identity: str = "singleton"
     size: tuple[int, ...] | None = None
+    axes: tuple[str, ...] = ()
     parent: str | None = None
     ratio: int = 1
     lifecycle: str = ""
@@ -128,8 +185,25 @@ class InstanceDecl:
                 or any(type(n) is not int or n <= 0 for n in self.size)
             ):
                 raise ValueError(f"lattice 尺寸必须为正整数元组: {self.size!r}")
-        elif self.size is not None:
-            raise ValueError("只有 lattice 实例可声明 size")
+            for axis in self.axes:
+                _require_ident(axis, "lattice 坐标轴")
+            if self.size is None and not self.axes:
+                raise ValueError(
+                    "流式 lattice 必须声明坐标轴 axes（实例元数）"
+                )
+            if (
+                self.size is not None
+                and self.axes
+                and len(self.axes) != len(self.size)
+            ):
+                raise ValueError(
+                    f"axes 维数与 size 不一致: {self.axes!r} vs {self.size!r}"
+                )
+        else:
+            if self.size is not None:
+                raise ValueError("只有 lattice 实例可声明 size")
+            if self.axes:
+                raise ValueError("只有 lattice 实例可声明 axes")
         if self.parent is not None:
             if type(self.ratio) is not int or self.ratio <= 0:
                 raise ValueError(f"层级倍率必须为正整数: {self.ratio!r}")
@@ -196,6 +270,18 @@ class SlotDecl:
     writer: str | None = None
     recompute: str = ""
     initial: object = 0
+    # 研究投影元数据（P3b；缺省 = 未认证，投影期 fail-closed）
+    role: str = ""
+    schedule: str = ""
+    quantization: str = ""
+    metric: str = "absolute_difference"
+    valid_domain: str = ""
+    epsilon: float | None = None
+    external_source: str = ""
+    external_writer: str = ""
+    access_interventions: tuple[str, ...] = ()
+    research_trace: bool = False
+    observation_protocols: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _require_ident(self.id, "槽位 id")
@@ -208,11 +294,18 @@ class SlotDecl:
             raise ValueError("derived 槽位必须声明 recompute")
         if self.persist in ("parameter", "external") and self.writer:
             raise ValueError(f"{self.persist} 槽位不得声明 writer")
+        if self.epsilon is not None and self.epsilon < 0:
+            raise ValueError(f"ε 必须非负: {self.epsilon!r}")
+        if self.metric not in ("absolute_difference", "discrete"):
+            raise ValueError(f"未知误差度量: {self.metric!r}")
+        for kind in self.access_interventions:
+            if kind not in ("node", "persistent", "parameter", "field_feature"):
+                raise ValueError(f"未知干预种类: {kind!r}")
 
 
 @dataclass(frozen=True, slots=True)
 class Parent:
-    """机制的一条父引用。
+    """机制的一条父引用（含研究侧模数元数据）。
 
     Attributes:
         slot: 父槽位 ID。
@@ -220,6 +313,12 @@ class Parent:
         lag: 0 = 同帧读取（本帧更早写入，否则帧初值）；k≥1 = 帧初 k 帧前的值。
         relation: ``same``（同实例）或关系 ID（按偏移取邻居）。
         aggregation: 邻居聚合（``AGGREGATIONS``）。
+        analysis_role: 分析角色（forward/inverse/...；研究投影用）。
+        valid_domain: 父值有效域描述（研究投影用）。
+        modulus_kind: ``linear``（Lipschitz 界）或 ``jump``（有界跳变）。
+        lipschitz: 线性边的 Lipschitz 常数；``None`` = 未认证。
+        jump_bound: 跳变边的跳幅上界（jump 边必填）。
+        metric: 误差度量（``absolute_difference`` / ``discrete``）。
     """
 
     slot: str
@@ -227,6 +326,12 @@ class Parent:
     lag: int = 0
     relation: str = "same"
     aggregation: str = "identity"
+    analysis_role: str = "forward"
+    valid_domain: str = ""
+    modulus_kind: str = "linear"
+    lipschitz: float | None = None
+    jump_bound: float | None = None
+    metric: str = "absolute_difference"
 
     def __post_init__(self) -> None:
         _require_ident(self.slot, "父槽位 id")
@@ -236,6 +341,24 @@ class Parent:
             raise ValueError(f"lag 必须为非负整数: {self.lag!r}")
         if self.aggregation not in AGGREGATIONS:
             raise ValueError(f"未知聚合: {self.aggregation!r}")
+        if self.modulus_kind not in ("linear", "jump"):
+            raise ValueError(f"未知模数类型: {self.modulus_kind!r}")
+        if self.modulus_kind == "linear":
+            if self.jump_bound is not None:
+                raise ValueError("linear 边不得携带 jump_bound")
+            if self.lipschitz is not None and self.lipschitz < 0:
+                raise ValueError(
+                    f"Lipschitz 常数必须非负: {self.lipschitz!r}"
+                )
+        else:
+            if self.lipschitz is not None:
+                raise ValueError("jump 边不得携带 lipschitz")
+            if self.jump_bound is None or self.jump_bound <= 0:
+                raise ValueError(
+                    f"jump 边必须给出正 jump_bound: {self.jump_bound!r}"
+                )
+        if self.metric not in ("absolute_difference", "discrete"):
+            raise ValueError(f"未知误差度量: {self.metric!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,8 +446,10 @@ class MechanismDecl:
     address: AddressUse | None = None
     witnesses: tuple[Witness, ...] = ()
     params: tuple[str, ...] = ()
+    param_arguments: tuple[tuple[str, str], ...] = ()
     accelerated: Callable[..., object] | None = None
     scope: str = "instance"
+    boundary_cases: tuple[str, ...] = ()
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -339,6 +464,17 @@ class MechanismDecl:
             raise ValueError(f"未知机制作用域: {self.scope!r}")
         for parameter_id in self.params:
             _require_ident(parameter_id, "机制参数 id")
+        for parameter_id, argument in self.param_arguments:
+            _require_ident(parameter_id, "机制参数 id")
+            if not argument:
+                raise ValueError("参数绑定必须给出 argument")
+        if self.param_arguments:
+            declared = {item for item, _ in self.param_arguments}
+            if declared != set(self.params):
+                raise ValueError(
+                    f"param_arguments 与 params 不一致: {sorted(declared)}"
+                    f" vs {sorted(self.params)}"
+                )
 
     def outputs(self) -> tuple[str, ...]:
         """规范化的输出槽位元组。"""
@@ -366,16 +502,26 @@ class InvariantDecl:
 
 @dataclass(frozen=True, slots=True)
 class ParameterDecl:
-    """参数声明：默认值、范围、单位（值由世界装配解析）。"""
+    """参数声明：默认值、值类型、范围、单位、来源（值由世界装配解析）。"""
 
     id: str
     default: object | None = None
+    kind: str = "float"
+    choices: tuple[object, ...] = ()
     minimum: object | None = None
     maximum: object | None = None
     unit: str = ""
+    source: str = ""
+    intervention_allowed: bool = True
 
     def __post_init__(self) -> None:
         _require_ident(self.id, "参数 id")
+        if self.kind not in VALUE_KINDS:
+            raise ValueError(f"未知参数值类型: {self.kind!r}")
+        if self.kind == "enum" and not self.choices:
+            raise ValueError("enum 参数必须给出 choices")
+        if self.kind != "enum" and self.choices:
+            raise ValueError(f"只有 enum 参数可声明 choices: {self.id}")
         if self.default is None and (self.minimum is None or self.maximum is None):
             raise ValueError("无默认值的参数必须给出范围")
         if (
@@ -384,6 +530,13 @@ class ParameterDecl:
             and self.minimum > self.maximum
         ):
             raise ValueError(f"参数范围倒置: [{self.minimum}, {self.maximum}]")
+
+    def accepts(self, value: object) -> bool:
+        """值是否属于本参数声明的值域（干预覆盖校验用）。"""
+        return accepts_value(
+            value, kind=self.kind, minimum=self.minimum,
+            maximum=self.maximum, choices=self.choices,
+        )
 
 
 @dataclass(frozen=True, slots=True)

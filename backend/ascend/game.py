@@ -74,7 +74,7 @@ from ascend.time import WorldClock, GameCalendar
 from ascend.i18n import I18n, get_default
 from ascend.lifecycle import LifecycleStack
 from ascend.world_tree import world_tree, Event, AffectedParty, WorldEvent
-from ascend.fate import derive
+from ascend.world.kernel import Address, address_seed
 from ascend.save import (
     SaveManager, collect_state, aligned_time, apply_clock, apply_state,
     require_state_version, validate_world_program, validate_world_settings,
@@ -147,7 +147,7 @@ class GameEngine:
         self.clock: WorldClock = WorldClock()
         # 世界状态提交存储（帧内影子、帧边界原子发布，WC-7.6）：
         # 调度器/地形引擎/ChunkStore 序列化共享同一提交锁。
-        from ascend.runtime.state_store import FrameStateStore
+        from ascend.world.runtime import FrameStateStore
         self.state_store: FrameStateStore = FrameStateStore()
         # 世界程序（声明编译产物；启动/读档时装配，见 13 篇）。
         self.world_program = None
@@ -354,12 +354,11 @@ class GameEngine:
             # 世界设置校验（fail-closed，先于昂贵的世界生成）：
             # 声明版本不一致 = 这个世界的生成规律已经变了，用新公式
             # 继续跑旧状态会得到"合法但不属于任何已声明世界"的轨迹。
-            # 世界程序身份覆盖全部声明文件与日历刻度（见 13 篇）。
-            from ascend.causal.program import get_default_program
-            from ascend.causal.world import ASCEND_MECHANISMS
-            self.world_program = get_default_program()
+            # 世界程序身份覆盖全部声明模块、参数、内核与驱动周期。
+            from ascend.world.assembly import build_game_program
+            self.world_program = build_game_program()
             validate_world_settings(
-                manifest, ASCEND_MECHANISMS.declaration_settings(),
+                manifest, self.world_program.declaration_settings(),
             )
             validate_world_program(manifest, self.world_program.settings())
             # state 文件存在才读档恢复；新世界首次进入尚无 state
@@ -481,29 +480,18 @@ class GameEngine:
         logger.info("玩家实体就绪: %r", self.player_service)
 
         # 5b. 天气引擎（接入已加载 chunk 的天气基线）
-        # 干预时间线挂载点：单一线程安全实例注入引擎/终端/研究 API（同源）；
-        # 自带时钟（submitted_at 盖章 / 缺省帧）与实例存在性查询。
-        from ascend.causal import InterventionTimeline
-        from ascend.causal.program import get_default_program
-        from ascend.causal.world import ASCEND_MECHANISMS
+        # 干预时间线挂载点：单一事实源 = 引擎自建表（绑定 wired 程序与
+        # 世界时钟、实例存在性查询），终端/研究 API 共用同一实例。
+        from ascend.world.assembly import build_game_program
         if self.world_program is None:
-            self.world_program = get_default_program()
-        self.intervention_table = InterventionTimeline(
-            ASCEND_MECHANISMS,
-            now=lambda: self.clock.time,
-            instance_exists=lambda node, inst: (
-                self.weather_engine.instance_exists(node, inst)
-            ),
-        )
+            self.world_program = build_game_program()
         self.weather_engine = WeatherEngine(
             self.clock, seed=self.seed,
-            intervention_table=self.intervention_table,
             climate_lookup=self._climate_lookup.baseline,
             region_domain=self._region_domain,
-            world_program=self.world_program,
-            wave_parallel=True,
             state_store=self.state_store,
         )
+        self.intervention_table = self.weather_engine.intervention_table
         self._world_stack.push(
             self._unset("weather_engine", self.weather_engine.shutdown)
         )
@@ -521,23 +509,24 @@ class GameEngine:
         # 5c'. 世界程序 + 帧调度器：声明编译为执行计划（波次/内核绑定/
         # 更新点/身份），调度器按计划驱动。执行权只来自声明——订阅者
         # 不得回写世界状态（ADR-12/13）。读档路径已在设置校验前取用。
-        from ascend.runtime import FrameScheduler, apply_update_points
+        from ascend.world.runtime import FrameScheduler, bind_periods
         self._scheduler = FrameScheduler(
             clock=self.clock, store=self.state_store,
         )
-        apply_update_points(
-            self.world_program,
+        bind_periods(
+            self.world_program.schedule,
             self._scheduler,
             {
-                "weather.evaluate": self.weather_engine.advance,
-                "terrain.integrate": self.tile_state_engine.advance,
+                "minute": self.weather_engine.advance,
+                "hour": self.tile_state_engine.advance,
             },
         )
         logger.info(
-            "世界程序就绪: identity=%s waves=%d points=%d",
+            "世界程序就绪: identity=%s slots=%d mechanisms=%d periods=%s",
             self.world_program.identity,
-            len(self.world_program.waves),
-            len(self.world_program.update_points),
+            len(self.world_program.slots),
+            len(self.world_program.mechanisms),
+            [key for key, _ in self.world_program.schedule.periods],
         )
         self._world_stack.push(self._unset("_scheduler", self._scheduler.shutdown))
         self.chunk_services = ChunkServiceRegistry([
@@ -877,7 +866,9 @@ class GameEngine:
         # 确定性选取（命运织机）：同 seed 同大陆 → 同出生点。
         # 随机地址由身份派生，同 seed 双跑可复现
         # （CRN 地址纪律，见 docs/世界框架/随机系统/设计.md）。
-        return pool[derive(seed, "world", "birth_point") % len(pool)]
+        return pool[
+            address_seed(seed, Address("world", "birth_point")) % len(pool)
+        ]
 
     def _generate_initial_chunks(self, continent) -> None:
         """预生成出生点周边 INITIAL_CHUNK_RADIUS 范围的详细 tile 层。
@@ -996,13 +987,13 @@ class GameEngine:
         manifest = self._manifest
         if self.birth_chunk:
             manifest.birth_chunk = self.birth_chunk
-        # 世界设置补写：旧存档首次加载时记录当前声明版本与程序身份，
-        # 使下一次加载有可比对的事实（校验已在 _start_world 读档前完成）。
-        from ascend.causal.world import ASCEND_MECHANISMS
-        manifest.mechanism_declaration = (
-            ASCEND_MECHANISMS.declaration_settings()
-        )
+        # 世界设置补写：记录当前声明视图与程序身份，使下一次加载有可
+        # 比对的事实（校验已在 _start_world 读档前完成；旧身份存档在
+        # 校验处即被 fail-closed 拒绝，不会走到这里）。
         if self.world_program is not None:
+            manifest.mechanism_declaration = (
+                self.world_program.declaration_settings()
+            )
             manifest.world_program = self.world_program.settings()
         manifest.touch(
             self.save_manager.manifest_path(self.world_id),
@@ -1174,7 +1165,7 @@ class GameEngine:
         作废轨迹不得覆盖它（WC-9.2）。
         """
         if self._world_invalidated is not None:
-            from ascend.runtime import WorldInvalidatedError
+            from ascend.world.runtime import WorldInvalidatedError
 
             raise WorldInvalidatedError(
                 f"世界已失效，拒绝保存（轨迹作废）: {self._world_invalidated}"

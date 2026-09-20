@@ -4,12 +4,19 @@
   已在声明构造时拒绝，这里做集合级检查）；
 - ``source_digest`` / ``mechanism_digest`` / ``module_digest`` / ``kernel_digest``：
   声明 + 实现源码 + 源文件依赖的规范摘要（进世界身份，WC-1.1）。
+
+**打包身份**：打包（Nuitka，无源码）模式下 ``inspect.getsource`` 与源文件
+读取不可用；此时摘要取自随包配送的 ``declarations/impl_digests.json``
+（生成物，``research/equations/export_impl_digests.py``），保证打包身份与
+源码身份逐位一致。表缺失即 fail-closed（不静默退化）。
 """
 
 from __future__ import annotations
 
 import inspect
+import json
 from dataclasses import asdict, is_dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from ascend.world.kernel import (
@@ -23,12 +30,38 @@ from ascend.world.kernel import (
 from .declarations import MechanismDecl, ModulePack
 
 __all__ = [
+    "IMPL_DIGESTS_PATH",
+    "impl_key",
+    "kernel_source_digest",
     "kernel_digest",
     "mechanism_digest",
     "module_digest",
     "source_digest",
     "validate_module",
 ]
+
+#: 打包实现摘要表（源码不可读时的事实源；生成物随包配送）。
+IMPL_DIGESTS_PATH = (
+    Path(__file__).resolve().parents[1] / "declarations" / "impl_digests.json"
+)
+
+
+@lru_cache(maxsize=1)
+def _recorded_impl_digests() -> dict[str, str]:
+    """读取打包实现摘要表（缺文件 = 空表；查不到即 fail-closed）。"""
+    if not IMPL_DIGESTS_PATH.is_file():
+        return {}
+    payload = json.loads(IMPL_DIGESTS_PATH.read_text(encoding="utf-8"))
+    digests = payload.get("digests", {})
+    if not isinstance(digests, dict):
+        raise ValueError(f"实现摘要表格式非法: {IMPL_DIGESTS_PATH}")
+    return {str(key): str(value) for key, value in digests.items()}
+
+
+def impl_key(function: object) -> str:
+    module = getattr(function, "__module__", "?")
+    qualname = getattr(function, "__qualname__", repr(function))
+    return f"{module}.{qualname}"
 
 
 def _duplicates(values: list[str]) -> list[str]:
@@ -83,13 +116,17 @@ def validate_module(pack: ModulePack) -> tuple[str, ...]:
 
 
 def source_digest(function: object) -> str:
-    """实现源码摘要（取不到源码时退化为模块.限定名，仍然稳定）。"""
+    """实现源码摘要（打包模式退化为记录表，缺失即拒绝）。"""
     try:
         text = inspect.getsource(function)  # type: ignore[arg-type]
     except (OSError, TypeError):
-        module = getattr(function, "__module__", "?")
-        qualname = getattr(function, "__qualname__", repr(function))
-        return digest_text(f"{module}.{qualname}")
+        recorded = _recorded_impl_digests().get(impl_key(function))
+        if recorded is None:
+            raise ValueError(
+                "打包模式缺少实现摘要（未随包配送/未重生成 "
+                "impl_digests.json）: " + impl_key(function)
+            ) from None
+        return recorded
     return digest_text(text)
 
 
@@ -150,13 +187,34 @@ def module_digest(pack: ModulePack, *, root: Path | None = None) -> str:
     return digest_object(payload)
 
 
-def kernel_digest() -> str:
-    """数值内核摘要：冻表 + 地址算法 + 定点原语源码。"""
+def kernel_source_digest() -> str:
+    """内核定点原语源码摘要（打包模式取随包记录值）。"""
     fixed_path = Path(__file__).resolve().parents[1] / "kernel" / "fixed.py"
+    try:
+        return file_digest(fixed_path)
+    except OSError:
+        return _recorded_kernel_digest()
+
+
+def kernel_digest() -> str:
+    """数值内核摘要：冻表 + 地址算法 + 定点原语源码（打包模式取记录值）。"""
     return digest_object(
         {
             "tables": TABLE_DIGEST,
             "rng": ALGORITHM,
-            "fixed": file_digest(fixed_path),
+            "fixed": kernel_source_digest(),
         }
     )
+
+
+def _recorded_kernel_digest() -> str:
+    """打包模式内核源文件摘要（记录表 ``kernel`` 项；缺失即拒绝）。"""
+    if not IMPL_DIGESTS_PATH.is_file():
+        raise ValueError(
+            "打包模式缺少内核摘要（未随包配送 impl_digests.json）"
+        )
+    payload = json.loads(IMPL_DIGESTS_PATH.read_text(encoding="utf-8"))
+    kernel = payload.get("kernel")
+    if not isinstance(kernel, str) or not kernel:
+        raise ValueError(f"实现摘要表缺少 kernel 项: {IMPL_DIGESTS_PATH}")
+    return kernel

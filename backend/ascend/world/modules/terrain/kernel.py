@@ -166,6 +166,71 @@ def evolve_reference(
     return result
 
 
+def evolve_accelerated_into(
+    states: Mapping[str, object],
+    terrain: object,
+    slope: object,
+    *,
+    precip: Sequence[Sequence[float]],
+    temp: Sequence[float],
+    dt: float = 1.0,
+    cover: object | None = None,
+) -> None:
+    """C 加速**原地**路径：零拷贝映射调用方数组（生产更新点直调）。
+
+    与 :func:`evolve_accelerated` 同一 C 内核、同一公式；入参须为可写
+    缓冲（``array('B')`` / ``array('H')`` / ``array('f')``）。语义与
+    参考实现逐位一致（内核对锁定），供地形更新点在帧事务影子数组上调用。
+    """
+    n_steps = len(temp)
+    if n_steps < 1:
+        return
+    if len(precip) != _N_STATES or any(
+        len(row) != n_steps for row in precip
+    ):
+        raise ValueError(f"precip 形状须为 {_N_STATES}×{n_steps}")
+    n = len(terrain)  # type: ignore[arg-type]
+    pointers = (ctypes.POINTER(ctypes.c_uint8) * _N_STATES)()
+    views: list[object] = []
+    for index, key in enumerate(STATE_KEYS):
+        raw = states[key]
+        if len(raw) != n:  # type: ignore[arg-type]
+            raise ValueError(f"状态 {key} 长度须为 {n}")
+        view = (ctypes.c_uint8 * n).from_buffer(raw)
+        views.append(view)  # 保活（调用期间）
+        pointers[index] = ctypes.cast(view, ctypes.POINTER(ctypes.c_uint8))
+    terrain_ptr = (ctypes.c_uint16 * n).from_buffer(terrain)
+    slope_ptr = (ctypes.c_float * n).from_buffer(slope)
+    flat_precip = [0.0] * (_N_STATES * n_steps)
+    for index in range(_N_STATES):
+        for step in range(n_steps):
+            flat_precip[index * n_steps + step] = precip[index][step]
+    cover_ptr = None
+    if cover is not None:
+        if len(cover) != n:  # type: ignore[arg-type]
+            raise ValueError(f"cover 长度须为 {n}")
+        cover_ptr = _c_arr(list(cover))  # type: ignore[arg-type]
+    _STATE.state_evolve(
+        pointers,
+        terrain_ptr,
+        slope_ptr,
+        cover_ptr,
+        n,
+        _N_STATES,
+        n_steps,
+        _c_arr(flat_precip),
+        _c_arr(list(temp)),
+        ctypes.c_double(dt),
+        _DEPOSIT_PTR,
+        _DRAIN_PTR,
+        _MELT_PTR,
+        _FREEZE_PTR,
+        _FREEZE_BELOW_PTR,
+        _MELT_ABOVE_PTR,
+        _STATE_MAX_PTR,
+    )
+
+
 def evolve_accelerated(
     states: Mapping[str, Sequence[int]],
     terrain: Sequence[int],

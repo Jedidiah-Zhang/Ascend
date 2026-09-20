@@ -18,6 +18,27 @@ from typing import Mapping, cast
 from ascend.data import load_content, split_ns_id
 from ascend.i18n import get_default
 from ascend.mathutil import clamp
+from ascend.world.runtime import evaluate_direct
+
+
+_WORLDGEN_PROGRAM = None
+
+
+def _worldgen_program():
+    """惰性编译世界生成程序（新核心；避免导入环与进程启动开销）。"""
+    global _WORLDGEN_PROGRAM
+    if _WORLDGEN_PROGRAM is None:
+        from ascend.world import Schedule, WorldSpec, compile_world
+        from ascend.world.modules import worldgen
+        from ascend.world.modules.pipeline import PIPELINE_PHASES
+
+        _WORLDGEN_PROGRAM = compile_world(
+            WorldSpec(
+                modules=(worldgen.MODULE,),
+                schedule=Schedule(phases=PIPELINE_PHASES),
+            )
+        )
+    return _WORLDGEN_PROGRAM
 
 _I18N = get_default()
 
@@ -235,11 +256,9 @@ def sea_level_temperature(latitude_noise: float) -> float:
     Raises:
         ValueError: 输入越出节点声明值域（fail-closed）。
     """
-    from ascend.causal.world import ASCEND_MECHANISMS
+    from ascend.world.modules.ids import LATITUDE_NOISE, SEA_LEVEL_TEMPERATURE
 
-    from .mechanisms import LATITUDE_NOISE, SEA_LEVEL_TEMPERATURE
-
-    return cast(float, ASCEND_MECHANISMS.evaluate(
+    return cast(float, evaluate_direct(_worldgen_program(), 
         SEA_LEVEL_TEMPERATURE,
         {LATITUDE_NOISE: latitude_noise},
     ))
@@ -262,12 +281,10 @@ def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
     Raises:
         ValueError: 输入越出节点声明值域（fail-closed）。
     """
-    from ascend.causal.world import ASCEND_MECHANISMS
-
-    from .mechanisms import (ALTITUDE, ANNUAL_TEMPERATURE,
+    from ascend.world.modules.ids import (ALTITUDE, ANNUAL_TEMPERATURE,
                              SEA_LEVEL_TEMPERATURE)
 
-    return cast(float, ASCEND_MECHANISMS.evaluate(
+    return cast(float, evaluate_direct(_worldgen_program(), 
         ANNUAL_TEMPERATURE,
         {SEA_LEVEL_TEMPERATURE: sea_level_temp, ALTITUDE: altitude},
     ))
@@ -289,11 +306,9 @@ def rainfall_from_noise(rainfall_noise: float) -> float:
     Raises:
         ValueError: 输入越出节点声明值域（fail-closed）。
     """
-    from ascend.causal.world import ASCEND_MECHANISMS
+    from ascend.world.modules.ids import ANNUAL_RAINFALL, RAINFALL_NOISE
 
-    from .mechanisms import ANNUAL_RAINFALL, RAINFALL_NOISE
-
-    return cast(float, ASCEND_MECHANISMS.evaluate(
+    return cast(float, evaluate_direct(_worldgen_program(), 
         ANNUAL_RAINFALL,
         {RAINFALL_NOISE: rainfall_noise},
     ))
@@ -331,12 +346,10 @@ def classify(
     Raises:
         ValueError: 输入越出节点声明值域（fail-closed）。
     """
-    from ascend.causal.world import ASCEND_MECHANISMS
-
-    from .mechanisms import (ALTITUDE, ANNUAL_RAINFALL, ANNUAL_TEMPERATURE,
+    from ascend.world.modules.ids import (ALTITUDE, ANNUAL_RAINFALL, ANNUAL_TEMPERATURE,
                              CLIMATE_ZONE)
 
-    zone = ASCEND_MECHANISMS.evaluate(
+    zone = evaluate_direct(_worldgen_program(), 
         CLIMATE_ZONE,
         {
             ANNUAL_TEMPERATURE: mean_temp,
@@ -376,12 +389,10 @@ def annual_baseline(
     Returns:
         年均基线 WeatherParams。
     """
-    from ascend.causal.world import ASCEND_MECHANISMS
-
-    from .mechanisms import (BASELINE_HUMIDITY, BASELINE_WIND_SPEED,
+    from ascend.world.modules.ids import (BASELINE_HUMIDITY, BASELINE_WIND_SPEED,
                              CLIMATE_ZONE, HUMIDITY_NOISE, WIND_NOISE)
 
-    reg = ASCEND_MECHANISMS
+    program = _worldgen_program()
     temperature = apply_lapse_rate(sea_level_temp, altitude)
     zone = int(climate)
     return WeatherParams(
@@ -390,11 +401,11 @@ def annual_baseline(
         # 日照基线 = 常数 12h（天文年均）：不进入任何后续机制，属声明图外读出量
         sunshine=12.0,
         altitude=altitude,
-        humidity=cast(float, reg.evaluate(
+        humidity=cast(float, evaluate_direct(program, 
             BASELINE_HUMIDITY,
             {CLIMATE_ZONE: zone, HUMIDITY_NOISE: humidity_noise},
         )),
-        wind_speed=cast(float, reg.evaluate(
+        wind_speed=cast(float, evaluate_direct(program, 
             BASELINE_WIND_SPEED,
             {CLIMATE_ZONE: zone, WIND_NOISE: wind_noise},
         )),

@@ -14,8 +14,11 @@ chunk 分量缺省坐标用 default_chunk。任何未识别的多余参数都会
 
 from __future__ import annotations
 
-from ascend.causal import PlannedIntervention, default_duration
 from ascend.log import get_logger
+from ascend.world.research.timeline import (
+    PlannedIntervention,
+    default_duration,
+)
 
 from .result import CommandResult
 
@@ -87,15 +90,15 @@ class InterventionCommandsMixin:
         node, rest = self._pop(args)
         if node is None:
             raise ValueError(t("console.do_need_node"))
-        registry = self._intervention_table.registry
-        if node not in registry.nodes:
+        program = self._intervention_table.program
+        if node not in program.slots:
             raise ValueError(t("console.do_unknown_node", target=node))
-        node_spec = registry.nodes[node]
+        slot = program.slots[node]
         value_text, rest = self._pop(rest)
         if value_text is None:
             raise ValueError(t("console.do_need_value"))
         value = self._coerce(
-            value_text, node_spec.value.kind, node_spec.value.choices,
+            value_text, slot.domain.kind, slot.domain.choices,
         )
         frame, stop, instance = self._parse_target(
             rest, node, default_duration=default_duration("node"),
@@ -119,14 +122,15 @@ class InterventionCommandsMixin:
         param, rest = self._pop(args)
         if param is None:
             raise ValueError(t("console.do_need_param"))
-        registry = self._intervention_table.registry
-        if param not in registry.parameters:
+        declaration = self._intervention_table.parameter_decl(param)
+        if declaration is None:
             raise ValueError(t("console.do_unknown_parameter", target=param))
-        param_spec = registry.parameters[param]
         value_text, rest = self._pop(rest)
         if value_text is None:
             raise ValueError(t("console.do_need_value"))
-        value = self._coerce(value_text, param_spec.value_type)
+        value = self._coerce(
+            value_text, declaration.kind, declaration.choices,
+        )
         frame, rest = self._take_frame(rest)
         self._reject_extra(rest)
         if frame is None:
@@ -152,10 +156,11 @@ class InterventionCommandsMixin:
             raise ValueError(t("console.do_clear_usage"))
         instance: tuple = ()
         if space == "node":
-            registry = self._intervention_table.registry
-            if target not in registry.nodes:
+            program = self._intervention_table.program
+            if target not in program.slots:
                 raise ValueError(t("console.do_unknown_node", target=target))
-            if registry.nodes[target].instance_domain.kind != "global_singleton":
+            slot = program.slots[target]
+            if program.instances[slot.on].kind != "global":
                 instance, rest = self._take_instance(rest)
         elif space == "feature":
             instance, rest = self._take_instance(rest)
@@ -213,19 +218,26 @@ class InterventionCommandsMixin:
     ) -> object:
         """按目标值域类型解析值。
 
-        integer/float 域转数值；enum 域按 ``choices`` 的元素类型解析
-        （整数枚举转 int，文本枚举保持文本）；其余（string 等）保持文本。
+        int/float 域转数值；enum 域按 ``choices`` 的元素类型解析
+        （整数枚举转 int，文本枚举保持文本）；bool 域按字面量解析；
+        其余（any 等）保持文本。
         """
-        if kind == "integer":
+        if kind == "int":
             try:
                 return int(text)
             except ValueError:
-                raise ValueError(f"值 {text!r} 不属于声明值域 integer") from None
+                raise ValueError(f"值 {text!r} 不属于声明值域 int") from None
         if kind == "float":
             try:
                 return float(text)
             except ValueError:
                 raise ValueError(f"值 {text!r} 不属于声明值域 float") from None
+        if kind == "bool":
+            if text.lower() in ("1", "true", "yes", "on"):
+                return True
+            if text.lower() in ("0", "false", "no", "off"):
+                return False
+            raise ValueError(f"值 {text!r} 不属于声明值域 bool")
         if kind == "enum" and choices and all(
             isinstance(choice, int) and not isinstance(choice, bool)
             for choice in choices
@@ -286,9 +298,9 @@ class InterventionCommandsMixin:
         default_duration: int | None,
     ) -> tuple[int, int | None, tuple]:
         """解析 (生效帧, 失效帧, 实例) 三要素，多余参数一律报错。"""
-        registry = self._intervention_table.registry
-        node_spec = registry.nodes[node]
-        is_global = node_spec.instance_domain.kind == "global_singleton"
+        program = self._intervention_table.program
+        slot = program.slots[node]
+        is_global = program.instances[slot.on].kind == "global"
         rest = list(args)
         instance: tuple = ()
         if not is_global:

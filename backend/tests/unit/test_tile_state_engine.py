@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from ascend.config import GAME_HOUR
-from ascend.runtime import FrameScheduler, FrameStateStore
+from ascend.world.runtime import FrameScheduler, FrameStateStore
 from ascend.space.tile_grid import TileGrid
 from ascend.space.tile_state import TileStateEngine, state_evolve
 from ascend.space.terrain import TerrainType

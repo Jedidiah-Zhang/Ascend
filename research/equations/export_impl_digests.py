@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""从生产机制注册表生成实现内容摘要表（构建期嵌入，issue #49）。
+"""生产声明 → 打包实现摘要表（构建期嵌入；P2-3c-3）。
 
-打包（Nuitka，无源码）模式无法读取方程源码；本表在源码模式下按与运行期
-完全相同的算法计算每个机制的 ``equation_version``，随包配送，使打包身份
-与源码身份逐位一致。禁用手改：表由本脚本生成，``--check`` 为漂移门禁。
+打包（Nuitka，无源码）模式无法 ``inspect.getsource`` 实现函数、也无法读
+内核源文件；本表在源码模式下按与运行期完全相同的算法
+（``world/meta/validate.source_digest`` / ``kernel_digest``）计算每条实现与
+内核的摘要，随包配送，使打包身份与源码身份逐位一致。禁用手改：表由本
+脚本生成，``--check`` 为漂移门禁。
 """
 
 from __future__ import annotations
@@ -18,70 +20,69 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 BACKEND = ROOT / "backend"
 DEFAULT_OUT = (
-    BACKEND / "ascend" / "causal" / "declarations" / "impl_digests.json"
+    BACKEND / "ascend" / "world" / "declarations" / "impl_digests.json"
 )
 
 sys.path.insert(0, str(BACKEND))
 
-from ascend.causal.registry import _source_version, _sourceless  # noqa: E402
-from ascend.space.mechanisms import (  # noqa: E402
-    WORLD_GEN_MECHANISM_SPECS,
+from ascend.world.meta.validate import (  # noqa: E402
+    impl_key,
+    kernel_source_digest,
+    source_digest,
 )
-from ascend.weather.mechanisms import (  # noqa: E402
-    WEATHER_MECHANISM_SPECS,
+from ascend.world.modules import clock, terrain, weather, worldgen  # noqa: E402
+from ascend.world.modules.weather import engine_inputs  # noqa: E402
+
+#: 生产模块集（游戏进程 + 研究投影的全部实现来源）。
+_MODULES = (
+    clock.MODULE,
+    engine_inputs.MODULE,
+    weather.MODULE,
+    worldgen.MODULE,
+    terrain.MODULE,
 )
 
-_SPECS = WORLD_GEN_MECHANISM_SPECS + WEATHER_MECHANISM_SPECS
-
-CONTRACT_VERSION = "v0.1"
+CONTRACT_VERSION = "world-arch-v0.1"
 SCHEMA_VERSION = 1
 
 
 def content() -> str:
-    """返回实现摘要表的稳定 JSON 文本（按 mechanism_id 排序）。"""
-    if _sourceless():
-        raise RuntimeError(
-            "实现摘要表必须在源码模式生成（当前为打包/无源码模式）"
-        )
-    entries = []
-    for mechanism in sorted(_SPECS, key=lambda spec: spec.mechanism_id):
-        # 直接读声明 spec 并以 verify_table=False 计算版本：表陈旧时
-        # 注册表无法构造（fail-closed），生成器不能依赖它。
-        entries.append({
-            "mechanism_id": mechanism.mechanism_id,
-            "output": mechanism.output,
-            "equation_version": _source_version(
-                mechanism.function,
-                mechanism.source_dependencies,
-                mechanism_id=mechanism.mechanism_id,
-                output=mechanism.output,
-                verify_table=False,
-            ),
-        })
+    """返回实现摘要表的稳定 JSON 文本（按键排序）。"""
+    entries: dict[str, str] = {}
+    count = 0
+    for pack in _MODULES:
+        for mechanism in pack.mechanisms:
+            count += 1
+            entries[impl_key(mechanism.impl)] = source_digest(mechanism.impl)
+            if mechanism.accelerated is not None:
+                entries[impl_key(mechanism.accelerated)] = source_digest(
+                    mechanism.accelerated
+                )
     payload = {
         "schema_version": SCHEMA_VERSION,
         "contract_version": CONTRACT_VERSION,
-        "digests": entries,
+        "kernel": kernel_source_digest(),
+        "digests": {key: entries[key] for key in sorted(entries)},
     }
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
 def compare(path: Path = DEFAULT_OUT) -> tuple[bool, str, str | None]:
-    """比较入库摘要表与生产注册表重算值。"""
+    """比较入库摘要表与生产声明重算值。"""
     expected = content()
     if not path.exists():
         return False, f"实现摘要表不存在: {path}", None
     current = path.read_text(encoding="utf-8")
     if current == expected:
-        return True, "impl_digests.json 与生产注册表重算值一致", None
+        return True, "impl_digests.json 与生产声明重算值一致", None
     diff = "\n".join(difflib.unified_diff(
         current.splitlines(),
         expected.splitlines(),
         fromfile=f"{path} (现存)",
-        tofile=f"{path} (注册表重算)",
+        tofile=f"{path} (声明重算)",
         lineterm="",
     ))
-    return False, "impl_digests.json 已偏离生产注册表（改实现后未重生成）", diff
+    return False, "impl_digests.json 已偏离生产声明（改实现后未重生成）", diff
 
 
 def check(path: Path = DEFAULT_OUT) -> tuple[bool, str]:
@@ -92,7 +93,7 @@ def check(path: Path = DEFAULT_OUT) -> tuple[bool, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="生产机制注册表 -> 实现内容摘要表",
+        description="生产声明 -> 打包实现摘要表",
     )
     parser.add_argument("--check", action="store_true", help="仅巡检，不写文件")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="输出 JSON 路径")
@@ -111,7 +112,7 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(content(), encoding="utf-8")
     print(f"[PASS] 生成 {output}")
-    print(f"       机制 {len(_SPECS)} 条")
+    print(f"       模块 {len(_MODULES)} 个")
     return 0
 
 

@@ -26,11 +26,12 @@ graph TD
         ENT["EntityManager<br/>实体生灭/移动"]
     end
 
-    subgraph Causal["🧬 因果声明（causal/）"]
-        REG["MechanismRegistry<br/>机制注册表：C0/C1 构造期验收"]
-        IVT["InterventionTable / InterventionEvaluator<br/>干预执行器：登记·校验·覆盖求值"]
+    subgraph World["🧬 世界核心（world/）"]
+        REG["WorldProgram（compile/）<br/>声明编译：C0/C1/C2 静态校验 + 身份"]
+        IVT["InterventionTimeline（research/timeline.py）<br/>干预时间线：登记·校验·覆盖解析"]
         SNAP["equations.json → Lean<br/>研究快照（自动生成）"]
-        TRC["TraceLog / TraceRecord<br/>研究 trace：逐节点留痕·可重算"]
+        TRC["TraceLog / TraceRecord（research/records.py）<br/>研究记录：逐机制留痕·可重算"]
+        DRV["FrameScheduler（runtime/driver.py）<br/>声明周期驱动 + 帧事务"]
     end
 
     subgraph Save["💾 存档（save/）"]
@@ -47,15 +48,16 @@ graph TD
     WT_Tree --> WT_Archive
     CLK --> CAL
     GEN --> WEA
-    WEA -->|"机制登记（mechanisms.py）"| REG
-    REG -->|"声明 + wired_nodes 可达性"| IVT
-    IVT -->|"覆盖求值（evaluate_node）"| WEA
-    REG -->|"export_registry.py 生成"| SNAP
-    REG -->|"方程版本（构造期预计算）"| TRC
+    WEA -->|"wired 子集声明（modules/weather）"| REG
+    REG -->|"编译产物：wired 求值面"| IVT
+    IVT -->|"覆盖求值（resolve_node / evaluate）"| WEA
+    REG -->|"export_world.py 投影"| SNAP
+    REG -->|"机制摘要（编译期）"| TRC
     IVT -->|"求值点留痕（fail-closed）"| TRC
     IVT -->|"persist / restore（生效干预）"| SER
     WEA -->|"persist_state / restore_state（时间线 + 注入核投影）"| SER
-    REG -->|"declaration_settings（世界设置比对）"| SER
+    REG -->|"declaration_settings / settings（世界设置比对）"| SER
+    DRV -->|"周期推进（weather / terrain）"| WEA
     SM --> SER
 
     GameEngine --> WorldTree

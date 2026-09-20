@@ -23,13 +23,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from ascend.causal import (
+from ascend.log import get_logger
+from ascend.net.protocol import make_response
+from ascend.world.research.timeline import (
     InterventionTimeline,
     PlannedIntervention,
     default_duration,
 )
-from ascend.log import get_logger
-from ascend.net.protocol import make_response
 
 logger = get_logger(__name__)
 

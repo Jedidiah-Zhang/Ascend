@@ -29,7 +29,7 @@ from ascend.config import (CLIMATE_PROXY_OCTAVES,
                            CLIMATE_PROXY_TEMP_WAVELENGTH, FEATURE_BLOCK_SIZE,
                            FEATURE_MAX_RADIUS, GAME_DAY, GAME_HOUR, GAME_YEAR)
 from ascend.data import load_content, split_ns_id
-from ascend.fate import derive
+from ascend.world.kernel import Address, address_seed
 from ascend.log import get_logger
 from ascend.space import ClimateZone, PerlinNoise, classify
 
@@ -266,9 +266,9 @@ def _segment_seed(world_seed: int, bx: int, by: int, seg_idx: int) -> int:
     身份: ("weather", "feature", "block", bx, by, "segment", seg_idx)。
     段间、块间、世界间均统计独立（设计文档 namespace 约定）。
     """
-    return derive(
-        world_seed, "weather", "feature", "block", bx, by, "segment", seg_idx,
-    )
+    return address_seed(world_seed, Address(
+        "weather", "feature", ("block", bx, by, "segment", seg_idx),
+    ))
 
 
 class ClimateProxy:
@@ -300,8 +300,12 @@ class ClimateProxy:
             rain_wavelength: 降雨代理波长 (m)。
             octaves: 多八度层数。
         """
-        self._temp = PerlinNoise(derive(seed, "weather", "proxy", "temp"))
-        self._rain = PerlinNoise(derive(seed, "weather", "proxy", "rain"))
+        self._temp = PerlinNoise(address_seed(
+            seed, Address("weather", "proxy", ("temp",)),
+        ))
+        self._rain = PerlinNoise(address_seed(
+            seed, Address("weather", "proxy", ("rain",)),
+        ))
         self._temp_freq = 1.0 / temp_wavelength
         self._rain_freq = 1.0 / rain_wavelength
         self._octaves = octaves

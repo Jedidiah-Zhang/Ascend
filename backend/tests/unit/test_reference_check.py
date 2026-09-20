@@ -13,14 +13,14 @@ from pathlib import Path
 _EQ = Path(__file__).resolve().parents[3] / "research" / "equations"
 sys.path.insert(0, str(_EQ))
 
+import export_world  # noqa: E402
 import reference_check  # noqa: E402
-
-from ascend.causal.world import ASCEND_MECHANISMS  # noqa: E402
 
 
 def test_all_mechanisms_covered_and_matching():
-    report = reference_check.check_mechanisms(ASCEND_MECHANISMS)
-    assert report.mechanisms == len(ASCEND_MECHANISMS.mechanisms)
+    program = export_world.build_program()
+    report = reference_check.check_mechanisms(program)
+    assert report.mechanisms == len(program.mechanisms)
     assert report.uncovered == [], (
         f"方程字符串或参考实现未覆盖: {report.uncovered}"
     )
@@ -36,14 +36,10 @@ def test_impossible_equation_is_uncovered():
     """无法解析且无参考实现的方程必须被覆盖门禁抓住（判别力）。"""
     from dataclasses import replace
 
-    from ascend.causal.world import ASCEND_MECHANISMS
-
-    mechanism = next(
-        spec for spec in ASCEND_MECHANISMS.mechanisms.values()
-        if spec.mechanism_id == "weather.tick.derive_day.v1"
-    )
+    program = export_world.build_program()
+    mechanism = program.mechanisms["weather.tick.derive_day.v1"]
     broken = replace(
-        mechanism, mechanism_id="toy.broken.v1",
+        mechanism, id="toy.broken.v1",
         equation="this is not an expression",
     )
     from mechanism_reference import unresolved_names

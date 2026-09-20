@@ -18,6 +18,7 @@ from ascend.space.state_defs import build_param_tables as old_param_tables
 from ascend.world import LatticeField, Schedule, WorldProcess, WorldSpec, compile_world
 from ascend.world.modules import terrain
 from ascend.world.modules.terrain import kernel
+from ascend.world.modules.terrain.core import TerrainCore
 from ascend.world.modules.terrain.data import build_param_tables
 
 _GOLDEN = json.loads(
@@ -120,22 +121,19 @@ class TestTerrainModuleFrame:
         )
         payload = _GOLDEN["module"]
         inputs = payload["inputs"]
-        initial = {
-            f"terrain.{key}": LatticeField(
-                (4,), 0,
-            )
-            for key in kernel.STATE_KEYS
-        }
+        coords = (0, 0)
+        process = WorldProcess(program)
+        process.materialize("lattice.chunk", coords)
         for key, values in inputs["states"].items():
-            field = initial[f"terrain.{key}"]
+            field = LatticeField((len(values),), 0)
             for index, value in enumerate(values):
                 field.set((index,), value)
-        process = WorldProcess(program, initial_state=initial)
+            process.seed_at(f"terrain.{key}", coords, field)
         process.step(
             inputs={
-                "terrain.terrain_id": inputs["terrain_id"],
-                "terrain.slope": inputs["slope"],
-                "terrain.cover": inputs["cover"],
+                "terrain.terrain_id": {coords: inputs["terrain_id"]},
+                "terrain.slope": {coords: inputs["slope"]},
+                "terrain.cover": {coords: inputs["cover"]},
                 "weather.precip_moisture": inputs["precip_moisture"],
                 "weather.precip_snow": inputs["precip_snow"],
                 "weather.step_temp": inputs["step_temp"],
@@ -143,7 +141,8 @@ class TestTerrainModuleFrame:
             }
         )
         for slot, expected in payload["outputs"].items():
-            assert process.committed(slot).values() == tuple(expected)
+            actual = process.committed(slot).get(coords)
+            assert actual.values() == tuple(expected)
 
     def test_module_reproducible(self):
         program = compile_world(
@@ -153,19 +152,131 @@ class TestTerrainModuleFrame:
             )
         )
         payload = _GOLDEN["module"]["inputs"]
-        externals = {
-            "terrain.terrain_id": payload["terrain_id"],
-            "terrain.slope": payload["slope"],
-            "terrain.cover": payload["cover"],
+        coords = (0, 0)
+        inputs = {
+            "terrain.terrain_id": {coords: payload["terrain_id"]},
+            "terrain.slope": {coords: payload["slope"]},
+            "terrain.cover": {coords: payload["cover"]},
             "weather.precip_moisture": payload["precip_moisture"],
             "weather.precip_snow": payload["precip_snow"],
             "weather.step_temp": payload["step_temp"],
             "terrain.dt": payload["dt"],
         }
-        first = WorldProcess(program)
-        second = WorldProcess(program)
-        first.step(inputs=externals)
-        second.step(inputs=externals)
-        for key in kernel.STATE_KEYS:
-            slot = f"terrain.{key}"
-            assert first.committed(slot) == second.committed(slot)
+        results = []
+        for _ in range(2):
+            process = WorldProcess(program)
+            process.materialize("lattice.chunk", coords)
+            for key, values in payload["states"].items():
+                field = LatticeField((len(values),), 0)
+                for index, value in enumerate(values):
+                    field.set((index,), value)
+                process.seed_at(f"terrain.{key}", coords, field)
+            process.step(inputs=inputs)
+            results.append(
+                tuple(
+                    process.committed(f"terrain.{key}").get(coords)
+                    for key in kernel.STATE_KEYS
+                )
+            )
+        assert results[0] == results[1]
+
+
+class TestTerrainCoreAdapter:
+    """适配器 vs 旧 C 直调（``state_evolve_arrays``）逐位一致。"""
+
+    def _old_run(self, case: dict) -> dict[str, list[int]]:
+        from array import array
+
+        from ascend.space.tile_state import state_evolve_arrays
+
+        states = {
+            key: array("B", case["states"][key])
+            for key in kernel.STATE_KEYS
+        }
+        state_evolve_arrays(
+            states,
+            array("H", case["terrain"]),
+            array("f", case["slope"]),
+            precip=case["precip"],
+            temp=case["temp"],
+            dt=case["dt"],
+            tile_cover=case["cover"],
+        )
+        return {key: list(states[key]) for key in kernel.STATE_KEYS}
+
+    def test_evolve_matches_old_c_path(self):
+        core = TerrainCore()
+        for _ in range(6):
+            n = _RNG.choice([1, 5, 32])
+            case = {
+                "states": {
+                    key: [_RNG.randint(0, 255) for _ in range(n)]
+                    for key in kernel.STATE_KEYS
+                },
+                "terrain": [_RNG.randint(0, 7) for _ in range(n)],
+                "slope": [round(_RNG.uniform(0.0, 1.0), 4) for _ in range(n)],
+                "precip": [
+                    [round(_RNG.uniform(0.0, 5.0), 4)],
+                    [round(_RNG.uniform(0.0, 5.0), 4)],
+                    [0.0],
+                ],
+                "temp": [round(_RNG.uniform(-25.0, 35.0), 4)],
+                "dt": _RNG.choice([1.0, 1 / 24]),
+                "cover": (
+                    None
+                    if _RNG.random() < 0.5
+                    else [round(_RNG.uniform(0.0, 1.0), 4) for _ in range(n)]
+                ),
+            }
+            expected = self._old_run(case)
+            result = core.evolve(
+                case["states"],
+                case["terrain"],
+                case["slope"],
+                precip=case["precip"],
+                temp=case["temp"],
+                dt=case["dt"],
+                cover=case["cover"],
+            )
+            actual = {
+                key: list(result[key].values())
+                for key in kernel.STATE_KEYS
+            }
+            assert actual == expected, case
+
+    def test_evolve_into_multi_step(self):
+        core = TerrainCore()
+        n = 8
+        case = {
+            "states": {
+                key: [_RNG.randint(0, 60) for _ in range(n)]
+                for key in kernel.STATE_KEYS
+            },
+            "terrain": [_RNG.randint(0, 7) for _ in range(n)],
+            "slope": [0.1] * n,
+            "precip": [
+                [1.0, 2.0],
+                [0.5, 0.0],
+                [0.0, 0.0],
+            ],
+            "temp": [-5.0, 10.0],
+            "dt": 1 / 24,
+            "cover": None,
+        }
+        expected = self._old_run(case)
+        from array import array
+
+        states = {
+            key: array("B", case["states"][key])
+            for key in kernel.STATE_KEYS
+        }
+        core.evolve_into(
+            states,
+            array("H", case["terrain"]),
+            array("f", case["slope"]),
+            precip=case["precip"],
+            temp=case["temp"],
+            dt=case["dt"],
+            cover=case["cover"],
+        )
+        assert {key: list(states[key]) for key in kernel.STATE_KEYS} == expected
