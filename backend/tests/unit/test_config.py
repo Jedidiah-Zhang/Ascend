@@ -68,7 +68,7 @@ class TestGenFingerprintConstants:
             )
 
     def test_T9_fingerprint_covers_climate_thresholds(self):
-        """气候阈值（P0-03 注入 C 的常量）必须在指纹覆盖内。"""
+        """气候阈值（注入 C 的常量）必须在指纹覆盖内。"""
         for name in (
             "LAPSE_RATE", "ALPINE_ALTITUDE", "POLAR_TEMP", "DESERT_RAINFALL",
             "STEPPE_RAINFALL", "STEPPE_MIN_TEMP", "TROPICAL_TEMP",

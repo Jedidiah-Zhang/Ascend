@@ -1,12 +1,12 @@
-"""天气引擎适配器 — 新核心无状态求值（P2-2 引擎切换）。
+"""天气引擎适配器 — 新核心无状态求值（引擎切换）。
 
 引擎在任意 tick 查询天气（含历史重算），而 wired 天气机制全部是派生量
 （无状态、无 lag）：适配器每次求值构造一个临时 ``WorldProcess``——物化
 请求的 chunk、注入边界输入与干预覆盖、推进一帧、读回全部机制输出。
 
 **wired 子集**：旧 ``WIRED_NODES`` 的 20 个节点在此固化为引擎求值子集
-（其余 6 个天气机制产出基线/读出，由引擎作为边界提供）。P2-3 删除旧
-注册表后，本清单即引擎的权威求值面。
+（其余 6 个天气机制产出基线/读出，由引擎作为边界提供）。旧注册表删除
+后，本清单即引擎的权威求值面。
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def wired_weather_pack():
         slots=tuple(
             slot for slot in WEATHER_MODULE.slots if slot.id in kept_slots
         ),
-        notes="引擎求值子集（旧 WIRED_NODES）；P5 后由生成程序补全。",
+        notes="引擎求值子集（旧 WIRED_NODES）。",
     )
 
 

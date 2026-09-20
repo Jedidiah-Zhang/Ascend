@@ -1,7 +1,7 @@
 {
  "comment": "AUTO-GENERATED from the Ascend world declaration (ascend.world.compile; modules: worldgen + weather).",
  "declaration": {
-  "hash": "sha256:1902172ddffc69375830b7ec1c76f1868b68d08b14148bd54fa3549d808e9e64",
+  "hash": "sha256:c40f6678d44fd9a43f8d92c40ff79fed61d97a9a858480c719bdb5cc464185e9",
   "id": "ascend.world.scalar_formulas",
   "microstep_order": [
    "world.gen_input",
@@ -18,7 +18,7 @@
    "weather.instant_composite",
    "weather.instant_readout"
   ],
-  "slice_boundary": "Generation programs (continent / hydrology / tile / weather field) are declared in ascend/world/generation.py with content fingerprints (sources + constants + version) and P0 sampling protocols; their outputs enter this slice as declared boundary inputs. Content data (data/*.json) remains content rather than algorithm: changing it changes parameters, not the declaration.",
+  "slice_boundary": "Generation programs (continent / hydrology / tile / weather field) are declared in ascend/world/generation.py with content fingerprints (sources + constants + version) and sampling protocols; their outputs enter this slice as declared boundary inputs. Content data (data/*.json) remains content rather than algorithm: changing it changes parameters, not the declaration.",
   "version": "1",
   "wired_nodes": [
    "weather.astronomy.daylight_hours",
@@ -5051,8 +5051,8 @@
     "noise_above_1.12:clamp_to_38",
     "finite_interior:linear_mapping"
    ],
-   "equation": "clamp(latitude_noise * 25 + 10, -20, 38)（定点 Q30，issue #52）",
-   "equation_version": "sha256:1a6e6e8b1decad53d566c8633dd08edfeaea9dc66f5eeb742b9b44f083b0be34",
+   "equation": "clamp(latitude_noise * 25 + 10, -20, 38)（定点 Q30）",
+   "equation_version": "sha256:55cff25109cf0d67f80d197b529598546ee4e7f00701e6da0378d7d1005f3f48",
    "function": "ascend.world.modules.worldgen.module._impl_0",
    "output": "weather.chunk.sea_level_temperature_c",
    "parameters": [],
@@ -5082,7 +5082,7 @@
     }
    ],
    "random_sources": [],
-   "resolved_version": "sha256:6bfa86a43de76adc63b65c888b00aafbaba3e60cf298670582631ae959546e4b",
+   "resolved_version": "sha256:862049ed687f7466b2cee7001ab26464725278fe5400568b803385ca3079c12d",
    "source_dependencies": [
     "ascend/world/modules/weather/equations.py",
     "ascend/world/kernel/fixed.py",
@@ -5099,7 +5099,7 @@
    ],
    "witnesses": [
     {
-     "equation_version": "sha256:1a6e6e8b1decad53d566c8633dd08edfeaea9dc66f5eeb742b9b44f083b0be34",
+     "equation_version": "sha256:55cff25109cf0d67f80d197b529598546ee4e7f00701e6da0378d7d1005f3f48",
      "expected_outputs": [
       10.0,
       20.000000009313226

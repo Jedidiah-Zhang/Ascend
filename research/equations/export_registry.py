@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""从世界声明生成研究声明快照（P2-3b：事实源 = WorldProgram）。"""
+"""从世界声明生成研究声明快照（事实源 = WorldProgram）。"""
 
 from __future__ import annotations
 

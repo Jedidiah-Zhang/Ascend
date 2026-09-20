@@ -1,4 +1,4 @@
-"""包络代数测试（issue #53 P4 地基）：包含保持 + 集合律 + fail-closed。"""
+"""包络代数测试：包含保持 + 集合律 + fail-closed。"""
 
 from __future__ import annotations
 

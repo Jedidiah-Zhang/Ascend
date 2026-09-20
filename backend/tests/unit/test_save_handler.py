@@ -105,7 +105,7 @@ class TestSaveCreate:
             handlers["save_create"](_req("save_create", {"name": "  "}))
 
     def test_default_random_seed(self, manager, handlers):
-        """seed 缺省为 0 → 创建时随机化并写入 manifest（P0 防护）。
+        """seed 缺省为 0 → 创建时随机化并写入 manifest（回归防护）。
 
         防护：seed 不得保留 0 到首次进入才随机化——否则 secrets_blob
         身份与 manifest 失配、state 加解密失败。

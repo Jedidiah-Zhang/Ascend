@@ -186,7 +186,7 @@ class GameServer:
             try:
                 conn, addr = self._socket.accept()
                 # TCP_NODELAY：低延迟小包（游戏实时事件）场景禁用 Nagle
-                # 聚合（P2-05）；每个连接 socket 独立设置（监听 socket
+                # 聚合；每个连接 socket 独立设置（监听 socket
                 # 不生效）。设置失败（平台差异）仅告警，不中断 accept 循环
                 try:
                     conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)

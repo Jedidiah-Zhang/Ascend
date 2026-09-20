@@ -4,7 +4,7 @@
 
 判据（预注册，05 篇总则风格）：
   V0 声明/生成物漂移：equations.json 与生产声明一致、
-      impl_digests.json 与生产声明重算一致（issue #49），且
+      impl_digests.json 与生产声明重算一致，且
       GenDeclarationData.lean 与 equations.json + config.py 真值一致；
   V1 声明加载 + 结构校验：schema.validate 无问题；
   V2 L_j 对账：声明 L 与 config 常量解析计算一致（容差 1e-12）；
@@ -30,11 +30,11 @@ sys.path.insert(0, str(HERE))                       # 供 import schema
 sys.path.insert(0, str(HERE.parents[1] / "backend"))  # 供 import ascend
 
 import schema
-import export_impl_digests  # noqa: E402  实现内容摘要表漂移巡检（issue #49）
+import export_impl_digests  # noqa: E402  实现内容摘要表漂移巡检
 import export_registry  # noqa: E402  生产声明 -> JSON 漂移巡检
 import export_world  # noqa: E402  V4 生产侧事实源（新声明投影）
 import gen_lean  # noqa: E402  V0 巡检用（同目录）
-import reference_check  # noqa: E402  V4 独立参考对拍（issue #49）
+import reference_check  # noqa: E402  V4 独立参考对拍
 
 from ascend.config import (  # noqa: E402
     LATITUDE_MAX, LATITUDE_MIN, LATITUDE_T_MAX, LATITUDE_T_MIN,
@@ -76,7 +76,7 @@ def main() -> int:
     n = 2_000 if args.fast else 20_000
     results: list[tuple[str, bool, str]] = []
 
-    # ── V0 生产注册表与生成物漂移巡检（issue #44/#46）─
+    # ── V0 生产注册表与生成物漂移巡检─
     # 固定锚定默认单一事实来源 equations.json（生成物入库对应它，
     # 不跟随 --json 的自定义路径，避免对拍临时片段误报入库产物漂移）。
     registry_ok, registry_detail = export_registry.check()
@@ -163,7 +163,7 @@ def main() -> int:
                     sa_ok,
                     f"{len(sa_samples)} 样本，越界 {len(sa_bad)}，{sa_txt}"))
 
-    # ── V4 独立参考对拍（issue #49）──────────────────
+    # ── V4 独立参考对拍──────────────────
     # 每机制：方程表达式或声明参考实现（覆盖门禁）+ 见证/随机样本
     # 与生产求值对拍；未覆盖或不一致即 FAIL。
     report = reference_check.check_mechanisms(

@@ -5,7 +5,7 @@ const FrameCodecClass = preload("res://scripts/utils/frame_codec.gd")
 const TOKEN_PATH: String = "user://test_handshake_token"
 
 
-# 编码失败注入桩（P2-34）
+# 编码失败注入桩
 class StubCodec extends FrameCodecClass:
 	var fail_encode: bool = false
 
@@ -100,7 +100,7 @@ func test_missing_token_file_sends_empty_token() -> void:
 
 
 func test_encode_failure_aborts_handshake() -> void:
-	"""回归（P2-34）：hello 编码失败不发送空帧，按 ANOMALY 拒绝可重试。"""
+	"""回归：hello 编码失败不发送空帧，按 ANOMALY 拒绝可重试。"""
 	var codec: StubCodec = StubCodec.new()
 	codec.fail_encode = true
 	var sent: Array = []

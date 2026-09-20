@@ -86,39 +86,43 @@ GUT is not distributed with the repo (`frontend/addons/gut` only needs to be ins
 
 ### Research declaration pipeline (drift gates)
 
-The single source of truth for research equations is the production mechanism registry
-(declaration slices in `backend/ascend/weather|space/mechanisms.py`, assembled by
-`backend/ascend/causal/world.py`; see `docs/研究理论/世界基座/07-机制注册表.md`).
-After modifying any registered equation, parameter, node declaration, or `data/world.json`,
-you must regenerate and commit both generated artifacts, or the CI drift gates will fail:
+The single source of truth for research equations is the module declarations in
+`backend/ascend/world/modules/` (six declaration kinds + implementation bindings);
+the research-side projection is `research/equations/equations.json`. After modifying
+any equation, parameter, node declaration, or `data/*.json`, you must regenerate and
+commit the generated artifacts, or the CI drift gates will fail:
 
 ```bash
-.venv/bin/python research/equations/export_registry.py          # registry → equations.json
+.venv/bin/python research/equations/export_registry.py          # world declarations → equations.json
 .venv/bin/python research/equations/gen_lean.py                 # equations.json → Lean data section
+.venv/bin/python research/equations/export_impl_digests.py      # implementation digest table (packaged identity)
 .venv/bin/python research/equations/verify_equations.py --fast  # full reconciliation (V0–V3)
-.venv/bin/python research/equations/graph_check.py              # graph health checks (G0–G6)
+.venv/bin/python research/equations/graph_check.py              # graph health checks (G0–G9)
 ```
 
-`equations.json` and `GenDeclarationData.lean` are generated artifacts — never edit them by hand.
+`equations.json`, `GenDeclarationData.lean`, `impl_digests.json`, and
+`world/kernel/frozen_tables.py` are generated artifacts — never edit them by hand.
 
-**Intervention executor** (P2, `docs/研究理论/世界基座/08-干预执行器.md`): researcher
-interventions are registered in `InterventionTable` and replace the generated value at
-evaluation points. When adding an intervenable component, keep
-`causal/world.py::WIRED_NODES` in sync with the actual evaluation sites
-(`WeatherEngine.evaluate_node`), or the drift gate in
-`tests/unit/test_intervention_wiring.py` will fail.
+**Intervention executor** (see the World Contract, WC-6): researcher interventions are
+registered through `world/research/timeline.py` as plans plus append-only per-frame
+records, and replace the generated value at evaluation points. Timeline validation
+uses the compiled program as the single source of truth (slot exists and is
+mechanism-written, permissions/domains/instances, parameters consumed by wired
+mechanisms); `tests/world/test_timeline.py` and the wiring drift tests guard it.
 
-**Acceptance runner** (P5, `docs/研究理论/世界基座/11-验收runner.md`): after changing a
-declaration or engine path, run `.venv/bin/python research/acceptance/run_acceptance.py`
-(C0–C2/W0–W5/I0–I1; any failing criterion turns CI red). After changing a declaration, also
-run `run_acceptance.py --check` to detect Lean UnrolledDag instance drift.
+**Acceptance runner**: after changing a declaration or engine path, run
+`.venv/bin/python research/acceptance/run_acceptance.py`
+(C0–C2/W0–W7/I0–I1/L3; any failing criterion turns CI red). After changing a declaration, also
+run `run_acceptance.py --check` to detect Lean UnrolledDag instance drift (including the
+machine-checked `WellFormed`).
 
-**Research trace** (P3, `docs/研究理论/世界基座/10-研究trace.md`): the research log and
-gameplay events live in separate stores — new nodes/mechanisms are recorded automatically;
-never put trace fields into event payloads (a gate test enforces this); evaluation points
-must go through `InterventionEvaluator` (calling `registry.evaluate` directly skips tracing).
+**Research records** (see the World Contract, WC-10): the research log and gameplay
+events live in separate stores — new mechanisms are recorded automatically; never put
+record fields into event payloads (a gate test enforces this); evaluation records go
+through the `TraceLog` in `world/research/records.py`, captured per mechanism when the
+engine mounts a log.
 
-**Complete save** (P4, `docs/研究理论/世界基座/09-完整存档.md`): when adding runtime
+**Complete save** (see the World Contract, WC-7.5 and WC-8): when adding runtime
 state that cannot be recomputed from the world settings (researcher-applied quantities,
 markers that evolve with the mechanisms), update the `state.json.enc` payload and the
 restore path (`save/serializer.py` plus the subsystem's `persist_*` / `restore_*`) and

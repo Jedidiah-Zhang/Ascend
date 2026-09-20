@@ -220,7 +220,7 @@ class ContinentGenerator:
         )
 
         # Step 5b: 距水距离场 — 多源 BFS（海 + 河 + 湖），供材质分布/
-        # 生态等按"距水多远"的直觉分类使用（issue #42）。不单独广播
+        # 生态等按"距水多远"的直觉分类使用。不单独广播
         # 阶段（并入 width，毫秒级）。
         # 海判定用 not land_mask（与 is_land() 的 e>0 语义一致，避免
         # 恰为 0.0 的格两处判定不一致）；河/湖用 river_width>0。

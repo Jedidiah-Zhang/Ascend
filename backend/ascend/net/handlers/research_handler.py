@@ -140,7 +140,7 @@ def make_research_handler(
             },
         )
 
-    # ── 研究日志（P3）：与终端 trace 指令组同源同一实例 ──────────
+    # ── 研究日志：与终端 trace 指令组同源同一实例 ──────────
 
     def _trace_log():
         """取挂载的研究日志；未挂载抛 ValueError（fail-closed）。"""
@@ -308,7 +308,7 @@ def _plan_from_payload(
     if "rep" in payload or "mechanism_id" in payload:
         raise ValueError(
             "运行内机制替换已废除（WC-1.3）；结构变体 = 换世界，"
-            "见 issue #49"
+            "见独立参考对拍"
         )
     extra = sorted(set(payload) - _PLAN_FIELDS)
     if extra:

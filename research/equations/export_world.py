@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""新声明 → 研究投影（equations.json 同 schema，P2-3b）。
+"""新声明 → 研究投影（equations.json 同 schema）。
 
 事实源 = ``WorldProgram``（``ascend.world.compile``）；本模块把声明投影为
 研究侧 schema（nodes/mechanisms/parameters/edges/variables/declaration），
@@ -34,7 +34,7 @@ DECLARATION_VERSION = "1"
 SLICE_BOUNDARY = (
     "Generation programs (continent / hydrology / tile / weather field) "
     "are declared in ascend/world/generation.py with content fingerprints "
-    "(sources + constants + version) and P0 sampling protocols; their "
+    "(sources + constants + version) and sampling protocols; their "
     "outputs enter this slice as declared boundary inputs. Content data "
     "(data/*.json) remains content rather than algorithm: changing it "
     "changes parameters, not the declaration."

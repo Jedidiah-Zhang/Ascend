@@ -292,7 +292,7 @@ class SlotDecl:
     writer: str | None = None
     recompute: str = ""
     initial: object = 0
-    # 研究投影元数据（P3b；缺省 = 未认证，投影期 fail-closed）
+    # 研究投影元数据（缺省 = 未认证，投影期 fail-closed）
     role: str = ""
     schedule: str = ""
     quantization: str = ""

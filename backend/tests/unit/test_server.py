@@ -91,7 +91,7 @@ class TestAcceptLoop:
                 srv.stop()
 
     def test_tcp_nodelay_on_accepted_connections(self) -> None:
-        """每个连接 socket 设置 TCP_NODELAY（P2-05：禁 Nagle 聚合）。"""
+        """每个连接 socket 设置 TCP_NODELAY（禁 Nagle 聚合）。"""
         from ascend.net.server import ClientHandler
 
         captured: dict = {}

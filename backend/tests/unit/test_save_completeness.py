@@ -1,6 +1,6 @@
 """完整存档契约测试 — W_t 往返、W4 双跑一致、世界设置与 fail-closed。
 
-契约来源：issue #46 P4（manifest 含世界设置全量、W_t 含生效干预/注入核、
+契约来源：完整存档契约（manifest 含世界设置全量、W_t 含生效干预/注入核、
 快照 fail-closed）与世界验收协议 04 §3.5（W4 状态充分性）。
 
 W4 的实质断言：两个从同一世界设置出发的实例，一个**不存档**持续演化、
@@ -194,7 +194,7 @@ class TestStateSufficiencyW4:
 
         clock_b, engine_b = _build_world()
         state_without = dict(state)
-        # 模拟旧版存档（P4 之前）：只有时钟与玩家，干预时间线为空
+        # 模拟旧版存档：只有时钟与玩家，干预时间线为空
         state_without["weather"] = {
             "interventions": {"plan": [], "records": []},
         }

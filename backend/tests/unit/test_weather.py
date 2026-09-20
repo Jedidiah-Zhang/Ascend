@@ -775,7 +775,7 @@ class TestFeatureField:
             f.inject_core(0, 0, "tornado", center_x=0.0, center_y=0.0,
                           radius=100.0, born_tick=0, duration=100)
 
-    # ── 注入核持久化（P4：W_t 的不可重算部分）──────────────────
+    # ── 注入核持久化（W_t 的不可重算部分）──────────────────
 
     def test_injected_cores_round_trip(self):
         """persist_injected → restore_injected 逐字段一致。"""
@@ -2088,7 +2088,7 @@ class TestWeatherReport:
         e.shutdown()
 
     def test_report_sun_azimuth_daily_constant_seasonal(self):
-        """sun_azimuth 日内恒定（光照轨道基准）、随季节渐变（P2-01）。"""
+        """sun_azimuth 日内恒定（光照轨道基准）、随季节渐变。"""
         from ascend.weather.weather_engine import WeatherEngine
         from ascend.weather.diurnal import sunrise_azimuth, _solar_declination
         wt = WorldTree()
@@ -2481,7 +2481,7 @@ class TestForceControl:
 
 
 class TestWeatherQueryConcurrency:
-    """handler 线程查询与引擎线程推进并发安全（P2-12）。"""
+    """handler 线程查询与引擎线程推进并发安全。"""
 
     def test_concurrent_query_and_tick(self):
         import threading

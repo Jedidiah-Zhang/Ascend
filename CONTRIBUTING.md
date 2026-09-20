@@ -87,39 +87,40 @@ GUT 不随仓库分发（`frontend/addons/gut` 只需在本地安装），因此
 
 ### 研究声明管线
 
-研究方程的唯一事实源是生产机制注册表（声明片段在 `backend/ascend/weather|space/mechanisms.py`，由 `backend/ascend/causal/world.py` 组装，
-详见 docs/研究理论/世界基座/07-机制注册表.md）。修改任何已登记方程、
-参数、节点声明或 `data/world.json` 后，必须重新生成并提交两个产物，
-否则 CI 漂移门禁会失败：
+研究方程的唯一事实源是 `backend/ascend/world/modules/` 的模块声明（六种声明 +
+实现绑定），研究侧投影为 `research/equations/equations.json`。修改任何方程、
+参数、节点声明或 `data/*.json` 后，必须重新生成并提交生成物，否则 CI 漂移
+门禁会失败：
 
 ```bash
-.venv/bin/python research/equations/export_registry.py          # 注册表 → equations.json
+.venv/bin/python research/equations/export_registry.py          # 世界声明 → equations.json
 .venv/bin/python research/equations/gen_lean.py                 # equations.json → Lean 数据段
+.venv/bin/python research/equations/export_impl_digests.py      # 实现摘要表（打包身份）
 .venv/bin/python research/equations/verify_equations.py --fast  # 全链对拍（V0–V3）
-.venv/bin/python research/equations/graph_check.py              # 图健康巡检（G0–G6）
+.venv/bin/python research/equations/graph_check.py              # 图健康巡检（G0–G9）
 ```
 
-`equations.json` 与 `GenDeclarationData.lean` 均为生成物，禁止手改。
+`equations.json`、`GenDeclarationData.lean`、`impl_digests.json` 与
+`world/kernel/frozen_tables.py` 均为生成物，禁止手改。
 
-**干预执行器**（P2，docs/研究理论/世界基座/08-干预执行器.md）：研究者干预经
-`InterventionTable` 登记后在求值点替换生成；新增可干预分量时必须同步
-`causal/world.py::WIRED_NODES` 与实际求值点（`WeatherEngine.evaluate_node`），
-否则 `tests/unit/test_intervention_wiring.py` 的漂移巡检会失败。
+**干预执行器**（见《世界契约》WC-6）：研究者干预经 `world/research/timeline.py`
+登记为计划与逐帧记录，在求值点替换生成；时间线校验以编译程序为唯一事实源
+（槽位存在且由机制写入、权限/值域/实例域、参数须被已接线机制消费），改动后
+由 `tests/world/test_timeline.py` 与接线漂移测试盯防。
 
-**验收 runner**（P5，docs/研究理论/世界基座/11-验收runner.md）：改声明/引擎后跑
-`.venv/bin/python research/acceptance/run_acceptance.py`（C0–C2/W0–W5/I0–I1，任一
+**验收 runner**：改声明/引擎后跑
+`.venv/bin/python research/acceptance/run_acceptance.py`（C0–C2/W0–W7/I0–I1/L3，任一
 判据失败即红）；改声明后还需 `run_acceptance.py --check` 巡检 Lean UnrolledDag 实例（含机器证明的 `WellFormed`，声明漂移即失败）。
 
-**研究 trace**（P3，docs/研究理论/世界基座/10-研究trace.md）：研究日志与玩法
-事件分库——新增节点/机制自动被记录；**不要把 trace 字段写进事件载荷**（有门禁
-测试）；求值点必须经 `InterventionEvaluator`（直接调 `registry.evaluate`
-不带 trace）。
+**研究记录**（见《世界契约》WC-10）：研究日志与玩法事件分库——新增机制自动
+被记录；**不要把记录字段写进事件载荷**（有门禁测试）；求值记录走
+`world/research/records.py` 的 `TraceLog`，引擎在挂载记录时逐机制捕获。
 
-**完整存档**（P4，docs/研究理论/世界基座/09-完整存档.md）：新增"无法由世界
-设置重算"的运行时状态（研究者施加的量、随机制演化的标记）时，必须同步
-`state.json.enc` 载荷与恢复路径（`save/serializer.py` + 该子系统的
-`persist_*` / `restore_*`），并补 W4 双跑一致断言；可重算的解析量**不得**
-落盘。改动状态载荷格式时递增 `STATE_VERSION`（旧档即不可读，不写迁移）。
+**完整存档**（见《世界契约》WC-7.5、WC-8）：新增"无法由世界设置重算"的运行时
+状态（研究者施加的量、随机制演化的标记）时，必须同步 `state.json.enc` 载荷与
+恢复路径（`save/serializer.py` + 该子系统的 `persist_*` / `restore_*`），并补
+W4 双跑一致断言；可重算的解析量**不得**落盘。改动状态载荷格式时递增
+`STATE_VERSION`（旧档即不可读，不写迁移）。
 
 ## 提交约定
 

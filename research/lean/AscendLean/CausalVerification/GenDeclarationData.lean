@@ -2,13 +2,13 @@ import AscendLean.CausalVerification.Declarations
 
 /-! AUTO-GENERATED — 本文件由工具生成，禁止手改。
 
-生成器：research/equations/gen_lean.py（issue #44/#46 防漂移机制）
+生成器：research/equations/gen_lean.py（防漂移机制）
 生成命令：.venv/bin/python research/equations/gen_lean.py
 巡检命令：.venv/bin/python research/equations/gen_lean.py --check
 巡检接入：research/equations/verify_equations.py 主流程 V0 步
 
 来源与指纹（sha256 前 16 位）：
-- research/equations/equations.json   sha256:d770a43021e94a12
+- research/equations/equations.json   sha256:5bb34c1d7ad49e87
 - backend/ascend/config.py            sha256:023c2028c5d2d2e6
 
 防漂移三层闭环：

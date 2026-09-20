@@ -1,4 +1,4 @@
-"""冻表数据（生成物，禁止手改；issue #53 P1）。
+"""冻表数据（生成物，禁止手改）。
 
 由 research/equations/export_frozen_tables.py 生成：
 - COS 四分之一周期均匀采样（1024 段），Q(30)；

@@ -1,4 +1,4 @@
-"""定点原语测试（issue #53 P1）：精确性用 Fraction 对照，不依赖浮点结论。"""
+"""定点原语测试：精确性用 Fraction 对照，不依赖浮点结论。"""
 
 from __future__ import annotations
 

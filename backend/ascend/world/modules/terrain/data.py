@@ -1,8 +1,7 @@
 """地形状态内容数据 — 状态注册表与内核参数表（读 ``data/terrain.json``）。
 
-P1 从旧 ``space/state_defs.py`` 与 ``space/terrain.py`` 的 states 行提取；
-内容仍是数据：改 ``terrain.json`` 不改代码。P5 生成程序声明化时并入统一
-内容装载。
+从旧 ``space/state_defs.py`` 与 ``space/terrain.py`` 的 states 行提取；
+内容仍是数据：改 ``terrain.json`` 不改代码。生成程序声明化时并入统一内容装载。
 """
 
 from __future__ import annotations

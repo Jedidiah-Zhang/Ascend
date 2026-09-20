@@ -1,4 +1,4 @@
-"""实体练兵切片 — 实体 + 事件 + 资源 + Γ（P4-3，无策略）。
+"""实体练兵切片 — 实体 + 事件 + 资源 + Γ（无策略）。
 
 一个"不改框架"的完整模块：两类实体（资源堆 / 采集者）、互链关系
 （目标 + 归属）、**事件驱动**的采集与结算、跨槽位守恒不变量。用于演练
@@ -58,7 +58,7 @@ RESOURCE = InstanceDecl(
 )
 HARVESTER = InstanceDecl(
     id="entity.harvester", kind="entity", identity="derived_id",
-    lifecycle="驱动层 spawn/despawn（P4-3 练兵切片）",
+    lifecycle="驱动层 spawn/despawn（练兵切片）",
 )
 
 RELATION_TARGET = RelationDecl(
@@ -318,5 +318,5 @@ MODULE = ModulePack(
         "黄金语义：tests/world/test_harvest.py",
         "验收判据：W7（实体切片）",
     ),
-    notes="实体练兵切片：实体 + 事件 + 资源 + Γ（P4-3，无策略）。",
+    notes="实体练兵切片：实体 + 事件 + 资源 + Γ（无策略）。",
 )

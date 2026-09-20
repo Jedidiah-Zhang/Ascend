@@ -1,4 +1,4 @@
-"""动量演练模块 — P4 验收：按接入协议接入的**全新模块**（drill.momentum）。
+"""动量演练模块 — 接入验收：按接入协议接入的**全新模块**（drill.momentum）。
 
 接入过程只写声明 + 证据 + 测试，零框架改动（契约/元模型/验收框架均未动）：
 
@@ -141,5 +141,5 @@ MODULE = ModulePack(
         "黄金语义：tests/world/test_momentum.py",
         "协议门禁：tests/world/test_protocol.py（接入协议检查）",
     ),
-    notes="P4 验收演练：全新模块仅凭声明 + 证据接入（lag≥2）。",
+    notes="接入验收演练：全新模块仅凭声明 + 证据接入（lag≥2）。",
 )

@@ -49,7 +49,7 @@ from ascend.world_tree.root import ROLE_STRUCTURAL, VariableGraph  # noqa: E402
 JSON_PATH = HERE / "equations.json"
 
 W_MAX = 2000.0      # G2 预注册阈值
-# 2026-09-08 重注册（issue #46 P1 全量公式收编）：图扩展到世界生成
+# 2026-09-08 重注册（全量公式收编）：图扩展到世界生成
 # 标量公式后，出现单位量纲映射边（噪声→mm/年 等，L~1725），绝对值大但
 # 不放大相对误差；放大语义仍由 G1 环收缩与 G3 相对预算守卫。
 REL_CTF = 0.05       # G3 相对界：Σ ε_u·W(u,t) ≤ 5% × 值域宽度
@@ -128,7 +128,7 @@ def tainted_pairs(
     """路径污染标记：经过 None-L（跳变）边的 (u,t) 对。
 
     跳变边不参与线性路径乘积，其下游目标只能报"条件成立"，不得按 0
-    静默计入解析界（issue #53 P4 决策）。
+    静默计入解析界。
     """
     order = graph.toposort()
     # 目标自身的零长路径：若其任一声明更新入边为跳变边，则该目标本身
@@ -328,7 +328,7 @@ def main() -> int:
         else:
             results.append(("G6 汇聚节点", True, "无多父节点"))
 
-    # ── G7 模数一致性（issue #53 P0/P4）──────────────
+    # ── G7 模数一致性──────────────
     # 线性边：见证差商必须 ≤ 声明 L（否证器，L 不得为 None）；跳变边：
     # 必须声明正 jump_bound（有界跳变），不做连续差商核验。矛盾即红。
     mechanisms = data.get("mechanisms", {})

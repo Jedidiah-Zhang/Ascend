@@ -1,4 +1,4 @@
-"""P2 垂直切片：昼夜链的定点/冻表实现（并行参考，尚未接生产；issue #53）。
+"""昼夜链垂直切片：昼夜链的定点/冻表实现（并行参考，尚未接生产）。
 
 链：``tick → hour_of_day → diurnal_phase_cos → diurnal_temperature_offset``
 对应生产机制：

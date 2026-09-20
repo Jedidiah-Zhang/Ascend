@@ -1,4 +1,4 @@
-"""P2 垂直切片对拍（issue #53）：定点/冻表实现 ↔ 旧 float 实现。
+"""昼夜链定点/冻表对拍：定点/冻表实现 ↔ 旧 float 实现。
 
 对拍判据（声明偏差，见 ascend/world/kernel/diurnal.py）：
 

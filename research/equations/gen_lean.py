@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生产注册表快照 → Lean 自动生成器（issue #44/#46 防漂移机制）。
+"""生产注册表快照 → Lean 自动生成器（防漂移机制）。
 
 生产注册表生成的 ``research/equations/equations.json`` 与 config 常量真值
 自动生成 research/lean/AscendLean/CausalVerification/GenDeclarationData.lean：
@@ -166,7 +166,7 @@ def build_content(json_path: Path) -> tuple[str, dict]:
     add("")
     add("/-! AUTO-GENERATED — 本文件由工具生成，禁止手改。")
     add("")
-    add("生成器：research/equations/gen_lean.py（issue #44/#46 防漂移机制）")
+    add("生成器：research/equations/gen_lean.py（防漂移机制）")
     add("生成命令：.venv/bin/python research/equations/gen_lean.py")
     add("巡检命令：.venv/bin/python research/equations/gen_lean.py --check")
     add("巡检接入：research/equations/verify_equations.py 主流程 V0 步")
@@ -343,7 +343,7 @@ def check(json_path: Path = DEFAULT_JSON, out_path: Path = OUT_PATH) -> tuple[bo
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="声明数据 → Lean 生成器（issue #44 防漂移）")
+        description="声明数据 → Lean 生成器（防漂移）")
     ap.add_argument("--check", action="store_true",
                     help="巡检模式：重新生成并与现存文件 diff，不一致则 exit 1")
     ap.add_argument("--json", default=str(DEFAULT_JSON),

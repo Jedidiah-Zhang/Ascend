@@ -543,7 +543,7 @@ func test_response_hits_pending_callback_only() -> void:
 func test_response_hits_pending_with_float_seq() -> void:
 	"""真实链路 JSON.parse 将数字解析为 float（2.0）：查表前归一化仍命中。
 
-	回归：P1-04 seq 配对后，float seq 未命中 → 响应退回广播 → 10s 超时
+	回归：seq 配对后，float seq 未命中 → 响应退回广播 → 10s 超时
 	→ UI 显示"请求失败：请求超时"。
 	"""
 	var got: Array = []

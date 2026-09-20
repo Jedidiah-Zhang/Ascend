@@ -1,4 +1,4 @@
-"""V5 包含对拍测试（issue #53 P4）：生产输出必须落在声明包络内。"""
+"""V5 包含对拍测试：生产输出必须落在声明包络内。"""
 
 from __future__ import annotations
 

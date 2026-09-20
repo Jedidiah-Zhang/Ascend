@@ -154,7 +154,7 @@ class WorldProcess:
         self._store.materialize(kind, coords)
 
     def dematerialize(self, kind: str, coords: tuple[int, ...]) -> None:
-        """卸载实例：丢弃其值（持久化由存档层负责，P2-3）。"""
+        """卸载实例：丢弃其值（持久化由存档层负责）。"""
         self._store.dematerialize(kind, coords)
 
     def materialized(self, kind: str) -> tuple[tuple[int, ...], ...]:

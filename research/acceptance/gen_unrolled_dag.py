@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""世界声明 → Lean UnrolledDag 实例生成器（P2-3c-2）。
+"""世界声明 → Lean UnrolledDag 实例生成器。
 
 把**生产世界声明**（``WorldProgram`` 投影，``export_world.project``）实例化为
 ``AscendLean.CausalVerification.UnrolledDag.Decl``，并生成：

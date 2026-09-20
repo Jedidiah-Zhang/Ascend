@@ -1,6 +1,6 @@
-"""世界生成标量公式 — 定点实现（issue #52 空间内核批次）。
+"""世界生成标量公式 — 定点实现。
 
-覆盖 #53 P3 剩余的空间生成机制（3 个 C 单源标量 + climate_zone / biome
+覆盖空间生成机制（3 个 C 单源标量 + climate_zone / biome
 决策树）的定点等价物：
 
 - :func:`sea_level_temperature` / :func:`rainfall_from_noise` /

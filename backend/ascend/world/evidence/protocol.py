@@ -1,4 +1,4 @@
-"""模块接入协议 — 声明面完整性与证据义务的机器检查（P4-4）。
+"""模块接入协议 — 声明面完整性与证据义务的机器检查。
 
 接入一个模块 = **声明 + 证据 + 测试，零框架改动**（见
 ``docs/研究理论/世界架构/02-模块接入协议.md``）：
@@ -41,7 +41,7 @@ class ProtocolIssue:
 #: 每条豁免都必须在《02-模块接入协议》里给出理由与补齐计划。
 PROTOCOL_EXEMPTIONS: dict[str, tuple[tuple[str, str], ...]] = {
     # 场内核（terrain.integrate）：单机制整场内核，模数元数据（逐父 L 与
-    # 有效域）随 P5 生成程序声明化一并补齐（内核误差界在 kernel.py 内
+    # 有效域）随生成程序声明化一并补齐（内核误差界在 kernel.py 内
     # 声明；当前由内核对 + 黄金向量承载证据）。
     "terrain": (
         ("parent.modulus", "terrain.integrate<-*"),

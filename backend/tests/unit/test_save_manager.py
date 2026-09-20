@@ -259,7 +259,7 @@ class TestGenParams:
 
 
 class TestSeedZero:
-    """种子创建时定案（P0 回归：seed=0 密钥身份失配）。"""
+    """种子创建时定案（回归：seed=0 密钥身份失配）。"""
 
     def test_seed_zero_randomized_at_create(self, manager):
         """seed=0（随机占位）在创建时随机化，manifest 出生即一致。"""
@@ -780,7 +780,7 @@ class TestSnapshot:
         assert os.path.isfile(path)
 
     def test_snapshot_after_checkpoint_keeps_wal_data(self, manager, world, tmp_path):
-        """WAL checkpoint 后打包：快照内 chunk/事件数据完整（回归 #P0-1）。
+        """WAL checkpoint 后打包：快照内 chunk/事件数据完整（回归）。
 
         复现引擎 snapshot_current 的顺序：flush → checkpoint → 打包；
         若缺 checkpoint，WAL 模式拷贝的 .db 会丢失全部数据。
@@ -1984,7 +1984,7 @@ class TestSecretsInManifest:
 
 
 class TestExtractCrashRecovery:
-    """回滚换目录的崩溃自愈（P0-06：extract 两段 rename 崩溃窗口）。"""
+    """回滚换目录的崩溃自愈（extract 两段 rename 崩溃窗口）。"""
 
     def _write_pending(self, manager, world, snap_name):
         """手工写挂起标记（模拟崩溃残留，格式与实现一致）。"""
@@ -2206,7 +2206,7 @@ class TestExtractCrashRecovery:
 
 
 class TestLineageTamperProtection:
-    """血缘签名防护（P0-07：lineage.json 无签名 → prune 可被借刀误删）。"""
+    """血缘签名防护（lineage.json 无签名 → prune 可被借刀误删）。"""
 
     def test_prune_skips_when_lineage_unsigned(self, manager, world):
         """无签名血缘（历史格式）→ prune 零淘汰、零删除。"""
@@ -2239,7 +2239,7 @@ class TestLineageTamperProtection:
 
 
 class TestSnapshotRebind:
-    """复制档快照改绑新世界 ID（P0-08：复制档自愈，不依赖原世界）。"""
+    """复制档快照改绑新世界 ID（复制档自愈，不依赖原世界）。"""
 
     def test_export_rebinds_snapshot_identity(self, manager, world):
         """导出后快照头部与内嵌 manifest 均为副本 ID，钥匙可独立解锁。"""

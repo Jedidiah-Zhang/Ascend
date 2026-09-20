@@ -444,7 +444,7 @@ func test_stop_sync_when_noop() -> void:
 	assert_eq(p.state, BackendProcess.State.IDLE)
 
 
-# ── 强杀/按名清理命令清单（P0-10） ────────────────────────
+# ── 强杀/按名清理命令清单 ────────────────────────
 
 func test_force_kill_commands_include_pid_and_patterns() -> void:
 	var p := _make_proc("user://t_proj")

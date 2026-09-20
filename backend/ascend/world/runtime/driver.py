@@ -178,7 +178,7 @@ class FrameScheduler:
             invalidated = self.store.invalidated
             if invalidated is not None:
                 # 提交相位失败：状态可能已部分应用或已提交，回滚边界
-                # 无意义；重放会破坏"同一逻辑帧只更新一次"（WC-9.2/P1）。
+                # 无意义；重放会破坏"同一逻辑帧只更新一次"（WC-9.2）。
                 self._invalidated = invalidated
                 logger.error(
                     "世界失效（帧推进至 %d）：%s", now, invalidated,

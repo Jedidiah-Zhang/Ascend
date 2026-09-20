@@ -276,7 +276,7 @@ class TestWorldProcessEntry:
             engine.stop()
 
     def test_full_state_round_trip_through_disk(self, monkeypatch):
-        """P4 完整存档：干预表与注入核随 W_t 落盘并在新进程恢复。
+        """完整存档：干预表与注入核随 W_t 落盘并在新进程恢复。
 
         模拟真实读档路径：进程 A 施加干预 + 强制特征核 → 保存脉搏落盘
         （含 state.json.enc 与 manifest 世界设置）→ 进程 B 重新

@@ -720,7 +720,7 @@ class TestDerivedCacheRebuildFallback:
 
 
 class TestWorldGeneratorLazyPath:
-    """惰性首触（get_altitude）与主动 ensure_continent 统一创建入口（P0-09）。"""
+    """惰性首触（get_altitude）与主动 ensure_continent 统一创建入口。"""
 
     def test_lazy_path_matches_ensure_path(self):
         """两条路径产出同一份大陆（含沙漠 moisture 动态值域与群系结果）。"""

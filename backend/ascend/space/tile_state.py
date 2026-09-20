@@ -94,12 +94,11 @@ def state_evolve(
     tile_cover: list[float] | None = None,
     states: dict[str, array] | None = None,
 ) -> None:
-    """统一演化内核入口（P2-2b：生产路径经新核心 ``TerrainCore``）。
+    """统一演化内核入口（生产路径经新核心 ``TerrainCore``）。
 
     把网格状态/地形/坡度数组交给声明式地形模块的 field 机制求值，原地
     回写状态数组（与旧 C 直调同语义）。内核（参考实现 / C 加速）在模块内
-    逐位对拍；``state_evolve_arrays`` 保留为旧内核直调路径（测试/内核对，
-    P2-3 删除）。
+    逐位对拍；``state_evolve_arrays`` 保留为旧内核直调路径（测试/内核对）。
 
     Args:
         grid: 目标 TileGrid（地形/坡度数组；状态默认取网格数组）。

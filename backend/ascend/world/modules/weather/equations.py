@@ -1,9 +1,9 @@
-"""旧注册表方程实现（P1 逐位移植；生成后即为源码）。
+"""方程实现（逐位移植自旧注册表；生成后即为源码）。
 
 本文件由一次性移植生成器从旧机制注册表提取；导入已改写为新内核
 （``ascend.world.kernel``）。改动方程必须同步黄金向量
 （``backend/tests/world/data/weather_golden.json`` 由旧实现生成，
-P2 后作为冻结契约保留）。
+旧注册表删除后作为冻结契约保留）。
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def _derive_latitude_equation(
     output_min: float,
     output_max: float,
 ) -> float:
-    """定点实现（issue #53 P3）：量化 + 定点除/乘 + 定点 clamp。"""
+    """定点实现：量化 + 定点除/乘 + 定点 clamp。"""
     from ascend.world.kernel.fixed import clamp as fixed_clamp, div, mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -48,7 +48,7 @@ def _derive_seasonal_amplitude_equation(
     output_min: float,
     output_max: float,
 ) -> float:
-    """定点实现（issue #53 P3）：量化 + 定点除/乘 + 两处定点 clamp。"""
+    """定点实现：量化 + 定点除/乘 + 两处定点 clamp。"""
     from ascend.world.kernel.fixed import clamp as fixed_clamp, div, mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -78,7 +78,7 @@ def _diurnal_amplitude_equation(
     seasonal_amplitude: float,
     diurnal_to_seasonal_ratio: float,
 ) -> float:
-    """定点实现（issue #53 P3）：量化 + 定点乘（半偶舍入）。"""
+    """定点实现：量化 + 定点乘（半偶舍入）。"""
     from ascend.world.kernel.fixed import mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -94,7 +94,7 @@ def _humidity_seasonal_amplitude_equation(
     seasonal_amplitude: float,
     humidity_seasonal_scale: float,
 ) -> float:
-    """定点实现（issue #53 P3）：量化 + 定点乘（半偶舍入）。"""
+    """定点实现：量化 + 定点乘（半偶舍入）。"""
     from ascend.world.kernel.fixed import mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -111,7 +111,7 @@ def _humidity_diurnal_amplitude_equation(
     diurnal_to_seasonal_ratio: float,
     humidity_diurnal_scale: float,
 ) -> float:
-    """定点实现（issue #53 P3）：量化 + 定点乘链（左结合，半偶舍入）。"""
+    """定点实现：量化 + 定点乘链（左结合，半偶舍入）。"""
     from ascend.world.kernel.fixed import mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -130,7 +130,7 @@ def _precip_threshold_equation(
     threshold_dry: float,
     threshold_wet: float,
 ) -> float:
-    """定点实现（issue #53 P3）：量化 + 定点除/乘 + clamp（半偶舍入）。"""
+    """定点实现：量化 + 定点除/乘 + clamp（半偶舍入）。"""
     from ascend.world.kernel.fixed import clamp as fixed_clamp, div, mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -160,7 +160,7 @@ def _day_of_year_equation(tick: int, game_day: int, days_per_year: int) -> int:
 
 
 def _hour_equation(tick: int, game_day: int, game_hour: int) -> float:
-    """定点实现（issue #53 P2）：整数日历除法 + Q30 半偶舍入。"""
+    """定点实现：整数日历除法 + Q30 半偶舍入。"""
     from ascend.world.kernel.diurnal import hour_of_day_q
     from ascend.world.kernel.fixed import to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
@@ -181,7 +181,7 @@ def _season_phase_cos_equation(
     season_length_days: int,
     seasons_per_year: int,
 ) -> float:
-    """冻表实现（issue #53 P3）：整数日算术 + 冻表 cos + 半偶舍入。
+    """冻表实现：整数日算术 + 冻表 cos + 半偶舍入。
 
     progress = season + day_of_season/L；angle = (progress − 1.5)/S · 2π；
     angle_q = (2·p_num − 3·L) · TWO_PI_Q / (2·L·S)。
@@ -202,7 +202,7 @@ def _season_phase_cos_equation(
 
 
 def _diurnal_phase_cos_equation(hour: float, peak_hour: float) -> float:
-    """冻表实现（issue #53 P2）：输入量化 + 冻表 cos + 半偶舍入。"""
+    """冻表实现：输入量化 + 冻表 cos + 半偶舍入。"""
     from ascend.world.kernel.diurnal import diurnal_phase_cos_q
     from ascend.world.kernel.fixed import quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
@@ -220,7 +220,7 @@ def _solar_declination_equation(
     obliquity_deg: float,
     days_per_year: int,
 ) -> float:
-    """冻表实现（issue #53 P3）：整数日算术 + 冻表 sin + 定点乘。
+    """冻表实现：整数日算术 + 冻表 sin + 定点乘。
 
     radians(x) = x·π/180；π/180 的 Q 值由 TWO_PI_Q 整数半偶除得。
     """
@@ -240,7 +240,7 @@ def _seasonal_temperature_offset_equation(
     amplitude: float,
     season_phase_cos: float,
 ) -> float:
-    """定点实现（issue #53 P3）：定点乘（半偶舍入）。"""
+    """定点实现：定点乘（半偶舍入）。"""
     from ascend.world.kernel.fixed import mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -258,7 +258,7 @@ def _diurnal_temperature_offset_equation(
     amplitude: float,
     diurnal_phase_cos: float,
 ) -> float:
-    """定点实现（issue #53 P2）：定点乘（半偶舍入）。"""
+    """定点实现：定点乘（半偶舍入）。"""
     from ascend.world.kernel.diurnal import diurnal_temperature_offset_q
     from ascend.world.kernel.fixed import quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
@@ -277,7 +277,7 @@ def _seasonal_humidity_offset_equation(
     season_phase_cos: float,
     sharpness: float,
 ) -> float:
-    """定点/冻表实现（issue #53 P3）：sharpness>0 走冻表 tanh，否则恒等。"""
+    """定点/冻表实现：sharpness>0 走冻表 tanh，否则恒等。"""
     from ascend.world.kernel.fixed import mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
     from ascend.world.kernel.tables import tanh_q
@@ -298,7 +298,7 @@ def _diurnal_humidity_offset_equation(
     amplitude: float,
     diurnal_phase_cos: float,
 ) -> float:
-    """定点实现（issue #53 P3）：量化 + 定点乘 + 取负（半偶舍入）。"""
+    """定点实现：量化 + 定点乘 + 取负（半偶舍入）。"""
     from ascend.world.kernel.fixed import mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -310,7 +310,7 @@ def _diurnal_humidity_offset_equation(
 
 
 def _sunrise_equation(latitude: float, solar_declination: float) -> float:
-    """冻表实现（issue #53 P3）：tan=sin/cos 表相除 + acos 冻表 + degrees。
+    """冻表实现：tan=sin/cos 表相除 + acos 冻表 + degrees。
 
     注意：acos 在端点附近误差声明为 2e-3 rad（见 tables.ACOS_MAX_ERROR），
     对应日出/日落时刻误差上界 ~0.008 h。
@@ -336,7 +336,7 @@ def _sunrise_equation(latitude: float, solar_declination: float) -> float:
 
 
 def _sunset_equation(latitude: float, solar_declination: float) -> float:
-    """冻表实现（issue #53 P3）：tan=sin/cos 表相除 + acos 冻表 + degrees。
+    """冻表实现：tan=sin/cos 表相除 + acos 冻表 + degrees。
 
     与 sunrise 同构（12 + 半昼长），误差声明同 tables.ACOS_MAX_ERROR。
     """
@@ -361,7 +361,7 @@ def _sunset_equation(latitude: float, solar_declination: float) -> float:
 
 
 def _daylight_equation(sunrise: float, sunset: float) -> float:
-    """定点实现（issue #53 P3）：量化后整数相减（精确）。"""
+    """定点实现：量化后整数相减（精确）。"""
     from ascend.world.kernel.fixed import quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -380,7 +380,7 @@ def _temperature_equation(
     lower_bound: float,
     upper_bound: float,
 ) -> float:
-    """定点实现（issue #53 P3）：量化 + 整数加 + 定点乘 + 定点 clamp。"""
+    """定点实现：量化 + 整数加 + 定点乘 + 定点 clamp。"""
     from ascend.world.kernel.fixed import clamp as fixed_clamp, mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -405,7 +405,7 @@ def _humidity_equation(
     lower_bound: float,
     upper_bound: float,
 ) -> float:
-    """定点实现（issue #53 P3）：量化 + 整数加 + 定点乘 + 定点 clamp。"""
+    """定点实现：量化 + 整数加 + 定点乘 + 定点 clamp。"""
     from ascend.world.kernel.fixed import clamp as fixed_clamp, mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -429,7 +429,7 @@ def _wind_equation(
     lower_bound: float,
     upper_bound: float,
 ) -> float:
-    """定点实现（issue #53 P3）：量化 + 定点乘 + 双层定点 clamp。"""
+    """定点实现：量化 + 定点乘 + 双层定点 clamp。"""
     from ascend.world.kernel.fixed import clamp as fixed_clamp, mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -452,7 +452,7 @@ def _precipitation_intensity_equation(
     signal_max: float,
     intensity_scale: float,
 ) -> float:
-    """定点实现（issue #53 P3）：分段判据 + 定点乘（半偶舍入）。"""
+    """定点实现：分段判据 + 定点乘（半偶舍入）。"""
     from ascend.world.kernel.fixed import mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 
@@ -479,7 +479,7 @@ def _sunshine_equation(
     lower_bound: float,
     upper_bound: float,
 ) -> float:
-    """定点实现（issue #53 P3）：量化 + 定点乘 + 定点 clamp。"""
+    """定点实现：量化 + 定点乘 + 定点 clamp。"""
     from ascend.world.kernel.fixed import clamp as fixed_clamp, mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
 

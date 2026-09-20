@@ -615,7 +615,7 @@ class FeatureField:
         with self._lock:
             return len(self._injected)
 
-    # ── 注入核持久化（P4 完整存档：W_t 的不可重算部分）────────
+    # ── 注入核持久化（完整存档：W_t 的不可重算部分）────────
 
     def persist_injected(self) -> list[dict[str, object]]:
         """注入核的确定性列表（存档载荷，按 chunk 坐标 + 类型排序）。

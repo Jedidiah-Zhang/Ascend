@@ -288,7 +288,7 @@ class TestHydraulicErosion:
         assert avg_change < 1.0, f"净质量变化 {total_change:.2f}，平均 {avg_change:.4f}m/像素"
 
     def test_seafloor_unchanged(self):
-        """海底（dem<0）不参与侵蚀与沉积，海拔逐轮保持原样（P2-15）。"""
+        """海底（dem<0）不参与侵蚀与沉积，海拔逐轮保持原样。"""
         from ascend.space.hydrology import erode
         w, h = 10, 10
         # 斜坡陆地（顶部高）+ 右侧 3 列海洋
@@ -322,7 +322,7 @@ class TestHydraulicErosion:
 
 
 class TestFillDepressions:
-    """fill_depressions 直测 — 填洼语义 + 退化路径（P2-17）。"""
+    """fill_depressions 直测 — 填洼语义 + 退化路径。"""
 
     def test_fills_depression_with_ocean_boundary(self):
         """有海洋边界的陆地洼地 → 填到溢出口。"""

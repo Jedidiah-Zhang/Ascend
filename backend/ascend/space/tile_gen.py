@@ -292,7 +292,7 @@ class TileGenerator:
         moisture: float,
         bias: TerrainBias,
     ) -> TerrainType:
-        """按层次规则判定 tile 地表材质（issue #42）。
+        """按层次规则判定 tile 地表材质。
 
         输入全为低频连续场（宏观海拔/坡度/距水/气候/湿度），无细节
         噪声——相邻 tile 输入连续 → 材质区域连续，根治碎斑。

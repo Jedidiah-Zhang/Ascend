@@ -1,6 +1,6 @@
 """研究 trace 生产接线测试 — 引擎挂载、终端指令、研究 API 与事件分库。
 
-覆盖 P3 接线：``WeatherEngine.enable_trace`` → 求值点记录 → 终端
+覆盖记录接线：``WeatherEngine.enable_trace`` → 求值点记录 → 终端
 ``trace`` 指令组与 net ``research_trace_*`` 同源；并锁死"研究日志与玩法
 事件分库"这条边界（事件载荷不得出现 trace 字段）。
 """

@@ -1,9 +1,9 @@
-"""天气引擎输入模块 — 引擎提供的 chunk 基线（P2-2 引擎切换）。
+"""天气引擎输入模块 — 引擎提供的 chunk 基线（引擎切换）。
 
 旧引擎把 chunk 气候基线（大陆模型生成 / 派生）作为边界输入提供，不重算
 这些机制（``WIRED_NODES`` 只含 20 个天气节点）。本模块把这些槽位声明为
 external，与「wired 天气子集」组合编译，保持与旧引擎相同的数据流；
-P5 生成程序声明化后由生成程序产出。
+生成程序声明化后由生成程序产出。
 """
 
 from __future__ import annotations
@@ -55,5 +55,5 @@ MODULE = ModulePack(
     instances=(GLOBAL, CHUNK),
     slots=_SLOTS,
     evidence=("引擎切换对拍：tests/world/test_engine_switch.py",),
-    notes="引擎提供的 chunk 基线（旧 WIRED 子集的输入面）；P5 内化。",
+    notes="引擎提供的 chunk 基线（旧 WIRED 子集的输入面）。",
 )

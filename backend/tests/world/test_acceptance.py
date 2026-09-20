@@ -1,4 +1,4 @@
-"""P0 验收测试 — 新核心的 W0/W1/W2 构造。"""
+"""验收测试 — 新核心的 W0/W1/W2 构造。"""
 
 from __future__ import annotations
 

@@ -1,11 +1,11 @@
-"""地形状态模块 — 统一演化内核（P1 从旧实现逐位移植）。
+"""地形状态模块 — 统一演化内核（从旧实现逐位移植）。
 
 一个 field 作用域机制（整场内核）：三状态通道 + 地形/坡度/遮蔽 +
 逐步降水/温度/步长。参考实现与 C 加速逐位一致（内核对）；黄金向量
 由旧实现生成（tests/world/data/terrain_golden.json）。
 
-**P1 边界**：lattice 固定尺寸（单 chunk 测试）；chunk 流式物化与
-更新点周期接线在 P2/P4。参数表来自 data/terrain.json（内容数据）。
+**边界**：lattice 支持固定尺寸与流式物化；更新点周期由驱动层声明绑定。
+参数表来自 data/terrain.json（内容数据）。
 """
 from __future__ import annotations
 
@@ -424,5 +424,5 @@ MODULE = ModulePack(
         '内核对：tests/world/test_terrain_kernel.py',
         '黄金向量：tests/world/data/terrain_golden.json（旧实现生成）',
     ),
-    notes='P1：单 chunk 固定尺寸；流式物化 P4。',
+    notes='地形状态模块：统一演化内核。',
 )

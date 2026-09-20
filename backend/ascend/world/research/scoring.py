@@ -1,4 +1,4 @@
-"""基线预测与评分 — E0/E1 骨架（P3）。
+"""基线预测与评分 — E0/E1 骨架。
 
 - :func:`persistence_predictor`：预测下一帧 = 本帧观测（无记忆基线）；
 - :func:`score_frames`：逐键 MAE（数值）/ 错误率（离散）；
