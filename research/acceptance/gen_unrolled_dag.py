@@ -78,7 +78,7 @@ def _render() -> str:
     lines.append("")
     lines.append("/-! AUTO-GENERATED — 本文件由工具生成，禁止手改。")
     lines.append("")
-    lines.append("生成器：research/acceptance/gen_unrolled_dag.py（issue #46 P5）")
+    lines.append("生成器：research/acceptance/gen_unrolled_dag.py")
     lines.append("生成命令：.venv/bin/python research/acceptance/gen_unrolled_dag.py")
     lines.append("巡检命令：.venv/bin/python research/acceptance/gen_unrolled_dag.py --check")
     lines.append("")

@@ -5,7 +5,7 @@ import AscendLean.CausalVerification.LipschitzLayer
 # SubSCM — 显式 do 干预结构（02 篇命题 2.5 干预情形的定义级编码）
 
 出处：`docs/研究理论/世界基座/02-误差传播与反事实.md` 命题 2.5；
-干预的工程语义见 `docs/研究理论/世界基座/04-世界验收协议.md`。
+干预的工程语义见 `docs/研究理论/世界契约.md` WC-6。
 
 记号对照：公式按 02 篇的通用节点值记法书写（`x`/`x̂`）；Lean 代码内部变量名 `X`/`Xh` 表示真值/模型轨迹值。
 

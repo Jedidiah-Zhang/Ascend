@@ -14,7 +14,7 @@ research/lean/
 ├── lean-toolchain                   # Lean 版本锁定
 ├── lake-manifest.json               # 依赖锁定（Mathlib）
 └── AscendLean/
-    └── CausalVerification/          # ← 对应 docs/研究理论/世界基座/ 与第一阶段实施定义
+    └── CausalVerification/          # ← 对应 docs/研究理论/ 理论篇（世界基座 01–03、工程符号体系）与第一阶段实施定义
         ├── Contraction.lean         # 推论 2.2 三档行为 + 推论 2.3 收缩链两律（外推饱和/初值遗忘）
         ├── DagPathExpansion.lean    # 命题 2.5 代数内核：递推 ⟹ 路径和展开 + 汇聚反例
         ├── LipschitzLayer.lean      # 连接命题：|x̂ − x| ≤ e_t，组合出命题 2.5 完整式（含命题 2.1 链特例）
@@ -57,7 +57,7 @@ CI：`.github/workflows/lean_action_ci.yml` 在 push / PR 触及
 | 02-误差传播与反事实.md                                              | Contraction.lean        | 推论 2.2 三档行为（0≤Λ<1 收缩 / Λ=1 线性 / Λ>1 发散）、推论 2.3 外推饱和与初值遗忘    |
 | 02-误差传播与反事实.md                                              | DagPathExpansion.lean   | 命题 2.5 代数内核（误差递推 ⟹ 路径和展开）、汇聚"取最大"反例                          |
 | 02-误差传播与反事实.md                                              | LipschitzLayer.lean     | 命题 2.1 链特例 + 命题 2.5 完整式：\|x̂ − x\| ≤ e_t（节点误差按路径和放大）、干预情形     |
-| 02 篇命题 2.5 干预情形 + 世界基座 04 验收协议                       | SubSCM.lean             | 显式 do 结构：subSCM 换常数方程（断入边）、ε'-形干预闭式、与编码版四重互证            |
+| 02 篇命题 2.5 干预情形（W1/W2 判据）                              | SubSCM.lean             | 显式 do 结构：subSCM 换常数方程（断入边）、ε'-形干预闭式、与编码版四重互证            |
 | 02 篇 §5                                                           | SpatialKernel.lean      | 空间核逐点 Lipschitz 界（绝对权重和放大）与 Σ\|w_σ\|<1 的严格收缩                     |
 | 工程符号体系 §3 + 04 篇 C2 + 第一阶段实施定义 §4/§5                | UnrolledDag.lean        | 时间展开无环：阶段次序 + 滞后父模板 ⟹ 任意有限窗口展开图无环（秩测度 + 良基）         |
 | 第一阶段实施定义 §7/§9 + 04 篇 W2                                   | InterventionTypes.lean  | 节点/持续/机制干预轨迹语义：persist(1)=nodeDo、干预不改过去、三类互异数值见证          |
@@ -68,10 +68,10 @@ CI：`.github/workflows/lean_action_ci.yml` 在 push / PR 触及
 配套验证管线见 `research/equations/`（声明层数值对照，Python 差分测试）；
 Lean 只证明数学性质，不检查引擎代码是否按声明实现（那是对拍测试的职责）。
 
-`equations.json` 为**生成物**（生产注册表 → `export_registry.py`，禁止手改），
-来源、切片与迁移流程见 `docs/研究理论/世界基座/07-机制注册表.md`。
+`equations.json` 为**生成物**（生产声明 → `export_world.py`，禁止手改），
+来源与切片见 `backend/ascend/world/modules/` 的模块声明。
 
-新方程接入流程演练（issue #45，零污染 dry-run）：复制 `equations.json`
+新方程接入流程演练（零污染 dry-run）：复制 `equations.json`
 加演练边 → `gen_lean.py --json <副本> --out <临时 .lean>` 生成到仓库外
 → `lake env lean <临时 .lean>` 验证编译绿（新边自动 camel 命名进数据段，
 对账定理模板需人工评估是否扩展）。正式接入走注册表登记 + 重新生成

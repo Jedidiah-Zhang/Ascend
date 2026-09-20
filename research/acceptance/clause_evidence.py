@@ -50,7 +50,7 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
         evidence=("docs/研究理论/世界契约.md",
                   "research/acceptance/clause_evidence.py"),
         positive="条款真值地位（规范/说明/实现注记分级）",
-        negative="实现注记不具规范效力（世界基座旧文已标注历史）",
+        negative="实现注记不具规范效力（旧实现注记已删除，仅版本受控文档留存）",
     ),
     ClauseEvidence(
         "WC-1.1", "covered",
@@ -67,7 +67,7 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
         checks=("C0",),
         evidence=("backend/tests/integration/test_game_engine.py",
                   "backend/tests/world/test_assembly.py"),
-        positive="迁移即新身份（P2/P4 已发生）；manifest 记录声明/程序视图",
+        positive="迁移即新身份（已发生）；manifest 记录声明/程序视图",
         negative="旧身份存档 fail-closed 拒载（声明不一致测试）",
     ),
     ClauseEvidence(
@@ -440,16 +440,15 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
     ),
     ClauseEvidence(
         "WC-11.3", "covered",
-        evidence=("docs/研究理论/世界契约.md",
-                  "docs/研究理论/世界架构/01-重构计划.md"),
-        positive="契约变更记录（v0.1 → v0.2）与阶段计划同步",
-        negative="实现先行不豁免变更登记（P2 身份迁移已登记）",
+        evidence=("docs/研究理论/世界契约.md",),
+        positive="契约变更记录（v0.1 → v0.2）随声明载体迁移登记",
+        negative="实现先行不豁免变更登记（身份迁移已登记）",
     ),
     ClauseEvidence(
         "WC-11.4", "covered",
         evidence=("docs/研究理论/世界契约.md",
                   "docs/研究理论/世界架构/00-总纲.md"),
         positive="文档从属：总纲/技术文档低于契约，冲突以契约为准",
-        negative="历史文档已标注（世界基座旧文加历史注记）",
+        negative="旧实现注记已删除（文档从属要求条款引用）",
     ),
 )

@@ -2,7 +2,7 @@ import AscendLean.CausalVerification.UnrolledDag
 
 /-! AUTO-GENERATED — 本文件由工具生成，禁止手改。
 
-生成器：research/acceptance/gen_unrolled_dag.py（issue #46 P5）
+生成器：research/acceptance/gen_unrolled_dag.py
 生成命令：.venv/bin/python research/acceptance/gen_unrolled_dag.py
 巡检命令：.venv/bin/python research/acceptance/gen_unrolled_dag.py --check
 
