@@ -32,9 +32,12 @@ SCHEMA_VERSION = 3
 DECLARATION_ID = "ascend.world.scalar_formulas"
 DECLARATION_VERSION = "1"
 SLICE_BOUNDARY = (
-    "Unified weather field channels, continent/hydrology/tile algorithm "
-    "pipelines, and dynamic biome subdivision ranges remain outside this "
-    "slice; their outputs enter as declared boundary inputs."
+    "Generation programs (continent / hydrology / tile / weather field) "
+    "are declared in ascend/world/generation.py with content fingerprints "
+    "(sources + constants + version) and P0 sampling protocols; their "
+    "outputs enter this slice as declared boundary inputs. Content data "
+    "(data/*.json) remains content rather than algorithm: changing it "
+    "changes parameters, not the declaration."
 )
 
 _WEATHER_DEPS = (
