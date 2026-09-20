@@ -187,7 +187,7 @@ def compile_world(spec: WorldSpec) -> WorldProgram:
             mechanisms_in_order.append(item)
     plan = _build_plan(spec.schedule, tuple(mechanisms_in_order), issues)
 
-    _check_instances(instances, relations, issues)
+    _check_instances(instances, relations, slots, issues)
     _check_slots(slots, mechanisms, parameters, issues)
     _check_mechanisms(
         tuple(mechanisms_in_order), slots, relations, instances, plan,
@@ -342,6 +342,7 @@ def _resolve_knobs(
 def _check_instances(
     instances: Mapping[str, InstanceDecl],
     relations: Mapping[str, RelationDecl],
+    slots: Mapping[str, SlotDecl],
     issues: list[str],
 ) -> None:
     for instance in instances.values():
@@ -355,12 +356,56 @@ def _check_instances(
                 issues.append(
                     f"实例 {instance.id} 的层级父必须是 lattice: {parent.id}"
                 )
+            elif (
+                instance.size is not None
+                and parent.size is not None
+                and (
+                    len(instance.size) != len(parent.size)
+                    or any(
+                        child != coarse * instance.ratio
+                        for child, coarse in zip(instance.size, parent.size)
+                    )
+                )
+            ):
+                issues.append(
+                    f"实例 {instance.id} 尺寸与层级倍率不符: "
+                    f"{instance.size} != {parent.size} × {instance.ratio}"
+                )
     for relation in relations.values():
         for endpoint in (relation.source, relation.target):
             if endpoint and endpoint not in instances:
                 issues.append(
                     f"关系 {relation.id} 端点未声明: {endpoint}"
                 )
+        if relation.kind == "level":
+            child = instances.get(relation.source)
+            parent = instances.get(relation.target)
+            if (
+                child is not None
+                and parent is not None
+                and child.parent != relation.target
+            ):
+                issues.append(
+                    f"关系 {relation.id}: 子实例 {child.id} 的层级父必须是 "
+                    f"{relation.target}（实际 {child.parent}）"
+                )
+        elif relation.kind == "link":
+            key_slot = slots.get(relation.key_slot)
+            if key_slot is None:
+                issues.append(
+                    f"关系 {relation.id}: 链接键槽位未声明 "
+                    f"{relation.key_slot}"
+                )
+            else:
+                if key_slot.on != relation.source:
+                    issues.append(
+                        f"关系 {relation.id}: 链接键槽位 {relation.key_slot} "
+                        f"不在源实例 {relation.source} 上"
+                    )
+                if key_slot.persist not in ("state", "derived"):
+                    issues.append(
+                        f"关系 {relation.id}: 链接键槽位必须是 state/derived"
+                    )
 
 
 def _check_invariants(
@@ -373,15 +418,16 @@ def _check_invariants(
         if invariant.id in seen:
             issues.append(f"不变量 id 重复: {invariant.id}")
         seen.add(invariant.id)
-        slot = slots.get(invariant.slot)
-        if slot is None:
-            issues.append(
-                f"不变量 {invariant.id} 槽位未声明: {invariant.slot}"
-            )
-        elif slot.persist not in ("state", "derived"):
-            issues.append(
-                f"不变量 {invariant.id} 只能作用于 state/derived 槽位: "
-                f"{invariant.slot}（{slot.persist}）"
+        for slot_id in invariant.slots:
+            slot = slots.get(slot_id)
+            if slot is None:
+                issues.append(
+                    f"不变量 {invariant.id} 槽位未声明: {slot_id}"
+                )
+            elif slot.persist not in ("state", "derived"):
+                issues.append(
+                    f"不变量 {invariant.id} 只能作用于 state/derived 槽位: "
+                    f"{slot_id}（{slot.persist}）"
             )
 
 
@@ -406,6 +452,64 @@ def _check_slots(
             issues.append(
                 f"参数槽位 {slot.id} 缺少同名参数声明"
             )
+
+
+def _check_parent_relation(
+    mechanism: MechanismDecl,
+    parent: Parent,
+    output_slot: SlotDecl | None,
+    parent_slot: SlotDecl,
+    relation: RelationDecl | None,
+    issues: list[str],
+) -> None:
+    """父引用关系校验：same / spatial / level / link 的方向与聚合规则。"""
+    if parent.relation == "same":
+        if parent.aggregation != "identity":
+            issues.append(f"机制 {mechanism.id}: same 关系不得聚合")
+        return
+    if relation is None:
+        return  # 未声明已在上层报告
+    if relation.kind == "spatial":
+        if relation.source != parent_slot.on:
+            issues.append(
+                f"机制 {mechanism.id}: 关系 {relation.id} 源 "
+                f"{relation.source} 与槽位载体 {parent_slot.on} 不符"
+            )
+        return
+    owner = output_slot.on if output_slot is not None else None
+    if relation.kind == "level":
+        # 方向：输出实例 = 父实例（prolong：读子实例聚合）
+        #       输出实例 = 子实例（restrict：读父实例对应坐标）
+        if owner == relation.target and parent_slot.on == relation.source:
+            if parent.aggregation == "identity":
+                issues.append(
+                    f"机制 {mechanism.id}: prolong（父读子）必须声明聚合 "
+                    f"（sum/mean/min/max）"
+                )
+        elif owner == relation.source and parent_slot.on == relation.target:
+            if parent.aggregation != "identity":
+                issues.append(
+                    f"机制 {mechanism.id}: restrict（子读父）不得聚合"
+                )
+        else:
+            issues.append(
+                f"机制 {mechanism.id}: level 关系 {relation.id} 的端点与"
+                f"输出实例/父槽位不符（{owner} / {parent_slot.on}）"
+            )
+        return
+    if relation.kind == "link":
+        if owner != relation.source:
+            issues.append(
+                f"机制 {mechanism.id}: link 关系的持有方必须是输出实例 "
+                f"{relation.source}（实际 {owner}）"
+            )
+        if parent_slot.on != relation.target:
+            issues.append(
+                f"机制 {mechanism.id}: link 关系的父槽位必须挂在目标实例 "
+                f"{relation.target}（实际 {parent_slot.on}）"
+            )
+        if parent.aggregation != "identity":
+            issues.append(f"机制 {mechanism.id}: link 关系不得聚合")
 
 
 def _check_mechanisms(
@@ -465,7 +569,23 @@ def _check_mechanisms(
                     f"机制 {mechanism.id}: 父槽位未声明 {parent.slot}"
                 )
                 continue
-            if output_slot is not None and slot.on != output_slot.on:
+            relation = (
+                None if parent.relation == "same"
+                else relations.get(parent.relation)
+            )
+            if parent.relation != "same" and relation is None:
+                issues.append(
+                    f"机制 {mechanism.id}: 父引用关系未声明 "
+                    f"{parent.relation}"
+                )
+            cross_ok = (
+                relation is not None and relation.kind in ("level", "link")
+            )
+            if (
+                output_slot is not None
+                and slot.on != output_slot.on
+                and not cross_ok
+            ):
                 parent_instance = instances.get(slot.on)
                 if not (
                     parent_instance is not None
@@ -473,28 +593,12 @@ def _check_mechanisms(
                 ):
                     issues.append(
                         f"机制 {mechanism.id}: 跨实例类型父引用仅支持 "
-                        f"global 广播（{slot.on} → {output_slot.on}）"
+                        f"global 广播或 level/link 关系"
+                        f"（{slot.on} → {output_slot.on}）"
                     )
-            if parent.relation != "same":
-                relation = relations.get(parent.relation)
-                if relation is None:
-                    issues.append(
-                        f"机制 {mechanism.id}: 父引用关系未声明 "
-                        f"{parent.relation}"
-                    )
-                elif relation.kind != "spatial":
-                    issues.append(
-                        f"机制 {mechanism.id}: 父引用关系必须是 spatial"
-                    )
-                elif relation.source != slot.on:
-                    issues.append(
-                        f"机制 {mechanism.id}: 关系 {relation.id} 源 "
-                        f"{relation.source} 与槽位载体 {slot.on} 不符"
-                    )
-            elif parent.aggregation != "identity":
-                issues.append(
-                    f"机制 {mechanism.id}: same 关系不得聚合"
-                )
+            _check_parent_relation(
+                mechanism, parent, output_slot, slot, relation, issues,
+            )
             if parent.slot in mechanism.outputs() and parent.lag == 0:
                 issues.append(
                     f"机制 {mechanism.id}: 自引用必须 lag≥1"

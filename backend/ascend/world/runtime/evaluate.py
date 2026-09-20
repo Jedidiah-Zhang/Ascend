@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import itertools
 from typing import Mapping
 
 from ascend.world.kernel import round_half_even_div
@@ -77,8 +78,8 @@ def evaluate_mechanism(
         if trace is not None:
             trace.append((mechanism, (), parent_values, result))
         return result
-    if instance.kind == "lattice" and instance.size is None:
-        return _evaluate_dynamic(
+    if instance.kind == "entity":
+        return _evaluate_instances(
             program,
             store,
             mechanism,
@@ -87,17 +88,44 @@ def evaluate_mechanism(
             tick=tick,
             inputs=inputs,
             params=params,
-            instance_id=instance.id,
+            owner=instance,
+            keys=tuple(
+                (entity_id,) for entity_id in store.entities(instance.id)
+            ),
+            skip=skip or {},
+            trace=trace,
+        )
+    if instance.kind == "lattice" and instance.size is None:
+        return _evaluate_instances(
+            program,
+            store,
+            mechanism,
+            impl=impl,
+            root_seed=root_seed,
+            tick=tick,
+            inputs=inputs,
+            params=params,
+            owner=instance,
+            keys=store.materialized(instance.id),
             skip=skip or {},
             trace=trace,
         )
     if instance.kind == "lattice":
-        fields = {
-            slot: LatticeField(instance.size, 0) for slot in slots
-        }
+        # 场初值取当前值（影子优先）：被干预实例跳过求值、保持干预值
+        fields = {}
+        for slot in slots:
+            current = store.read(slot, 0)
+            fields[slot] = (
+                current.copy()
+                if isinstance(current, LatticeField)
+                else LatticeField(instance.size, 0)
+            )
         for coords in fields[slots[0]].coordinates():
+            if all(coords in skip.get(slot, frozenset()) for slot in slots):
+                continue
             parent_values = _resolve_parents(
-                program, store, mechanism, inputs=inputs, instance=coords
+                program, store, mechanism, inputs=inputs,
+                instance=coords, owner=instance,
             )
             context = MechanismContext(
                 mechanism=mechanism,
@@ -118,7 +146,7 @@ def evaluate_mechanism(
     )
 
 
-def _evaluate_dynamic(
+def _evaluate_instances(
     program: object,
     store: StateStore,
     mechanism: MechanismDecl,
@@ -128,18 +156,24 @@ def _evaluate_dynamic(
     tick: int,
     inputs: Mapping[str, object],
     params: Mapping[str, object],
-    instance_id: str,
+    owner: object,
+    keys: tuple[tuple[object, ...], ...],
     skip: Mapping[str, frozenset[tuple[int, ...]]],
     trace: list | None = None,
 ) -> dict[str, object]:
-    """动态 lattice：只对已物化实例逐点求值（被干预实例跳过）。"""
+    """逐实例求值（动态 lattice 的已物化集合 / 实体的存活集合）。
+
+    被干预实例（``skip``）跳过；``owner`` 是输出槽位的实例类型声明
+    （level/link 关系解析方向用）。
+    """
     slots = mechanism.outputs()
     fields = {slot: DynamicField() for slot in slots}
-    for coords in store.materialized(instance_id):
+    for coords in keys:
         if all(coords in skip.get(slot, frozenset()) for slot in slots):
             continue
         parent_values = _resolve_parents(
-            program, store, mechanism, inputs=inputs, instance=coords
+            program, store, mechanism, inputs=inputs,
+            instance=coords, owner=owner,
         )
         context = MechanismContext(
             mechanism=mechanism,
@@ -381,6 +415,7 @@ def _resolve_parents(
     *,
     inputs: Mapping[str, object],
     instance: tuple[int, ...] | None,
+    owner: object | None = None,
 ) -> dict[str, object]:
     values: dict[str, object] = {}
     for parent in mechanism.parents:
@@ -394,7 +429,7 @@ def _resolve_parents(
             values[parent.argument] = store.read(parent.slot, parent.lag)
         else:
             values[parent.argument] = _neighbor_value(
-                program, store, parent, instance
+                program, store, parent, instance, owner
             )
     return values
 
@@ -411,12 +446,14 @@ def _read_external(
     if isinstance(value, LatticeField):
         return value.get(instance)
     if isinstance(value, Mapping):
-        try:
-            return value[tuple(instance)]  # type: ignore[index]
-        except KeyError:
-            raise KeyError(
-                f"外部槽位 {slot_id} 缺少实例 {instance!r} 输入"
-            ) from None
+        key = tuple(instance)
+        if key in value:
+            return value[key]  # type: ignore[index]
+        if len(key) == 1 and key[0] in value:
+            return value[key[0]]  # type: ignore[index]
+        raise KeyError(
+            f"外部槽位 {slot_id} 缺少实例 {instance!r} 输入"
+        )
     raise TypeError(
         f"外部 lattice 槽位 {slot_id} 的输入必须是 LatticeField 或坐标映射"
     )
@@ -431,16 +468,72 @@ def _external(inputs: Mapping[str, object], slot_id: str) -> object:
         ) from None
 
 
+def _instance_key(key: object, relation: object) -> tuple[object, ...]:
+    """链接键 → 目标实例坐标（str/int 实体 ID 视作一元组）。"""
+    if isinstance(key, tuple):
+        return key
+    if isinstance(key, str) and key:
+        return (key,)
+    if isinstance(key, int) and not isinstance(key, bool):
+        return (key,)
+    raise TypeError(
+        f"关系 {relation.id} 的链接键必须是 str/int/坐标元组: {key!r}"
+    )
+
+
+def _level_value(
+    program: object,
+    store: StateStore,
+    parent: Parent,
+    relation: object,
+    coords: tuple[object, ...],
+    owner: object | None,
+) -> object:
+    """层级关系取值：restrict（子读父）或 prolong（父读子后聚合）。"""
+    child = program.instances[relation.source]
+    ratio = child.ratio
+    if owner is not None and owner.id == relation.source:
+        target = tuple(int(coord) // ratio for coord in coords)
+        return store.read_at(parent.slot, target, parent.lag)
+    values: list[object] = []
+    for offset in itertools.product(range(ratio), repeat=len(coords)):
+        child_coords = tuple(
+            int(coord) * ratio + step
+            for coord, step in zip(coords, offset)
+        )
+        values.append(store.read_at(parent.slot, child_coords, parent.lag))
+    return _aggregate(values, parent.aggregation, relation.id)
+
+
 def _neighbor_value(
     program: object,
     store: StateStore,
     parent: Parent,
-    coords: tuple[int, ...],
+    coords: tuple[object, ...],
+    owner: object | None = None,
 ) -> object:
     if parent.relation == "same":
         return store.read_at(parent.slot, coords, parent.lag)
-    field = store.read(parent.slot, parent.lag)
     relation = program.relations[parent.relation]
+    if relation.kind == "link":
+        key = store.read_at(relation.key_slot, coords, 0)
+        if key == "" or key is None:
+            # 链接未指派：按父槽位声明的缺失值处理（未声明即拒绝）
+            missing = program.slots[parent.slot].domain.missing
+            if missing is None:
+                raise ValueError(
+                    f"关系 {relation.id}: 链接键未指派，且父槽位 "
+                    f"{parent.slot} 未声明缺失值"
+                )
+            return missing
+        return store.read_at(
+            parent.slot, _instance_key(key, relation), parent.lag,
+        )
+    if relation.kind == "level":
+        return _level_value(
+            program, store, parent, relation, coords, owner,
+        )
+    field = store.read(parent.slot, parent.lag)
     collected: list[object] = []
     for offset in relation.offsets:
         neighbor = tuple(c + d for c, d in zip(coords, offset))

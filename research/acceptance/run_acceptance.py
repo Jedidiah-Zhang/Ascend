@@ -11,7 +11,8 @@
 与运行环境——实验档案必须可绑定到"哪个世界、哪份代码"。
 
 ``--mutation``：生产实现变异探针——分别破坏一处实现（观测不量化、记录不
-校验、地址随机有序、快照身份绕过），对应判据必须变红；任一未被检出即失败。
+校验、地址随机有序、快照身份绕过、守恒漏水），对应判据必须变红；任一未被
+检出即失败。
 """
 
 from __future__ import annotations
@@ -134,6 +135,39 @@ def _mutation_address_order() -> tuple[object, object]:
     return context, ("address_seed", ordered)
 
 
+def _mutation_conservation_leak() -> tuple[object, object]:
+    """流域扣减改为不减（漏水）：W6 必须变红。"""
+    from dataclasses import replace
+
+    from ascend.world.modules import conservation
+
+    leaky = tuple(
+        replace(mechanism, impl=lambda ctx: int(ctx.parent("stock")))
+        if mechanism.id == "water.basin.drain" else mechanism
+        for mechanism in conservation.MODULE.mechanisms
+    )
+    return conservation, (
+        "MODULE", replace(conservation.MODULE, mechanisms=leaky),
+    )
+
+
+def _mutation_event_gating() -> tuple[object, object]:
+    """采集机制改为阶段模式（事件门控失效）：W7 必须变红。"""
+    from dataclasses import replace
+
+    from ascend.world.meta.declarations import When
+    from ascend.world.modules import harvest
+
+    broken = tuple(
+        replace(mechanism, when=When("phase", "hold"))
+        if mechanism.id == "harvest.gather" else mechanism
+        for mechanism in harvest.MODULE.mechanisms
+    )
+    return harvest, (
+        "MODULE", replace(harvest.MODULE, mechanisms=broken),
+    )
+
+
 def _mutation_identity_constant() -> tuple[object, object]:
     """快照身份恒等（绕过校验）：W4 必须变红。"""
     from ascend.world.compile import WorldProgram
@@ -152,6 +186,10 @@ MUTATIONS = (
      world_checks.check_l3_crn),
     ("快照身份绕过（W4）", _mutation_identity_constant,
      world_checks.check_w4),
+    ("守恒漏水（W6）", _mutation_conservation_leak,
+     world_checks.check_w6),
+    ("事件门控失效（W7）", _mutation_event_gating,
+     world_checks.check_w7),
 )
 
 

@@ -256,7 +256,8 @@ class TestFrameTransaction:
 
     def test_invariant_reject_rolls_back(self):
         invariant = InvariantDecl(
-            id="t.inv", slot="t.q", check=lambda value: value <= 10,
+            id="t.inv", slots=("t.q",),
+            check=lambda view: view["t.q"] <= 10,
             severity="reject",
         )
         program = compile_world(
@@ -272,7 +273,8 @@ class TestFrameTransaction:
 
     def test_invariant_record_collects_violation(self):
         invariant = InvariantDecl(
-            id="t.inv", slot="t.q", check=lambda value: value <= 10,
+            id="t.inv", slots=("t.q",),
+            check=lambda view: view["t.q"] <= 10,
             severity="record",
         )
         program = compile_world(

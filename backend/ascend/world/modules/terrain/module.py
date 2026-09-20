@@ -42,6 +42,13 @@ SLOT_TERRAIN_MOISTURE = SlotDecl(
     domain=ValueDomain(kind='int', bits=8, minimum=0, maximum=100),
     permissions=_INTERVENE,
     writer='terrain.integrate', initial=0,
+    role='mechanism_state',
+    schedule='on_terrain_integration',
+    quantization='integer',
+    metric='absolute_difference',
+    access_interventions=('node', 'persistent'),
+    observation_protocols=('research.full.v1',),
+    research_trace=True,
 )
 
 SLOT_TERRAIN_SNOW = SlotDecl(
@@ -51,6 +58,13 @@ SLOT_TERRAIN_SNOW = SlotDecl(
     domain=ValueDomain(kind='int', bits=8, minimum=0, maximum=255),
     permissions=_INTERVENE,
     writer='terrain.integrate', initial=0,
+    role='mechanism_state',
+    schedule='on_terrain_integration',
+    quantization='integer',
+    metric='absolute_difference',
+    access_interventions=('node', 'persistent'),
+    observation_protocols=('research.full.v1',),
+    research_trace=True,
 )
 
 SLOT_TERRAIN_ICE = SlotDecl(
@@ -60,6 +74,13 @@ SLOT_TERRAIN_ICE = SlotDecl(
     domain=ValueDomain(kind='int', bits=8, minimum=0, maximum=255),
     permissions=_INTERVENE,
     writer='terrain.integrate', initial=0,
+    role='mechanism_state',
+    schedule='on_terrain_integration',
+    quantization='integer',
+    metric='absolute_difference',
+    access_interventions=('node', 'persistent'),
+    observation_protocols=('research.full.v1',),
+    research_trace=True,
 )
 
 SLOT_TERRAIN_TERRAIN_ID = SlotDecl(
@@ -390,6 +411,12 @@ MODULE = ModulePack(
             equation='统一演化公式（见 kernel.py 模块注释）',
             arithmetic=Arithmetic(domain='fixed', bits=30),
             witnesses=_WITNESSES,
+            boundary_cases=(
+                '状态按通道上界 clamp（[0, state_max]）',
+                '输出按 int(v + 0.5) 量化回 uint8',
+                'precip 形状 / slope 长度与状态长度不符即拒绝',
+                'dt 由调度周期（hour）给出；dt=0 时状态不变',
+            ),
             notes='C 加速与参考实现逐位一致（内核对）；黄金向量冻结',
         ),
     ),

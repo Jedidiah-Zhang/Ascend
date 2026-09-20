@@ -31,6 +31,10 @@ class TestAcceptanceChecks:
         codes = [check().code for check in world_checks.ALL_CHECKS]
         assert len(set(codes)) == len(codes)
 
+    def test_check_codes_match_declared(self):
+        codes = tuple(check().code for check in world_checks.ALL_CHECKS)
+        assert codes == world_checks.CHECK_CODES
+
     def test_manifest_binds_identity(self):
         manifest = run_acceptance.build_manifest()
         program = world_checks._world_program()

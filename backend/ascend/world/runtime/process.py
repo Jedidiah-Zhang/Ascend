@@ -141,6 +141,11 @@ class WorldProcess:
 
     def materialize(self, kind: str, coords: tuple[int, ...]) -> None:
         """物化一个实例（如 chunk）：为动态槽位补初值。"""
+        instance = self._program.instances.get(kind)
+        if instance is None:
+            raise ValueError(f"实例类型未声明: {kind}")
+        if instance.kind == "entity":
+            raise ValueError(f"实体实例用 spawn_entity 创建: {kind}")
         for slot in self._program.slots.values():
             if slot.on != kind:
                 continue
@@ -155,6 +160,41 @@ class WorldProcess:
     def materialized(self, kind: str) -> tuple[tuple[int, ...], ...]:
         """已物化实例坐标（升序）。"""
         return self._store.materialized(kind)
+
+    # ── 实体生命周期（世界状态；进帧事务）──────────────────────
+
+    def spawn_entity(self, kind: str, entity_id: str) -> None:
+        """创建实体：集合与各槽位初值进帧事务影子（提交才可见）。
+
+        Raises:
+            ValueError: 实例类型不是 entity，或实体已存在。
+        """
+        self._require_entity_kind(kind)
+        initials = {
+            slot.id: slot.initial
+            for slot in self._program.slots.values()
+            if slot.on == kind and slot.persist in ("state", "derived")
+        }
+        self._store.spawn(kind, entity_id, initials)
+
+    def despawn_entity(self, kind: str, entity_id: str) -> None:
+        """销毁实体：集合与槽位值在提交时一并清除（中止则不变）。"""
+        self._require_entity_kind(kind)
+        slot_ids = tuple(
+            slot.id
+            for slot in self._program.slots.values()
+            if slot.on == kind and slot.persist in ("state", "derived")
+        )
+        self._store.despawn(kind, entity_id, slot_ids)
+
+    def entities(self, kind: str) -> tuple[str, ...]:
+        """存活实体 ID（含帧内新增/销毁的影子视图）。"""
+        return self._store.entities(kind)
+
+    def _require_entity_kind(self, kind: str) -> None:
+        instance = self._program.instances.get(kind)
+        if instance is None or instance.kind != "entity":
+            raise ValueError(f"未知实体实例类型: {kind!r}")
 
     def seed_at(
         self,
@@ -226,6 +266,20 @@ class WorldProcess:
             for slot, value in scalar_replaced.items():
                 self._store.write(slot, value)
             for slot, mapping in dynamic_replaced.items():
+                slot_decl = self._program.slots[slot]
+                instance = self._program.instances[slot_decl.on]
+                if instance.kind == "lattice" and instance.size is not None:
+                    # 定尺寸 lattice：干预并入整场影子（求值跳过该实例）
+                    base = self._store.read(slot, 0)
+                    merged = (
+                        base.copy()
+                        if isinstance(base, LatticeField)
+                        else LatticeField(instance.size, 0)
+                    )
+                    for coords, item in mapping.items():
+                        merged.set(coords, item)
+                    self._store.write(slot, merged)
+                    continue
                 for coords, item in mapping.items():
                     self._store.write_at(slot, coords, item)
             for group in due:
@@ -251,9 +305,15 @@ class WorldProcess:
             for slot, value in scalar_replaced.items():
                 writes[slot] = value
             for slot, mapping in dynamic_replaced.items():
-                field = writes.get(slot)
-                if not isinstance(field, DynamicField):
-                    field = DynamicField()
+                value = writes.get(slot)
+                if isinstance(value, LatticeField):
+                    merged = value.copy()
+                    for coords, item in mapping.items():
+                        merged.set(coords, item)
+                    writes[slot] = merged
+                    self._store.write(slot, merged)
+                    continue
+                field = value if isinstance(value, DynamicField) else DynamicField()
                 for coords, item in mapping.items():
                     field.set(coords, item)
                 writes[slot] = field
@@ -308,6 +368,7 @@ class WorldProcess:
             "seed": self._seed,
             "tick": self._tick,
             "materialized": self._store.materialized_sets(),
+            "entities": self._store.entities_payload(),
             "states": snapshot["states"],
             "history": snapshot["history"],
         }
@@ -348,6 +409,9 @@ class WorldProcess:
         process._store.restore_materialized(
             dict(snapshot.get("materialized", {}))  # type: ignore[arg-type]
         )
+        process._store.restore_entities(
+            dict(snapshot.get("entities", {}))  # type: ignore[arg-type]
+        )
         return process
 
     # ── 内部 ────────────────────────────────────────────────────
@@ -363,10 +427,31 @@ class WorldProcess:
         for slot_id, mapping in dynamic_replaced.items():
             slot = self._check_target(slot_id)
             instance = self._program.instances[slot.on]
-            if instance.kind != "lattice" or instance.size is not None:
+            if instance.kind == "entity":
+                live = set(self._store.entities(instance.id))
+                for coords in mapping:
+                    if len(coords) != 1 or coords[0] not in live:
+                        raise FrameFailure(
+                            f"干预实体不存在: {slot_id}@{coords!r}"
+                        )
+                continue
+            if instance.kind != "lattice":
                 raise FrameFailure(
-                    f"槽位 {slot_id} 不是动态实例槽位，不能按实例替换"
+                    f"槽位 {slot_id} 不是实例槽位，不能按实例替换"
                 )
+            if instance.size is not None:
+                for coords in mapping:
+                    if len(coords) != len(instance.size) or any(
+                        not isinstance(axis, int)
+                        or isinstance(axis, bool)
+                        or not 0 <= axis < extent
+                        for axis, extent in zip(coords, instance.size)
+                    ):
+                        raise FrameFailure(
+                            f"干预实例越界: {slot_id}@{coords!r} "
+                            f"不在 {instance.size!r}"
+                        )
+                continue
             materialized = set(self._store.materialized(instance.id))
             for coords in mapping:
                 if coords not in materialized:
@@ -403,12 +488,10 @@ class WorldProcess:
                 if instance.size is None:
                     continue  # 动态实例：物化时补初值
                 values[slot.id] = LatticeField(instance.size, slot.initial)
+            elif instance.kind == "entity":
+                values[slot.id] = DynamicField()  # 存活实体由 spawn 决定
             elif instance.kind == "global":
                 values[slot.id] = slot.initial
-            else:
-                raise NotImplementedError(
-                    f"槽位 {slot.id}: 实例类型 {instance.kind} 在 P4 交付"
-                )
         if remaining:
             raise ValueError(
                 f"初始状态含未声明/非状态槽位: {sorted(remaining)}"
@@ -421,14 +504,19 @@ class WorldProcess:
     ) -> tuple[str, ...]:
         violations: list[str] = []
         for invariant in self._program.invariants:
-            if invariant.slot in writes:
-                value = writes[invariant.slot]
-            else:
-                value = self._store.read(invariant.slot, 0)
-            if invariant.check(value):
+            view = {
+                slot_id: (
+                    writes[slot_id]
+                    if slot_id in writes
+                    else self._store.read(slot_id, 0)
+                )
+                for slot_id in invariant.slots
+            }
+            if invariant.check(view):
                 continue
             message = invariant.message or (
-                f"不变量 {invariant.id} 失败: {invariant.slot}"
+                f"不变量 {invariant.id} 失败: "
+                f"{', '.join(invariant.slots)}"
             )
             if invariant.severity == "reject":
                 raise FrameFailure(message)

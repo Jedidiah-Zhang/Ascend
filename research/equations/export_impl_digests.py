@@ -58,6 +58,10 @@ def content() -> str:
                 entries[impl_key(mechanism.accelerated)] = source_digest(
                     mechanism.accelerated
                 )
+        for invariant in pack.invariants:
+            entries[impl_key(invariant.check)] = source_digest(
+                invariant.check
+            )
     payload = {
         "schema_version": SCHEMA_VERSION,
         "contract_version": CONTRACT_VERSION,

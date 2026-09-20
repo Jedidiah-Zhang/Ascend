@@ -168,7 +168,7 @@ def module_digest(pack: ModulePack, *, root: Path | None = None) -> str:
         "invariants": [
             {
                 "id": item.id,
-                "slot": item.slot,
+                "slots": list(item.slots),
                 "severity": item.severity,
                 "message": item.message,
                 "check": source_digest(item.check),

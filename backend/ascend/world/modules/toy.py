@@ -346,7 +346,8 @@ SPATIAL = ModulePack(
     ),
     invariants=(
         InvariantDecl(
-            id="toy.v.bounds", slot="toy.v", check=_spatial_bounds,
+            id="toy.v.bounds", slots=("toy.v",),
+            check=lambda view: _spatial_bounds(view["toy.v"]),
             severity="reject", message="toy.v 超出 [0, 1000]",
         ),
     ),

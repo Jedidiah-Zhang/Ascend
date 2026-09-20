@@ -185,7 +185,10 @@ class DynamicField:
     def load(cls, payload: Mapping[str, object]) -> "DynamicField":
         return cls(
             {
-                tuple(int(part) for part in coords): value
+                tuple(
+                    part if isinstance(part, str) else int(part)
+                    for part in coords
+                ): value
                 for coords, value in payload["entries"]  # type: ignore[union-attr]
             }
         )
@@ -222,6 +225,89 @@ class StateStore:
         self._history: dict[str, object] = {}
         self._max_lag = max_lag
         self._materialized: dict[str, set[tuple[int, ...]]] = {}
+        # 实体集合是**世界状态**（不是物化视图）：创建/销毁进帧事务。
+        self._entities: dict[str, set[str]] = {}
+        self._entity_add: dict[str, set[str]] = {}
+        self._entity_remove: dict[str, set[str]] = {}
+        self._entity_drop: list[tuple[tuple[str, ...], str]] = []
+
+    # ── 实体集合（世界状态；创建/销毁进帧事务）─────────────────
+
+    def entities(self, kind: str) -> tuple[str, ...]:
+        """存活的实体 ID（已提交 ∪ 帧内新增 − 帧内销毁）。"""
+        live = set(self._entities.get(kind, ()))
+        live |= self._entity_add.get(kind, set())
+        live -= self._entity_remove.get(kind, set())
+        return tuple(sorted(live))
+
+    def spawn(
+        self,
+        kind: str,
+        entity_id: str,
+        initials: Mapping[str, object],
+    ) -> None:
+        """帧内创建实体：集合进影子，各槽位以初值落影子（提交才可见）。"""
+        if not isinstance(entity_id, str) or not entity_id:
+            raise ValueError(f"实体 ID 必须为非空字符串: {entity_id!r}")
+        if entity_id in self.entities(kind):
+            raise ValueError(f"实体已存在: {kind} {entity_id}")
+        self._entity_add.setdefault(kind, set()).add(entity_id)
+        self._entity_remove.get(kind, set()).discard(entity_id)
+        for slot_id, initial in initials.items():
+            self.write_at(slot_id, (entity_id,), initial)
+
+    def despawn(
+        self,
+        kind: str,
+        entity_id: str,
+        slot_ids: tuple[str, ...],
+    ) -> None:
+        """帧内销毁实体：集合进影子，槽位值在提交时清除（中止则不变）。"""
+        if entity_id not in self.entities(kind):
+            raise ValueError(f"实体不存在: {kind} {entity_id}")
+        if entity_id in self._entity_add.get(kind, set()):
+            self._entity_add[kind].discard(entity_id)
+        else:
+            self._entity_remove.setdefault(kind, set()).add(entity_id)
+        self._entity_drop.append((tuple(slot_ids), entity_id))
+
+    def entities_payload(self) -> dict[str, list[str]]:
+        """实体集合的规范载荷（JSON 友好）。"""
+        return {
+            kind: sorted(ids)
+            for kind, ids in sorted(self._entities.items())
+            if ids
+        }
+
+    def restore_entities(self, payload: Mapping[str, object]) -> None:
+        """从快照恢复实体集合（影子必须为空）。"""
+        self._entities = {
+            str(kind): {str(item) for item in ids}
+            for kind, ids in payload.items()
+        }
+        self._entity_add.clear()
+        self._entity_remove.clear()
+        self._entity_drop.clear()
+
+    def _commit_entities(self) -> None:
+        for kind, ids in self._entity_add.items():
+            self._entities.setdefault(kind, set()).update(ids)
+        for kind, ids in self._entity_remove.items():
+            self._entities.setdefault(kind, set()).difference_update(ids)
+        for slot_ids, entity_id in self._entity_drop:
+            coords = (entity_id,)
+            for slot_id in slot_ids:
+                field = self._committed.get(slot_id)
+                if isinstance(field, DynamicField) and field.contains(coords):
+                    remaining = dict(field.items())
+                    remaining.pop(coords, None)
+                    self._committed[slot_id] = DynamicField(remaining)
+                history = self._history.get(slot_id)
+                if isinstance(history, dict):
+                    history.pop(coords, None)
+        self._entity_add.clear()
+        self._entity_remove.clear()
+        self._entity_drop.clear()
 
     # ── 物化（视图，不是世界语义）───────────────────────────────
 
@@ -358,17 +444,31 @@ class StateStore:
     def read_at(
         self,
         slot_id: str,
-        coords: tuple[int, ...],
+        coords: tuple[object, ...],
         lag: int = 0,
     ) -> object:
-        """动态槽位逐实例读取（lag 语义同 ``read``）。"""
+        """实例槽位逐实例读取（lag 语义同 ``read``）。"""
         if lag == 0:
             shadow = self._shadow.get(slot_id)
-            if isinstance(shadow, DynamicField) and shadow.contains(coords):
+            if isinstance(shadow, DynamicField):
+                if shadow.contains(coords):
+                    return shadow.get(coords)
+            elif shadow is not None:
+                # 定尺寸 lattice 影子：整场覆盖，逐实例取点
                 return shadow.get(coords)
             return self._committed[slot_id].get(coords)  # type: ignore[union-attr]
         if lag == 1:
-            return self._committed[slot_id].get(coords)  # type: ignore[union-attr]
+            committed = self._committed[slot_id]
+            if isinstance(committed, DynamicField):
+                if committed.contains(coords):
+                    return committed.get(coords)
+                shadow = self._shadow.get(slot_id)
+                if (
+                    isinstance(shadow, DynamicField)
+                    and shadow.contains(coords)
+                ):
+                    return shadow.get(coords)  # 本帧新创建：以初值为前值
+            return committed.get(coords)  # type: ignore[union-attr]
         history = self._history.get(slot_id)
         try:
             return history[coords][-(lag - 1)]  # type: ignore[index]
@@ -415,6 +515,7 @@ class StateStore:
                 self._committed[slot_id] = value
             else:
                 self._committed[slot_id] = value
+        self._commit_entities()
         self._shadow.clear()
         return writes
 
@@ -433,6 +534,10 @@ class StateStore:
                 )
                 if committed.contains(coords):
                     entries.append(committed.get(coords))
+                else:
+                    # 新实例（实体创建）：历史以初值预热（"自始如此"）
+                    for _ in range(self._max_lag):
+                        entries.append(value)
                 committed.set(coords, value)
         else:
             for coords, value in shadow.items():
@@ -442,6 +547,9 @@ class StateStore:
     def abort(self) -> None:
         """丢弃影子写入（状态不变）。"""
         self._shadow.clear()
+        self._entity_add.clear()
+        self._entity_remove.clear()
+        self._entity_drop.clear()
 
     def committed(self, slot_id: str) -> object:
         """读已提交值（忽略影子）。"""
@@ -496,8 +604,9 @@ class StateStore:
                 )
             else:
                 self._history[slot_id] = {
-                    tuple(int(part) for part in coords): deque(
-                        values, maxlen=self._max_lag,
-                    )
+                    tuple(
+                        part if isinstance(part, str) else int(part)
+                        for part in coords
+                    ): deque(values, maxlen=self._max_lag)
                     for coords, values in entry["entries"]  # type: ignore[index]
                 }

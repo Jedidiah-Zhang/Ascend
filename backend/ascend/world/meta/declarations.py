@@ -204,9 +204,19 @@ class InstanceDecl:
                 raise ValueError("只有 lattice 实例可声明 size")
             if self.axes:
                 raise ValueError("只有 lattice 实例可声明 axes")
+        if self.kind == "entity" and not self.lifecycle:
+            raise ValueError("entity 实例必须声明 lifecycle（创建/销毁条件）")
         if self.parent is not None:
-            if type(self.ratio) is not int or self.ratio <= 0:
-                raise ValueError(f"层级倍率必须为正整数: {self.ratio!r}")
+            if self.kind != "lattice":
+                raise ValueError("只有 lattice 实例可声明层级父实例")
+            if self.parent == self.id:
+                raise ValueError(f"层级父实例不得是自身: {self.parent}")
+            if type(self.ratio) is not int or self.ratio < 2:
+                raise ValueError(
+                    f"层级倍率必须为 ≥2 的整数（退化层级无意义）: {self.ratio!r}"
+                )
+        elif self.ratio != 1:
+            raise ValueError("未声明层级父实例时 ratio 必须为 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,11 +225,14 @@ class RelationDecl:
 
     Attributes:
         id: 关系标识（父引用以它索引进空间偏移集合）。
-        kind: ``spatial``（同层偏移）/ ``link``（实体链接）/ ``level``。
+        kind: ``spatial``（同层偏移）/ ``link``（实体链接/归属）/
+            ``level``（层级父子：source = 子实例，target = 父实例）。
         source: 源实例类型 ID（spatial 时与 ``target`` 相同）。
         target: 目标实例类型 ID。
         offsets: 整数偏移元组（spatial 专用）。
-        boundary: 边界算子（``BOUNDARY_KINDS``）。
+        boundary: 边界算子（``BOUNDARY_KINDS``；spatial 专用）。
+        key_slot: 链接键槽位（link 专用）：source 实例上持有目标实例键
+            （实体 ID）的槽位；键值须为 str/int。
     """
 
     id: str
@@ -228,6 +241,7 @@ class RelationDecl:
     target: str = ""
     offsets: tuple[tuple[int, ...], ...] = ()
     boundary: str = "reject"
+    key_slot: str = ""
 
     def __post_init__(self) -> None:
         _require_ident(self.id, "关系 id")
@@ -240,6 +254,8 @@ class RelationDecl:
                 raise ValueError("spatial 关系要求 source == target")
             if not self.offsets:
                 raise ValueError("spatial 关系必须给出 offsets")
+            if self.key_slot:
+                raise ValueError("spatial 关系不得携带 key_slot")
             widths = {len(offset) for offset in self.offsets}
             if len(widths) != 1:
                 raise ValueError("offsets 各分量维数必须一致")
@@ -248,6 +264,12 @@ class RelationDecl:
                 raise ValueError(f"{self.kind} 关系不得携带 offsets")
             if not self.source or not self.target:
                 raise ValueError(f"{self.kind} 关系必须给出 source/target")
+            if self.kind == "link":
+                if not self.key_slot:
+                    raise ValueError("link 关系必须给出 key_slot（链接键槽位）")
+                _require_ident(self.key_slot, "链接键槽位")
+            elif self.key_slot:
+                raise ValueError("level 关系不得携带 key_slot")
 
 
 @dataclass(frozen=True, slots=True)
@@ -483,17 +505,27 @@ class MechanismDecl:
 
 @dataclass(frozen=True, slots=True)
 class InvariantDecl:
-    """不变量：对槽位值的声明式断言（reject = 帧失败；record = 留痕）。"""
+    """不变量：值域/守恒/单调/总量检查（reject = 帧失败；record = 留痕）。
+
+    ``slots`` 是检查读取的槽位集合（单槽位检查即一元组）；``check`` 收到
+    ``{槽位: 值}`` 只读视图——本帧写入优先，否则已提交值。跨槽位总量
+    （守恒）检查因此在声明层即可表达，不引入新的运行时概念。
+    """
 
     id: str
-    slot: str
-    check: Callable[[object], bool]
+    slots: tuple[str, ...]
+    check: Callable[[Mapping[str, object]], bool]
     severity: str = "reject"
     message: str = ""
 
     def __post_init__(self) -> None:
         _require_ident(self.id, "不变量 id")
-        _require_ident(self.slot, "不变量槽位")
+        if not self.slots:
+            raise ValueError("不变量必须给出至少一个槽位")
+        for slot in self.slots:
+            _require_ident(slot, "不变量槽位")
+        if len(set(self.slots)) != len(self.slots):
+            raise ValueError(f"不变量槽位不得重复: {self.slots!r}")
         if self.severity not in ("reject", "record"):
             raise ValueError(f"未知不变量级别: {self.severity!r}")
         if not callable(self.check):

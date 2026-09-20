@@ -372,7 +372,8 @@ class TestStructureChecks:
             mechanisms=(_mech("m.a", "t.a"),),
             invariants=(
                 InvariantDecl(
-                    id="t.inv", slot="t.e", check=lambda value: True,
+                    id="t.inv", slots=("t.e",),
+                    check=lambda view: True,
                 ),
             ),
         )

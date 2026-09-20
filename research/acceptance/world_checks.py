@@ -1,4 +1,4 @@
-"""新核心验收判据（P2-3c-2）— C0–C2 / W0–W5 / I0–I1 / L3。
+"""新核心验收判据（P2-3c-2；P4-2 增 W6）— C0–C2 / W0–W6 / I0–I1 / L3。
 
 全部判据只依赖新核心（声明/编译/运行时/研究层）与玩具模块，不读旧注册表：
 每个判据独立报告输入摘要与结果，失败给出首个分歧（04 §1 风格）。
@@ -26,7 +26,13 @@ from ascend.world.evidence import (  # noqa: E402
     witness_coverage_issues,
 )
 from ascend.world.meta.declarations import AddressUse  # noqa: E402
-from ascend.world.modules import toy, weather, worldgen  # noqa: E402
+from ascend.world.modules import (  # noqa: E402
+    conservation,
+    harvest,
+    toy,
+    weather,
+    worldgen,
+)
 from ascend.world.modules.pipeline import PIPELINE_PHASES  # noqa: E402
 from ascend.world.research import (  # noqa: E402
     ObservationSpec,
@@ -41,7 +47,7 @@ from ascend.world.research.records import (  # noqa: E402
     record_from_trace,
 )
 
-__all__ = ["ALL_CHECKS", "CheckResult"]
+__all__ = ["ALL_CHECKS", "CHECK_CODES", "CheckResult"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,6 +353,115 @@ def check_i1() -> CheckResult:
     )
 
 
+# ── 守恒练兵切片（P4-2）────────────────────────────────────────
+
+_CONSERVATION_PHASES = ("flow", "apply", "drain")
+
+
+def check_w6() -> CheckResult:
+    """守恒练兵切片：逐帧总量守恒 + 多分辨率稳态（跨槽位不变量）。"""
+    program = compile_world(
+        WorldSpec(
+            modules=(conservation.MODULE,),
+            schedule=Schedule(phases=_CONSERVATION_PHASES),
+        )
+    )
+    process = WorldProcess(program)
+    total_ok = True
+    try:
+        for _ in range(12):
+            process.step()
+            total = (
+                sum(process.committed("water.plot.stock").values())
+                + sum(process.committed("water.basin.stock").values())
+            )
+            total_ok = total_ok and total == conservation.TOTAL_WATER
+    except Exception as exc:
+        return CheckResult(
+            "W6", "守恒切片（流量/守恒/多分辨率）", False,
+            f"帧失败: {type(exc).__name__}: {exc}",
+        )
+    steady = (
+        process.committed("water.plot.stock").values() == (10, 10, 10, 10)
+        and process.committed("water.basin.stock").values() == (0, 0)
+    )
+    ok = total_ok and steady
+    return CheckResult(
+        "W6", "守恒切片（流量/守恒/多分辨率）", ok,
+        f"逐帧总量 == {conservation.TOTAL_WATER}={total_ok}；"
+        f"稳态（地块满 10 / 流域空 0）={steady}",
+        input={"module": conservation.MODULE.id},
+    )
+
+
+# ── 实体练兵切片（P4-3）────────────────────────────────────────
+
+def check_w7() -> CheckResult:
+    """实体练兵切片：事件门控 + 链接 + Γ 指派 + 守恒（实体/事件/资源）。"""
+    from ascend.world.research.action import (
+        ActionSpec,
+        interventions_at,
+        resolve,
+    )
+
+    program = compile_world(
+        WorldSpec(
+            modules=(harvest.MODULE,),
+            schedule=Schedule(phases=("hold",)),
+        )
+    )
+    process = WorldProcess(program)
+    for index in range(harvest.RESOURCE_COUNT):
+        process.spawn_entity("entity.resource", f"r{index}")
+    process.spawn_entity("entity.harvester", "h0")
+    next_tick = process.tick + 1
+    actions = (
+        ActionSpec(
+            id="target", target_slot="harvest.target",
+            value={("h0",): "r0"},
+        ),
+        ActionSpec(
+            id="owner", target_slot="harvest.owner",
+            value={("r0",): "h0"},
+        ),
+    )
+    process.step(interventions=interventions_at(
+        resolve(actions, tick=next_tick), next_tick,
+    ))
+    stock_before = process.committed("harvest.stock").values()
+    process.step()
+    gated = (
+        process.committed("harvest.stock").values() == stock_before
+        and process.committed("harvest.yield").values() == (0,)
+    )
+    total_ok = True
+    try:
+        for _ in range(3):
+            process.step(events=("harvest", "harvest.settle"))
+            total_ok = total_ok and (
+                sum(process.committed("harvest.stock").values())
+                + sum(process.committed("harvest.carried").values())
+                == harvest.TOTAL_RESOURCE
+            )
+    except Exception as exc:
+        return CheckResult(
+            "W7", "实体切片（实体/事件/资源/Γ）", False,
+            f"帧失败: {type(exc).__name__}: {exc}",
+        )
+    moved = (
+        process.committed("harvest.stock").values() == (0, 5)
+        and process.committed("harvest.carried").values() == (5,)
+    )
+    ok = gated and total_ok and moved
+    return CheckResult(
+        "W7", "实体切片（实体/事件/资源/Γ）", ok,
+        f"事件门控={gated}；逐帧守恒={total_ok}；"
+        f"结算后 存量={process.committed('harvest.stock').values()} / "
+        f"携带={process.committed('harvest.carried').values()}",
+        input={"module": harvest.MODULE.id},
+    )
+
+
 # ── L3：研究记录 / CRN / 状态闭合 ───────────────────────────────
 
 
@@ -425,6 +540,14 @@ def check_l3_state() -> CheckResult:
     )
 
 
+#: 全部判据码（不执行判据；条款↔证据对账门禁与漂移测试用）。
+CHECK_CODES: tuple[str, ...] = (
+    "C0", "C1", "C2",
+    "W0", "W1", "W2", "W3", "W4", "W5", "W6", "W7",
+    "I0", "I1",
+    "L3-历史", "L3-CRN", "L3-状态",
+)
+
 ALL_CHECKS = (
     check_c0,
     check_c1,
@@ -435,6 +558,8 @@ ALL_CHECKS = (
     check_w3,
     check_w4,
     check_w5,
+    check_w6,
+    check_w7,
     check_i0,
     check_i1,
     check_l3_history,
