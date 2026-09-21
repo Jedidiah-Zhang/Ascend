@@ -40,7 +40,7 @@ class ContinentCommandsMixin:
         Returns:
             执行结果。
         """
-        from olam.generation.continent import read_continent_header
+        from olam.generation.continent_io import read_continent_header
 
         path = self._continent_path
         if not os.path.isfile(path):

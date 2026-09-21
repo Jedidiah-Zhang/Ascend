@@ -1246,7 +1246,7 @@ class TestContinentCommand:
         import struct
         import zlib
 
-        from olam.generation.continent import CONTINENT_CACHE_VERSION
+        from olam.generation.continent_io import CONTINENT_CACHE_VERSION
         head = (
             b"ASCNT" + struct.pack("<B", CONTINENT_CACHE_VERSION)
             + struct.pack("<i", len(fp)) + fp.encode()

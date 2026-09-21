@@ -168,10 +168,6 @@ class TileGrid:
         """写入 (x, y) 处的高度 (m)。"""
         self._elevation[y * self._size + x] = elevation
 
-    def get_slope(self, x: int, y: int) -> float:
-        """读取 (x, y) 处的最大坡度 (m/m)，供 isometric 渲染选择斜坡变体。"""
-        return self._slope[y * self._size + x]
-
     def set_slope(self, x: int, y: int, slope: float) -> None:
         """写入 (x, y) 处的坡度 (m/m)。"""
         self._slope[y * self._size + x] = slope

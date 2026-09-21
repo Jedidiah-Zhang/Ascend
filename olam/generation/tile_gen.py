@@ -36,11 +36,10 @@
 from olam.generation.terrain import TerrainType
 from olam.content.tile_grid import TileGrid, TILE_MAP_SIZE
 from olam.generation.noise import PerlinNoise
-from olam.generation.climate import LAPSE_RATE
 from olam.generation.biome import TerrainBias, biome_membership, get_template
 
 
-from olam.constants import MOISTURE_TILE_FREQUENCY as _MOISTURE_FREQ, TERRAIN_NOISE_FREQUENCY as _TERRAIN_NOISE_FREQ, TERRAIN_NOISE_AMPLITUDE as _TERRAIN_NOISE_AMP, ROCK_LINE_ELEV as _ROCK_LINE_ELEV, BARE_ROCK_SLOPE as _BARE_ROCK_SLOPE, GRAVEL_ALT_BAND as _GRAVEL_ALT_BAND, FERTILE_LOW_ELEV as _FERTILE_LOW_ELEV, WETLAND_BAND_M as _WETLAND_BAND_M
+from olam.constants import LAPSE_RATE, MOISTURE_TILE_FREQUENCY as _MOISTURE_FREQ, TERRAIN_NOISE_FREQUENCY as _TERRAIN_NOISE_FREQ, TERRAIN_NOISE_AMPLITUDE as _TERRAIN_NOISE_AMP, ROCK_LINE_ELEV as _ROCK_LINE_ELEV, BARE_ROCK_SLOPE as _BARE_ROCK_SLOPE, GRAVEL_ALT_BAND as _GRAVEL_ALT_BAND, FERTILE_LOW_ELEV as _FERTILE_LOW_ELEV, WETLAND_BAND_M as _WETLAND_BAND_M
 
 
 class TileGenerator:

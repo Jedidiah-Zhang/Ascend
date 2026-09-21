@@ -132,7 +132,7 @@ def _parse_event_class(raw: object, field: str) -> type | None:
 
 def _parse_feature_config(ns_id: str, raw: Mapping) -> FeatureConfig:
     """单行 JSON → FeatureConfig（type_name = local 部分，非空校验）。"""
-    ns, local = split_ns_id(ns_id)
+    _, local = split_ns_id(ns_id)
     if not local:
         raise ValueError(f"注册表键 local 部分为空: {ns_id!r}")
     effect = str(raw.get("effect", ""))

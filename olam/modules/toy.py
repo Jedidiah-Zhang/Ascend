@@ -13,7 +13,6 @@ from __future__ import annotations
 from olam.kernel import round_half_even_div
 from olam.meta.declarations import (
     AddressUse,
-    Arithmetic,
     InstanceDecl,
     InvariantDecl,
     MechanismDecl,

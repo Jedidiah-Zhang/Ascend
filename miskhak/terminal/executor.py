@@ -18,7 +18,7 @@
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from miskhak.events import world_tree
 from miskhak.log import get_logger

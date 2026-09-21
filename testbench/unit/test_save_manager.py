@@ -16,9 +16,9 @@ import pytest
 
 from miskhak.save.manager import (
     SaveManager, SNAPSHOT_SUFFIX, AUTO_SNAPSHOT_KEEP, QUIT_SNAPSHOT_KEEP,
-    STATE_FILE, CHUNKS_DB, ENTITIES_FILE, EVENTS_DB,
+    STATE_FILE, CHUNKS_DB, EVENTS_DB,
 )
-from miskhak.save.snapshot import SnapshotStore
+from miskhak.save.snapshot import ENTITIES_FILE, SnapshotStore
 from miskhak.save.manifest import Manifest, SaveFormatError, MANIFEST_NAME, SEED_MAX
 from miskhak.save.crypto import SaveCryptoError, SaveKeys
 

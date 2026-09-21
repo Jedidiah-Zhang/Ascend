@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
 
 from olam.meta.declarations import MechanismDecl
 from olam.runtime.evaluate import evaluate_direct

@@ -13,11 +13,8 @@ CI runner 固定架构，跨架构（x86 vs ARM）不追求位级一致。
 import hashlib
 import struct
 
-from olam.generation.continent import (
-    ContinentGenerator,
-    ContinentParams,
-    serialize_continent,
-)
+from olam.generation.continent import ContinentGenerator, ContinentParams
+from olam.generation.continent_io import serialize_continent
 from olam.generation.generator import WorldGenerator
 from olam.generation.tile_gen import TileGenerator
 from olam.content.tile_grid import TileGrid

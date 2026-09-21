@@ -10,7 +10,7 @@
 
 from miskhak.events import world_tree, Event, AffectedParty, WorldEvent
 from miskhak.events.event import (
-    SUB_CELL_SIZE, SUB_CELLS, spatial_key, sub_cell_range,
+    SUB_CELLS, spatial_key, sub_cell_range,
 )
 from miskhak.log import get_logger
 from .entity import Entity, EntityType, Controller

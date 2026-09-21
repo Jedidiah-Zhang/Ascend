@@ -21,6 +21,8 @@ from olam.content.tile_grid import TILE_MAP_SIZE
 from olam.generation.continent import (
     ContinentGenerator,
     ContinentParams,
+)
+from olam.generation.continent_io import (
     serialize_continent,
     deserialize_continent,
 )

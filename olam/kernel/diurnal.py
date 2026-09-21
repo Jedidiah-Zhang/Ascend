@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from .fixed import mul, round_half_even_div
 from .frozen_tables import TABLE_BITS
-from .tables import DECLARED_EPSILON, cos_q
+from .tables import cos_q
 
 __all__ = [
     "HOUR_MAX_ERROR",

@@ -13,9 +13,11 @@ from olam.generation.continent import (
     ContinentGenerator,
     ContinentParams,
     ContinentData,
+)
+from olam.generation.continent_io import (
+    CONTINENT_CACHE_VERSION,
     serialize_continent,
     deserialize_continent,
-    CONTINENT_CACHE_VERSION,
 )
 from olam.generation.generator import (
     WorldGenerator,
@@ -589,7 +591,7 @@ class TestGenerationFingerprint:
 
     def test_read_continent_header_roundtrip(self):
         """read_continent_header 轻量读取版本与指纹，不解析场体。"""
-        from olam.generation.continent import read_continent_header
+        from olam.generation.continent_io import read_continent_header
 
         fake = _small_continent(seed=1)
         fake.gen_fingerprint = "test-fp-123456"
@@ -598,7 +600,7 @@ class TestGenerationFingerprint:
 
     def test_read_continent_header_invalid(self):
         """非法/损坏/空输入返回 None。"""
-        from olam.generation.continent import read_continent_header
+        from olam.generation.continent_io import read_continent_header
 
         assert read_continent_header(b"garbage-not-zlib") is None
         assert read_continent_header(b"") is None

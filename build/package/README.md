@@ -43,12 +43,6 @@ build/package.sh <通道> [linux|windows|all]
 
 （CI runner 均完整安装；本地缺工具时自动跳过不阻断其余格式。）
 
-## 规划中
-
-| 平台 | 产物 | 工具 |
-|---|---|---|
-| macOS | `.dmg` | hdiutil（需 macOS runner + 签名） |
-
 ## 约定
 
 - 版本号从 `build/version/` 读取（`core` 为共享核心；产品版本见

@@ -16,7 +16,6 @@ from enum import IntEnum
 from typing import Mapping, cast
 
 from olam.content.loader import load_content, split_ns_id
-from olam.kernel.mathutil import clamp
 from olam.runtime import evaluate_direct
 
 
@@ -93,7 +92,7 @@ class SeasonalityMode(IntEnum):
 
 
 # ── 物理常量（单一事实来源 olam/constants.py） ──────
-from olam.constants import LAPSE_RATE, PARAM_BOUNDS as _PARAM_BOUNDS
+from olam.constants import PARAM_BOUNDS as _PARAM_BOUNDS
 
 
 @dataclass(slots=True)

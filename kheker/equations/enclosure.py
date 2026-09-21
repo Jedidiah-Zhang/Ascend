@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from olam.kernel.fixed import div, mul, round_half_even_div
+from olam.kernel.fixed import round_half_even_div
 
 __all__ = [
     "DiscreteSet", "Interval",

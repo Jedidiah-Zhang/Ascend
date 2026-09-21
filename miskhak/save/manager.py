@@ -53,7 +53,7 @@ from .lineage import (LINEAGE_FILE, LIVE_ORIGIN_KEY, PARENT_KEY, SNAPSHOTS_KEY,
                       LineageStore, SnapshotEntry, parse_lineage_raw,
                       parse_snapshot_entries)
 from .manifest import MANIFEST_NAME, SEED_MAX, Manifest, SaveFormatError
-from .snapshot import (AUTO_SNAPSHOT_KEEP, CHUNKS_DB, ENTITIES_FILE, EVENTS_DB,
+from .snapshot import (AUTO_SNAPSHOT_KEEP, CHUNKS_DB, EVENTS_DB,
                        QUIT_SNAPSHOT_KEEP, SNAPSHOT_DIR, SNAPSHOT_ENTRIES,
                        SNAPSHOT_SUFFIX, STATE_FILE, SnapshotStore)
 

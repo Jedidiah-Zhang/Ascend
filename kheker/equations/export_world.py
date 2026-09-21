@@ -18,7 +18,6 @@ from olam import Schedule, WorldSpec, compile_world
 from olam.kernel import digest_object
 from olam.meta.declarations import (
     MechanismDecl,
-    ModulePack,
     ParameterDecl,
     Parent,
     SlotDecl,

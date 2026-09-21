@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
 
 from olam.kernel import Address, address_value
 from olam.meta.declarations import AddressUse

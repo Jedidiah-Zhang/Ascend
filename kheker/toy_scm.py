@@ -276,7 +276,6 @@ def _s4(fast=False):
 
 def _s5(fast=False):
     print("\n=== S5 稀有配置 p_min=1e-4：被动 vs do-分层 ===")
-    d = 2
     p_min = 1e-4
     eps = 0.2
     reps = 200 if not fast else 60

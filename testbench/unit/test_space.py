@@ -271,7 +271,8 @@ class TestClimateZone:
 
     def test_lapse_rate(self):
         """气温直减率：升高 1000m 应降 9.0°C（游戏性放大值）。"""
-        from olam.generation.climate import apply_lapse_rate, LAPSE_RATE
+        from olam.constants import LAPSE_RATE
+        from olam.generation.climate import apply_lapse_rate
         assert LAPSE_RATE == 9.0
         t0 = apply_lapse_rate(20.0, 0.0)
         t1 = apply_lapse_rate(20.0, 1000.0)

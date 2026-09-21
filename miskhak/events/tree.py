@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from miskhak.log import get_logger
 from .archive import EventArchive
-from .event import Event, LocationFilter, SUB_CELL_SIZE, SUB_CELLS, spatial_key, sub_cell_range
+from .event import Event, LocationFilter, SUB_CELLS, spatial_key, sub_cell_range
 from .graph import EventGraph
 
 logger = get_logger(__name__)

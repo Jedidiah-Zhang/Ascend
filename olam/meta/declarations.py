@@ -649,12 +649,6 @@ class Schedule:
                 raise ValueError(f"周期刻度必须为正整数: {ticks!r}")
             seen.add(name)
 
-    def phase_rank(self, key: str) -> int:
-        """阶段在帧内的序（未知阶段即拒绝）。"""
-        if key not in self.phases:
-            raise ValueError(f"未声明的阶段: {key!r}")
-        return self.phases.index(key)
-
     def period_ticks(self, key: str) -> int | None:
         """周期名 → tick 数；未知周期返回 ``None``。"""
         return dict(self.periods).get(key)

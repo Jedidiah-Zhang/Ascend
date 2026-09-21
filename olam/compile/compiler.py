@@ -30,6 +30,7 @@ from olam.meta.declarations import (
     MechanismDecl,
     ModulePack,
     ParameterDecl,
+    Parent,
     RelationDecl,
     Schedule,
     SlotDecl,
@@ -84,10 +85,6 @@ class WorldProgram:
     identity: str
     module_digests: Mapping[str, str]
     kernel: str
-
-    def writer_of(self, slot_id: str) -> str | None:
-        """槽位写者（parameter/external 返回 ``None``）。"""
-        return self.slots[slot_id].writer
 
     def due_groups(
         self,
