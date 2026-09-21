@@ -50,7 +50,7 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
         evidence=("docs/研究理论/世界契约.md",
                   "research/acceptance/clause_evidence.py"),
         positive="条款真值地位（规范/说明/实现注记分级）",
-        negative="实现注记不具规范效力（旧实现注记已删除，仅版本受控文档留存）",
+        negative="实现注记不具规范效力（条款引用以契约为准）",
     ),
     ClauseEvidence(
         "WC-1.1", "covered",
@@ -67,7 +67,7 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
         checks=("C0",),
         evidence=("backend/tests/integration/test_game_engine.py",
                   "backend/tests/world/test_assembly.py"),
-        positive="迁移即新身份（已发生）；manifest 记录声明/程序视图",
+        positive="身份组分变化即新世界；manifest 记录声明/程序视图",
         negative="旧身份存档 fail-closed 拒载（声明不一致测试）",
     ),
     ClauseEvidence(
@@ -75,7 +75,7 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
         evidence=("backend/tests/world/test_timeline.py",
                   "backend/tests/world/test_protocol.py"),
         positive="结构变更 = 换世界；运行内机制替换不在干预目标空间",
-        negative="timeline 拒绝 mechanism 空间（机制替换已废除）",
+        negative="timeline 拒绝 mechanism 空间（结构替换不在一局运行内）",
     ),
     ClauseEvidence(
         "WC-1.4", "covered",
@@ -186,7 +186,7 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
                   "backend/tests/world/test_kernel_fixed.py",
                   "backend/tests/world/test_kernel_tables.py",
                   "backend/tests/world/test_kernel_enclosure.py"),
-        positive="定点原语 + 冻表超越函数 + 整数随机；内核摘要进世界身份",
+        positive="定点原语 + 预计算表超越函数 + 整数随机；内核摘要进世界身份",
         negative="打包缺实现摘要即 fail-closed（打包身份回退测试）",
     ),
     ClauseEvidence(
@@ -391,7 +391,7 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
         checks=("C1",),
         evidence=("backend/tests/world/test_kernel.py",
                   "backend/tests/world/test_kernel_tables.py"),
-        positive="定点溢出显式失败；冻表误差声明化（ε 进声明）",
+        positive="定点溢出显式失败；预计算表误差声明化（ε 进声明）",
         negative="越界即拒绝（clamp 必须由机制显式声明）",
     ),
     ClauseEvidence(
@@ -441,14 +441,14 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
     ClauseEvidence(
         "WC-11.3", "covered",
         evidence=("docs/研究理论/世界契约.md",),
-        positive="契约变更记录（v0.1 → v0.2）随声明载体迁移登记",
-        negative="实现先行不豁免变更登记（身份迁移已登记）",
+        positive="契约变更记录成文（v0.1 → v0.2）；声明数据变更只改世界身份",
+        negative="实现先行不豁免变更登记（身份变更与契约版本分别记录）",
     ),
     ClauseEvidence(
         "WC-11.4", "covered",
         evidence=("docs/研究理论/世界契约.md",
                   "docs/研究理论/世界架构/00-总纲.md"),
         positive="文档从属：总纲/技术文档低于契约，冲突以契约为准",
-        negative="旧实现注记已删除（文档从属要求条款引用）",
+        negative="实现注记与契约冲突时以契约为准（降级文档只允许引用条款）",
     ),
 )

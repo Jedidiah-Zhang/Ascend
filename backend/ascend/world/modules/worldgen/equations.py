@@ -1,9 +1,7 @@
-"""方程实现（逐位移植自旧注册表；生成后即为源码）。
+"""方程实现 — 世界生成机制的定点求值。
 
-本文件由一次性移植生成器从旧机制注册表提取；导入已改写为新内核
-（``ascend.world.kernel``）。改动方程必须同步黄金向量
-（``backend/tests/world/data/weather_golden.json`` 由旧实现生成，
-旧注册表删除后作为冻结契约保留）。
+导入内核 ``ascend.world.kernel``；改动方程必须同步黄金向量
+（``backend/tests/world/data/weather_golden.json``，冻结契约数据）。
 """
 from __future__ import annotations
 from ascend.space.climate import ClimateZone, get_climate_template

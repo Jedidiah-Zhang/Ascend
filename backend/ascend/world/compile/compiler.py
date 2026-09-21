@@ -646,7 +646,7 @@ def _check_modulus(
     slots: Mapping[str, SlotDecl],
     issues: list[str],
 ) -> None:
-    """模数一致性（G7 语义）：线性边见证差商 ≤ L；跳变边跳幅 ≤ jump_bound。"""
+    """父边误差界一致性（G7 语义）：线性边见证差商 ≤ L；跳变边跳幅 ≤ jump_bound。"""
     output_slot = slots.get(mechanism.outputs()[0])
     output_kind = output_slot.domain.kind if output_slot else "any"
     for parent in mechanism.parents:

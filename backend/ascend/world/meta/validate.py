@@ -197,7 +197,7 @@ def kernel_source_digest() -> str:
 
 
 def kernel_digest() -> str:
-    """数值内核摘要：冻表 + 地址算法 + 定点原语源码（打包模式取记录值）。"""
+    """数值内核摘要：预计算表 + 地址算法 + 定点原语源码（打包模式取记录值）。"""
     return digest_object(
         {
             "tables": TABLE_DIGEST,

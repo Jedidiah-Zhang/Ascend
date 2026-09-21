@@ -73,7 +73,7 @@ deriving DecidableEq, Repr, Fintype
 
 /-- 世界声明：分量模板 v 在阶段 r 的方程所声明的全部父模板。
 
-值是 `List`（而非 `Finset`）：声明是生成物、重复项由生成器保证不出现，
+值是 `List`（而非 `Finset`）：父模板由声明投影逐条给出、重复项不出现，
 而列表让 `wellFormedCheck` 保持**可计算**（`Finset.toList` 依赖选择公理）。 -/
 abbrev Decl (n m K : ℕ) := Fin n → Fin m → List (ParentSpec n m K)
 

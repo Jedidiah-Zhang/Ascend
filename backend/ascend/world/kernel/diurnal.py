@@ -1,4 +1,4 @@
-"""昼夜链垂直切片：昼夜链的定点/冻表实现（并行参考，尚未接生产）。
+"""昼夜链定点实现 — 昼夜链的纯整数求值（tick → 小时 → 相位 → 温度偏移）。
 
 链：``tick → hour_of_day → diurnal_phase_cos → diurnal_temperature_offset``
 对应生产机制：
@@ -8,15 +8,13 @@
   ``cos((hour − peak_hour) / 24 · 2π)``
 - ``weather.offset.derive_diurnal_temperature.v1``：``amplitude · phase``
 
-本模块是**迁移先导**：全整数实现（定点 + 冻表），与旧 float 实现的对拍
-由 ``tests/unit/test_num_diurnal.py`` 承担，偏差上界在下方声明。生产切换
-（换入 ``weather/mechanisms.py``）是独立步骤：会改变世界身份，需重生成
-equations.json / Lean / impl_digests —— 对拍通过后再执行。
+全整数实现（定点原语 + 预计算表），与浮点参考公式的对拍由
+``tests/world/test_kernel_diurnal.py`` 承担，偏差上界在下方声明。
 
 声明偏差（各阶段，供对拍判据）：
 
 - 小时：半偶舍入 ≤ 0.5 ulp = 2^-(bits+1)；
-- 相位：冻表误差 ``tables.DECLARED_EPSILON`` + 角度量化 ≤ 3e-6；
+- 相位：预计算表误差 ``tables.DECLARED_EPSILON`` + 角度量化 ≤ 3e-6；
 - 温度偏移：``|amplitude|·相位误差 + 0.5 ulp``；amplitude ≤ 30 时 ≤ 1e-4。
 """
 
@@ -35,7 +33,7 @@ __all__ = [
     "hour_of_day_q",
 ]
 
-# 与冻表同精度（多精度按 #53 顺序扩展）
+# 与预计算表同精度；多精度表未提供
 HOUR_MAX_ERROR: float = 2.0 ** -(TABLE_BITS + 1)
 # 相位：表误差 1e-5 + 角度量化 ≈2.5e-7 + 舍入；取 2e-5（含裕度）
 PHASE_MAX_ERROR: float = 2e-5

@@ -6,12 +6,13 @@
   - 季节振幅 / 纬度连续推导（保证气候带边界无跳变）
 
 公式单一事实来源：precip_type_for / derive_seasonal_amp /
-derive_latitude 委托新核心声明方程执行（``world/modules/weather``，
-参数值取自 ascend.config）。分级阈值事实来源 = ascend.config
-的 *_TIER_BOUNDARIES 系列常量。
+derive_diurnal_amp / derive_humidity_seasonal_amp /
+derive_humidity_diurnal_amp / derive_latitude 委托声明方程执行
+（``world/modules/weather``，参数值取自 ascend.config）。分级阈值事实
+来源 = ascend.config 的 *_TIER_BOUNDARIES 系列常量。
 
-fail-closed 契约：三个声明委托函数在输入越出声明值域时抛
-ValueError（不再静默钳制），与研究声明的值域语义一致。
+fail-closed 契约：声明委托函数在输入越出声明值域时抛 ValueError，
+与研究声明的值域语义一致。
 """
 
 from dataclasses import dataclass
@@ -41,7 +42,7 @@ _WEATHER_PROGRAM = None
 
 
 def _weather_program():
-    """惰性编译天气程序（新核心；避免导入环与进程启动开销）。"""
+    """惰性编译天气声明程序（避免导入环与进程启动开销）。"""
     global _WEATHER_PROGRAM
     if _WEATHER_PROGRAM is None:
         from ascend.world import Schedule, WorldSpec, compile_world
@@ -59,7 +60,7 @@ def _weather_program():
 
 @dataclass(frozen=True, slots=True)
 class DaySummary:
-    """单日解析天气摘要（地形状态结算器采样契约，见 WeatherEngine.get_day_summary）。
+    """单日解析天气摘要（地形状态积分器的采样契约，见 WeatherEngine.get_day_summary）。
 
     Attributes:
         day: 游戏日（1-based）。
@@ -217,7 +218,7 @@ def derive_seasonal_amp(temperature: float, rainfall: float) -> float:
 
 
 def derive_diurnal_amp(seasonal_amp: float) -> float:
-    """昼夜温度振幅 = 季节振幅 × DIURNAL_TO_SEASONAL_RATIO（注册表方程）。
+    """昼夜温度振幅 = 季节振幅 × DIURNAL_TO_SEASONAL_RATIO（声明方程）。
 
     季节振幅由 :func:`derive_seasonal_amp` 产出；本函数与湿度振幅
     委托各自 chunk 派生机制求值，保证 register_chunk 落盘的振幅族
@@ -239,7 +240,7 @@ def derive_diurnal_amp(seasonal_amp: float) -> float:
 
 
 def derive_humidity_seasonal_amp(seasonal_amp: float) -> float:
-    """季节湿度振幅 = 季节振幅 × HUMIDITY_SEASONAL_SCALE（注册表方程）。
+    """季节湿度振幅 = 季节振幅 × HUMIDITY_SEASONAL_SCALE（声明方程）。
 
     Args:
         seasonal_amp: 季节温度振幅 (°C)。
@@ -257,7 +258,7 @@ def derive_humidity_seasonal_amp(seasonal_amp: float) -> float:
 
 
 def derive_humidity_diurnal_amp(seasonal_amp: float) -> float:
-    """昼夜湿度振幅 = 季节振幅 × RATIO × HUMIDITY_DIURNAL_SCALE（注册表方程）。
+    """昼夜湿度振幅 = 季节振幅 × RATIO × HUMIDITY_DIURNAL_SCALE（声明方程）。
 
     Args:
         seasonal_amp: 季节温度振幅 (°C)。

@@ -74,8 +74,8 @@ def center_distance(dx: float, dy: float) -> float:
     """归一化坐标到矩形中心的 Chebyshev 距离，四象限对称。
 
     中心偏置（center bias）用「距地图中心的距离」把陆地推向中心。
-    旧实现的手写分支在第三象限与负 y 轴出错（dx=0, dy=-2 时误算为 0，
-    中心偏置消失）；max(abs) 恒非负且象限对称，消除该缺陷。
+    以 max(|dx|, |dy|) 计算：恒非负且象限对称，第三象限与负 y 轴
+    不出现中心偏置丢失。
 
     Args:
         dx: 归一化 X 偏移（[-1, 1]）。

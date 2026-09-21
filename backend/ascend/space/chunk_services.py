@@ -11,7 +11,7 @@ chunk 生命周期三事件：register（chunk 接入世界）→ on_tiles_ready
   尚未生成（生成中）。解析算服务（weather）此时即可注册；依赖网格的
   服务（状态引擎）注册后等 on_tiles_ready。
 - on_tiles_ready(cx, cy)：tile 生成/恢复完成，网格可用。解析算服务
-  无动作；状态引擎结算缺口。
+  无动作；状态引擎补齐积分缺口。
 - unregister(cx, cy)：chunk 卸载（LRU 淘汰），服务释放该 chunk 状态。
 """
 

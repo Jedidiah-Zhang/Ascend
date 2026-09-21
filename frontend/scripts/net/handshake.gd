@@ -1,13 +1,13 @@
 """握手层 — token 加载/hello 发送/ack 等待/拒绝处理（纯逻辑 RefCounted）。
 
-职责（从 connection.gd 抽离）:
+职责:
   - start()：每次连接重读 token 文件 → 发送 hello{token, protocol_version}
   - tick()：HELLO_SENT 下累计 ack 等待，超时（HELLO_TIMEOUT）→ timeout 信号
   - on_message()：消费握手完成前的服务器消息：
       hello_ack → acked 信号（门面据此发 connection_established 并放行 send）
       error/hello → rejected(kind, reason)（门面据此重试或终态）
       其他 → 返回 false（调用方丢弃：认证前后端不会发普通消息）
-  - 关键回归语义：ack 后停止计时，连接不再误触发 hello 超时重连
+  - ack 后停止计时，避免连接误触发 hello 超时重连
 
 拒绝分类（RejectKind）：
   - VERSION_MISMATCH：服务端发 error 帧（协议版本不兼容，唯一会发的握手拒绝）
@@ -122,7 +122,7 @@ func is_acked() -> bool:
 func on_message(msg: Dictionary) -> bool:
 	if msg.get("type", "") == "hello_ack":
 		state = State.ACKED
-		_elapsed = 0.0  # 回归：ack 后停止计时，防 10s 后误超时
+		_elapsed = 0.0  # ack 后停止计时，防 10s 后误超时
 		# 服务端 BLOB 版本协商结果：以此作为 tile 数据解码基准
 		# （前端本地上报的 Config.TILE_BLOB_VERSION 仅作握手前的客户端声明）
 		blob_version = int(msg.get("payload", {}).get("blob_version", 0))

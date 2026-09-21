@@ -1,14 +1,15 @@
 """指令执行器 — 解析并执行终端指令，返回结构化结果。
 
-从 GameConsole 提取的核心指令逻辑，封装为无 UI 依赖的纯执行器。
-指令路由采用 dict 映射（O(1) 查找）。
+无 UI 依赖的纯执行器；指令路由采用 dict 映射（O(1) 查找）。
 
-指令结构（Issue #2）:
+指令结构:
     status                                  运行状态（时间 + 世界树统计）
     time [speed|pause|resume|jump|tick]     时间控制组（TimeCommandsMixin）
     weather [status|set]                    天气查询与强制控制组（WeatherCommandsMixin）
     entity [list|birth|death]               实体生灭调试组（EntityCommandsMixin）
     continent [status|regen]                大陆缓存诊断组（ContinentCommandsMixin）
+    do ...                                  干预执行器组（InterventionCommandsMixin）
+    trace ...                               研究日志组（TraceCommandsMixin）
     tp [x y]                                玩家传送（EntityCommandsMixin）
     lang / events / help / quit             独立指令
 
@@ -341,7 +342,7 @@ class CommandExecutor(
     # ── 顶层指令实现 ────────────────────────────────────
 
     def _cmd_status(self) -> str:
-        """生成运行状态报告（合并原 st + report）。
+        """生成运行状态报告。
 
         Returns:
             首行时间概览 + 世界树统计的多行文本。

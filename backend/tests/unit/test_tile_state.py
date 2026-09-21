@@ -151,7 +151,7 @@ class TestKernelParity:
         g, g2 = _run_ref_and_c(grid, precip, temp)
         assert g2.to_bytes() == g.to_bytes()
 
-    def test_pulse_dt_parity(self):
+    def test_hour_step_parity(self):
         """运行期脉冲（dt=1/24）与参考一致。"""
         g, g2 = _run_ref_and_c(
             _make_grid(),

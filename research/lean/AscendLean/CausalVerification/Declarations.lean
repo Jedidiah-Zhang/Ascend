@@ -5,8 +5,8 @@ import AscendLean.CausalVerification.LipschitzLayer
 # 声明层函数性质 — equations.json 承诺的机器验证
 
 出处：`research/equations/equations.json`（世界参数声明的单一事实来源）+
-`backend/ascend/config.py` 第 268-281 行常量 +
-`backend/ascend/weather/derive.py` 引擎公式 +
+`backend/ascend/config.py` 的纬度/季节振幅常量 +
+`backend/ascend/weather/derive.py` 引擎入口（经声明程序求值）+
 `research/equations/verify_equations.py` 判据 V2/V3。
 
 本文件把声明数据的三条承诺变成定理：
@@ -21,7 +21,7 @@ import AscendLean.CausalVerification.LipschitzLayer
 V2 判据的形式化对应物。
 
 编码取舍：
-- `clamp` 自建（Mathlib 无内置；语义取 climate.py 的
+- `clamp` 自建（Mathlib 无内置；语义取 `ascend.mathutil.clamp` 的
   `max lo (min hi value)`，即 `min hi (max lo x)`）；
 - Lipschitz 用轻量谓词 `Lip K g`（绝对值形式，K : ℝ）而非 Mathlib 的
   `LipschitzWith`（ℝ≥0 系数 + edist）——声明数据的 L_j 是普通非负实数，
@@ -37,10 +37,10 @@ namespace AscendLean.Declarations
 
 /-! ## 第一节：clamp 引理库（通用小工具）
 
-镜像 `backend/ascend/space/climate.py` 的 `max lo (min hi value)`。
+镜像 `ascend.mathutil.clamp` 的 `max lo (min hi value)`。
 前置条件 `lo ≤ hi` 由引理显式携带（与 Python 版一致：乱序输入行为未定义）。 -/
 
-/-- 钳制函数：`climate.py` 的 `max lo (min hi value)`。 -/
+/-- 钳制函数：`ascend.mathutil.clamp` 的 `max lo (min hi value)`。 -/
 def clamp (lo hi x : ℝ) : ℝ := min hi (max lo x)
 
 /-- **clamp 有界性·内部恒等**：x ∈ [lo, hi] 时钳制不动。
@@ -207,7 +207,8 @@ lemma decAffine_antitone {tMin tMax lo hi : ℝ} (hT : tMin < tMax) (hnn : lo �
     mul_nonpos_of_nonneg_of_nonpos hsnn (sub_nonpos.mpr hab)
   linarith
 
-/-- derive_latitude 镜像公式（derive.py 第 195-199 行）：
+/-- derive_latitude 镜像公式（声明方程
+    `weather.chunk.derive_solar_latitude_proxy.v1`）：
     `lat(T) = clamp(LAT_MAX − (T−T_MIN)/(T_MAX−T_MIN)·(LAT_MAX−LAT_MIN),
     LAT_MIN, LAT_MAX)`。 -/
 -- 注意：字段必须逐行声明；Lean 4.34 下「一行多字段 + 后续命题字段引用」
@@ -286,7 +287,7 @@ theorem deriveLat_lip_optimal (c : LatCfg) (hlat : c.latMin < c.latMax) (L : ℝ
     exact le_trans (deriveLat_lip_upper c x y)
       (mul_le_mul_of_nonneg_right hle (abs_nonneg (x - y)))
 
-/-! ### 特例实例化：config 数值（backend/ascend/config.py 第 269-272 行） -/
+/-! ### 特例实例化：config 数值（backend/ascend/config.py 的纬度常量） -/
 
 /-- config 数值的纬度推导配置：
     LATITUDE_T_MIN=-5, LATITUDE_T_MAX=35, LATITUDE_MIN=0, LATITUDE_MAX=80。 -/
@@ -326,7 +327,8 @@ SEASONAL_AMP_BOUNDS=(1,30)。
 verify_equations.py 判据：V2 L_j 对账 temperature->seasonal_amp 与
 rainfall->seasonal_amp；V3 derive_seasonal_amp 界内 + 锚点。
 
-镜像忠实度（derive.py 第 167-178 行）：
+镜像忠实度（声明方程
+`weather.chunk.derive_seasonal_temperature_amplitude.v1`）：
 - `t_ratio` 不做钳制（线性核裸算），最终输出才钳到 [1,30]；
 - `rain_factor` 先钳到 [-0.5, 1.0] 再乘 R_BONUS；
 - 两项相加后一次钳制。 -/
@@ -350,16 +352,16 @@ structure AmpCfg where
 /-- 原始雨因子 `(R_REF − rainfall)/R_REF`（不钳制版本）。 -/
 noncomputable def rainFactorRaw (rRef : ℝ) (r : ℝ) : ℝ := (rRef - r) / rRef
 
-/-- 雨因子：先钳到 [-0.5, 1.0]（derive.py 第 173-176 行的字面镜像）。 -/
+/-- 雨因子：先钳到 [-0.5, 1.0]（声明方程中钳制段的字面镜像）。 -/
 noncomputable def rainFactor (c : AmpCfg) (r : ℝ) : ℝ :=
   clamp (-0.5) 1 (rainFactorRaw c.rRef r)
 
 /-- 基础振幅：低温端取 ampMax、高温端取 ampMin 的递减仿射
-    （derive.py 第 167-172 行，t_ratio 不钳制）。 -/
+    （声明方程的温度线性核，t_ratio 不钳制）。 -/
 noncomputable def baseAmp (c : AmpCfg) (t : ℝ) : ℝ :=
   decAffine c.tMin c.tMax c.ampMin c.ampMax t
 
-/-- derive_seasonal_amp 镜像定义（derive.py 第 178 行：
+/-- derive_seasonal_amp 镜像定义（声明方程：
     `clamp(base_amp + rain_bonus, 1, 30)`）。 -/
 noncomputable def deriveAmp (c : AmpCfg) (t r : ℝ) : ℝ :=
   clamp c.bLo c.bHi (baseAmp c t + rainFactor c r * c.rBonus)
@@ -410,7 +412,7 @@ theorem deriveAmp_lip_rainfall (c : AmpCfg) (t : ℝ) :
   exact lip_clamp_comp (lip_const_add (lip_mul_const h1 c.rBonusNonneg))
     c.bLo c.bHi
 
-/-! ### 特例实例化：config 数值（backend/ascend/config.py 第 275-281 行） -/
+/-! ### 特例实例化：config 数值（backend/ascend/config.py 的季节振幅常量） -/
 
 /-- config 数值的季节振幅推导配置。 -/
 def ampConfig : AmpCfg :=
@@ -459,8 +461,8 @@ theorem deriveAmp_anchor_hot_marine : deriveAmp ampConfig 35 2000 = 2 := by
 声明：role=structural，离散输出，L 退化为 0。
 verify_equations.py 判据：V3 precip_type_for 阈值语义。
 
-编码取舍：引擎实现（derive.py 第 55 行）
-`return "snow" if round(temperature, 1) <= 0 else "rain"` 中 round(1)
+编码取舍：声明方程 `weather.instant.classify_precipitation_type.v1`
+（`'snow' if round_half_even(T, 1) <= 0 else 'rain'`）中 round(1)
 是事件广播与 UI 显示文案一致的浮点细节；数学规范建模为理想阈值
 `snow iff T ≤ 0`。舍入映射 T ↦ round(T,1) 保序（单调不减），故
 理想模型的单调性结论在加舍入后依然成立，只是阈值处 ±0.05 的
@@ -514,8 +516,8 @@ LipschitzLayer.error_recurrence_bound（02 篇命题 2.5 连接命题）要求�
   「固定 r 变 t」正是单坐标语义（另一父坐标 rainfall 不动）；
 - rainfall→seasonal_amp 边：取 adj = 0.002，
   由 `amp_config_L_rain` + `deriveAmp_lip_rainfall` 背书；
-- temperature→precip_type 边：离散输出，L=0 退化
-  （01 篇 margin 条件处理，不入 adj 数值表）。
+- temperature→precip_type 边：离散输出 L=0 退化
+  （阈值与离散输出口径见 01-样本复杂度.md §5，不入 adj 数值表）。
 
 下面的适配器定理展示形状转换：结构方程只读单一父坐标 +
 全局 Lip 定理 ⟹ hlip 所需的单坐标界。完整 SCM 实例化

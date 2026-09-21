@@ -136,7 +136,7 @@ class TestDiscreteSet:
 
 
 class TestTableEnclosures:
-    """冻表函数区间扩展：采样包含保持 + 极值/定义域语义。"""
+    """预计算表函数区间扩展：采样包含保持 + 极值/定义域语义。"""
 
     def test_cos_and_sin_inclusion(self):
         rng = random.Random(53)

@@ -1,7 +1,7 @@
 """流线模块测试 — C 扩展退化路径 + 小网格冒烟。
 
-退化路径锁定：w/h=1 时 _bilinear 的 w-2=-1 曾导致越界读，
-现退化为单点采样（返回 arr[0]），trace 安全返回（源头点仍被记录，
+退化路径锁定：w/h=1 时 _bilinear 退化为单点采样（返回 arr[0]，
+不读 w-2 越界索引），trace 安全返回（源头点仍被记录，
 与文档"返回点数包含源头"一致）。
 """
 
@@ -14,7 +14,7 @@ from ascend.space.streamlines import _trace_downstream_c
 
 class TestTraceDegenerateGrids:
     def test_single_cell_no_crash(self):
-        """1×1 网格：_bilinear 退化路径（修复前 w-2=-1 越界读）。"""
+        """1×1 网格：_bilinear 退化路径（w-2 为负不得越界读）。"""
         dem = array('d', [5.0])
         smooth = array('d', [5.0])
         flow = array('d', [1.0])

@@ -1,12 +1,12 @@
-"""天气引擎适配器 — 新核心无状态求值（引擎切换）。
+"""天气引擎适配器 — 无状态求值（引擎求值子集）。
 
-引擎在任意 tick 查询天气（含历史重算），而 wired 天气机制全部是派生量
-（无状态、无 lag）：适配器每次求值构造一个临时 ``WorldProcess``——物化
-请求的 chunk、注入边界输入与干预覆盖、推进一帧、读回全部机制输出。
+引擎在任意 tick 查询天气（含历史重算），而引擎求值子集中的天气机制
+全部是派生量（无状态、无 lag）：适配器每次求值构造一个临时
+``WorldProcess``——物化请求的 chunk、注入边界输入与干预覆盖、推进一帧、
+读回全部机制输出。
 
-**wired 子集**：旧 ``WIRED_NODES`` 的 20 个节点在此固化为引擎求值子集
-（其余 6 个天气机制产出基线/读出，由引擎作为边界提供）。旧注册表删除
-后，本清单即引擎的权威求值面。
+**引擎求值子集**：``ENGINE_EVAL_OUTPUTS`` 的 20 个节点在此固化为引擎
+求值面（其余 6 个天气机制产出基线/读出，由引擎作为边界提供）。
 """
 
 from __future__ import annotations
@@ -22,12 +22,12 @@ from ..pipeline import PIPELINE_PHASES
 from . import engine_inputs
 from .module import MODULE as WEATHER_MODULE
 
-__all__ = ["WIRED_OUTPUTS", "WeatherCore", "wired_weather_pack"]
+__all__ = ["ENGINE_EVAL_OUTPUTS", "WeatherCore", "engine_eval_pack"]
 
 _CHUNK = "lattice.chunk"
 
-# 引擎求值子集（旧 WIRED_NODES，20 节点）
-WIRED_OUTPUTS: tuple[str, ...] = (
+# 引擎求值子集（20 节点）
+ENGINE_EVAL_OUTPUTS: tuple[str, ...] = (
     "weather.astronomy.daylight_hours",
     "weather.astronomy.sunrise_hour",
     "weather.astronomy.sunset_hour",
@@ -51,15 +51,15 @@ WIRED_OUTPUTS: tuple[str, ...] = (
 )
 
 
-def wired_weather_pack():
-    """天气模块的 wired 子集（只保留被求值机制及其依赖槽位）。"""
-    wired = tuple(
+def engine_eval_pack():
+    """天气模块的求值子集（只保留被求值机制及其依赖槽位）。"""
+    evaluated = tuple(
         mechanism
         for mechanism in WEATHER_MODULE.mechanisms
-        if mechanism.outputs()[0] in WIRED_OUTPUTS
+        if mechanism.outputs()[0] in ENGINE_EVAL_OUTPUTS
     )
-    kept_slots = set(WIRED_OUTPUTS)
-    for mechanism in wired:
+    kept_slots = set(ENGINE_EVAL_OUTPUTS)
+    for mechanism in evaluated:
         for parent in mechanism.parents:
             if parent.slot in engine_inputs.BASELINE_IDS:
                 continue  # 引擎提供的基线由 engine_inputs 声明
@@ -67,22 +67,22 @@ def wired_weather_pack():
     kept_slots -= set(engine_inputs.BASELINE_IDS)
     return replace(
         WEATHER_MODULE,
-        id="weather.wired",
-        mechanisms=wired,
+        id="weather.eval",
+        mechanisms=evaluated,
         slots=tuple(
             slot for slot in WEATHER_MODULE.slots if slot.id in kept_slots
         ),
-        notes="引擎求值子集（旧 WIRED_NODES）。",
+        notes="引擎求值子集：引擎按 tick 与边界输入查询的机制集合。",
     )
 
 
 class WeatherCore:
-    """按 (tick, 边界输入, 实例集合) 求值 wired 天气机制（无状态）。"""
+    """按 (tick, 边界输入, 实例集合) 求值天气机制（无状态）。"""
 
     def __init__(self, program: object | None = None) -> None:
         self._program = program or compile_world(
             WorldSpec(
-                modules=(engine_inputs.MODULE, wired_weather_pack()),
+                modules=(engine_inputs.MODULE, engine_eval_pack()),
                 schedule=Schedule(phases=PIPELINE_PHASES),
             )
         )
@@ -97,9 +97,9 @@ class WeatherCore:
         return self._program
 
     @property
-    def wired_outputs(self) -> tuple[str, ...]:
-        """引擎求值面（wired 节点清单）。"""
-        return WIRED_OUTPUTS
+    def eval_outputs(self) -> tuple[str, ...]:
+        """引擎求值面（求值面节点清单）。"""
+        return ENGINE_EVAL_OUTPUTS
 
     def evaluate(
         self,

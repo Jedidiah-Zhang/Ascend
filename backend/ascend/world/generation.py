@@ -11,9 +11,9 @@
 
 每个程序声明：输入、输出（内容名 + ``feeds``：喂给的声明槽位）、内容身份
 （源码文件 + 配置常量 + 版本 → 指纹）、确定性说明、采样协议（证据如何
-取样）。**清单对齐**：``compute_gen_fingerprint`` 的旧清单（源码文件 +
-配置常量）必须被四个程序完整覆盖——任何新增文件/常量未归属即红（漂移
-测试 ``tests/world/test_generation.py``）。
+取样）。**清单对齐**：``compute_gen_fingerprint``（``ascend/space/generator.py``）
+列出的源码文件与配置常量必须被四个程序完整覆盖——任何新增文件/常量
+未归属即红（漂移测试 ``tests/world/test_generation.py``）。
 
 ``feeds`` 与游戏程序的**声明外部槽位**一一对应（时钟/驱动槽位除外），
 这是 ``slice_boundary`` 消解的可执行证据：边界输入全部有声明来源。
@@ -294,7 +294,7 @@ GENERATION_PROGRAMS: tuple[GenerationDecl, ...] = (
 def generation_fingerprint(decl: GenerationDecl) -> str:
     """生成程序内容指纹 = 版本 + 配置常量值 + 源码文件内容摘要。
 
-    打包模式（源码缺失）退位到声明版本 + 常量（与旧管线同策略）；
+    打包模式（源码缺失）退位到声明版本 + 常量；
     源码在场时任一文件/常量变化即变（WC-1.2 生成身份）。
     """
     from ascend import config

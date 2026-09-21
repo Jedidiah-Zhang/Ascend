@@ -327,7 +327,7 @@ class SlotDecl:
 
 @dataclass(frozen=True, slots=True)
 class Parent:
-    """机制的一条父引用（含研究侧模数元数据）。
+    """机制的一条父引用（含研究侧误差界元数据）。
 
     Attributes:
         slot: 父槽位 ID。
@@ -364,7 +364,7 @@ class Parent:
         if self.aggregation not in AGGREGATIONS:
             raise ValueError(f"未知聚合: {self.aggregation!r}")
         if self.modulus_kind not in ("linear", "jump"):
-            raise ValueError(f"未知模数类型: {self.modulus_kind!r}")
+            raise ValueError(f"未知误差界类型: {self.modulus_kind!r}")
         if self.modulus_kind == "linear":
             if self.jump_bound is not None:
                 raise ValueError("linear 边不得携带 jump_bound")
@@ -399,7 +399,7 @@ class When:
 
 @dataclass(frozen=True, slots=True)
 class Arithmetic:
-    """算术域：定点 / 冻表 / 显式浮点孤岛（WC-4.4）。"""
+    """算术域：定点 / 预计算表 / 显式浮点孤岛（WC-4.4）。"""
 
     domain: str = "fixed"
     bits: int = TABLE_BITS

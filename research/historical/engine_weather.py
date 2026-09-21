@@ -1,6 +1,6 @@
-"""历史探针 2：真实引擎天气诊断（E1-E3）。
+"""早期探针：真实引擎天气诊断（E1-E3）。历史快照，不参与 CI；数值保留。
 
-运行: .venv/bin/python research/engine_weather.py [--exp E1 E2 E3] [--fast]
+运行: .venv/bin/python research/historical/engine_weather.py [--exp E1 E2 E3] [--fast]
 - E1: Granger 滞后可见性（分钟粒度，含正/负功效校准）
 - E2: 温度分布 margin 指数 α（幂律拟合）
 - E3: 时间相关尺度（自相关）与空间相关尺度（跨 chunk 相关）

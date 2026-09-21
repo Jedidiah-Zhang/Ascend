@@ -1,7 +1,7 @@
-"""新核心验收判据（含守恒与实体切片判据）— C0–C2 / W0–W6 / I0–I1 / L3。
+"""世界验收判据（含守恒与实体演练模块）— C0–C2 / W0–W7 / I0–I1 / L3。
 
-全部判据只依赖新核心（声明/编译/运行时/研究层）与玩具模块，不读旧注册表：
-每个判据独立报告输入摘要与结果，失败给出首个分歧（04 §1 风格）。
+全部判据只依赖世界声明程序（声明/编译/运行时/研究层）与玩具模块：
+每个判据独立报告输入摘要与结果，失败给出首个分歧。
 """
 
 from __future__ import annotations
@@ -127,7 +127,7 @@ def check_c0() -> CheckResult:
 
 
 def check_c1() -> CheckResult:
-    """结构最小性与模数：见证覆盖 + 重跑 + G7 否证全部一致。"""
+    """结构最小性与 L 界：见证覆盖 + 重跑 + G7 否证全部一致。"""
     program = _world_program()
     issues: list[str] = []
     for mechanism in program.mechanisms.values():
@@ -139,8 +139,8 @@ def check_c1() -> CheckResult:
     )
     edges = sum(len(m.parents) for m in program.mechanisms.values())
     return CheckResult(
-        "C1", "结构最小性与模数", not issues,
-        f"见证 {witnesses} 条 / 父引用 {edges} 条；覆盖、重跑与模数否证一致"
+        "C1", "结构最小性与误差界", not issues,
+        f"见证 {witnesses} 条 / 父引用 {edges} 条；覆盖、重跑与误差界否证一致"
         if not issues else "; ".join(issues[:3]),
     )
 
@@ -353,13 +353,13 @@ def check_i1() -> CheckResult:
     )
 
 
-# ── 守恒练兵切片────────────────────────────────────────
+# ── 守恒演练模块 ───────────────────────────────────────
 
 _CONSERVATION_PHASES = ("flow", "apply", "drain")
 
 
 def check_w6() -> CheckResult:
-    """守恒练兵切片：逐帧总量守恒 + 多分辨率稳态（跨槽位不变量）。"""
+    """守恒演练模块：逐帧总量守恒 + 多分辨率稳态（跨槽位不变量）。"""
     program = compile_world(
         WorldSpec(
             modules=(conservation.MODULE,),
@@ -394,10 +394,11 @@ def check_w6() -> CheckResult:
     )
 
 
-# ── 实体练兵切片────────────────────────────────────────
+# ── 实体演练模块 ───────────────────────────────────────
+
 
 def check_w7() -> CheckResult:
-    """实体练兵切片：事件门控 + 链接 + Γ 指派 + 守恒（实体/事件/资源）。"""
+    """实体演练模块：事件门控 + 链接 + Γ 指派 + 守恒（实体/事件/资源）。"""
     from ascend.world.research.action import (
         ActionSpec,
         interventions_at,

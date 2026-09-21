@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成冻表数据模块（backend/ascend/world/kernel/frozen_tables.py）。
+"""生成预计算表数据模块（backend/ascend/world/kernel/frozen_tables.py）。
 
 生成物禁止手改：表内容即真值，测试锁定"表 == 入库摘要"。生成使用
 标准库数学函数，因此**重新生成可能产生末位差异**——请只在明确需要
@@ -61,7 +61,7 @@ def build() -> str:
         "acos": {"segments": ACOS_SEGMENTS, "table": acos_q},
     })
     lines = [
-        '"""冻表数据（生成物，禁止手改）。',
+        '"""预计算表数据（生成物，禁止手改）。',
         "",
         "由 research/equations/export_frozen_tables.py 生成：",
         f"- COS 四分之一周期均匀采样（{COS_SEGMENTS} 段），Q({BITS})；",

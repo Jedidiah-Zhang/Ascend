@@ -1,8 +1,7 @@
-"""世界生成 → 天气链的阶段序（从旧微步序逐位移植）。
+"""世界生成 → 天气链的阶段序。
 
-阶段名沿用旧微步标识（`world.gen_input` … `weather.instant_readout`），
-顺序即帧内求值序：同帧父引用必须由更早阶段提供。生产切换后本序为
-唯一事实源（旧 `causal/microsteps.py` 删除）。
+阶段名即帧内求值序（`world.gen_input` … `weather.instant_readout`）：
+同帧父引用必须由更早阶段提供。本序是调度与机制声明的唯一事实源。
 """
 
 from __future__ import annotations

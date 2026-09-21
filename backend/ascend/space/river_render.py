@@ -175,8 +175,8 @@ def _river_width(continent, wx: float, wy: float,
 def _river_radius(width: float) -> int:
     """河道宽度 (m) → 渲染半径 (tile，1 tile = 100m)。
 
-    宽 40m 河 → 1 tile 水；80m 河 → 2 tile。深浅分级由 depth 场
-    派生（issue #42 单 WATER，无深浅枚举）。
+    宽 40m 河 → 1 tile 水；80m 河 → 2 tile。深浅分级由 elevation
+    反推。
     """
     return max(1, int(width / 50 + 0.5))
 

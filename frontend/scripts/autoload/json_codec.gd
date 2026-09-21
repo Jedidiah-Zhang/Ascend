@@ -1,7 +1,6 @@
-"""序列化工具 — 调试期使用 JSON 作为传输编码。
+"""序列化工具 — 传输帧体编解码，使用 JSON。
 
-演进路径: JSON (调试期) → MessagePack (正式期)
-切换时新建 MessagePack 编解码类并替换调用点，勿在本类上改名复用。
+JSON 可读性好，便于调试期直接检查帧内容。
 """
 
 extends RefCounted
@@ -9,7 +8,7 @@ class_name JsonCodec
 
 
 static func encode(value: Variant) -> PackedByteArray:
-	"""编码为传输格式。当前使用 JSON 以便调试。
+	"""编码为传输格式（JSON，便于调试期排查）。
 
 	Args:
 		value: 任意可序列化的 Variant
@@ -25,7 +24,7 @@ static func encode(value: Variant) -> PackedByteArray:
 
 
 static func decode(data: PackedByteArray) -> Variant:
-	"""从传输格式解码。当前使用 JSON。
+	"""从传输格式解码（JSON）。
 
 	Args:
 		data: 编码的字节数组

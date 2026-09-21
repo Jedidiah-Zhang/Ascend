@@ -28,7 +28,7 @@ func test_create_request_default_random_seed() -> void:
 
 
 func test_create_request_carries_gen_params() -> void:
-	"""调参产出（大陆占比）随创建请求下发（Issue #8）。"""
+	"""调参产出（大陆占比）随创建请求下发。"""
 	var req: Dictionary = SaveApi.create_request(
 		"调参世界", "2a", {"land_ratio": 0.35})
 	assert_eq(req["payload"]["gen_params"], {"land_ratio": 0.35})

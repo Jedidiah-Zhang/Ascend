@@ -1,14 +1,14 @@
-# 历史探针（归档）
+# 历史探针（快照）
 
-这些脚本是早期研究探针的**历史快照**，数值保留、不因理论重构删除：
+这些脚本是早期研究探针的**快照**，数值与运行方式保留：
 
-- 数值保留，不因理论重构删除；
-- 旧判据中的过强结论、错误预算口径与事后调参**不得作为确认性证据**；
-- **不作为 CI 门禁**：脚本打印 PASS/FAIL 供人工阅读，无退出码语义。
+- 数值保留，结论只作历史记录，**不作为确认性证据**；
+- 打印 PASS/FAIL 供人工阅读，无退出码语义；
+- **不参与 CI**；
+- 依赖未固化（numpy / scipy / sklearn / statsmodels 等研究侧依赖不在
+  `requirements.txt` 内）。
 
-归档原因：入口路径失修（`parents[...]` 指向错误）且打印 FAIL
-不返回非零退出码；与其在历史脚本上维护门禁语义，不如移出研究入口、
-保留为可运行的历史记录。入口路径已随归档修正：
+运行：
 
 ```bash
 .venv/bin/python research/historical/engine_weather.py --fast   # E1–E3
@@ -16,4 +16,4 @@
 .venv/bin/python research/historical/engine_e6.py    --fast     # E6
 ```
 
-`research/toy_scm.py`（S1–S6，不依赖后端）未归档，仍在 `research/` 下。
+`research/toy_scm.py`（S1–S6，不依赖后端）在 `research/` 下。

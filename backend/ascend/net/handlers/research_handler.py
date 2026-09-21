@@ -11,7 +11,7 @@
 - research_do_list：当前生效计划 + 已发生记录（确定性快照）。
 
 字段校验全部 fail-closed：``instance`` 必须是列表/元组（None 视作空元组），
-未知字段一律拒绝；运行内机制替换已废除（WC-1.3，结构变体 = 换世界），
+未知字段一律拒绝；运行内机制替换不受支持（WC-1.3，结构变体 = 换世界），
 ``rep`` / ``mechanism_id`` 返回 ``{success: false, error}``。
 
 特征核控制（space="feature"）转发到 ``WeatherEngine.force_feature``——
@@ -160,7 +160,7 @@ def make_research_handler(
             kind = payload.get("kind")
             if kind is not None and kind not in ("eval", "recompute"):
                 raise ValueError(
-                    f"kind 必须为 eval/recompute（#50 双账分离）: {kind!r}"
+                    f"kind 必须为 eval/recompute: {kind!r}"
                 )
             offset = _optional_int(payload, "offset") or 0
             limit = _optional_int(payload, "limit") or TRACE_PAGE_DEFAULT
@@ -185,7 +185,7 @@ def make_research_handler(
                 "limit": limit,
                 "returned": len(page),
                 "total": total,
-                # 双账与丢失报告（#50）：发生/重算各多少、容量上界丢了多少
+                # 双账与丢失报告：发生/重算各多少、容量上界丢了多少
                 "counts": log.counts(),
                 "dropped": log.dropped,
             },

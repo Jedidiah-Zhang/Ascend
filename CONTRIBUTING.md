@@ -96,8 +96,9 @@ GUT 不随仓库分发（`frontend/addons/gut` 只需在本地安装），因此
 .venv/bin/python research/equations/export_registry.py          # 世界声明 → equations.json
 .venv/bin/python research/equations/gen_lean.py                 # equations.json → Lean 数据段
 .venv/bin/python research/equations/export_impl_digests.py      # 实现摘要表（打包身份）
-.venv/bin/python research/equations/verify_equations.py --fast  # 全链对拍（V0–V3）
-.venv/bin/python research/equations/graph_check.py              # 图健康巡检（G0–G9）
+.venv/bin/python research/equations/export_frozen_tables.py     # 预计算表（仅表规格变更时运行）
+.venv/bin/python research/equations/verify_equations.py --fast  # 全链对拍（V0–V4）
+.venv/bin/python research/equations/graph_check.py              # 图健康巡检（G0–G7）
 ```
 
 `equations.json`、`GenDeclarationData.lean`、`impl_digests.json` 与

@@ -1,4 +1,4 @@
-"""创建世界流程 — 步骤注册与参数汇总单元测试（Issue #8）。
+"""创建世界流程 — 步骤注册与参数汇总单元测试。
 
 覆盖 scripts/ui/setup_flow.gd 与 setup_step.gd 契约。
 """

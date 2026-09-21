@@ -1,5 +1,5 @@
-"""历史探针 2 — E6：空间-时间维度预测诊断（全图模型 + 相邻区条件增益）。
-证据状态见 research/historical/ 归档说明。
+"""早期探针 — E6：空间-时间维度预测诊断（全图模型 + 相邻区条件增益）。
+历史快照，不参与 CI；数值保留。
 
 补全理论实验对照的引擎侧诊断：
 (1) 全图模型：把"位置特征（基线/纬度/海拔/气候） + 时间相位"作为输入，
@@ -7,7 +7,7 @@
 (2) 条件预测增益：观测到 A 区此刻降雨，对 B 区（相邻）未来降雨的预测力提升多少？
     随时间延迟如何衰减？（噪声场的空间-时间平滑性 → 可外推的窗口）
 
-运行: .venv/bin/python research/engine_e6.py [--fast]
+运行: .venv/bin/python research/historical/engine_e6.py [--fast]
 """
 
 from __future__ import annotations

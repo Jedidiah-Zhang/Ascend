@@ -52,7 +52,7 @@ jobs:
         run: python -m pip install -q -r requirements.txt
       - name: Lean 实例漂移巡检（生产声明 → UnrolledDag）
         run: python research/acceptance/run_acceptance.py --check
-      # 模数一致性门禁（模数一致性）：G7 核验线性边差商 ≤ L 与
+      # 误差界一致性门禁：G7 核验线性边差商 ≤ L 与
       # 跳变边 jump_bound；G3 复核反事实误差界（含跳变条件标注）。
       - name: 声明图与见证一致性巡检（graph_check G7）
         run: python research/equations/graph_check.py
@@ -73,8 +73,7 @@ jobs:
           path: acceptance.json
           if-no-files-found: ignore
 
-  # 世界核心（新架构）门禁：元模型/编译器/运行时/研究层/新核心验收。
-  # 与旧实现并行，直到生产切换时旧实现整体删除。
+  # 世界核心门禁：元模型/编译器/运行时/研究层/验收构造。
   world-core:
     runs-on: ubuntu-latest
 

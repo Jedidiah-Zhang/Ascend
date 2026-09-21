@@ -1,11 +1,11 @@
-"""世界验收 runner — C0–C2 / W0–W5 / I0–I1 / L3 统一执行与产物落盘。
+"""世界验收 runner — C0–C2 / W0–W7 / I0–I1 / L3 统一执行与产物落盘。
 
 运行:
     .venv/bin/python research/acceptance/run_acceptance.py [--json out.json]
     .venv/bin/python research/acceptance/run_acceptance.py --check
     .venv/bin/python research/acceptance/run_acceptance.py --mutation
 
-判据见 ``world_checks.py``（新核心）；退出码 0 = 全部通过。
+判据见 ``world_checks.py``；退出码 0 = 全部通过。
 
 产物 manifest：世界程序身份、模块/内核摘要、契约版本、代码版本（git commit）
 与运行环境——实验档案必须可绑定到"哪个世界、哪份代码"。
@@ -217,7 +217,7 @@ def run_mutation() -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="世界验收 runner（新核心）")
+    ap = argparse.ArgumentParser(description="世界验收 runner（C0–C2 / W0–W7 / I0–I1 / L3）")
     ap.add_argument("--json", default="", help="产物输出路径（缺省只打印）")
     ap.add_argument(
         "--check", action="store_true",

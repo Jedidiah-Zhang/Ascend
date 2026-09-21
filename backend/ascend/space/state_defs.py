@@ -4,10 +4,10 @@
 本模块声明"有哪些状态"（STATE_TYPES）与实体遮蔽规格（COVERAGE_SPECS）；
 地形 × 状态的演化参数矩阵在 terrain.TERRAIN_DEFS（每个地形定义自带
 states 行，引用本模块的 StateParams 模板或自定义）。
-演化/涂抹/结算算法在 tile_state.py（统一内核由注册表驱动）。
+演化（单一积分器）在 tile_state.py，由本注册表驱动。
 
 增删状态 = STATE_TYPES 加/减一行 + bump TileGrid.TILE_GRID_VERSION
-+ 前端 STATE_KEYS 同步——序列化/涂抹/结算代码由注册表驱动，零改动。
++ 前端 STATE_KEYS 同步——序列化/积分代码由注册表驱动，零改动。
 加一个地形 = terrain.TERRAIN_DEFS 加一行（含 states 行），零算法改动。
 """
 
@@ -61,7 +61,7 @@ class StateConfig:
 
 
 # ── 状态注册表（单一事实源）──────────────────────────────
-# 序列化布局、TileGrid 状态数组、结算/涂抹循环全部由此驱动。
+# 序列化布局、TileGrid 状态数组、积分循环全部由此驱动。
 # 不适用规则（岩石无湿润、水面先结冰等）由 terrain.TERRAIN_DEFS
 # 每行 states 按基底逐型声明（None=不适用），不在本表表达。
 

@@ -4,8 +4,7 @@
   1. 确定 chunk 内哪些 tile 属于湖泊（水面以下 → WATER，单一水体）
   2. 水面以上的边缘地带 → 湿地过渡（MARSH）
 
-深浅分级由 elevation 反推（issue #42 单 WATER；湖面高程在 basin
-数据，玩法阶段按需查询）。
+深浅分级由 elevation 反推。
 
 所有 chunk 共享同一个湖面高程（来自 LakeBasin.surface_elev），
 保证跨 chunk 水面平坦连续。
@@ -45,7 +44,7 @@ def render_lake_chunk(
 
     对于每个与 chunk 有重叠的湖泊盆地：
       1. 遍历 chunk 内所有 tile，检查其宏观海拔
-      2. 海拔 < 湖面 → 水体（浅水/深水取决于深度）
+      2. 海拔 < 湖面 → 水体（单一 WATER，深浅由 elevation 反推）
       3. 海拔在湖面以上 0-2m → MARSH（湿地）
       4. 海拔接近湖面 → 自然湖岸线
 
@@ -123,8 +122,7 @@ def _flatten_lake_surface(
 ) -> None:
     """将湖面以下的 tile 标记为水体（仅限湖盆地 cells 覆盖范围）。
 
-    湖面以下一律 WATER（issue #42 单 WATER，无深浅枚举；深浅由
-    elevation 反推——湖面高程在 basin 数据，玩法阶段按需查询）。
+    湖面以下一律 WATER。
 
     只处理湖盆地格点覆盖的 tile——湖面只淹没湖盆地所在区域，
     不受周边更高湖面影响（如高山湖不会淹没整片低地 chunk）。

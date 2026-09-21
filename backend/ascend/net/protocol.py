@@ -1,8 +1,8 @@
 """消息协议 — 帧格式与序列化。
 
 帧格式: 1 字节协议版本 + 4 字节大端长度前缀 + 体。
-当前版本 0x01 = JSON；未来新增编码（如 MessagePack）注册新版本号，
-解码按版本分发，前后端可渐进迁移。
+当前版本 0x01 = JSON；新增编码（如 MessagePack）注册新版本号，
+解码按版本分发，互不影响。
 与 Godot 侧 scripts/autoload/connection.gd 保持一致。
 """
 

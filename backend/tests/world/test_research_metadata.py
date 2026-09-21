@@ -1,9 +1,9 @@
-"""研究元数据测试 — 声明字段规则、模数否证与迁移一致性。
+"""研究元数据测试 — 声明字段规则、误差界否证与快照一致性。
 
-- 元模型：linear/jump 模数字段规则、ε 与 access 种类校验；
+- 元模型：linear/jump 误差界字段规则、ε 与 access 种类校验；
 - 编译器：G7 语义（线性边见证差商 ≤ L；跳变边跳幅 ≤ jump_bound）；
-- 迁移一致性：新声明的研究元数据与旧快照 ``equations.json`` 逐项一致
-  （切换投影后，本测试改为投影自洽检查）。
+- 快照一致性：声明的研究元数据与 ``research/equations/equations.json``
+  逐项一致。
 """
 
 from __future__ import annotations
@@ -185,7 +185,7 @@ def program():
     )
 
 
-class TestMetadataMigration:
+class TestMetadataSnapshotConsistency:
 
     def test_parent_metadata_matches_snapshot(self, program):
         for mid, mech in _SNAPSHOT["mechanisms"].items():

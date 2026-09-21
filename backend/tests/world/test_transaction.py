@@ -153,7 +153,7 @@ class TestGuard:
 
 
 class TestThreadIsolation:
-    """帧事务按线程隔离：工作线程补齐不与 tick 批次合并。"""
+    """帧事务按线程隔离：工作线程补齐不与 tick 线程的事务合并。"""
 
     def test_transactions_are_thread_local(self):
         store = FrameStateStore()
@@ -199,7 +199,7 @@ class TestThreadIsolation:
 
 
 class TestCommitPhaseFailure:
-    """提交相位失败 → 世界失效、不重放（WC-9.2 / #51）。
+    """提交相位失败 → 世界失效、不重放（WC-9.2）。
 
     与提交前失败（回调抛错，可回滚重试）不同：应用动作/记录回调位于
     提交相位，状态可能已部分应用或已提交——此时回滚不可行，世界失效

@@ -1,6 +1,6 @@
-"""后台解码线程层 — JSON 解析移出主线程的队列封装（纯逻辑 RefCounted）。
+"""后台解码线程层 — 帧体排队与 JSON 解码在工作线程执行（纯逻辑 RefCounted）。
 
-职责（从 connection.gd 抽离）:
+职责:
   - start/stop：线程生命周期（幂等；stop 唤醒并 join）
   - push(body)：主线程入队帧体（线程安全）
   - drain()：主线程取出已解码消息（线程安全，空则返回空数组）

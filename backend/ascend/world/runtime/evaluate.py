@@ -355,7 +355,7 @@ def evaluate_direct(
     """按机制 ID 用父值直接求值（研究/领域适配器用；无状态、无 store）。
 
     输入按父槽位 ID 给出；参数缺省取程序解析值。输入按声明值域做边界
-    校验（fail-closed；越界即 ``ValueError``），与旧注册表求值语义一致。
+    校验（fail-closed；越界即 ``ValueError``）。
     """
     mechanism = program.mechanisms.get(mechanism_id)
     if mechanism is None:
@@ -385,7 +385,7 @@ def _validate_inputs(
     mechanism: MechanismDecl,
     parent_values: Mapping[str, object],
 ) -> None:
-    """父值边界校验（仅数值；越界即拒绝，与旧注册表 fail-closed 一致）。"""
+    """父值边界校验（仅数值；越界即拒绝，声明值域 fail-closed）。"""
     for parent in mechanism.parents:
         if parent.argument not in parent_values:
             continue

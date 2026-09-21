@@ -1,7 +1,7 @@
-"""历史探针 2：E4 方程预测诊断 + E5 CRN 流诊断。
+"""早期探针：E4 方程预测诊断 + E5 CRN 流诊断（历史快照，不参与 CI）。
 
-运行: .venv/bin/python research/engine_e4_5.py [--fast]
-新框架下的适用范围见 05 篇，既有结果的证据状态见 06 篇。
+运行: .venv/bin/python research/historical/engine_e4_5.py [--fast]
+数值保留；依赖未固化（研究侧依赖不在 requirements.txt）。
 """
 
 from __future__ import annotations
@@ -125,16 +125,16 @@ def _e4(fast=False):
 
 
 def _e5(fast=False):
-    """E5 CRN 流纪律检验（05 篇判据 · 同 seed 双跑 + 全包静态扫描）。
+    """E5 CRN 流纪律检验（同 seed 双跑 + 全包静态扫描）。
 
-    诊断 Loom of Fate 落地后的 CRN 地址纪律（00 篇 §3）：
+    诊断当前 CRN 地址纪律：
       1. 全 ascend 包静态扫描：模拟路径零裸 random/np.random——
-         随机性一律经 fate 派生（白名单：世界创建熵、UUID、MT 播种构造）。
+         随机性一律经 地址派生（白名单：世界创建熵、UUID、MT 播种构造）。
       2. 同 seed 双跑：基线 vs do 干预（额外 chunk、无关流消费、不同
          执行路径）——未干预上游变量（chunk (0,0) 温度/湿度/风/降雨
          序列）必须逐位一致，否则单一全局 rng 污染（判据即漂移检出）。
     """
-    print("\n=== E5 CRN 流纪律检验（同 seed 双跑 · Loom of Fate） ===")
+    print("\n=== E5 CRN 流纪律检验（同 seed 双跑 · 地址随机） ===")
 
     # ── 1. 全包静态扫描：模拟路径裸随机使用点 ──
     import ascend
@@ -164,7 +164,7 @@ def _e5(fast=False):
                 continue
             bad.append(f"{py.relative_to(pkg_root)}:{i}: {ln.strip()}")
     ok_scan = len(bad) == 0
-    print(line("全包裸随机扫描", "模拟路径零裸 random（随机性经 fate 派生）",
+    print(line("全包裸随机扫描", "模拟路径零裸 random（随机性经 地址派生）",
                f"{len(bad)} 处违规，白名单 {len(whitelisted)} 处"
                f"（世界创建熵/UUID/MT 播种）", ok_scan))
     for b in bad:
@@ -220,9 +220,9 @@ def _e5(fast=False):
     if not ok_run:
         for i in drift[:5]:
             print(f"    漂移 @ {i}: {base[i]} vs {do_run[i]}")
-    print("[结论] Loom of Fate 已落地：随机性经身份派生（256-bit），"
-          "干预只停用被干预流，未干预流逐位不变——阶段 1 do-operator"
-          "按 docs/世界框架/随机系统/设计.md 契约实现即可满足 CRN 前提 (a)。")
+    print("[结论] 随机性经地址派生（256-bit），"
+          "干预只停用被干预地址，未干预地址逐位不变——按"
+          " docs/世界框架/随机系统/设计.md 契约实现即可满足 CRN 前提 (a)。")
 
 
 def main():

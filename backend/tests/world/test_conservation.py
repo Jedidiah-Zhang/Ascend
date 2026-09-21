@@ -1,4 +1,4 @@
-"""守恒练兵切片测试— 流量 / 守恒不变量 / 多分辨率。
+"""守恒演练模块测试 — 流量 / 守恒不变量 / 多分辨率。
 
 - 声明自洽：不变量常量与槽位初值一致（防漂移）；
 - 守恒：逐帧「地块 + 流域 == 声明总量」（跨槽位 reject 不变量）；
@@ -46,7 +46,7 @@ class TestDeclarationSelfConsistency:
         assert initial == conservation.TOTAL_WATER
 
     def test_module_is_declaration_only(self):
-        """练兵切片只依赖声明面（无框架钩子）。"""
+        """演练模块只依赖声明面（无框架钩子）。"""
         assert conservation.MODULE.id == "drill.conservation"
         assert conservation.MODULE.mechanisms
         assert conservation.MODULE.invariants

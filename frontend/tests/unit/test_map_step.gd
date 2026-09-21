@@ -1,4 +1,4 @@
-"""地图生成调参步骤单元测试（Issue #8）。
+"""地图生成调参步骤单元测试。
 
 覆盖 scripts/ui/setup_steps/map_step.gd 的纯逻辑部分：
 种子定案、大陆占比范围、参数产出、预览请求与响应应用。
@@ -82,9 +82,9 @@ func test_seed_submitted_arbitrary_text_maps_to_256bit() -> void:
 func test_seed_text_mapping_deterministic() -> void:
 	"""同文本两次映射结果一致（可复现世界）。"""
 	var step: MapSetupStep = _make_step()
-	step.on_seed_submitted("fate word")
+	step.on_seed_submitted("seed word")
 	var first: String = str(step.get_params()["seed"])
-	step.on_seed_submitted("fate word")
+	step.on_seed_submitted("seed word")
 	assert_eq(str(step.get_params()["seed"]), first, "同文本恒同种子")
 
 

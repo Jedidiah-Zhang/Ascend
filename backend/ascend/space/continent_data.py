@@ -184,8 +184,8 @@ class ContinentData:
             (mean_temp, annual_rainfall, sea_level_temp, climate_zone)：
             越界（地图界限外）返回一致的极地深海默认值
             (-20, 0, -20, POLAR_TUNDRA)——地图为有界矩形，界限外
-            统一视为极地深海，避免各字段自相矛盾（此前默认 zone=0
-            即热带雨林，与 -20°C 温度/深海海拔矛盾）。
+            统一视为极地深海，避免各字段自相矛盾（zone=0 即热带
+            雨林，与 -20°C 温度/深海海拔矛盾）。
         """
         key = (cx, cy)
         hit = self._chunk_climate.get(key)

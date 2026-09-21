@@ -6,11 +6,12 @@
 
 生成：空间块（FEATURE_BLOCK_SIZE）内按段（1 游戏年）确定性派生——
 核属性全部由 (块坐标, 段索引) 派生的 RNG 决定，任意 (x, y, t) 可重算，
-自然核不落盘（存档只存 seed + 时钟 + 注入核）。
+自然核不落盘（存档只存 seed + 时钟 + 干预时间线）。
 
 例外：**注入核**（干预执行器 / 调试强制控制）不是解析量——它由研究者
-施加、无法由 seed 重算，因此随完整世界状态 W_t 落盘
-（``persist_injected`` / ``restore_injected``）。
+施加、无法由 seed 重算。它不计入世界状态载荷（WC-6.5）：读档由
+干预时间线投影重建（``WeatherEngine._project_injected_features``）；
+低层 ``persist_injected`` / ``restore_injected`` 供工具/测试路径使用。
 
 气候带判定：低频气候代理场（ClimateProxy，纯噪声近似），
 特征频率统计在统计层面正确，个别位置偏差可接受（文档注记）。
@@ -225,7 +226,7 @@ class FeatureCore:
 
 
 def _canonical_order(cores: list[FeatureCore]) -> list[FeatureCore]:
-    """核的规范顺序：算术合成前的稳定排序（WC-3.2 / #52）。
+    """核的规范顺序：算术合成前的稳定排序（WC-3.2）。
 
     浮点求和/叠乘对顺序敏感：同一 W_t（核集合相同）若插入或恢复顺序
     不同，逐点合成可能出现末位差异并翻转阈值判定。按核的稳定身份
@@ -261,7 +262,7 @@ def _require_finite(value: object, label: str) -> float:
 
 
 def _segment_seed(world_seed: int, bx: int, by: int, seg_idx: int) -> int:
-    """块坐标 + 段索引 → 确定性种子（经 fate.derive 派生去相关）。
+    """块坐标 + 段索引 → 确定性种子（经地址随机标签派生去相关）。
 
     身份: ("weather", "feature", "block", bx, by, "segment", seg_idx)。
     段间、块间、世界间均统计独立（设计文档 namespace 约定）。
@@ -277,7 +278,7 @@ class ClimateProxy:
     特征生成频率与降水校准需要"任意位置的气候带"，但不允许依赖
     chunk 数据（场是解析量，独立于加载状态）。用低频温度/降雨
     噪声近似判定气候档位（海拔忽略——代理无法表达构造地形，
-    高山核频率偏差可接受，见 features.py 模块注记）。
+    高山核频率偏差可接受，见模块 docstring）。
 
     用法:
         proxy = ClimateProxy(seed=42)
@@ -529,9 +530,9 @@ class FeatureField:
     ) -> FeatureCore:
         """注入一个特征核（终端调试指令用，与自然核同代码路径）。
 
-        注入核是运行时状态（非解析量，由研究者施加），随完整世界状态
-        W_t 落盘（``persist_injected`` / ``restore_injected``）；
-        同 (cx, cy, type_name) 重复注入覆盖旧核。
+        注入核是运行时状态（非解析量，由研究者施加），读档由干预时间线
+        投影重建（``WeatherEngine._project_injected_features``）；
+        同 (cx, cy, type_name) 重复注入覆盖已有核。
 
         Args:
             cx, cy: 关联 chunk 坐标（身份键 + 事件 location）。
@@ -596,7 +597,7 @@ class FeatureField:
         with self._lock:
             return self._injected.get((cx, cy, type_name))
 
-    # ── 注入核集合操作（时间线投影用；#51）────────────────────
+    # ── 注入核集合操作（时间线投影用）────────────────────
 
     def clear_injected(self) -> int:
         """清空全部注入核并返回移除数量（整体替换的第一步）。
@@ -615,14 +616,14 @@ class FeatureField:
         with self._lock:
             return len(self._injected)
 
-    # ── 注入核持久化（完整存档：W_t 的不可重算部分）────────
+    # ── 注入核载荷（低层工具/测试路径；引擎状态载荷见 weather_engine）──
 
     def persist_injected(self) -> list[dict[str, object]]:
-        """注入核的确定性列表（存档载荷，按 chunk 坐标 + 类型排序）。
+        """注入核的确定性列表（按 chunk 坐标 + 类型排序）。
 
         自然核时间线不落盘（由 seed 派生可重算）；注入核由研究者施加。
 
-        **引擎状态载荷不再使用本方法**（#51 / WC-6.5）：注入核是外部
+        **引擎状态载荷不使用本方法**（WC-6.5）：注入核是外部
         输入的时间线投影，读档由 ``WeatherEngine._project_injected_features``
         从干预时间线重建。本方法保留为工具/测试路径（低层 ``inject_core``
         直连场景）。
@@ -635,10 +636,10 @@ class FeatureField:
             return [self._core_plain(cx, cy, core) for (cx, cy, _), core in items]
 
     def restore_injected(self, payload) -> int:
-        """从存档载荷恢复注入核（读档路径，fail-closed）。
+        """从载荷恢复注入核（低层工具/测试路径，fail-closed）。
 
-        校验全部字段后**整体替换**现有注入核集合——存档是唯一事实源，
-        不把旧世界的残留核与新核混在一起。任一条非法即拒绝，不留半成品。
+        校验全部字段后**整体替换**现有注入核集合——载荷是唯一事实源，
+        不把已有残留核与新核混在一起。任一条非法即拒绝，不留半成品。
 
         Args:
             payload: ``persist_injected`` 输出的列表。

@@ -66,7 +66,7 @@ class TestEngineTracing:
         weather.get_weather(*_CHUNK)
         assert weather.trace is None
 
-    def test_enable_records_every_wired_node(self, engine):
+    def test_enable_records_every_eval_node(self, engine):
         weather, _ = engine
         log = weather.enable_trace()
         weather.get_weather(*_CHUNK)
@@ -119,7 +119,7 @@ class TestEngineTracing:
         assert log.verify(entry) is True
 
     def test_past_query_marked_recompute(self, engine, clock):
-        """历史查询记"重算"，不冒充世界推进时的"发生"（#50 双账分离）。"""
+        """历史查询记"重算"，不冒充世界推进时的"发生"。"""
         weather, _ = engine
         log = weather.enable_trace()
         weather.get_weather(*_CHUNK)
@@ -198,7 +198,7 @@ class TestTerminalTraceCommands:
         assert "边界处理" in shown.output
 
     def test_status_reports_ledger(self, executor, engine):
-        """status 显示双账与丢失报告（#50）。"""
+        """status 显示双账与丢失报告。"""
         weather, _ = engine
         executor.execute("trace on")
         weather.get_weather(*_CHUNK)
@@ -276,7 +276,7 @@ class TestResearchTraceApi:
         assert replayed["payload"]["consistent"] is True
 
     def test_list_kind_filter_and_ledger(self, engine, clock):
-        """研究 API：kind 筛选 + 双账计数 + 丢失报告（#50）。"""
+        """研究 API：kind 筛选 + 双账计数 + 丢失报告。"""
         weather, _ = engine
         weather.enable_trace()
         weather.get_weather(*_CHUNK)

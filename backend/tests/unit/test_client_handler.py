@@ -1,8 +1,7 @@
 """ClientHandler 断开路径资源清理单元测试。
 
-回归：recv/send 线程自退出路径必须显式关闭 socket，不得依赖 GC 兜底
-（此前仅 close()/shutdown 显式处理，断开路径的 socket 要靠循环 GC
-回收 handler 对象才关闭，FD 释放时机不确定）。
+判据：recv/send 线程自退出路径必须显式关闭 socket，不得依赖 GC 兜底
+（依赖 GC 会让 FD 释放时机不确定）。
 """
 
 import socket

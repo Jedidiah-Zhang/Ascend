@@ -78,7 +78,7 @@ class TestGenFingerprintConstants:
 
 
 class TestTerrainDistributionConstants:
-    """issue #42 地形分布阈值常量。"""
+    """地形分布阈值常量。"""
 
     def test_T10_band_widths_ordered(self):
         """距水带宽度递增：沙滩 < 冲积 < 湿地。"""
@@ -93,7 +93,7 @@ class TestTerrainDistributionConstants:
     def test_T12_thresholds_sane(self):
         """阈值取值域合理。"""
         assert config.ROCK_LINE_ELEV > 0
-        assert 0 < config.BARE_ROCK_SLOPE < 1.0  # 坡度比值域 (0,1)，不与 STEEP_GRADIENT 耦合
+        assert 0 < config.BARE_ROCK_SLOPE < 1.0  # 坡度比值域 (0,1)
         assert config.ARID_RAINFALL_MM > 0
         assert config.PERMAFROST_TEMP_C < 0
 

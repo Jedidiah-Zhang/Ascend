@@ -1,7 +1,6 @@
 """地形状态内容数据 — 状态注册表与内核参数表（读 ``data/terrain.json``）。
 
-从旧 ``space/state_defs.py`` 与 ``space/terrain.py`` 的 states 行提取；
-内容仍是数据：改 ``terrain.json`` 不改代码。生成程序声明化时并入统一内容装载。
+内容仍是数据：改 ``terrain.json`` 不改代码。
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ class StateConfig:
     melt_above: float | None = None
 
 
-# 状态注册表（顺序 = 载荷布局契约；与旧 state_defs.STATE_TYPES 同源）
+# 状态注册表（顺序 = 载荷布局契约）
 STATE_TYPES: dict[str, StateConfig] = {
     "moisture": StateConfig("moisture", (0, 100), precip_trigger="rain"),
     "snow": StateConfig(

@@ -25,7 +25,7 @@ func _init() -> void:
 ## 缓存世界脚本引用，供 process_section 拉取玩家信息。
 ##
 ## Args:
-##     world: 世界脚本节点（MainWorld 或 MainWorld3D）。
+##     world: 世界脚本节点（MainWorld2D）。
 func setup(world: Node) -> void:
 	_world = world
 

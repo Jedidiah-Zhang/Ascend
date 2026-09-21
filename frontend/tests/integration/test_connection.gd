@@ -462,7 +462,7 @@ func test_full_connect_flow() -> void:
 
 
 func test_hello_front_when_pending_frames() -> void:
-	"""回归（Issue #34 → 审查修复）：重连时 hello 必须恰好位于发送队列队首。
+	"""回归：重连时 hello 必须恰好位于发送队列队首。
 
 	hello 必须经 _send_queue.push_front 置于队首；若改为队尾 append，
 	重连时残留业务帧会先于 hello 落盘，后端在握手前收到非 hello 帧即断开

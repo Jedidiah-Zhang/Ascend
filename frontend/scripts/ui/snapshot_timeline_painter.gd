@@ -203,7 +203,7 @@ func layout(row_rect: Rect2) -> void:
 	body_rect = Rect2(tree_rect.position + Vector2(14, HEADER_H),
 		Vector2(tree_rect.size.x - 28 - LEGEND_W, tree_rect.size.y - HEADER_H - 8))
 
-	# 编号：按保存顺序（saved_at 真实创建时刻，同秒游戏时间兜底）
+	# 编号：按保存顺序（血缘 seq 主键，saved_at / 游戏时间兜底）
 	numbers.clear()
 	for i in sorted_ids.size():
 		numbers[str(sorted_ids[i])] = i + 1

@@ -1,4 +1,4 @@
-"""冻表超越函数 — cos 四分之一周期表 + 纯整数查询。
+"""预计算表超越函数 — cos 四分之一周期表 + 纯整数查询。
 
 - 表数据在 ``frozen_tables.py``（生成物，摘要入库）；查询路径**无浮点、
   无 libm**，跨平台逐位一致；
@@ -8,8 +8,7 @@
   归约 ≤ 2π·2^-30 ≈ 5.9e-9 → 总界取 ``DECLARED_EPSILON``（含裕度，测试
   以密集采样验证）。
 
-多精度/其他函数（sin/tanh/acos）按 #53 顺序后续加入；本模块只支持
-表精度（``bits != TABLE_BITS`` 即拒绝，不静默换精度）。
+本模块只提供单一表精度：``bits != TABLE_BITS`` 即拒绝（不静默换精度）。
 """
 
 from __future__ import annotations
@@ -44,12 +43,11 @@ def cos_q(theta_q: int, bits: int = TABLE_BITS) -> int:
     """定点余弦：``theta_q`` 为 Q(bits) 弧度，返回 Q(bits) 的 cos 值。
 
     Raises:
-        ValueError: ``bits`` 与冻表精度不符（不静默换精度）。
+        ValueError: ``bits`` 与表精度不符（不静默换精度）。
     """
     if bits != TABLE_BITS:
         raise ValueError(
-            f"冻表 cos 只支持 Q({TABLE_BITS})，实际 Q({bits})；"
-            f"多精度表按 #53 后续粒度加入"
+            f"预计算表 cos 只支持 Q({TABLE_BITS})，实际 Q({bits})"
         )
     t = theta_q % TWO_PI_Q
     quarter = t // HALF_PI_Q
@@ -76,7 +74,7 @@ def _interp(r: int) -> int:
 
 
 def sin_q(theta_q: int, bits: int = TABLE_BITS) -> int:
-    """定点正弦：sin(θ) = cos(θ − π/2)（复用同一冻表，无新数据）。"""
+    """定点正弦：sin(θ) = cos(θ − π/2)（复用同一张 cos 表，无新数据）。"""
     return cos_q(theta_q - HALF_PI_Q, bits)
 
 # tanh 声明误差：插值 ≤ (16/2048)²/8·0.77 ≈ 5.9e-6 + 域外饱和 2.3e-7 + 舍入
@@ -91,8 +89,7 @@ def tanh_q(x_q: int, bits: int = TABLE_BITS) -> int:
     """
     if bits != TABLE_BITS:
         raise ValueError(
-            f"冻表 tanh 只支持 Q({TABLE_BITS})，实际 Q({bits})；"
-            f"多精度表按 #53 后续粒度加入"
+            f"预计算表 tanh 只支持 Q({TABLE_BITS})，实际 Q({bits})"
         )
     span = TANH_MAX_Q - TANH_MIN_Q
     x = max(TANH_MIN_Q, min(TANH_MAX_Q, x_q))
@@ -122,7 +119,7 @@ def acos_q(x_q: int, bits: int = TABLE_BITS) -> int:
     """
     if bits != TABLE_BITS:
         raise ValueError(
-            f"冻表 acos 只支持 Q({TABLE_BITS})，实际 Q({bits})"
+            f"预计算表 acos 只支持 Q({TABLE_BITS})，实际 Q({bits})"
         )
     scale = 1 << TABLE_BITS
     span = 2 * scale
@@ -141,7 +138,7 @@ def tan_q(x_q: int, bits: int = TABLE_BITS) -> int:
     """定点正切：tan = sin/cos（两张既有表相除，半偶舍入）。"""
     if bits != TABLE_BITS:
         raise ValueError(
-            f"冻表 tan 只支持 Q({TABLE_BITS})，实际 Q({bits})"
+            f"预计算表 tan 只支持 Q({TABLE_BITS})，实际 Q({bits})"
         )
     return div(sin_q(x_q, bits), cos_q(x_q, bits), bits)
 
@@ -150,6 +147,6 @@ def degrees_q(x_q: int, bits: int = TABLE_BITS) -> int:
     """定点弧度 → 角度：x·180/π（定点乘，半偶舍入）。"""
     if bits != TABLE_BITS:
         raise ValueError(
-            f"冻表 degrees 只支持 Q({TABLE_BITS})，实际 Q({bits})"
+            f"预计算表 degrees 只支持 Q({TABLE_BITS})，实际 Q({bits})"
         )
     return mul(x_q, DEG_FACTOR_Q, bits)

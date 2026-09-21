@@ -86,7 +86,7 @@ def test_no_basins_returns_unchanged():
 def test_wetland_skips_non_soil_shore(material):
     """岩岸（裸岩/砾石/冻土）不被湿地 fringe 覆盖为 MARSH。
 
-    材质由低频场判定（issue #42 纯净化），湿地 fringe 只作用在土壤上。
+    材质由低频场判定，湿地 fringe 只作用在土壤上。
     """
     grid, macro, basin, continent = _make_scene()
     # 湿地候选环（elev=101）预分类为非土壤材质

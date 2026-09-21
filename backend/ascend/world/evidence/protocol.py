@@ -7,7 +7,7 @@
 - **证据义务**：模块说明、证据清单、机制方程与见证、边界情形；
 - **研究元数据**：槽位 role/schedule/quantization/metric/access/观测协议
   （投影模块的投影期义务，P3b）；
-- **模数元数据**：每条父引用的 L/jump_bound 与有效域（G7 义务）。
+- **误差界元数据**：每条父引用的 L/jump_bound 与有效域（G7 义务）。
 
 已知豁免（:data:`PROTOCOL_EXEMPTIONS`）：按模块登记"允许缺失"的项与
 理由——缺口显式可见，不静默通过；豁免消失（补齐后）即自动收紧。
@@ -38,11 +38,11 @@ class ProtocolIssue:
 
 
 #: 已登记豁免：模块 id → ((缺口类别, 目标或前缀*), ...)。
-#: 每条豁免都必须在《02-模块接入协议》里给出理由与补齐计划。
+#: 每条豁免都必须在《02-模块接入协议》里给出理由与缺口说明。
 PROTOCOL_EXEMPTIONS: dict[str, tuple[tuple[str, str], ...]] = {
-    # 场内核（terrain.integrate）：单机制整场内核，模数元数据（逐父 L 与
-    # 有效域）随生成程序声明化一并补齐（内核误差界在 kernel.py 内
-    # 声明；当前由内核对 + 黄金向量承载证据）。
+    # 场内核（terrain.integrate）：单机制整场内核，逐父 L 与有效域
+    # 元数据未登记（内核误差界在 kernel.py 内声明；当前由内核对 +
+    # 黄金向量承载证据）。
     "terrain": (
         ("parent.modulus", "terrain.integrate<-*"),
         ("parent.valid_domain", "terrain.integrate<-*"),
@@ -72,8 +72,8 @@ def module_protocol_issues(
     Args:
         pack: 模块包（六声明 + 参数/旋钮 + 证据义务）。
         require_research_metadata: 是否要求槽位研究元数据（投影模块与
-            练兵切片为 True；纯测试夹具可为 False）。
-        require_modulus: 是否要求父引用模数元数据（同左）。
+            验收演练模块为 True；纯测试夹具可为 False）。
+        require_modulus: 是否要求父引用误差界元数据（同左）。
     """
     issues: list[ProtocolIssue] = []
 

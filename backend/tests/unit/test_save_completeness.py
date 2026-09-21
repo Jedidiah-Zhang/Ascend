@@ -120,7 +120,7 @@ class TestWorldStateRoundTrip:
         assert engine2.field.features.get_injected(0, 1, "cold_snap") is None
 
     def test_feature_core_projected_with_spec_fidelity(self):
-        """注入核经时间线投影重建，规格逐字段一致（WC-6.5 / #51）。"""
+        """注入核经时间线投影重建，规格逐字段一致（WC-6.5）。"""
         clock, engine = _build_world()
         engine.force_feature(1, 0, "storm", True)
         original = engine.field.features.get_injected(1, 0, "storm")
@@ -231,7 +231,7 @@ class TestFailClosedLoad:
             "plan": [], "records": [],
         }
 
-    def test_unwired_target_rejected_on_restore(self):
+    def test_restore_rejects_target_outside_eval(self):
         """存档里的干预重新走登记校验：未接线目标不得静默恢复。"""
         clock, engine = _build_world()
         state = collect_state(clock, _Player(), engine, 0)

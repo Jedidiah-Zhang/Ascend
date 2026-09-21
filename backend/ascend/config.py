@@ -3,8 +3,8 @@
 按领域组织，各模块通过 `from ascend.config import XXX` 引用。
 
 **内容参数（World / Climate / Weather / Tile）的有效值来自
-`data/world.json`**（改内容只改数据文件、不用改代码，也为未来 Mod
-提供数据层修改入口；本文件中的赋值仅为类型声明与兜底默认）。修改
+`data/world.json`**（改内容只改数据文件、不用改代码；本文件中的赋值
+仅为类型声明与兜底默认）。修改
 内容参数请改 `data/world.json`，配置文件于模块末尾加载并覆盖。
 Server / Time / Storage / UI 为引擎/基础设施常量，仅在本文件定义。
 
@@ -232,7 +232,7 @@ MAX_CHUNK_QUERY: int = 512              # get_chunks 单请求最大 chunk 数�
 # Save — 存档（实时写入频率）
 # ═══════════════════════════════════════════════════════════════
 
-SAVE_PULSE_INTERVAL: float = 5.0        # 统一保存脉搏间隔（真实秒）
+AUTOSAVE_INTERVAL: float = 5.0        # 统一周期保存间隔（真实秒）
 
 
 # 天气分级阈值 — 按数值升序排列，返回值为区间索引（0-based）
@@ -391,7 +391,7 @@ CONTINENT_GEN_CONSTANT_NAMES: tuple[str, ...] = (
 CONTINENT_GEN_VERSION: int = 1
 
 # ═══════════════════════════════════════════════════════════════
-# Content 覆盖 — 从 data/world.json 加载内容参数（Mod 第 1 层）
+# Content 覆盖 — 从 data/world.json 加载内容参数（内容数据层）
 # ═══════════════════════════════════════════════════════════════
 # 在全部常量定义之后执行：覆盖 World/Climate/Weather/Tile 内容参数，
 # 保留本模块常量名与类型（35+ 处 `from config import X` 与 C 注入零改动）。

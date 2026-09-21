@@ -1,6 +1,6 @@
-"""主世界 2D 场景 — 正俯视扁平化地形 + 流式 chunk（Issue #38）。
+"""主世界 2D 场景 — 正俯视扁平化地形 + 流式 chunk。
 
-职责划分（2026-08 拆分）:
+职责划分:
   - 本脚本（MainWorld2D）：世界编排——连接/消息路由/流式 chunk/玩家输入/
     就绪收尾的副作用执行。相机跟随与缩放 → CameraRig；昼夜色调 →
     LightingController；位置对账判定 → PlayerSync；地形/信号层数据 →
@@ -45,7 +45,6 @@ const _TILE_BLOB_ELEV: int = CHUNK_SIZE * CHUNK_SIZE * 4
 var _blob_version: int = Config.TILE_BLOB_VERSION
 ## 状态段按 BLOB 版本强关联（后端 STATE_TYPES 增删状态必须 bump 版本，
 ## 前端解码按版本查表，防止分段错位）：v1 = moisture/snow/ice
-## （issue #42 材质 9→8 重排后重标 v1，格式不变）
 const _STATE_NAMES_BY_VERSION: Dictionary = {
 	1: ["moisture", "snow", "ice"],
 }
@@ -320,7 +319,7 @@ func _ensure_player() -> void:
 
 
 ## 创建玩家 pawn（PawnRenderer 按 CREATURE 规格生成分层 Sprite2D 部件，
-## 脚底中心锚点 + 头顶名称浮层；侧视 billboard 由朝向镜像换位表达）：
+## 脚底中心锚点 + 头顶名称浮层；朝向由左右镜像表达）：
 ## 初始隐藏，位置取 _player_pos（惰性创建前可能已有权威位置，不复位）。
 func _create_player() -> void:
 	var player := Node2D.new()
@@ -343,7 +342,7 @@ func _create_player() -> void:
 	_player.visible = false  # 等出生点和地形就绪后再显示
 	_entities_root().add_child(_player)
 	# 注：不复位 _player_pos——惰性创建可能发生在权威位置已写入之后
-	# （回归：_apply_authoritative_position → _ensure_player 时位置被清零）
+	# （_apply_authoritative_position → _ensure_player 时位置会被清零）
 	_player.position = _world_to_screen(_player_pos)
 	print("MainWorld2D: player created")
 
@@ -770,7 +769,7 @@ func _mount_built_chunk(key: Vector2i, cells: Dictionary) -> void:
 	_mount_signal_layer(key, offset, cells, TerrainTileBuilder.LAYER_SHADOW,
 		_terrain_parent)
 	# 装饰层暂不挂载：确定性哈希逐 tile 撒点无空间连贯性，灰褐色单格
-	# 散点呈"噪点"观感（待成簇/密度重构后再恢复，见 issue #42 讨论）
+	# 散点呈"噪点"观感（LAYER_DECOR 数据仍由 TerrainTileBuilder 产出）
 	# _mount_signal_layer(key, offset, cells, TerrainTileBuilder.LAYER_DECOR,
 	# 	_terrain_parent)
 	if Config.CONTOUR_LAYER_ENABLED:
@@ -821,9 +820,8 @@ static func _node_prefix(layer: String) -> String:
 	return "Chunk"
 
 
-## 批量填充 tile 层（Godot 4.7 的 TileMapLayer 无 set_cells，逐格 set_cell；
-## 单 chunk 上限 40k 格，主线程一次性填充 ~ms 级可接受；后续阶段若需优化
-## 可改用 TileMapLayer 内置批量接口或分层预处理）。
+## 批量填充 tile 层（逐格 set_cell；单 chunk 上限 40k 格，主线程一次性
+## 填充 ~ms 级可接受）。
 func _fill_cells(layer: TileMapLayer, cells: Array) -> void:
 	for cell in cells:
 		layer.set_cell(cell[0], cell[1], cell[2])
@@ -1157,7 +1155,7 @@ func _handle_response(message: Dictionary) -> void:
 		"get_chunks":
 			var chunks: Array = payload.get("chunks", [])
 			# 请求参数回显：include_tiles=true = 完整版（含地形数组），
-			# false = 字段版。不再用数组长度等形状启发式判型
+			# false = 字段版。判型依据该回显字段，不依赖响应形状
 			var has_tiles: bool = payload.get("include_tiles", false)
 			for chunk in chunks:
 				var cx: int = int(chunk.get("cx", 0))
@@ -1506,8 +1504,8 @@ func _tile_build_task(key: Vector2i, terr: PackedInt32Array, elev: PackedFloat32
 
 
 ## 主线程轮询后台构建结果并挂载：序号失配（重连后新任务取代）或状态已非
-## CONSTRUCTING（卸载/断线降级）的陈旧结果丢弃；有效结果主线程创建
-## TileMapLayer 并 set_cells 后交 _mount_built_chunk。
+## CONSTRUCTING（卸载/断线降级）的陈旧结果丢弃；有效结果交 _mount_built_chunk
+## 在主线程建层并逐格填充。
 func _poll_build_results() -> void:
 	_build_mutex.lock()
 	var results := _build_results.duplicate()
@@ -1623,7 +1621,7 @@ func _send_chunk_request(coords: Array[Array], include_tiles: bool) -> void:
 
 ## 卸载远离玩家的 chunk（距中心超出流半径 + 卸载余量 + 在途缓冲）：
 ## 释放地形节点并清空状态与数据（BUILT/RECEIVED → UNKNOWN，在途请求作废）。
-## 卸载判定统一在此处（每帧）：响应处理不再因越界丢弃数据——
+## 卸载判定统一在此处（每帧）：响应处理不因越界丢弃数据——
 ## 缓冲圈内的在途响应到达后正常缓存/构建，越过缓冲圈才作废。
 func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> void:
 	var unload_r := stream_r + UNLOAD_MARGIN + UNLOAD_BUFFER

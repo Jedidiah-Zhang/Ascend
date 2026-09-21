@@ -1,9 +1,9 @@
-"""引擎切换对拍— 新适配器 vs 旧引擎边界求值。
+"""天气引擎求值子集对拍 — 与黄金向量逐位一致。
 
-- ``engine_golden.json``：旧注册表按引擎边界（11 基线 + tick + 5 场扰动）
-  逐 chunk 求值 wired 节点（20）；
-- 新 ``WeatherCore`` 必须逐位一致（单 chunk 与多 chunk 同帧）；
-- 节点干预（逐实例值替换）在新路径上生效。
+- ``engine_golden.json``：按引擎边界（11 基线 + tick + 5 场扰动）逐 chunk
+  求值面节点（20），作为冻结的契约数据；
+- ``WeatherCore`` 求值必须逐位一致（单 chunk 与多 chunk 同帧）；
+- 节点干预（逐实例值替换）在求值面上生效。
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from ascend.world.modules.weather.core import WIRED_OUTPUTS, WeatherCore
+from ascend.world.modules.weather.core import ENGINE_EVAL_OUTPUTS, WeatherCore
 
 _GOLDEN = json.loads(
     (Path(__file__).parent / "data" / "engine_golden.json").read_text(
@@ -47,14 +47,14 @@ def core():
 
 
 class TestEngineSwitch:
-    def test_wired_outputs_are_20(self, core):
-        assert len(WIRED_OUTPUTS) == 20
-        assert set(WIRED_OUTPUTS) == set(
+    def test_eval_outputs_are_20(self, core):
+        assert len(ENGINE_EVAL_OUTPUTS) == 20
+        assert set(ENGINE_EVAL_OUTPUTS) == set(
             mechanism.outputs()[0]
             for mechanism in core.program.mechanisms.values()
         )
 
-    def test_wired_matches_old(self, core):
+    def test_eval_matches_golden(self, core):
         mismatches = []
         for record in _GOLDEN["chunks"]:
             coords = tuple(record["coords"])

@@ -1,7 +1,7 @@
 import Mathlib
 
 /-!
-# 命题 2.5 试点形式化 — 汇聚拓扑的路径和展开与"取最大"反例
+# 命题 2.5 形式化 — 汇聚拓扑的路径和展开与"取最大"反例
 
 出处：`docs/研究理论/世界基座/02-误差传播与反事实.md` 命题 2.5。
 
@@ -32,7 +32,7 @@ inductive ConvNode where
   | x1 | x2 | x3
 deriving DecidableEq, Repr
 
-/-- 汇聚闭式（试点 1）：`e₃ = ε₃ + L₁₃·ε₁ + L₂₃·ε₂`。
+/-- 汇聚闭式：`e₃ = ε₃ + L₁₃·ε₁ + L₂₃·ε₂`。
 递推在 2 父 1 子处的路径和展开：
 X3 的误差 = 自身模型误差 + 每条父路径（X1→X3、X2→X3）贡献的**和**。 -/
 theorem converge_closed_form (e ε : ConvNode → ℝ) (L13 L23 : ℝ)
@@ -84,7 +84,7 @@ theorem converge_max_via_closed (e ε : ConvNode → ℝ)
   · rw [hε1, hε2]
     norm_num
 
-/-! ## 第三部分：n 父星形一般化（试点 3） -/
+/-! ## 第三部分：n 父星形一般化 -/
 
 /-- n 父汇聚的闭式（星形一般化）：`eₙ = εₙ + Σ_{i<n} L_i·ε_i`。
 父节点 `i < n` 无父（`e_i = ε_i`）；子节点 n 的误差为自身误差
@@ -99,7 +99,7 @@ theorem star_closed_form (n : ℕ) (e ε L : ℕ → ℝ)
   intro i hi
   rw [hleaf i (Finset.mem_range.mp hi)]
 
-/-! ## 第四部分：一般 DAG 的路径和展开（试点 4） -/
+/-! ## 第四部分：一般 DAG 的路径和展开 -/
 
 /-- 路径权重和 `W u t`：从 u 到 t 的所有有向路径的权重和
     `W u t = Σ_{paths u→t} Π_{(a,b)∈path} L_{a,b}`（02 篇命题 2.5）；

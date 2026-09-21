@@ -3,7 +3,7 @@
 
 进程模型（一个进程 = 一种模式，进程内不换世界）:
   - 菜单进程（无参）: 服务模式启动（GameEngine.start_service），
-    TCP 端口立即就绪，仅提供存档管理请求——主菜单不再等待地图生成；
+    TCP 端口立即就绪，仅提供存档管理请求（主菜单无需等待地图生成）；
   - 世界进程（--world-id <id>）: 直接构建世界观（GameEngine.start），
     世界就绪信号 = world_initialized 事件；大陆生成 5-30s 期间端口
     已开放（网络层先行），前端可连接并收 world_progress 进度；

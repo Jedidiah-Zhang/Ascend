@@ -1,9 +1,9 @@
-"""天气引擎输入模块 — 引擎提供的 chunk 基线（引擎切换）。
+"""天气引擎输入模块 — 引擎提供的 chunk 气候基线。
 
-旧引擎把 chunk 气候基线（大陆模型生成 / 派生）作为边界输入提供，不重算
-这些机制（``WIRED_NODES`` 只含 20 个天气节点）。本模块把这些槽位声明为
-external，与「wired 天气子集」组合编译，保持与旧引擎相同的数据流；
-生成程序声明化后由生成程序产出。
+引擎把 chunk 气候基线（大陆模型生成 / 派生）作为边界输入提供，不重算
+这些机制（``ENGINE_EVAL_OUTPUTS`` 只含 20 个天气节点）。本模块把这些槽位声明
+为 external，与天气引擎求值子集组合编译；这些内容由生成程序声明产出
+（``ascend/world/generation.py``）。
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from .module import CHUNK, MODULE as WEATHER_MODULE
 
 __all__ = ["BASELINE_IDS", "MODULE"]
 
-# 引擎提供的 11 个基线节点（旧 weather_engine._boundary_values）
+# 引擎提供的 11 个基线节点
 BASELINE_IDS: tuple[str, ...] = (
     "weather.chunk.annual_mean_temperature_c",
     "weather.chunk.annual_rainfall_mm_per_year",
@@ -54,6 +54,6 @@ MODULE = ModulePack(
     version="1",
     instances=(GLOBAL, CHUNK),
     slots=_SLOTS,
-    evidence=("引擎切换对拍：tests/world/test_engine_switch.py",),
-    notes="引擎提供的 chunk 基线（旧 WIRED 子集的输入面）。",
+    evidence=("求值子集对拍：tests/world/test_engine_eval_subset.py",),
+    notes="引擎提供的 chunk 基线：求值子集的边界输入。",
 )

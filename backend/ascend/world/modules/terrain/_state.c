@@ -2,9 +2,10 @@
 
 与 _hydrology.c 同款模式：纯数值逐格循环下沉 C，Python 层薄包装。
 本内核同时服务两条链路（同公式防漂移）：
-  * 结算（settle）：步长 = 1 游戏日，n_steps = 结算天数，
-    每日天气来自解析场固定时刻采样（Python 侧算好传入）；
-  * 运行期脉冲：步长 = 1/24 游戏日，n_steps = 1，天气取当前实时值。
+  * 生产积分：按声明更新点每游戏小时一步，一次调用可覆盖多个更新点
+    （n_steps = 缺口步数，步长 dt = 1/24 游戏日），天气取解析场对应
+    时刻的采样值；
+  * 数组层入口：供内核对拍使用，调用方直接给出逐步降水/温度序列。
 
 统一公式（日标定，delta × dt 缩放步长）：
   delta = precip_mm × deposit[t]                       # 沉积（降水）
@@ -27,8 +28,7 @@ state 每步 clamp 到 [0, state_max[s]]。
    states: n_states 行 × n 列的 uint8 数组（每行一块连续内存）。
    terrain: 每 tile 地形 id（uint16 存储，值 0-255，索引参数表）。
    slope: 每 tile 坡度（float32，排水修正 (1+slope)）。
-   tile_cover: 每 tile 沉积倍率（NULL=1.0；运行期实体遮蔽传入，
-    结算传 NULL——settle 时无实体）。
+   tile_cover: 每 tile 沉积倍率（NULL=1.0；实体遮蔽接入后由调用方传入）。
    step_precip: n_states × n_steps（行主序），每步每状态降水量 mm。
    step_temp: n_steps 每步均温 °C。
    deposit/drain/melt/freeze: n_states × 256 参数表（行主序）。

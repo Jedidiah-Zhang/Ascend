@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "contract_version": "world-arch-v0.1",
-  "kernel": "sha256:11ed336de40557b7665a4dacaa4df551f9e436e462710487e8bd34eafc41afb4",
+  "kernel": "sha256:aedaa898569555ff73e0cb865cdc82fd40651da51441283f06886e6df02e72e6",
   "digests": {
     "ascend.world.modules.terrain.module._integrate_accelerated": "sha256:c647c8779b3ceee046a65a74df8ae7f304eaac7ae6834153fb1e9a3d289bb321",
     "ascend.world.modules.terrain.module._integrate_reference": "sha256:3ef2da13788946e4012eab96fa5c62643779e1369c86eea13b2c4fb75b07d35a",

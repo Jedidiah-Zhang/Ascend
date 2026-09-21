@@ -1,4 +1,4 @@
-"""昼夜链定点/冻表对拍：定点/冻表实现 ↔ 旧 float 实现。
+"""昼夜链定点与预计算表对拍 — 与浮点参考实现的误差在声明界内。
 
 对拍判据（声明偏差，见 ascend/world/kernel/diurnal.py）：
 
@@ -90,7 +90,7 @@ def test_determinism_and_no_libm_in_query_path(monkeypatch):
 
 
 def test_hour_matches_quantized_float_exactly():
-    """小时阶段：整数日历除法的定点值 == 旧值量化（半偶同规则）。"""
+    """小时阶段：整数日历除法的定点值 == 浮点值量化（半偶同规则）。"""
     for tick in range(0, 2 * GAME_DAY + GAME_HOUR, 3):
         expected = quantize(_old_hour(tick), TABLE_BITS)
         assert diurnal.hour_of_day_q(tick, GAME_DAY, GAME_HOUR) == expected

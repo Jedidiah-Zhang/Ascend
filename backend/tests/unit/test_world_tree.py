@@ -465,26 +465,26 @@ class TestWorldTreeTrim:
             bus._archive.close()  # type: ignore[union-attr]
             os.unlink(path)
 
-    def test_fate_path_default_none(self):
-        """Event.fate_path 默认 None（事件不消费随机流）。"""
+    def test_address_path_default_none(self):
+        """Event.address_path 默认 None（事件不消费随机流）。"""
         ev = make_event(id="plain")
-        assert ev.fate_path is None
+        assert ev.address_path is None
 
-    def test_fate_path_archive_round_trip(self):
-        """fate_path 归档写入/读回往返（有值与 None 两种形态）。"""
+    def test_address_path_archive_round_trip(self):
+        """address_path 归档写入/读回往返（有值与 None 两种形态）。"""
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         bus = WorldTree(archive_path=path)
         try:
-            with_fate = make_event(timestamp=1, id="ev_fate",
-                                   fate_path="weather/precip/3/-2@3912")
-            without_fate = make_event(timestamp=2, id="ev_plain")
-            bus.publish(with_fate)
-            bus.publish(without_fate)
+            with_address = make_event(timestamp=1, id="ev_addr",
+                                   address_path="weather/precip/3/-2@3912")
+            without_address = make_event(timestamp=2, id="ev_plain")
+            bus.publish(with_address)
+            bus.publish(without_address)
             bus._trim(10)  # 归档两者
-            assert bus.get_event_by_id("ev_fate").fate_path == \
+            assert bus.get_event_by_id("ev_addr").address_path == \
                 "weather/precip/3/-2@3912"
-            assert bus.get_event_by_id("ev_plain").fate_path is None
+            assert bus.get_event_by_id("ev_plain").address_path is None
         finally:
             bus._archive.close()  # type: ignore[union-attr]
             os.unlink(path)
@@ -539,11 +539,11 @@ class TestWorldTreeTrim:
             os.unlink(path)
 
 
-# ── 保存脉搏 flush-and-drop（Issue #40 地基） ──────────────
+# ── 周期保存 flush-and-drop ──────────────
 
 
 class TestArchivePending:
-    """archive_pending 保存脉搏归档：events.db 单一事实源。"""
+    """archive_pending 周期保存归档：events.db 单一事实源。"""
 
     def test_flush_all_to_disk_and_clear_memory(self):
         """flush 后：全部事件落盘、内存/索引/图清空、查询自动合并。"""
@@ -667,7 +667,7 @@ class TestArchivePending:
             # 已归档的 a4（ts=4 == 潜在回退水位）查询不可遗漏
             assert [e.id for e in bus.get_events_in_range(4, 4)] == ["a4"], \
                 "水位回退会让同 tick 归档事件漏出查询"
-            # 新旧归档合并：flush 批（a2/a3）与 trim 批（b2/b3）都在
+            # 两次归档合并：flush 批（a2/a3）与 trim 批（b2/b3）都在
             assert {e.id for e in bus.get_events_in_range(2, 3)} == {"a2", "a3", "b2", "b3"}
         finally:
             bus._archive.close()  # type: ignore[union-attr]
@@ -735,7 +735,7 @@ class TestArchivePending:
     def test_archive_pending_write_failure(self, monkeypatch):
         """归档写失败：内存已清、水位不推进、异常传播、下次 flush 恢复。
 
-        崩溃语义：写失败 = 该批丢失（≤1 脉搏窗口），不破坏水位不变量。
+        崩溃语义：写失败 = 该批丢失（≤1 个保存窗口），不破坏水位不变量。
         """
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -778,7 +778,7 @@ class TestArchivePending:
             assert bus._archive_boundary is None, "切库必须重置水位"
 
             bus.publish(make_event(timestamp=0, id="new_a"))
-            # 库2 无旧数据：查询不遗漏（新水位语义）
+            # 库2 无既有数据：查询不遗漏（水位语义）
             assert [e.id for e in bus.get_events_in_range(0, 1000)] == ["new_a"]
             assert bus.get_event_by_id("old_a") is None, "旧库事件不可见"
         finally:
@@ -1513,7 +1513,7 @@ class TestStats:
         assert len(received) == 1
 
         bus.reset()  # 读档重建语义
-        assert len(received) == 1  # 旧事件已清
+        assert len(received) == 1  # 先前事件已清
         bus.publish(make_event(event_type="weather_change", timestamp=2))
         assert len(received) == 2, "reset 后订阅必须保留，事件仍能送达"
 

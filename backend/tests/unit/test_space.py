@@ -235,10 +235,10 @@ class TestClimateZone:
     def test_climate_constants_injection(self):
         """C 侧气候常量由 config 注入：运行时修改即刻生效，可重置。
 
-        防护：C 不再内置阈值副本——改 config 常量无需重编译，
+        防护：C 侧不内置阈值副本——改 config 常量无需重编译，
         C 管线（``classify_climate_c`` / ``apply_lapse_rate_c``）行为随注入值变化。
 
-        注（#52）：注册表机制（``climate.classify`` 等）已改为定点实现，
+        注：注册表机制（``climate.classify`` 等）为定点实现，
         阈值单一事实源 = ``ascend.config``（不读 C 注入）；本测试验证 C/bulk
         管线的注入语义，并断言注册表机制不受 C 注入影响。
         """
@@ -793,7 +793,7 @@ class TestTileGrid:
             TileGrid.from_bytes(b"\x02\x00\x00\x00" + b"\x00" * 100)
 
     def test_from_bytes_wrong_version_rejected(self):
-        """版本不符（其他格式/未来产物）明确拒绝——零迁移路径。"""
+        """版本不符（其他格式/未来产物）明确拒绝，不提供兼容转换。"""
         # 构造当前尺寸的合法 blob 但版本头不同
         wrong_len = 4 + TILE_MAP_SIZE * TILE_MAP_SIZE * (2 + 4 + 4) \
             + TILE_MAP_SIZE * TILE_MAP_SIZE * len(STATE_TYPES)
@@ -1217,7 +1217,7 @@ class TestTileGenerator:
 
         # 与 generate_chunk 保持一致的参数
         detail_freq = 0.005
-        detail_amp = 50.0  # 目标振幅：±50m（不再是 ±100m）
+        detail_amp = 50.0  # 目标振幅：±50m
 
         # 多个代表性位置
         test_chunks = [

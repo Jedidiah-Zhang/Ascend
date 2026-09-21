@@ -1,4 +1,4 @@
-"""证据 — 见证执行（C1）与新核心验收。"""
+"""证据 — 见证执行（C1）与验收构造。"""
 
 from __future__ import annotations
 

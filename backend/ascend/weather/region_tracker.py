@@ -40,9 +40,8 @@ from .field import UnifiedWeatherField, CH_PRECIPITATION
 _PRECIP_SIGNAL_CAP: float = PRECIP_SIGNAL_MAX
 
 # 默认观察窗口半径（chunk）：**观察层参数**（不是世界声明）——只决定
-# 降水通报的观察范围，不改变世界演化，也不进世界身份；⑤b 将由观测
-# 协议元数据接管声明（不在 config.py：config 是机制方程源码依赖，
-# 改动会改变世界身份）。
+# 降水通报的观察范围，不改变世界演化，也不进世界身份（不放 config.py：
+# config 是机制方程源码依赖，改动会改变世界身份）。
 DEFAULT_REGION_RADIUS: int = 16
 
 

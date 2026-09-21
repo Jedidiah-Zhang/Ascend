@@ -219,7 +219,7 @@ func advance(delta: float) -> Dictionary:
 func _initial_cells(_key: Vector2i, states: Dictionary) -> Array:
 	# 状态集须与 _state_order 同构（键 ∈ _state_order，缺失键跳过）：
 	# atlas 列偏移 = _state_order.find(name) × LEVELS，契约外的新键会
-	# 产生负偏移——main_world 按 BLOB v2 固定版本表构造，恒满足
+	# 产生负偏移——main_world 按 BLOB 版本表构造，恒满足
 	var cells: Array = []
 	var tiles: int = _tiles_of(states)
 	if tiles <= 0:

@@ -1,7 +1,6 @@
 """2D 正俯视相机 — Camera2D 摆位/缩放与可视范围计算。
 
-从 3D 等轴版迁移（原 camera_rig.gd）：正交摆位/阴影覆盖几何删除，
-改为 Camera2D 跟随 + 滚轮缩放（zoom 倍率钳制）。几何计算仅保留
+Camera2D 跟随 + 滚轮缩放（zoom 倍率钳制）；几何计算只保留
 visible_radius（2D 屏幕对角线 → 世界 tile 半径，流式半径用）。
 """
 
@@ -9,7 +8,7 @@ class_name CameraRig
 extends RefCounted
 
 
-## 相机常量（与 main_world.gd 原声明同源，见 Config）
+## 相机常量（唯一事实源 = Config）
 const CAMERA_ZOOM_DEFAULT: float = Config.CAMERA_ZOOM_DEFAULT
 const CAMERA_ZOOM_STEP: float = Config.CAMERA_ZOOM_STEP
 const CAMERA_ZOOM_MIN: float = Config.CAMERA_ZOOM_MIN

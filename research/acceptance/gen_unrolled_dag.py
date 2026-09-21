@@ -9,9 +9,8 @@
   定理段 —— ``wellFormed_real``：生产声明满足 ``WellFormed``（机器可判）；
             ``unroll_acyclic_real``：由 ``unroll_acyclic`` 得到时间展开无环。
 
-为什么需要它：``UnrolledDag.lean`` 证明的是"任何合法声明展开无环"，但**从未
-与真实声明对上**。本生成器把"生产声明合法"也变成机器可判的命题，C2 于是
-同时具备理论内核与实例见证。
+为什么需要它：``UnrolledDag.lean`` 证明"任何合法声明展开无环"；本生成器
+把"生产声明合法"变成机器可判的命题，C2 因此同时具备理论内核与实例见证。
 
 运行:
   .venv/bin/python research/acceptance/gen_unrolled_dag.py            # 生成/刷新

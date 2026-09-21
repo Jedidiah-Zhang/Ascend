@@ -1,4 +1,4 @@
-"""创建世界流程容器（Issue #8）— 多步调参 + 创建 + 进入世界。
+"""创建世界流程容器 — 多步调参 + 创建 + 进入世界。
 
 流程（步骤可插拔，顺序由 SetupFlow.build_steps 固定）:
   1. 逐步骤调参：每步一个页面（SetupStep 契约，见 setup_step.gd）
@@ -339,7 +339,7 @@ static func _default_save_name() -> String:
 	return SaveInfoFormatter.datetime_string(float(Time.get_unix_time_from_system()))
 
 
-## 创建成功后已切 world_loading 进度页，本页不再处理连接就绪；
+## 创建成功后已切 world_loading 进度页，本页不处理连接就绪；
 ## 仅保留 _entering_world 兜底标记（连接失败走 _on_connection_lost）。
 func _on_connected(_host: String, _port: int) -> void:
 	pass

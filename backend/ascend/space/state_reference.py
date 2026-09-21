@@ -2,8 +2,9 @@
 
 与 C 加速实现（``tile_state.state_evolve_arrays`` → ``_state.c``）完全同
 公式、同运算顺序：本文件是"公式在说什么"的可执行规范，C 是它的加速
-等价物。两者由 ``tests/unit/test_kernels.py`` 逐位对拍（数值内核批次将
-以本实现为基准做整数/定点迁移）。
+等价物。生产路径不引用本文件（``ascend`` 内无调用点），保留为内核语义
+的参考与对拍基准——测试用参考内核内联在 ``tests/unit/test_tile_state.py``
+与 ``tests/world/test_terrain_kernel.py``。
 
 统一公式（日标定，delta × dt 缩放步长）：
 

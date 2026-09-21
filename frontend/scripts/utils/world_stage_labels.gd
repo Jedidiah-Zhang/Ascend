@@ -1,4 +1,4 @@
-"""世界生成阶段 → UI 文案映射（单源，Issue #8）。
+"""世界生成阶段 → UI 文案映射（单一事实源）。
 
 后端 ContinentGenerator.STAGE_*（elevation/climate/erosion/water/
 width/done）+ "chunks" 出生区阶段的统一翻译表；world_loading.gd

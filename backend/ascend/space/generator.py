@@ -174,7 +174,7 @@ class WorldGenerator:
             for i in range(n_phases)
         ]
 
-        # 噪声通道（温雨改用大陆场 C 模型，海拔改用构造模拟）
+        # 噪声通道（温雨与海拔取大陆场：C 模型温雨 + 构造海拔场）
         self._noise_humidity = PerlinNoise(seed + 500)
         self._noise_wind = PerlinNoise(seed + 600)
         # 次级噪声（群系细分用）
@@ -272,7 +272,7 @@ class WorldGenerator:
                     # 无指纹缓存（旧格式/手工写入）：没有身份摘要就无法
                     # 证明它与当前算法一致，按既有"版本/损坏 → 未命中
                     # 重新生成"路径处理（CONTINENT_CACHE_VERSION 校验
-                    # 兜底格式迁移）；不静默沿用无法验证的派生数据。
+                    # 兜底）；不静默沿用无法验证的派生数据。
                     logger.warning(
                         "大陆缓存无生成环境指纹（旧格式/手工写入），"
                         "无法校验一致性，重新生成: %s", cache_path,

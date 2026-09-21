@@ -122,7 +122,7 @@ class TestEngineEvaluation:
         assert snapshot[0]["target"] == param_id
         assert snapshot[0]["submitted_at"] is not None
 
-    def test_unwired_node_rejected(self, weather_engine):
+    def test_node_outside_eval_rejected(self, weather_engine):
         """已声明但未接线的生成点：登记被拒绝（不再静默无效）。"""
         from ascend.world.modules import ids as m
 
@@ -130,7 +130,7 @@ class TestEngineEvaluation:
         with pytest.raises(ValueError, match="未接线"):
             _plan_node(table, m.ANNUAL_TEMPERATURE, 25.0, stop=1)
 
-    def test_unwired_parameter_rejected(self, weather_engine):
+    def test_parameter_outside_eval_rejected(self, weather_engine):
         _, table = weather_engine
         with pytest.raises(ValueError, match="未被已接线机制消费"):
             table.plan(PlannedIntervention(
@@ -329,7 +329,7 @@ class TestDoCommands:
         assert "enum" in bad.output
 
     def test_do_mech_is_gone(self, executor):
-        """运行内机制替换已废除：do mech 落到帮助文案（fail-closed）。"""
+        """运行内机制替换不受支持：do mech 落到帮助文案（fail-closed）。"""
         result = executor.execute("do mech weather.instant.temperature_c inc")
         assert result.success is False
         assert "do value" in result.output
@@ -385,7 +385,7 @@ class TestDoCommands:
         assert "多余参数" in result.output
 
     def test_do_clear_rejects_rep(self, executor):
-        """rep 参数已废除（运行内机制替换关闭）。"""
+        """rep 参数不受支持（运行内机制替换关闭）。"""
         from ascend.world.modules import ids as m
 
         executor.execute(f"do value {m.INSTANT_TEMPERATURE} 25 0 0 at 0")
@@ -533,7 +533,7 @@ class TestResearchApi:
         assert "target" in response["payload"]["error"]
 
     def test_research_do_rejects_mechanism_replacement(self, weather_engine):
-        """运行内机制替换已废除（WC-1.3，结构变体 = 换世界）。"""
+        """运行内机制替换不受支持（WC-1.3，结构变体 = 换世界）。"""
         from ascend.world.modules import ids as m
 
         handler, _ = self._handler(weather_engine)
@@ -728,33 +728,33 @@ class TestResearchApi:
         assert "duration" in response["payload"]["error"]
 
 
-# ── 可达性声明漂移巡检（WIRED_OUTPUTS == 实际求值点）──────────
+# ── 可达性声明漂移巡检（ENGINE_EVAL_OUTPUTS == 实际求值点）──────────
 
 class TestWiringDrift:
-    """WIRED_OUTPUTS == 引擎实际求值集合（可达性声明不腐烂）。"""
+    """ENGINE_EVAL_OUTPUTS == 引擎实际求值集合（可达性声明不腐烂）。"""
 
-    def test_wired_nodes_evaluated_by_engine(self, weather_engine):
-        """运行时覆盖：引擎求值结果节点集合 == WIRED_OUTPUTS。
+    def test_eval_nodes_evaluated_by_engine(self, weather_engine):
+        """运行时覆盖：引擎求值结果节点集合 == ENGINE_EVAL_OUTPUTS。
 
         缺一 = 声明了求值点却没执行（干预静默无效）；多一 = 引擎
         执行了未声明节点（可达性声明漂移）。
         """
-        from ascend.world.modules.weather.core import WIRED_OUTPUTS
+        from ascend.world.modules.weather.core import ENGINE_EVAL_OUTPUTS
 
         engine, _ = weather_engine
         key = (0, 0)
         field = engine._fields[key]
         values, _ = engine._evaluate(engine._clock.time, {key: field})
-        assert {output for output, _ in values} == set(WIRED_OUTPUTS)
+        assert {output for output, _ in values} == set(ENGINE_EVAL_OUTPUTS)
 
     def test_no_hand_sequenced_evaluation_left(self):
-        """天气引擎不得再手工顺序求值（唯一执行路径 = 世界程序求值面）。"""
+        """天气引擎不得手工顺序求值（唯一执行路径 = 世界程序求值面）。"""
         root = Path(__file__).resolve().parents[2] / "ascend" / "weather"
         source = (root / "weather_engine.py").read_text(encoding="utf-8")
         pattern = re.compile(r"self\.evaluate_node\(\s*m\.")
         assert not pattern.search(source), (
             "weather_engine.py 仍存在手工顺序的节点求值调用；"
-            "所有 wired 节点应经世界程序求值"
+            "所有求值面节点应经世界程序求值"
         )
         # 区域观测器仍以注入求值器消费节点（漂移巡检锚点保留）
         tracker_source = (root / "region_tracker.py").read_text(
@@ -762,15 +762,15 @@ class TestWiringDrift:
         )
         assert re.search(r"self\._evaluate\(\s*\n?\s*m\.", tracker_source)
 
-    def test_wired_nodes_subset_of_declared(self):
+    def test_eval_nodes_subset_of_declared(self):
         from ascend.world.modules.weather import module as weather_module
         from ascend.world.modules.weather.core import (
-            WIRED_OUTPUTS,
+            ENGINE_EVAL_OUTPUTS,
             WeatherCore,
         )
 
         declared = {slot.id for slot in weather_module.MODULE.slots}
-        assert set(WIRED_OUTPUTS) <= declared
+        assert set(ENGINE_EVAL_OUTPUTS) <= declared
         core = WeatherCore()
         consumed = {
             parameter

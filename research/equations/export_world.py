@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""新声明 → 研究投影（equations.json 同 schema）。
+"""世界声明 → 研究投影（equations.json 同 schema）。
 
 事实源 = ``WorldProgram``（``ascend.world.compile``）；本模块把声明投影为
 研究侧 schema（nodes/mechanisms/parameters/edges/variables/declaration），
 供 ``gen_lean``/``graph_check``/``verify_equations`` 等消费。
 
-版本摘要由新声明计算（equation_version = 机制摘要；resolved_version =
-方程 + 参数 + 边界组合），与旧注册表摘要不同——迁移即新世界身份（WC-1.2）。
+版本摘要由声明计算（equation_version = 机制摘要；resolved_version =
+方程 + 参数 + 边界组合）；任一组分变化即新世界身份（WC-1.2）。
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from ascend.world.meta.declarations import (
 from ascend.world.meta.validate import mechanism_digest
 from ascend.world.modules import weather, worldgen
 from ascend.world.modules.pipeline import PIPELINE_PHASES
-from ascend.world.modules.weather.core import WIRED_OUTPUTS
+from ascend.world.modules.weather.core import ENGINE_EVAL_OUTPUTS
 
 SCHEMA_VERSION = 3
 DECLARATION_ID = "ascend.world.scalar_formulas"
@@ -100,7 +100,7 @@ def project(program: object) -> dict[str, object]:
         "version": DECLARATION_VERSION,
         "microstep_order": list(PIPELINE_PHASES),
         "slice_boundary": SLICE_BOUNDARY,
-        "wired_nodes": sorted(WIRED_OUTPUTS),
+        "eval_nodes": sorted(ENGINE_EVAL_OUTPUTS),
     }
     declaration["hash"] = digest_object(
         {
@@ -402,7 +402,7 @@ def _witness_entries(
     mechanism: MechanismDecl,
     program: object,
 ) -> list[dict[str, object]]:
-    """每个父引用取首个"只变该父"的见证对（与旧投影同形）。"""
+    """每个父引用取首个"只变该父"的见证对。"""
     slot_of = {parent.argument: parent.slot for parent in mechanism.parents}
     entries: list[dict[str, object]] = []
     for parent in mechanism.parents:

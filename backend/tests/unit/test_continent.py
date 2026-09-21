@@ -251,7 +251,7 @@ class TestContinentOutline:
 
 
 class TestGeneratePreview:
-    """快速地形预览（Issue #8 创建世界调参）。"""
+    """快速地形预览。"""
 
     @staticmethod
     def _preview(seed: int = CANONICAL_SEED, land_ratio: float = 0.55,

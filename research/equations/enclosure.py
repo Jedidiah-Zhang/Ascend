@@ -221,7 +221,7 @@ def _ceil_div(num: int, den: int) -> int:
     return -(-num // den)
 
 
-# ── 冻表函数的区间扩展（结果含表声明误差膨胀）───────────────
+# ── 预计算表函数的区间扩展（结果含表声明误差膨胀）───────────
 
 
 def _ceil_q(value: float, bits: int) -> int:
@@ -249,7 +249,7 @@ def cos_enclosure(box: Interval) -> Interval:
     from ascend.world.kernel.tables import DECLARED_EPSILON, cos_q
 
     if box.bits != TABLE_BITS:
-        raise ValueError(f"冻表包络只支持 Q({TABLE_BITS})")
+        raise ValueError(f"预计算表包络只支持 Q({TABLE_BITS})")
     scale = 1 << TABLE_BITS
     lo = min(cos_q(box.lo), cos_q(box.hi))
     hi = max(cos_q(box.lo), cos_q(box.hi))
@@ -267,7 +267,7 @@ def sin_enclosure(box: Interval) -> Interval:
     from ascend.world.kernel.tables import DECLARED_EPSILON, sin_q
 
     if box.bits != TABLE_BITS:
-        raise ValueError(f"冻表包络只支持 Q({TABLE_BITS})")
+        raise ValueError(f"预计算表包络只支持 Q({TABLE_BITS})")
     scale = 1 << TABLE_BITS
     lo = min(sin_q(box.lo), sin_q(box.hi))
     hi = max(sin_q(box.lo), sin_q(box.hi))
@@ -285,7 +285,7 @@ def tanh_enclosure(box: Interval) -> Interval:
     from ascend.world.kernel.tables import TANH_MAX_ERROR, tanh_q
 
     if box.bits != TABLE_BITS:
-        raise ValueError(f"冻表包络只支持 Q({TABLE_BITS})")
+        raise ValueError(f"预计算表包络只支持 Q({TABLE_BITS})")
     lo = tanh_q(box.lo)
     hi = tanh_q(box.hi)
     eps = _ceil_q(TANH_MAX_ERROR, TABLE_BITS)
@@ -298,7 +298,7 @@ def acos_enclosure(box: Interval) -> Interval:
     from ascend.world.kernel.tables import ACOS_MAX_ERROR, acos_q
 
     if box.bits != TABLE_BITS:
-        raise ValueError(f"冻表包络只支持 Q({TABLE_BITS})")
+        raise ValueError(f"预计算表包络只支持 Q({TABLE_BITS})")
     scale = 1 << TABLE_BITS
     low = acos_q(box.hi)
     high = acos_q(box.lo)
@@ -316,7 +316,7 @@ def tan_enclosure(box: Interval) -> Interval:
     from ascend.world.kernel.tables import TAN_MAX_ERROR
 
     if box.bits != TABLE_BITS:
-        raise ValueError(f"冻表包络只支持 Q({TABLE_BITS})")
+        raise ValueError(f"预计算表包络只支持 Q({TABLE_BITS})")
     result = sin_enclosure(box).div(cos_enclosure(box))
     eps = _ceil_q(TAN_MAX_ERROR, TABLE_BITS)
     return Interval(result.lo - eps, result.hi + eps, TABLE_BITS)
@@ -328,5 +328,5 @@ def degrees_enclosure(box: Interval) -> Interval:
     from ascend.world.kernel.tables import DEG_FACTOR_Q
 
     if box.bits != TABLE_BITS:
-        raise ValueError(f"冻表包络只支持 Q({TABLE_BITS})")
+        raise ValueError(f"预计算表包络只支持 Q({TABLE_BITS})")
     return box.mul(Interval.point(DEG_FACTOR_Q, TABLE_BITS))

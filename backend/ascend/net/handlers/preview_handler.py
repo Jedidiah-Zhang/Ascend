@@ -1,4 +1,4 @@
-"""地图预览处理程序 — 创建世界流程的地形预览（Issue #8）。
+"""地图预览处理程序 — 创建世界流程的地形预览。
 
 语义：调参步骤的只读查询（无副作用）——给定种子与大陆占比，
 返回低分辨率地形缩略图（海拔场 + 实测陆地占比），前端按高度着色。
@@ -60,7 +60,7 @@ def _parse_preview_payload(msg: dict) -> tuple[int, float, float | None, float |
         raise ValueError("payload 必须为对象")
     seed = parse_seed(payload.get("seed", ""))
     if seed == 0:
-        # 随机占位：预览即定案（种子唯一随机源 = 后端，与命运织机
+        # 随机占位：预览即定案（种子唯一随机源 = 后端，与随机系统的
         # "随机性全部可追溯"一致），响应回传 hex 种子供创建复用。
         seed = random.randint(1, SEED_MAX)
     land_ratio = float(payload.get("land_ratio", CONTINENT_LAND_RATIO))

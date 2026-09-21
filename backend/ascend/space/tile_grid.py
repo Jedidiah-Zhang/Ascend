@@ -38,7 +38,7 @@ class TileGrid:
     地形类型用 array('H')（uint16），高度和坡度用 array('f')（float32），
     状态数组用 array('B')（uint8，按 STATE_TYPES 注册表）。
     高度场供 2.5D 渲染抬升 tile 顶面，坡度场供 isometric 渲染选择斜坡变体；
-    状态层为动态叠加（湿润/覆雪/结冰），由状态引擎涂抹、随 chunk 持久化。
+    状态层为动态叠加（湿润/覆雪/结冰），由状态引擎积分、随 chunk 持久化。
 
     线程安全：每个 TileGrid 归属单个 chunk，由该 chunk 的生成线程独占。
     """
@@ -210,7 +210,7 @@ class TileGrid:
     def state_raw(self, key: str) -> array:
         """返回底层状态 array 的引用（零拷贝）。
 
-        状态引擎批量涂抹/结算直接操作该数组（与 raw_data/elevation_raw
+        状态引擎批量积分直接操作该数组（与 raw_data/elevation_raw
         同模式）。调用方负责按 STATE_TYPES[key].bounds clamp。
 
         Args:

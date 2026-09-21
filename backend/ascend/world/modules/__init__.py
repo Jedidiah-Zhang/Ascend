@@ -4,8 +4,8 @@
 - ``pipeline``：世界生成 → 天气链阶段序；
 - ``clock`` / ``toy``：验收玩具模块；
 - ``weather`` / ``worldgen`` / ``terrain``：生产切片模块；
-- ``conservation``：守恒练兵切片（流量/守恒不变量/多分辨率）；
-- ``harvest``：实体练兵切片（实体/事件/资源/Γ）。
+- ``conservation``：守恒演练模块（流量/守恒不变量/多分辨率）；
+- ``harvest``：实体演练模块（实体/事件/资源/Γ）。
 
 用法：``from ascend.world.modules import weather`` 或直接导入子模块。
 """

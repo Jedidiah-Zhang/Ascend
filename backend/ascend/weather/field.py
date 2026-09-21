@@ -1,7 +1,7 @@
 """统一天气场 — 特征 + 纹理双分量合成，1km 网格 C1 插值 + tile 级噪声。
 
 下游（WeatherEngine / 地形状态引擎）只认 sample(x, y, t) / sample_grid，
-不感知分量存在——防止未来又拆回两个系统。
+分量拆分对下游透明。
 
 合成路径：
     纹理分量（多 octave Perlin，波长按参数独立）
@@ -43,8 +43,8 @@ CH_HUMIDITY = "humidity"          # 湿度扰动（归一化 [-1, 1]）
 CH_WIND = "wind"                  # 风扰动（归一化 [-1, 1]）
 
 
-# 降水阈值/强度校准不在此处实现：唯一求值点是注册表节点
-# （weather.chunk.precipitation_threshold / weather.instant.precipitation_intensity），
+# 降水阈值/强度校准不在此处实现：唯一求值点是声明节点
+# （weather.chunk.precipitation_threshold / weather.instant.precipitation_intensity_mm_per_hour），
 # 由 WeatherEngine.evaluate_node 统一求值（含干预覆盖），查询路径与
 # region_tracker 事件路径共用同一入口。
 
@@ -270,7 +270,7 @@ class UnifiedWeatherField:
     ) -> list[float]:
         """批量采样矩形区域的通道合成值（一次核收集）。
 
-        供 #37 解析结算器等栅格消费者使用——批量与单点共享同一
+        供地形状态积分器等栅格消费者使用——批量与单点共享同一
         合成路径，仅核收集复用（性能语义独立）。
 
         Args:

@@ -325,8 +325,8 @@ def _value_to_rgb(v: float | int, mode: str) -> tuple[int, int, int]:
 def _tile_worker(seed: int, cx: int, cy: int, w: int, h: int, mode: str) -> bytes:
     """在子进程中生成瓦片原始数据（float32 数组）。
 
-    返回 5 层: [海拔][温度][降雨][气候][群系] 各 float32。
-    海拔使用 Voronoi 构造模拟，其余为零（待气候管线接入）。
+    返回 5 层: [海拔][温度][降雨][气候][群系] 各 float32，逐格由构造海拔
+    与噪声气候管线（海面温度 → 直减率 → 气候带 → 群系）求值。
     """
     import math
     import struct

@@ -45,8 +45,8 @@ const SPEC_SLOTS: String = "slots"     # {slot: [part, ...]}
 const SPEC_NAMEPLATE: String = "nameplate_offset"  # Vector2（头顶浮层锚点）
 
 
-## 默认物种规格：CREATURE 人形 16×24（占位：头/躯干/左右附肢，色板沿用旧
-## 玩家占位纹理），PLANT 14×20（冠/茎），其余（STRUCTURE/未知）石块 14×14。
+## 默认物种规格：CREATURE 人形 16×24（头/躯干/左右附肢），PLANT 14×20
+## （冠/茎），其余（STRUCTURE/未知）石块 14×14。
 static func default_spec(entity_type: String) -> Dictionary:
 	match entity_type:
 		"CREATURE":

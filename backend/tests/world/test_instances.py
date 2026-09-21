@@ -1,4 +1,4 @@
-"""装载位扩展测试— 实体实例、层级实例与链接/层级关系。
+"""实例接入位测试 — 实体实例、层级实例与链接/层级关系。
 
 - 实体：存活集合是世界状态（spawn/despawn 进帧事务）；机制按存活实体逐实例
   求值；快照/恢复携带实体集合与逐实体值；干预要求实体存活；
@@ -73,7 +73,7 @@ _TREE = ModulePack(
         _GLOBAL,
         InstanceDecl(
             id="entity.tree", kind="entity", identity="derived_id",
-            lifecycle="驱动层 spawn/despawn（练兵切片）",
+            lifecycle="驱动层 spawn/despawn（演练模块）",
         ),
     ),
     slots=(
@@ -102,7 +102,7 @@ _HUT = ModulePack(
     instances=(
         InstanceDecl(
             id="entity.hut", kind="entity", identity="derived_id",
-            lifecycle="驱动层 spawn/despawn（练兵切片）",
+            lifecycle="驱动层 spawn/despawn（演练模块）",
         ),
     ),
     relations=(

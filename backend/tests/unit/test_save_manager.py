@@ -186,7 +186,7 @@ class TestNameUniqueness:
 
 
 class TestGenParams:
-    """创建世界调参产出（Issue #8）随档定案。"""
+    """创建世界调参产出随档定案。"""
 
     def test_create_persists_gen_params(self, manager):
         """gen_params 写入 manifest 并可经文件往返恢复。"""
@@ -1067,8 +1067,8 @@ class TestSnapshotDelete:
 class TestSnapshotIncremental:
     """增量快照（v2 链式物化）读路径。
 
-    写路径（diff）尚未接入，增量文件由测试辅助函数按格式构造；
-    验证物化 = 全量基座 + 逐级应用文件级/页级变更。
+    增量文件按格式构造（见 ``_build_delta_snapshot``）；验证物化 =
+    全量基座 + 逐级应用文件级/页级变更。
     """
 
     def test_delta_file_level_merges_over_base(self, manager, world):
@@ -1819,7 +1819,7 @@ class TestSnapshotBranchPrune:
     """分支裁剪 — remove_snapshot_branch（节点 + 全部后代）。"""
 
     def _build_fork(self, manager, world) -> dict:
-        """构造分叉血缘: A → B → C1 → C1a, B → C2（Issue #32 场景）。"""
+        """构造分叉血缘: A → B → C1 → C1a, B → C2。"""
         manager.write_state(world, {"clock": {"time": 100}})
         a = manager.create_snapshot(world, suffix="manual")
         b = manager.create_snapshot(world, suffix="manual")
@@ -1832,7 +1832,7 @@ class TestSnapshotBranchPrune:
     def test_prune_branch_deletes_subtree_only(self, manager, world):
         """子树（节点 + 后代，含 auto 当前记录）全部删除，兄弟分支不受影响。
 
-        注：Issue #32 例子「裁剪 C1 → 删 C1、C1a、C2」有误——C2 挂 B 下
+        注：「裁剪 C1 → 删 C1、C1a、C2」的说法有误——C2 挂 B 下
         是 C1 的兄弟，不是后代；子树定义 = 节点 + 后代。
         """
         s = self._build_fork(manager, world)

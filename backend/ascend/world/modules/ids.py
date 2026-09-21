@@ -1,7 +1,7 @@
 """天气/世界生成链节点与参数 ID — 单一事实源。
 
-旧 ``weather/mechanisms.py`` 的常量块迁入本模块；引擎/派生/区域追踪与
-旧声明文件统一从这里取 ID（旧声明删除后本模块为唯一来源）。
+本模块集中定义节点/参数 ID 常量；引擎（``ascend/weather``）、派生层与
+区域追踪、各模块声明统一从这里取 ID。
 """
 
 from __future__ import annotations

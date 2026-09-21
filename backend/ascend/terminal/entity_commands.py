@@ -19,7 +19,7 @@ class EntityCommandsMixin:
     def _h_entity(self, args: list[str]) -> CommandResult:
         """处理 entity 指令组：list 列表 / birth 诞生 / death 死亡。
 
-        调试用生灭入口（Issue #20 验收）：birth/death 是世界内因果
+        调试用生灭入口：birth/death 是世界内因果
         事件，经 EntityManager 发布 entity_born/entity_died 到世界树，
         EventBridge 广播后前端应实时渲染/移除。
 

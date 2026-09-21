@@ -1,6 +1,6 @@
 """实体事件契约 — 实体生灭/移动/传送发布的 data 结构。
 
-data 键即 dataclass 字段，event_type 由类属性声明（不再重复写字符串）。
+data 键即 dataclass 字段，event_type 由类属性声明。
 位置类字段以 tuple 声明，as_dict() 输出 JSON 安全的 list。
 """
 

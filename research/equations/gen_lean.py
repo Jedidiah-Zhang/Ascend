@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""生产注册表快照 → Lean 自动生成器（防漂移机制）。
+"""声明快照 → Lean 自动生成器（防漂移机制）。
 
-生产注册表生成的 ``research/equations/equations.json`` 与 config 常量真值
+世界声明生成的 ``research/equations/equations.json`` 与 config 常量真值
 自动生成 research/lean/AscendLean/CausalVerification/GenDeclarationData.lean：
 
   数据段 —— config 两组推导常量、声明边表的 role/L、变量 bounds；
@@ -53,7 +53,7 @@ CONFIG_CONSTANTS = [
     "SEASONAL_AMP_R_REF", "SEASONAL_AMP_R_BONUS", "SEASONAL_AMP_BOUNDS",
 ]
 
-# 注册表节点 ID（完整 ID 消除旧声明中年均温/即时温度的同名歧义）
+# 声明节点 ID（完整命名空间 ID 区分年均温/即时温度等同名概念）
 SEA_LEVEL_TEMPERATURE = "weather.chunk.sea_level_temperature_c"
 SOLAR_LATITUDE_PROXY = "weather.chunk.solar_latitude_proxy_deg"
 ANNUAL_TEMPERATURE = "weather.chunk.annual_mean_temperature_c"
@@ -117,7 +117,7 @@ def load_declaration(json_path: Path) -> dict:
 
 def load_config_constants() -> dict[str, float]:
     """以 sys.path 方式 import ascend.config 取常量真值
-    （路径处理同 verify_equations.py:24-27）。"""
+    （sys.path 处理与 verify_equations.py 相同）。"""
     sys.path.insert(0, str(ROOT / "backend"))
     from ascend import config as asc_config  # noqa: E402
 
@@ -244,7 +244,7 @@ def build_content(json_path: Path) -> tuple[str, dict]:
     add("")
     add("-- 形状统一为：手写 Declarations.lean 实例的相关量 = 本文件数据段字面量。")
     add("-- 任何一侧改动都会使本节某条定理失败（lake build 红）或触发 --check diff。")
-    add("-- 协议耦合说明：本节模板引用 LatCfg/AmpCfg 的字段名，若手写侧重构字段，")
+    add("-- 协议耦合说明：本节模板引用 LatCfg/AmpCfg 的字段名；字段改名")
     add("-- 需同步修改 gen_lean.py 的对账模板。")
     add("")
     latitude_edge = (SEA_LEVEL_TEMPERATURE, SOLAR_LATITUDE_PROXY)

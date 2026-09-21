@@ -55,8 +55,8 @@ class TestCellHash:
         assert len(vals) == 16
 
     def test_seed_pattern_not_merely_offset(self):
-        # 旧缺陷形态：seed 只做线性平移（模式整体位移）；
-        # 混淆后相邻 seed 的同一坐标取值应均匀散布（非邻近值）
+        # seed 混淆不得退化为线性平移（模式整体位移）：
+        # 相邻 seed 的同一坐标取值应均匀散布（非邻近值）
         a = [cell_hash(0, 0, s) for s in range(16)]
         gaps = [abs(a[i] - a[i + 1]) for i in range(15)]
         assert min(gaps) > 0.01

@@ -117,7 +117,7 @@ class TestSaveCreate:
         assert manager.read_state(manifest.world_id)["clock"]["time"] == 3
 
     def test_create_with_gen_params(self, manager, handlers):
-        """gen_params（大陆占比）随档定案写入 manifest（Issue #8）。"""
+        """gen_params（大陆占比）随档定案写入 manifest。"""
         resp = handlers["save_create"](_req("save_create", {
             "name": "调参世界", "seed": "2a",
             "gen_params": {"land_ratio": 0.35},
@@ -221,7 +221,7 @@ class TestSaveSnapshot:
 
 
 class TestSaveSnapshotDelete:
-    """快照删除协议（单点 / 分支裁剪，Issue #32）。
+    """快照删除协议（单点 / 分支裁剪）。
 
     与 save_delete（删世界）/ save_snapshot（建快照）对称的命名：
     save_snapshot_delete = 删除快照；recursive 区分删除范围。

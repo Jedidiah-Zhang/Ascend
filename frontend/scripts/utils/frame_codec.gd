@@ -12,7 +12,7 @@ extends RefCounted
 
 
 
-# 与后端 ascend/net/protocol.py 同步（唯一事实源 = config.gd，同 connection.gd）
+# 与后端 ascend/net/protocol.py 同步（唯一事实源 = config.gd）
 const PROTOCOL_VERSION: int = Config.PROTOCOL_VERSION
 
 

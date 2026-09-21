@@ -221,7 +221,7 @@ func test_send_flush_partial_failure_keeps_unsent() -> void:
 
 
 func test_send_front_flushed_before_queued() -> void:
-	"""防护（Issue #34）：握手帧必须先于残留业务帧发送（push_front 会把
+	"""防护：握手帧必须先于残留业务帧发送（push_front 会把
 握手压到队尾）。"""
 	var t := _make_transport()
 	var s := _make_fake(2)

@@ -1,7 +1,9 @@
-"""地形状态引擎 — 统一演化内核（C）+ 声明更新点的单一积分器。
+"""地形状态引擎 — 统一演化内核 + 声明更新点的单一积分器。
 
 分层（数据算法分离；数据在 state_defs.py，存储在 TileGrid）：
-  1. 统一演化内核：``state_evolve``（_state.c）——逐 tile 数值循环下沉 C。
+  1. 统一演化内核：``state_evolve``——生产经声明式地形模块求值
+     （逐 tile 数值循环下沉模块 C 内核）；数组层入口
+     ``state_evolve_arrays``（_state.c）供内核对拍。
   2. TileStateEngine：唯一积分路径——按声明更新点（每游戏小时）
      直接读解析天气场，对每注册 chunk 单步积分；快进/回载按
      ``chunk.integrated_through`` 游标补齐，与逐步推进逐位一致。
@@ -94,11 +96,11 @@ def state_evolve(
     tile_cover: list[float] | None = None,
     states: dict[str, array] | None = None,
 ) -> None:
-    """统一演化内核入口（生产路径经新核心 ``TerrainCore``）。
+    """统一演化内核入口（生产路径经声明式地形模块求值）。
 
     把网格状态/地形/坡度数组交给声明式地形模块的 field 机制求值，原地
-    回写状态数组（与旧 C 直调同语义）。内核（参考实现 / C 加速）在模块内
-    逐位对拍；``state_evolve_arrays`` 保留为旧内核直调路径（测试/内核对）。
+    回写状态数组；数组层入口 ``state_evolve_arrays`` 供内核对拍使用
+    （参考实现 / C 加速逐位一致）。
 
     Args:
         grid: 目标 TileGrid（地形/坡度数组；状态默认取网格数组）。
@@ -128,7 +130,7 @@ _TERRAIN_CORE = None
 
 
 def _terrain_core():
-    """新核心地形适配器（进程内一次编译缓存）。"""
+    """声明式地形模块的适配器（进程内一次编译缓存）。"""
     global _TERRAIN_CORE
     if _TERRAIN_CORE is None:
         from ascend.world.modules.terrain.core import TerrainCore
@@ -147,6 +149,8 @@ def state_evolve_arrays(
     tile_cover: list[float] | None = None,
 ) -> None:
     """统一演化内核数组层入口（_state.c 零拷贝包装，原地更新 states）。
+
+    供内核对拍使用；生产路径统一经 ``state_evolve``。
 
     Args:
         states: 状态 key → array（uint8）映射（按 state_keys() 顺序取行）。
@@ -438,7 +442,7 @@ class TileStateEngine:
     ) -> bool:
         """帧事务应用动作：整组替换状态数组并推进游标。
 
-        网格已被替换（恢复/重载）或游标已被其他批次推进时跳过，
+        网格已被替换（恢复/重载）或游标已被其他帧事务推进时跳过，
         返回是否实际提交。
         """
         with self._lock:

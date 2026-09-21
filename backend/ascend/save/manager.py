@@ -14,7 +14,7 @@ GameEngine 负责把运行时状态喂给 write_state，读档时从 read_state 
     <root>/<world_id>/                  # 一个存档位 = 一个目录 = 一个世界
         manifest.json          # 明文元信息 + 密钥混淆串 secrets_blob
         state.json.enc         # 时钟/玩家/天气（加密 + HMAC）
-        entities.json.enc      # 实体表（Issue #25 启用）
+        entities.json.enc      # 实体表（快照打包项之一）
         chunks.db / events.db  # SQLite（明文，实时增量写）
         continent.bin          # 大陆宏观场缓存（可再生，随档分发）
         snapshots/             # 该世界的回退点集合（回滚时保留自身）
@@ -197,7 +197,7 @@ class SaveManager:
         manifest——存档身份（world_id+seed）出生即一致，密钥混淆层
         （secrets_blob 绑定 world_id+seed）不会与 manifest 失配。
 
-        gen_params 为创建世界流程的调参产出（Issue #8），随档定案：
+        gen_params 为创建世界流程的调参产出，随档定案：
         目前含 land_ratio；非法值抛 ValueError（与 Manifest 校验一致）。
 
         Args:
@@ -324,7 +324,7 @@ class SaveManager:
         logger.info("删除存档位: %s", world_id)
 
     def export_world(self, world_id: str) -> str:
-        """复制世界为新的存档位（Issue #14 "复制存档"），含快照。
+        """复制世界为新的存档位，含快照。
 
         活目录只复制规范文件（manifest/state/DB/血缘/大陆缓存），
         排除运行期残留的 -wal/-shm/.tmp 等垃圾；快照逐个改绑新世界

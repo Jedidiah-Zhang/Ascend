@@ -1,7 +1,7 @@
 """生成程序声明测试— 身份、清单对齐、边界绑定、确定性。
 
 - 声明自洽：四个生成程序（大陆/水文/瓦片/统一天气场）字段完整；
-- 清单对齐：旧 ``compute_gen_fingerprint`` 的源码/常量清单被完整覆盖
+- 清单对齐：``compute_gen_fingerprint`` 的源码/常量清单被完整覆盖
   （新增未归属即红）；
 - 身份：指纹稳定、常量/版本变化即变、打包退位策略可复现；
 - 边界绑定：``feeds`` 覆盖游戏程序的全部生成侧外部槽位（slice_boundary
@@ -46,8 +46,8 @@ class TestDeclaration:
             assert len(decl.sampling) >= 2, decl.id
             assert decl.determinism, decl.id
 
-    def test_inventory_covers_legacy_fingerprint(self):
-        """旧生成环境指纹的源码与常量必须全部有归属（漂移门禁）。"""
+    def test_inventory_covers_fingerprint_sources(self):
+        """生成环境指纹的源码与常量必须全部有归属（漂移门禁）。"""
         declared_files = {
             rel for decl in GENERATION_PROGRAMS for rel in decl.source_files
         }

@@ -69,7 +69,7 @@ def executor_weather(clock, calendar, i18n, weather_engine):
 
 
 # ══════════════════════════════════════════════════════════
-# T1: status（合并原 st + report）
+# T1: status（时间概览 + 世界树统计）
 # ══════════════════════════════════════════════════════════
 
 class TestStatus:
@@ -93,7 +93,7 @@ class TestStatus:
         assert "tick" in result.output.lower()
 
     def test_T2_legacy_aliases_removed(self, executor):
-        """原 st/rp/report 顶层别名已删除，返回未知指令。
+        """st/rp/report 顶层别名不受支持，返回未知指令。
 
         Arrange:
             CommandExecutor。
@@ -388,8 +388,8 @@ class TestTimeJump:
             assert result.success is False, cmd
 
 
-class TestLegacyTimeCommands:
-    """过时顶层时间指令已删除的测试。"""
+class TestRemovedTimeAliasesRejected:
+    """顶层时间指令别名不受支持的测试。"""
 
     def test_T18_removed_commands_unknown(self, executor):
         """sleep/travel/mode/pause/resume/tick/jump 顶层指令返回未知。
@@ -397,7 +397,7 @@ class TestLegacyTimeCommands:
         Arrange:
             CommandExecutor。
         Act:
-            执行各过时指令。
+            执行各别名指令。
         Assert:
             均 success=False（未知指令）。
         """
@@ -758,7 +758,7 @@ class TestTeleportCommand:
 
 
 # ══════════════════════════════════════════════════════════
-# entity 指令组（Issue #20）
+# entity 指令组
 # ══════════════════════════════════════════════════════════
 
 
@@ -1094,7 +1094,7 @@ class TestHelp:
             assert result.success is True
             for kw in ("status", "time", "weather", "lang", "events"):
                 assert kw in result.output
-            # 过时指令不再出现
+            # 别名指令不应出现
             assert "sleep" not in result.output
             assert "travel" not in result.output
 

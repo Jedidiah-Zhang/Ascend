@@ -64,8 +64,7 @@ _PAGES_SUFFIX: str = ".pages"
 # 保留策略：auto（当前/冻结记录）环形保留最近 N 个，quit（退出保存）保留最近 K 个；
 # manual（手动）永久保留。live_origin 指向的快照永不自动淘汰
 # （当前记录），因此同一来源的实际上限 = N + 1。
-# 注：quit 为预留来源（退出保存尚未接入，晋升语义已就绪），
-# 保留策略先行——启用时按普通非 auto 保存路径走即可。
+# 注：quit 为预留来源（退出保存尚未接入），保留上限已定义。
 AUTO_SNAPSHOT_KEEP: int = 20
 QUIT_SNAPSHOT_KEEP: int = 3
 

@@ -8,8 +8,8 @@ import AscendLean.CausalVerification.Declarations
 巡检接入：research/equations/verify_equations.py 主流程 V0 步
 
 来源与指纹（sha256 前 16 位）：
-- research/equations/equations.json   sha256:5bb34c1d7ad49e87
-- backend/ascend/config.py            sha256:023c2028c5d2d2e6
+- research/equations/equations.json   sha256:7c893e338c7eec04
+- backend/ascend/config.py            sha256:de8bda0a0265d52b
 
 防漂移三层闭环：
 ① 注册表快照/配置改动 → 数据段字面量/本头指纹变化 → --check 失败；
@@ -287,7 +287,7 @@ def varWorldGenWindNoiseHi : ℝ := 1
 
 -- 形状统一为：手写 Declarations.lean 实例的相关量 = 本文件数据段字面量。
 -- 任何一侧改动都会使本节某条定理失败（lake build 红）或触发 --check diff。
--- 协议耦合说明：本节模板引用 LatCfg/AmpCfg 的字段名，若手写侧重构字段，
+-- 协议耦合说明：本节模板引用 LatCfg/AmpCfg 的字段名；字段改名
 -- 需同步修改 gen_lean.py 的对账模板。
 
 -- 4.1 纬度斜率对账（V2 判据；声明 L=2）

@@ -3,7 +3,7 @@
 使用 __slots__ 消除 per-instance __dict__，data 懒分配，position 拆为独立 int 字段。
 大规模实体场景下内存效率显著优于普通 dataclass。
 
-设计原则（Issue #20）:
+设计原则:
   - 实体类型是存在形态分类（生物/植物/物品/建筑），"被谁控制"不是类型
     —— 玩家只是 controller=PLAYER 的 CREATURE，与 NPC 唯一的区别是
     决策模块由玩家输入替代 AI。这是意识转移玩法的架构基础。
@@ -25,8 +25,7 @@ class EntityType(IntEnum):
     使用 int 枚举，内存和比较效率优于字符串。
 
     序列化约定：跨进程/持久化一律使用 ``.name`` 字符串，禁止使用
-    数值——枚举成员可能增删重排（如 PLANT 插入导致 ITEM 1→2），
-    数值序列化会在版本间静默错位。
+    数值——枚举成员可能增删重排，数值序列化会在版本间静默错位。
     """
     CREATURE = 0
     PLANT = 1

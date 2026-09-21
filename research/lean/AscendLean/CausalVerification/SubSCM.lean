@@ -280,7 +280,7 @@ theorem subSCM_bound_via_encoded
     hadjnn he t
 
 /-- **互证④（升级关系）**：任意编码版设定的应用可无损升级为
-    主定理更紧的 ε'-形界（干预源项显式归零）——旧接口的一切用例
+    主定理更紧的 ε'-形界（干预源项显式归零）——编码接口的一切用例
     都被 SubSCM 主定理涵盖并改进。 -/
 theorem subSCM_bound_of_encoded
     (f fh : ℕ → (ℕ → ℝ) → ℝ) (X Xh ε e : ℕ → ℝ) (adj : ℕ → ℕ → ℝ)

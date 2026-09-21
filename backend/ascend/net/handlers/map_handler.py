@@ -139,8 +139,8 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
                 for future in as_completed(futures):
                     chunk = future.result()
                     # 时序契约：tile 就绪后广播 on_tiles_ready——状态
-                    # 引擎结算缺口（缺失天气的 chunk 安全空转——结算器
-                    # 按未注册日跳过）
+                    # 引擎按积分游标补齐缺口（天气未注册的 chunk 不推进
+                    # 游标，fail-closed，待注册后重试）
                     if chunk_services is not None:
                         chunk_services.on_tiles_ready(chunk.cx, chunk.cy)
 
@@ -174,7 +174,7 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
         logger.debug("get_chunks: 返回 %d 个块 (缓存 %d, 新生成 %d)",
                      len(result_chunks), len(coord_tuples) - len(missing), len(missing))
         # include_tiles 回显：前端据此区分"字段版/完整版"响应，
-        # 不再依赖 terrain 数组长度等数据形状启发式
+        # 不依赖 terrain 数组长度等数据形状启发式
         return make_response(
             "get_chunks",
             {"chunks": result_chunks, "include_tiles": include_tiles},

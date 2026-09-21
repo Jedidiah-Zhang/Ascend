@@ -5,9 +5,9 @@
 数据文件加一项（value 追加）**，枚举/查询/状态引擎/生成算法
 零改动（完整性由测试兜底）。
 
-issue #42 语义收窄：TerrainType 只表达**地表材质**（8 种），
-地貌形态（山巅/陡坡）与水体深浅不再进枚举——海拔/坡度/水深
-均为场（宏观海拔 / 面内坡度 / elevation 反推水深），从场推导。
+TerrainType 只表达**地表材质**（8 种）：地貌形态（山巅/陡坡）
+与水体深浅不进枚举——海拔/坡度/水深均为场（宏观海拔 / 面内坡度 /
+elevation 反推水深），从场推导。
 
 身份约定（Mod 三层基础设施第 1 层，从首发即启用命名空间）：
 - **注册表键 / 持久化标识 = 命名空间 id**（`<ns>:<local>`，如
@@ -38,7 +38,7 @@ class TerrainDef:
         label_key: i18n 键（显示名，文案在 lang/*.json）。
         passable: 材质面级通行基线（True = 可落脚；水面由
             water_passability 按水深实时推导覆盖）。
-        buildable: 能否建造建筑（面内坡度等派生约束推后到 #30）。
+        buildable: 能否建造建筑（面内坡度等派生约束未实现）。
         movement_cost: 移动消耗倍率（1.0 = 正常；"inf" = 不可通行）。
         fertility: 土壤肥力 [0, 1]。
         states: 状态演化参数（None = 不适用，恒 0）。
@@ -237,7 +237,7 @@ def state_params(terrain: TerrainType, key: str) -> StateParams | None:
 
 
 def water_passability(terrain: TerrainType, elevation: float) -> tuple[bool, float]:
-    """水体通行性按水深实时推导（issue #42：无 depth 通道，从场反推）。
+    """水体通行性按水深实时推导。
 
     非水体返回注册表基线。水体（WATER）：水深 = −海拔（海洋；湖底
     高于海平面时 depth=0 视为可涉水——湖泊精确水深需湖面高程，推后

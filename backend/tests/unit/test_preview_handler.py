@@ -1,4 +1,4 @@
-"""地图预览处理程序单元测试 — 创建世界调参的地形预览（Issue #8）。
+"""地图预览处理程序单元测试 — 创建世界调参的地形预览。
 
 覆盖 ascend/net/handlers/preview_handler.py。
 """
@@ -64,7 +64,7 @@ class TestMapPreview:
     def test_seed_zero_or_missing_randomizes(self, handlers):
         """seed="" / "0" / 缺省 = 随机占位：预览时定案并回传 hex 种子。
 
-        种子唯一随机源 = 后端（命运织机契约）；回传种子再请求
+        种子唯一随机源 = 后端；回传种子再请求
         须产出同一地形（定案确定性）。
         """
         for payload in ({"seed": ""}, {"seed": "0"}, {}):

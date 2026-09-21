@@ -3,7 +3,7 @@
 玩家位置的唯一权威来源。前端本地插值仅作预测显示，
 通过 player_move 上报、player_state 查询、player_teleported 事件对齐。
 
-玩家只是 controller=PLAYER 的 CREATURE（Issue #20）——与 NPC 唯一的
+玩家只是 controller=PLAYER 的 CREATURE——与 NPC 唯一的
 区别是决策来自玩家输入而非 AI。本服务封装的是"玩家控制的那个实体"
 的生命周期与位置写入，而非一种特殊实体类型。
 
@@ -177,8 +177,8 @@ class PlayerService:
     def restore(self, entity_id: str, x: float, y: float) -> Entity:
         """读档恢复玩家实体（静默，不发布 entity_born / 移动事件）。
 
-        实体表全量恢复（Issue #25）后优先复用 manager 中已恢复的实体；
-        当前阶段实体表未持久化，按存档身份静默重建该实体。
+        manager 中已有该实体（实体表经存档恢复）时优先复用；
+        否则按存档身份静默重建该实体。
 
         Args:
             entity_id: 存档中的玩家实体 ID。
@@ -199,7 +199,7 @@ class PlayerService:
                 born_at=self._clock.time,
             )
         else:
-            # 实体表已恢复（#25）：仅校准精确位置与整数索引
+            # 实体表已恢复：仅校准精确位置与整数索引
             entity.set_data("fx", clamped[0])
             entity.set_data("fy", clamped[1])
             if (entity.chunk_x, entity.chunk_y, entity.tile_x, entity.tile_y) \

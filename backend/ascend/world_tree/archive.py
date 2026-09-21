@@ -117,7 +117,7 @@ class EventArchive:
                 json.dumps(ev.caused_by, ensure_ascii=False),
                 ev.observes,
                 json.dumps(ev.co_participants, ensure_ascii=False),
-                ev.fate_path,
+                ev.address_path,
                 json.dumps(
                     [{"entity_id": a.entity_id, "role": a.role}
                      for a in ev.affected],
@@ -447,7 +447,7 @@ class EventArchive:
             caused_by=json.loads(row["caused_by_json"]),
             observes=row["observes"],
             co_participants=json.loads(row["co_participants_json"]),
-            fate_path=row["fate_path"],
+            address_path=row["address_path"],
             affected=affected,
         )
 

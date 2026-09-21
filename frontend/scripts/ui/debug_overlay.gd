@@ -186,7 +186,7 @@ func setup_default_sections(world: Node) -> void:
 	"""创建所有默认调试分区并注入世界脚本引用。
 
 	Args:
-		world: 世界脚本节点（MainWorld 或 MainWorld3D）。
+		world: 世界脚本节点（MainWorld2D）。
 	"""
 	add_section(FPSSection.new())
 	add_section(MemorySection.new())
@@ -204,7 +204,7 @@ func setup_default_sections(world: Node) -> void:
 ## 向所有分区注入世界脚本引用（调用各分区的 setup）。
 ##
 ## Args:
-##     world: 世界脚本节点（MainWorld 或 MainWorld3D）。
+##     world: 世界脚本节点（MainWorld2D）。
 func setup_sections(world: Node) -> void:
 	for section: DebugSection in _sections:
 		section.setup(world)

@@ -300,7 +300,7 @@ class TestMapHandlers:
 
 
 class TestMapHandlersWithStateEngine:
-    """include_tiles + tile_state_engine 组合（Issue #37 装配契约）。
+    """include_tiles + tile_state_engine 组合。
 
     回归：_generate_tiles 无返回值时 future.result() 为 None，
     on_tiles_ready(None.cx) 崩溃（reviewer 实测）；注册-生成-就绪

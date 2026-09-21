@@ -1,4 +1,4 @@
-"""世界加载进度页 — 创建/进入世界时展示后端启动与生成进度（Issue #8）。
+"""世界加载进度页 — 创建/进入世界时展示后端启动与生成进度。
 
 流程: 创建请求成功后 → 重启后端(世界模式) → 本页显示
 「启动世界进程 → 生成地形(stage 逐阶段) → 进入世界」。
@@ -332,7 +332,7 @@ func _input(event: InputEvent) -> void:
 
 ## 离开回主菜单：必须先标记输入已处理（本节点仍在树中），再切场景——
 ## change_scene_to_file 会立即释放当前场景，之后 get_viewport() 返回 null
-## → set_input_as_handled 崩溃（回归：test_world_loading_error_menu）。
+## → set_input_as_handled 崩溃。
 func _leave_to_main_menu() -> void:
 	get_viewport().set_input_as_handled()
 	_change_to_menu_scene()

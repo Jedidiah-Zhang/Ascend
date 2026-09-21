@@ -22,7 +22,6 @@ const MAX_MESSAGE_SIZE: int = 16 * 1024 * 1024  # 16 MiB
 const PROTOCOL_VERSION: int = 0x01  # 与后端 ascend/net/protocol.py 同步
 ## tile 数据 BLOB 版本（客户端已知/支持的版本；握手时上报，服务端以
 ## 其 TILE_GRID_VERSION 裁决兼容性——见 handshake.gd / client_handler.py）
-## issue #42 材质 9→8 重排后重新标 v1（无历史版本）。
 const TILE_BLOB_VERSION: int = 1
 
 const VENV_PYTHON_REL: String = ".venv/bin/python"
@@ -80,7 +79,7 @@ const SHADOW_ELEVATION_DIFF_M: float = 6.0
 const CONTOUR_INTERVAL_M: float = 500.0
 ## 装饰密度海拔档位（米）：低于档位 0 无装饰，之后逐档加密（见 TerrainTileBuilder）
 const DECOR_ELEVATION_TIERS: Array[float] = [300.0, 1000.0, 2000.0]
-## 等高线调试层默认开关（开发期调试用；挂调试面板后改为运行时开关）
+## 等高线调试层默认开关（默认关闭，开发期调试用）
 const CONTOUR_LAYER_ENABLED: bool = false
 
 # ═══════════════════════════════════════════════════════════

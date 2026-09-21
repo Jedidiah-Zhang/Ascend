@@ -5,7 +5,7 @@
 1. **覆盖门禁**：方程字符串可求值（表达式或 ``REFERENCE_IMPLS``），
    否则报"未覆盖"（fail-closed，不允许静默跳过）；
 2. **对拍**：在 C1 见证上下文 + 见证点附近的随机抖动上，比较
-   ``evaluate_direct``（新核心生产求值）与 ``reference_value``（独立
+   ``evaluate_direct``（生产求值）与 ``reference_value``（独立
    参考）。类型必须一致，浮点按声明容差，离散输出必须相等；
 3. 生产因域外拒绝的采样计为跳过（不掩盖：跳过数会报告）。
 
@@ -26,7 +26,7 @@ from ascend.world.runtime import evaluate_direct
 
 from mechanism_reference import reference_value, unresolved_names
 
-# 逐机制实现包络容差：生产若为定点/冻表实现，与 float 规范参考的差
+# 逐机制实现包络容差：生产若为定点/预计算表实现，与 float 规范参考的差
 # 必须落在该机制声明的内核误差内（不是放水：容差即声明界）
 _TOLERANCES: dict[str, float] = {
     "weather.tick.derive_hour_of_day.v1": diurnal.HOUR_MAX_ERROR,
@@ -57,7 +57,7 @@ _TOLERANCES: dict[str, float] = {
     "world.gen.derive_baseline_wind_speed.v1": 1e-5,
     "world.gen.derive_humidity_sharpness.v1": 1e-5,
     "world.gen.derive_mean_precip_intensity.v1": 1e-5,
-    # 空间生成定点实现（#52）：输入量化 2⁻³¹ × 放大系数 + 乘加舍入传播。
+    # 空间生成定点实现：输入量化 2⁻³¹ × 放大系数 + 乘加舍入传播。
     # sst：≤ 25×2⁻³¹ + 舍入 ≈ 1.3e-8；rainfall：≤ (1+3450/2)×2⁻³¹ ≈ 2.4e-6；
     # lapse：≤ 9e-3×范围×2⁻³¹ + 除法舍入 ≈ 3e-8。决策树为离散输出
     # （阈值邻域 2⁻³¹ 才可能翻转）。

@@ -33,7 +33,7 @@ from typing import Mapping
 
 # 状态载荷格式版本。**无向后兼容**：读档只接受本版本，旧格式与未来格式
 # 一律拒绝（fail-closed），不做静默兜底——"看起来能跑"比拒绝加载更危险。
-# v3（#51）：注入核改为干预时间线投影，天气载荷不再含 feature_cores。
+# v3：注入核由干预时间线投影重建，天气载荷不含 feature_cores。
 STATE_VERSION: int = 3
 
 
@@ -43,7 +43,7 @@ def collect_state(
     weather_engine,
     archive_max_timestamp,
 ) -> dict:
-    """采集完整世界状态 W_t（保存脉搏的 state 载荷）。
+    """采集完整世界状态 W_t（周期保存的 state 载荷）。
 
     Args:
         clock: WorldClock 实例。

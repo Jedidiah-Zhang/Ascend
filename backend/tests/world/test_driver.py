@@ -4,8 +4,8 @@
 - 世界状态更新只能由声明更新点触发（注册顺序 = 执行顺序）；
 - 驱动信号来自时钟，不经世界树事件；
 - 世界写路径所在包不得订阅世界树或时钟（唯一驱动者是 FrameScheduler）；
-- 一次推进批次是一个帧事务：写方影子提交，提交前失败整帧回滚重试，
-  提交相位失败世界失效（WC-7.6 / WC-9.2 / #51）。
+- 一次推进是一个帧事务：写方影子提交，提交前失败整帧回滚重试，
+  提交相位失败世界失效（WC-7.6 / WC-9.2）。
 """
 
 import re
@@ -139,7 +139,7 @@ class TestWorldTreeRoleGate:
 
 
 class TestFrameTransaction:
-    """一次推进批次 = 一个帧事务（WC-7.6）。"""
+    """一次推进 = 一个帧事务（WC-7.6）。"""
 
     def test_writes_invisible_until_batch_commit(self):
         store = FrameStateStore()
@@ -200,7 +200,7 @@ class TestFrameTransaction:
 
 
     def test_applier_failure_invalidates_world_without_replay(self):
-        """提交中失败：世界失效——不重放、不重试（#51 三相位语义）。"""
+        """提交中失败：世界失效——不重放、不重试。"""
         store = FrameStateStore()
         scheduler = FrameScheduler(store=store)
         runs: list = []
@@ -227,8 +227,7 @@ class TestFrameTransaction:
     def test_record_failure_after_commit_does_not_replay_frame(self):
         """提交后记录回调失败：状态已提交一次，世界失效且不重放。
 
-        旧语义会把边界回退并重放同一帧（计数 1 → 2）；新语义下
-        第二次推进必须直接拒绝，计数保持 1。
+        边界不得回退重放同一帧：第二次推进必须直接拒绝，计数保持 1。
         """
         store = FrameStateStore()
         scheduler = FrameScheduler(store=store)

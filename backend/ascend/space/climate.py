@@ -25,7 +25,7 @@ _WORLDGEN_PROGRAM = None
 
 
 def _worldgen_program():
-    """惰性编译世界生成程序（新核心；避免导入环与进程启动开销）。"""
+    """惰性编译世界声明程序（避免导入环与进程启动开销）。"""
     global _WORLDGEN_PROGRAM
     if _WORLDGEN_PROGRAM is None:
         from ascend.world import Schedule, WorldSpec, compile_world
@@ -240,9 +240,9 @@ class WeatherParams:
 # ── 物理推导（纯函数）────────────────────────────────────
 
 def sea_level_temperature(latitude_noise: float) -> float:
-    """纬度噪声 → 海平面年均温度（经机制注册表，定点实现 #52）。
+    """纬度噪声 → 海平面年均温度（经世界声明机制，定点实现）。
 
-    生产求值经机制注册表（``world.gen.derive_sea_level_temperature.v1``，
+    生产求值经世界声明机制（``world.gen.derive_sea_level_temperature.v1``，
     Q30 定点；与 C 标量 ``hydrology.sea_level_temperature_c`` 的差异
     登记在 ``research/equations/reference_check._TOLERANCES``）。C 标量
     仍供 bulk 大陆管线使用。
@@ -265,10 +265,10 @@ def sea_level_temperature(latitude_noise: float) -> float:
 
 
 def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
-    """气温直减率：海拔每升高 1000m 温度下降 LAPSE_RATE °C（经注册表，#52 定点）。
+    """气温直减率：海拔每升高 1000m 温度下降 LAPSE_RATE °C（经世界声明机制，定点）。
 
     语义：直减率仅作用于陆地（altitude>0），海域返回海面温度本身——
-    负海拔不产生深度伪影；陆地 clamp [-20, 36]。生产求值经机制注册表
+    负海拔不产生深度伪影；陆地 clamp [-20, 36]。生产求值经世界声明机制
     （``world.gen.derive_annual_mean_temperature.v1``，Q30 定点）。
 
     Args:
@@ -291,10 +291,10 @@ def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
 
 
 def rainfall_from_noise(rainfall_noise: float) -> float:
-    """降雨噪声 → 年降雨量 (mm/年)（经注册表，#52 定点）。
+    """降雨噪声 → 年降雨量 (mm/年)（经世界声明机制，定点）。
 
     公式：``clamp(min + (n+1)/2*(max-min), 0, 5000)``；min/max 为
-    config 常量（data/world.json#climate 同源）。生产求值经机制注册表
+    config 常量（data/world.json#climate 同源）。生产求值经世界声明机制
     （``world.gen.derive_annual_rainfall.v1``，Q30 定点）。
 
     Args:
@@ -319,7 +319,7 @@ def classify(
     annual_rainfall: float,
     altitude: float,
 ) -> ClimateZone:
-    """由年均温、年降雨量、海拔纯静态判定气候档位（经注册表，#52 定点）。
+    """由年均温、年降雨量、海拔纯静态判定气候档位（经世界声明机制，定点）。
 
     判定顺序（前者优先；下列数值为 config 默认值，运行期阈值以 config 为准）：
       1. 海拔 ≥ 2000m → ALPINE（覆盖纬度气候，高山独立）
@@ -330,7 +330,7 @@ def classify(
       6. 温度 ≥ 5°C → TEMPERATE_FOREST
       7. -5≤T<5°C → SUBARCTIC_TAIGA（R≥400）/ POLAR_TUNDRA（冷干合并）
 
-    生产求值经机制注册表（``world.gen.classify_climate_zone.v1``，
+    生产求值经世界声明机制（``world.gen.classify_climate_zone.v1``，
     Q30 量化域整数比较）；C 版（``hydrology.classify_climate_c``）供
     bulk 大陆管线使用，两条路径阈值同源（config），差异登记在
     ``research/equations/reference_check._TOLERANCES``。纯函数，线程安全。
@@ -375,8 +375,8 @@ def annual_baseline(
     从气候档位模板的区间表中用噪声插值。
     日照固定为 12.0（天文年均，季节变化由天气引擎单独处理）。
 
-    湿度/风速/日照经机制注册表求值（模板数据 data/climate.json），
-    温度经注册表直减率方程（apply_lapse_rate 委托同一注册表）。
+    湿度/风速/日照经世界声明机制求值（模板数据 data/climate.json），
+    温度经声明直减率方程（apply_lapse_rate 委托同一机制）。
 
     Args:
         altitude: 海拔 (m)。

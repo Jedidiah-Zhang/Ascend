@@ -20,7 +20,7 @@ import export_world  # noqa: E402
 
 
 def content() -> str:
-    """返回世界声明的稳定 JSON 快照（新核心投影）。"""
+    """返回世界声明的稳定 JSON 快照（世界声明投影）。"""
     return export_world.to_json()
 
 

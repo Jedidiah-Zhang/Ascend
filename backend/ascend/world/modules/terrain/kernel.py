@@ -1,9 +1,8 @@
 """地形状态演化内核 — 参考实现（规范）与 C 加速（逐位一致）。
 
-参考实现逐行移植自旧 ``space/state_reference.py``；C 加速为同一公式的
-批量实现（``_state.c``）。两者由 ``tests/world/test_terrain_kernel.py``
-逐位锁定；黄金向量由旧实现一次性生成
-（``tests/world/data/terrain_golden.json``），旧注册表删除后作为冻结契约保留。
+C 加速为同一公式的批量实现（``_state.c``）。两者由
+``tests/world/test_terrain_kernel.py`` 逐位锁定；黄金向量
+（``tests/world/data/terrain_golden.json``）为冻结契约数据。
 
 **纯函数语义**：不修改入参，返回新状态（提交由调用方负责）。
 

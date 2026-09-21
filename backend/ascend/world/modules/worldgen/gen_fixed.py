@@ -14,7 +14,7 @@
 
 语义（WC-4.4）：
 
-- 统一 Q(bits)（``bits = TABLE_BITS``，与天气侧冻表内核一致）；
+- 统一 Q(bits)（``bits = TABLE_BITS``，与天气侧预计算表内核一致）；
 - 边界输入（噪声/海拔/温度）在机制入口一次性量化；乘加走定点原语
   （半偶舍入，纯整数）；除法走整数半偶除法；clamp 在量化域完成；
 - 阈值比较在量化域进行——与 float 比较的差异 ≤ 输入量化误差
@@ -32,8 +32,8 @@
 
 **边界**：大陆/水文宏观管线（``_hydrology.c::compute_climate``，含
 exp 大陆度修正）与 `biome.py` 的 float 路径（动态 ``subdiv_ranges``）
-仍是显式 `slice_boundary`，不在本模块；本模块是注册表机制（研究事实
-源）的实现。两条路径的最终统一（宏观管线定点化）留待后续批次。
+仍是显式 `slice_boundary`，不在本模块；本模块是世界生成机制（研究事实
+源）的实现。
 """
 
 from __future__ import annotations

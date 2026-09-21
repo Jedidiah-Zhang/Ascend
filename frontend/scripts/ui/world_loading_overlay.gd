@@ -1,7 +1,7 @@
 """主世界加载覆盖层 — 全屏遮罩 + 进度条，隐藏地形加载过程。
 
 进入存档后 main_world 在 LoadingLayer 挂载本覆盖层：不透明背景
-完全盖住 3D 世界，玩家看不到地形 chunk 流式加载/网格构建的过程。
+完全盖住 2D 世界，玩家看不到地形 chunk 流式加载/建层的过程。
 进度条与新建世界进度页（world_loading.gd）同款（共享 ProgressLerp）：
   世界生成阶段 → 按 WorldStageLabels.ORDER 推进刻度（封顶 90%）；
   出生点地形加载 → 按已构建 chunk 比例从 90% 补满到 100%。

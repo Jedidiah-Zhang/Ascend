@@ -1,6 +1,6 @@
 """存档协议封装 — 请求构造与响应解析（纯逻辑，UI 负责收发）。
 
-设计原则（Issue #13）：存档是状态通道（request-response）——
+设计原则：存档是状态通道（request-response）——
 世界外的元操作，不产生历史、不进因果图。
 
 本类为纯逻辑 RefCounted：不依赖 Connection 单例，
@@ -15,8 +15,8 @@
     save_delete {world_id} → {}
     save_export {world_id} → {world_id}
 
-进入世界 / 回滚不再走 save_load 请求：由 Connection.restart_backend
-以 --world-id/--snapshot 参数拉起世界进程完成（进程模型重构）。
+进入世界 / 回滚不经 save_load 请求：由 Connection.restart_backend
+以 --world-id/--snapshot 参数拉起世界进程完成。
 
 快照条目附带血缘字段（时间线分叉视图数据源）:
 	parent    创建时活目录来源（回滚目标快照 file，"" = 世界初始）
@@ -53,7 +53,7 @@ static func create_request(
 ) -> Dictionary:
 	"""新建存档位请求（seed="" 后端随机；seed 为协议层 hex 字符串）。
 
-	gen_params 为创建世界流程的调参产出（Issue #8）：目前含
+	gen_params 为创建世界流程的调参产出：目前含
 	land_ratio（目标陆地比例），随档定案写入 manifest。
 	"""
 	return {
@@ -69,7 +69,7 @@ static func preview_request(
 	world_seed: String = "", land_ratio: float = 0.55,
 	width_km: float = 100.0, height_km: float = 60.0,
 	layers: Array = ["temp", "rain", "climate"]) -> Dictionary:
-	"""地图地形预览请求（创建世界调参，Issue #8）。
+	"""地图地形预览请求（创建世界调参）。
 
 	seed 为协议层 hex 字符串；"" / "0" = 随机占位——后端在预览时
 	随机定案，响应 payload.seed 回传 hex 种子（创建世界复用）。
@@ -100,7 +100,7 @@ static func snapshot_request(world_id: String) -> Dictionary:
 
 
 static func snapshot_delete_request(world_id: String, snapshot: String, recursive: bool = false) -> Dictionary:
-	"""删除快照请求（单点删除或分支裁剪，Issue #32）。
+	"""删除快照请求（单点删除或分支裁剪）。
 
 	recursive=false 单点删除（后代重接到被删节点的父）；
 	recursive=true 分支裁剪（节点 + 全部后代一并删除）。

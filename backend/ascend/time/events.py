@@ -1,6 +1,6 @@
 """时间事件契约 — 日历在分钟/小时/天边界发布的 data 结构。
 
-data 键即 dataclass 字段，event_type 由类属性声明（不再重复写字符串）。
+data 键即 dataclass 字段，event_type 由类属性声明。
 """
 
 from dataclasses import dataclass

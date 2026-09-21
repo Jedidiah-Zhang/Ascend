@@ -4,9 +4,9 @@
 
 - 逐帧独立记录、只追加；撤销 = 后续帧不再记录，既有记录不改写；
 - 求值解析只看记录，不看"当前表"；
-- 运行内机制替换已废除（WC-1.3）。
+- 运行内机制替换不受支持（WC-1.3）。
 
-校验以编译后的 wired 程序为唯一事实源（引擎求值面 = 可干预面）：
+校验以编译后的求值程序为唯一事实源（引擎求值面 = 可干预面）：
 未接线分量/未被消费参数/越域值一律拒绝，存档恢复同样重走校验。
 """
 
@@ -25,14 +25,14 @@ from ascend.world.research.timeline import (
 
 NODE = "weather.chunk.precipitation_threshold"
 GLOBAL_NODE = "weather.tick.day"
-UNWIRED_NODE = "weather.chunk.seasonal_temperature_amplitude_c"
+OUTSIDE_EVAL_NODE = "weather.chunk.seasonal_temperature_amplitude_c"
 PARAM = "world.parameter.game_day_ticks"
 
 _PROGRAM = None
 
 
 def _program():
-    """wired 天气程序（引擎求值面；模块级缓存，程序不可变）。"""
+    """求值天气程序（引擎求值面；模块级缓存，程序不可变）。"""
     global _PROGRAM
     if _PROGRAM is None:
         _PROGRAM = WeatherCore().program
@@ -85,13 +85,13 @@ class TestPlanValidation:
                 target_space="mechanism", target=NODE, value=1.0,
             ))
 
-    def test_unwired_node_rejected(self):
+    def test_node_outside_eval_rejected(self):
         timeline = _timeline()
         with pytest.raises(ValueError):
-            timeline.plan(_node_entry(target=UNWIRED_NODE))
+            timeline.plan(_node_entry(target=OUTSIDE_EVAL_NODE))
 
     def test_node_outside_program_rejected(self):
-        """程序绑定求值面：完整模块里存在、wired 子集里不存在的分量拒绝。"""
+        """程序绑定求值面：完整模块里存在、求值子集里不存在的分量拒绝。"""
         timeline = _timeline()
         with pytest.raises(ValueError, match="未声明"):
             timeline.plan(_node_entry(
@@ -174,7 +174,7 @@ class TestPlanValidation:
                 value=0.5,
             ))
 
-    def test_consumed_parameters_match_wired_face(self):
+    def test_consumed_parameters_match_eval_face(self):
         timeline = _timeline()
         consumed = timeline.consumed_parameters
         assert PARAM in consumed
@@ -201,7 +201,7 @@ class TestPlanValidation:
         assert entry.seq == 1
 
     def test_feature_active_requires_spec(self):
-        """active=True 必须携带核规格（读档投影事实源，WC-6.5 / #51）。"""
+        """active=True 必须携带核规格（读档投影事实源，WC-6.5）。"""
         timeline = _timeline()
         with pytest.raises(ValueError, match="核规格"):
             timeline.plan(PlannedIntervention(
@@ -425,11 +425,11 @@ class TestPersistence:
         with pytest.raises(ValueError):
             _timeline().restore(payload)
 
-    def test_restore_rejects_unwired_target(self):
+    def test_restore_rejects_target_outside_eval(self):
         timeline = _timeline()
         timeline.plan(_node_entry(value=0.4))
         payload = timeline.persist()
-        payload["plan"][0]["target"] = UNWIRED_NODE
+        payload["plan"][0]["target"] = OUTSIDE_EVAL_NODE
         with pytest.raises(ValueError):
             _timeline().restore(payload)
 
@@ -449,7 +449,7 @@ class TestPersistence:
         payload = source.persist()
         payload["plan"].append({
             **payload["plan"][0],
-            "target": UNWIRED_NODE,
+            "target": OUTSIDE_EVAL_NODE,
             "seq": 2,
         })
         target = _timeline()

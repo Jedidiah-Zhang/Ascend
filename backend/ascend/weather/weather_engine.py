@@ -11,7 +11,7 @@
 区域级 start/stop 事件（per-chunk 覆盖范围跟踪）。
 
 事件按等级发布（整数 tier + prev_tier，边界见 config `*_TIER_BOUNDARIES`），
-仅在等级跨越边界时触发，不再按固定数值阈值。
+仅在等级跨越边界时触发。
 
 """
 
@@ -60,9 +60,9 @@ class _ChunkWeatherBaseline:
         mean_intensity: 气候带基准降雨强度 (mm/h)（来自模板的数据契约）。
         seasonal_amp: 季节温度振幅 (°C)，从年均温+年降雨连续推导（derive_seasonal_amp），
             保证气候带交界处无跳变。
-        diurnal_amp: 昼夜温度振幅 (°C)，= seasonal_amp × RATIO（注册表方程）。
-        humidity_seasonal_amp: 季节湿度振幅 (pp)，= seasonal_amp × SCALE（注册表方程）。
-        humidity_diurnal_amp: 昼夜湿度振幅 (pp)，= seasonal_amp × RATIO × SCALE（注册表方程）。
+        diurnal_amp: 昼夜温度振幅 (°C)，= seasonal_amp × RATIO（声明方程）。
+        humidity_seasonal_amp: 季节湿度振幅 (pp)，= seasonal_amp × SCALE（声明方程）。
+        humidity_diurnal_amp: 昼夜湿度振幅 (pp)，= seasonal_amp × RATIO × SCALE（声明方程）。
         humidity_sharpness: 湿度季节曲线 sharpness（0=余弦，>0=tanh 阶梯；
             来自模板数据契约，季风档 2.5）。
         latitude: 纬度 (°)，用于日出/日落时间计算 + 日照时长计算。
@@ -206,7 +206,7 @@ class WeatherEngine:
         chunk 基线）一律不落盘——它们由 seed + 时钟 + 声明重建，
         漏存它们不会改变轨迹，多存它们则掩盖"状态充分性"的真问题。
 
-        **注入特征核不作为状态**（#51 / WC-6.5）：它是外部输入
+        **注入特征核不作为状态**（WC-6.5）：它是外部输入
         （``field_feature`` 计划）的时间线投影，读档由
         :meth:`restore_state` 按生效计划重建。
         """
@@ -240,7 +240,7 @@ class WeatherEngine:
         self._project_injected_features()
 
     def _project_injected_features(self) -> int:
-        """按时间线投影注入核（WC-6.5 / #51）：外部输入投影，不入状态。
+        """按时间线投影注入核（WC-6.5）：外部输入投影，不入状态。
 
         投影 = 整体替换：先校验全部生效计划，再清空注入核并逐条注入
         （校验先于改动——失败不留半成品状态）。撤销已固化为
@@ -432,7 +432,7 @@ class WeatherEngine:
     def _intervention(self) -> InterventionTimeline:
         """干预时间线挂载点（惰性创建；无表时引擎自建）。
 
-        绑定引擎 wired 程序（求值面 = 可干预面；校验以编译声明为唯一
+        绑定引擎求值程序（求值面 = 可干预面；校验以编译声明为唯一
         事实源），注入时钟与实例存在性查询，使自建表与生产注入表行为
         一致。惰性初始化非原子：由游戏线程单线程驱动（server/dispatcher
         同线程），首次调用仅在此线程发生，无需加锁。
@@ -478,7 +478,7 @@ class WeatherEngine:
             rainfall: 降雨强度 mm/h（含特征核效果），用于衰减日照。
             world_x, world_y: 采样位置（世界坐标 m，chunk 中心）。
             now: 时刻（tick）。
-            hum_perturb: 湿度通道合成值（波次求值已采样，
+            hum_perturb: 湿度通道合成值（本帧求值已采样，
                 同点共享避免重复采样；None=自行采样）。
 
         Returns:
@@ -501,7 +501,7 @@ class WeatherEngine:
     def _boundary_values(
         self, now: int, fields: dict[tuple[int, int], WeatherField],
     ) -> "tuple[dict[tuple[str, tuple], object], dict[tuple[int, int], float]]":
-        """为波次执行器准备边界输入（非机制声明的输入节点 + 时钟）。
+        """为本帧求值准备边界输入（非机制声明的输入节点 + 时钟）。
 
         边界 = 声明图之外/之前的输入：chunk 基线（气候静态量）与场采样
         （扰动/倍率/信号）。同点五通道共享一次核收集与漂移偏移。全部
@@ -556,7 +556,7 @@ class WeatherEngine:
         self, now: int, fields: dict[tuple[int, int], WeatherField],
         *, trace_kind: str = "eval",
     ) -> "tuple[dict[tuple[str, tuple], object], dict[tuple[int, int], float]]":
-        """求值全部 wired 节点（新核心无状态求值；唯一执行路径）。
+        """求值引擎求值面的全部节点（无状态求值；唯一执行路径）。
 
         物化 chunk、注入边界与干预覆盖、一帧求值、读回机制输出；挂载研究
         记录时逐机制捕获并登记（可重算校验）。查询路径与驱动路径共用：
@@ -650,7 +650,7 @@ class WeatherEngine:
         )
 
     def _weather_core(self):
-        """新核心适配器（进程内一次编译缓存）。"""
+        """天气声明程序的适配器（进程内一次编译缓存）。"""
         if self._core is None:
             from ascend.world.modules.weather.core import WeatherCore
             self._core = WeatherCore()
@@ -659,7 +659,7 @@ class WeatherEngine:
     def _active_overrides(
         self, now: int, fields: dict[tuple[int, int], WeatherField],
     ) -> "tuple[dict[str, object], dict[str, dict[tuple, object]], dict[str, object]]":
-        """本帧生效干预：按 wired 目标逐实例解析（与旧求值点同语义）。
+        """本帧生效干预：按求值面目标逐实例解析（与单节点求值路径同语义）。
 
         逐目标调用 ``resolve_node`` 会为生效帧物化记录；已撤销的干预在
         历史帧仍命中当时记录（revoke 不改写过去，WC-6.2）。
@@ -669,7 +669,7 @@ class WeatherEngine:
         node_overrides: dict[str, object] = {}
         instance_overrides: dict[str, dict[tuple, object]] = {}
         instances = list(fields)
-        for target in core.wired_outputs:
+        for target in core.eval_outputs:
             slot = core.program.slots.get(target)
             if slot is None:
                 continue
@@ -698,7 +698,7 @@ class WeatherEngine:
         values: dict[tuple[str, tuple], object],
         hum_perturb: float,
     ) -> "tuple[WeatherParams, float, float, float]":
-        """从波次求值结果取出单个 chunk 的参数与天文读数。
+        """从本帧求值结果取出单个 chunk 的参数与天文读数。
 
         Returns:
             (WeatherParams, sunrise_hour, sunset_hour, hum_perturb)。
@@ -748,7 +748,7 @@ class WeatherEngine:
             field = self._fields.get(key)
         if field is None:
             return None
-        # 历史查询是"重算"（#50）：记录仍然留痕，但不冒充世界推进时的发生
+        # 历史查询是"重算"：记录仍然留痕，但不冒充世界推进时的发生
         trace_kind = "eval" if time >= self._clock.time else "recompute"
         values, hum = self._evaluate(
             time, {key: field}, trace_kind=trace_kind,
@@ -762,7 +762,7 @@ class WeatherEngine:
         self, cx: int, cy: int, day: int,
         samples_per_day: int = 4,
     ) -> "DaySummary | None":
-        """单日解析天气摘要 — 地形状态结算器的采样契约。
+        """单日解析天气摘要 — 地形状态积分器的采样契约。
 
         每日固定采样时刻（均匀 4 点，默认）对解析场取样，按
         precip_type_for 分雨/雪合计降水量、均温取采样均值。
@@ -800,7 +800,7 @@ class WeatherEngine:
             return None
         for k in range(samples_per_day):
             tick = t0 + k * step
-            # 日摘要采样是事后重算（#50）：与推进时的"发生"分账
+            # 日摘要采样是事后重算：与推进时的"发生"分账
             values, hum = self._evaluate(
                 tick, {key: field}, trace_kind="recompute",
             )
@@ -894,14 +894,15 @@ class WeatherEngine:
         """强制开启/关闭指定 chunk 的特征核（终端调试指令用）。
 
         干预接线：强制控制先登记 field_feature 计划条目（目标/实例/
-        生效帧校验 + 历史），再执行特征核注入/移除（运行时状态桥接，
-        随 W_t 序列化，见 ``persist_state``）。注入核与自然核同代码路径——
-        查询与事件都走场合成，无特判。
+        生效帧校验 + 历史），再执行特征核注入/移除。注入核不落盘，
+        读档由时间线投影重建（``_project_injected_features``）。注入核与
+        自然核同代码路径——查询与事件都走场合成，无特判。
         {type}_start/stop 事件由下一次更新点推进时的核身份
         差异跟踪自动发布。
 
         **单一事实源 = 注入核**：no-op 判定与解除都只看核是否存在
-        （``get_injected``），计划条目仅作校验/历史；强制核常驻与条目的
+        （``get_injected``）；计划条目提供校验/历史，并携带读档投影所需
+        的核规格（见 ``_project_injected_features``）。强制核常驻与条目的
         stop_frame=None（长期）语义一致，核不会先于条目失效。
 
         Args:
@@ -937,9 +938,9 @@ class WeatherEngine:
                 wx = (cx + 0.5) * TILE_MAP_SIZE
                 wy = (cy + 0.5) * TILE_MAP_SIZE
                 # front（带形）需要移动矢量；其余核静止即可。
-                # 核规格进计划值（读档投影的事实源，WC-6.5 / #51）：
+                # 核规格进计划值（读档投影的事实源，WC-6.5）：
                 # 恢复不依赖 data/weather.json 的当前配置，避免配置漂移
-                # 悄悄改写旧世界的注入核。
+                # 悄悄改写既有存档的注入核。
                 spec = {
                     "center_x": wx,
                     "center_y": wy,
@@ -994,8 +995,8 @@ class WeatherEngine:
         tod = now % GAME_DAY
         with self._query_lock:
             fields = dict(self._fields)
-        # 世界程序波次计划：全部 wired 节点一次求值（唯一执行路径；
-        # wave_parallel 时同波并发，结果逐位一致）
+        # 世界声明程序（WorldProgram）：求值面全部节点按帧一次求值
+        # （唯一执行路径）
         values, hum_perturb = self._evaluate(now, fields)
 
         def _commit_records() -> None:
@@ -1084,7 +1085,7 @@ class WeatherEngine:
                             time_of_day=int(tod),
                         ))
                         field.last_sunshine_tier = sun_tier
-                    # per-chunk 昼夜切换（复用波次求值返回的 sr/ss）
+                    # per-chunk 昼夜切换（复用本帧求值返回的 sr/ss）
                     is_day = sr <= hour < ss
                     if (field.last_is_daytime is not None
                             and is_day != field.last_is_daytime):
@@ -1190,7 +1191,7 @@ class WeatherEngine:
             region: 区域事件（质心 chunk + 强度）。
             now: 当前时刻（tick）。
             tod: 当日 tick（time_of_day 字段）。
-            values: 本帧波次求值结果 ``{(节点, 实例): 值}``。
+            values: 本帧求值结果 ``{(节点, 实例): 值}``。
             fields: 本帧参与求值的 chunk 快照。
         """
         cx, cy = region.center_chunk
@@ -1205,18 +1206,18 @@ class WeatherEngine:
                 intensity=float(region.intensity),
                 time_of_day=tod,
                 chunks=region.chunks,
-            ), fate_path=f"weather/precip/{cx}/{cy}@{now}")
+            ), address_path=f"weather/precip/{cx}/{cy}@{now}")
         else:
             self._publish(cx, cy, now, PrecipitationStop(
                 time_of_day=tod,
                 chunks=region.chunks,
-            ), fate_path=f"weather/precip/{cx}/{cy}@{now}")
+            ), address_path=f"weather/precip/{cx}/{cy}@{now}")
 
     def _publish(
         self, cx: int, cy: int, now: int,
         ev: WorldEvent,
         *,
-        fate_path: str | None = None,
+        address_path: str | None = None,
     ) -> None:
         """发布天气事件。
 
@@ -1224,7 +1225,7 @@ class WeatherEngine:
             cx, cy: 事件所在 chunk 坐标。
             now: 世界时间（tick）。
             ev: 事件 data 契约。
-            fate_path: 随机性来源的 Loom of Fate 流身份（None = 事件
+            address_path: 随机性来源的地址随机标签（None = 事件
                 不直接消费随机流）。供研究溯源——天气事件的值域经
                 场派生链（seed + 坐标 + 时间）可完全回溯。
         """
@@ -1236,5 +1237,5 @@ class WeatherEngine:
             affected=[AffectedParty("world", "subject")],
             event_type=ev.event_type,
             data=ev.as_dict(),
-            fate_path=fate_path,
+            address_path=address_path,
         ))

@@ -1,6 +1,6 @@
 """存档网络处理程序 — 状态通道的存档管理请求。
 
-语义（Issue #13）：存档是状态通道（request-response）——世界外的
+语义：存档是状态通道（request-response）——世界外的
 元操作，不产生历史、不进因果图。
 
 进程模型（一进程一模式）:
@@ -90,7 +90,7 @@ def make_save_handlers(save_manager, game_engine=None):
     def handle_save_create(msg: dict) -> dict:
         """创建新存档位（新游戏第一步，随后前端拉起世界进程进入）。
 
-        gen_params 为创建世界流程的调参产出（Issue #8）：目前含
+        gen_params 为创建世界流程的调参产出：目前含
         land_ratio（目标陆地比例），随档定案写入 manifest。
         """
         payload = _payload(msg)
@@ -157,7 +157,7 @@ def make_save_handlers(save_manager, game_engine=None):
             )
 
     def handle_save_export(msg: dict) -> dict:
-        """复制世界为新的存档位（Issue #14 "复制存档"）。"""
+        """复制世界为新的存档位。"""
         payload = _payload(msg)
         world_id = str(payload.get("world_id", "")).strip()
         if not world_id:
@@ -172,7 +172,7 @@ def make_save_handlers(save_manager, game_engine=None):
         """删除快照：单点（recursive=False，后代重接）或分支裁剪
         （recursive=True，节点 + 全部后代）。
 
-        语义（Issue #32）：血缘森林节点集合移除——删除集由本处
+        语义：血缘森林节点集合移除——删除集由本处
         计算（单点或子树），血缘重接 / live_origin 回退 / seq 空洞
         由 SaveManager.remove_snapshots 原语统一保证。
 

@@ -48,8 +48,8 @@ graph TD
     WT_Tree --> WT_Archive
     CLK --> CAL
     GEN --> WEA
-    WEA -->|"wired 子集声明（modules/weather）"| REG
-    REG -->|"编译产物：wired 求值面"| IVT
+    WEA -->|"求值子集声明（modules/weather）"| REG
+    REG -->|"编译产物：引擎求值面"| IVT
     IVT -->|"覆盖求值（resolve_node / evaluate）"| WEA
     REG -->|"export_world.py 投影"| SNAP
     REG -->|"机制摘要（编译期）"| TRC
@@ -144,7 +144,7 @@ graph LR
     subgraph 运行时
         WEA_RUN["WeatherEngine<br/>每分 tick 解析天气"]
         FIELD["WeatherField<br/>per-chunk 天气状态"]
-        SCHED["RainSchedule<br/>ModifierSchedule"]
+        FEAT["UnifiedWeatherField.features<br/>场特征核（冷锋/寒潮/热浪/暴风）"]
     end
 
     NOISE --> CONT
@@ -154,7 +154,7 @@ graph LR
     CHUNK --> TILE
     CHUNK --> WEA_RUN
     WEA_RUN --> FIELD
-    WEA_RUN --> SCHED
+    WEA_RUN --> FEAT
 ```
 
 ## 5. GameEngine 编排与组合
@@ -248,10 +248,10 @@ classDiagram
         +get_weather(cx, cy, time?) WeatherParams
         +get_weather_report(cx, cy) tuple
         +get_tiers(cx, cy, time?) dict
+        +advance(now)
         +shutdown()
-        -_on_minute_change(event)
-        -_compute_params(...)
-        -_classify(value, boundaries)
+        -_params_from_values(...)
+        -_evaluate(...)
     }
 
     class EntityManager {
@@ -333,7 +333,7 @@ classDiagram
     PlayerService ..> EntityManager : 实体生灭/移动
     PlayerService ..> WorldTree : player_teleported
     MessageDispatcher ..> GameServer : 收发消息
-    TraceLog ..> MechanismRegistry : 声明（父集/版本/边界）
+    TraceLog ..> WorldProgram : 声明（父集/版本/边界）
     SaveManager ..> Serializer : 状态载荷
     Serializer ..> WeatherEngine : persist_state / restore_state
     Serializer ..> WorldSettings : 读档前声明比对

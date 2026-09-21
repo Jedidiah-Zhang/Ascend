@@ -1,8 +1,7 @@
 """玩家位置对账的纯逻辑判定 — 客户端预测 + 服务器权威纠正。
 
-从 main_world.gd 拆出（原 _process_snap / _apply_authoritative_position /
-_send_player_move 的判定部分）：纯函数无状态，可独立单元测试。
-状态（snap 过渡 / 上报 seq 记录）由调用方持有，本类只负责判定与推进计算。
+纯函数无状态，可独立单元测试。状态（snap 过渡 / 上报 seq 记录）由调用方
+持有，本类只负责判定与推进计算。
 """
 
 class_name PlayerSync

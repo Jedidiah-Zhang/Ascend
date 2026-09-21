@@ -8,7 +8,7 @@
 - **研究**：``ObservationSpec`` / ``ActionSpec`` / ``ExperimentSpec`` / ``Oracle``；
 - **证据**：``run_acceptance`` / ``run_witnesses``。
 
-内核原语（定点/冻表/地址随机/摘要）经 ``ascend.world.kernel`` 提供给
+内核原语（定点/预计算表/地址随机/摘要）经 ``ascend.world.kernel`` 提供给
 模块实现；本包不承载游戏内容（内容数据在 ``data/*.json``）。
 """
 

@@ -1,9 +1,8 @@
-"""机制声明（逐位移植自旧注册表；生成后即为源码）。
+"""机制声明 — 世界生成的槽位、参数、机制与见证。
 
-声明形态已转换为新元模型（六种声明）：输出为 derived 槽位、
-旧微步 → 新阶段、旧参数绑定 → ParameterDecl + ``ctx.param``、
-旧见证 → 只变单父的见证对。生成来源与改写规则见
-``/tmp`` 的一次性生成器说明（旧注册表删除后本注记改为历史）。
+输出为 derived 槽位；参数经 ParameterDecl + ``ctx.param`` 绑定；见证为
+只变单父的见证对。实现见 ``equations.py``，黄金向量
+（``tests/world/data/weather_golden.json``）为冻结契约数据。
 """
 from __future__ import annotations
 
@@ -400,7 +399,7 @@ def _impl_8(ctx: object) -> object:
     )
 
 
-# ── 见证（旧见证 → 只变单父的见证对）────────────────────
+# ── 见证（只变单父的见证对）──────────────────────────────
 WITNESSES_0 = (
     Witness(
         'latitude_noise_changes_sea_level_temperature.base',
@@ -1251,6 +1250,6 @@ MODULE = ModulePack(
         MECHANISM_7,
         MECHANISM_8,
     ),
-    evidence=('黄金向量对拍（tests/world/test_weather_port.py）',),
-    notes='由旧机制注册表一次性移植；旧注册表删除后为唯一事实源。',
+    evidence=('定点实现与浮点参考对拍（tests/world/test_worldgen_fixed.py）',),
+    notes='世界生成标量机制：海面温度、降雨、温度递减、气候档与群系判定。',
 )

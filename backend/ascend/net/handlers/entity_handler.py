@@ -1,6 +1,6 @@
 """实体快照网络处理程序 — 状态通道的实体全量查询。
 
-语义（Issue #20）:
+语义:
     entity_snapshot 属于状态通道（request-response）——世界外的元操作，
     供前端接入/读档后初始化实体视图，不产生历史、不进因果图。
     接入后的增量维护走因果通道（entity_born/died/moved 事件）。

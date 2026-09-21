@@ -1,4 +1,4 @@
-"""世界生成模块 — 旧注册表 9 机制逐位移植。"""
+"""世界生成模块 — 世界生成链的槽位与机制声明（见 module.py / equations.py）。"""
 
 from __future__ import annotations
 

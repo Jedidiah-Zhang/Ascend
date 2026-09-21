@@ -1,7 +1,7 @@
 """声明快照的研究图投影加载与结构校验。
 
-``equations.json`` 由生产 ``MechanismRegistry`` 确定性生成；本模块只
-读取其中的 ``variables/edges`` 兼容投影，供图巡检和 Lean bridge 使用。
+``equations.json`` 由世界声明投影确定性生成（``export_world.py``）；本
+模块只读取其中的 ``variables/edges`` 投影，供图巡检和 Lean bridge 使用。
 
 结构不变式（role 枚举、L≥0、悬空引用、结构边无环）由
 VariableGraph 在声明时强制；本模块补充**语义校验**：

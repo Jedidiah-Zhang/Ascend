@@ -1,6 +1,6 @@
 """TCP 传输层 — 连接状态机/重连/帧切分/超时/发送队列（纯逻辑 RefCounted）。
 
-职责（从 connection.gd 抽离）:
+职责:
   - 连接：connect/poll，CONNECTING 超时 → reset_for_reconnect
   - 断开：任何连接失效 → reset_for_reconnect（disconnected 信号，
     断线去重与 UI 语义由门面负责）
@@ -171,7 +171,7 @@ func send_frame_front(body: PackedByteArray) -> void:
 
 
 func drain_pending_frames() -> Array[PackedByteArray]:
-	"""返回并清空未发送帧（测试钩子，等价旧测试对 _send_queue 的读取）。"""
+	"""返回并清空未发送帧（测试钩子）。"""
 	var out: Array[PackedByteArray] = _send_queue.duplicate()
 	_send_queue.clear()
 	return out

@@ -9,7 +9,7 @@
   - storm_start / storm_stop：暴风雨事件切换
   - season_change / sunrise / sunset：全局季节 / per-chunk 昼夜
 
-data 键即 dataclass 字段，event_type 由类属性声明（不再重复写字符串）。
+data 键即 dataclass 字段，event_type 由类属性声明。
 """
 
 from dataclasses import dataclass
@@ -71,7 +71,7 @@ class PrecipitationStart(WorldEvent):
     """降水开始。precip_type: rain|snow，由当前温度判定。
 
     chunks: 区域涉及的 chunk 坐标（必填）——前端区域渲染与叙事载荷用，
-    坐标 = 区域连通域 chunk 集合（状态演化不消费事件，ADR-12）。
+    坐标 = 区域连通域 chunk 集合（状态演化不消费事件）。
     """
 
     event_type: ClassVar[str] = "precipitation_start"

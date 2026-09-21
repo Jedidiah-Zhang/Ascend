@@ -1,6 +1,6 @@
 """游戏世界装配测试— 声明切片、驱动周期与存档视图。
 
-装配 = 天气引擎求值面（wired 子集）+ 地形积分 + 驱动周期；它是存档
+装配 = 天气引擎求值面（求值子集）+ 地形积分 + 驱动周期；它是存档
 身份（manifest 声明视图/程序视图）与调度绑定的事实源。
 """
 
@@ -8,20 +8,20 @@ from __future__ import annotations
 
 from ascend.config import GAME_HOUR, GAME_MINUTE
 from ascend.world.assembly import DRIVER_PERIODS, build_game_program
-from ascend.world.modules.weather.core import WIRED_OUTPUTS
+from ascend.world.modules.weather.core import ENGINE_EVAL_OUTPUTS
 
 
 class TestGameProgram:
     def test_identity_reproducible(self):
         assert build_game_program().identity == build_game_program().identity
 
-    def test_covers_weather_wired_face(self):
+    def test_covers_weather_eval_face(self):
         program = build_game_program()
         writers = {
             slot.writer for slot in program.slots.values()
             if slot.writer is not None
         }
-        for slot_id in WIRED_OUTPUTS:
+        for slot_id in ENGINE_EVAL_OUTPUTS:
             assert slot_id in program.slots
             assert program.slots[slot_id].writer in writers
 

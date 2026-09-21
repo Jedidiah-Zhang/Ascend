@@ -1,26 +1,7 @@
 {
  "comment": "AUTO-GENERATED from the Ascend world declaration (ascend.world.compile; modules: worldgen + weather).",
  "declaration": {
-  "hash": "sha256:c40f6678d44fd9a43f8d92c40ff79fed61d97a9a858480c719bdb5cc464185e9",
-  "id": "ascend.world.scalar_formulas",
-  "microstep_order": [
-   "world.gen_input",
-   "world.gen_derived_a",
-   "world.gen_derived_b",
-   "world.gen_derived_c",
-   "world.gen_derived_d",
-   "weather.chunk_derived_a",
-   "weather.chunk_derived_b",
-   "weather.frame_input",
-   "weather.instant_tick_input",
-   "weather.instant_tick_derived",
-   "weather.instant_offset",
-   "weather.instant_composite",
-   "weather.instant_readout"
-  ],
-  "slice_boundary": "Generation programs (continent / hydrology / tile / weather field) are declared in ascend/world/generation.py with content fingerprints (sources + constants + version) and sampling protocols; their outputs enter this slice as declared boundary inputs. Content data (data/*.json) remains content rather than algorithm: changing it changes parameters, not the declaration.",
-  "version": "1",
-  "wired_nodes": [
+  "eval_nodes": [
    "weather.astronomy.daylight_hours",
    "weather.astronomy.sunrise_hour",
    "weather.astronomy.sunset_hour",
@@ -41,7 +22,26 @@
    "weather.tick.season",
    "weather.tick.season_phase_cos",
    "weather.tick.solar_declination_rad"
-  ]
+  ],
+  "hash": "sha256:aec36fbdfc23bbca08ab352be44824f1a5e711ad883236e5bd631e0c38f28550",
+  "id": "ascend.world.scalar_formulas",
+  "microstep_order": [
+   "world.gen_input",
+   "world.gen_derived_a",
+   "world.gen_derived_b",
+   "world.gen_derived_c",
+   "world.gen_derived_d",
+   "weather.chunk_derived_a",
+   "weather.chunk_derived_b",
+   "weather.frame_input",
+   "weather.instant_tick_input",
+   "weather.instant_tick_derived",
+   "weather.instant_offset",
+   "weather.instant_composite",
+   "weather.instant_readout"
+  ],
+  "slice_boundary": "Generation programs (continent / hydrology / tile / weather field) are declared in ascend/world/generation.py with content fingerprints (sources + constants + version) and sampling protocols; their outputs enter this slice as declared boundary inputs. Content data (data/*.json) remains content rather than algorithm: changing it changes parameters, not the declaration.",
+  "version": "1"
  },
  "edges": [
   {

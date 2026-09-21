@@ -97,8 +97,8 @@ class TestProtocol:
 
         前端实现：1 字节协议版本 + 4 字节大端长度前缀 + UTF-8 JSON 体
         （见 frontend/scripts/utils/frame_codec.gd）。此测试锁定后端
-        产出的逐字节格式，任何一侧修改帧格式（如迁移 MessagePack 注册
-        新版本号）都必须同时修改两侧并更新本测试。
+        产出的逐字节格式，任何一侧修改帧格式（如新增 MessagePack 帧格式
+        并注册新版本号）都必须同时修改两侧并更新本测试。
         """
         msg = {"a": 1, "b": "中文"}
         encoded = encode_message(msg)
@@ -107,6 +107,6 @@ class TestProtocol:
         assert length == len(encoded) - 5
         body = encoded[5:]
         assert body == json.dumps(msg, ensure_ascii=False).encode("utf-8")
-        # 非 JSON 可序列化值必须显式报错，不得静默降级（default=str 已移除）
+        # 非 JSON 可序列化值必须显式报错，不得静默降级（不设 default=str）
         with pytest.raises(TypeError):
             encode_message({"bad": {1, 2, 3}})

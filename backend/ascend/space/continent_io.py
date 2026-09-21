@@ -296,8 +296,8 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
                     surface_elev=r.f64(),
                     area_km2=r.f64(),
                 ))
-            # 原数据结构：flow_acc/filled_dem 为 list，directions 为 list
-            # （与 Hydrologydata 定义一致）；elevation/river_width 为 array
+            # 字段类型与 HydrologyData 定义一致：flow_acc/filled_dem 为
+            # list，directions 为 list；elevation/river_width 为 array
             flow_acc = r.f64_array().tolist()
             directions = r.i8_array()
             filled_dem = r.f64_array().tolist()

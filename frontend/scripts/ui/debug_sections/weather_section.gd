@@ -1,7 +1,7 @@
 """天气分区 — 展示玩家所在 chunk 的实时天气。
 
 数据经 on_world_response("get_weather") 接收：main_world 负责轮询
-get_weather（1s 间隔）并广播响应，本分区不再自行轮询（单一 poller）。
+get_weather（1s 间隔）并广播响应，本分区只消费响应（单一轮询点）。
 """
 
 class_name WeatherSection
@@ -42,7 +42,7 @@ func _init() -> void:
 
 
 ## 响应 get_weather 响应：取 weathers 数组首个条目交给 _apply_weather_data
-## 逐字段刷新（数据由 main_world 以 1s 间隔轮询，本分区不再自行拉取）。
+## 逐字段刷新（数据由 main_world 以 1s 间隔轮询，本分区只消费响应）。
 ##
 ## Args:
 ##     request_type: 请求类型，仅处理 "get_weather"。

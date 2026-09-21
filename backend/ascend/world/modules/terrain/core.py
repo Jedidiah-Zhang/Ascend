@@ -1,12 +1,11 @@
-"""地形核心适配器 — 新核心 field 机制（生产切换）。
+"""地形核心适配器 — 以 field 机制求值地形演化。
 
-旧 ``space/tile_state.state_evolve`` 的语义：给定 chunk 内状态/地形/坡度
-数组与逐步降水/温度/步长，原地更新状态数组。本适配器用新核心的
-``terrain.integrate``（field 机制，chunk 动态实例）实现同一语义：
+给定 chunk 内状态/地形/坡度数组与逐步降水/温度/步长，原地更新状态数组。
+适配器用 ``terrain.integrate``（field 机制，chunk 动态实例）实现同一语义：
 
 - 每一步构造一次无状态求值：物化 chunk、装载当前状态场、注入地形/坡度/
   遮蔽与降水/温度/步长、推进一帧、读回三状态场；
-- 多步（日结算采样）按步序贯求值——与旧内核的逐步循环同序同式；
+- 多步（日结算采样）按步序贯求值——与内核的逐步循环同序同式；
 - 内核（参考实现 / C 加速）逐位对拍由模块内核对锁定，适配器只做数据搬运。
 """
 
@@ -100,7 +99,7 @@ class TerrainCore:
         dt: float = 1.0,
         cover: Sequence[float] | None = None,
     ) -> None:
-        """与旧 ``state_evolve`` 同语义：原地回写 ``states`` 数组。
+        """原地回写 ``states`` 数组（内核绑定入口）。
 
         生产直调内核绑定（零拷贝，与机制声明同一 C 内核；逐位一致由
         内核对锁定）。``states``/``terrain``/``slope`` 须为可写缓冲
@@ -113,5 +112,5 @@ class TerrainCore:
 
 
 def _as_field(values: Sequence[int]) -> LatticeField:
-    """序列 → 一维场（适配器输入形状：旧内核为扁平数组）。"""
+    """序列 → 一维场。"""
     return LatticeField.from_values(values)

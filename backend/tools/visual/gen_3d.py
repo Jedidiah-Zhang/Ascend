@@ -7,7 +7,7 @@
 
 用法:
     cd backend && PYTHONPATH=. python tools/visual/gen_3d.py
-    浏览器打开 ascending-backend/tools/visual/output/terrain_3d.html
+    浏览器打开 backend/tools/visual/output/terrain_3d.html
 """
 
 import os

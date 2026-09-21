@@ -531,13 +531,13 @@ func _set_layers(p_process: BackendProcess, p_transport: TcpTransport,
 	_wire_layers()
 
 
-## 强制握手完成（等价旧测试白盒 _hello_acked = true）
+## 强制握手完成（测试白盒：直接置握手层为 ACKED）
 func _force_handshake_acked() -> void:
 	if _handshake != null:
 		_handshake.state = HandshakeClass.State.ACKED
 
 
-## 取走并清空传输层未发送帧（等价旧测试对 _send_queue 的读取）
+## 取走并清空传输层未发送帧（测试白盒读回发送队列）
 func _drain_pending_frames() -> Array[PackedByteArray]:
 	if _transport == null:
 		return []

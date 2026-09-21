@@ -189,7 +189,7 @@ class TestApplyState:
 
 
 class TestApplyClock:
-    """时钟恢复（拆分的 apply_clock）。"""
+    """时钟恢复（apply_clock）。"""
 
     def test_restores_clock_only(self, clock):
         """仅恢复时钟，不触碰玩家。"""
@@ -212,7 +212,7 @@ class TestApplyClock:
 
 
 class TestApplyPlayer:
-    """玩家恢复（拆分的 apply_player）。"""
+    """玩家恢复（apply_player）。"""
 
     def test_restores_player_only(self, clock, player):
         """仅恢复玩家实体（静默）。"""

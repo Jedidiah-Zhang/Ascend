@@ -1,4 +1,4 @@
-"""研究投影测试— 新声明 → equations.json 同 schema。
+"""研究投影测试 — 声明 → ``equations.json`` 同 schema。
 
 - 确定性：两次投影逐位一致；
 - 结构：47 节点 / 35 机制 / 56 参数 / 64 边（55 linear + 9 jump）；

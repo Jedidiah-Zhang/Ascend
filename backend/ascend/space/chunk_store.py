@@ -3,7 +3,7 @@
 职责:
   1. LRU 内存缓存 ChunkData（有界地图可控容量）
   2. **已加载 chunk 全量落盘**——首次加载的 chunk（含确定性生成的
-     clean chunk）在保存脉搏时写入 SQLite，避免重访/读档时重新生成
+     clean chunk）在周期保存时写入 SQLite，避免重访/读档时重新生成
      （~1s/chunk）；重访的 chunk 靠 _persisted_coords 集合识别，
      内容不变则不重写
   3. 玩家改动（dirty chunk）落盘是强制的（玩家修改不可再生）
@@ -21,7 +21,7 @@ _persisted_coords 只增不删（库中行无删除路径）、启动时从库�
 与库必然一致；落盘后 dirty 清除、坐标入集合。
 
 淘汰策略（write-back on eviction）：
-   待落盘 chunk 在淘汰时写库提交（脉搏之间的安全网）；
+   待落盘 chunk 在淘汰时写库提交（周期保存之间的安全网）；
    已落盘 clean chunk 淘汰即弃（库中已有，重访直接恢复）。
    SQLite WAL 模式保证写入中途崩溃不会损坏数据库。
 
@@ -303,7 +303,7 @@ class ChunkStore:
 
         库中行 = 已加载 chunk（含玩家改动）。BLOB 为 zlib 压缩格式，
         旧版明文（无前缀）自动兼容读取。调用方应以
-        ChunkData.restore_tiles 恢复网格。需要结算日的调用方用
+        ChunkData.restore_tiles 恢复网格。需要取积分游标的调用方用
         load_tiles_with_day。
 
         Args:
@@ -368,7 +368,7 @@ class ChunkStore:
         """帧边界捕获：把待落盘 chunk 序列化为内存载荷（不写库、不清脏）。
 
         在游戏线程的帧边界调用（与同一帧的世界状态捕获同点，见
-        ``GameEngine._capture_pulse``）；序列化在状态提交锁内进行，
+        ``GameEngine._capture_save``）；序列化在状态提交锁内进行，
         保证读到某一已提交版本而非半帧（WC-7.6）。写库由
         :meth:`commit_captured` 在保存线程执行。
 
@@ -398,8 +398,8 @@ class ChunkStore:
         """把帧边界捕获的 chunk 载荷写入 SQLite（单事务）并清脏。
 
         提交时按捕获的 ``revision`` 判断：捕获后又被修改的 chunk
-        保留脏标记（新内容留给下一次脉搏），未变化的才清除。写入
-        失败即整体回滚并向上抛错（载荷不可部分落盘，#51/WC-8.2）。
+        保留脏标记（新内容留给下一次周期保存），未变化的才清除。写入
+        失败即整体回滚并向上抛错（载荷不可部分落盘，WC-8.2）。
 
         Args:
             captured: :meth:`capture_pending` 的返回值。
@@ -435,8 +435,8 @@ class ChunkStore:
     def flush(self) -> int:
         """将缓存中所有待落盘 chunk 写回 SQLite 并提交。
 
-        等价于"立即捕获 + 提交"（退出/快照前的同步路径）。保存
-        脉搏走帧边界捕获 + 异步提交（#51）：捕获在游戏线程完成，
+        等价于"立即捕获 + 提交"（退出/快照前的同步路径）。周期保存
+        走帧边界捕获 + 异步提交：捕获在游戏线程完成，
         此处供 close/快照等同步场景使用。
 
         待落盘 = 玩家改动（dirty）或首次加载（坐标不在已落盘集合）。

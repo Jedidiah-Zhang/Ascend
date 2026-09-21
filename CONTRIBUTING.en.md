@@ -96,8 +96,9 @@ commit the generated artifacts, or the CI drift gates will fail:
 .venv/bin/python research/equations/export_registry.py          # world declarations → equations.json
 .venv/bin/python research/equations/gen_lean.py                 # equations.json → Lean data section
 .venv/bin/python research/equations/export_impl_digests.py      # implementation digest table (packaged identity)
-.venv/bin/python research/equations/verify_equations.py --fast  # full reconciliation (V0–V3)
-.venv/bin/python research/equations/graph_check.py              # graph health checks (G0–G9)
+.venv/bin/python research/equations/export_frozen_tables.py     # precomputed tables (only when the table spec changes)
+.venv/bin/python research/equations/verify_equations.py --fast  # full reconciliation (V0–V4)
+.venv/bin/python research/equations/graph_check.py              # graph health checks (G0–G7)
 ```
 
 `equations.json`, `GenDeclarationData.lean`, `impl_digests.json`, and

@@ -302,7 +302,7 @@ class TestChunkStorePersistence:
             store.close()
 
     def test_T15_flush_persists_and_reports_count(self, db_path):
-        """flush 落盘待落盘 chunk 并返回写入数（脉搏保存入口语义）。"""
+        """flush 落盘待落盘 chunk 并返回写入数（周期保存入口语义）。"""
         store = ChunkStore(db_path, max_size=4)
         try:
             store.put(_make_chunk(0, 0, with_tiles=True))
@@ -555,7 +555,7 @@ class _FailingDb:
 
 
 class TestFrameBoundaryCapture:
-    """帧边界捕获 + 提交流程（#51 存档原子性）。"""
+    """帧边界捕获 + 提交流程。"""
 
     def test_capture_does_not_write_or_clear_dirty(self, db_path):
         """捕获只做内存序列化：不写库、不清脏；提交才落盘。"""
@@ -585,7 +585,7 @@ class TestFrameBoundaryCapture:
             store.commit_captured(captured)
             assert chunk.dirty is True, "修订号变化 → 保留脏标记"
             store.commit_captured(store.capture_pending())
-            assert chunk.dirty is False, "下一次脉搏落盘新内容"
+            assert chunk.dirty is False, "下一次周期保存落盘新内容"
         finally:
             store.close()
 
@@ -601,10 +601,10 @@ class TestFrameBoundaryCapture:
             store._db = _FailingDb(real_db)
             with pytest.raises(RuntimeError, match="disk full"):
                 store.commit_captured(captured)
-            assert chunk.dirty is True, "失败后脏标记保留，下一次脉搏重试"
+            assert chunk.dirty is True, "失败后脏标记保留，下一次周期保存重试"
             store._db = real_db
             assert store.commit_captured(store.capture_pending()) == 1
-            assert chunk.dirty is False, "恢复后重试成功（下一次脉搏）"
+            assert chunk.dirty is False, "恢复后重试成功（下一次周期保存）"
         finally:
             store._db = real_db
             store.close()

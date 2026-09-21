@@ -2,8 +2,8 @@
 
 运行: .venv/bin/python research/equations/verify_equations.py [--fast]
 
-判据（预注册，05 篇总则风格）：
-  V0 声明/生成物漂移：equations.json 与生产声明一致、
+判据：
+  V0 生成物漂移：equations.json 与生产世界声明一致、
       impl_digests.json 与生产声明重算一致，且
       GenDeclarationData.lean 与 equations.json + config.py 真值一致；
   V1 声明加载 + 结构校验：schema.validate 无问题；
@@ -15,7 +15,9 @@
   V3 引擎符合性（ascend.weather.derive）：
      precip_type_for 满足声明语义 round(1) 后 ≤0 为雪，输出 ∈ {snow, rain}；
      derive_latitude 输出落在声明界 [0,80]、锚点 (-5→80, 35→0)、单调不增；
-     derive_seasonal_amp 输出落在声明界 [1,30]、锚点 (-5,2000→28, 35,2000→2)。
+     derive_seasonal_amp 输出落在声明界 [1,30]、锚点 (-5,2000→28, 35,2000→2)；
+  V4 独立参考对拍：逐机制按方程表达式或声明参考实现求值，与生产求值在
+     见证与随机样本上对拍；未覆盖或不一致即 FAIL。
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ sys.path.insert(0, str(HERE.parents[1] / "backend"))  # 供 import ascend
 import schema
 import export_impl_digests  # noqa: E402  实现内容摘要表漂移巡检
 import export_registry  # noqa: E402  生产声明 -> JSON 漂移巡检
-import export_world  # noqa: E402  V4 生产侧事实源（新声明投影）
+import export_world  # noqa: E402  V4 生产侧事实源（世界声明投影）
 import gen_lean  # noqa: E402  V0 巡检用（同目录）
 import reference_check  # noqa: E402  V4 独立参考对拍
 
@@ -76,11 +78,11 @@ def main() -> int:
     n = 2_000 if args.fast else 20_000
     results: list[tuple[str, bool, str]] = []
 
-    # ── V0 生产注册表与生成物漂移巡检─
+    # ── V0 声明快照与生成物漂移巡检 ──────────────────
     # 固定锚定默认单一事实来源 equations.json（生成物入库对应它，
     # 不跟随 --json 的自定义路径，避免对拍临时片段误报入库产物漂移）。
     registry_ok, registry_detail = export_registry.check()
-    results.append(("V0 生产注册表快照漂移", registry_ok, registry_detail))
+    results.append(("V0 声明快照漂移", registry_ok, registry_detail))
     digests_ok, digests_detail = export_impl_digests.check()
     results.append(("V0 实现内容摘要表漂移", digests_ok, digests_detail))
     lean_ok, lean_detail = gen_lean.check()

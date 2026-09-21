@@ -33,7 +33,7 @@ _I18N = get_default()
 
 @dataclass(slots=True)
 class TerrainBias:
-    """群系对 tile 材质分类的偏移参数（issue #42 层次分类）。
+    """群系对 tile 材质分类的偏移参数。
 
     基线 = TEMPERATE_DECIDUOUS_FOREST（全默认 = config 阈值）。
     其他群系相对基线偏移。tile 生成时 bias = Σ weight_i × bias_i

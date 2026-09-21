@@ -278,7 +278,7 @@ class TestWorldProcessEntry:
     def test_full_state_round_trip_through_disk(self, monkeypatch):
         """完整存档：干预表与注入核随 W_t 落盘并在新进程恢复。
 
-        模拟真实读档路径：进程 A 施加干预 + 强制特征核 → 保存脉搏落盘
+        模拟真实读档路径：进程 A 施加干预 + 强制特征核 → 周期保存落盘
         （含 state.json.enc 与 manifest 世界设置）→ 进程 B 重新
         load_world，状态必须完整回来。
         """
@@ -301,7 +301,7 @@ class TestWorldProcessEntry:
             engine.load_world(world_id=world_id)
             assert engine.chunk_store, "快路径也应加载至少一个 chunk"
             chunk = engine.chunk_store.keys()[0]
-            # 施加一条节点干预 + 一个强制特征核，然后走真实保存脉搏
+            # 施加一条节点干预 + 一个强制特征核，然后走真实周期保存
             engine.intervention_table.plan(PlannedIntervention(
                 target_space="node", target=INSTANT_TEMPERATURE,
                 instance=chunk, value=30.0,
@@ -310,10 +310,10 @@ class TestWorldProcessEntry:
             engine.weather_engine.force_feature(
                 chunk[0], chunk[1], "storm", True,
             )
-            engine._final_pulse()
+            engine._final_save()
             state = engine.save_manager.read_state(world_id)
             # 节点干预 + 特征核控制各一条（后者由 force_feature 登记；
-            # 注入核由时间线投影，不作为状态入档：#51/WC-6.5）
+            # 注入核由时间线投影，不作为状态入档（WC-6.5）
             plan = state["weather"]["interventions"]["plan"]
             assert [entry["target_space"] for entry in plan] == [
                 "node", "field_feature",
@@ -374,7 +374,7 @@ class TestWorldProcessEntry:
             engine.chunk_store._cache.pop(chunk, None)
             engine._on_chunk_evicted(*chunk)
             assert not engine.weather_engine.has_chunk(*chunk)
-            engine._final_pulse()
+            engine._final_save()
         finally:
             engine.stop()
 
@@ -419,7 +419,7 @@ class TestWorldProcessEntry:
             assert chunk.integrated_through == 30 * GAME_DAY, \
                 "前提：chunk 已积分到 day 31"
             state_before = bytes(chunk.tile_grid.state_raw("snow"))
-            engine._final_pulse()
+            engine._final_save()
         finally:
             engine.stop()
 
@@ -749,12 +749,12 @@ class TestWorldProcessEntry:
             engine.stop()
 
 
-class TestSavePulseEndToEnd:
-    """保存脉搏端到端（Issue #40 / #51）：事件跨重启持久化 + 快照含近期事件。
+class TestPeriodicSaveEndToEnd:
+    """周期保存端到端：事件跨重启持久化 + 快照含近期事件。
 
-    `_final_pulse()` 同步执行完整脉搏（帧边界捕获 + 事件 flush → state
+    `_final_save()` 同步执行完整周期保存（帧边界捕获 + 事件 flush → state
     → chunk 提交 → manifest，任一步失败即失败），确定性模拟保存线程的
-    落盘（不等真实 SAVE_PULSE_INTERVAL）。
+    落盘（不等真实 AUTOSAVE_INTERVAL）。
     """
 
     def _publish_chain(self):
@@ -783,10 +783,10 @@ class TestSavePulseEndToEnd:
             data={"action": "seek_shelter"},
         ))
 
-    def test_events_persist_across_restart_via_pulse(self, monkeypatch):
-        """脉搏 flush 后重启（新进程语义）：事件完整、因果链可追溯。
+    def test_events_persist_across_restart_via_periodic_save(self, monkeypatch):
+        """周期保存 flush 后重启（新进程语义）：事件完整、因果链可追溯。
 
-        崩溃语义：flush 后事件即落盘，重启不丢；丢失窗口 = 脉搏间隔。
+        崩溃语义：flush 后事件即落盘，重启不丢；丢失窗口 = 保存间隔。
         """
         _patch_fast_worldgen(monkeypatch)
         from ascend.world_tree import world_tree
@@ -794,10 +794,10 @@ class TestSavePulseEndToEnd:
         engine1 = GameEngine(seed=42)
         try:
             engine1.start_service()
-            world_id = engine1.save_manager.create_world("脉搏世界", seed=7).world_id
+            world_id = engine1.save_manager.create_world("周期世界", seed=7).world_id
             engine1.load_world(world_id=world_id)
             self._publish_chain()
-            engine1._final_pulse()  # 模拟保存脉搏落盘
+            engine1._final_save()  # 模拟周期保存落盘
         finally:
             engine1.stop()
 
@@ -817,7 +817,7 @@ class TestSavePulseEndToEnd:
             engine2.stop()
 
     def test_snapshot_contains_recent_events(self, monkeypatch):
-        """快照强一致点：checkpoint 前同步完整脉搏，快照含近期事件。"""
+        """快照强一致点：checkpoint 前同步完整周期保存，快照含近期事件。"""
         import shutil
         import tempfile
 
@@ -861,7 +861,7 @@ class TestSavePulseEndToEnd:
             engine.stop()
 
     def test_loaded_chunks_persist_across_restart(self, monkeypatch):
-        """已加载 chunk（未改动）经脉搏落盘，重启后直接命中免重生成。"""
+        """已加载 chunk（未改动）经周期保存落盘，重启后直接命中免重生成。"""
         from ascend.space import BiomeType, ClimateZone, WeatherParams
         from ascend.space.chunk import ChunkData
         from ascend.space.tile_grid import TileGrid
@@ -900,7 +900,7 @@ class TestSavePulseEndToEnd:
 
 
 class TestTerrainStatePersistence:
-    """地形状态层集成（Issue #37）：settled_day 随存档持久化、
+    """地形状态层集成：settled_day 随存档持久化、
     LRU 淘汰后重载续算、不重放历史。"""
 
     def _start_world(self, engine, name=None, seed=7):

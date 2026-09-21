@@ -1,9 +1,7 @@
-"""方程实现（逐位移植自旧注册表；生成后即为源码）。
+"""方程实现 — 天气机制的定点/预计算表求值。
 
-本文件由一次性移植生成器从旧机制注册表提取；导入已改写为新内核
-（``ascend.world.kernel``）。改动方程必须同步黄金向量
-（``backend/tests/world/data/weather_golden.json`` 由旧实现生成，
-旧注册表删除后作为冻结契约保留）。
+导入内核 ``ascend.world.kernel``；改动方程必须同步黄金向量
+（``backend/tests/world/data/weather_golden.json``，冻结契约数据）。
 """
 from __future__ import annotations
 
@@ -181,7 +179,7 @@ def _season_phase_cos_equation(
     season_length_days: int,
     seasons_per_year: int,
 ) -> float:
-    """冻表实现：整数日算术 + 冻表 cos + 半偶舍入。
+    """预计算表实现：整数日算术 + 预计算表 cos + 半偶舍入。
 
     progress = season + day_of_season/L；angle = (progress − 1.5)/S · 2π；
     angle_q = (2·p_num − 3·L) · TWO_PI_Q / (2·L·S)。
@@ -202,7 +200,7 @@ def _season_phase_cos_equation(
 
 
 def _diurnal_phase_cos_equation(hour: float, peak_hour: float) -> float:
-    """冻表实现：输入量化 + 冻表 cos + 半偶舍入。"""
+    """预计算表实现：输入量化 + 预计算表 cos + 半偶舍入。"""
     from ascend.world.kernel.diurnal import diurnal_phase_cos_q
     from ascend.world.kernel.fixed import quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
@@ -220,7 +218,7 @@ def _solar_declination_equation(
     obliquity_deg: float,
     days_per_year: int,
 ) -> float:
-    """冻表实现：整数日算术 + 冻表 sin + 定点乘。
+    """预计算表实现：整数日算术 + 预计算表 sin + 定点乘。
 
     radians(x) = x·π/180；π/180 的 Q 值由 TWO_PI_Q 整数半偶除得。
     """
@@ -277,7 +275,7 @@ def _seasonal_humidity_offset_equation(
     season_phase_cos: float,
     sharpness: float,
 ) -> float:
-    """定点/冻表实现：sharpness>0 走冻表 tanh，否则恒等。"""
+    """定点/预计算表实现：sharpness>0 走预计算表 tanh，否则恒等。"""
     from ascend.world.kernel.fixed import mul, quantize, to_float
     from ascend.world.kernel.frozen_tables import TABLE_BITS
     from ascend.world.kernel.tables import tanh_q
@@ -310,7 +308,7 @@ def _diurnal_humidity_offset_equation(
 
 
 def _sunrise_equation(latitude: float, solar_declination: float) -> float:
-    """冻表实现：tan=sin/cos 表相除 + acos 冻表 + degrees。
+    """预计算表实现：tan=sin/cos 表相除 + acos 预计算表 + degrees。
 
     注意：acos 在端点附近误差声明为 2e-3 rad（见 tables.ACOS_MAX_ERROR），
     对应日出/日落时刻误差上界 ~0.008 h。
@@ -336,7 +334,7 @@ def _sunrise_equation(latitude: float, solar_declination: float) -> float:
 
 
 def _sunset_equation(latitude: float, solar_declination: float) -> float:
-    """冻表实现：tan=sin/cos 表相除 + acos 冻表 + degrees。
+    """预计算表实现：tan=sin/cos 表相除 + acos 预计算表 + degrees。
 
     与 sunrise 同构（12 + 半昼长），误差声明同 tables.ACOS_MAX_ERROR。
     """

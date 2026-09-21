@@ -14,7 +14,7 @@ from .io import atomic_write
 
 MANIFEST_NAME: str = "manifest.json"
 
-# ── 世界生成调参契约（Issue #8）─────────────────────────────
+# ── 世界生成调参契约─────────────────────────────
 # 创建世界流程的参数范围：save_create 校验（_validate_gen_params）、
 # map_preview 请求校验（preview_handler）、种子随机上限（create_world）
 # 全部引用此处——新增调参键时在此定义范围，前后端各自落地。
@@ -96,9 +96,9 @@ class Manifest:
         明文 key.json，而是加密后藏于此字段随档分发（混淆层，防直读；
         真实防线仍是 HMAC，见 crypto.py 威胁模型说明）。
     mechanism_declaration: 世界设置中的机制声明版本（声明 ID + 全量摘要 +
-        观测协议版本，``MechanismRegistry.declaration_settings()``）；
-        None = 旧存档尚未记录（首次加载时补写）。读档前与当前注册表
-        比对，不一致拒绝加载（见 settings.validate_world_settings）。
+        观测协议版本，``WorldProgram.declaration_settings()``）；
+        None = 旧存档尚未记录（首次加载时补写）。读档前与当前世界声明
+        程序比对，不一致拒绝加载（见 settings.validate_world_settings）。
     world_program: 世界程序身份视图（``WorldProgram.settings()``：身份摘要 +
         契约版本 + 各分量摘要）；None = 旧存档尚未记录（首次加载时补写）。
         读档前与当前编译产物比对，不一致拒绝加载
@@ -115,9 +115,9 @@ class Manifest:
     game_time: int = 0
     snapshot_count: int = 0
     secrets_blob: str | None = None
-    # 世界生成调参（创建世界流程的产出，Issue #8）：目前含
-    # land_ratio（目标陆地比例 [0-1]）；未来新增群落/物种分布等。
-    # 种子之外再生的不确定性来源，创建时定案，与 seed 同权重。
+    # 世界生成调参（创建世界流程的产出）：目前含
+    # land_ratio（目标陆地比例 [0-1]）。种子之外再生的不确定性来源，
+    # 创建时定案，与 seed 同权重。
     gen_params: dict | None = None
     mechanism_declaration: dict | None = None
     world_program: dict | None = None
@@ -132,11 +132,11 @@ class Manifest:
 
     @staticmethod
     def _validate_gen_params(gen_params: dict) -> dict:
-        """校验并规范化生成参数（Issue #8）。
+        """校验并规范化生成参数。
 
         land_ratio 必须为 (0, 1] 内的有限浮点；width_km/height_km 必须为
         [20, 200] 内的有限浮点（地图尺寸档位 60/100/150 km，含余量）。
-        未知键保留（向前兼容，未来步骤的参数由各自模块校验）。
+        未知键保留（向前兼容，其余参数由各自模块校验）。
         非法时抛 SaveFormatError。
         """
         result = dict(gen_params)

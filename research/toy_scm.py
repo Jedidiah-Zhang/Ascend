@@ -1,7 +1,10 @@
-"""历史探针 1：玩具 SCM（S1-S6）。
+"""早期探针：玩具 SCM 数值实验（S1–S6）。
 
 运行: .venv/bin/python research/toy_scm.py [--exp ...] [--fast]
-新框架下的适用范围见 05 篇，既有结果的证据状态见 06 篇。
+
+独立于后端的最小可运行脚本，打印 PASS/FAIL 供人工阅读（无退出码语义），
+不在 CI 中运行，依赖未固化（numpy/scipy/sklearn 不在 requirements.txt）。
+理论与适用范围见 docs/研究理论/世界基座/。
 """
 
 from __future__ import annotations

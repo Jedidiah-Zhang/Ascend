@@ -23,7 +23,7 @@ class TestWorldDataFile:
     def test_world_data_exists(self):
         doc = load_content("world")
         assert doc["version"] == 1
-        # tile 段（曾含 STEEP_GRADIENT，issue #42 移除后无 tile 内容）不再存在
+        # tile 段不存在：数据段固定为 world / climate / weather
         assert set(doc) == {"version", "world", "climate", "weather"}
 
     def test_content_values_applied(self):

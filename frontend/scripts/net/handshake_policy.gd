@@ -1,6 +1,6 @@
 """握手重试策略 — 致命失败判定 / 重试预算（纯逻辑 RefCounted）。
 
-职责（从 connection.gd 抽离）:
+职责:
   - on_rejected(kind)：按拒绝分类判定——VERSION_MISMATCH 永久性失败，
     立即 FAIL（重试无意义）；ANOMALY 计入预算
   - on_timeout() / on_disconnect()：计入预算（后端挂起 / 握手期被断开，
@@ -32,7 +32,7 @@ var _failures: int = 0
 
 # ── 预算接口 ───────────────────────────────────────────────
 
-## 握手成功：预算清零（任何一次成功即重置重试历史）。
+## 握手成功：预算清零（任何一次成功即重置）。
 func on_ack() -> void:
 	_failures = 0
 

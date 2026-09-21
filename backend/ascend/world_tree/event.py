@@ -5,7 +5,7 @@
 Event 与 WorldEvent 的分工：
   - Event: 总线上的消息单元（元数据 + data），由各系统发布。
   - WorldEvent: 事件 data 的契约基类。子类字段即 data 键，类型即
-    data 值类型；event_type 由类属性声明，发布时不再重复写字符串。
+    data 值类型；event_type 由类属性声明。
     序列化经 as_dict() 输出 JSON 安全 dict（tuple 递归转 list）。
 """
 
@@ -110,14 +110,15 @@ class Event:
         initiator_type: 发起方类型 "system" | "npc" | "player"。
         initiator_id: 发起方唯一标识。
         affected: 受影响方列表。
-        event_type: 事件类型字符串，各系统自行注册，如 "weather_change"。
+        event_type: 事件类型字符串（由 WorldEvent 子类声明），
+            如 "weather_change"。
         data: 事件类型特定的附加数据，JSON 可序列化。
         caused_by: 上游因果事件 ID 列表。
         observes: 被观测的物理事件 ID（仅 observation 事件使用）。
         co_participants: 共同参与方 ID 列表。
-        fate_path: 本事件随机性来源的 Loom of Fate 流身份
+        address_path: 本事件随机性来源的地址随机标签
             （如 "weather/precip/3/-2@3912"；None = 事件不消费随机流）。
-            供研究溯源：外生随机实现由流身份派生，无需存值即可重算
+            供研究溯源：外生随机实现由地址标签派生，无需存值即可重算
             （见 docs/世界框架/随机系统/设计.md）。
         id: 事件唯一标识（UUID hex，自动生成）。
     """
@@ -135,7 +136,7 @@ class Event:
     caused_by: list[str] = field(default_factory=list)
     observes: str | None = None
     co_participants: list[str] = field(default_factory=list)
-    fate_path: str | None = None
+    address_path: str | None = None
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 

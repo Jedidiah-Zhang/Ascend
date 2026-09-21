@@ -1,7 +1,6 @@
 """生成 chunk 的 2D tile 层数据 — 后台线程安全的纯数据计算。
 
-从 terrain_mesh_builder.gd 迁移（3D ArrayMesh → 2D TileMapLayer）：不再生成
-顶点/法线/UV/顶点色，改为输出每个 TileMapLayer 的 cell 数组（set_cell 形状）。
+输出每个 TileMapLayer 的 cell 数组（set_cell 形状），不创建节点与资源。
 海拔不做几何抬升——"五信号"（地形色/崖壁贴片/固定方向投影/装饰密度/
 等高线调试层，见视觉风格设计文档）全部在此类内以纯数据计算表达。
 
@@ -10,18 +9,17 @@
   - water：水体（单一 WATER）→ water atlas 列索引（半透明水面，独立层）
   - cliff：高侧边缘崖壁贴片（相邻 tile 海拔差 > 阈值）
   - shadow：固定方向投影（西北光照 → 东南侧低 tile 铺半透明阴影）
-  - decor：海拔越高岩石装饰越密（确定性哈希，非随机）——雪顶不再硬编码
-    （issue #42：覆雪是动态状态，由雪状态自然形成，见状态层）
+  - decor：海拔越高岩石装饰越密（确定性哈希，非随机）；覆雪是动态状态，
+    由雪状态经状态层表达，不做硬编码雪顶
   - contour：等高线调试层（500m 间隔，默认关闭，挂调试面板）
 
 地形类型映射与后端 ascend/space/terrain.py 的 TerrainType 枚举对齐：
 0 GRASSLAND / 1 SAND / 2 GRAVEL / 3 FERTILE_SOIL / 4 ROCK /
 5 PERMAFROST / 6 MARSH / 7 WATER。
 
-已知限制：信号只读本 chunk 数据，chunk 边界相邻 tile 的高差/等高线在接缝处
-可能不连续（跨 chunk 感知留待后续阶段）。自阶段 6 起支持邻居上下文：
-build_cells 可接收 neighbors 参数（各方向的紧邻边条数据），边界判定改读邻居
-边条——邻居已加载时接缝连续（否则回退无邻居语义）。
+接缝连续：build_cells 接收 neighbors 参数（各方向的紧邻边条数据），
+边界判定优先读邻居边条——邻居已加载时接缝连续；缺失方向回退
+无邻居语义（接缝不连续但安全）。
 """
 
 class_name TerrainTileBuilder
@@ -55,11 +53,10 @@ const DECOR_ELEVATION_TIERS: Array[float] = Config.DECOR_ELEVATION_TIERS
 
 ## 装饰密度（百分比）：海拔档位 [<300, <1000, <2000, ≥2000]
 const DECOR_DENSITY_PERCENT: PackedInt32Array = [2, 5, 10, 16]
-## 装饰 atlas 列：0 砾石 / 1 岩石 / 2 大岩块（雪顶已移除——覆雪为动态状态）
+## 装饰 atlas 列：0 砾石 / 1 岩石 / 2 大岩块（覆雪由状态层表达，不设雪顶装饰）
 const DECOR_TILE_ROCKS: Array[int] = [0, 1, 2]
 
 ## 地形 atlas 占位纯色（terrain_id 顺序；像素资产未开始，渲染管线先用色块）
-## 与旧 terrain_mesh_builder 时代的 _TERRAIN_FALLBACK_COLORS 主色调对齐
 const TERRAIN_TILE_COLORS: Array[Color] = [
 	Color(0.45, 0.62, 0.35),  # 0 GRASSLAND
 	Color(0.85, 0.78, 0.5),   # 1 SAND
@@ -76,7 +73,7 @@ const WATER_TILE_COLORS: Array[Color] = [
 	Color(0.2, 0.6, 0.9, 0.7),
 ]
 
-## 崖壁 atlas 占位纯色（暗岩边缘，单一样式；方向变体留待资产阶段）
+## 崖壁 atlas 占位纯色（暗岩边缘，单一样式）
 const CLIFF_TILE_COLORS: Array[Color] = [
 	Color(0.25, 0.2, 0.15, 0.95),
 ]
@@ -269,8 +266,8 @@ static func _receives_shadow(terrain: PackedInt32Array, elevation: PackedFloat32
 
 
 ## 装饰判定：海拔越高岩石装饰越密（确定性哈希决定落点，非随机源——
-## 同 chunk 数据任何线程/任何次构建结果一致）。雪顶已移除：覆雪由
-## 雪状态自然形成（状态层渲染），不做硬编码装饰。
+## 同 chunk 数据任何线程/任何次构建结果一致）；覆雪由状态层渲染，
+## 此处不做雪顶装饰。
 ## Returns:
 ##     decor atlas 列索引；无装饰返回 -1。
 static func _decor_at(elev: float, x: int, z: int, idx: int) -> int:
@@ -319,8 +316,7 @@ static func _is_water(terrain_id: int) -> bool:
 
 
 ## 由色表生成程序化占位 atlas 纹理（TILE_PIXEL_SIZE 方 tile 横向排布，
-## 纯色占位块——像素风渲染管线先通，资产后补替换此纹理即可；
-## 过滤模式沿用场景默认（未显式设置 texture_filter））。
+## 纯色占位块；过滤模式沿用场景默认（未显式设置 texture_filter））。
 ##
 ## Args:
 ##     colors: 每 tile 的纯色（长度 = atlas 列数）。

@@ -1,4 +1,4 @@
-"""创建世界流程的步骤基类（Issue #8）— 纯逻辑 RefCounted，可单测。
+"""创建世界流程的步骤基类 — 纯逻辑 RefCounted，可单测。
 
 步骤契约（由 SetupFlow / world_setup 容器驱动）:
   - step_id(): 步骤唯一 ID（注册/顺序校验）

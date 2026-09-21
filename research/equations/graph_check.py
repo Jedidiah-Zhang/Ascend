@@ -3,28 +3,33 @@
 运行: .venv/bin/python research/equations/graph_check.py [--json PATH]
 
 与 verify_equations.py（L1 自洽性）互补：本工具回答"设计是否合理"，
-判据全部来自 02 篇的已证明命题与 Lean 证书：
+判据来自 docs/研究理论/世界基座/02-误差传播与反事实.md 的已证明命题与
+Lean 证书：
   - 推论 2.2/2.3（Contraction.lean）：环收缩性、收缩/发散两律
   - 命题 2.5（DagPathExpansion.lean / ExplicitPaths.lean）：路径权重和
     W(u,t) = Σ_{u→t 路径} Π L，反事实误差上界 ε_t + Σ_u ε_u·W(u,t)
     （json 的 L 字段即文档的逐边 Lipschitz 常数 Λ_{u,v}）
-  - S4 探针（06 篇）：多父节点必须按"求和"而非取最大
+  - 汇聚节点必须按"求和"而非取最大（命题 2.5）
 
-判据（预注册，05 篇总则风格；阈值先定后跑，后续按实测校准）：
+判据：
   G0 声明加载 + 结构校验：schema.validate 无问题；
   G1 反馈环收缩：全图任意环上 L 乘积 < 1（推论 2.2 收敛）；≥1 ⟹ FAIL
      （推论 2.3：=1 线性累积、>1 指数发散）；
-  G2 路径权重上界：max_u,t W(u,t) ≤ 8（预注册；链长 ≤3、单边 L≤2 的
-     几何和上界，超出则误差放大多级，需 ε 补偿或收缩边兜底）；
+  G2 路径权重上界：max_u,t W(u,t) ≤ W_MAX（当前 2000.0；世界生成标量
+     公式带来单位量纲映射边（噪声→mm/年 等，L~1725），绝对值大但不
+     放大相对误差——放大语义仍由 G1 环收缩与 G3 相对预算守卫）；
   G3 反事实误差界：对每个有值域（bounds）的目标 t，Σ_u ε_u·W(u,t)
-     ≤ 5% × 值域宽度（预注册；量纲归一——不同变量单位不同，不能用
-     全局标量阈值；需声明 variables[*].eps，未声明 ⟹ 缺口报告）；
+     ≤ 5% × 值域宽度（量纲归一——不同变量单位不同，不能用全局标量
+     阈值；需声明 variables[*].eps，未声明 ⟹ 缺口报告）；
      无 bounds 的目标（外生根）界≡ε 自身，不做判定；
   G4 遗忘深度：θ=0.01，报告"权重衰减到 θ 以下所需深度 vs 实际路径
-     长度"——收缩快的路径上深层上游误差可忽略（ε 可放宽，推论 2.2 记忆
-     衰减的直接推论；报告型，无 PASS/FAIL）；
+     长度"——收缩快的路径上深层上游误差可忽略（推论 2.2 记忆衰减的
+     直接推论；报告型，无 PASS/FAIL）；
   G5 放大边定位：L>1 的边全部列出 + 以其为源的最大路径权重（报告型）；
-  G6 汇聚节点：入度 ≥2 的节点列出（求和语义节点，命题 2.5/S4；报告型）。
+  G6 汇聚节点：入度 ≥2 的节点列出（求和语义节点，命题 2.5；报告型）；
+  G7 L 界一致性：线性边的见证差商必须 ≤ 声明 L（L 不得为 None）；
+     跳变边必须声明正 jump_bound（有界跳变），不做连续差商核验。
+     矛盾即 FAIL。
 
 缺口报告（非判据，但阻止 L2 判定完整）：
   - variables[*].eps 未声明：命题 2.5 的上界输入缺失，G3 无法计算。
@@ -48,10 +53,7 @@ from ascend.world_tree.root import ROLE_STRUCTURAL, VariableGraph  # noqa: E402
 
 JSON_PATH = HERE / "equations.json"
 
-W_MAX = 2000.0      # G2 预注册阈值
-# 2026-09-08 重注册（全量公式收编）：图扩展到世界生成
-# 标量公式后，出现单位量纲映射边（噪声→mm/年 等，L~1725），绝对值大但
-# 不放大相对误差；放大语义仍由 G1 环收缩与 G3 相对预算守卫。
+W_MAX = 2000.0      # G2 路径权重阈值
 REL_CTF = 0.05       # G3 相对界：Σ ε_u·W(u,t) ≤ 5% × 值域宽度
 THETA = 0.01         # G4 遗忘阈值
 
@@ -97,7 +99,7 @@ def path_weights(
 ) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], int]]:
     """DAG 拓扑序 DP：W(u,t) = Σ_{u→t 路径} Π L 与最长路径深度。
 
-    多父求和（S4/命题 2.5 语义）；L=0 边贡献 0（离散边不放大误差）。
+    多父求和（命题 2.5 语义）；L=0 边贡献 0（离散边不放大误差）。
     """
     order = graph.toposort()
     nodes = list(graph.variables)
@@ -328,7 +330,7 @@ def main() -> int:
         else:
             results.append(("G6 汇聚节点", True, "无多父节点"))
 
-    # ── G7 模数一致性──────────────
+    # ── G7 L 界一致性（见证差商 ≤ 声明 L）──────────────
     # 线性边：见证差商必须 ≤ 声明 L（否证器，L 不得为 None）；跳变边：
     # 必须声明正 jump_bound（有界跳变），不做连续差商核验。矛盾即红。
     mechanisms = data.get("mechanisms", {})
@@ -405,13 +407,13 @@ def main() -> int:
         head = "；".join(violations[:4])
         more = f"；…另有 {len(violations) - 4} 条" if len(violations) > 4 else ""
         results.append((
-            "G7 模数一致性", False,
+            "G7 误差界一致性", False,
             f"{checked_linear} 线性边 / {declared_jump} 跳变边；"
             f"矛盾 {len(violations)}：{head}{more}",
         ))
     else:
         results.append((
-            "G7 模数一致性", True,
+            "G7 误差界一致性", True,
             f"{checked_linear} 线性边差商 ≤ L；"
             f"{declared_jump} 跳变边已声明 jump_bound",
         ))

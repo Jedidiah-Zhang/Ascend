@@ -24,7 +24,7 @@ _FULL_PROGRAM = None
 
 
 def _node_evaluate(node_id, parents, *, frame=0, instance=()):
-    """测试用节点求值入口（直连 wired 声明程序；生产路径见 evaluate_node）。"""
+    """测试用节点求值入口（直连求值子集声明程序；生产路径见 evaluate_node）。"""
     global _WEATHER_PROGRAM
     from ascend.world.modules.weather.core import WeatherCore
     from ascend.world.runtime import evaluate_direct
@@ -72,7 +72,7 @@ def _calibrate_precip(
 
 
 def _advance_weather(engine, game_time):
-    """驱动 WeatherEngine 到指定时刻（声明更新点；替代旧事件总线驱动）。"""
+    """驱动 WeatherEngine 到指定时刻（声明更新点）。"""
     engine.advance(game_time)
 
 
@@ -733,7 +733,7 @@ class TestFeatureField:
         assert f.sample_multiplier(100.0, 100.0, t) == 1.0
 
     def test_synthesis_independent_of_insertion_order(self):
-        """同一核集合、不同插入顺序 → 合成值逐位一致（#52 稳定求和）。
+        """同一核集合、不同插入顺序 → 合成值逐位一致。
 
         判别力前提：该量级组合在未排序时 float 求和确实分叉
         （1e16 与 1 相加丢小项），因此本测试不是恒真。
@@ -1235,7 +1235,7 @@ class TestFrameDeferredRecords:
         engine.shutdown()
 
     def test_no_store_publishes_immediately(self):
-        """未注入帧事务（测试/独立使用）：行为与旧路径一致（立即生效）。"""
+        """未注入帧事务（测试/独立使用）：干预立即生效。"""
         engine, clock, events = self._engine(store=None)
         _advance_weather(engine, clock.time)
         _force_perception_reset(engine, 0, 0, "temp")
@@ -1438,7 +1438,7 @@ class TestWeatherEngine:
         assert len(starts) >= 1
         assert starts[0].data["intensity"] > 0
         assert starts[0].data["precip_type"] in ("rain", "snow")
-        assert starts[0].fate_path == (
+        assert starts[0].address_path == (
             f"weather/precip/{dry[0]}/{dry[1]}@{starts[0].timestamp}"
         )
         e.shutdown()
@@ -1589,7 +1589,7 @@ class TestWeatherEngine:
         e.shutdown()
 
     def test_world_tree_events_do_not_drive_engine(self):
-        """事件总线不再是驱动路径：minute_change 不触发天气推进。"""
+        """事件总线不是驱动路径：minute_change 不触发天气推进。"""
         from ascend.config import GAME_DAY, GAME_HOUR
         from ascend.weather.weather_engine import WeatherEngine
         wt = WorldTree()
@@ -2539,8 +2539,8 @@ class TestWeatherQueryConcurrency:
 class TestRegistryProductionAudit:
     """注册表-生产消费审计：已声明机制必须全部进入生产求值路径。
 
-    防回归：chunk 振幅族与区域降水校准若被改回内联公式（与注册表
-    分叉），以下测试立即失败（review 2026-09-08 发现的未消费机制）。
+    防回归：chunk 振幅族与区域降水校准必须经注册表求值——退化为
+    内联公式（与注册表分叉）时以下测试立即失败。
     """
 
     def test_register_chunk_amplitudes_flow_through_registry(self):

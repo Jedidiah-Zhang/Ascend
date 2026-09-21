@@ -1,6 +1,6 @@
 """世界装配 — 游戏进程的声明切片（身份载体 + 驱动周期）。
 
-游戏进程的世界 = 天气引擎求值面（wired 子集）+ 地形积分 + 驱动周期
+游戏进程的世界 = 天气引擎求值面（求值子集）+ 地形积分 + 驱动周期
 （游戏分钟驱动天气推进、游戏小时驱动地形积分）。生成程序（大陆/水文/
 瓦片）仍是声明边界，其身份由存档的生成指纹单独记录。
 
@@ -17,7 +17,7 @@ from ascend.world.meta.declarations import Schedule, WorldSpec
 from ascend.world.modules import terrain
 from ascend.world.modules.pipeline import PIPELINE_PHASES
 from ascend.world.modules.weather import engine_inputs
-from ascend.world.modules.weather.core import wired_weather_pack
+from ascend.world.modules.weather.core import engine_eval_pack
 
 __all__ = ["DRIVER_PERIODS", "build_game_program"]
 
@@ -29,12 +29,12 @@ DRIVER_PERIODS: tuple[tuple[str, int], ...] = (
 
 
 def build_game_program() -> WorldProgram:
-    """编译游戏世界程序（天气 wired + 地形 + 驱动周期）。"""
+    """编译游戏世界程序（天气求值子集 + 地形 + 驱动周期）。"""
     return compile_world(
         WorldSpec(
             modules=(
                 engine_inputs.MODULE,
-                wired_weather_pack(),
+                engine_eval_pack(),
                 terrain.MODULE,
             ),
             schedule=Schedule(

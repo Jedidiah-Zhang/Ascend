@@ -1,4 +1,4 @@
-"""审查修复测试 — 发布布局路径解析 / 语言切换 / ns 校验 / 原子性。
+"""发布布局路径解析 / 语言切换 / ns 校验 / 原子性测试。
 
 Coverage: data._resolve_content_dir、i18n._resolve_content_dir/get_default、
 data.split_ns_id、biome/climate 构建原子性。

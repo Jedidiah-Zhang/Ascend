@@ -1,6 +1,6 @@
 """后端进程层 — 进程生命周期状态机（纯逻辑 RefCounted，测试可注入）。
 
-职责（从 connection.gd 抽离）:
+职责:
   - 启动序列：端口预探测 → 拉起后端（开发 .venv python / 打包 server 二进制）
     → 等待端口就绪（每 0.5s 探测一次）→ ready 信号
   - 启动超时（BACKEND_STARTUP_TIMEOUT）→ FAILED 终态 + failed 信号
@@ -81,7 +81,8 @@ var kill_command: Callable = _kill_term_default
 
 ## 强杀命令 (pid)，默认按 OS 分支。三路清理：按 PID -9（standalone
 ## 布局下跟踪 PID 即真实服务进程）+ 开发模式按脚本路径 pattern +
-## 打包模式按服务二进制名（onefile fork 子进程等 PID 跟踪不到的场景）。
+## 打包模式按服务二进制名（PID 跟踪不到的孤儿进程场景）。
+
 var force_kill_command: Callable = _force_kill_default
 
 ## 按名清理未跟踪进程 ()，默认按 OS 分支。
@@ -131,8 +132,8 @@ func _force_kill_commands(p_pid: int) -> Array:
 	    仅 pid > 0 时加入，防 kill -9 -1 误杀）；
 	  - 开发模式按脚本路径（项目根绝对路径正则转义后精确匹配，
 	    不误伤其它 python 进程）；
-	  - 打包模式按服务二进制名（覆盖 fork 子进程等 PID 跟踪不到
-	    的场景）。
+	  - 打包模式按服务二进制名（覆盖 PID 跟踪不到的孤儿
+	    进程场景）。
 	"""
 	if _is_windows():
 		var wcmds: Array = []

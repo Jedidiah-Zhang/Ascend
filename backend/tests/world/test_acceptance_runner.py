@@ -1,4 +1,4 @@
-"""新验收 runner 测试— 判据全绿 + 变异探针全部检出。
+"""验收 runner 测试 — 判据全绿 + 变异探针全部检出。
 
 判据与变异定义在 ``research/acceptance/world_checks.py`` 与
 ``run_acceptance.py``；本测试保证 runner 的判别力不是徒有其表。

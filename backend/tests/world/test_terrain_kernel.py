@@ -1,9 +1,10 @@
 """地形内核测试 — 参数表一致、黄金向量、内核对与模块帧。
 
-- 参数表：新装载器 vs 旧 ``state_defs.build_param_tables`` 逐值一致；
-- 黄金向量：新参考实现 vs 旧实现输出（``data/terrain_golden.json``）；
+- 参数表：``terrain.data.build_param_tables`` 与
+  ``state_defs.build_param_tables`` 逐值一致；
+- 黄金向量：参考实现与冻结向量逐位一致（``data/terrain_golden.json``）；
 - 内核对：参考实现 vs C 加速逐位一致（随机 + 黄金输入）；
-- 模块帧：新核心编译并推进一帧，输出与旧实现一致。
+- 模块帧：编译并推进一帧，输出与冻结向量逐位一致。
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from ascend.space.state_defs import build_param_tables as old_param_tables
+from ascend.space.state_defs import build_param_tables as space_param_tables
 from ascend.world import LatticeField, Schedule, WorldProcess, WorldSpec, compile_world
 from ascend.world.modules import terrain
 from ascend.world.modules.terrain import kernel
@@ -42,16 +43,16 @@ def _call(func, case: dict) -> dict[str, list[int]]:
 
 
 class TestParamTables:
-    def test_matches_old_loader(self):
+    def test_matches_space_loader(self):
         new = build_param_tables()
-        old = old_param_tables()
+        old = space_param_tables()
         assert len(new) == len(old) == 7
         for index, (new_table, old_table) in enumerate(zip(new, old)):
             assert new_table == old_table, f"第 {index} 张表不一致"
 
 
 class TestGoldenVectors:
-    def test_reference_matches_old(self):
+    def test_reference_matches_golden(self):
         mismatches = []
         for vector in _GOLDEN["vectors"]:
             actual = _call(kernel.evolve_reference, vector["inputs"])
@@ -59,7 +60,7 @@ class TestGoldenVectors:
                 mismatches.append((vector["inputs"], vector["outputs"], actual))
         assert not mismatches, mismatches[:2]
 
-    def test_accelerated_matches_old(self):
+    def test_accelerated_matches_golden(self):
         mismatches = []
         for vector in _GOLDEN["vectors"]:
             actual = _call(kernel.evolve_accelerated, vector["inputs"])
@@ -112,7 +113,7 @@ class TestKernelPair:
 
 
 class TestTerrainModuleFrame:
-    def test_module_frame_matches_old(self):
+    def test_module_frame_matches_golden(self):
         program = compile_world(
             WorldSpec(
                 modules=(terrain.MODULE,),
@@ -182,9 +183,9 @@ class TestTerrainModuleFrame:
 
 
 class TestTerrainCoreAdapter:
-    """适配器 vs 旧 C 直调（``state_evolve_arrays``）逐位一致。"""
+    """声明式适配器与数组层入口（``state_evolve_arrays``）逐位一致。"""
 
-    def _old_run(self, case: dict) -> dict[str, list[int]]:
+    def _array_run(self, case: dict) -> dict[str, list[int]]:
         from array import array
 
         from ascend.space.tile_state import state_evolve_arrays
@@ -204,7 +205,7 @@ class TestTerrainCoreAdapter:
         )
         return {key: list(states[key]) for key in kernel.STATE_KEYS}
 
-    def test_evolve_matches_old_c_path(self):
+    def test_evolve_matches_array_path(self):
         core = TerrainCore()
         for _ in range(6):
             n = _RNG.choice([1, 5, 32])
@@ -228,7 +229,7 @@ class TestTerrainCoreAdapter:
                     else [round(_RNG.uniform(0.0, 1.0), 4) for _ in range(n)]
                 ),
             }
-            expected = self._old_run(case)
+            expected = self._array_run(case)
             result = core.evolve(
                 case["states"],
                 case["terrain"],
@@ -263,7 +264,7 @@ class TestTerrainCoreAdapter:
             "dt": 1 / 24,
             "cover": None,
         }
-        expected = self._old_run(case)
+        expected = self._array_run(case)
         from array import array
 
         states = {

@@ -15,7 +15,7 @@ var _last_tile_pos: Vector2i = Vector2i(-999999, -999999)
 ## 缓存世界脚本引用，供 process_section 拉取玩家位置。
 ##
 ## Args:
-##     world: 世界脚本节点（MainWorld 或 MainWorld3D）。
+##     world: 世界脚本节点（MainWorld2D）。
 func setup(world: Node) -> void:
 	_world = world
 
