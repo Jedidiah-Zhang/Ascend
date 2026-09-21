@@ -64,7 +64,7 @@ var _status_color: Color = STATUS_WAITING_COLOR
 var _checking_saves: bool = false
 ## 设置覆盖层（首次打开时惰性实例化）
 var _settings_screen: SettingsScreen = null
-## 版本号（读取打包注入的 res://version.txt，见 build_release.sh；开发期无此文件则为空）
+## 版本号（读取打包注入的 res://version.txt，见 build/package/miskhak/build.sh；开发期无此文件则为空）
 var _version_text: String = ""
 
 
@@ -158,7 +158,7 @@ func _draw() -> void:
 
 # ── 版本 ──────────────────────────────────────────────────
 
-## 读取打包注入的版本文件（build/nuitka/version.txt 单一源，发布流程拷入
+## 读取打包注入的版本文件（build/version/miskhak.txt 单一源，打包流程拷入
 ## miskhak/client/version.txt 进入 PCK）；开发期无该文件，返回空串不显示版本。
 func _load_version() -> String:
 	if not FileAccess.file_exists("res://version.txt"):

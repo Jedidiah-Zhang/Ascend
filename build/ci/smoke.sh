@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Ascend 打包产物冒烟 — 启动产物 → 协议级握手 → 清理
 #
-# 用法: bash build/ci/smoke.sh <stage目录> <platform: linux|windows>
+# 用法: bash build/ci/smoke.sh <stage目录> <platform: linux|windows> [product: game|research]
+#
+# product=game 时额外校验前端可执行与资源包齐备（研究包无前端）。
 #
 # 协议级验证（build/ci/smoke_server.py）：TCP 就绪 + hello 握手 +
 # save_list 响应，替代旧的"端口有人听"检查（残留进程占用端口会假阳性）。
@@ -13,8 +15,9 @@
 #   windows 产物+MSYS  → 原生执行（路径 cygpath 转 Windows 风格）
 set -euo pipefail
 
-STAGE="${1:?用法: bash build/ci/smoke.sh <stage目录> <platform>}"
-PLATFORM="${2:?用法: bash build/ci/smoke.sh <stage目录> <platform>}"
+STAGE="${1:?用法: bash build/ci/smoke.sh <stage目录> <platform> [game|research]}"
+PLATFORM="${2:?用法: bash build/ci/smoke.sh <stage目录> <platform> [game|research]}"
+PRODUCT="${3:-research}"
 
 case "$PLATFORM" in
   linux|windows) ;;
@@ -55,6 +58,18 @@ if [ ! -f "$STAGE/server/olam/declarations/impl_digests.json" ]; then
   exit 1
 fi
 
+# 游戏包前端检查：可执行与资源包必须随包配送（研究包无前端，跳过）
+if [ "$PRODUCT" = "game" ]; then
+  if [ ! -f "$STAGE/ascend.x86_64" ] && [ ! -f "$STAGE/ascend.exe" ]; then
+    echo "    [冒烟] 失败：游戏包缺少前端可执行（ascend.x86_64 / ascend.exe）" >&2
+    exit 1
+  fi
+  if [ ! -f "$STAGE/ascend.pck" ]; then
+    echo "    [冒烟] 失败：游戏包缺少资源包 ascend.pck" >&2
+    exit 1
+  fi
+fi
+
 cleanup() {
   [ -n "$PID" ] && kill "$PID" 2>/dev/null || true
   # 兜底：精确匹配本舞台目录的产物进程（路径含 stage 目录，不误伤其它实例）
@@ -63,28 +78,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "    [冒烟] 启动打包后端（端口 $PORT）..."
+echo "    [冒烟] 启动打包后端（端口 $PORT，数据根隔离到临时目录）..."
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
     STAGE_WIN="$(cygpath -w "$STAGE")"
     TMP_WIN="$(cygpath -w "$TMP")"
     ASCEND_SERVER_PORT="$PORT" ASCEND_SAVE_ROOT="$TMP_WIN" \
-      "$STAGE/server/server.exe" --project-root "$STAGE_WIN" >"$LOGF" 2>&1 &
+      "$STAGE/server/server.exe" --project-root "$STAGE_WIN" --data-root "$TMP_WIN" >"$LOGF" 2>&1 &
     ;;
   *)
     if [ "$PLATFORM" = "windows" ]; then
       ASCEND_SERVER_PORT="$PORT" ASCEND_SAVE_ROOT="$TMP" \
-        wine "$STAGE/server/server.exe" --project-root "Z:$(echo "$STAGE" | sed 's|/|\\|g')" >"$LOGF" 2>&1 &
+        wine "$STAGE/server/server.exe" --project-root "Z:$(echo "$STAGE" | sed 's|/|\\|g')" \
+        --data-root "Z:$(echo "$TMP" | sed 's|/|\\|g')" >"$LOGF" 2>&1 &
     else
       ASCEND_SERVER_PORT="$PORT" ASCEND_SAVE_ROOT="$TMP" \
-        "$STAGE/server/server" --project-root "$STAGE" >"$LOGF" 2>&1 &
+        "$STAGE/server/server" --project-root "$STAGE" --data-root "$TMP" >"$LOGF" 2>&1 &
     fi
     ;;
 esac
 PID=$!
 
+# token 由后端写入数据根（--data-root）；冒烟不污染舞台目录（产物不携带运行期文件）
 if python3 "$(dirname "${BASH_SOURCE[0]}")/smoke_server.py" \
-    --port "$PORT" --token-file "$STAGE/.ascend_token"; then
+    --port "$PORT" --token-file "$TMP/.ascend_token"; then
   ok=1
 fi
 

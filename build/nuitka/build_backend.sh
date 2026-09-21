@@ -17,8 +17,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERSION="$(cat "$ROOT/build/nuitka/version.txt")"
-PRODUCT_VERSION="${VERSION%%-*}"  # 版本资源仅取数字段（0.0.1-alpha → 0.0.1）
+# 版本资源取共享核心版本（后端二进制为两类包共用；产品版本在包层）
+VERSION="$(tr -d '[:space:]' < "$ROOT/build/version/core.txt")"
+PRODUCT_VERSION="${VERSION%%-*}"  # 版本资源仅取数字段（0.0.3-alpha → 0.0.3）
 
 # Python 解释器：本地开发用 .venv；CI 无 venv 时回退系统 python
 if [ -x "$ROOT/.venv/bin/python" ]; then
@@ -29,6 +30,10 @@ fi
 
 OUT_DIR="$ROOT/build/work/nuitka"
 DIST_NAME="server"
+
+# 环境净化：编译进程不得继承 shell 凭据（Nuitka 会把整个环境写进
+# build/work/*/run_server.build/scons-debug.py）
+source "$ROOT/build/lib/build_env.sh"
 
 EXCLUDES=()
 while IFS= read -r line; do
@@ -47,7 +52,10 @@ cd "$ROOT"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-PYTHONPATH="$PYPATH" "$VENV_PY" -m nuitka \
+# 构建中间目录含环境快照，无论成败都不留在磁盘上
+trap 'rm -rf "$OUT_DIR/run_server.build" "$OUT_DIR/server.build"' EXIT
+
+PYTHONPATH="$PYPATH" ascend_build_env "$VENV_PY" -m nuitka \
   --standalone \
   --output-dir="$OUT_DIR" \
   --output-filename="$DIST_NAME" \

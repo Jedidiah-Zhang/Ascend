@@ -1,24 +1,26 @@
 # package/ — 发布打包脚本
 
-## 管线
+两类包各占一个子目录；流水线编排与共享逻辑在 `build/package.sh` 与 `build/lib/`。
 
+```text
+build/package.sh <通道> [linux|windows|all]
+  └─ build/package/<通道>/build.sh <平台>    # 完整流程（导出/编译 → 组装 → 冒烟 → 归档）
+       ├─ assemble.sh                        # 组装舞台（后端舞台 + 可选前端）
+       └─ <平台>/make_*.sh | archive.sh      # 各格式归档
 ```
-assemble_release.sh [linux|windows]   → 舞台目录（work/staging/Ascend-<平台>/，固定名）
-<平台>/make_*.sh                      → 最终交付物（dist/release/，固定名，覆盖式）
-build/ci/publish_release.sh           → GitHub Releases（版本化命名，传完即删）
-```
 
-## 已实现
+| 通道 | 组装 | 归档脚本 | 产物（`build/dist/<通道>/`） |
+|---|---|---|---|
+| `miskhak` | `miskhak/assemble.sh` | `miskhak/linux/make_tar_gz.sh` | `ascend-game-linux.tar.gz` |
+| | | `miskhak/linux/make_deb.sh` | `ascend-game-linux.deb` |
+| | | `miskhak/linux/make_rpm.sh` | `ascend-game-linux.rpm` |
+| | | `miskhak/linux/make_appimage.sh` | `ascend-game-linux.AppImage` |
+| | | `miskhak/windows/make_zip.sh` | `ascend-game-windows.zip` |
+| | | `miskhak/windows/make_installer.sh` | `ascend-game-windows-setup.exe` |
+| `kheker` | `kheker/assemble.sh` | `kheker/archive.sh <平台>` | `ascend-research-linux.tar.gz` / `ascend-research-windows.zip` |
 
-| 脚本 | 产物 | 说明 |
-|---|---|---|
-| `assemble_release.sh` | 舞台目录 | 游戏 exe+pck 到根目录、`server/` 后端目录整体复制 |
-| `linux/make_tar_gz.sh` | `ascend-linux.tar.gz` | 通用分发 |
-| `linux/make_deb.sh` | `ascend-linux.deb` | Debian/Ubuntu（/opt/ascend + 桌面注册） |
-| `linux/make_rpm.sh` | `ascend-linux.rpm` | Fedora/OpenSUSE（结构同 deb） |
-| `linux/make_appimage.sh` | `ascend-linux.AppImage` | 单文件免安装（AppRun 启动游戏） |
-| `windows/make_zip.sh` | `ascend-windows.zip` | 绿色版 |
-| `windows/make_installer.sh` | `ascend-windows-setup.exe` | Inno Setup 安装器 |
+舞台目录：`build/work/staging/<通道>-<平台>/`（内部命名），归档顶层目录为
+对外产品名（`Ascend-Game/` / `Ascend-Research/`）。
 
 舞台目录生命周期 = 组装 → 各格式消费（共享同一舞台目录）→ 统一删除。
 
@@ -49,7 +51,8 @@ build/ci/publish_release.sh           → GitHub Releases（版本化命名，�
 
 ## 约定
 
-- 版本号从 `build/nuitka/version.txt` 读取（单一来源），**本地产物不带版本号**，
-  版本化命名只发生在发布（`publish_release.sh`）时刻
+- 版本号从 `build/version/` 读取（`core` 为共享核心；产品版本见
+  `miskhak.txt` / `kheker.txt`），**本地产物不带版本号**，
+  版本化命名只发生在发布（`build/ci/publish_release.sh`）时刻
 - 所有脚本只消费 `build/work/` 下的产物，不直接依赖源码树
-- 舞台目录生命周期 = 组装 → 归档 → 删除
+- 组装逻辑只有一份（`build/lib/stage.sh`），两通道的差异只在「是否叠加前端」

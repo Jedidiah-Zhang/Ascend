@@ -21,12 +21,17 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERSION="$(cat "$ROOT/build/nuitka/version.txt")"
+# 版本资源取共享核心版本（后端二进制为两类包共用；产品版本在包层）
+VERSION="$(tr -d '[:space:]' < "$ROOT/build/version/core.txt")"
 PRODUCT_VERSION="${VERSION%%-*}"
 # 注意: --mingw64 仅支持 Windows Python ≤ 3.12
 WIN_PYTHON="${WIN_PYTHON:-C:\\Python312\\python.exe}"
 MINGW_GCC="${MINGW_GCC:-$HOME/mingw64/bin/gcc.exe}"
 OUT_DIR="$ROOT/build/work/nuitka-win"
+
+# 环境净化：编译进程不得继承 shell 凭据（Nuitka 会把整个环境写进
+# build/work/*/run_server.build/scons-debug.py）
+source "$ROOT/build/lib/build_env.sh"
 WINE_ROOT="Z:$(echo "$ROOT" | sed 's|/|\\|g')"
 WINE_PYPATH="$WINE_ROOT"
 
@@ -54,7 +59,11 @@ cd "$ROOT"
 #    不用 onefile：Linux 上 onefile 会 fork 子进程破坏前端 PID 语义）
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
-PYTHONPATH="$WINE_PYPATH" wine "$WIN_PYTHON" -m nuitka \
+
+# 构建中间目录含环境快照，无论成败都不留在磁盘上
+trap 'rm -rf "$OUT_DIR/run_server.build" "$OUT_DIR/server.build"' EXIT
+
+PYTHONPATH="$WINE_PYPATH" ascend_build_env wine "$WIN_PYTHON" -m nuitka \
   --standalone \
   --mingw64 \
   --output-dir="$WINE_ROOT\\build\\work\\nuitka-win" \

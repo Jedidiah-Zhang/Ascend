@@ -48,7 +48,7 @@ miskhak/client/addons/
 # 打包时从 miskhak/lang 同步的语言副本（开发期客户端直读 res://../lang = miskhak/lang）
 miskhak/client/lang/
 
-# 打包时从 build/nuitka/version.txt 同步的版本文件（主菜单显示用）
+# 打包时从 build/version/miskhak.txt 同步的版本文件（主菜单显示用）
 miskhak/client/version.txt
 
 # 前端资源文件（不开源：美术素材、音频等）

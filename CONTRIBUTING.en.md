@@ -145,13 +145,13 @@ Follow the [Conventional Commits](https://www.conventionalcommits.org/) spec and
 
 ## Release
 
-- Single source of version: `build/nuitka/version.txt` (derives release naming, artifact filenames, Windows exe properties, and main-menu display)
-- Pushing a tag triggers CI auto-release — currently the backend (research platform) only; this is normally done by maintainers:
+- Single source of version: `build/version/` (`core.txt` shared core, plus `miskhak.txt` / `kheker.txt` product versions = core version + product sequence; verified by `build/ci/check_version.sh`)
+- Pushing a `research-v*` tag triggers CI auto-release of the research package; this is normally done by maintainers:
 
 ```bash
 git push origin main
-git tag v<version> && git push origin v<version>
+git tag research-v<version> && git push origin research-v<version>
 ```
 
-- Local build: `bash build/build_release.sh all` (see `build/README.md`)
-- Frontend distribution (including proprietary assets) follows a private process, not this repo's CI
+- Local build: `bash build/package.sh miskhak|kheker [linux|windows|all]` (see `build/README.md`)
+- Game packages (including proprietary assets) follow a private process, not this repo's CI

@@ -1,12 +1,15 @@
 name: Release
 
 # 触发：
-#   - 推送 v* 标签（正式发布：构建 + 自动发版）
+#   - 推送 research-v* 标签（研究包正式发布：构建 + 自动发版）
 #   - 手动运行（仅构建，产物作为 artifact 供下载，不发版）
+#
+# 游戏包（game-v*）不进本仓库 CI：前端为闭源商业资产，走私有流程。
+# 版本号与 tag 约定见 build/README.md。
 on:
   push:
     tags:
-      - "v*"
+      - "research-v*"
   workflow_dispatch:
 
 permissions:
@@ -16,11 +19,11 @@ jobs:
   check-version:
     name: 版本对账
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')   # 仅 tag 触发时校验
+    if: startsWith(github.ref, 'refs/tags/research-v')   # 仅 tag 触发时校验
     steps:
       - uses: actions/checkout@v5.1.0
 
-      - name: 校验触发 tag 与 version.txt 一致
+      - name: 校验触发 tag 与 kheker 版本一致
         run: bash build/ci/check_version.sh --tag "${{ github.ref_name }}"
 
   build-linux:
@@ -38,14 +41,14 @@ jobs:
           python -m pip install -q -r build/nuitka/requirements-build.txt
           python -m pip install -q -r requirements.txt
 
-      - name: 一键打包后端（研究平台发行）
-        run: bash build/build_backend_release.sh linux
+      - name: 一键打包研究包
+        run: bash build/package.sh kheker linux
 
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: release-linux
           path: |
-            build/dist/release/ascend-server-linux.tar.gz
+            build/dist/kheker/ascend-research-linux.tar.gz
           if-no-files-found: error
 
   build-windows:
@@ -74,17 +77,17 @@ jobs:
         shell: bash
         run: bash build/ci/setup_mingw.sh
 
-      - name: 一键打包后端（原生编译，研究平台发行）
+      - name: 一键打包研究包（原生编译）
         shell: bash
         env:
           BACKEND_WIN_SCRIPT: build/nuitka/build_backend_windows_native.sh
-        run: bash build/build_backend_release.sh windows
+        run: bash build/package.sh kheker windows
 
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: release-windows
           path: |
-            build/dist/release/ascend-server-windows.zip
+            build/dist/kheker/ascend-research-windows.zip
           if-no-files-found: error
 
   test:
@@ -108,7 +111,7 @@ jobs:
 
   release:
     name: 发布 GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')   # 仅 tag 触发时发版
+    if: startsWith(github.ref, 'refs/tags/research-v')   # 仅 tag 触发时发版
     needs: [check-version, build-linux, build-windows, test]
     runs-on: ubuntu-latest
     steps:
@@ -119,14 +122,14 @@ jobs:
       - uses: actions/download-artifact@v8.0.1
         with:
           name: release-linux
-          path: build/dist/release
+          path: build/dist/kheker
 
       - uses: actions/download-artifact@v8.0.1
         with:
           name: release-windows
-          path: build/dist/release
+          path: build/dist/kheker
 
       - name: 发布（版本化命名 + 上传 Release）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash build/ci/publish_release.sh
+        run: bash build/ci/publish_release.sh kheker

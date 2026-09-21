@@ -137,13 +137,14 @@ W4 双跑一致断言；可重算的解析量**不得**落盘。改动状态载�
 
 ## 发布
 
-- 版本号单一来源：`build/nuitka/version.txt`（Release 命名、产物文件名、Windows exe 属性、主菜单显示均由它派生）
-- 推送标签会触发 CI 自动发版——目前仅发行后端（研究平台）；此操作通常由维护者执行：
+- 版本号单一来源：`build/version/`（`core.txt` 共享核心 + `miskhak.txt` /
+  `kheker.txt` 产品版本 = 核心版本 + 产品序号；`build/ci/check_version.sh` 对账）
+- 推送 `research-v*` 标签会触发 CI 自动发研究包；此操作通常由维护者执行：
 
 ```bash
 git push origin main
-git tag v<版本> && git push origin v<版本>
+git tag research-v<版本> && git push origin research-v<版本>
 ```
 
-- 本地打包：`bash build/build_release.sh all`（详见 `build/README.md`）
-- 前端发行（含闭源资产）走私有流程，不在本仓库 CI
+- 本地打包：`bash build/package.sh miskhak|kheker [linux|windows|all]`（详见 `build/README.md`）
+- 游戏包（含闭源资产）走私有流程，不在本仓库 CI

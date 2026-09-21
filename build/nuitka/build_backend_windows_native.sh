@@ -14,10 +14,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERSION="$(cat "$ROOT/build/nuitka/version.txt")"
+# 版本资源取共享核心版本（后端二进制为两类包共用；产品版本在包层）
+VERSION="$(tr -d '[:space:]' < "$ROOT/build/version/core.txt")"
 PRODUCT_VERSION="${VERSION%%-*}"
 MINGW_GCC="${MINGW_GCC:-gcc}"
 OUT_DIR="$ROOT/build/work/nuitka-win"
+
+# 环境净化：编译进程不得继承 shell 凭据（Nuitka 会把整个环境写进
+# build/work/*/run_server.build/scons-debug.py）
+source "$ROOT/build/lib/build_env.sh"
 # Nuitka（Windows Python）需要 Windows 风格路径；参数统一用正斜杠
 WIN_ROOT="$(cygpath -w "$ROOT" | tr '\\' '/')"
 
@@ -39,7 +44,11 @@ cd "$ROOT"
 # 2. Nuitka 编译（原生 Windows；--mingw64 与 wine 版产物同源同构）
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
-PYTHONPATH="$WIN_ROOT" python -m nuitka \
+
+# 构建中间目录含环境快照，无论成败都不留在磁盘上
+trap 'rm -rf "$OUT_DIR/run_server.build" "$OUT_DIR/server.build"' EXIT
+
+PYTHONPATH="$WIN_ROOT" ascend_build_env python -m nuitka \
   --standalone \
   --mingw64 \
   --output-dir="$WIN_ROOT/build/work/nuitka-win" \
