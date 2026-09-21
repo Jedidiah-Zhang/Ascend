@@ -5,7 +5,7 @@
 计划条目（单一事实源 = 注入核）；终端 do 指令组与 net 研究 API 同源落到
 同一时间线，缺省解析与错误处理一致。
 
-- 历史稳定：撤销不改写已物化帧的解析结果。
+- 撤销不改写已物化帧的解析结果。
 - 机制替换关闭：do mech 与 research_do 的 rep/mechanism_id 一律拒绝。
 - 另含两条系统性门禁：可达性漂移巡检与 do 指令组 i18n 双语对账。
 """
@@ -123,7 +123,7 @@ class TestEngineEvaluation:
         assert snapshot[0]["submitted_at"] is not None
 
     def test_node_outside_eval_rejected(self, weather_engine):
-        """已声明但未接线的生成点：登记被拒绝（不再静默无效）。"""
+        """已声明但未接线的生成点：登记被拒绝（fail-closed）。"""
         from olam.modules import ids as m
 
         _, table = weather_engine
@@ -231,7 +231,7 @@ class TestForceFeatureIntervention:
         assert core.is_active(far_future)
 
     def test_revoke_then_stop_still_removes_core(self, weather_engine, clock):
-        """回归：撤销计划后，weather feature stop 仍能解除核。"""
+        """撤销计划后，weather feature stop 仍能解除核。"""
         engine, table = weather_engine
         assert engine.force_feature(0, 0, "storm", True) is True
         assert table.revoke(
@@ -282,7 +282,7 @@ class TestDoCommands:
         assert "超出" in result.output or "值域" in result.output
 
     def test_do_value_rejects_extra_args(self, executor):
-        """多余参数 fail-closed（不再静默忽略坐标/垃圾 token）。"""
+        """多余参数 fail-closed（拒绝坐标/垃圾 token）。"""
         from olam.modules import ids as m
 
         result = executor.execute(
@@ -377,7 +377,7 @@ class TestDoCommands:
         assert "未找到" in result.output
 
     def test_do_clear_single_coord_is_friendly_error(self, executor):
-        """回归：单坐标不再抛 IndexError 逃逸到 dispatcher。"""
+        """单坐标按多余参数拒绝，不抛 IndexError。"""
         from olam.modules import ids as m
 
         result = executor.execute(f"do clear node {m.INSTANT_TEMPERATURE} 3")
@@ -576,7 +576,7 @@ class TestResearchApi:
         assert engine.field.features.get_injected(0, 0, "storm") is None
 
     def test_research_do_feature_clear_removes_core(self, weather_engine):
-        """回归：API 清除 feature 走 force_feature，不留孤儿注入核。"""
+        """API 清除 feature 走 force_feature，不留孤儿注入核。"""
         handler, table = self._handler(weather_engine)
         engine = weather_engine[0]
         handler["research_do"]({
@@ -705,7 +705,7 @@ class TestResearchApi:
     def test_research_do_clear_feature_unknown_type_is_handled(
         self, weather_engine,
     ):
-        """回归：clear 的 feature 分支与 do 对称（不抛未捕获 ValueError）。"""
+        """clear 的 feature 分支与 do 对称，不抛未捕获 ValueError。"""
         handler, _ = self._handler(weather_engine)
         response = handler["research_do_clear"]({
             "payload": {
@@ -731,7 +731,7 @@ class TestResearchApi:
 # ── 可达性声明漂移巡检（ENGINE_EVAL_OUTPUTS == 实际求值点）──────────
 
 class TestWiringDrift:
-    """ENGINE_EVAL_OUTPUTS == 引擎实际求值集合（可达性声明不腐烂）。"""
+    """ENGINE_EVAL_OUTPUTS == 引擎实际求值集合。"""
 
     def test_eval_nodes_evaluated_by_engine(self, weather_engine):
         """运行时覆盖：引擎求值结果节点集合 == ENGINE_EVAL_OUTPUTS。
@@ -759,7 +759,7 @@ class TestWiringDrift:
             "weather_engine.py 仍存在手工顺序的节点求值调用；"
             "所有求值面节点应经世界程序求值"
         )
-        # 区域观测器仍以注入求值器消费节点（漂移巡检锚点保留）
+        # 区域观测器以注入求值器消费节点（漂移巡检锚点）
         tracker_source = (adapters / "region_tracker.py").read_text(
             encoding="utf-8",
         )

@@ -1,7 +1,6 @@
 """玩家状态网络处理程序 — 权威玩家位置的查询与移动上报。
 
-通过 make_player_handler() 工厂函数创建，返回 {request_type: handler} 映射，
-与 map_handler / weather_handler 模式一致。
+通过 make_player_handler() 工厂函数创建，返回 {request_type: handler} 映射。
 
 协议:
     player_state 请求 → {payload: {entity_id, x, y}}
@@ -70,7 +69,7 @@ def make_player_handler(player_service):
 
         非法坐标忽略上报，返回当前权威位置（前端据此纠正）。
         seq（若携带）原样回传——TCP 有序且响应与上报一一对应，
-        前端据此精确识别"回声认可"与"钳制偏离"，避免位移窗口错位误判。
+        前端据此识别"回声认可"与"钳制偏离"。
 
         Args:
             msg: 请求消息，payload 含 "x"、"y"（可选 "seq"）。

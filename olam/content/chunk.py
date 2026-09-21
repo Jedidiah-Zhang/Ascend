@@ -60,9 +60,6 @@ class ChunkData:
 
     # 详细层 — 按需生成
     # tile_grid 代表地表层（layer_id=0）的详细 tile。
-    # 未来洞穴层（layer_id<0）的 chunk 数据结构待定，
-    # 可能是 ChunkData 内嵌 caves: dict[int, TileGrid]，
-    # 或独立的 CaveChunkData。当前不预留字段，避免过早抽象。
     tile_grid: TileGrid | None = None
 
     # 玩家修改未落盘标记。不变量：dirty ⇒ 持有 tile_grid——
@@ -79,8 +76,7 @@ class ChunkData:
 
     # 状态层积分游标（地形状态引擎维护）：tile_grid 的状态数组
     # 已积分到该 tick 的声明更新点；0=未积分（从世界开端补算）。
-    # 随 chunk_tiles 持久化——LRU 淘汰/读档后按此续算缺口，防止
-    # 把已积分的历史重放一遍。
+    # 随 chunk_tiles 持久化——LRU 淘汰/读档后按此续算缺口。
     integrated_through: int = 0
 
     @property

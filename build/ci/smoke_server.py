@@ -10,11 +10,11 @@
     3. 发送 save_list 请求，等待 response（验证 handler 注册与存档层就绪）
 
 帧格式与 miskhak/net/protocol.py 保持一致（1B 版本 + 4B 大端长度 + JSON 体）；
-故意独立实现（不 import 后端代码），使冒烟能暴露打包产物自身的协议破损。
+本文件独立实现（不 import 后端代码）。
 协议常量随产物契约手动同步（版本表见 miskhak/net/protocol.py 与
 miskhak/client/scripts/config.gd）。
 
-退出码: 0 = 通过；1 = 失败（附时间线，便于与产物日志对照）。
+退出码: 0 = 通过；1 = 失败（失败输出附时间线）。
 """
 
 import argparse
@@ -74,6 +74,7 @@ def wait_ready(host: str, port: int, timeout: float) -> socket.socket:
 
 
 def main() -> int:
+    """执行冒烟流程，返回退出码（0 = 通过；1 = 失败）。"""
     parser = argparse.ArgumentParser(description="Ascend 打包产物协议级冒烟")
     parser.add_argument("--port", type=int, required=True, help="产物监听端口")
     parser.add_argument("--token-file", required=True, help=".ascend_token 文件路径")

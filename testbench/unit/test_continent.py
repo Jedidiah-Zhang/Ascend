@@ -1,18 +1,15 @@
 """大陆生成模块测试 — 层1 全局低分辨率大陆生成。
 
-测试覆盖（按 TDD 顺序）：
-  1. TestContinentOutline — 大陆轮廓：有限边界 + 海陆比 + 连续性
-  2. TestTerrainBlocks — 地块划分：数量 + 大小 + 曲率 + 岩性
-  3. TestTectonicSkeleton — 构造骨架线：碰撞带 + 拉张带 + 曲率
-  4. TestElevationSynthesis — 海拔合成：值域 + 双峰 + 连续性
-  5. TestGlacialModel — 冰川侵蚀
-  6. TestCoastalClassification — 海岸分类
-  7. TestVolcanism — 火山分布
+覆盖：
+  - TestCenterDistance — center_distance 四象限对称性
+  - TestContinentOutline — 大陆轮廓：有限边界 + 海陆比 + 确定性
+  - TestGeneratePreview — generate_preview 缩略图与气候图层
+  - TestContinentalityClimate — 大陆度修正 + 万向风气候（chunk 级）
+  - TestVisualOutput — 手动运行的 PNG 可视化
 
 约定：
   - seed=42 为规范测试种子
   - 无 parametrize，使用显式循环
-  - 所有类和方法有中文 docstring
   - 在仓库根运行 pytest
 """
 
@@ -49,7 +46,7 @@ class TestCenterDistance:
     """center_distance 四象限对称性（Chebyshev 距离）。"""
 
     def test_third_quadrant_negative_y_axis(self):
-        """防护：dx=0, dy=-2 应算得 2（不得误算为 0）。"""
+        """dx=0, dy=-2 应算得 2。"""
         from olam.generation.continent import center_distance
         assert center_distance(0.0, -2.0) == 2.0
         assert center_distance(0.0, -1.5) == 1.5
@@ -141,7 +138,7 @@ class TestContinentOutline:
         assert not all(mask), "至少存在一个海洋像素"
 
     def test_land_mass_ratio_in_range(self):
-        """陆地比例在 15%-65% 之间。
+        """陆地比例在 15%-75% 之间。
 
         默认 land_ratio=0.55，允许一定偏差。
         """
@@ -246,7 +243,7 @@ class TestContinentOutline:
 
 
 # ════════════════════════════════════════════════════════════════
-# 3. TestContinentalityClimate — 大陆度 + 万向风气候测试
+# 3. TestGeneratePreview — 快速地形预览与气候图层
 # ════════════════════════════════════════════════════════════════
 
 
@@ -385,7 +382,7 @@ class TestGeneratePreview:
         assert all(isinstance(v, int) for v in p["climate"])
 
     def test_preview_climate_omitted_by_default(self):
-        """缺省 layers 不计算气候（向后兼容）。"""
+        """缺省 layers 不计算气候。"""
         from olam.generation.continent import ContinentGenerator
         p = ContinentGenerator(seed=CANONICAL_SEED).generate_preview(0.55)
         assert "temperature" not in p
@@ -514,7 +511,7 @@ class TestContinentalityClimate:
 
     @staticmethod
     def _chunk_dict_to_field(cont, field_idx: int) -> list:
-        """从 chunk 气候 dict 重建逐格数组（仅用于可视化兼容）。
+        """从 chunk 气候 dict 重建逐格数组（供可视化使用）。
 
         field_idx: 0=temp, 1=rain, 2=sea_temp, 3=zone
         """

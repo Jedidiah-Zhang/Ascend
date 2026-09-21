@@ -16,11 +16,10 @@ Lean 证书：
   G1 反馈环收缩：全图任意环上 L 乘积 < 1（推论 2.2 收敛）；≥1 ⟹ FAIL
      （推论 2.3：=1 线性累积、>1 指数发散）；
   G2 路径权重上界：max_u,t W(u,t) ≤ W_MAX（当前 2000.0；世界生成标量
-     公式带来单位量纲映射边（噪声→mm/年 等，L~1725），绝对值大但不
-     放大相对误差——放大语义仍由 G1 环收缩与 G3 相对预算守卫）；
+     公式含单位量纲映射边（噪声→mm/年 等，L~1725））；
   G3 反事实误差界：对每个有值域（bounds）的目标 t，Σ_u ε_u·W(u,t)
-     ≤ 5% × 值域宽度（量纲归一——不同变量单位不同，不能用全局标量
-     阈值；需声明 variables[*].eps，未声明 ⟹ 缺口报告）；
+     ≤ 5% × 值域宽度（按值域宽度归一；需声明 variables[*].eps，
+     未声明 ⟹ 缺口报告）；
      无 bounds 的目标（外生根）界≡ε 自身，不做判定；
   G4 遗忘深度：θ=0.01，报告"权重衰减到 θ 以下所需深度 vs 实际路径
      长度"——收缩快的路径上深层上游误差可忽略（推论 2.2 记忆衰减的
@@ -60,6 +59,7 @@ THETA = 0.01         # G4 遗忘阈值
 
 
 def line(name: str, ok: bool, detail: str = "") -> str:
+    """格式化单条判据结果行。"""
     return f"[{'PASS' if ok else 'FAIL'}] {name} | {detail}"
 
 
@@ -156,6 +156,7 @@ def tainted_pairs(
 
 
 def main() -> int:
+    """运行声明图健康巡检并打印判据结果；返回退出码。"""
     ap = argparse.ArgumentParser(description="声明图健康巡检（L2 设计判据）")
     ap.add_argument("--json", default=str(JSON_PATH),
                     help="声明 JSON 路径")

@@ -10,7 +10,7 @@ extends RefCounted
 
 ## 就绪判定半径：出生 chunk 周围 radius×radius 圈全部加载视为就绪
 const TERRAIN_READY_RADIUS: int = 1
-## 地形就绪等待超时（秒）：超时强制显示，防后端异常时玩家永久卡住
+## 地形就绪等待超时（秒）：超时强制判定就绪
 const TERRAIN_READY_TIMEOUT: float = 8.0
 ## 补满收尾兜底（秒）：进度条补满动画异常（completed 信号未触发）时强制收尾
 const COMPLETION_FALLBACK_SEC: float = 3.0
@@ -31,7 +31,7 @@ var _completion_fallback_sec: float = 0.0
 ##     （completed 信号未触发，主世界应直接显示世界）。
 func tick(delta: float) -> Dictionary:
 	var act := {"force_ready": false, "force_finish": false}
-	# 就绪等待计时仅在补满收尾开始前累积（开始后不再触发重复强判）
+	# 就绪等待计时仅在补满收尾开始前累积
 	if not _loading_completed:
 		_terrain_ready_timer += delta
 		if _terrain_ready_timer >= TERRAIN_READY_TIMEOUT:
@@ -60,7 +60,7 @@ func finish() -> void:
 	_terrain_ready_timer = 0.0
 
 
-## 重置（世界重建/断线后旧加载状态失效）。
+## 重置（世界重建/断线时调用）。
 func reset() -> void:
 	_loading_completed = false
 	_terrain_ready_timer = 0.0

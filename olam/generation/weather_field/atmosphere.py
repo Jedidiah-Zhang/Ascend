@@ -8,7 +8,7 @@
 场沿风向漂移（wind_vector 驱动采样坐标偏移），值随时间连续。
 
 相邻位置采样坐标接近 → 空间连续；每个通道独立 PerlinNoise 实例
-（seed 去相关），多八度叠加使场值非平凡连续（无直线式梯度）。
+（seed 去相关）。
 
 纯查询对象，构造后只读，线程安全。
 """
@@ -110,7 +110,7 @@ class TextureField:
         Returns:
             单位向量 (wx, wy)。
         """
-        # +0.5 偏移避开 Perlin 整数网格零点（否则 game_time=0 时噪声恒为 0）
+        # +0.5 偏移避开 Perlin 整数网格零点
         angle = self._wind_noise.sample(game_time * 1e-7 + 0.5, 0.5) * math.pi
         return (math.cos(angle), math.sin(angle))
 

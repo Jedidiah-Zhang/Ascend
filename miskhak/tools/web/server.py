@@ -331,7 +331,7 @@ def _tile_worker(seed: int, cx: int, cy: int, w: int, h: int, mode: str) -> byte
     """在子进程中生成瓦片原始数据（float32 数组）。
 
     返回 5 层: [海拔][温度][降雨][气候][群系]，行优先、小端 float32。
-    直接采样生产 WorldGenerator，避免维护另一套世界生成公式。
+    直接采样生产 WorldGenerator。
     """
     import struct
     gen = _get_generator(seed)

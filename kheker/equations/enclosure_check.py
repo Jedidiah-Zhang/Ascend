@@ -421,6 +421,7 @@ class EnclosureCheckReport:
 
     @property
     def passed(self) -> bool:
+        """无未覆盖机制且无包含失败。"""
         return not self.uncovered and not self.problems
 
 

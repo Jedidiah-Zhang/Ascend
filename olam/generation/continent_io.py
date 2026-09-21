@@ -1,8 +1,7 @@
 """大陆缓存 I/O — 层1 宏观场的二进制序列化。
 
-从 continent.py 拆出：缓存随档分发（存档可分享），pickle 反序列化
-可执行任意代码（恶意分享存档 = 加载即 RCE）；本模块只解析
-struct/array 字节，无代码执行面，截断/篡改数据一律拒绝。
+缓存随存档分发（存档可分享）。本模块只解析 struct/array 字节，无代码
+执行面：截断/篡改数据一律拒绝。
 
 序列化布局见 CONTINENT_CACHE_VERSION 下方注释（显式二进制 schema）。
 """
@@ -17,10 +16,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# 大陆缓存格式版本：仅标识当前二进制格式，不追溯历史版本——
-# 格式变更时保持递增，任何版本字节不匹配的旧缓存一律
-# 反序列化失败 → 重新生成。头部 gen_fingerprint 字段标识生成环境，
-# 加载时与当前指纹不一致即拒绝加载（fail-closed，见 generator）。
+# 大陆缓存格式版本：仅标识当前二进制格式。格式变更时递增；
+# 版本字节不匹配的缓存一律反序列化失败 → 重新生成。头部
+# gen_fingerprint 字段标识生成环境，加载时与当前指纹不一致即
+# 拒绝加载（fail-closed，见 generator）。
 CONTINENT_CACHE_VERSION: int = 1
 
 # ── 二进制序列化（显式 schema，非 pickle） ────────────────
@@ -33,7 +32,7 @@ CONTINENT_CACHE_VERSION: int = 1
 #   land_mask      u32 n + n×u8        （布尔掩码按 0/1 字节）
 #   elevation      u32 n + n×f64
 #   river_width    u32 n + n×f64
-#   water_distance u32 n + n×f64       （v2 新增，距水距离场 m，0=水体）
+#   water_distance u32 n + n×f64       （距水距离场 m，0=水体）
 #   hydrology      u8 present
 #     lake_basins  u32 count; each: u32 cells_n + cells_n×i32 + f64×2
 #     flow_acc     u32 n + n×f64
@@ -46,9 +45,9 @@ CONTINENT_CACHE_VERSION: int = 1
 #         + i32 source_idx + i32 outlet_idx + u32 pn + pn×i32
 #       node_grid u32 count; each: i32 key, i32 x, i32 y
 #   subdiv_ranges  u32 count; each: i32 zone, f64 p10, f64 p90
-#                （派生缓存：读入后丢弃，见 deserialize_continent）
+#                （派生缓存：读入后保留）
 #   chunk_climate  u32 count; each: i32 cx, i32 cy, f64×3, i32 zone
-#                （派生缓存：读入后丢弃，见 deserialize_continent）
+#                （派生缓存：读入后保留）
 # 网格字段（land_mask/elevation/river_width/flow_acc/directions/
 # filled_dem）长度须 == grid_width × grid_height（防截断/篡改）。
 _MAGIC: bytes = b"ASCNT"
@@ -176,8 +175,8 @@ def serialize_continent(data: ContinentData) -> bytes:
 
     显式二进制 schema（见模块注释）：无代码执行面，随档分发安全。
 
-    末尾两个派生缓存段（subdiv_ranges/chunk_climate）在加载时被丢弃
-    并重算；此处仍写出，保持格式兼容（旧构建可读，字段不缩水）。
+    末尾两个派生缓存段（subdiv_ranges/chunk_climate）随缓存写出；
+    加载路径读入并保留（缓存缺派生段时由加载方注入重建入口）。
     """
     data.ensure_derived_caches()  # 加载后回写：先按当前算法补建，不写空段
     buf = io.BytesIO()
@@ -245,16 +244,15 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
     """压缩字节 → ContinentData。
 
     末尾两个派生缓存段（subdiv_ranges/chunk_climate）按格式读入并保留：
-    它们与宏观场同源写入、受 gen_fingerprint 背书（算法不一致在生成器
-    加载路径 fail-closed），加载即信任。缺派生段的旧格式由加载方经
+    它们与宏观场同源写入、受 gen_fingerprint 校验（算法不一致在生成器
+    加载路径 fail-closed），加载即信任。缺派生段的缓存由加载方经
     ContinentData.attach_derived_rebuilder 注入重建入口惰性重算。
 
     Returns:
         ContinentData；格式/版本不符、数据损坏或截断时返回 None
         （调用方据此重新生成并覆盖缓存）。
     """
-    # 惰性导入避免循环依赖（hydrology/streamlines 不依赖本模块，
-    # 但本模块在生成路径中才用到它们）
+    # 惰性导入（生成路径才会用到 hydrology/streamlines）
     from olam.generation.hydrology import HydrologyData, LakeBasin
     from olam.generation.streamlines import RiverNetwork, River, RiverPoint
     try:
@@ -372,11 +370,9 @@ def deserialize_continent(raw: bytes) -> "ContinentData | None":
             land_mask=land_mask, elevation_field=elevation,
             river_width=river_width, water_distance=water_distance,
             hydrology=hydrology,
-            # 派生缓存随缓存持久化：写入时与宏观场同源、同一算法，且
-            # gen_fingerprint 已背书算法一致（不一致在生成器加载路径
-            # fail-closed）。加载即信任，不做"按当前算法重算"——重算
-            # 输入（侵蚀前气候场）不落盘，与生成值非逐位一致，会静默
-            # 改变读档后的轨迹。缺派生段的旧格式由加载路径注入重建入口。
+            # 派生缓存随缓存持久化：加载即信任（gen_fingerprint 校验
+            # 算法一致，不一致在生成器加载路径 fail-closed）；缺派生段
+            # 的缓存由加载路径注入重建入口。
             _subdiv_ranges=subdiv_ranges,
             _chunk_climate=chunk_climate,
             _derived_ready=True,
@@ -397,8 +393,8 @@ def read_continent_header(raw: bytes) -> "tuple[int, str] | None":
         raw: continent.bin 原始字节（zlib 压缩）。
 
     Returns:
-        (版本号, 指纹字符串)；格式非法/损坏/旧版本无指纹字段时
-        返回 (版本, "")，magic 不符或不可解压时返回 None。
+        (版本号, 指纹字符串)；格式非法/损坏/非当前格式版本（无指纹
+        字段）时返回 (版本, "")，magic 不符或不可解压时返回 None。
     """
     try:
         head = zlib.decompressobj().decompress(raw, 64 + 256)
@@ -410,7 +406,7 @@ def read_continent_header(raw: bytes) -> "tuple[int, str] | None":
             return None
         version = r.u8()
         if version != CONTINENT_CACHE_VERSION:
-            # 非当前格式（旧缓存/未来版本产物）：指纹无从解析
+            # 非当前格式版本：指纹无从解析
             return (version, "")
         return (version, r.string())
     except (struct.error, ValueError, IndexError):

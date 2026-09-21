@@ -61,7 +61,7 @@ class TestParseSeed:
         assert parse_seed("   ") == 0
 
     def test_bool_rejected(self):
-        """bool 是 int 子类——显式拒绝，避免 True→1 误入。"""
+        """bool 是 int 子类——显式拒绝。"""
         with pytest.raises(ValueError):
             parse_seed(True)
         with pytest.raises(ValueError):

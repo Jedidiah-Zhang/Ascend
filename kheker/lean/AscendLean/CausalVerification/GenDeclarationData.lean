@@ -9,7 +9,7 @@ import AscendLean.CausalVerification.Declarations
 
 来源与指纹（sha256 前 16 位）：
 - kheker/equations/equations.json   sha256:8b20164019d3defa
-- olam/constants.py            sha256:42d052229f2d804f
+- olam/constants.py            sha256:22cc1cd8aa5dafe2
 
 防漂移三层闭环：
 ① 注册表快照/配置改动 → 数据段字面量/本头指纹变化 → --check 失败；

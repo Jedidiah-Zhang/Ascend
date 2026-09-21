@@ -93,7 +93,7 @@ func _send_default(message: Dictionary) -> void:
 
 
 ## 请求响应回调（挂起请求表按 seq 精确配对）：CREATE 进入世界流程、
-## 其余错误/超时/断线统一复位忙状态并提示。
+## 其余错误/超时/断线复位忙状态并提示。
 func _on_request_response(message: Dictionary) -> void:
 	if message.get("type", "") == "error":
 		_busy = false

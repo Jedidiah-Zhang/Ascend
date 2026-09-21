@@ -1,4 +1,4 @@
-"""世界常量 — 世界身份与内容参数的单一定义源（world 区）。
+"""世界常量 — 世界身份与内容参数的单一定义源。
 
 - 时间刻度（TICK_RATE / GAME_*）与内容参数（World / Climate / Weather /
   Tile）在此定义；内容参数的有效值来自 ``data/world.json``（改内容只改
@@ -82,9 +82,8 @@ CONTINENTALITY_D0_KM: float = 200.0
 # 噪声频率
 NOISE_FREQ_DERIVED: float = 0.005     # 派生参数噪声（中频，日照/湿度/风速）
 
-# 群系细分 moisture 噪声（tile 级世界坐标频率——与 chunk 级 NOISE_FREQ_DERIVED
-# 同空间尺度：chunk 级在块坐标用 0.005，tile 级换算到世界坐标后频率除以
-# TILE_MAP_SIZE，保证 chunk 标签与 tile 隶属度来自同一噪声场）
+# 群系细分 moisture 噪声（tile 级世界坐标频率 = chunk 级 NOISE_FREQ_DERIVED
+# 除以 TILE_MAP_SIZE，两者同空间尺度）
 MOISTURE_TILE_FREQUENCY: float = NOISE_FREQ_DERIVED / TILE_MAP_SIZE
 
 # 地形噪声
@@ -313,7 +312,7 @@ SEASONAL_AMP_R_BONUS: float = 4.0       # 干旱区大陆性修正幅度
 SEASONAL_AMP_BOUNDS: tuple[float, float] = (1.0, 30.0)
 
 # 地形材质分布阈值
-# 全部输入为低频连续场，不参与 layer1 大陆生成——不入指纹名单。
+# 全部输入为低频连续场，不参与 layer1 大陆生成，不入指纹名单。
 # 距水距离带 (m)：按到最近水体（海/河/湖）的平面距离划分材质
 SAND_BEACH_BAND_M: float = 40.0         # 沙滩带：距水 < 此值 → SAND
 
@@ -348,8 +347,7 @@ WATER_WADE_DEPTH_M: float = 2.0
 WATER_WADE_COST: float = 3.0
 
 # 指纹覆盖的生成相关常量名（compute_gen_fingerprint 经 getattr 解析，
-# 测试保证名单内名字全部存在）。修改影响大陆宏观场输出的常量时，
-# 应将其加入此元组——漂移才能被 continent status 与加载告警发现。
+# 名单内名字全部存在，由测试保证；名单外常量不参与指纹）。
 CONTINENT_GEN_CONSTANT_NAMES: tuple[str, ...] = (
     "CONTINENT_WIDTH_KM", "CONTINENT_HEIGHT_KM", "CONTINENT_SAMPLE_RESOLUTION_M",
     "CONTINENT_LAND_RATIO",
@@ -377,8 +375,8 @@ CONTINENT_GEN_CONSTANT_NAMES: tuple[str, ...] = (
 )
 
 # 打包环境（生成管线源码缺失，无法哈希源码）的生成版本号：
-# 发布时若生成算法/相关常量变化，递增此值——打包指纹随之变化。
-# 开发环境指纹含源码哈希，日常无需维护；仅进发布清单（build/README.md）。
+# 开发环境指纹含源码哈希；打包环境以该值替代源码成分。
+# 生成算法/相关常量变化时递增此值（进发布清单，见 build/README.md）。
 CONTINENT_GEN_VERSION: int = 1
 
 from olam.content.loader import load_content as _load_content

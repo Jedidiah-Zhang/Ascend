@@ -29,7 +29,7 @@ class TestWorldSettings:
         validate_world_settings(self._manifest(settings), settings)
 
     def test_absent_declaration_accepted_for_backfill(self):
-        """旧存档未记录声明版本：放行，由调用方随后补写。"""
+        """未记录声明版本：放行，由调用方随后补写。"""
         validate_world_settings(
             self._manifest(None), build_game_program().declaration_settings(),
         )
@@ -101,7 +101,7 @@ class TestWorldProgram:
         validate_world_program(self._manifest(view), view)
 
     def test_absent_program_accepted_for_backfill(self):
-        """旧存档未记录程序身份：放行，由调用方随后补写。"""
+        """未记录程序身份：放行，由调用方随后补写。"""
         validate_world_program(self._manifest(None), self._program())
 
     def test_identity_mismatch_rejected(self):

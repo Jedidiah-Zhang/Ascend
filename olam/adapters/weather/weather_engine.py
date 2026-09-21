@@ -10,8 +10,8 @@
 极端天气：场特征核（寒潮/热浪/风暴/锋面），核出现/消失 →
 区域级 start/stop 事件（per-chunk 覆盖范围跟踪）。
 
-事件按等级发布（整数 tier + prev_tier，边界见 config `*_TIER_BOUNDARIES`），
-仅在等级跨越边界时触发。
+事件按等级发布（整数 tier + prev_tier，边界见 ``olam/constants.py``
+的 `*_TIER_BOUNDARIES`），仅在等级跨越边界时触发。
 
 """
 
@@ -58,7 +58,7 @@ class _ChunkWeatherBaseline:
             年均基线值（rainfall 为 mm/年，降水校准输入）。
         mean_intensity: 气候带基准降雨强度 (mm/h)（来自模板的数据契约）。
         seasonal_amp: 季节温度振幅 (°C)，从年均温+年降雨连续推导（derive_seasonal_amp），
-            保证气候带交界处无跳变。
+            气候带交界处无跳变。
         diurnal_amp: 昼夜温度振幅 (°C)，= seasonal_amp × RATIO（声明方程）。
         humidity_seasonal_amp: 季节湿度振幅 (pp)，= seasonal_amp × SCALE（声明方程）。
         humidity_diurnal_amp: 昼夜湿度振幅 (pp)，= seasonal_amp × RATIO × SCALE（声明方程）。
@@ -136,12 +136,11 @@ class WeatherEngine:
         self._seed = seed
         self._wt = world_tree_arg if world_tree_arg is not None else _default_wt
         self._intervention_table = intervention_table
-        # 研究记录（默认关闭：未挂载 = 零开销；研究通道按需开启）
+        # 研究记录（默认关闭；研究通道按需开启）
         self._trace: TraceLog | None = None
         # 查询/写入互斥：handler 线程查询（get_weather 系）与游戏线程
         # 推进（advance / register / unregister）并发安全。
-        # RLock：事件发布在锁内同步分发（记录/观测），防未来订阅者
-        # 回调重入查询 API（当前订阅者仅转发与展示，RLock 为低成本防御）。
+        # RLock：事件发布在锁内同步分发，订阅者回调可重入查询 API。
         self._query_lock = threading.RLock()
         self._field = UnifiedWeatherField(seed=seed)
         self._fields: dict[tuple[int, int], WeatherField] = {}
@@ -202,8 +201,7 @@ class WeatherEngine:
         """天气侧 W_t 载荷：干预时间线（计划 + 已发生记录）。
 
         可重算量（统一天气场、气候代理、自然核时间线、区域跟踪器、
-        chunk 基线）一律不落盘——它们由 seed + 时钟 + 声明重建，
-        漏存它们不会改变轨迹，多存它们则掩盖"状态充分性"的真问题。
+        chunk 基线）不落盘——由 seed + 时钟 + 声明重建。
 
         **注入特征核不作为状态**（WC-6.5）：它是外部输入
         （``field_feature`` 计划）的时间线投影，读档由
@@ -365,7 +363,7 @@ class WeatherEngine:
             self._fields.pop(key, None)
 
     def shutdown(self) -> None:
-        """关闭引擎（无订阅；保留接口供生命周期统一调用）。"""
+        """关闭引擎（无订阅，仅记录日志）。"""
         logger.debug("天气引擎已关闭")
 
     # ── 公开：查询 API ──────────────────────────────────────────
@@ -381,16 +379,15 @@ class WeatherEngine:
     ) -> object:
         """单节点求值（区域通报等回调；含干预覆盖）。
 
-        区域通报只需要少数节点的即时值：本入口用声明直接求值
-        （``evaluate_direct``），干预覆盖按时间线解析——与主路径
-        （``_evaluate``）同一语义，但只算一个节点。
+        本入口用声明直接求值（``evaluate_direct``），干预覆盖按时间线
+        解析——与主路径（``_evaluate``）同一语义，但只算一个节点。
 
         Args:
             node_id: 输出节点/机制 ID。
             parent_values: 父值（按父槽位 ID；调用方已解析实例与帧）。
             frame: 当前世界 tick。
             instance: 实例坐标（全局分量用空元组）。
-            trace_kind: 记录性质（保留参数；单点求值不写记录）。
+            trace_kind: 记录性质（本入口不写记录）。
         """
         del trace_kind
         from olam.runtime import evaluate_direct
@@ -504,7 +501,7 @@ class WeatherEngine:
 
         边界 = 声明图之外/之前的输入：chunk 基线（气候静态量）与场采样
         （扰动/倍率/信号）。同点五通道共享一次核收集与漂移偏移。全部
-        实例值预计算 → 并行求值无需共享缓存；缺值即 KeyError（fail-closed）。
+        实例值预计算；缺值即 KeyError（fail-closed）。
 
         Returns:
             (boundary, hum_perturb)：``{(节点, 实例): 值}`` 与各实例湿度
@@ -725,7 +722,6 @@ class WeatherEngine:
         """查询任意 chunk 在当前或过去时刻的精确天气（解析算，无状态）。
 
         供 UI 面板、温度计、生态模拟等需要精确值的模块同步使用。
-        感知层 AI 决策应订阅事件而非轮询此方法。
 
         场为解析量（seed + 时间可完全重算），任意过去时刻精确，
         无调度窗口修剪。
@@ -824,8 +820,8 @@ class WeatherEngine:
             "tuple[WeatherParams, float, float, float, float, float] | None"):
         """一次计算返回当前时刻的完整天气报告（网络 handler 专用）。
 
-        天文与噪声只算一次，且降雨衰减自动使用含特征核效果的 rainfall，
-        调用方无需穿递。
+        天文读数与噪声在同一求值内取用；降雨衰减使用含特征核效果的
+        rainfall。
 
         Args:
             cx: chunk X 坐标。
@@ -928,7 +924,7 @@ class WeatherEngine:
             features = self._field.features
             table = self._intervention()
             # 单一事实源 = 注入核本身（记录只做校验/历史/回溯），
-            # 因此核自然过期后 stop 仍可解除，do clear 后核也不会成为孤儿。
+            # 因此核自然过期后 stop 仍可解除。
             core = features.get_injected(cx, cy, type_name)
             if active:
                 if core is not None and core.is_active(now):
@@ -938,8 +934,7 @@ class WeatherEngine:
                 wy = (cy + 0.5) * TILE_MAP_SIZE
                 # front（带形）需要移动矢量；其余核静止即可。
                 # 核规格进计划值（读档投影的事实源，WC-6.5）：
-                # 恢复不依赖 data/weather.json 的当前配置，避免配置漂移
-                # 悄悄改写既有存档的注入核。
+                # 恢复不依赖 data/weather.json 的当前配置。
                 spec = {
                     "center_x": wx,
                     "center_y": wy,
@@ -1125,8 +1120,7 @@ class WeatherEngine:
         ids = {core.core_id for core in cores}
         prev = field.active_feature_ids
         if prev is None:
-            # 首刻静默：仅初始化（注入核除外——调试注入是运行时操作，
-            # 应立即可见，不受历史状态静默影响）
+            # 首刻静默：仅初始化（注入核除外，立即可见）
             field.active_feature_ids = {
                 cid for cid in ids if not cid.startswith("inj:")
             }
@@ -1138,8 +1132,8 @@ class WeatherEngine:
             if ev is not None:
                 self._publish(cx, cy, now, ev)
         for core_id in prev - ids:
-            # 从当前核列表中定位已消失核的类型（重新收集成本高，
-            # 用 type 前缀区分注入核；自然核从段的确定性生成重查）
+            # 从当前核列表中定位已消失核的类型（用 type 前缀区分注入核；
+            # 自然核从段的确定性生成重查）
             core = self._find_core(core_id, now)
             if core is None:
                 continue
@@ -1195,8 +1189,7 @@ class WeatherEngine:
         """
         cx, cy = region.center_chunk
         if region.kind == "start":
-            # 降水类型：质心处温度判定（质心 chunk 未注册时缺省 rain，
-            # 不臆造 0°C 判雪——连通域质心几乎必为注册 chunk）
+            # 降水类型：质心处温度判定；质心 chunk 未注册时缺省 rain
             temp = None
             if (cx, cy) in fields:
                 temp = values.get((_mechanisms.INSTANT_TEMPERATURE, (cx, cy)))

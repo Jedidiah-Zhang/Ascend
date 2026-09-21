@@ -198,14 +198,14 @@ class TestGenParams:
         assert reloaded.gen_params == {"land_ratio": 0.35}
 
     def test_create_without_gen_params(self, manager):
-        """无调参时 gen_params 为 None（旧档兼容）。"""
+        """无调参时 gen_params 为 None。"""
         manifest = manager.create_world("默认世界", seed=1)
         assert manifest.gen_params is None
         reloaded = Manifest.read(manager.manifest_path(manifest.world_id))
         assert reloaded.gen_params is None
 
     def test_legacy_manifest_without_gen_params(self, manager):
-        """旧版 manifest（无 gen_params 字段）仍可读（向前兼容）。"""
+        """manifest 缺 gen_params 字段时读取为 None。"""
         manifest = manager.create_world("旧档", seed=1)
         path = manager.manifest_path(manifest.world_id)
         data = json.loads(open(path, encoding="utf-8").read())
@@ -250,7 +250,7 @@ class TestGenParams:
         assert manifest.gen_params == {"width_km": 60.0}
 
     def test_unknown_gen_param_keys_kept(self, manager):
-        """未知键保留（向前兼容未来步骤的调参）。"""
+        """未知 gen_params 键原样保留。"""
         manifest = manager.create_world(
             "未来调参", seed=1,
             gen_params={"land_ratio": 0.5, "colony_seed": 7},
@@ -259,7 +259,7 @@ class TestGenParams:
 
 
 class TestSeedZero:
-    """种子创建时定案（回归：seed=0 密钥身份失配）。"""
+    """种子在创建时定案。"""
 
     def test_seed_zero_randomized_at_create(self, manager):
         """seed=0（随机占位）在创建时随机化，manifest 出生即一致。"""
@@ -513,8 +513,8 @@ class TestSnapshot:
     def test_enter_frozen_auto_record_continues_and_promotes(self, manager, world):
         """进入冻结的（非当前）auto 记录：继续该线，保存时原地晋升。
 
-        前端真实场景：时间线点击旧分支的冻结 auto 节点——目标成为
-        当前记录（不新建），之后保存晋升保留其原 parent/seq。
+        前端场景：时间线点击较早分支的冻结 auto 节点——目标成为
+        当前记录（不新建），之后保存晋升保留其 parent/seq。
         """
         manager.write_state(world, {"clock": {"time": 100}})
         m1 = manager.create_snapshot(world, suffix="manual", game_time=100)
@@ -570,12 +570,7 @@ class TestSnapshot:
             "不变式恢复：当前记录恒为 auto"
 
     def test_lineage_write_failure_keeps_files(self, manager, world, monkeypatch):
-        """血缘写失败：跳过保留策略，新保存文件与旧记录均不被误删。
-
-        回归：_write_lineage 失败（只 warning）后 1b 反向对账会把
-        无血缘条目的新文件当幽灵删除（静默丢失用户保存）——失败
-        时须跳过 prune，旧 auto 记录保留（血缘仍指向它）。
-        """
+        """血缘写失败：跳过保留策略，新保存文件与既有记录均不被误删。"""
         manager.write_state(world, {"clock": {"time": 100}})
         auto = manager.create_snapshot(world, suffix="auto", game_time=100)
 
@@ -712,7 +707,7 @@ class TestSnapshot:
         assert manager.read_state(world) == original
 
     def test_extract_overwrites_live_dir(self, manager, world):
-        """展开覆盖活目录内容（旧内容被替换）。"""
+        """展开覆盖活目录内容。"""
         manager.write_state(world, {"version": "old"})
         filename = manager.create_snapshot(world)
         snapshot_path = os.path.join(manager.snapshot_dir(world), filename)
@@ -780,11 +775,7 @@ class TestSnapshot:
         assert os.path.isfile(path)
 
     def test_snapshot_after_checkpoint_keeps_wal_data(self, manager, world, tmp_path):
-        """WAL checkpoint 后打包：快照内 chunk/事件数据完整（回归）。
-
-        复现引擎 snapshot_current 的顺序：flush → checkpoint → 打包；
-        若缺 checkpoint，WAL 模式拷贝的 .db 会丢失全部数据。
-        """
+        """WAL checkpoint 后打包：快照内 chunk/事件数据完整。"""
         import sqlite3
 
         from olam.generation.biome import BiomeType
@@ -1000,7 +991,7 @@ class TestLineage:
         assert lineage["snapshots"][s2]["seq"] == 1, "seq 反映创建顺序而非游戏时间"
 
     def test_lineage_entries_have_seq(self, manager, world):
-        """新格式血缘条目写入即含 seq（权威排序键）。"""
+        """血缘条目写入即含 seq（权威排序键）。"""
         manager.write_state(world, {"clock": {"time": 100}})
         manager.create_snapshot(world, suffix="manual")
         lineage = manager.snapshot_lineage(world)
@@ -1184,12 +1175,7 @@ class TestSnapshotIncremental:
             manager.extract_snapshot(delta, world_id=world)
 
     def test_delta_pages_from_missing_base_db(self, manager, world):
-        """DB 从无到有：全页增量可在无基座库时物化（写读对称）。
-
-        回归：_diff_db_pages 在基座无该 DB 时产出全页覆盖，读侧
-        _apply_pages 须创建文件（页 0 含 SQLite 头），否则该增量
-        及其全部后代不可恢复。
-        """
+        """DB 从无到有：全页增量可在无基座库时物化（写读对称）。"""
         manager.write_state(world, {"clock": {"time": 100}})
         base = manager.create_snapshot(world, suffix="manual", game_time=100)
         # 活目录新建 DB（玩家改动路径）
@@ -1224,12 +1210,7 @@ class TestSnapshotIncremental:
     def test_base_same_as_live_falls_back_on_stale_origin(
         self, manager, world, monkeypatch,
     ):
-        """血缘写失败后 fresh record 退化为真实 diff（锚点 ≠ 父）。
-
-        回归：空增量特例仅当锚点 == 直接父节点（刚写入）时成立；
-        晋升的血缘写失败使磁盘 live_origin 停留在旧 auto 记录，
-        此时必须以真实 diff 写入当前状态，否则回滚到旧内容。
-        """
+        """血缘写失败后 fresh record 退化为真实 diff（锚点 ≠ 父）。"""
         manager.write_state(world, {"clock": {"time": 100}})
         manager.create_snapshot(world, suffix="manual", game_time=100)
         manager.write_state(world, {"clock": {"time": 200}})
@@ -1625,11 +1606,7 @@ class TestSnapshotPrune:
         assert lineage["snapshots"][s2]["parent"] == "", "子节点重接到祖父"
 
     def test_prune_cleans_ghost_files(self, manager, world):
-        """磁盘上无血缘条目的残留快照文件被清理（反向对账）。
-
-        回归：晋升时旧 auto 文件删除失败会留下幽灵节点——prune
-        应对账删除，避免前端时间线出现无血缘的节点。
-        """
+        """磁盘上无血缘条目的残留快照文件被清理（反向对账）。"""
         manager.write_state(world, {"clock": {"time": 100}})
         manager.create_snapshot(world, suffix="manual")
         ghost = "@2026-01-01-000000-ghost-auto.ascendsave"
@@ -1642,11 +1619,7 @@ class TestSnapshotPrune:
         assert manager.snapshot_lineage(world)["snapshots"], "血缘条目不受影响"
 
     def test_prune_without_lineage_keeps_files(self, manager, world):
-        """血缘缺失/损坏时不反向对账（防全量误删 manual）。
-
-        回归：lineage.json 丢失或损坏时 known 为空，1b 会把全部
-        快照文件当幽灵删除——宁缺勿删，文件保留待修复。
-        """
+        """血缘缺失/损坏时不反向对账（防全量误删 manual）。"""
         manager.write_state(world, {"clock": {"time": 100}})
         s1 = manager.create_snapshot(world, suffix="manual")
         rec = manager.snapshot_lineage(world)["live_origin"]
@@ -2007,7 +1980,7 @@ class TestExtractCrashRecovery:
         assert leftovers == [], f"崩溃残留未清理: {leftovers}"
 
     def test_recovers_swap_interrupted_between_renames(self, manager, world):
-        """①与②之间崩溃（活目录缺失）→ 向前补全：临时目录上位、旧目录抛弃。"""
+        """①与②之间崩溃（活目录缺失）→ 向前补全：临时目录上位、备份目录抛弃。"""
         manager.write_state(world, {"clock": {"time": 100}})
         snap = manager.create_snapshot(world, suffix="manual")
         snap_path = os.path.join(manager.snapshot_dir(world), snap)
@@ -2033,7 +2006,7 @@ class TestExtractCrashRecovery:
         assert mgr3.read_state(world)["clock"]["time"] == 100
 
     def test_recovers_swap_landed_before_asset_moves(self, manager, world):
-        """②与③之间崩溃（活目录已上位）→ 补搬资产后抛弃旧目录。"""
+        """②与③之间崩溃（活目录已上位）→ 补搬资产后抛弃备份目录。"""
         manager.write_state(world, {"clock": {"time": 100}})
         snap = manager.create_snapshot(world, suffix="manual")
         wdir = manager.world_dir(world)
@@ -2077,7 +2050,7 @@ class TestExtractCrashRecovery:
         self._assert_root_clean(manager)
 
     def test_recovers_legacy_uuid_tombstone(self, manager, world):
-        """历史遗留 uuid 命名墓碑：按墓碑内 manifest 反查世界并移回。"""
+        """uuid 命名的墓碑目录：按墓碑内 manifest 反查世界并移回。"""
         manager.write_state(world, {"clock": {"time": 100}})
         wdir = manager.world_dir(world)
         legacy = os.path.join(manager.root, ".old-deadbeefdeadbeef")
@@ -2090,7 +2063,7 @@ class TestExtractCrashRecovery:
 
     def test_recovery_merges_lineage_when_live_has_newer(self, manager, world):
         """罕见态：交换已落定、资产搬运曾失败（标记已移除）、活目录
-        已产生新血缘 → 自愈合并旧条目，不回写 live_origin。"""
+        已产生新血缘 → 自愈合并既有条目，不回写 live_origin。"""
         manager.write_state(world, {"clock": {"time": 100}})
         manager.create_snapshot(world, suffix="manual")
         manager.write_state(world, {"clock": {"time": 200}})
@@ -2123,7 +2096,7 @@ class TestExtractCrashRecovery:
         os.rename(tmp, wdir)
         self._write_pending(manager, world, snap)
         # 模拟"资产已搬、set_live_origin 前崩溃"：血缘已在新活目录、
-        # 值为旧来源
+        # live_origin 值为展开前的来源
         mgr2 = SaveManager(root=manager.root)
         assert mgr2.snapshot_lineage(world)["live_origin"] == snap
         self._assert_root_clean(manager)
@@ -2161,9 +2134,8 @@ class TestExtractCrashRecovery:
     def test_extract_self_heals_soft_failure_residue(self, manager, world):
         """软失败后墓碑残留（无标记）：同会话再次回滚内联自愈，无需重启。
 
-        前端真实路径：裸文件名 + 目标世界——快照文件此刻仍在墓碑
-        snapshots/ 内，须先自愈搬回活目录才能解析（回归：自愈在
-        resolve_snapshot_path 之前执行）。
+        前端路径：裸文件名 + 目标世界——快照文件此刻仍在墓碑
+        snapshots/ 内，须先自愈搬回活目录才能解析。
         """
         manager.write_state(world, {"clock": {"time": 100}})
         snap = manager.create_snapshot(world, suffix="manual")
@@ -2207,13 +2179,13 @@ class TestExtractCrashRecovery:
 
 
 class TestLineageTamperProtection:
-    """血缘签名防护（lineage.json 无签名 → prune 可被借刀误删）。"""
+    """血缘签名校验：无签名或篡改时 prune 零删除。"""
 
     def test_prune_skips_when_lineage_unsigned(self, manager, world):
-        """无签名血缘（历史格式）→ prune 零淘汰、零删除。"""
+        """无签名血缘 → prune 零淘汰、零删除。"""
         manager.write_state(world, {"clock": {"time": 100}})
         s1 = manager.create_snapshot(world, suffix="manual")
-        # 把血缘退回无签名历史格式（模拟升级前的旧档）
+        # 去掉签名包裹，写回无签名血缘
         with open(manager.lineage_path(world), encoding="utf-8") as f:
             payload = json.load(f)
         with open(manager.lineage_path(world), "w", encoding="utf-8") as f:
@@ -2222,11 +2194,7 @@ class TestLineageTamperProtection:
         assert os.path.isfile(os.path.join(manager.snapshot_dir(world), s1))
 
     def test_prune_skips_when_lineage_tampered(self, manager, world):
-        """血缘 data 被篡改 → prune 零删除（宁缺勿删）。
-
-        借刀手法复现：把 manual 条目从血缘抹掉，若无签名防线，
-        反向对账会把该文件当幽灵删除。
-        """
+        """血缘 data 被篡改 → prune 零删除（宁缺勿删）。"""
         manager.write_state(world, {"clock": {"time": 100}})
         s1 = manager.create_snapshot(world, suffix="manual")
         rec = manager.snapshot_lineage(world)["live_origin"]

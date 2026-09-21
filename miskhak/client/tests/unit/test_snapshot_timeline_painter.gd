@@ -1,7 +1,7 @@
 """SnapshotTimelinePainter 单元测试 — 时间线绘制器几何/命中/缩放。
 
-必须注入画布（Control）满足 layout 的尺寸推算；断言锁定几何/命中等纯逻辑
-几何/命中/缩放等纯逻辑结果，不含具体渲染像素。
+必须注入画布（Control）满足 layout 的尺寸推算；断言几何/命中/缩放等
+纯逻辑结果，不含具体渲染像素。
 """
 
 extends GutTest
@@ -119,7 +119,7 @@ func test_node_label_priority() -> void:
 
 
 func test_reset_clears_geometry() -> void:
-	"""收起后命中几何清空，防陈旧矩形命中。"""
+	"""收起后命中几何清空，陈旧矩形不参与命中。"""
 	var painter: SnapshotTimelinePainter = _painter(_make_canvas())
 	_layout_chain(painter, 3, Rect2(24, 300, 1232, 76))
 	assert_true(painter.node_rects.size() > 0)

@@ -1,7 +1,7 @@
 """世界生成阶段 → UI 文案映射（单一事实源）。
 
 后端 ContinentGenerator.STAGE_*（elevation/climate/erosion/water/
-width/done）+ "chunks" 出生区阶段的统一翻译表；world_loading.gd
+width/done）+ "chunks" 出生区阶段的翻译表；world_loading.gd
 与 main_world.gd 共同引用，新增阶段文案只改此处。
 """
 
@@ -20,9 +20,9 @@ const LABEL_KEYS: Dictionary = {
 	"done": "ui.stage.done",
 }
 
-## 阶段顺序（与后端广播顺序一致：ContinentGenerator.generate 的
-## STAGE_* 逐阶段 + game.py 的 "chunks" 出生区阶段，随后 world_initialized）：
-## 进度条按此推进刻度；缓存命中时只广播 done（读档秒开）。
+## 阶段顺序（与后端广播顺序一致：ContinentGenerator 的 STAGE_* 逐阶段
+## + game.py 的 "chunks" 出生区阶段，随后 world_initialized）：进度条按此
+## 推进刻度；缓存命中时只广播 done。
 const ORDER: Array = [
 	"elevation", "climate", "erosion", "water", "width", "done", "chunks",
 ]

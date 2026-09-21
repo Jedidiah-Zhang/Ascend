@@ -1,9 +1,9 @@
 name: CLA Check
 
-# 贡献者许可协议自动核验（自托管，替代 CLA Assistant）
+# 贡献者许可协议自动核验（自托管）
 #
-# 注意：用 pull_request_target 以便 fork PR 也能以写入权限创建 check；
-# 本 workflow 不检出任何 PR 代码，仅通过 context 读取 PR 描述，安全。
+# 触发方式 pull_request_target：fork PR 亦能以写入权限创建 check；
+# 本 workflow 不检出 PR 代码，仅通过 context 读取 PR 描述。
 on:
   pull_request_target:
     types: [opened, edited, reopened, synchronize]

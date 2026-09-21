@@ -82,9 +82,8 @@ func _worker() -> void:
 		_input.clear()
 		_mutex.unlock()
 		for body in batch:
-			# 直接解析片段（不走 JsonCodec：其失败 push_error 在后台线程
-			# 会污染错误收集；JSON.parse_string 会打 engine 条件错误。
-			# 实例 API 静默返回错误码，坏帧属预期输入）
+			# 直接解析片段：实例 API 静默返回错误码，坏帧属预期输入
+			# （不走 JsonCodec 的 push_error 路径）
 			var json := JSON.new()
 			if json.parse(body.get_string_from_utf8()) != OK:
 				continue  # 坏 JSON 帧体跳过

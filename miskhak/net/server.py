@@ -210,12 +210,9 @@ class GameServer:
                 if not self.is_running:
                     break  # 正常停止路径（stop() 已关闭 socket → EBADF）
                 if exc.errno in _TRANSIENT_ACCEPT_ERRORS:
-                    # 瞬时错误：重试而非永久退出。否则监听 socket 仍在，
-                    # 新连接照常完成 TCP 握手却无人 accept——服务器看似
-                    # 运行实则瘫痪（前端连得上但永远等不到 hello_ack）。
+                    # 瞬时错误：重试而非永久退出。
                     if exc.errno == errno.ECONNABORTED:
-                        # 连接中止是正常瞬时事件：立即重试（退避会把
-                        # accept 吞吐压到 1 conn/s，连接洪泛下反而拒客）
+                        # 连接中止是正常瞬时事件：立即重试
                         continue
                     logger.warning(
                         "accept 资源类瞬时错误（errno=%d），1s 后重试", exc.errno,

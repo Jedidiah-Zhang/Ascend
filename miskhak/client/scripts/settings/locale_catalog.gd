@@ -8,9 +8,8 @@ tr(key) % {"param": v}，与后端 Python str.format(**kwargs) 同构。
 class_name LocaleCatalog
 extends RefCounted
 
-## 定位语言目录：开发期优先游戏区语言目录（res://../lang = miskhak/lang，最新源）；
-## 打包构建拷入的 res://lang 仅在开发目录缺失/打包环境生效——
-## 避免本地跑过一次 build_release 后 res://lang 旧副本盖过新改动。
+## 语言目录候选顺序：res://../lang（开发期游戏区语言目录）优先于
+## res://lang（打包构建拷入 PCK 的副本）。
 const SEARCH_DIRS: Array[String] = ["res://../lang", "res://lang"]
 const LOCALES: Array[Dictionary] = [
 	{"locale": "zh_CN", "label": "简体中文"},
@@ -28,8 +27,7 @@ static func find_lang_dir() -> String:
 	return ""
 
 
-## 解析单个语言文件；缺失/JSON 非法返回 {}（实例 parse 静默返回错误码，
-## 避免 parse_string 在损坏文件时每次启动刷引擎错误）。
+## 解析单个语言文件；缺失/JSON 非法返回 {}（实例 parse 静默返回错误码）。
 static func load_messages(path: String) -> Dictionary:
 	if not FileAccess.file_exists(path):
 		return {}
@@ -42,7 +40,7 @@ static func load_messages(path: String) -> Dictionary:
 	return {}
 
 
-## 加载并注册全部语言（重复调用先移除旧 Translation）。返回注册数。
+## 加载并注册全部语言（重复调用先移除同一 locale 已注册的 Translation）。返回注册数。
 func load_all(lang_dir: String = "") -> int:
 	if lang_dir.is_empty():
 		lang_dir = find_lang_dir()

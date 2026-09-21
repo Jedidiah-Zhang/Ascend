@@ -3,8 +3,7 @@
 #
 # 用法: bash build/nuitka/build_backend_windows.sh
 #
-# 原理: Nuitka 不支持 Linux→Windows 直接交叉编译，采用官方路线——
-#   wine 运行 Windows Python + Nuitka（Windows 版），C 编译用
+# 原理: wine 运行 Windows Python + Nuitka（Windows 版）；C 编译用
 #   mingw-w64（Windows 版 gcc.exe，亦在 wine 下运行）。
 #   Nuitka 本体编译使用其自行下载的 winlibs gcc（忽略外部 mingw），
 #   本机 mingw 仅用于交叉编译 C 加速模块为 .dll。
@@ -55,8 +54,7 @@ if [ ! -f _state.dll ] || [ _state.c -nt _state.dll ]; then
 fi
 cd "$ROOT"
 
-# 2. Nuitka 编译（wine 下运行 Windows Python；standalone 目录模式——
-#    不用 onefile：Linux 上 onefile 会 fork 子进程破坏前端 PID 语义）
+# 2. Nuitka 编译（wine 下运行 Windows Python；standalone 目录模式）
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 

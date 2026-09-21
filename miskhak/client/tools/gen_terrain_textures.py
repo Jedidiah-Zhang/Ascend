@@ -2,7 +2,6 @@
 
 Outputs 64×64 PNG tiles to miskhak/client/assets/terrain/textures/.
 Each terrain type gets top_<name>.png and side_<name>.png.
-Replace these PNGs with AI-generated assets or user texture packs later.
 
 Usage:
     cd /home/Jedidiah/Documents/Ascend
@@ -40,8 +39,7 @@ TERRAIN_PALETTE = {
 def _simple_noise(seed: int, width: int, height: int, octaves: int) -> np.ndarray:
     """Generate a 2D noise field using random upscale + interpolation.
 
-    Not real Perlin, but produces plausible tileable pixel textures
-    without external dependencies.
+    Not real Perlin; produces tileable pixel textures.
     """
     rng = np.random.default_rng(seed)
     result = np.zeros((height, width), dtype=np.float32)
@@ -138,6 +136,7 @@ def _make_pixel_texture(base_color, noise_seed: int, side: bool) -> Image.Image:
 
 
 def generate_all() -> list[str]:
+    """生成全部地形贴图 PNG，返回生成的文件路径列表。"""
     os.makedirs(OUT_DIR, exist_ok=True)
     generated: list[str] = []
 

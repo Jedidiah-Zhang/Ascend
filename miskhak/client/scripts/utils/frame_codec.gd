@@ -55,7 +55,7 @@ func frame_encode(message: Dictionary) -> PackedByteArray:
 ##
 ## Args:
 ##     buffer: 收到的原始字节（可能含多帧 + 半帧尾部）。
-##     max_message_size: 单帧体长度上限（默认 16 MiB），防超大非法帧。
+##     max_message_size: 单帧体长度上限（默认 16 MiB）。
 ##
 ## Returns:
 ##     {bodies: 完整帧体数组, remaining: 未凑齐一帧的剩余字节}。

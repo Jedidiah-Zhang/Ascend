@@ -103,7 +103,7 @@ class GameConsole:
         """后台游戏循环：按帧率持续 tick，直到 _running 为 False。
 
         精确追踪活跃时间——暂停期间不计入 active_real_time。
-        帧间耗时设上限，避免与主线程操作重复计时。
+        帧间耗时计入上限 2×dt。
         暂停状态由 executor.paused 统一管理。
         """
         dt = 1.0 / self.TICK_RATE

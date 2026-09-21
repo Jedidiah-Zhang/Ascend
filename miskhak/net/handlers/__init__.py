@@ -8,7 +8,7 @@ def parse_coord(coord) -> "tuple[int, int] | None":
     """校验并解析单个 chunk 坐标（各 handler 共用）。
 
     合法坐标：长度 ≥2 的序列，前两元素为整值 int/float（排除 bool）。
-    非整值浮点（如 10.9）视为非法——不静默截断到错误 chunk。
+    非整值浮点（如 10.9）视为非法。
 
     Args:
         coord: 客户端载荷中的单个坐标项。

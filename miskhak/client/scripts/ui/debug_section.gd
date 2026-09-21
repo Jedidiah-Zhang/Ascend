@@ -1,6 +1,6 @@
 """调试信息分区基类 — 所有调试分区继承自此 RefCounted 类。
 
-每个分区提供统一的 get_lines() 接口，由 DebugOverlay 统一渲染。
+每个分区提供 get_lines() 接口，由 DebugOverlay 渲染。
 分区自行管理数据拉取、轮询计时器、tile 变化检测，与具体世界脚本解耦。
 
 生命周期:
@@ -19,7 +19,7 @@ extends RefCounted
 
 # ── 属性 ────────────────────────────────────────────────────
 
-## 分区标签翻译键（渲染时由 DebugOverlay 统一翻译，见 lang/*.json debug.section.*）
+## 分区标签翻译键（渲染时由 DebugOverlay 翻译，见 lang/*.json debug.section.*）
 var label_key: String = ""
 
 ## 是否启用，设为 false 时 DebugOverlay 跳过该分区

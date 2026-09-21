@@ -6,8 +6,8 @@
 - co_participant: 多方共同参与
 - informed_by: 从他人处获知
 
-存储与遍历原语由 digraph.py 的 DirectedGraph 基类提供（事件层与
-变量层共用同一套实现）；本模块只保留事件语义的方法。
+存储与遍历原语由 ``olam.meta.digraph.DirectedGraph`` 基类提供；
+本模块只保留事件语义的方法。
 """
 
 from __future__ import annotations

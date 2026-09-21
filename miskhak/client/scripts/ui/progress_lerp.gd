@@ -2,7 +2,7 @@
 
 world_loading（新建世界进度页）与 world_loading_overlay（主世界加载
 覆盖层）共用：目标更新时触发快速补间窗口（高速逼近新刻度），平时缓慢
-爬升（视觉活性）；单方向推进、不越格、目标邻近时精确落点（消除浮点
+爬升；单方向推进、不越格、目标邻近时精确落点（消除浮点
 累计误差让补间停在 0.9999999 的问题）。
 """
 
@@ -13,12 +13,12 @@ extends RefCounted
 const CATCHUP_SEC: float = 0.6
 ## 快速补间速率（每秒比例）：视觉"快速增长"
 const CATCHUP_PER_SEC: float = 0.25
-## 缓慢爬升速率（每秒比例）：视觉活性，不匀速、不越格
+## 缓慢爬升速率（每秒比例）：不匀速、不越格
 const DRIFT_PER_SEC: float = 0.01
 
 ## 当前显示的进度比例（0~1，平滑补间值）
 var display_ratio: float = 0.0
-## 进度目标刻度（单调不减语义由调用方保证）
+## 进度目标刻度（单调不减语义由调用方维持）
 var target_ratio: float = 0.0
 ## 快速补间剩余时间（秒）；目标更新时重置
 var catchup_left: float = 0.0

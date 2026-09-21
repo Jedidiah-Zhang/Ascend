@@ -11,10 +11,8 @@ class TestLoading extends WorldLoading:
 
 	func _change_to_menu_scene() -> void:
 		change_scene_calls += 1
-		# 原 bug：get_viewport() 在 change_scene_to_file 之后被调用时
-		# 返回 null（节点已出树）→ set_input_as_handled 崩溃。正确顺序
-		# 是 set_input_as_handled 先执行（见 _leave_to_main_menu），
-		# 故本钩子被调时节点必仍在树中、viewport 必有效。
+		# 记录切换时刻节点仍在树中且 viewport 有效
+		# （_leave_to_main_menu 先标记输入再切场景）。
 		viewport_valid_at_switch = is_inside_tree() and get_viewport() != null
 
 
@@ -39,11 +37,7 @@ func _click(loading: TestLoading, at: Vector2) -> void:
 
 
 func test_menu_click_error_state_leaves_to_menu() -> void:
-	"""ERROR 态点回主菜单：触发离开路径，且切场景时节点仍在树中。
-
-	回归：change_scene_to_file 释放本节点后 get_viewport() 返回 null，
-	set_input_as_handled 崩溃（E）。修复后必须先标记输入再切场景。
-	"""
+	"""ERROR 态点回主菜单：触发离开路径，且切场景时节点仍在树中。"""
 	var loading := _make_loading()
 	_set_error_with_buttons(loading)
 	_click(loading, Vector2(250, 25))  # 落在 menu 按钮内

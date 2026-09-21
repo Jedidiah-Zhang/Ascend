@@ -1,7 +1,7 @@
 """状态追赶分区 — 显示值追赶（StateDisplayChaser）调试信息。
 
 展示当前抽样密度倍率（初雪/暴雪加速期 > 1）、加速剩余时长与
-显示值收敛中的 chunk 数——验证"快下快铺"事件加速是否生效。
+显示值收敛中的 chunk 数。
 """
 
 class_name StateSection

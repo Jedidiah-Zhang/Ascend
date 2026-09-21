@@ -51,8 +51,8 @@ def setup_logging(level: int = logging.DEBUG, log_dir: Path | None = None) -> st
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_path = target_dir / f"ascend_{timestamp}.log"
 
-        # 世界核心使用标准库 logger；在应用入口配置根 logger，统一收集
-        # olam / miskhak 以及直接运行脚本的日志，不让库反向依赖游戏日志层。
+        # 在应用入口配置根 logger，统一收集 olam / miskhak 以及
+        # 直接运行脚本的日志。
         root_logger = logging.getLogger()
         root_logger.setLevel(level)
 

@@ -21,7 +21,7 @@ class TestStateRegistry:
     """状态注册表结构完整性。"""
 
     def test_state_types_all_states_present(self):
-        """首发三状态齐全。"""
+        """注册表含 moisture / snow / ice 三状态。"""
         assert set(STATE_TYPES) == {"moisture", "snow", "ice"}
 
     def test_state_keys_match_registry(self):
@@ -59,7 +59,7 @@ class TestStateRegistry:
             )
 
     def test_thresholds_only_snow(self):
-        """首发仅覆雪声明叙事阈值阶梯。"""
+        """仅覆雪声明阈值阶梯。"""
         with_thresholds = [
             k for k, c in STATE_TYPES.items() if c.thresholds
         ]
@@ -108,7 +108,7 @@ class TestTerrainStateParams:
                 assert state_params(terrain, "ice") is None
 
     def test_marsh_drain_slower_than_grassland(self):
-        """沼泽排水慢于草地（湿地语义的逐型微调）。"""
+        """沼泽排水慢于草地。"""
         marsh = state_params(TerrainType.MARSH, "moisture")
         grass = state_params(TerrainType.GRASSLAND, "moisture")
         assert marsh.drain < grass.drain

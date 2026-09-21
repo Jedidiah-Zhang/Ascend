@@ -1,7 +1,6 @@
 """Tile 级河流渲染 — 沿流线点集绘制自然蜿蜒的河道。
 
-流线由 streamlines.py 的 RK4 积分产生,天然弯曲(弯曲度 1.5-3.0),
-无需额外蜿蜒扰动。渲染只需沿点集画河道截面。
+流线由 streamlines.py 的 RK4 积分产生；渲染沿点集画河道截面。
 
 用法:
     from olam.generation.river_render import render_river_chunk
@@ -88,7 +87,7 @@ def _render_streamlines(
                 _fill_circle(tile_grid, tx, ty, _river_radius(width), size)
             continue
 
-        # 沿流线点集画河道(流线已弯曲,无需额外蜿蜒)
+        # 沿流线点集画河道
         for p in points:
             wx = p.x
             wy = p.y
@@ -157,10 +156,9 @@ def _river_width(continent, wx: float, wy: float,
                  flow: float, max_acc: float) -> float:
     """河道宽度 (m)。
 
-    优先采样层1河流宽度场（continent.sample_river_width）——与
-    hydrology.compute_river_width 同源、与出生点避让同源、跨 chunk
-    连续（消除按 chunk 局部 max 归一化的边界接缝）。
-    场外点（插值为 0，如流线与宽度场的边界差）回退到对数流量公式，
+    优先采样层1河流宽度场（continent.sample_river_width，与
+    hydrology.compute_river_width 同源、跨 chunk 连续）；场外点
+    （插值为 0，如流线与宽度场的边界差）回退到对数流量公式，
     范围取 config 的 RIVER_WIDTH_MIN/MAX（2m~80m，与层1一致）。
     """
     field_w = continent.sample_river_width(wx, wy)
@@ -190,8 +188,7 @@ def _fill_circle(
     """以 (cx, cy) 为中心填充河道圆。
 
     半径内 → WATER；河岸外侧一环（radius < dist ≤ radius+1）→ 沃土
-    （窄河的低频距水场可能捕捉不到岸带，render 兜底；湖岸沃土过渡
-    由分类的距水带处理）。
+    （湖岸沃土过渡由分类的距水带处理）。
     """
     for dy in range(-radius, radius + 1):
         for dx in range(-radius, radius + 1):

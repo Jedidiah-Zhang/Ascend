@@ -1,12 +1,12 @@
 """地形核心适配器 — 以 field 机制求值地形演化。
 
 给定 chunk 内状态/地形/坡度数组与逐步降水/温度/步长，原地更新状态数组。
-适配器用 ``terrain.integrate``（field 机制，chunk 动态实例）实现同一语义：
+适配器用 ``terrain.integrate``（field 机制，chunk 动态实例）求值：
 
 - 每一步构造一次无状态求值：物化 chunk、装载当前状态场、注入地形/坡度/
   遮蔽与降水/温度/步长、推进一帧、读回三状态场；
-- 多步（日结算采样）按步序贯求值——与内核的逐步循环同序同式；
-- 内核（参考实现 / C 加速）逐位对拍由模块内核对锁定，适配器只做数据搬运。
+- 多步（日结算采样）按步序贯求值；
+- 数值计算由内核完成，适配器只做数据搬运。
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ class TerrainCore:
 
     @property
     def program(self) -> object:
+        """编译后的世界程序。"""
         return self._program
 
     def evolve(

@@ -1,15 +1,13 @@
 """握手重试策略 — 致命失败判定 / 重试预算（纯逻辑 RefCounted）。
 
 职责:
-  - on_rejected(kind)：按拒绝分类判定——VERSION_MISMATCH 永久性失败，
-    立即 FAIL（重试无意义）；ANOMALY 计入预算
-  - on_timeout() / on_disconnect()：计入预算（后端挂起 / 握手期被断开，
-    token 失效或后端重启中，重试可能成功——token 每次握手重读）
+  - on_rejected(kind)：按拒绝分类判定——VERSION_MISMATCH 立即 FAIL；
+    ANOMALY 计入预算
+  - on_timeout() / on_disconnect()：计入预算
   - on_ack()：握手成功，预算清零（任何一次成功即重置）
   - reset()：主动复位（进程切换/手动重连）
 
-重试时序（间隔）归 TcpTransport 所有（连续失败指数退避、成功复位），
-本策略只回答"继续重试还是终态"。
+本策略只判定"继续重试还是终态"。
 
 依赖方向：connection(门面) → 本层；本层不感知其他子层。
 """

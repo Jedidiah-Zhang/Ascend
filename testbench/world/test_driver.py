@@ -1,6 +1,6 @@
 """帧调度器测试— 声明周期绑定、帧事务与失效语义。
 
-对应《世界契约》WC-4（机制求值纪律）与帧调度设计决定：
+对应《世界契约》WC-4（机制求值纪律）：
 - 世界状态更新只能由声明更新点触发（注册顺序 = 执行顺序）；
 - 驱动信号来自时钟，不经世界树事件；
 - 世界写路径所在包不得订阅世界树或时钟（唯一驱动者是 FrameScheduler）；
@@ -132,7 +132,7 @@ class TestWorldTreeRoleGate:
                     code = line.split("#", 1)[0]
                     if pattern.search(code):
                         offenders.append(
-                            f"{path.relative_to(root)}:{number}: {line.strip()}"
+                            f"{path.relative_to(repo)}:{number}: {line.strip()}"
                         )
         assert offenders == [], (
             "世界写路径不得订阅世界树/时钟（应注册到 FrameScheduler）: "

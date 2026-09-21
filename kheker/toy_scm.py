@@ -22,10 +22,12 @@ RNG = np.random.default_rng(20260822)
 
 
 def line(name, pred, meas, ok):
+    """格式化单条 PASS/FAIL 判据行。"""
     return f"[{'PASS' if ok else 'FAIL'}] {name} | 预测: {pred} | 实测: {meas}"
 
 
 def ci_k(values):
+    """95% t 置信区间半宽（样本数 < 2 时返回 0）。"""
     if len(values) < 2:
         return 0.0
     from scipy import stats as st
@@ -33,6 +35,7 @@ def ci_k(values):
 
 
 def tv(p_hat, p):
+    """两离散分布的总变差距离。"""
     return float(0.5 * np.abs(p_hat - p).sum())
 
 
@@ -365,6 +368,7 @@ def _s6(fast=False):
 
 
 def main():
+    """按 ``--exp`` 运行指定实验并打印结果。"""
     ap = argparse.ArgumentParser()
     ap.add_argument("--exp", nargs="+",
                     default=["S1", "S2", "S2b", "S3", "S4", "S5", "S6"])

@@ -9,15 +9,15 @@
   - 「当前时间点」= 活目录节点（is_live）：从 live_origin 派生；
     无来源时挂在链尾（从未回滚 = 与初始同线）。**当 live_origin
     是树内的 auto 记录时省略该伪节点，并把该记录标记 is_live**——
-    auto 记录即当前线的滚动记录（当前位置），既保留当前位置提示
-    又不重复挂点（如手动保存后「手动点 + auto 点 + 当前点」三点）
+    auto 记录即当前线的滚动记录（当前位置），此时不另挂「当前时间点」
+    节点（如手动保存后「手动点 + auto 点 + 当前点」三点）
   - auto 节点（当前线的滚动记录：恒为叶子，手动保存/离开线时原地
-    晋升/冻结）参与时间线，隐藏会让旧分支在跳转后"消失"；
-    quit 等其它来源仍可过滤
+    晋升/冻结）参与时间线，隐藏会使分叉分支在跳转后"消失"；
+    quit 等其它来源不参与时间线
 
 排序键 = 血缘 seq（后端权威的单调创建顺序，回滚后游戏时间倒退
-不影响它）：save_order_ids 编号、链内串链、兄弟排序全部统一，
-saved_at/game_time 仅作展示字段（旧档缺 seq 时回退 saved_at 排序）。
+不影响它）：save_order_ids 编号、链内串链、兄弟排序共用同一键，
+saved_at/game_time 仅作展示字段（无 seq 的档回退 saved_at 排序）。
 LIVE 节点取伪 seq = max+1，恒排最后——悬空来源时也只会串在链尾，
 不可能成为链头（防护：LIVE 的 time 若取 0 会排最前导致树反转）。
 
@@ -33,7 +33,7 @@ extends RefCounted
 const LIVE_ID: String = "@live"
 
 
-## 排序键：血缘 seq（创建顺序）主键，saved_at/game_time 兜底（旧档无 seq）。
+## 排序键：血缘 seq（创建顺序）主键，saved_at/game_time 兜底（无 seq 的档）。
 static func _sort_key(snap: Dictionary) -> Dictionary:
 	return {
 		"seq": int(snap.get("seq", 0)),
@@ -54,10 +54,10 @@ static func _sort_cmp(a: Dictionary, b: Dictionary) -> bool:
 	return a["time"] < b["time"]
 
 
-## 保存顺序的节点 id 列表（编号数据源，全端共用保证编号一致）。
+## 保存顺序的节点 id 列表（编号数据源，各端编号一致）。
 ##
 ## 以血缘 seq（真实创建顺序）为主键——回滚后游戏时间倒退不会影响它；
-## 旧档（无 seq）回退到 saved_at，同秒以游戏时间兜底。
+## 无 seq 的档回退到 saved_at，同秒以游戏时间兜底。
 ##
 ## Args:
 ##     snapshots: 快照条目数组（含 file/seq/saved_at/game_time）。
@@ -93,7 +93,7 @@ static func save_order_ids(snapshots: Array) -> Array:
 ##     live_game_time: 活目录当前游戏时间（世界摘要 game_time，仅展示）。
 ##     live_origin: 活目录来源快照 file（"" = 世界初始）。
 ##     keep_suffixes: 参与时间线的快照来源（默认 manual + auto——
-##         auto 是分支的滚动记录/延续节点，隐藏会使旧分支"消失"）。
+##         auto 是分支的滚动记录/延续节点，隐藏会使分叉分支"消失"）。
 ##
 ## Returns:
 ##     {nodes: [{id, label, time, saved_at, seq, depth, slot, is_live, suffix, children}],
@@ -132,8 +132,8 @@ static func build(
 		}
 	# LIVE 伪节点：live_origin 是树内的 auto 记录时省略——该记录
 	# 即当前线的滚动记录（当前位置），标记 is_live 供 UI 高亮，
-	# 不挂「当前时间点」伪节点（会重复）；
-	# ""（世界初始）/ 悬空来源 / 非 auto 来源（异常态）仍展示。
+	# 不挂「当前时间点」伪节点；
+	# ""（世界初始）/ 悬空来源 / 非 auto 来源（异常态）照常展示。
 	# LIVE 伪 seq = max+1：恒排最后，悬空来源时只会串到链尾（不做链头）
 	if (
 		nodes.has(live_origin)

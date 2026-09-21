@@ -1,4 +1,4 @@
-"""观测边界测试（消费侧隔离；协议对拍见 tests/world） — 消费端真值隔离与最小 G 协议。
+"""观测边界测试（消费侧隔离；协议对拍见 testbench/world） — 消费端真值隔离与最小 G 协议。
 
 - 消费路径（网络 handler）不得触达研究 trace 通道（静态漂移门禁）；
 - G 观测映射：协议量化、白名单读出、只含标量、泄露检测有判别力；
@@ -10,16 +10,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
-
-
-ROOT = Path(__file__).resolve().parents[2] / "olam"
+ROOT = Path(__file__).resolve().parents[2]
 
 #: 消费路径不得导入的研究记录/时间线模块（研究通道有专用 handler）
 _FORBIDDEN_IMPORTS = re.compile(
-    r"(?:from\s+ascend\.world\.research\.(?:records|timeline)\b"
-    r"|import\s+ascend\.world\.research\.(?:records|timeline)\b)"
+    r"(?:from\s+olam\.protocols\.(?:records|timeline)\b"
+    r"|import\s+olam\.protocols\.(?:records|timeline)\b)"
 )
 
 
@@ -29,7 +25,9 @@ class TestConsumerTruthIsolation:
     def test_handlers_do_not_import_research_trace(self):
         exempt = {"research_handler.py"}
         offenders = []
-        for path in sorted((ROOT / "net" / "handlers").glob("*.py")):
+        for path in sorted(
+            (ROOT / "miskhak" / "net" / "handlers").glob("*.py")
+        ):
             if path.name in exempt:
                 continue
             source = path.read_text(encoding="utf-8")

@@ -137,8 +137,8 @@ class WorldProgram:
     def declaration_settings(self) -> dict[str, str]:
         """声明视图（manifest 比对：声明 ID + 摘要 + 观测协议版本）。
 
-        声明视图刻意不含槽位/机制明细——摘要已经覆盖全部声明内容，
-        存档层不需要认识世界内部结构（``save/settings.py``）。
+        声明视图不含槽位/机制明细——摘要已覆盖全部声明内容
+        （比对方：``save/settings.py``）。
         """
         return {
             "declaration_id": self.contract,

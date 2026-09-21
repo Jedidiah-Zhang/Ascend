@@ -11,7 +11,7 @@ class_name SettingsStore
 extends RefCounted
 
 
-## 默认值表：新增设置项先在此登记（load 缺失键按此回填）。
+## 默认值表（load 缺失键按此回填）。
 const DEFAULTS: Dictionary = {
 	"display/resolution": "1280x720",
 	"display/window_mode": "windowed",
@@ -23,7 +23,7 @@ const DEFAULTS: Dictionary = {
 ## 窗口模式白名单：windowed 窗口化 / borderless 无边框全屏 / fullscreen 独占全屏
 const WINDOW_MODES: Array[String] = ["windowed", "borderless", "fullscreen"]
 
-## 帧率上限最大值（防御手改 cfg 的天文数字导致 Engine.max_fps 异常）。
+## 帧率上限最大值（超出按默认值回填）。
 const MAX_FPS_LIMIT: int = 1000
 
 ## 帧率上限档位：0 = 不限（置于末位）。
@@ -89,6 +89,7 @@ func get_value(key: String) -> Variant:
 	return _values.get(key, DEFAULTS.get(key))
 
 
+## 写入内存值表中的键（不落盘）。
 func set_value(key: String, value: Variant) -> void:
 	_values[key] = value
 
@@ -111,8 +112,7 @@ func _sanitize() -> void:
 		_values["debug/debug_mode"] = DEFAULTS["debug/debug_mode"]
 
 
-## 语言格式校验（"xx_XX"）；非法值（如手改 cfg 的 12345）会导致
-## 下拉框无匹配与翻译失效，故 load 时回退默认。
+## 语言格式校验（"xx_XX"）；load 时非法值回退默认。
 static func is_valid_locale(locale: String) -> bool:
 	if locale.length() != 5 or locale[2] != "_":
 		return false

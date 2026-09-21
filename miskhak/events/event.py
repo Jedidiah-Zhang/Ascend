@@ -16,7 +16,7 @@ import uuid
 from olam.constants import TILE_MAP_SIZE
 from miskhak.events.affected import AffectedParty
 
-# 子格尺寸：将每个 chunk 内细分为 sub-cell 以支持更精细的空间索引
+# 子格：将每个 chunk 内细分为 sub-cell，
 # 每个 sub-cell = SUB_CELL_SIZE × SUB_CELL_SIZE tiles（16×16 = 256 tiles）
 SUB_CELL_SIZE: int = 16
 SUB_CELLS: int = (TILE_MAP_SIZE + SUB_CELL_SIZE - 1) // SUB_CELL_SIZE  # 13
@@ -61,8 +61,7 @@ def sub_cell_range(
 def _json_safe(value: Any) -> Any:
     """递归将 tuple 转为 list。
 
-    统一 data 值为 JSON 形状（list），与 EventBridge 广播、归档往返
-    的类型一致，避免测试/订阅者侧 tuple↔list 漂移。
+    统一 data 值为 JSON 形状（list），与广播、归档往返的类型一致。
     """
     if isinstance(value, tuple):
         return [_json_safe(v) for v in value]
@@ -78,8 +77,8 @@ class WorldEvent:
     """事件 data 契约基类。
 
     子类覆写 event_type 并声明字段（dataclass 字段即 data 键）：
-    as_dict() 输出统一为 JSON 形状（tuple 递归转 list），与 EventBridge
-    广播、归档往返一致。字段支持 int/float/str/bool/tuple/list/dict
+    as_dict() 输出统一为 JSON 形状（tuple 递归转 list），与广播、
+    归档往返一致。字段支持 int/float/str/bool/tuple/list/dict
     （及嵌套 dataclass，asdict 自动转 dict）。
 
     此类不直接发布——event_type 为空串的子类（如事件基类）仅作
@@ -170,7 +169,7 @@ class LocationFilter:
     两层过滤：
     - chunk 级（必选）：center_chunk + radius，按 chunk 粗筛。
     - sub-cell 级（可选）：center_tile + sub_radius，按 sub-cell 精筛。
-    None 表示不做位置限制，完全向后兼容。
+    None 表示不做位置限制。
 
     Attributes:
         center_chunk: 中心 chunk 坐标 (chunk_x, chunk_y)。

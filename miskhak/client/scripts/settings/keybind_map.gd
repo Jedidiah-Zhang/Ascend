@@ -149,6 +149,7 @@ func find_conflict(d: Dictionary, exclude_action: String = "") -> String:
 	return ""
 
 
+## 移除某动作的第 index 个绑定；越界或未知动作忽略。
 func remove_bind(action: String, index: int) -> void:
 	if not _binds.has(action):
 		return
@@ -156,12 +157,13 @@ func remove_bind(action: String, index: int) -> void:
 		_binds[action].remove_at(index)
 
 
+## 清空某动作的全部绑定；未知动作忽略。
 func clear_action(action: String) -> void:
 	if _binds.has(action):
 		_binds[action].clear()
 
 
-## 动作绑定列表（深拷贝，防外部改写内部状态）。
+## 动作绑定列表（深拷贝）。
 func get_binds(action: String) -> Array:
 	return _binds.get(action, []).duplicate(true)
 

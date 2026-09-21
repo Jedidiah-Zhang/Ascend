@@ -67,7 +67,7 @@ func _socket_default() -> StreamPeerTCP:
 
 # ── 内部状态 ───────────────────────────────────────────────
 
-## 注：类型用 Object——测试注入的 fake 不是 StreamPeerTCP 子类
+## 注：类型为 Object（测试注入的 fake 无需继承 StreamPeerTCP）
 var _socket: Object = null
 var _reconnect_timer: float = 0.0
 var _connect_elapsed: float = 0.0
@@ -166,7 +166,7 @@ func send_frame(body: PackedByteArray) -> void:
 
 
 func send_frame_front(body: PackedByteArray) -> void:
-	"""入队一条协议帧体并置于队首（握手帧专用：必须先于任何残留业务帧发出）。"""
+	"""入队一条协议帧体并置于队首（握手帧专用，先于队列中已有帧发送）。"""
 	_send_queue.push_front(body)
 
 

@@ -1,6 +1,4 @@
-"""序列化工具 — 传输帧体编解码，使用 JSON。
-
-JSON 可读性好，便于调试期直接检查帧内容。
+"""序列化工具 — 传输帧体编解码（JSON）。
 """
 
 extends RefCounted
@@ -8,7 +6,7 @@ class_name JsonCodec
 
 
 static func encode(value: Variant) -> PackedByteArray:
-	"""编码为传输格式（JSON，便于调试期排查）。
+	"""编码为传输格式（JSON）。
 
 	Args:
 		value: 任意可序列化的 Variant

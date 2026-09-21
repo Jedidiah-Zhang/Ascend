@@ -7,8 +7,8 @@ states 行，引用本模块的 StateParams 模板或自定义）。
 演化（单一积分器）在 tile_state.py，由本注册表驱动。
 
 增删状态 = STATE_TYPES 加/减一行 + bump TileGrid.TILE_GRID_VERSION
-+ 前端 STATE_KEYS 同步——序列化/积分代码由注册表驱动，零改动。
-加一个地形 = terrain.TERRAIN_DEFS 加一行（含 states 行），零算法改动。
++ 前端 STATE_KEYS 同步（序列化/积分代码由注册表驱动）。
+加一个地形 = terrain.TERRAIN_DEFS 加一行（含 states 行）。
 """
 
 from dataclasses import dataclass
@@ -102,7 +102,7 @@ def build_param_tables() -> tuple[
     Returns:
         (deposit, drain, melt, freeze, freeze_below, melt_above,
         state_max)；前四表为 n_states × 256（terrain id 索引，
-        不适用组合系数全 0 → delta 恒 0，内核无需适用性分支），
+        不适用组合系数全 0 → delta 恒 0），
         后三表为 n_states（状态级激活门限）。
 
     调用方不得修改返回的列表（C 包装与 Python 参考实现共享）。

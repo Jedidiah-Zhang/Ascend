@@ -37,6 +37,7 @@ def _digest(payload: dict) -> str:
 
 
 def build() -> str:
+    """按表规格计算 cos/tanh/acos 量化表，返回生成文件的源码文本。"""
     pi_q = round(math.pi * SCALE)
     half_pi_q = pi_q // 2
     two_pi_q = 2 * pi_q
@@ -102,6 +103,7 @@ def _emit(values: tuple[int, ...]) -> list[str]:
 
 
 def main() -> int:
+    """写出预计算表文件；返回退出码（0 = 成功）。"""
     content = build()
     OUT.write_text(content, encoding="utf-8")
     print(f"[PASS] 生成 {OUT}")

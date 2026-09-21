@@ -15,7 +15,7 @@
     save_delete {world_id} → {}
     save_export {world_id} → {world_id}
 
-进入世界 / 回滚不经 save_load 请求：由 Connection.restart_backend
+进入世界 / 回滚由 Connection.restart_backend
 以 --world-id/--snapshot 参数拉起世界进程完成。
 
 快照条目附带血缘字段（时间线分叉视图数据源）:
@@ -78,8 +78,8 @@ static func preview_request(
 	尺寸只影响生成范围。缺省 100×60。
 
 	layers 请求气候图层（temp/rain/climate，与后端 PREVIEW_LAYERS
-	一致）：后端一次计算全部携带，前端切换视图零往返。缺省全请求；
-	旧后端忽略该字段（仅返回海拔），前端按响应缺字段自动降级。
+	一致）：后端一次计算全部携带。缺省全请求；后端忽略该字段时
+	仅返回海拔，前端按响应缺字段自动降级。
 	"""
 	return {
 		"type": "request", "request_type": MAP_PREVIEW,
@@ -166,7 +166,8 @@ const _WORLD_DEFAULTS: Dictionary = {
 static func parse_worlds(payload: Dictionary) -> Array:
 	"""解析 save_list 响应的 worlds 数组为规范化摘要列表。
 
-	字段缺失或为 null 时以默认值兜底（弱后端容错），保证 UI 层可直接读取。
+	字段缺失或为 null 时以默认值兜底（弱后端容错）；
+	各字段值规范化为可直接读取的类型（str / int / float）。
 	"""
 	var raw: Array = payload.get("worlds", [])
 	var result: Array = []

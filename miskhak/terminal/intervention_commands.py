@@ -65,8 +65,7 @@ class InterventionCommandsMixin:
         except ValueError as exc:
             return CommandResult(success=False, output=str(exc))
         if result.success:
-            # 干预是研究溯源的关键操作：成功路径留结构化日志（与
-            # research_do 同字段），使终端登记的干预也可事后复现。
+            # 成功路径留结构化日志（与 research_do 同字段）
             logger.info("do %s: %s", " ".join(args), result.output)
         return result
 

@@ -139,6 +139,7 @@ def plot_pipeline(seed: int, axs: np.ndarray) -> None:
 
 
 def main():
+    """对多个种子执行管线绘图并保存 pipeline_stages.png。"""
     seeds = [42, 137, 888]
     n_seeds = len(seeds)
     n_cols = 6  # 海拔、温度、降雨、气候、流线河、湖泊

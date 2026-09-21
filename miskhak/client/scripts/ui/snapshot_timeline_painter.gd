@@ -83,7 +83,7 @@ var node_rects: Dictionary = {}
 var legend_rects: Dictionary = {}
 
 
-## 注入树数据（节点/边/保存顺序编号），展开/收起时间线后不再变。
+## 注入树数据（节点/边/保存顺序编号）；同一次展开期间不变。
 ##
 ## Args:
 ##     p_nodes: 节点列表（TimelineLayout.build 的 nodes）。
@@ -142,7 +142,7 @@ func fit_zoom() -> void:
 	zoom = clampf(minf(1.0, minf(fit_w, fit_h)), ZOOM_MIN, 1.0)
 
 
-## 收起时间线时清空命中几何（防止陈旧矩形参与命中判定）。
+## 收起时间线时清空命中几何。
 func reset() -> void:
 	origin = Vector2.ZERO
 	tree_rect = Rect2()

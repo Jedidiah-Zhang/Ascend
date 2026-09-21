@@ -2,26 +2,18 @@
 
 数据全部来自 erode() 的输出（dem / directions / flow_acc）。
 
-核心思路:
+流程:
   1. Dijkstra 从所有海洋格反向计算"到海最低代价场" dist[]:
        cost(q) = max(0, dem[q]) + 1 - 1.5 * log(1 + flow_acc[q])
-     —— 高海拔贵、高流量便宜。作为全局可达性约束，
-        保证追踪终能到海、不跨分水岭。
+     高海拔贵、高流量便宜；作为全局可达性约束（追踪到海、不跨分水岭）。
   2. 从源头（flow_acc >= threshold 且无更高 acc 上游）沿三级方向场 RK4 积分:
-       a. dem 平滑梯度 -∇z（σ 高斯模糊后）—— 山谷跟随，自然弯曲
-          仅当与 dist 下降方向同向（点积>0）时启用，否则视为跨分水岭
-       b. flow_acc 平滑场 +梯度 —— 指向下游高流量主流通道，
-          等值线跟随真实汇水网络，平原区有自然弯曲
-          必须与 dist 下降同向，否则在局部极大绕圈打转 → 退到 dist
-       c. dist 场 -∇dist —— 纯几何兜底，保证到海
-  3. Chaikin 切角平滑 2 轮 → 消除格子线。
+       a. dem 平滑梯度 -∇z（σ 高斯模糊后）—— 山谷跟随
+          仅当与 dist 下降方向同向（点积>0）时启用，否则退到 dist
+       b. flow_acc 平滑场 +梯度 —— 指向下游高流量主流通道
+          必须与 dist 下降同向，否则退到 dist
+       c. dist 场 -∇dist —— 纯几何兜底
+  3. Chaikin 切角平滑 2 轮。
   4. RK4 积分核心调用 C 实现（_streamlines.so）。
-
-设计取舍:
-  - 纯 dem 梯度：山地弯曲好，但会跨分水岭、平原易断头
-  - 纯 dist 追踪：全局可达，但平原 dist 退化为几何距离场 → 平行直线
-  - 纯 flow_acc：平原有弯曲，但局部极大处会绕圈打转
-  - 三级混合：山地 dem 弯曲，平原 flow_acc 弯曲，分水岭/兜底靠 dist
 
 用法:
     from olam.generation.streamlines import build_river_network
@@ -121,6 +113,8 @@ _DY = (0, 0, 1, -1, 1, 1, -1, -1)
 
 @dataclass(slots=True)
 class RiverPoint:
+    """流线采样点：坐标 (x, y)、累积流量 flow、Strahler 分级。"""
+
     x: float
     y: float
     flow: float
@@ -129,6 +123,12 @@ class RiverPoint:
 
 @dataclass
 class River:
+    """一条河流：点列表 + 在网络 rivers 中的索引 + 汇入的河流索引。
+
+    source_idx 为本河在网络中的索引；outlet_idx = -1 表示独立入海；
+    parent_indices 为汇入本河的支流索引列表。
+    """
+
     points: list[RiverPoint] = field(default_factory=list)
     source_idx: int = -1
     outlet_idx: int = -1
@@ -137,6 +137,8 @@ class River:
 
 @dataclass
 class RiverNetwork:
+    """河流网络：网格尺寸 + 河流列表 + 格点索引表。"""
+
     width: int
     height: int
     rivers: list[River] = field(default_factory=list)
@@ -232,7 +234,7 @@ def _find_sources(
 ) -> list[int]:
     """找河流源头：acc >= threshold 且无更高 acc 上游流入的格子。
 
-    按流量降序排序——高流量优先追踪，支流自然汇入主流。
+    按流量降序排序。
     """
     sources: list[int] = []
     for i in range(w * h):
@@ -266,10 +268,7 @@ def _find_sources(
 
 def _gaussian_blur(arr: list[float], w: int, h: int,
                    sigma: float) -> array:
-    """可分离高斯模糊。
-
-    平滑 dem 让 -∇z 跟随宏观山谷趋势而非像素级噪声。
-    """
+    """可分离高斯模糊。"""
     from olam.generation.hydrology import _gaussian_blur_c
     arr_in = array('d', arr)
     return _gaussian_blur_c(arr_in, w, h, sigma)
@@ -284,7 +283,7 @@ def _chaikin(points: list[tuple[float, float]],
              iters: int = 2) -> list[tuple[float, float]]:
     """Chaikin 切角平滑：每轮把每条边切成 1/4-3/4 两段，角点内收。
 
-    保留首尾点，2 轮即可消除格子线感。
+    保留首尾点。
     """
     pts = points
     for _ in range(iters):
@@ -316,7 +315,7 @@ def _merge_into_existing(
 ) -> tuple[int, bool]:
     """检测流线是否经过已有河流 merge_radius 格内。
 
-    - 前段（< min_length/2 步）碰到 → 丢弃（消除平行短支流）
+    - 前段（< min_length/2 步）碰到 → 丢弃
     - 后段碰到 → 截断，设 outlet 汇入已有河流
 
     Returns:
@@ -427,11 +426,11 @@ def build_river_network(
     smooth_flow = _gaussian_blur(flow_acc, w, h, sigma)
     sources = _find_sources(flow_acc, directions, land_mask, w, h, threshold)
 
-    # 预转为 array('d') 避免每河重复 O(n) 转换
+    # 预转为 array('d')，循环内复用
     dem_arr = array('d', dem)
     dist_arr = array('d', dist)
 
-    # array('i') 代替 dict — O(1) 直接索引，-1=未访问
+    # array('i')，-1=未访问（O(1) 直接索引）
     n = w * h
     visited = array('i', [-1]) * n
 

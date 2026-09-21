@@ -8,7 +8,7 @@
 判据见 ``world_checks.py``；退出码 0 = 全部通过。
 
 产物 manifest：世界程序身份、模块/内核摘要、契约版本、代码版本（git commit）
-与运行环境——实验档案必须可绑定到"哪个世界、哪份代码"。
+与运行环境。
 
 ``--mutation``：生产实现变异探针——分别破坏一处实现（观测不量化、记录不
 校验、地址随机有序、快照身份绕过、守恒漏水），对应判据必须变红；任一未被
@@ -218,6 +218,7 @@ def run_mutation() -> int:
 
 
 def main() -> int:
+    """按命令行开关运行判据、变异探针或生成物巡检；返回退出码。"""
     ap = argparse.ArgumentParser(description="世界验收 runner（C0–C2 / W0–W7 / I0–I1 / L3）")
     ap.add_argument("--json", default="", help="产物输出路径（缺省只打印）")
     ap.add_argument(

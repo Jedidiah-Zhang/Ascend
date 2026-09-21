@@ -11,13 +11,12 @@
     随后:   HMAC(sign_key, payload) || Fernet(key)(payload)
 
     会话钥匙（Fernet + HMAC）每次生成，经 SaveKeys.protect 以
-    world_id + seed 派生密钥混淆后藏入头部 secrets_blob——与存档位
-    的 manifest.secrets_blob 同级（防直读/防手贱，不防推导）；
-    world_id/seed 头部明文（解锁派生输入，威胁模型见 crypto.py）。
-    payload 用会话钥匙加密：HMAC 覆盖整个密文，先验签名再解密。
+    world_id + seed 派生密钥混淆后藏入头部 secrets_blob——
+    world_id/seed 头部明文（解锁派生输入）；payload 用会话钥匙加密：
+    HMAC 覆盖整个密文，先验签名再解密。
 
     payload = zip 打包的差异数据:
-      - base = null（全量，v1 兼容）: 完整活目录文件字节
+      - base = null（全量）: 完整活目录文件字节
       - base = <文件>（增量）: 与锚点内容（物化后的全量）的差异——
         文件级条目只在变化时携带，SQLite 数据库以 "<库名>.pages"
         页图携带（见 _PAGES_SUFFIX）。
@@ -26,9 +25,9 @@
     跳过 auto/quit；到 "" 则 base=null）。物化 = 沿链合并：
     全量解包 + 逐级应用增量页覆盖。
 
-    复制档自愈：export 时以 rebind_snapshot 把每个快照整体改绑
+    复制档：export 时以 rebind_snapshot 把每个快照整体改绑
     新世界 ID（头部与内嵌 manifest 同步换身份，钥匙不变）——
-    副本沿自身血缘与快照目录解析，不依赖原世界。
+    副本沿自身血缘与快照目录解析。
 """
 
 import io
@@ -62,17 +61,14 @@ SNAPSHOT_SUFFIX: str = ".ascendsave"
 #           + {<index u32 LE><length u32 LE><bytes>}*count
 _PAGES_SUFFIX: str = ".pages"
 # 保留策略：auto（当前/冻结记录）环形保留最近 N 个，quit（退出保存）保留最近 K 个；
-# manual（手动）永久保留。live_origin 指向的快照永不自动淘汰
-# （当前记录），因此同一来源的实际上限 = N + 1。
-# 注：quit 为预留来源（退出保存尚未接入），保留上限已定义。
+# manual（手动）永久保留。live_origin 指向的快照永不自动淘汰（当前记录）。
+# 注：quit 来源当前无创建入口，保留上限已定义。
 AUTO_SNAPSHOT_KEEP: int = 20
 QUIT_SNAPSHOT_KEEP: int = 3
 
-# 快照打包的固定文件集合（密钥藏于 manifest.secrets_blob，无需独立文件；
-# continent.bin 可再生，不进快照，保持回退点精简；lineage 为世界级元数据，
-# 不随快照打包——快照依赖世界内 lineage 提供父子上下文。
-# chunks.db 语义：已加载 chunk 全量落盘（含确定性生成的 clean chunk，
-# 见 ChunkStore 模块说明）——chunks.db 本身即动态数据，随快照链走）
+# 快照打包的固定文件集合：密钥藏于 manifest.secrets_blob，无需独立文件；
+# continent.bin 可再生、lineage 为世界级元数据，均不进快照。
+# chunks.db 记录已加载 chunk（含确定性生成的 clean chunk），随快照链走。
 SNAPSHOT_ENTRIES: tuple[str, ...] = (
     MANIFEST_NAME, STATE_FILE, ENTITIES_FILE, CHUNKS_DB, EVENTS_DB,
 )
@@ -150,9 +146,9 @@ class SnapshotStore:
         """把活目录规范文件打包为加密快照单文件（v2 全量基座，base=null）。
 
         新建（create_snapshot）、刷新（refresh_snapshot）与晋升
-        （promote）共用同一打包原语：内容永远 = 活目录当前状态。
+        （promote）共用同一打包原语：内容 = 活目录当前状态。
         原子写入（临时文件 + rename）：刷新覆写既有快照时，写入
-        中途崩溃不会损坏原文件（该节点是所在线的唯一记录）。
+        中途崩溃不会损坏原文件。
 
         增量写见 write_delta_snapshot（有锚点时使用）。
         """
@@ -222,8 +218,8 @@ class SnapshotStore:
         base_content_dir 提供时视为锚点的物化内容（空增量特例：
         fresh record 内容与锚点一致，免链式物化）。
 
-        锚点物化失败（链上缺失/损坏）回退全量——不阻断保存，
-        新节点成为新的全量基座（自愈）。
+        锚点物化失败（链上缺失/损坏）回退全量，新节点成为新的
+        全量基座。
         """
         wdir = os.path.join(self._root, world_id)
         anchor = self.anchor_of(world_id, parent)
@@ -286,15 +282,15 @@ class SnapshotStore:
     ) -> str | None:
         """解析增量锚点：沿血缘 parent 链上溯到最近手动节点。
 
-        锚点规则：增量只引用永不淘汰的 manual 节点（auto/quit
-        会被环形淘汰/晋升，不可作基座）；到 ""（世界初始）返回
+        锚点规则：增量只锚定 manual 节点（auto/quit 会被环形淘汰/
+        晋升，不可作基座）；到 ""（世界初始）返回
         None（该节点写全量，成为新的全量基座）。
 
         Args:
             world_id: 世界 ID。
             parent: 候选节点的血缘 parent（live_origin 或晋升前的父）。
-            lineage: 可选的已加载血缘（删除重基座时传入内存版，
-                避免磁盘旧数据；None 时重新读取）。
+            lineage: 可选的已加载血缘（删除重基座时传入内存版；
+                None 时重新读取）。
 
         Returns:
             最近手动祖先文件名；无则 None。
@@ -675,7 +671,7 @@ class SnapshotStore:
         重新 diff 写回原文件名（树位置/seq 不变）。
 
         须在删除文件之前调用（旧链仍可物化）。物化失败（链上损坏）
-        的后代跳过——本就不可恢复，不拖累删除（best-effort）。
+        的后代跳过。
         """
         removed_manuals = {
             f for f in removed if self.snapshot_kind(f) == "manual"

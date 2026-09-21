@@ -1,4 +1,4 @@
-"""游戏运行配置 — 引擎与基础设施常量（game 区）。
+"""游戏运行配置 — 引擎与基础设施常量。
 
 服务端口、线程与查询限流、出生点、存档根与 SQLite/事件归档参数。
 世界时间刻度与内容参数见 ``olam.constants``。
@@ -22,16 +22,16 @@ TILE_WORKERS: int = 8
 INITIAL_CHUNK_RADIUS: int = 2
 
 # 天气查询 API
-MAX_WEATHER_QUERY_CHUNKS: int = 64      # get_weather 单请求最大 chunk 数（防超大请求卡游戏线程）
+MAX_WEATHER_QUERY_CHUNKS: int = 64      # get_weather 单请求最大 chunk 数（超限截断）
 
 # 地图请求 API
-MAX_CHUNK_QUERY: int = 512              # get_chunks 单请求最大 chunk 数（防超大请求卡游戏线程）
+MAX_CHUNK_QUERY: int = 512              # get_chunks 单请求最大 chunk 数（超限截断）
 
 AUTOSAVE_INTERVAL: float = 5.0        # 统一周期保存间隔（真实秒）
 
 
 # 无存档模式（测试/调试，world_id=None）的数据根：系统临时目录，
-# 调试数据不污染项目根，随 /tmp 系统清理
+# 随系统临时目录清理
 _DEV_DATA_ROOT: str = _os.path.join(_tempfile.gettempdir(), "ascend-dev")
 
 # ChunkStore

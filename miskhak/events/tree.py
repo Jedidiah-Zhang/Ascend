@@ -148,7 +148,7 @@ class WorldTree:
             self._max_memory_events is not None
             and len(self._event_log) > self._max_memory_events
         ):
-            # trim 到阈值的一半，留出余量避免频繁触发
+            # trim 到阈值的一半
             keep = self._max_memory_events // 2
             if keep > 0 and len(self._event_log) > keep:
                 cutoff_time = self._event_log[-keep].timestamp
@@ -277,8 +277,7 @@ class WorldTree:
           - 写失败时本批已从内存摘取 = 丢失 ≤1 个周期保存窗口的事件
             （等价崩溃语义，不破坏水位不变量——水位只在写成功后才推进）。
 
-        注：_trim 护栏路径（超 max_memory_events 时）仍在锁内写归档，
-        与本文的锁外写不同——trim 仅极端突发时触发，不阻塞正常周期保存。
+        注：_trim 护栏路径（超 max_memory_events 时）仍在锁内写归档。
 
         Args:
             无。
@@ -330,7 +329,7 @@ class WorldTree:
         """合并归档与内存事件：按 ID 去重后按时间排序。
 
         权重分层 trim 允许同一 tick 的事件一部分在归档、一部分在内存，
-        因此不能依赖时间边界拼接，必须完整查询后合并去重。
+        故按完整查询结果合并去重。
         """
         merged: list[Event] = []
         seen: set[str] = set()
@@ -353,7 +352,7 @@ class WorldTree:
     ) -> list[Event]:
         """按时间范围查询事件。
 
-        使用二分查找定位时间边界，避免全量扫描。
+        使用二分查找定位时间边界。
         若启用归档且查询范围超出内存窗口，自动从 SQLite 归档合并结果。
 
         Args:
@@ -378,9 +377,8 @@ class WorldTree:
                     continue
                 results.append(ev)
 
-        # 若查询范围与归档数据重叠，从归档完整查询后合并去重。
-        # 不能用 earliest_ts 截断归档查询：同时间戳事件可能分层分布在
-        # 归档（低权重）和内存（高权重），截断会静默丢失已归档事件。
+        # 若查询范围与归档数据重叠，从归档完整查询后合并去重
+        # （同时间戳事件可能分层分布在归档与内存，不作时间截断）。
         if self._should_merge_archive(start_time):
             archived = self._archive.query_time_range(
                 start_time, end_time,
@@ -596,12 +594,11 @@ class WorldTree:
     ) -> None:
         """在构造后配置归档和内存限制。
 
-        用于在 GameEngine.start() 中根据运行环境配置世界树，
-        避免在模块导入时就需要确定这些参数。
+        用于在 GameEngine.start() 中根据运行环境配置世界树。
 
         Args:
             archive_path: SQLite 归档路径。None 保持现状。路径变化时
-                关闭旧归档并切换（读档切存档位时使用）。
+                关闭既有归档并切换（读档切存档位时使用）。
             max_memory_events: 内存事件上限。None 保持现状。
         """
         if archive_path is not None:
@@ -611,7 +608,7 @@ class WorldTree:
                 )
                 self._archive.close()
                 self._archive = None
-                # 新归档内容未知，水位必须重置（否则查询会漏合并）
+                # 新归档内容未知，水位必须重置
                 self._archive_boundary = None
             if self._archive is None:
                 self._archive = EventArchive(archive_path)
@@ -807,8 +804,8 @@ class WorldTree:
     def await_async(self) -> None:
         """等待所有正在执行的异步回调完成。
 
-        阻塞直到线程池中所有已提交的 subscribe_async 回调执行完毕。
-        应在游戏退出/世界重建前调用，避免异步任务被强制中断。
+        阻塞直到线程池中所有已提交的 subscribe_async 回调执行完毕；
+        应在游戏退出/世界重建前调用。
 
         注意：进程模型下世界进程内 WorldTree 实例常驻，此处等待后
         重建线程池，保证后续 subscribe_async 仍可用。
@@ -838,9 +835,8 @@ class WorldTree:
         """重置世界数据（读档重建用），保留订阅。
 
         清空事件日志、索引、因果图与修剪状态，但保留订阅：
-        EventBridge 跨世界常驻（网络层不重建），清掉订阅会断掉
-        事件广播链路。旧世界的子系统订阅由其各自 shutdown()
-        负责注销，此处只重置数据面。
+        EventBridge 跨世界常驻（网络层不重建）。各子系统的订阅由其
+        各自 shutdown() 注销，此处只重置数据面。
         """
         with self._lock:
             self._event_log.clear()

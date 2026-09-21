@@ -105,11 +105,7 @@ class TestSaveCreate:
             handlers["save_create"](_req("save_create", {"name": "  "}))
 
     def test_default_random_seed(self, manager, handlers):
-        """seed 缺省为 0 → 创建时随机化并写入 manifest（回归防护）。
-
-        防护：seed 不得保留 0 到首次进入才随机化——否则 secrets_blob
-        身份与 manifest 失配、state 加解密失败。
-        """
+        """seed 缺省为 0 → 创建时随机化并写入 manifest，随后 state 可正常读写。"""
         resp = handlers["save_create"](_req("save_create", {"name": "x"}))
         manifest = manager.get_manifest(resp["payload"]["world_id"])
         assert 1 <= manifest.seed <= SEED_MAX
@@ -194,7 +190,7 @@ class TestSaveSnapshot:
             handlers["save_snapshot"](_req("save_snapshot", {"world_id": "nope"}))
 
     def test_routes_to_loaded_world_via_engine(self, manager):
-        """引擎加载目标世界：走 snapshot_current（flush+checkpoint 路径）。"""
+        """引擎加载目标世界：走 snapshot_current。"""
         world_id = manager.create_world("世界", seed=1).world_id
         engine = self._RecordingEngine(manager, world_id=world_id)
         handlers = make_save_handlers(manager, engine)
@@ -203,11 +199,7 @@ class TestSaveSnapshot:
         assert resp["payload"]["file"].endswith(".ascendsave")
 
     def test_routes_idle_world_to_plain_snapshot(self, manager):
-        """目标非当前加载世界（服务模式）：直接打包，不误用当前世界。
-
-        防护：必须按 payload 的 world_id 快照目标世界——engine 可用
-        时误快照当前加载世界会让服务模式保存失败（报"当前无存档位"）。
-        """
+        """目标非当前加载世界（服务模式）：按 payload 的 world_id 直接打包目标世界。"""
         idle_id = manager.create_world("闲置档", seed=1).world_id
         loaded_id = manager.create_world("当前档", seed=2).world_id
         engine = self._RecordingEngine(manager, world_id=loaded_id)

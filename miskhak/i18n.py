@@ -98,7 +98,7 @@ class I18n:
             翻译后的字符串。
         """
         text = self._translations.get(key, key)
-        # 无占位符短路：文本不含 { 时跳过正则替换（热路径省 re.sub 开销）
+        # 无占位符短路：文本不含 { 时跳过正则替换
         if kwargs and "{" in text:
             def _replace(match: re.Match) -> str:
                 k = match.group(1)

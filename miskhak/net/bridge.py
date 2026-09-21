@@ -15,8 +15,7 @@ logger = get_logger(__name__)
 class EventBridge:
     """WorldTree ↔ Godot 事件桥接器。
 
-    订阅 WorldTree 所有事件，转换为字典消息并广播。
-    安装后自动转发，无需手动干预。
+    订阅 WorldTree 所有事件，转换为字典消息并广播；安装后自动转发。
 
     Usage:
         bridge = EventBridge(world_tree, server)

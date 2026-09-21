@@ -175,7 +175,7 @@ func test_message_received_after_ack() -> void:
 	assert_eq(received[0], {"type": "snapshot"})
 
 
-# ── 握手流程（回归迁移：ack 停表语义由握手层单测覆盖） ────
+# ── 握手流程（ack 计时语义由握手层单测覆盖） ────
 
 func test_handshake_ack_emits_established() -> void:
 	"""握手完成 → connection_established + CONNECTED。"""
@@ -227,7 +227,7 @@ func test_version_mismatch_fails_immediately() -> void:
 
 
 func test_retry_budget_exhaustion_fails() -> void:
-	"""可重试失败耗尽预算 → FAILED 终态（不再无限重连）。"""
+	"""可重试失败耗尽预算 → FAILED 终态。"""
 	var failed: Array = []
 	Connection.backend_failed.connect(func(r): failed.append(r))
 
@@ -349,11 +349,7 @@ func test_layer_constants_match_config() -> void:
 # ── 后端进程终止（优雅关闭） ────────────────────────────────
 
 func test_network_layer_survives_pause() -> void:
-	"""网络层应免疫暂停（暂停菜单打开时仍须收发消息）。
-
-	回归：暂停期间 Connection._process 冻结 → 存档请求发不出去、
-	响应收不回来，「正在保存...」永久卡住。
-	"""
+	"""网络层应免疫暂停：暂停菜单打开时仍须收发消息。"""
 	assert_eq(Connection.process_mode, Node.PROCESS_MODE_ALWAYS,
 		"暂停时网络层必须继续处理")
 
@@ -462,15 +458,10 @@ func test_full_connect_flow() -> void:
 
 
 func test_hello_front_when_pending_frames() -> void:
-	"""回归：重连时 hello 必须恰好位于发送队列队首。
+	"""重连时 hello 必须恰好位于发送队列队首。
 
-	hello 必须经 _send_queue.push_front 置于队首；若改为队尾 append，
-	重连时残留业务帧会先于 hello 落盘，后端在握手前收到非 hello 帧即断开
-	（见 miskhak/net/client_handler.py），造成握手死循环。
-
-	注意：必须用门面 _ready 真实创建并接线的 handshake（_real_handshake），
-	其 _send_frame 即被门面接线到 transport 队首——自己手搓 handshake 会
-	绕过门面接线，测试假绿。
+	hello 经 _send_frame 接线到 transport 队首（_send_queue.push_front）；
+	必须使用门面 _ready 创建并接线的 handshake（_real_handshake）。
 	"""
 	var t := TcpTransportClass.new("127.0.0.1", 1)
 	Connection._set_layers(_fake_process, t, _real_handshake, _fake_worker)
@@ -487,6 +478,7 @@ func test_hello_front_when_pending_frames() -> void:
 	decode_ok(frames[1])
 
 
+## 断言一帧可解码且仅含一条可解析的 JSON 消息体。
 func decode_ok(frame: PackedByteArray) -> void:
 	var d: Dictionary = Connection._codec.frame_decode(frame, Config.MAX_MESSAGE_SIZE)
 	assert_eq(d["bodies"].size(), 1, "业务帧应可解码")
@@ -541,11 +533,7 @@ func test_response_hits_pending_callback_only() -> void:
 
 
 func test_response_hits_pending_with_float_seq() -> void:
-	"""真实链路 JSON.parse 将数字解析为 float（2.0）：查表前归一化仍命中。
-
-	回归：seq 配对后，float seq 未命中 → 响应退回广播 → 10s 超时
-	→ UI 显示"请求失败：请求超时"。
-	"""
+	"""真实链路 JSON.parse 将数字解析为 float（2.0）：查表前归一化仍命中。"""
 	var got: Array = []
 	_register_pending(2, func(msg): got.append(msg))
 
@@ -556,7 +544,7 @@ func test_response_hits_pending_with_float_seq() -> void:
 
 
 func test_response_not_hit_pending_falls_back_to_broadcast() -> void:
-	"""未登记的响应（无回调消费方）：退回广播（兼容原按类型分发路径）。"""
+	"""未登记的响应（无回调消费方）：退回广播。"""
 	var got: Array = []
 	_register_pending(7, func(msg): got.append(msg))
 	var broadcasted: Array = []
@@ -637,7 +625,7 @@ func test_connection_loss_flushes_pending() -> void:
 
 
 func test_connect_to_server_flushes_pending() -> void:
-	"""主动重连：清空旧连接挂起请求（响应不会再来）。"""
+	"""主动重连：清空先前连接的挂起请求（响应不会再来）。"""
 	var got: Array = []
 	_register_pending(12, func(msg): got.append(msg))
 	Connection.connect_to_server()
@@ -647,7 +635,7 @@ func test_connect_to_server_flushes_pending() -> void:
 
 
 func test_restart_backend_flushes_pending() -> void:
-	"""进程切换（restart_backend）：清空旧挂起请求。"""
+	"""进程切换（restart_backend）：清空先前挂起请求。"""
 	var got: Array = []
 	_register_pending(13, func(msg): got.append(msg))
 	Connection.restart_backend(PackedStringArray(["--world-id", "w1"]))

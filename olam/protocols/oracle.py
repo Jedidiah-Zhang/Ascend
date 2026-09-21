@@ -29,6 +29,7 @@ class Oracle:
 
     @property
     def observation(self) -> ObservationSpec:
+        """本 oracle 使用的观测协议。"""
         return self._observation
 
     def rollout(

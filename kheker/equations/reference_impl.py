@@ -75,10 +75,12 @@ _SUBDIV = _subdiv_configs()
 # ── C 单源标量的独立复刻（语义源：space/_hydrology.c）───────────
 
 def sea_level_temperature(latitude_noise: float) -> float:
+    """海平面温度：纬度噪声 → ℃（钳制到 [-20, 38]）。"""
     return max(-20.0, min(38.0, latitude_noise * 25.0 + 10.0))
 
 
 def rainfall_from_noise(rain_noise: float) -> float:
+    """年降雨：降雨噪声 → mm/年（钳制到 [0, 5000]）。"""
     value = RAINFALL_MIN + (rain_noise + 1.0) * 0.5 * (
         RAINFALL_MAX - RAINFALL_MIN
     )
@@ -86,6 +88,7 @@ def rainfall_from_noise(rain_noise: float) -> float:
 
 
 def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
+    """海拔递减：海拔 > 0 时按 LAPSE_RATE 降温（钳制到 [-20, 36]），否则原值返回。"""
     if altitude <= 0.0:
         return sea_level_temp
     return max(-20.0, min(36.0, sea_level_temp - altitude * LAPSE_RATE / 1000.0))
@@ -115,20 +118,24 @@ def classify_climate(temp: float, rainfall: float, altitude: float) -> int:
 # ── 模板查表与群系（独立算法）──────────────────────────────────
 
 def baseline_humidity(climate_zone: int, humidity_noise: float) -> float:
+    """气候带模板湿度区间上的噪声线性 ramp（钳制到 [0, 100]）。"""
     lo, hi = _TEMPLATES[int(climate_zone)]["humidity"]
     return max(0.0, min(100.0, lo + (humidity_noise + 1.0) * 0.5 * (hi - lo)))
 
 
 def baseline_wind_speed(climate_zone: int, wind_noise: float) -> float:
+    """气候带模板风速区间上的噪声线性 ramp（钳制到 [0, 50]）。"""
     lo, hi = _TEMPLATES[int(climate_zone)]["wind"]
     return max(0.0, min(50.0, lo + (wind_noise + 1.0) * 0.5 * (hi - lo)))
 
 
 def mean_precip_intensity(climate_zone: int) -> float:
+    """气候带模板的平均降水强度。"""
     return _TEMPLATES[int(climate_zone)]["mean_precip_intensity"]
 
 
 def humidity_sharpness(climate_zone: int) -> float:
+    """气候带模板的湿度锐度。"""
     return _TEMPLATES[int(climate_zone)]["humidity_sharpness"]
 
 

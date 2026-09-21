@@ -78,6 +78,7 @@ def validate() -> tuple[str, ...]:
 
 
 def main() -> int:
+    """按对账表校验并打印结果；返回退出码。"""
     ap = argparse.ArgumentParser(description="条款↔证据对账门禁")
     ap.add_argument("--check", action="store_true", help="巡检（缺省即巡检）")
     ap.parse_args()

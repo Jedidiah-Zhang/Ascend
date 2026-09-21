@@ -212,7 +212,7 @@ class TestInheritedContract:
         assert g.neighbors("temperature", ROLE_INVERSE) == []
 
     def test_mutation_primitives_disabled(self):
-        """warmup/remove_nodes 会破坏声明元数据，必须被禁用。"""
+        """warmup/remove_nodes 在变量层被禁用（抛 NotImplementedError）。"""
         g = make_graph()
         with pytest.raises(NotImplementedError):
             g.remove_nodes({"temperature"})

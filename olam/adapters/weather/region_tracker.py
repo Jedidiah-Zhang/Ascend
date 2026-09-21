@@ -36,12 +36,11 @@ from olam.content.chunk import TILE_MAP_SIZE
 from olam.modules import ids as m
 from olam.generation.weather_field.field import UnifiedWeatherField, CH_PRECIPITATION
 
-# 降水信号最大可信值（超过视同饱和，防止校准溢出）
+# 降水信号最大可信值（超过按该值截断）
 _PRECIP_SIGNAL_CAP: float = PRECIP_SIGNAL_MAX
 
-# 默认观察窗口半径（chunk）：**观察层参数**（不是世界声明）——只决定
-# 降水通报的观察范围，不改变世界演化，也不进世界身份（不放 config.py：
-# config 是机制方程源码依赖，改动会改变世界身份）。
+# 默认观察窗口半径（chunk）：观察层参数（非世界声明），只决定降水通报的
+# 观察范围，不改变世界演化，也不进世界身份。
 DEFAULT_REGION_RADIUS: int = 16
 
 

@@ -3,7 +3,7 @@
 支持本地指令（register_command 注册）和远程指令转发。
 所有内容通过 _draw() 渲染，无 RichTextLabel 等子节点。
 
-本地指令模仿 DebugSection 的注册模式：
+本地指令注册：
 	term.register_command("tp", _cmd_teleport, "tp <x> <y> - 传送玩家")
 handler 签名: func(args: PackedStringArray) -> String（返回输出文本，空串无输出）。
 
@@ -306,7 +306,7 @@ func write(text: String) -> void:
 
 
 func register_command(cmd_name: String, handler: Callable, help_text: String = "") -> void:
-	"""注册本地指令（模仿 DebugSection 的注册模式）。
+	"""注册本地指令。
 
 	Args:
 		cmd_name: 指令名（首个空格前的词，不区分大小写）。

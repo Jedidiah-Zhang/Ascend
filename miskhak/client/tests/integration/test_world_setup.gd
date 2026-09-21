@@ -81,12 +81,7 @@ func test_ready_builds_map_step() -> void:
 
 
 func test_seed_input_injected_into_step() -> void:
-	"""种子输入框注入：world_setup._ready 必须把 LineEdit 交给步骤。
-
-	回归：此前容器创建了 _seed_input 却从未注入，步骤内 _seed_input
-	恒为 null，点击种子框 _open_seed_input 直接返回 false——输入框
-	永远打不开（无法输入自定义种子）。
-	"""
+	"""种子输入框注入：world_setup._ready 必须把 LineEdit 交给步骤。"""
 	var pair: Array = _make_setup()
 	var setup: Control = pair[0]
 	assert_not_null(setup._seed_input, "容器应创建种子输入框")
@@ -192,7 +187,7 @@ func test_connection_lost_during_create_shows_error() -> void:
 	assert_string_contains(setup._status_text, "连接中断")
 
 
-# ── 预览响应（map_step 回调化后由步骤自身消费） ────────────
+# ── 预览响应（由步骤自身消费） ────────────
 
 func test_preview_response_reaches_step() -> void:
 	var pair: Array = _make_setup()

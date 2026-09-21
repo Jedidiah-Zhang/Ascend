@@ -1,10 +1,8 @@
 """创建世界流程 — 步骤注册与参数汇总（纯逻辑 RefCounted）。
 
-设计（可插拔 + 固定顺序）:
-  - 步骤顺序 = build_steps() 数组顺序（依赖链固定：地图生成 →
-    群落分布 → 物种分布），中间步骤按依赖插入即可
-  - 步骤基类 SetupStep 提供统一契约，新增步骤实现后加入注册表
-  - setup_params 汇总：{seed, gen_params} 最终传给 save_create
+步骤顺序 = build_steps() 数组顺序（依赖链：地图生成 → 群落分布 →
+物种分布）。步骤基类 SetupStep 定义步骤契约；setup_params 汇总
+{seed, gen_params}，最终传给 save_create。
 
 本类只负责注册与汇总；页面容器（world_setup.gd）驱动步骤流转。
 """
@@ -15,7 +13,6 @@ extends RefCounted
 
 ## 构建步骤链（有序，依赖在前的先执行）。
 ## 当前步骤：地图生成调参（seed + 大陆占比 + 地形预览）。
-## 新增步骤（初始群落分布、物种分布等）按依赖追加到对应位置。
 static func build_steps() -> Array:
 	var steps: Array = []
 	steps.append(MapSetupStep.new())

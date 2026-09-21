@@ -305,7 +305,7 @@ class TestEntityManager:
         assert mgr.in_region((0, 0)) == []
 
     def test_death_removes_empty_index_buckets(self):
-        """死亡后空索引桶被删除（防高周转下空集无界累积）。"""
+        """死亡后空索引桶被删除。"""
         wt = WorldTree()
         mgr = EntityManager(world_tree_arg=wt)
         e = mgr.birth(EntityType.CREATURE, 3, 4, 10, 10)
@@ -316,7 +316,7 @@ class TestEntityManager:
         assert mgr.type_counts() == {}
 
     def test_move_removes_empty_spatial_bucket(self):
-        """跨 sub-cell 移动后，旧空间桶为空时被删除。"""
+        """跨 sub-cell 移动后，移动前的空间桶为空时被删除。"""
         wt = WorldTree()
         mgr = EntityManager(world_tree_arg=wt)
         e = mgr.birth(EntityType.CREATURE, 0, 0, 0, 0)
@@ -353,10 +353,10 @@ class TestEntityManager:
         mgr = EntityManager(world_tree_arg=wt)
         e = mgr.birth(EntityType.CREATURE, 0, 0, 0, 0)
         mgr.move(e.id, 0, 0, 20, 0)  # 从 sub-cell (0,0) 跨到 (1,0)
-        # 旧 sub-cell 找不到
+        # 移动前 sub-cell 找不到
         assert len(mgr.in_region((0, 0), radius=0,
             center_tile=(0, 0), sub_radius=0)) == 0
-        # 新 sub-cell 能找到
+        # 移动后 sub-cell 能找到
         assert len(mgr.in_region((0, 0), radius=0,
             center_tile=(20, 0), sub_radius=0)) == 1
 

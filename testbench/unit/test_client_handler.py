@@ -1,7 +1,6 @@
 """ClientHandler 断开路径资源清理单元测试。
 
-判据：recv/send 线程自退出路径必须显式关闭 socket，不得依赖 GC 兜底
-（依赖 GC 会让 FD 释放时机不确定）。
+判据：recv/send 线程自退出路径必须显式关闭 socket，不得依赖 GC 兜底。
 """
 
 import socket

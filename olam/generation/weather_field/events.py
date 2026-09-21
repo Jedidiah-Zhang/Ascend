@@ -139,16 +139,22 @@ class TemperatureOffsetStart(WorldEvent):
 
 @dataclass
 class ColdSnapStart(TemperatureOffsetStart):
+    """寒潮开始事件（温度偏移型）。"""
+
     event_type: ClassVar[str] = "cold_snap_start"
 
 
 @dataclass
 class HeatWaveStart(TemperatureOffsetStart):
+    """热浪开始事件（温度偏移型）。"""
+
     event_type: ClassVar[str] = "heat_wave_start"
 
 
 @dataclass
 class StormStart(WorldEvent):
+    """暴风雨开始事件（风速/降雨倍率）。"""
+
     event_type: ClassVar[str] = "storm_start"
     wind_multiplier: float
     rain_multiplier: float
@@ -165,14 +171,20 @@ class ModifierStop(WorldEvent):
 
 @dataclass
 class ColdSnapStop(ModifierStop):
+    """寒潮结束事件。"""
+
     event_type: ClassVar[str] = "cold_snap_stop"
 
 
 @dataclass
 class HeatWaveStop(ModifierStop):
+    """热浪结束事件。"""
+
     event_type: ClassVar[str] = "heat_wave_stop"
 
 
 @dataclass
 class StormStop(ModifierStop):
+    """暴风雨结束事件。"""
+
     event_type: ClassVar[str] = "storm_stop"

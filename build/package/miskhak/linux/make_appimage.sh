@@ -50,7 +50,7 @@ EOF
 chmod +x "$APPDIR/AppRun"
 
 # ── 打包 ─────────────────────────────────────────────────
-# appimagetool 默认输出到当前目录 → 在 work/ 内运行，产物落位可预期
+# appimagetool 默认输出到当前目录 → 在 build/work/ 内运行后移动到目标路径
 rm -f "$ASCEND_ROOT"/build/work/*.AppImage
 (
   cd "$ASCEND_ROOT/build/work"

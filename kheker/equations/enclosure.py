@@ -55,12 +55,15 @@ class Interval:
         return cls(value, value, bits)
 
     def contains(self, value: int) -> bool:
+        """value（Q 单位整数）是否在闭区间内（含端点）。"""
         return self.lo <= value <= self.hi
 
     def is_empty(self) -> bool:
+        """恒为 False：闭区间表示不承载空集。"""
         return False  # 闭区间表示下构造即非空
 
     def is_singleton(self) -> bool:
+        """上下界相等时即单点包络。"""
         return self.lo == self.hi
 
     def width(self) -> int:
@@ -103,14 +106,17 @@ class Interval:
     # ── 区间扩展（包含保持）──────────────────────────────
 
     def add(self, other: "Interval") -> "Interval":
+        """加法区间扩展：[lo+lo', hi+hi']。"""
         self._same_bits(other)
         return Interval(self.lo + other.lo, self.hi + other.hi, self.bits)
 
     def sub(self, other: "Interval") -> "Interval":
+        """减法区间扩展：[lo−hi', hi−lo']。"""
         self._same_bits(other)
         return Interval(self.lo - other.hi, self.hi - other.lo, self.bits)
 
     def neg(self) -> "Interval":
+        """取负：[-hi, -lo]。"""
         return Interval(-self.hi, -self.lo, self.bits)
 
     def mul(self, other: "Interval") -> "Interval":
@@ -190,12 +196,15 @@ class DiscreteSet:
     values: frozenset
 
     def contains(self, value: object) -> bool:
+        """value 是否在取值集合内。"""
         return value in self.values
 
     def is_empty(self) -> bool:
+        """取值集合为空。"""
         return not self.values
 
     def is_singleton(self) -> bool:
+        """取值集合恰有一个元素。"""
         return len(self.values) == 1
 
     def width(self) -> float:
@@ -203,13 +212,16 @@ class DiscreteSet:
         return 0.0 if self.is_singleton() else 1.0
 
     def union(self, other: "DiscreteSet") -> "DiscreteSet":
+        """并集。"""
         return DiscreteSet(self.values | other.values)
 
     def intersect(self, other: "DiscreteSet") -> "DiscreteSet":
+        """交集。"""
         return DiscreteSet(self.values & other.values)
 
     @classmethod
     def of(cls, values: Iterable) -> "DiscreteSet":
+        """由可迭代对象构造取值集合。"""
         return cls(frozenset(values))
 
 

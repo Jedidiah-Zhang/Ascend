@@ -26,6 +26,8 @@ class EntityBorn(WorldEvent):
 
 @dataclass
 class EntityDied(WorldEvent):
+    """实体在虚拟世界消亡（死亡/被摧毁/被拾取等）。"""
+
     event_type: ClassVar[str] = "entity_died"
     entity_id: str
     entity_type: str

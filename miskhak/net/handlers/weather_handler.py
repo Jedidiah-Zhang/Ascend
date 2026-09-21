@@ -3,7 +3,7 @@
 通过 make_weather_handler() 工厂函数创建，返回 {request_type: handler} 映射。
 
 输入防护：逐坐标校验（畸形坐标跳过不毁整批）、批量上限
-MAX_WEATHER_QUERY_CHUNKS（防超大请求卡游戏线程）。
+MAX_WEATHER_QUERY_CHUNKS（超限截断）。
 所有等级标签从"四舍五入后的显示值"分类，保证面板数值与标签一致。
 """
 

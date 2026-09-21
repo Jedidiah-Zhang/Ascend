@@ -14,8 +14,8 @@
 
 实现分层：
 
-- :class:`InterventionPlan` 语义由 :class:`InterventionTimeline` 内联承载
-  （``plan`` / ``revoke``）；计划条目含 ``[start_frame, stop_frame)`` 窗口；
+- 计划语义由 :class:`InterventionTimeline` 内联承载（``plan`` / ``revoke``）；
+  计划条目含 ``[start_frame, stop_frame)`` 窗口；
 - 求值点（``resolve_node`` / ``resolve_parameter``）惰性物化：该帧生效且
   尚无记录时补记一条，保证"已求值帧的记录"只追加、撤销不改写历史。
 """
@@ -71,7 +71,7 @@ def _duration_class(duration: int | None) -> str:
 def default_duration(target_space: str) -> int | None:
     """缺省时长（终端 do 与研究 API 共用一处）。
 
-    节点值替换缺省单帧（原"节点干预"），参数/特征核控制缺省长期。
+    节点值替换缺省单帧，参数/特征核控制缺省长期。
     """
     return 1 if target_space == "node" else None
 

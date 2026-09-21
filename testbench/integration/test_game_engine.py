@@ -15,13 +15,13 @@ from miskhak.save import STATE_VERSION
 # GameEngine 默认端口 9081，确保与 test_net.py 的 19081 不冲突
 GAME_ENGINE_PORT = 9081
 
-# 原始初始区块生成（模块 import 时捕获——_patch_fast_worldgen 会
+# 真实初始区块生成（模块 import 时捕获——_patch_fast_worldgen 会
 # 整体替换成 no-op，集成测试需借真实实现 + 缩小半径）
 _REAL_GENERATE_INITIAL = GameEngine._generate_initial_chunks
 
 
 def _patch_fast_worldgen(monkeypatch):
-    """快路径世界生成：小大陆 + 跳过初始区块，避免真实生成耗时。
+    """快路径世界生成：小大陆 + 跳过初始区块。
 
     只替换生成来源，生命周期/网络/存档流程全走真实路径。
     """
@@ -489,7 +489,7 @@ class TestWorldProcessEntry:
             engine.stop()
 
     def test_load_world_backfills_program_identity(self, monkeypatch):
-        """旧存档未记录程序身份：加载放行，落盘时补写（下一次可比对）。"""
+        """未记录程序身份的存档：加载放行，落盘时补写（下一次可比对）。"""
         _patch_fast_worldgen(monkeypatch)
         engine = GameEngine(seed=42)
         try:

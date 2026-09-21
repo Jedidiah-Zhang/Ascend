@@ -8,8 +8,8 @@
   - 有存档 → save_select.tscn（存档选择页）
   - 无存档 → world_setup.tscn（创建世界调参流程，直达）
 
-进程模型：进入主菜单 = 菜单模式（世界进程已由暂停菜单切换回菜单，
-此处仅兜底——Connection.restart_backend 幂等跳过已一致的模式）。
+进程模型：进入主菜单 = 菜单模式；后端若处于世界进程模式，
+经 Connection.restart_backend 切回。
 """
 
 extends Control
@@ -78,7 +78,7 @@ func _ready() -> void:
 	_font = FontUtils.get_mono_font()
 	_version_text = _load_version()
 	_update_status()
-	# 兜底：若后端仍处世界进程模式（异常路径未走暂停菜单），切回菜单模式
+	# 兜底：若后端处于世界进程模式（异常路径未走暂停菜单），切回菜单模式
 	if Connection.backend_args.size() > 0:
 		Connection.restart_backend(PackedStringArray())
 	if not Connection.connection_established.is_connected(_on_connected):
@@ -306,7 +306,7 @@ func _on_connected(_host: String, _port: int) -> void:
 	_update_status()
 
 
-## 后端连接断开回调：刷新状态文本并复位存档检查（响应可能不再回来）。
+## 后端连接断开回调：刷新状态文本并复位存档检查（响应可能收不到）。
 func _on_disconnected() -> void:
 	_checking_saves = false
 	_update_status()

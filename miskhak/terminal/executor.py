@@ -41,9 +41,7 @@ logger = get_logger(__name__)
 class ExecutorConfig:
     """指令执行器的可选运行时服务依赖。
 
-    集中承载指令组依赖的运行时服务（weather/entity/continent 等），
-    替代构造时散落的长参数列表——新增指令组只需在此加字段，
-    构造签名不变。
+    集中承载指令组依赖的运行时服务（weather/entity/continent 等）。
 
     Attributes:
         weather_engine: WeatherEngine 实例，用于 weather 指令。
@@ -81,7 +79,7 @@ class CommandExecutor(
 
     解析指令字符串，调用对应逻辑，返回结构化结果。
     指令路由采用 dict 映射（O(1) 查找），第三方可通过 `register_command`
-    注入新指令，不修改核心代码。
+    注入新指令。
 
     Usage:
         executor = CommandExecutor(clock, calendar, I18n(),
@@ -182,8 +180,7 @@ class CommandExecutor(
     def execute(self, command: str) -> CommandResult:
         """执行一条指令字符串。
 
-        用 dict 映射代替 if/elif 链，O(1) 查找。
-        quit 指令由 frozenset 快速匹配。
+        指令路由为 dict 映射（O(1) 查找）；quit 指令由 frozenset 匹配。
 
         Args:
             command: 原始指令字符串（如 "time tick 5", "status", "lang en_US"）。

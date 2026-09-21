@@ -26,7 +26,7 @@ func _write_raw(text: String) -> void:
 	f.close()
 
 
-# ── 默认路径与迁移 ──────────────────────────────────────────
+# ── 默认路径 ──────────────────────────────────────────
 
 func test_default_path_follows_save_root_env() -> void:
 	OS.set_environment("ASCEND_SAVE_ROOT", "/tmp/opencode/fake_saves")

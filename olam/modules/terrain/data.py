@@ -1,6 +1,6 @@
 """地形状态内容数据 — 状态注册表与内核参数表（读 ``data/terrain.json``）。
 
-内容仍是数据：改 ``terrain.json`` 不改代码。
+状态与参数均为内容数据：改 ``terrain.json`` 不改代码。
 """
 
 from __future__ import annotations

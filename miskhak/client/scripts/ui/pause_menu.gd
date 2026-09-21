@@ -1,7 +1,7 @@
 """ESC 暂停菜单 — 继续游戏 / 手动存档 / 设置 / 返回主菜单 / 退出游戏。
 
 打开时暂停游戏（get_tree().paused），关闭时恢复；返回主菜单 / 退出
-游戏前先恢复（否则新场景的 _process 会被冻结）。
+游戏前先恢复。
 
 全部内容 _draw() 绘制 + 自绘命中检测，等宽字体，风格与主菜单 /
 存档选择页一致。
@@ -91,8 +91,7 @@ func _ready() -> void:
 	anchor_right = 1.0
 	anchor_bottom = 1.0
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	# 必须 ALWAYS：WHEN_PAUSED 会同时屏蔽未暂停时的输入（输入回调
-	# 受 process_mode 门控），ESC 将永远无法打开菜单
+	# ALWAYS：暂停期间仍能接收输入（输入回调受 process_mode 门控）
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_font = FontUtils.get_mono_font()
 	if not Settings.locale_changed.is_connected(_on_locale_changed):
@@ -292,7 +291,7 @@ func _hit_button(pos: Vector2) -> String:
 
 ## 执行按钮动作：继续游戏 / 发起存档 / 打开设置 / 返回主菜单
 ## / 退出游戏；切换场景或退出前先恢复游戏（解除暂停）。
-## 返回主菜单 = 进程切换回菜单模式（世界进程优雅退出落盘）。
+## 返回主菜单 = 进程切换回菜单模式（世界进程退出时落盘）。
 ##
 ## Args:
 ##     key: 按钮 key（见 BUTTONS 定义）。
@@ -306,7 +305,7 @@ func _activate(key: String) -> void:
 			_open_settings()
 		"menu":
 			close()
-			# 世界进程 → 菜单进程（优雅退出：最终落盘；切换期间不闪错）
+			# 世界进程 → 菜单进程（退出时最终落盘；切换期间不闪错）
 			Connection.restart_backend(PackedStringArray())
 			get_tree().change_scene_to_file(MAIN_MENU_SCENE)
 		"quit":

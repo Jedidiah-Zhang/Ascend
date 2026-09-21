@@ -7,7 +7,7 @@
 #   无 --tag：打印两通道版本，并校验 core 是两个产品版本的前缀。
 #   --tag  ：tag 触发发布时校验触发 tag 与对应通道版本一致
 #            （game-v<版本> → miskhak，research-v<版本> → kheker），
-#            不一致退出 1（阻断 CI release job），防止误打 tag 发布错误版本名。
+#            不一致退出 1（CI release job 中断）。
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"

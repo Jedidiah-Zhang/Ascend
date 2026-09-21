@@ -2,7 +2,7 @@
 
 - ``canonical_bytes``：规范 JSON（键排序、紧凑分隔符、UTF-8、拒绝 NaN）；
 - ``digest_object`` / ``digest_text`` / ``digest_bytes``：sha256 摘要，
-  统一前缀 ``sha256:``；
+  固定前缀 ``sha256:``；
 - ``file_digest``：文件内容摘要（源码依赖进身份用，与路径无关）。
 
 规范编码是相等、序列化与摘要的公共底座：同一份声明在任何机器、

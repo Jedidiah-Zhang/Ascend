@@ -3,11 +3,11 @@
 渲染所有已注册 DebugSection 的文本行，显示在屏幕左上角。
 F3 键切换可见性（自管理，无需世界脚本介入；调试模式关闭时忽略）。
 每个 Section 自行管理数据拉取与轮询，
-DebugOverlay 仅负责统一调度（process_sections / broadcast_event / broadcast_response）。
+DebugOverlay 仅负责调度（process_sections / broadcast_event / broadcast_response）。
 
 用法:
 	var overlay := get_node("DebugLayer/DebugOverlay")
-    overlay.setup_default_sections(self)  # 世界脚本一行搞定
+    overlay.setup_default_sections(self)  # 世界脚本调用一次
     overlay.process_sections(delta)       # 每帧调用
     overlay.broadcast_event(...)          # 后端事件到达时调用
 """
@@ -34,7 +34,7 @@ const PADDING: int = 8
 const LABEL_INDENT: int = 4
 const SECTION_SPACING: int = 2
 
-## 最低刷新间隔（秒），限制 DebugOverlay 重绘频率避免每帧全量测量
+## 最低刷新间隔（秒），限制覆盖层重绘频率
 const REFRESH_INTERVAL: float = 0.25
 
 
@@ -152,7 +152,7 @@ func _on_debug_mode_changed(enabled: bool) -> void:
 		toggle()
 
 
-## 注册调试分区，加入统一渲染列表。
+## 注册调试分区，加入渲染列表。
 ##
 ## Args:
 ##     section: 要注册的 DebugSection 实例。
@@ -210,7 +210,7 @@ func setup_sections(world: Node) -> void:
 		section.setup(world)
 
 
-## 统一调度所有启用分区的每帧处理（覆盖层可见时由世界脚本每帧调用）。
+## 调度所有启用分区的每帧处理（覆盖层可见时由世界脚本每帧调用）。
 ##
 ## Args:
 ##     delta: 帧间隔（秒）。

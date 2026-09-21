@@ -1,7 +1,7 @@
 """验收 runner 测试 — 判据全绿 + 变异探针全部检出。
 
 判据与变异定义在 ``kheker/acceptance/world_checks.py`` 与
-``run_acceptance.py``；本测试保证 runner 的判别力不是徒有其表。
+``run_acceptance.py``；本测试验证 runner 的判别力。
 """
 
 from __future__ import annotations

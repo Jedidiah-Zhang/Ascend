@@ -1,7 +1,6 @@
 """统一天气场 — 特征 + 纹理双分量合成，1km 网格 C1 插值 + tile 级噪声。
 
-下游（WeatherEngine / 地形状态引擎）只认 sample(x, y, t) / sample_grid，
-分量拆分对下游透明。
+下游（WeatherEngine / 地形状态引擎）只认 sample(x, y, t) / sample_grid。
 
 合成路径：
     纹理分量（多 octave Perlin，波长按参数独立）
@@ -39,9 +38,7 @@ CH_WIND = "wind"                  # 风扰动（归一化 [-1, 1]）
 
 
 # 降水阈值/强度校准不在此处实现：唯一求值点是声明节点
-# （weather.chunk.precipitation_threshold / weather.instant.precipitation_intensity_mm_per_hour），
-# 由 WeatherEngine.evaluate_node 统一求值（含干预覆盖），查询路径与
-# region_tracker 事件路径共用同一入口。
+# （weather.chunk.precipitation_threshold / weather.instant.precipitation_intensity_mm_per_hour）。
 
 
 class UnifiedWeatherField:
@@ -99,6 +96,7 @@ class UnifiedWeatherField:
 
     @property
     def seed(self) -> int:
+        """场的随机种子（注入核的身份排序使用）。"""
         return self._seed
 
     @property
@@ -201,9 +199,8 @@ class UnifiedWeatherField:
         Returns:
             候选核列表。
         """
-        # 邻域外扩：4×4 插值邻域（±2 网格）基础上按核完整 falloff 范围
-        # （2×最大半径）外扩——cores_overlapping 相交判定按核半径，
-        # 仅靠插值邻域会截断核边缘贡献（gauss ~2.8%）
+        # 邻域外扩：4×4 插值邻域（±2 网格）外再按核完整 falloff 范围
+        # （2×最大半径）外扩。
         return self._features.cores_overlapping(
             x - self._grid_size * 2.0, y - self._grid_size * 2.0,
             x + self._grid_size * 2.0, y + self._grid_size * 2.0, t,
@@ -266,7 +263,7 @@ class UnifiedWeatherField:
         """批量采样矩形区域的通道合成值（一次核收集）。
 
         供地形状态积分器等栅格消费者使用——批量与单点共享同一
-        合成路径，仅核收集复用（性能语义独立）。
+        合成路径，仅核收集复用。
 
         Args:
             channel: 通道标识。

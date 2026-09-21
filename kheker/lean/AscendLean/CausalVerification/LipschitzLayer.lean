@@ -16,8 +16,8 @@ import AscendLean.CausalVerification.DagPathExpansion
 - 路径和闭式：
   `e_t = Σ_u ε_u · Σ_{paths u→t} Π L_{a,b}`，链情形退化回命题 2.1。
 
-`DagPathExpansion.lean` 已证明代数内核（`dag_path_expansion`：递推 ⟹ 闭式）。
-本文件补上缺失的一环——**凭什么真实预测误差满足那个递推上界**：
+`DagPathExpansion.lean` 证明代数内核（`dag_path_expansion`：递推 ⟹ 闭式）。
+本文件证明**真实预测误差满足该递推上界**：
 
 0. 记号：节点 = ℕ（拓扑序 = 自然数序）；真方程 `f i` / 模型方程 `fh i`
    吃全部上游取值（`(ℕ → ℝ) → ℝ`）；轨迹自洽 `X i = f i X`、`Xh i = fh i Xh`
@@ -36,11 +36,10 @@ import AscendLean.CausalVerification.DagPathExpansion
 6. 链特例 = 命题 2.1：单父链上实例化，路径和闭式退化回命题 2.1 的
     `Σ ε_j Π L_j` 形态。
 
-编码取舍（Lipschitz 的忠实版）：逐边 Lipschitz 采用**单父坐标**形式
+编码约定：逐边 Lipschitz 采用**单父坐标**形式
 （改一个父坐标、界 `L_{j,i}`，即文档"L_{j,i} 关于父 j"的字面语义），
-和式版本由望远镜引理**推导**而非假设。代价是需额外引入结构方程的
-局部性假设（`f i` 只读低坐标）——这是 SCM 结构方程的定义性内容，
-且 ℕ 全函数编码下必须显式声明依赖窗口。
+和式版本由望远镜引理**推导**而非假设；结构方程的
+局部性假设（`f i` 只读低坐标）在 ℕ 全函数编码下显式声明。
 -/
 
 open Finset
@@ -50,9 +49,7 @@ namespace AscendLean.CausalVerification
 
 /-! ## 第一节：望远镜引理（单坐标 Lipschitz ⟹ 多坐标贡献相加） -/
 
-/-- 非依赖版单坐标更新。Mathlib 的 `Function.update` 是依赖类型版
-    （值类型 `β a`），独立引理中会引入类型层强制转换、妨碍 `rw` 模式匹配，
-    故包一层普通定义，把依赖性限制在证明项内部。 -/
+/-- 非依赖版单坐标更新：把 `Function.update` 的依赖类型限制在证明项内部。 -/
 def pointUpd (x : ℕ → ℝ) (n : ℕ) (v : ℝ) : ℕ → ℝ :=
   Function.update x n v
 

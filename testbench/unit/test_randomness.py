@@ -1,7 +1,7 @@
 """种子派生确定性随机工具测试 — 生成层随机源单一入口契约。
 
-承诺：位置相关 + seed 相关的确定性随机必须经 cell_hash / seed_angle，
-禁止裸坐标哈希（否则所有世界模式相同）。
+位置相关 + seed 相关的确定性随机经 cell_hash / seed_angle，
+不使用裸坐标哈希。
 """
 
 import math

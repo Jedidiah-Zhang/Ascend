@@ -47,7 +47,7 @@ def _write_cache(path: str, data: ContinentData, fingerprint: str | None = None)
         path: 缓存路径。
         data: 待写入的大陆数据。
         fingerprint: 指纹覆盖；None 用当前指纹（正常缓存），"" 模拟
-            无指纹旧格式，其它值模拟生成环境漂移。
+            无指纹缓存，其它值模拟生成环境漂移。
 
     Returns:
         写入的原始字节（供"未被改写"断言用）。
@@ -116,7 +116,7 @@ class TestContinentSerialize:
     def test_roundtrip_256bit_seed(self):
         """256-bit 种子（> int64 范围）往返不失真。
 
-        回归：世界种子为 256-bit 空间（manifest.SEED_MAX = 2**256-1），
+        世界种子为 256-bit 空间（manifest.SEED_MAX = 2**256-1），
         seed 字段按 32 字节大端全量序列化，任意合法种子不溢出。
         """
         big_seed = 90716806870141588494432962298621886198264273751076786878364930858859894597832
@@ -132,13 +132,13 @@ class TestContinentSerialize:
         assert deserialize_continent(b"") is None
 
     def test_truncated_binary_rejected(self):
-        """截断的二进制缓存拒绝加载（防损坏/防恶意构造）。"""
+        """截断的二进制缓存拒绝加载。"""
         original = _small_continent(seed=42)
         raw = serialize_continent(original)
         assert deserialize_continent(raw[: len(raw) // 2]) is None
 
     def test_pickle_format_rejected(self):
-        """pickle 格式（可执行任意代码）拒绝加载（反序列化安全边界）。"""
+        """pickle 格式（可执行任意代码）拒绝加载。"""
         import pickle
         import zlib
         payload = pickle.dumps({
@@ -149,10 +149,10 @@ class TestContinentSerialize:
         assert deserialize_continent(zlib.compress(payload)) is None
 
     def test_version_mismatch_returns_none(self):
-        """格式版本不符返回 None（序列化格式迁移 → 重新生成）。
+        """格式版本不符返回 None（按未命中重新生成）。
 
-        注意：算法/调参变化不使缓存静默失效——由加载时的指纹
-        fail-closed 判定（见 TestGenerationFingerprint）。
+        算法/调参变化由加载时的指纹 fail-closed 判定
+        （见 TestGenerationFingerprint）。
         """
         original = _small_continent()
         from unittest import mock
@@ -165,7 +165,7 @@ class TestContinentSerialize:
         assert deserialize_continent(stale) is None
 
     def test_wrong_seed_rejected(self):
-        """头部 seed 与数据不符拒绝加载（防篡改/错档缓存）。"""
+        """头部 seed 原样读出（与生成器不符由 ensure_continent 校验）。"""
         original = _small_continent(seed=1)
         restored = deserialize_continent(serialize_continent(original))
         # 反序列化函数本身信任头部；seed 与生成器不符的场景由外层
@@ -265,10 +265,9 @@ class TestWorldGeneratorCache:
         assert not os.path.exists(self._cache_path(tmp_path, 66))
 
     def test_cache_seed_mismatch_regenerates(self, tmp_path, monkeypatch):
-        """缓存 seed 与生成器不符（错档/旧随机化窗口残留）：重新生成并覆盖。
+        """缓存 seed 与生成器不符（错档缓存）：重新生成并覆盖。
 
-        防护：缓存必须校验与 self._seed 的匹配——崩溃窗口（manifest
-        seed 未落盘）或拷贝错档若加载错误大陆，世界会静默不一致。
+        缓存加载时校验与 self._seed 的匹配。
         """
         other = _small_continent(seed=111)  # 其它种子的缓存
         fake = _small_continent(seed=222)  # 期望种子的生成结果（预计算，避免 mock 自递归）
@@ -299,8 +298,8 @@ class TestWorldGeneratorCache:
     def test_cache_land_ratio_mismatch_regenerates(self, tmp_path, monkeypatch):
         """缓存 land_ratio 与生成器不符（同 seed 调参结果混入）：重新生成。
 
-        Issue #8：大陆是 (seed, land_ratio) 的确定性函数——同 seed
-        不同占比的缓存必须视为未命中，否则调参无效。
+        大陆是 (seed, land_ratio) 的确定性函数——同 seed 不同占比的
+        缓存按未命中处理。
         """
         other = _small_continent(seed=333, land_ratio=0.30)
         fake = _small_continent(seed=333, land_ratio=0.70)
@@ -331,8 +330,8 @@ class TestWorldGeneratorCache:
     def test_cache_size_mismatch_regenerates(self, tmp_path, monkeypatch):
         """缓存尺寸与生成器不符（同 seed 不同地图尺寸调参结果混入）：重新生成。
 
-        Issue #8：大陆是 (seed, land_ratio, 尺寸) 的确定性函数——同 seed
-        不同尺寸的缓存必须视为未命中，否则地图尺寸调参无效。
+        大陆是 (seed, land_ratio, 尺寸) 的确定性函数——同 seed 不同
+        尺寸的缓存按未命中处理。
         """
         other = _small_continent(seed=555)  # 6×4km 缓存
         fake = _small_continent(seed=555, width_km=12.0, height_km=8.0)
@@ -413,10 +412,9 @@ class TestGenerationFingerprint:
     def test_fingerprint_mismatch_rejects_cache(
         self, tmp_path, monkeypatch,
     ):
-        """生成环境漂移：拒绝加载，不沿用旧缓存、不静默重算。
+        """生成环境漂移：拒绝加载，不沿用缓存、不静默重算。
 
-        防护（WC-1.2 / WC-9.1）：身份变更即新世界——按当前算法解释
-        旧缓存的派生层会静默改变轨迹，必须显式失败；异常消息携带
+        身份变更即新世界（WC-1.2 / WC-9.1），显式失败；异常消息携带
         可执行指引（新建世界 / continent regen / --regen-continent）。
         """
         from olam.generation import generator as gen_mod
@@ -505,10 +503,10 @@ class TestGenerationFingerprint:
         )
 
     def test_cache_without_fingerprint_regenerates(self, tmp_path, monkeypatch):
-        """无指纹缓存（旧格式/手工写入）：按未命中重新生成并覆盖。
+        """无指纹缓存（手工写入）：按未命中重新生成并覆盖。
 
-        无身份摘要无法证明缓存与当前算法一致；沿用既有"版本/损坏 →
-        未命中重新生成"路径，不静默沿用无法验证的派生数据。
+        无身份摘要无法证明缓存与当前算法一致；与版本不符/损坏同样
+        按未命中处理，不沿用无法验证的派生数据。
         """
         fake = _small_continent(seed=515)
         fresh = _small_continent(seed=515)
@@ -609,9 +607,7 @@ class TestGenerationFingerprint:
 class TestDerivedCachesLoadedFromDisk:
     """派生缓存随缓存持久化，受 gen_fingerprint 背书：加载即信任。
 
-    重算输入（侵蚀前气候场）不落盘，"加载后按当前算法重算"与生成值
-    非逐位一致，会静默改变读档后的轨迹——因此不作首选路径；算法变更
-    由指纹不一致 → 拒绝加载兜底（WC-1.2）。缺派生段的旧格式走重建
+    算法变更由指纹不一致 → 拒绝加载兜底（WC-1.2）。缺派生段走重建
     兜底（见 TestDerivedCacheRebuildFallback）。
     """
 
@@ -639,7 +635,7 @@ class TestDerivedCachesLoadedFromDisk:
 
 
 class TestDerivedCacheRebuildFallback:
-    """派生段缺失（旧格式/重建路径）：首次访问惰性重建一次，不读半成品。"""
+    """派生段缺失（重建路径）：首次访问惰性重建一次，不读半成品。"""
 
     @staticmethod
     def _bare(real):

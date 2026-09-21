@@ -117,8 +117,7 @@ def _parse_args(argv: list[str]) -> tuple[str | None, str | None, str | None, st
 def _force_utf8_stdio() -> None:
     """Windows 控制台/管道默认 ANSI 代码页（如 cp1252），中文日志
     UnicodeEncodeError 直接崩溃（英文 Windows 真实运行同样触发）。
-    统一重配置为 UTF-8 + errors=replace：任何环境不崩，文件/管道
-    输出保持可读，控制台至多显示替换符。
+    统一重配置为 UTF-8 + errors=replace。
     """
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
@@ -151,7 +150,7 @@ def main() -> None:
         listen_port = int(port_override)
 
     # SIGTERM（前端优雅关闭时发送）：结束主循环，走 engine.stop()
-    # 最终落盘（state + chunk flush + WAL），避免强杀丢状态
+    # 最终落盘（state + chunk flush + WAL）
     stop_requested = False
 
     def _handle_sigterm(_signum: int, _frame: object) -> None:
@@ -162,9 +161,8 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     engine = GameEngine(seed=42, port=listen_port)
-    # 网络层先行（幂等）：端口 + token 文件立即就绪。世界进程的
-    # load_world 会阻塞 5-30s（大陆生成），token 若延迟写入，
-    # 前端立即连接时读到旧 token 握手失败（且前端缓存 token 不重读）。
+    # 网络层先行（幂等）：端口 + token 文件在 load_world（大陆生成
+    # 5-30s）之前就绪。
     engine.ensure_network()
     if engine.server is not None:
         _write_token_file(engine.server.token)

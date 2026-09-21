@@ -5,8 +5,7 @@
 
 W4 的实质断言：两个从同一世界设置出发的实例，一个**不存档**持续演化、
 一个**存档后读档**继续演化，在相同未来随机地址下轨迹必须逐位一致。
-差异若出现，只可能来自某个未被存档携带的状态分量——这正是完整存档要
-排除的东西。
+差异只可能来自某个未被存档携带的状态分量。
 """
 
 from __future__ import annotations
@@ -187,14 +186,14 @@ class TestStateSufficiencyW4:
             _trajectory(engine_c, range(6, 13))
 
     def test_dropping_interventions_breaks_continuation(self):
-        """负例：漏存干预 → 轨迹分叉（证明本测试确实有判别力）。"""
+        """负例：漏存干预 → 轨迹分叉。"""
         clock_a, engine_a = _build_world()
         _apply_research_interventions(engine_a, frame=0)
         state = collect_state(clock_a, _Player(), engine_a, 0)
 
         clock_b, engine_b = _build_world()
         state_without = dict(state)
-        # 模拟旧版存档：只有时钟与玩家，干预时间线为空
+        # 构造仅含时钟与玩家的载荷：干预时间线为空
         state_without["weather"] = {
             "interventions": {"plan": [], "records": []},
         }
@@ -202,7 +201,7 @@ class TestStateSufficiencyW4:
 
         assert _trajectory(engine_a, range(0, 4)) != \
             _trajectory(engine_b, range(0, 4)), \
-            "丢失干预/注入核后轨迹必须分叉，否则 W4 断言无判别力"
+            "丢失干预/注入核后轨迹必须分叉"
 
 
 class TestFailClosedLoad:

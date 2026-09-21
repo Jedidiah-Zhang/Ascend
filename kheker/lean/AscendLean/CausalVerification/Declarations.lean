@@ -20,14 +20,13 @@ import AscendLean.CausalVerification.LipschitzLayer
 （verify_equations.py V3）的活；本文件的锚点/数值核对定理是
 V2 判据的形式化对应物。
 
-编码取舍：
-- `clamp` 自建（Mathlib 无内置；语义取 `ascend.mathutil.clamp` 的
-  `max lo (min hi value)`，即 `min hi (max lo x)`）；
-- Lipschitz 用轻量谓词 `Lip K g`（绝对值形式，K : ℝ）而非 Mathlib 的
-  `LipschitzWith`（ℝ≥0 系数 + edist）——声明数据的 L_j 是普通非负实数，
-  绝对值形式与 equations.json 的承诺逐字对应；
-- `precip_type_for` 建模为理想阈值 `T ≤ 0 → snow`：引擎先 round(1) 再判定
-  是事件广播/UI 显示一致的浮点细节，不在数学规范内（见第四节注释）。
+编码约定：
+- `clamp` 语义取 `ascend.mathutil.clamp` 的 `max lo (min hi value)`，
+  即 `min hi (max lo x)`；
+- Lipschitz 谓词 `Lip K g` 取绝对值形式（K : ℝ）；声明数据的 L_j 是普通
+  非负实数，绝对值形式与 equations.json 的承诺逐字对应；
+- `precip_type_for` 建模为理想阈值 `T ≤ 0 → snow`：引擎先 round(1) 再判定，
+  该浮点细节不在数学规范内（见第四节注释）。
 
 与 LipschitzLayer.lean 的衔接见第五节：本文件的逐边 `Lip` 定理
 供给连接定理 `error_recurrence_bound` 的 `hlip` 假设。
@@ -102,8 +101,8 @@ theorem abs_clamp_sub_clamp_le (lo hi a b : ℝ) :
 /-! ### Lipschitz 谓词与小复合代数 -/
 
 /-- 声明层 Lipschitz 谓词：全局 K-Lipschitz（绝对值形式）。
-    取轻量自定义而非 Mathlib `LipschitzWith`：声明数据的 L_j 是普通
-    非负实数，绝对值形式与 equations.json 的承诺逐字对应。 -/
+    声明数据的 L_j 是普通非负实数，绝对值形式与 equations.json
+    的承诺逐字对应。 -/
 def Lip (K : ℝ) (g : ℝ → ℝ) : Prop := ∀ x y, |g x - g y| ≤ K * |x - y|
 
 /-- **Lipschitz 函数复合 clamp 常数不变**（02 篇误差传播视角：钳制只会
@@ -461,12 +460,11 @@ theorem deriveAmp_anchor_hot_marine : deriveAmp ampConfig 35 2000 = 2 := by
 声明：role=structural，离散输出，L 退化为 0。
 verify_equations.py 判据：V3 precip_type_for 阈值语义。
 
-编码取舍：声明方程 `weather.instant.classify_precipitation_type.v1`
-（`'snow' if round_half_even(T, 1) <= 0 else 'rain'`）中 round(1)
-是事件广播与 UI 显示文案一致的浮点细节；数学规范建模为理想阈值
-`snow iff T ≤ 0`。舍入映射 T ↦ round(T,1) 保序（单调不减），故
-理想模型的单调性结论在加舍入后依然成立，只是阈值处 ±0.05 的
-半开区间归属细节不同——该差异属于引擎对拍测试（V3）的管辖范围。 -/
+建模约定：声明方程 `weather.instant.classify_precipitation_type.v1`
+（`'snow' if round_half_even(T, 1) <= 0 else 'rain'`）在数学规范中建模为
+理想阈值 `snow iff T ≤ 0`。舍入映射 T ↦ round(T,1) 保序（单调不减），故
+理想模型的单调性结论在加舍入后依然成立；阈值处 ±0.05 的
+半开区间归属细节属于引擎对拍测试（V3）的管辖范围。 -/
 
 /-- 降水类型的离散输出域。 -/
 inductive PrecipType : Type where
@@ -520,13 +518,11 @@ LipschitzLayer.error_recurrence_bound（02 篇命题 2.5 连接命题）要求�
   （阈值与离散输出口径见 01-样本复杂度.md §5，不入 adj 数值表）。
 
 下面的适配器定理展示形状转换：结构方程只读单一父坐标 +
-全局 Lip 定理 ⟹ hlip 所需的单坐标界。完整 SCM 实例化
-（节点编码、局部性假设、ε 的选取）留给后续 issue。 -/
+全局 Lip 定理 ⟹ hlip 所需的单坐标界。 -/
 
 /-- **形状适配器**：单变量全局 Lip 定理供给 hlip 所需的单坐标形式——
     结构方程 `g ∘ (· j)` 只读第 j 坐标时界照搬。
-    注：全局 Lip 下其余坐标一致性前提自动满足，故 hagree 未被使用；
-    保留该参数以镜像 hlip 的调用形状。 -/
+    注：全局 Lip 下其余坐标一致性前提自动满足，故 hagree 未被使用。 -/
 theorem single_coord_bridge {j : ℕ} {g : ℝ → ℝ} {L : ℝ}
     (hg : Lip L g) (x y : ℕ → ℝ) (_hagree : ∀ k, k ≠ j → x k = y k) :
     |g (x j) - g (y j)| ≤ L * |x j - y j| :=

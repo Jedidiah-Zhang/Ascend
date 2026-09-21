@@ -1,17 +1,15 @@
 """大陆数据类 — 层1 宏观场的纯数据载体。
 
-从 continent.py 拆出：ContinentParams（生成参数）与 ContinentData
-（生成结果数据 + 采样方法）不包含生成逻辑，独立成模块——
-生成器（ContinentGenerator）与序列化（continent_io）都依赖本模块，
-避免生成/序列化互相耦合。
+ContinentParams（生成参数）与 ContinentData（生成结果数据 + 采样方法）
+不含生成逻辑；生成器（ContinentGenerator）与序列化（continent_io）
+依赖本模块。
 
 派生缓存约定（WC-3.3 / WC-9.1）：``subdiv_ranges`` 与 ``_chunk_climate``
 是可由持久化宏观场重算的派生缓存。生成路径（ContinentGenerator.generate）
-返回前已按当前算法构建；磁盘加载路径保留磁盘副本并**加载即信任**——
-缓存与宏观场同源写入、同一算法，且 gen_fingerprint 已背书算法一致
-（不一致在生成器加载路径 fail-closed）。仅当派生段缺失或显式注入重建
-入口时，才按当前算法惰性重算并 memoize（重算输入不落盘、与生成值非
-逐位一致，故不作为首选路径）。
+返回前已按当前算法构建；磁盘加载路径保留磁盘副本并加载即信任
+（gen_fingerprint 校验算法一致，不一致在生成器加载路径 fail-closed）。
+仅当派生段缺失或显式注入重建入口时，才按当前算法惰性重算并 memoize
+（重算输入不落盘、与生成值非逐位一致）。
 """
 
 import threading
@@ -67,7 +65,7 @@ class ContinentData:
         water_distance: 行优先距水距离场 (m)，0=水体本身（同分辨率）。
         hydrology: 水文数据（流向、累积、湖盆、流线河网）。
         subdiv_ranges: 群系细分值域 {ClimateZone: (P10, P90)}；
-            派生缓存属性——加载路径首次访问时按当前算法重建。
+            派生缓存属性——派生段缺失时首次访问触发重建。
         _chunk_climate: chunk 级气候缓存，由 generate() 末尾填充。
             通过 get_chunk_climate(cx, cy) 查询，返回
             (mean_temp, annual_rainfall, sea_level_temp, zone_int)。
@@ -94,14 +92,13 @@ class ContinentData:
         default_factory=lambda: array('d')
     )
     # 距水距离场 (m)：每格到最近水体（海/河/湖）的距离，0 = 水体本身。
-    # 多源 BFS 计算（water_distance.compute_water_distance），与海拔场
-    # 同分辨率同索引；供材质分布（沙滩/冲积/湿地）与生态查询使用。
+    # 与海拔场同分辨率同索引；供材质分布（沙滩/冲积/湿地）与生态查询使用。
     water_distance: Union[list[float], "array[float]"] = field(
         default_factory=lambda: array('d')
     )
     hydrology: "HydrologyData | None" = None
     # 群系细分值域（派生缓存）。字段名带下划线：外部经 subdiv_ranges
-    # 属性读取（首次访问触发加载路径的重建），避免消费者直接读到空/旧值。
+    # 属性读取（未构建时首次访问触发重建）。
     _subdiv_ranges: dict[int, tuple[float, float]] = field(
         default_factory=dict, repr=False,
     )
@@ -126,11 +123,10 @@ class ContinentData:
     def attach_derived_rebuilder(
         self, rebuilder: "Callable[[ContinentData], None]",
     ) -> None:
-        """注入派生缓存重建入口，并标记待重建（缺派生段的兜底路径）。
+        """注入派生缓存重建入口，并标记待重建（缺派生段的路径）。
 
-        正常加载路径保留磁盘派生段并加载即信任（指纹背书）；仅当缓存
-        缺派生段（手工构造/未来格式）时经此注入按当前算法重建的入口，
-        首次查询在锁内重建一次（WC-9.1：无法验证时以重算兜底）。
+        正常加载路径保留磁盘派生段并加载即信任（指纹校验）；缓存缺
+        派生段时经此注入重建入口，首次查询在锁内重建一次（WC-9.1）。
         """
         self._derived_rebuilder = rebuilder
         self._derived_ready = False
@@ -139,7 +135,7 @@ class ContinentData:
     def subdiv_ranges(self) -> dict[int, tuple[float, float]]:
         """群系细分值域 {ClimateZone_int: (P10, P90)}（派生缓存）。
 
-        加载路径首次访问触发按当前算法重建；生成路径直接返回已构建值。
+        未构建（缺派生段）时首次访问触发重建；已构建直接返回。
         """
         self.ensure_derived_caches()
         return self._subdiv_ranges
@@ -177,15 +173,13 @@ class ContinentData:
     ) -> tuple[float, float, float, int]:
         """查询 chunk 中心的校准后气候属性。
 
-        界内未命中时触发派生缓存重建（加载路径首次查询），此后命中
-        缓存。越界不触发重建（地图外无须重算整场）。
+        界内未命中时触发派生缓存重建，此后命中缓存。越界不触发重建。
 
         Returns:
             (mean_temp, annual_rainfall, sea_level_temp, climate_zone)：
             越界（地图界限外）返回一致的极地深海默认值
             (-20, 0, -20, POLAR_TUNDRA)——地图为有界矩形，界限外
-            统一视为极地深海，避免各字段自相矛盾（zone=0 即热带
-            雨林，与 -20°C 温度/深海海拔矛盾）。
+            统一视为极地深海。
         """
         key = (cx, cy)
         hit = self._chunk_climate.get(key)
@@ -341,9 +335,7 @@ class ContinentData:
         if not self.water_distance:
             return 0.0
 
-        # 坐标换算用 self.cell_size（本大陆实际格分辨率）而非全局常量
-        # ——与 sample_altitude_bilinear 的预存模式一致，但非 100m 分辨率
-        # 的大陆（测试用小尺寸）换算仍正确。
+        # 坐标换算用 self.cell_size（本大陆实际格分辨率）。
         cell = float(self.cell_size)
         gx = world_x / cell - 0.5
         gy = world_y / cell - 0.5

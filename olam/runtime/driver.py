@@ -1,6 +1,6 @@
 """帧调度器 — 世界状态更新的唯一执行入口（声明周期驱动）。
 
-设计决定：
+调度规则：
 
 - 世界状态的演化只能由**声明的周期**触发，按注册顺序确定性执行；
 - 信号来自时钟（tick / skip，驱动层），**不经过世界树事件**；
@@ -56,7 +56,7 @@ class UpdatePoint:
 class FrameScheduler:
     """按声明顺序驱动世界更新点（唯一执行入口）。"""
 
-    # 连续失败退避上限（tick）：持久失败时重试代价可控（ADR-12 D5）。
+    # 连续失败退避上限（tick；ADR-12 D5）。
     _RETRY_BACKOFF_CAP: int = 64
 
     def __init__(self, clock=None, store: FrameStateStore | None = None) -> None:
@@ -191,7 +191,7 @@ class FrameScheduler:
             self._retry_not_before = now + self._backoff_ticks()
             failures = self._consecutive_failures
             if failures == 1 or (failures & (failures - 1)) == 0:
-                # 首次与 2 的幂次失败各汇总一条（避免每次重试刷日志）
+                # 首次与 2 的幂次失败各汇总一条
                 logger.warning(
                     "帧推进连续失败 %d 次：边界已回滚，%d tick 后重试",
                     failures, self._retry_not_before - now,

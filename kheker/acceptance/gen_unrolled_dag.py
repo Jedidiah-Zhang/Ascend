@@ -9,9 +9,6 @@
   定理段 —— ``wellFormed_real``：生产声明满足 ``WellFormed``（机器可判）；
             ``unroll_acyclic_real``：由 ``unroll_acyclic`` 得到时间展开无环。
 
-为什么需要它：``UnrolledDag.lean`` 证明"任何合法声明展开无环"；本生成器
-把"生产声明合法"变成机器可判的命题，C2 因此同时具备理论内核与实例见证。
-
 运行:
   .venv/bin/python kheker/acceptance/gen_unrolled_dag.py            # 生成/刷新
   .venv/bin/python kheker/acceptance/gen_unrolled_dag.py --check    # 巡检
@@ -162,6 +159,7 @@ def main_check() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """生成或 ``--check`` 巡检 UnrolledDag 实例；返回退出码。"""
     ap = argparse.ArgumentParser(description="生成 UnrolledDag 生产实例")
     ap.add_argument("--check", action="store_true", help="只巡检不写入")
     args = ap.parse_args(argv)

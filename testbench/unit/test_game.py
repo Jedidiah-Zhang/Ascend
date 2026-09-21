@@ -85,7 +85,7 @@ class TestSelectBirthPoint:
     def test_no_land_raises_runtime_error(self):
         """全海洋大陆抛 RuntimeError（携带 seed 诊断信息）。
 
-        回归防护：抛错信息携带入参 seed，不依赖实例状态。
+        抛错信息携带入参 seed，不依赖实例状态。
         """
         import pytest
         cont = self._FakeContinent(
@@ -175,7 +175,7 @@ class TestPeriodicSave:
         assert engine._save_queue.qsize() == 0
 
     def test_maybe_save_single_slot_merges(self):
-        """单槽位防堆积：上一周期保存在途时跳过本次（合并），不阻塞。"""
+        """单槽位：上一周期保存在途时跳过本次（合并），不阻塞。"""
         from miskhak.config import AUTOSAVE_INTERVAL
         engine = self._engine()
         engine._last_save_at = time.monotonic() - AUTOSAVE_INTERVAL - 1

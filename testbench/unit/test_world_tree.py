@@ -156,7 +156,7 @@ class TestEventGraph:
         assert set(observers) == {"obs1", "obs2"}
 
     def test_observers_excludes_non_observing_in_edges(self):
-        """回归：入边为 caused_by 但观测其它事件的节点不得判为观测者。"""
+        """入边为 caused_by 但观测其它事件的节点不得判为观测者。"""
         g = EventGraph()
         rain = make_event(id="rain", event_type="weather_change")
         other = make_event(id="other", event_type="physical_event")
@@ -644,11 +644,7 @@ class TestArchivePending:
             os.unlink(path)
 
     def test_flush_then_trim_boundary_monotonic(self):
-        """flush 后 trim 归档低于旧水位的同 tick 事件：水位不回退。
-
-        回归：水位若按实际归档 max_ts + 1 直接覆盖，会从 flush 水位
-        回退，导致边界查询漏掉已归档事件。
-        """
+        """flush 后 trim 归档低于既有水位的同 tick 事件：水位不回退。"""
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         bus = WorldTree(archive_path=path)
@@ -657,7 +653,7 @@ class TestArchivePending:
                 bus.publish(make_event(timestamp=t, id=f"a{t}"))
             bus.archive_pending()  # 水位 = 5
 
-            # flush 后发布低于旧水位的同 tick 迟到事件
+            # flush 后发布低于既有水位的同 tick 迟到事件
             bus.publish(make_event(timestamp=2, id="b2"))
             bus.publish(make_event(timestamp=3, id="b3"))
 
@@ -707,11 +703,7 @@ class TestArchivePending:
             os.unlink(path)
 
     def test_trim_boundary_excludes_archived_same_tick(self):
-        """trim 边界：归档中 ts == before_time 的同 tick 事件不逃出水位。
-
-        回归：水位若按 before_time 推进，查询 [boundary, x] 会漏掉
-        已归档的同 tick 事件（违反"归档中事件 ts < 水位"不变量）。
-        """
+        """trim 边界：归档中 ts == before_time 的同 tick 事件不逃出水位。"""
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         bus = WorldTree(archive_path=path)
@@ -787,7 +779,7 @@ class TestArchivePending:
             os.unlink(path2)
 
     def test_concurrent_publish_and_flush(self):
-        """并发 publish + archive_pending 无异常（复刻既有线程安全风格）。"""
+        """并发 publish + archive_pending 无异常。"""
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         bus = WorldTree(archive_path=path)
@@ -1190,7 +1182,7 @@ class TestEventArchive:
             os.unlink(path)
 
     def test_no_archive_path_behavior_unchanged(self):
-        """不传 archive_path 时行为与之前完全一致。"""
+        """不传 archive_path 时无归档，行为不变。"""
         bus = WorldTree()
         for t in range(5):
             bus.publish(make_event(timestamp=t * 60))
@@ -1203,11 +1195,7 @@ class TestEventArchive:
         assert len(results) == 0  # ts=0,60 已被 trim 丢弃
 
     def test_archive_merge_same_timestamp_boundary(self):
-        """同时间戳事件跨归档/内存边界时不丢失（权重分层 trim）。
-
-        防护：归档查询不得按 earliest_ts 截断——同一 tick 内低权重事件
-        （已归档）和高权重事件（留在内存）并存时，已归档事件不得被排除。
-        """
+        """同时间戳事件跨归档/内存边界时不丢失（权重分层 trim）。"""
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 
@@ -1245,11 +1233,7 @@ class TestEventArchive:
             os.unlink(path)
 
     def test_archive_query_from_other_thread(self):
-        """归档连接可从客户端线程安全查询（check_same_thread=False）。
-
-        回归：生产模型中 tick 线程写归档、客户端接收线程读归档，
-        同一连接跨线程使用会抛 ProgrammingError。
-        """
+        """归档连接可从客户端线程安全查询（check_same_thread=False）。"""
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 
@@ -1943,11 +1927,7 @@ class TestWorldTreeTileQuery:
         assert len(results) == 2  # 周边 chunk 不过滤 sub-cell
 
     def test_tile_query_consistent_across_trim(self):
-        """sub-cell 过滤在事件归档后结果不变（trim 前后等价）。
-
-        防护：归档查询路径必须与内存路径执行同一 sub-cell 过滤，
-        否则同一查询在 trim 前后返回不同结果集。
-        """
+        """sub-cell 过滤在事件归档后结果不变（trim 前后等价）。"""
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
 

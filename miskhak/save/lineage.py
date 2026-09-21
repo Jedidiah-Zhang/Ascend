@@ -8,12 +8,10 @@
     - sig = HMAC-SHA256(sign_key, canonical(data))，canonical 为
       sort_keys 紧凑序列化——签名只覆盖语义内容，与磁盘缩进无关；
     - sign_key 复用世界密钥（manifest.secrets_blob 混淆层），与
-      state.json.enc 同一把签名钥匙——威胁级别一致：防直读/防手贱，
-      不防推导（见 crypto.py 模块文档）。
+      state.json.enc 同一把签名钥匙——防直读，不防推导。
 
-严格模式：无有效签名的血缘文件一律视为损坏（load 返回 None）——
-不兼容历史无签名格式，不信任任何无法验签的内容。写侧必须能取到
-世界密钥，否则跳过写入（返回 False）。
+严格模式：无有效签名的血缘文件一律视为损坏（load 返回 None）。
+写侧必须能取到世界密钥，否则跳过写入（返回 False）。
 """
 
 import base64
@@ -168,8 +166,8 @@ class LineageStore:
     def load(self, world_id: str) -> dict | None:
         """读取并验签血缘文件；缺失/损坏/验签失败均返回 None。
 
-        严格模式：无有效签名 = 损坏——prune 只认 load 非 None 的血缘，
-        不可验签时不做任何淘汰（宁缺勿删）。
+        严格模式：无有效签名 = 损坏。prune 只认 load 非 None 的血缘，
+        不可验签时不做任何淘汰。
         """
         path = self.lineage_path(world_id)
         if not os.path.isfile(path):
@@ -183,7 +181,7 @@ class LineageStore:
         data = parse_lineage_raw(raw, self._keys(world_id))
         if data is None:
             logger.warning(
-                "血缘文件签名缺失或不匹配（历史格式/被篡改），按损坏处理: %s", path,
+                "血缘文件签名缺失或不匹配，按损坏处理: %s", path,
             )
         return data
 
@@ -193,8 +191,8 @@ class LineageStore:
         Returns:
             {"live_origin": str|"", "snapshots": {file: {parent, game_time,
              saved_at, seq}}}。文件缺失/损坏/验签失败时返回空血缘
-            （初始世界无快照 / 不可验签按空处理，反向对账由 load
-            另行把关）。seq 是唯一的权威排序键，其余时间字段仅作展示。
+            （初始世界无快照）。seq 是唯一的权威排序键，其余时间字段
+            仅作展示。
         """
         default: dict = {LIVE_ORIGIN_KEY: "", SNAPSHOTS_KEY: {}}
         data = self.load(world_id)
@@ -211,7 +209,7 @@ class LineageStore:
 
         Returns:
             写入是否成功（False = 未落盘，调用方应跳过依赖血缘
-            一致性的后续步骤——如保留策略的反向对账，防止误删）。
+            一致性的后续步骤，如保留策略的反向对账）。
         """
         keys = self._keys(world_id)
         if keys is None:

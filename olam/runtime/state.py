@@ -67,18 +67,22 @@ class LatticeField:
         return result
 
     def get(self, coords: tuple[int, ...]) -> int | float:
+        """读坐标处的值。"""
         value = self._values[self.index(coords)]
         return value
 
     def set(self, coords: tuple[int, ...], value: int | float) -> None:
+        """写坐标处的值（覆盖）。"""
         self._values[self.index(coords)] = value
 
     def copy(self) -> "LatticeField":
+        """返回同尺寸、同值的独立副本。"""
         clone = LatticeField(self.size)
         clone._values = list(self._values)
         return clone
 
     def values(self) -> tuple[int | float, ...]:
+        """按行主序返回全部值。"""
         return tuple(self._values)
 
     def __len__(self) -> int:
@@ -101,6 +105,7 @@ class LatticeField:
 
     @classmethod
     def load(cls, payload: Mapping[str, object]) -> "LatticeField":
+        """从 :meth:`export` 载荷构造场。"""
         size = tuple(int(n) for n in payload["size"])  # type: ignore[arg-type]
         field = cls(size)
         field._values = list(payload["values"])  # type: ignore[arg-type]
@@ -138,24 +143,31 @@ class DynamicField:
         self._values: dict[tuple[int, ...], object] = dict(values or {})
 
     def get(self, coords: tuple[int, ...]) -> object:
+        """读坐标处的值。"""
         return self._values[coords]
 
     def set(self, coords: tuple[int, ...], value: object) -> None:
+        """写坐标处的值（覆盖）。"""
         self._values[coords] = value
 
     def contains(self, coords: tuple[int, ...]) -> bool:
+        """坐标是否为已物化实例。"""
         return coords in self._values
 
     def items(self) -> tuple[tuple[tuple[int, ...], object], ...]:
+        """(坐标, 值) 对（字典插入序）。"""
         return tuple(self._values.items())
 
     def coords(self) -> tuple[tuple[int, ...], ...]:
+        """已物化坐标（升序）。"""
         return tuple(sorted(self._values))
 
     def values(self) -> tuple[object, ...]:
+        """按坐标升序的值序列。"""
         return tuple(self._values[coords] for coords in self.coords())
 
     def copy(self) -> "DynamicField":
+        """返回独立副本。"""
         return DynamicField(self._values)
 
     def merged(self, other: "DynamicField") -> "DynamicField":
@@ -173,6 +185,7 @@ class DynamicField:
         return f"DynamicField({self._values!r})"
 
     def export(self) -> dict[str, object]:
+        """规范载荷（快照/摘要用）。"""
         return {
             "kind": "dynamic",
             "entries": [
@@ -183,6 +196,7 @@ class DynamicField:
 
     @classmethod
     def load(cls, payload: Mapping[str, object]) -> "DynamicField":
+        """从 :meth:`export` 载荷构造场。"""
         return cls(
             {
                 tuple(
@@ -312,9 +326,11 @@ class StateStore:
     # ── 物化（视图，不是世界语义）───────────────────────────────
 
     def materialize(self, kind: str, coords: tuple[int, ...]) -> None:
+        """登记实例已物化（视图，不改变任何实例的求值结果）。"""
         self._materialized.setdefault(kind, set()).add(tuple(coords))
 
     def dematerialize(self, kind: str, coords: tuple[int, ...]) -> None:
+        """注销物化并丢弃该实例的已提交值与影子值。"""
         self._materialized.get(kind, set()).discard(tuple(coords))
         for slot_id, field in list(self._committed.items()):
             if isinstance(field, DynamicField) and field.contains(coords):
@@ -328,6 +344,7 @@ class StateStore:
                 self._shadow[slot_id] = DynamicField(remaining)
 
     def materialized(self, kind: str) -> tuple[tuple[int, ...], ...]:
+        """已物化坐标（升序）。"""
         return tuple(sorted(self._materialized.get(kind, ())))
 
     def materialized_sets(self) -> dict[str, list[list[int]]]:
@@ -342,6 +359,7 @@ class StateStore:
         self,
         payload: Mapping[str, object],
     ) -> None:
+        """从 :meth:`materialized_sets` 载荷恢复物化集合（覆盖式）。"""
         self._materialized = {
             kind: {tuple(int(part) for part in coords) for coords in items}
             for kind, items in payload.items()
@@ -558,8 +576,8 @@ class StateStore:
     def snapshot(self, slot_ids: tuple[str, ...]) -> dict[str, object]:
         """已提交状态快照（只含给定槽位）+ lag 历史（WC-7.5 检查点充分）。
 
-        ``lag≥2`` 的机制读取历史；历史不进快照会使读档后的轨迹与不中断
-        运行分叉。历史载荷有界：每槽位至多 ``max_lag`` 个值。
+        ``lag≥2`` 的机制读取历史，历史随快照一并保存。历史载荷有界：
+        每槽位至多 ``max_lag`` 个值。
         """
         states = {
             slot_id: export_value(self._committed[slot_id])

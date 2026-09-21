@@ -27,7 +27,7 @@ from olam.runtime import evaluate_direct
 from mechanism_reference import reference_value, unresolved_names
 
 # 逐机制实现包络容差：生产若为定点/预计算表实现，与 float 规范参考的差
-# 必须落在该机制声明的内核误差内（不是放水：容差即声明界）
+# 必须落在该机制声明的内核误差内（容差即声明界）
 _TOLERANCES: dict[str, float] = {
     "weather.tick.derive_hour_of_day.v1": diurnal.HOUR_MAX_ERROR,
     "weather.tick.derive_diurnal_phase_cos.v1": diurnal.PHASE_MAX_ERROR,
@@ -81,6 +81,7 @@ class MechanismCheckReport:
 
     @property
     def passed(self) -> bool:
+        """无未覆盖机制且无对拍不一致。"""
         return not self.uncovered and not self.problems
 
 

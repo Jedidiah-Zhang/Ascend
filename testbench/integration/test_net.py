@@ -19,7 +19,7 @@ from miskhak.log import setup_logging, get_logger
 
 logger = get_logger(__name__)
 
-# 避免端口冲突，使用随机端口
+# 避免端口冲突，使用专用测试端口
 TEST_PORT = 19081
 
 

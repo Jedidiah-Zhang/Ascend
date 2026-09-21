@@ -69,7 +69,7 @@ def test_registry_broadcasts_lifecycle_in_order():
 
 
 def test_weather_adapter_noop_on_tiles_ready():
-    """weather 是解析算——tile 就绪无追赶动作。"""
+    """weather 服务在 tile 就绪时无动作（返回 None）。"""
     w, s = _FakeWeather(), _FakeState()
     adapter = WeatherChunkService(w)
     assert adapter.on_tiles_ready(0, 0) is None

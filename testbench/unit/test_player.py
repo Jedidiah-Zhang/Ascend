@@ -1,6 +1,6 @@
 """PlayerService 单元测试。
 
-后端权威玩家实体（壳子版）：birth / 位置读写 / 传送 / 事件发布。
+后端权威玩家实体：birth / 位置读写 / 传送 / 事件发布。
 使用隔离 WorldTree 避免污染全局总线。
 """
 
@@ -95,7 +95,7 @@ class TestMoveTo:
     """move_to 权威移动测试。"""
 
     def test_move_accepts_reported_position(self, service):
-        """壳子实现：move_to 无条件接受上报坐标（含小数）。
+        """move_to 无条件接受上报坐标（含小数）。
 
         Arrange:
             已 birth 的 PlayerService。
@@ -270,7 +270,7 @@ class TestMapBounds:
         assert bounded.position == result
 
     def test_no_bounds_accepts_any_coords(self, service):
-        """未设置 max_chunk 时保持无界行为（向后兼容）。"""
+        """未设置 max_chunk 时无地图边界，接受任意坐标。"""
         service.birth()
         result = service.move_to(-0.5, -250.0)
         assert result == (-0.5, -250.0)

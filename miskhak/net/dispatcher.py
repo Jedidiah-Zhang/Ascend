@@ -5,7 +5,6 @@
 
 进程模型（服务器与世界观解耦）：菜单进程只注册存档处理程序；
 世界进程在 start() 时一次注册全部处理程序（save + 世界观）。
-进程内不换世界，故无需 replace/unregister。
 """
 
 from collections.abc import Callable
@@ -103,7 +102,7 @@ class MessageDispatcher:
                 self._server.send_to(client_id, response)
         except Exception as exc:
             logger.exception("处理程序错误: request_type=%s", req_type)
-            # 不回传内部异常细节（可能含路径/SQL）；前端只见通用错误
+            # 不回传内部异常细节；前端只见通用错误
             self._server.send_to(client_id, make_error(
                 req_type, f"处理失败: {type(exc).__name__}",
                 seq=msg.get("seq", 0)))

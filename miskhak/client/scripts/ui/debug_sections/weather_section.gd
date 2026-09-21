@@ -1,7 +1,7 @@
 """天气分区 — 展示玩家所在 chunk 的实时天气。
 
-数据经 on_world_response("get_weather") 接收：main_world 负责轮询
-get_weather（1s 间隔）并广播响应，本分区只消费响应（单一轮询点）。
+数据经 on_world_response("get_weather") 接收：main_world 以 1s 间隔轮询
+get_weather 并广播响应，本分区只消费响应。
 """
 
 class_name WeatherSection

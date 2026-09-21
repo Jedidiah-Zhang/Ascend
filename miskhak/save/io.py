@@ -5,7 +5,7 @@ import tempfile
 
 
 def atomic_write(path: str, data: bytes | str) -> None:
-    """原子写文件：mkstemp 唯一临时名 + fsync + os.replace（单一事实来源）。
+    """原子写文件：mkstemp 唯一临时名 + fsync + os.replace。
 
     崩溃安全：要么旧内容完整、要么新内容完整，绝无半写状态。
     临时文件与目标同目录（同文件系统，replace 原子）；mkstemp 唯一名

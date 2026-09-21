@@ -1,11 +1,10 @@
 """状态动态层管理器 — States_<cx>_<cy> TileMapLayer 生命周期集中封装。
 
-显示值追赶的状态层（覆雪/结冰/湿润）与主世界其他地形层不同：它在 chunk
-装载后按 chaser 的增量变化动态增删 cell（非一次性构建）。本类集中管理
-这些动态层的创建/填充/遗忘/清空。
+显示值追赶的状态层（覆雪/结冰/湿润）在 chunk 装载后按 chaser 的增量
+变化动态增删 cell（非一次性构建）。本类集中管理这些动态层的
+创建/填充/遗忘/清空。
 
-节点表按 key 索引（不用 has_node 名查找）——queue_free 延迟释放期间旧节点
-仍占用名字，名查找会误中将要销毁的节点。
+节点表按 key 索引（不用 has_node 名查找）。
 """
 
 class_name StateLayerManager
@@ -57,8 +56,7 @@ func apply_cells(key: Vector2i, cells: Array, tile_set: TileSet) -> void:
 			layer.set_cell(cell[0], 0, Vector2i(cell[1], 0))
 
 
-## 遗忘 chunk 的状态层（节点释放 + 表项移除；释放延迟期内节点仍占用名字，
-## 表项立即移除保证后续重建不撞名）。
+## 遗忘 chunk 的状态层（节点释放 + 表项移除）。
 func erase(key: Vector2i) -> void:
 	var layer: Variant = _layers.get(key)
 	if layer == null:
@@ -68,7 +66,7 @@ func erase(key: Vector2i) -> void:
 	_layers.erase(key)
 
 
-## 清空全部状态层（世界重建/断线后旧层数据失效）。
+## 清空全部状态层（世界重建/断线时调用）。
 func clear() -> void:
 	for key in _layers.keys():
 		var layer: Variant = _layers[key]

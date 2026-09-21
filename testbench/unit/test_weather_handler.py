@@ -81,7 +81,7 @@ class TestWeatherHandlerShape:
         assert callable(handlers["get_weather"])
 
     def test_response_fields(self):
-        """单个合法坐标返回完整字段（sunshine 取代 daylight_hours）。"""
+        """单个合法坐标返回完整字段；响应不含 daylight_hours。"""
         handle = make_weather_handler(_make_engine(), FakeI18n())["get_weather"]
         resp = handle(_request([[0, 0]]))
         assert resp["type"] == "response"

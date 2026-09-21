@@ -22,13 +22,12 @@ jobs:
       - uses: actions/checkout@v5
       - name: 生产声明快照漂移巡检
         run: python3 kheker/equations/export_registry.py --check
-      # 声明数据漂移巡检（防漂移①）：来源改动未重新生成 GenDeclarationData.lean 时
-      # lake build 不会变红，必须独立门禁。gen_lean.py 仅用 stdlib + 世界常量
-      # （stdlib-only）。
+      # 声明数据漂移巡检：gen_lean.py --check 校验 GenDeclarationData.lean 与来源一致
+      # （gen_lean.py 仅用 stdlib + 世界常量）。
       - name: 声明数据漂移巡检（gen_lean.py --check）
         run: python3 kheker/equations/gen_lean.py --check
-      # 实现内容摘要表漂移巡检（实现内容摘要）：改实现未重生成 impl_digests.json
-      # 时打包身份会静默漂移，必须独立门禁（verify_equations 亦含该步）。
+      # 实现内容摘要表漂移巡检：export_impl_digests.py --check 校验 impl_digests.json
+      # 与实现一致（verify_equations 亦含该步）。
       - name: 实现内容摘要表漂移巡检
         run: python3 kheker/equations/export_impl_digests.py --check
       - uses: leanprover/lean-action@v1
@@ -59,7 +58,7 @@ jobs:
       - name: 条款↔证据对账门禁
         run: python kheker/acceptance/clause_ledger.py --check
       # 变异探针（判别力）：破坏一处生产实现（观测不量化 / 泄露检测恒真 /
-      # 边界算子环绕 / 注入核投影置空），对应判据必须变红——防止判据徒有其表。
+      # 边界算子环绕 / 注入核投影置空），对应判据必须变红。
       - name: 生产实现变异探针
         run: python kheker/acceptance/run_acceptance.py --mutation
       - name: 上传验收产物

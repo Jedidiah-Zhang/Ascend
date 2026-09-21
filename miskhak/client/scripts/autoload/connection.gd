@@ -1,15 +1,15 @@
 """Connection 门面 — 组合四个子层的连接编排（进程/传输/握手/解码）。
 
 进程模型（一进程一模式）: 菜单进程（无参，服务模式）/ 世界进程
-（--world-id 等）。进入世界/回滚/返回菜单 = restart_backend()：优雅停
-旧进程 → 以目标参数拉起（异步 tick 状态机，_process 轮询推进）。
+（--world-id 等）。进入世界/回滚/返回菜单 = restart_backend()：优雅停止
+当前进程 → 以目标参数拉起（异步 tick 状态机，_process 轮询推进）。
 
 组合接线:
   process.ready  → transport.reset + handshake.reset + connect_to_host
   transport.connected → worker.start + handshake.start（发 hello）
   handshake.acked → connection_established + 放行 send
   handshake.rejected/timeout → handshake_policy 判定（RETRY = 重连重握手，
-    FAIL = FAILED 终态，不再自动重试）
+    FAIL = FAILED 终态，无自动重试）
   transport.disconnected → worker.stop + handshake.reset + 去重 connection_lost；
     握手进行中断开（token 失效/后端重启）同样计入握手失败预算
   worker.drain 逐帧 → 未 ack 走 handshake.on_message；已 ack 的
@@ -24,15 +24,14 @@ Status 为门面枚举（0-3，FAILED=3 测试锁定），在事件边界由子�
 seq → 回调；响应/错误按 seq 精确配对（过期响应命中失败退回广播，
 不会被错误消费）。清理策略：请求超时（REQUEST_TIMEOUT）投本地错误；
 连接失效/主动切换/终态统一 _flush_pending 投"连接失效"错误——UI 忙
-状态由回调复位，不再依赖广播必然到达。
+状态由回调复位。
 
 握手失败策略（handshake_policy.gd）: 版本不兼容（后端 error 帧）立即
 FAILED；token 失效/超时/异常计入重试预算（HANDSHAKE_MAX_RETRIES 次），
-耗尽即 FAILED。重连间隔退避归 TcpTransport 所有（连续失败翻倍封顶，
-成功复位）。FAILED 终态可经 connect_to_server() 重置重试。
+耗尽即 FAILED。FAILED 终态可经 connect_to_server() 重置重试。
 
 restart_backend 为异步状态机（WAIT_STOP → RESET → SPAWN），不阻塞
-主线程（不得用 OS.delay_msec 忙等）。
+主线程。
 """
 
 extends Node
@@ -45,7 +44,7 @@ const HandshakePolicyClass = preload("res://scripts/net/handshake_policy.gd")
 const DecodeWorkerClass = preload("res://scripts/net/decode_worker.gd")
 
 
-# ── 信号（对外契约不变） ──────────────────────────────────
+# ── 信号（对外契约） ──────────────────────────────────
 
 signal connection_established(host: String, port: int)
 signal connection_lost()
@@ -59,7 +58,7 @@ enum Status { DISCONNECTED, CONNECTING, CONNECTED, FAILED }
 var status: Status = Status.DISCONNECTED
 
 
-# ── 常量（唯一事实源 = config.gd；仅门面自用，协议/进程参数归各子层） ─
+# ── 常量（唯一事实源 = config.gd；仅门面自用） ─
 
 const DEFAULT_HOST: String = Config.DEFAULT_HOST
 const DEFAULT_PORT: int = Config.DEFAULT_PORT
@@ -82,7 +81,7 @@ enum RestartPhase { NONE, WAIT_STOP, RESET, SPAWN }
 var _restart_phase: RestartPhase = RestartPhase.NONE
 var _restart_args: PackedStringArray = PackedStringArray()
 
-## 当前断线事件是否已广播（断线期只广播一次，防失败重连刷屏）
+## 当前断线事件是否已广播（断线期只广播一次）
 var _outage_emitted: bool = false
 var _suppress_disconnect: bool = false
 
@@ -108,7 +107,7 @@ var _policy: HandshakePolicy = HandshakePolicyClass.new()
 
 func _ready() -> void:
 	"""自动加载初始化（编辑器跳过；运行时自动启动后端）。"""
-	# 网络层必须免疫暂停：暂停菜单打开期间仍需收发消息（否则「正在保存...」卡死）
+	# 暂停菜单打开期间网络层仍需收发消息
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	if Engine.is_editor_hint():
 		set_process(false)
@@ -169,8 +168,8 @@ func _wire_layers() -> void:
 	_signal_connect(_handshake.timeout, _on_handshake_timeout)
 
 
-## 解绑当前子层（注入前清理旧连接，防替换后旧层事件误触门面）。
-## 层未初始化（null）时跳过——测试钩子需支持在 _ready 前注入。
+## 解绑当前子层（供 _set_layers 注入前调用）。
+## 层未初始化（null）时跳过。
 func _unwire_layers() -> void:
 	if _process_layer == null or _transport == null or _handshake == null:
 		return
@@ -221,7 +220,7 @@ func disconnect_from_server() -> void:
 ## on_response 非空时登记挂起请求：响应/错误按 seq 精确投递该回调
 ## （回调内用 msg.type 区分 response/error）。请求超时或连接失效时
 ## 投本地 error 消息（回调收到后应复位忙状态）。不登记回调的消息
-## 走原广播路径（message_received 按 request_type 分发）。
+## 走广播路径（message_received 按 request_type 分发）。
 func send(message: Dictionary, on_response: Callable = Callable()) -> void:
 	if not _handshake.is_acked():
 		push_warning("Connection: send before handshake ack ignored")
@@ -288,8 +287,8 @@ func _local_error(seq: int, request_type: String, reason: String) -> Dictionary:
 
 
 ## 主动切换后端进程模式（进程模型：菜单 ⇄ 世界）。异步状态机：
-##   WAIT_STOP: 优雅停旧进程（等端口释放，层内超时强杀兜底）
-##   RESET:     清理旧连接残留
+##   WAIT_STOP: 优雅停止当前进程（等端口释放，层内超时强杀兜底）
+##   RESET:     清理连接与缓冲残留
 ##   SPAWN:     以新参数拉起 → 预探测 → 重连 → 握手
 func restart_backend(args: PackedStringArray = PackedStringArray()) -> void:
 	if _restart_phase != RestartPhase.NONE:
@@ -357,10 +356,10 @@ func _on_process_ready() -> void:
 
 
 func _on_process_failed(reason: String) -> void:
-	"""启动/停止失败（终态）：通知 UI，不再自动重试。
+	"""启动/停止失败（终态）：通知 UI，无自动重试。
 
-	切换中处于等待停止阶段时同步中止——旧进程未退出（强杀失败），
-	不得拉起新进程连上旧参数的后端。
+	切换中处于等待停止阶段时同步中止：待停进程未退出（强杀失败）
+	则不拉起新进程。
 	"""
 	if _restart_phase == RestartPhase.WAIT_STOP:
 		_restart_phase = RestartPhase.NONE
@@ -370,7 +369,7 @@ func _on_process_failed(reason: String) -> void:
 
 
 func _on_process_stopped() -> void:
-	"""旧进程已退出：推进切换状态机（RESET → 下一帧 SPAWN）。"""
+	"""待停进程已退出：推进切换状态机（RESET → 下一帧 SPAWN）。"""
 	if _restart_phase == RestartPhase.WAIT_STOP:
 		_restart_phase = RestartPhase.RESET
 	_sync_status()
@@ -402,7 +401,7 @@ func _on_transport_disconnected() -> void:
 		return
 	if was_handshaking:
 		# 已连上但握手未完成即被断开：token 失效/后端重启。
-		# token 每次握手重读，后端重启后可能恢复 → 走预算重试。
+		# token 每次握手重读 → 计入预算重试。
 		_handle_handshake_verdict(_policy.on_disconnect(), tr("ui.menu.handshake_auth_failed"))
 		return
 	if not _outage_emitted:
@@ -437,21 +436,21 @@ func _on_handshake_timeout() -> void:
 	_handle_handshake_verdict(_policy.on_timeout(), tr("ui.menu.handshake_timeout"))
 
 
-## 握手失败统一裁定：策略判定重试（复位重连）或终态（不再自动重试）。
+## 握手失败统一裁定：策略判定重试（复位重连）或终态（无自动重试）。
 func _handle_handshake_verdict(verdict: HandshakePolicyClass.Verdict, reason: String) -> void:
 	if verdict == HandshakePolicyClass.Verdict.FAIL:
 		_transport.disconnect_from_host()
 		_enter_failed(reason)
 		return
 	# 断线路径下 transport 已自行进入重连等待；rejected/timeout 路径
-	# 连接仍挂着，需主动 reset（其 disconnected 信号被抑制，避免重试期广播）。
+	# 连接仍挂着，需主动 reset（其 disconnected 信号被抑制）。
 	if _transport.state != TcpTransportClass.State.DISCONNECTED:
 		_suppress_disconnect = true
 		_transport.reset_for_reconnect()
 	_sync_status()
 
 
-## 进入连接层终态：不再自动重试，通知 UI（可经 connect_to_server 重置）。
+## 进入连接层终态（无自动重试），通知 UI（可经 connect_to_server 重置）。
 func _enter_failed(reason: String) -> void:
 	_fatal_reason = reason
 	_flush_pending(tr("ui.common.connection_lost_retry"))
@@ -520,7 +519,7 @@ func _data_root() -> String:
 
 # ── 测试钩子 ──────────────────────────────────────────────
 
-## 注入子层实例（单元/集成测试替身）；重接线，防重复连接同一组。
+## 注入子层实例（单元/集成测试替身）并重新接线。
 func _set_layers(p_process: BackendProcess, p_transport: TcpTransport,
 		p_handshake: Handshake, p_worker: DecodeWorker) -> void:
 	_unwire_layers()

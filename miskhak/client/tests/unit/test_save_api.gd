@@ -59,7 +59,7 @@ func test_preview_request_custom_size() -> void:
 
 
 func test_preview_request_layers_override() -> void:
-	"""可显式指定图层子集（旧后端兼容 / 按需裁剪）。"""
+	"""可显式指定图层子集。"""
 	var req: Dictionary = SaveApi.preview_request("2a", 0.55, 100.0, 60.0, ["temp"])
 	assert_eq(req["payload"]["layers"], ["temp"])
 

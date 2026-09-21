@@ -100,7 +100,7 @@ func test_missing_token_file_sends_empty_token() -> void:
 
 
 func test_encode_failure_aborts_handshake() -> void:
-	"""回归：hello 编码失败不发送空帧，按 ANOMALY 拒绝可重试。"""
+	"""hello 编码失败不发送空帧，按 ANOMALY 拒绝可重试。"""
 	var codec: StubCodec = StubCodec.new()
 	codec.fail_encode = true
 	var sent: Array = []
@@ -114,7 +114,7 @@ func test_encode_failure_aborts_handshake() -> void:
 		err.handled = true
 
 
-# ── ack 语义（核心回归） ───────────────────────────────────
+# ── ack 语义 ───────────────────────────────────────────────
 
 func test_ack_consumes_and_signals() -> void:
 	var hs := _make_hs()
@@ -129,7 +129,7 @@ func test_ack_consumes_and_signals() -> void:
 
 
 func test_ack_missing_blob_version_defaults_zero() -> void:
-	"""旧后端（无 blob_version 字段）握手 ack 应默认为 0（未知），不报错。"""
+	"""hello_ack 缺 blob_version 字段时应默认为 0（未知），不报错。"""
 	var hs := _make_hs()
 	hs.start()
 	hs.on_message({"type": "hello_ack"})
@@ -137,7 +137,7 @@ func test_ack_missing_blob_version_defaults_zero() -> void:
 
 
 func test_ack_stops_timeout_countdown() -> void:
-	"""回归：握手成功后超时计时必须停止，否则连接必然 10s 后误触发重连。"""
+	"""握手成功后超时计时停止：超过 HELLO_TIMEOUT 也不触发超时。"""
 	var hs := _make_hs()
 	watch_signals(hs)
 	hs.start()

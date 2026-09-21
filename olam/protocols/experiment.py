@@ -1,10 +1,10 @@
-"""实验协议 — 实验单位、臂、查询与划分（阶段二评价的容器）。
+"""实验协议 — 实验单位、臂、查询与划分。
 
 数据划分以**实验单位** ``ω``（世界种子及其地址空间）为最小独立单位：
 同单位内不同臂共享全部随机地址（CRN 配对，WC-7.3）；训练/测试按单位
 划分，不能把同一单位的帧打散后随机分配。
 
-本模块只定义数据形态与时间线语义；训练器与评分在阶段二接入。
+本模块只定义数据形态与时间线语义。
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ __all__ = ["Arm", "ExperimentSpec"]
 
 @dataclass(frozen=True, slots=True)
 class Arm:
-    """实验臂：一条干预时间线（后续可追加行动策略挂载点）。"""
+    """实验臂：一条干预时间线。"""
 
     id: str
     interventions: tuple[Intervention, ...] = ()
@@ -56,6 +56,7 @@ class ExperimentSpec:
             raise ValueError("实验臂 id 不得重复")
 
     def arm(self, arm_id: str) -> Arm:
+        """按 id 取实验臂；未声明即抛 ``KeyError``。"""
         for arm in self.arms:
             if arm.id == arm_id:
                 return arm

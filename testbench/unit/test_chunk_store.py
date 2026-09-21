@@ -130,7 +130,7 @@ class TestChunkStorePersistence:
             store.close()
 
     def test_T7b_clean_eviction_persists_first_load(self, db_path):
-        """clean chunk 首次加载后被淘汰：写回库（否则重访仍要重生成）。"""
+        """clean chunk 首次加载后被淘汰：写回库。"""
         store = ChunkStore(db_path, max_size=1)
         try:
             store.put(_make_chunk(0, 0, with_tiles=True))
@@ -229,7 +229,7 @@ class TestChunkStorePersistence:
     def test_T11b_restored_chunk_player_change_survives_eviction(self, db_path):
         """恢复的 chunk 保持 clean；玩家改动经 mark_dirty 后淘汰必落盘。
 
-        恢复 = 内容与库中一致，不置脏（无冗余重写）；改动必须走
+        恢复 = 内容与库中一致，不置脏；改动必须走
         mark_dirty 统一入口，脏 chunk 淘汰时写回、跨重启保留。
         """
         # 初始：写入一行（模拟已加载落盘）
@@ -318,7 +318,7 @@ class TestChunkStorePersistence:
             store.close()
 
     def test_T19_clean_chunk_roundtrip_across_reopen(self, db_path):
-        """clean chunk 落盘后重开：可直接恢复，免重新生成。"""
+        """clean chunk 落盘后重开：可直接恢复。"""
         chunk = _make_chunk(3, 4, with_tiles=True)
         original = chunk.tile_grid.to_bytes()
 
@@ -354,7 +354,7 @@ class TestChunkStorePersistence:
             store.close()
 
     def test_T21_blob_compressed_and_legacy_readable(self, db_path):
-        """存储 BLOB 为 zlib 压缩；旧版明文格式仍可读取（兼容）。"""
+        """存储 BLOB 为 zlib 压缩；无前缀明文行仍可读取。"""
         import sqlite3
         import zlib
 
@@ -378,7 +378,7 @@ class TestChunkStorePersistence:
         assert len(blob) < len(raw) / 2, "压缩后应显著小于明文"
         assert zlib.decompress(blob[2:]) == raw
 
-        # 旧版明文（无前缀、无 settled_day 列）仍可读：先删列建旧表
+        # 明文行（无前缀、无 settled_day 列）仍可读：重建无该列的表
         con = sqlite3.connect(db_path)
         con.execute("DROP TABLE chunk_tiles")
         con.execute(
@@ -416,7 +416,7 @@ class TestChunkStorePersistence:
             store2.close()
 
     def test_T16_put_refuses_to_replace_dirty_chunk(self, db_path):
-        """不能替换未落盘的脏 chunk（否则其脏状态被静默丢弃）。"""
+        """不能替换未落盘的脏 chunk。"""
         store = ChunkStore(db_path, max_size=4)
         try:
             a = _make_chunk(0, 0, with_tiles=True)
@@ -441,9 +441,7 @@ class TestChunkStorePersistence:
             store.close()
 
     def test_T18_dirty_chunk_cannot_unload_then_evicts_safely(self, db_path):
-        """脏 chunk 拒绝卸载网格 → 淘汰时数据源必然在场，改动落盘。
-
-        锁定不变量 end-to-end：置脏后 unload_tiles 返回 False，
+        """脏 chunk 拒绝卸载网格：置脏后 unload_tiles 返回 False，
         随后淘汰仍能持久化网格。
         """
         store = ChunkStore(db_path, max_size=1)

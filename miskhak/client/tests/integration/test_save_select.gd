@@ -84,7 +84,7 @@ func test_timeline_filters_snapshots_by_world() -> void:
 
 
 func test_timeline_includes_auto_protection_nodes() -> void:
-	"""跳转分支后旧分支的自动保护点应可见且可回滚（不消失）。"""
+	"""跳转分支后其他分支的自动保护点应可见且可回滚（不消失）。"""
 	var sel: Control = _make_select()
 	sel._apply_worlds(_payload([
 		{"world_id": "w1", "name": "世界A", "game_time": 300, "live_origin": "s1"},
@@ -206,7 +206,7 @@ func test_row_click_toggles_expansion() -> void:
 
 
 func test_expanding_second_row_collapses_first() -> void:
-	"""展开另一行时原展开行收起（同一时间只展开一行）。"""
+	"""展开另一行时已展开行收起（同一时间只展开一行）。"""
 	var sel: Control = _make_select()
 	sel._apply_worlds(_payload([
 		{"world_id": "w1", "name": "世界A", "game_time": 100},
@@ -218,7 +218,7 @@ func test_expanding_second_row_collapses_first() -> void:
 	ev.position = Vector2(60, sel.HEADER_H + 20)
 	sel._input(ev)
 	assert_eq(sel._expanded_row, 0)
-	# 行 1 已被展开行下移 TL_INLINE_H + TL_GAP
+	# 行 1 已被展开行下移 INLINE_H + GAP
 	ev.position = Vector2(60, sel.HEADER_H + 20 + sel.ROW_H + sel.ROW_GAP \
 		+ SnapshotTimelinePainter.INLINE_H + SnapshotTimelinePainter.GAP)
 	sel._input(ev)
@@ -230,8 +230,7 @@ func test_expanding_second_row_collapses_first() -> void:
 func test_node_numbering_follows_save_order() -> void:
 	"""编号按保存顺序递增（saved_at），而非视觉位置或游戏时间。
 
-	回归场景：回滚后游戏时间倒退（a1 的 time=150 小于 s2 的 200），
-	但 a1 保存于 s2 之前——编号必须反映真实保存顺序。
+	回滚后游戏时间可倒退：a1 的 time=150 小于 s2 的 200，但 a1 保存于 s2 之前。
 	"""
 	var sel: Control = _make_select()
 	sel._apply_worlds(_payload([

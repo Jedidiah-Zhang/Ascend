@@ -948,7 +948,7 @@ class TestEntityCommand:
         assert result.success is False
 
     def test_entity_death_short_prefix_rejected(self, executor_entity, entity_manager):
-        """前缀不足 4 字符返回用法（防误删）。"""
+        """前缀不足 4 字符返回用法。"""
         executor_entity.execute("entity birth creature 1 1")
         entity = entity_manager.all_entities()[0]
         result = executor_entity.execute(f"entity death {entity.id[:3]}")
@@ -1087,7 +1087,7 @@ class TestHelp:
         Act:
             执行 "?" 和 "help"。
         Assert:
-            输出包含新指令结构的关键词。
+            输出包含各指令关键词。
         """
         for cmd in ("?", "help"):
             result = executor.execute(cmd)

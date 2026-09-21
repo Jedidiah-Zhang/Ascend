@@ -148,8 +148,7 @@ def _ns_local(ns_id: str) -> str:
 def _parse_biome_template(ns_id: str, raw: Mapping) -> tuple[BiomeTemplate, str]:
     """单行 JSON → (BiomeTemplate, label_key)（不就地修改枚举成员）。
 
-    校验枚举一致性、必需字段；label_key 由调用方在全部校验通过后统一填充，
-    避免解析中途失败留下半修改的模块级枚举状态。
+    校验枚举一致性、必需字段；label_key 由调用方在全部校验通过后统一填充。
     """
     biome = BiomeType[_ns_local(ns_id)]
     if int(raw["value"]) != biome.value:
@@ -199,7 +198,7 @@ def _build_biome_templates(doc: Mapping) -> dict[BiomeType, BiomeTemplate]:
     missing = set(BiomeType) - set(templates)
     if missing:
         raise ValueError(f"data/biome.json: 缺群系 {[b.name for b in missing]}")
-    # 全部校验通过后统一填充（避免半修改状态）
+    # 全部校验通过后统一填充
     for tmpl, label_key in parsed:
         tmpl.biome_type.label_key = label_key
     global _OCEAN_BIOMES
@@ -253,8 +252,7 @@ class _SubdivConfig:
 
 
 # 8 档气候 → 细分配置
-# value_min/value_max 基于大陆场该档内实际分布的 P50 校准，
-# 使归一化中点对准实际中位数 → 两子型比例均衡。
+# value_min/value_max 基于大陆场该档内实际分布的 P50 校准。
 
 def _build_subdiv_configs(doc: Mapping) -> dict[ClimateZone, _SubdivConfig]:
     """data/biome.json 的 subdiv 段 → 每气候档细分配置。"""
@@ -314,8 +312,7 @@ def biome_membership(
         moisture_noise: 湿度次级噪声 [-1, 1]（沙漠细分用）。
         subdiv_ranges: 动态值域 {ClimateZone_int: (P10, P90)}，
             由 ContinentData.subdiv_ranges 提供。提供时覆盖静态
-            _SUBDIV_CONFIGS 的 value_min/max，使档内子型比例均衡。
-            None 时用静态默认值。
+            _SUBDIV_CONFIGS 的 value_min/max。None 时用静态默认值。
 
     Returns:
         [(BiomeType, weight), ...] 权重和为 1.0。

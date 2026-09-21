@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ascend 发布脚本 — 上传研究包到 GitHub Releases（版本化命名，本地不留历史产物）。
+# Ascend 发布脚本 — 上传研究包到 GitHub Releases（版本化命名，临时副本用后即删）。
 #
 # 用法: bash build/ci/publish_release.sh [kheker|miskhak]
 #   默认 kheker（研究包，对外 research）。miskhak（游戏包）含闭源前端资产，

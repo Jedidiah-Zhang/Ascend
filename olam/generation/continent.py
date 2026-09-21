@@ -41,8 +41,7 @@ def center_distance(dx: float, dy: float) -> float:
     """归一化坐标到矩形中心的 Chebyshev 距离，四象限对称。
 
     中心偏置（center bias）用「距地图中心的距离」把陆地推向中心。
-    以 max(|dx|, |dy|) 计算：恒非负且象限对称，第三象限与负 y 轴
-    不出现中心偏置丢失。
+    以 max(|dx|, |dy|) 计算：恒非负且象限对称。
 
     Args:
         dx: 归一化 X 偏移（[-1, 1]）。
@@ -107,8 +106,7 @@ class ContinentGenerator:
           海拔 + 陆地掩码 → 海拔校准 → 气候（温度+降雨）→ 气候校准
           → 侵蚀（降雨驱动水流）→ 河流树 + 湖泊盆地提取
 
-        校准步骤保证 8 档气候覆盖：海拔/降雨/温度场分别做保结构的
-        分位数拉伸，确保值域覆盖各气候档位的判定阈值。
+        校准步骤对海拔/降雨/温度场分别做保结构的分位数拉伸。
 
         Args:
             progress_cb: 可选阶段回调，每个生成阶段开始时以阶段名
@@ -189,8 +187,8 @@ class ContinentGenerator:
         # Step 5b: 距水距离场 — 多源 BFS（海 + 河 + 湖），供材质分布/
         # 生态等按"距水多远"的直觉分类使用。不单独广播
         # 阶段（并入 width，毫秒级）。
-        # 海判定用 not land_mask（与 is_land() 的 e>0 语义一致，避免
-        # 恰为 0.0 的格两处判定不一致）；河/湖用 river_width>0。
+        # 海判定用 not land_mask（与 is_land() 的 e>0 语义一致）；
+        # 河/湖用 river_width>0。
         from olam.generation.water_distance import compute_water_distance
         water_mask = [
             not is_land or width_m > 0.0
@@ -244,16 +242,14 @@ class ContinentGenerator:
     ) -> dict:
         """只生成海拔 + 陆地掩码的轻量预览（跳过侵蚀/水文）。
 
-        分位数校准保证预览陆地占比贴合 land_ratio（与真实生成同一
-        校准逻辑）；海拔另做与真实生成相同的高海拔拉伸，山顶着色
-        接近最终世界。未经侵蚀，预览海拔与最终世界略有偏差——
-        仅作形状与占比参考的缩略图。
+        分位数校准与真实生成同一逻辑，预览陆地占比贴合 land_ratio；
+        海拔另做与真实生成相同的高海拔拉伸。未经侵蚀，预览海拔与
+        最终世界略有偏差。
 
         layers 请求气候图层（"temp" / "rain" / "climate"）时，在
         海拔后补跑与完整管线一致的气候计算（_compute_climate +
-        校准 + 缺失档位注入），预览的气候值与最终世界一致。气候
-        计算仅 4 个噪声八度 + 数次 O(N) 校准遍历，相对海拔计算
-        增量极小，仍保持秒级返回；侵蚀/水文（昂贵部分）依旧跳过。
+        校准 + 缺失档位注入），预览的气候值与最终世界一致；侵蚀/
+        水文（昂贵部分）跳过。
 
         低分辨率缩略图（1000m/格）：网格随尺寸缩放（60×36 → 60×36 格，
         150×90 → 150×90 格），地形变化率一致——尺寸只影响生成范围。
@@ -263,7 +259,7 @@ class ContinentGenerator:
             width_km: 大陆东西宽度 (km)；None 用生成器参数（默认 100）。
             height_km: 大陆南北高度 (km)；None 用生成器参数（默认 60）。
             layers: 附加请求的气候图层名集合（"temp" / "rain" / "climate"）；
-                缺省仅海拔（向后兼容旧客户端）。
+                缺省仅海拔。
 
         Returns:
             预览数据字典:
@@ -295,9 +291,8 @@ class ContinentGenerator:
         }
         layers = set(layers)
         if layers:
-            # 与完整管线同序：气候 → 校准（含重分类）→ 缺失档位兜底注入，
-            # 保证预览气候值与最终世界一致（注入亦会抬升个别高山像素海拔，
-            # 使预览山顶着色接近最终世界）。
+            # 与完整管线同序：气候 → 校准（含重分类）→ 缺失档位兜底注入；
+            # 预览气候值与最终世界一致（注入亦会抬升个别高山像素海拔）。
             temp_field, rain_field, climate_field = (
                 gen._compute_climate(elevation, land_mask, w, h))
             gen._calibrate_climate_merged(
@@ -307,7 +302,7 @@ class ContinentGenerator:
                 elevation, temp_field, rain_field, land_mask, climate_field, w, h,
             )
             if "temp" in layers:
-                # 温度场统一为地表温度（海域 = 海面温度，无海底伪影）
+                # 温度场为地表温度（海域 = 海面温度）
                 preview["temperature"] = [int(round(v)) for v in temp_field]
             if "rain" in layers:
                 preview["rainfall"] = [int(round(v)) for v in rain_field]
@@ -365,12 +360,12 @@ class ContinentGenerator:
         land_temps.sort()
         land_rains.sort()
 
-        # 降雨校准参数 (原 _ensure_rainfall_range)
+        # 降雨校准参数
         rain_p3 = self._percentile(land_rains, 0.03)
         rain_p10 = self._percentile(land_rains, 0.10)
         do_rain_cal = not (rain_p3 <= CLIMATE_CALIB_RAINFALL_REF or rain_p10 <= rain_p3)
 
-        # 温度校准参数 (原 _ensure_temperature_range)
+        # 温度校准参数
         temp_p2 = self._percentile(land_temps, 0.02)
         temp_p98 = self._percentile(land_temps, 0.98)
         do_temp_cal = (
@@ -488,14 +483,10 @@ class ContinentGenerator:
     ) -> None:
         """兜底注入 — 对缺失气候档位，在最近邻区域创建最小气候种子。
 
-        分位数拉伸解决了大部分 seed 的气候覆盖，但极端干旱/偏冷 seed
-        仍可能缺失某些档位（温度-降雨空间分布天生不配合）。
-        本函数在最接近目标档位阈值的陆地像素周围 3×3 区域
-        直接设置参数，强制其落入目标档位。
-
-        仅改 9 像素（0.09 km²），在 100×60km 大陆上几乎不可见，
-        但保证大地图俯瞰时 8 种颜色都存在。在水文计算后执行，
-        不影响河流树/湖泊/流向。
+        分位数拉伸后仍可能缺失某些档位；本函数在最接近目标档位阈值的
+        陆地像素周围 3×3 区域直接设置目标参数，使其落入目标档位。
+        仅改 9 像素（0.09 km²）。在水文计算后执行，不改动河流树/湖泊/
+        流向。
         """
         n = w * h
 
@@ -602,8 +593,8 @@ class ContinentGenerator:
     ) -> dict[int, tuple[float, float]]:
         """计算每气候档内细分维度的 P10/P90 值域。
 
-        供 biome_membership 动态归一化用，使档内两子型比例均衡。
-        沙漠档用 moisture 噪声细分，此处不计算（噪声值域固定 [-1,1]）。
+        供 biome_membership 动态归一化用。沙漠档用 moisture 噪声细分，
+        此处不计算（噪声值域固定 [-1,1]）。
 
         Returns:
             {ClimateZone_int: (P10, P90)} 每档的细分值域。
@@ -653,8 +644,8 @@ class ContinentGenerator:
 
         大陆轮廓层（低频）：决定海陆分布的大洲形状。
         地形细节层（高频）：叠加山地丘陵等局部变化。
-        温和的中心倾向避免"四周陆地中间海洋"的环形分布。
-        分位数校准确保陆地比例稳定在 land_ratio。
+        中心偏置把陆地推向中心。
+        分位数校准将陆地比例定在 land_ratio。
         """
         noise_terrain = PerlinNoise(self._seed + 10002)
         noise_continent = PerlinNoise(self._seed + 10003)
@@ -664,9 +655,8 @@ class ContinentGenerator:
             0.5, 0.5, w, h, frequency=terrain_freq, octaves=5,
         )
 
-        # 大陆轮廓层：绝对频率（1.5 周期 / 100km），与网格宽解耦。
-        # 尺寸只改变生成范围——大尺寸下大陆轮廓自然延伸，
-        # 而非把同一形状按比例缩放。
+        # 大陆轮廓层：绝对频率（1.5 周期 / 100km），与网格宽解耦；
+        # 尺寸只改变生成范围。
         continent_freq = self._params.sample_resolution / 100_000.0 * 1.5
         continent_field = noise_continent.octave_grid(
             0.5, 0.5, w, h, frequency=continent_freq, octaves=2,
@@ -677,7 +667,7 @@ class ContinentGenerator:
         inv_w = 1.0 / w
         inv_h = 1.0 / h
 
-        # 用累加索引替代每像素的取模运算
+        # 行优先累加索引
         i = 0
         for y in range(h):
             dy = (y * inv_h - 0.5) * 2.0
@@ -698,7 +688,7 @@ class ContinentGenerator:
         sea_idx = max(0, min(n - 1, sea_idx))
         sea_level = sorted_vals[sea_idx]
 
-        # 列表推导 — 比 .append() 循环快
+        # 列表推导
         elevation = [(m - sea_level) * ELEVATION_SCALE_FACTOR for m in mixed]
         land_mask = [e > 0 for e in elevation]
         return land_mask, elevation
@@ -774,9 +764,9 @@ class ContinentGenerator:
         seed 决定连续风向角 [0, 2π)，主风向（80%）+ 次风向偏移 45°（20%）混合。
         使用水分预算模型：风携带水汽从海岸向内陆移动，
         地形抬升消耗水汽 → 背风面干燥。
-        海洋格无地形抬升（负海拔不产生伪抬升），仅继承上风陆地的
+        海洋格无地形抬升（负海拔不参与抬升计算），仅继承上风陆地的
         衰减抬升——近岸海域保留干燥气团出海的残余雨影。
-        因子范围 [MIN_FACTOR, 1.0]，保证基础降水。
+        因子范围 [MIN_FACTOR, 1.0]。
         """
         import math
         from olam.generation.hydrology import _rain_shadow_omnidirectional_c

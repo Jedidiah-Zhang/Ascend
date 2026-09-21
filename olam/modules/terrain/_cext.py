@@ -2,10 +2,10 @@
 
 加载模式：扩展缺失或比 .c 旧时用 gcc 编译
 （Windows 下为 .dll，由 mingw gcc 产出；其余平台为 .so）。
-`.so`/`.dll` 已 gitignore（跨机/跨 Python 版本不提交二进制），首次导入自动重建。
+`.so`/`.dll` 已 gitignore，首次导入自动重建。
 
 编译失败不静默降级：这些模块的 Python 层是 C 的薄包装（无纯 Python
-回退），缺失时启动即失败并给出明确错误，避免静默用错误数据运行。
+回退），缺失时启动即失败并给出明确错误。
 """
 
 import ctypes
@@ -14,9 +14,8 @@ import subprocess
 from pathlib import Path
 
 _GCC = "gcc"
-# 无 -ffast-math（破坏 IEEE-754 语义，令同 seed 世界跨机器不确定）；
-# 无 -march=native（产物绑定本机指令集，跨机器不可移植）——gcc 默认
-# 基线即可：x86 链 → x86-64，aarch64 链 → armv8-a，跨架构均可编译。
+# 不含 -ffast-math 与 -march=native；gcc 默认基线即可：
+# x86 链 → x86-64，aarch64 链 → armv8-a，跨架构均可编译。
 _CFLAGS = ["-O3", "-funroll-loops", "-shared", "-fPIC"]
 
 _EXT_SUFFIX = ".dll" if os.name == "nt" else ".so"

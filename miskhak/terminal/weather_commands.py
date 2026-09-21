@@ -5,7 +5,7 @@ Mixin，依赖宿主 CommandExecutor 提供的:
 
 强制控制走特征核注入（force_feature）——rain 映射为锋面核
 （纯降水提升，无事件类），cold_snap/heat_wave/storm 映射为
-同名特征核（与自然特征同代码路径，事件由引擎自动发布）。
+同名特征核。
 """
 
 from olam.adapters.weather.derive import (classify_humidity,

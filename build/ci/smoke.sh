@@ -6,8 +6,8 @@
 # product=game 时额外校验前端可执行与资源包齐备（研究包无前端）。
 #
 # 协议级验证（build/ci/smoke_server.py）：TCP 就绪 + hello 握手 +
-# save_list 响应，替代旧的"端口有人听"检查（残留进程占用端口会假阳性）。
-# 端口随机（OS 分配空闲端口），避免与开发实例/残留进程冲突。
+# save_list 响应。
+# 端口随机（OS 分配空闲端口）。
 #
 # 平台分派:
 #   linux 产物         → 直接执行 server/server
@@ -72,7 +72,7 @@ fi
 
 cleanup() {
   [ -n "$PID" ] && kill "$PID" 2>/dev/null || true
-  # 兜底：精确匹配本舞台目录的产物进程（路径含 stage 目录，不误伤其它实例）
+  # 兜底：按舞台目录路径精确匹配产物进程
   pkill -f "$STAGE/server/server" 2>/dev/null || true
   [ -n "$PID" ] && wait "$PID" 2>/dev/null || true
 }

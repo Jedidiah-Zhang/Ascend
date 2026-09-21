@@ -6,11 +6,11 @@
 
 多源 BFS（4 邻域）：所有水体格为源（距离 0），向陆地逐层扩散，
 距离 = 步数 × cell_size。4 邻域沿海岸线走，不斜穿窄陆地（对角
-不被当作直达），度量朴素、带宽参数按视觉标定即可。
+不被当作直达）。
 
-C 加速：复用 _hydrology.so 的 hydrology_water_distance（同一动态库，
-后端本就必需，无新增编译依赖）。纯 Python 参考实现仅存于测试中
-作正确性 oracle（C 输出与之一致，见 testbench/unit/test_water_distance.py）。
+C 加速：复用 _hydrology.so 的 hydrology_water_distance（同一动态库）。
+纯 Python 参考实现仅存于测试中作正确性 oracle（C 输出与之一致，
+见 testbench/unit/test_water_distance.py）。
 """
 
 import ctypes
@@ -65,12 +65,10 @@ def compute_water_distance(
         raise ValueError(
             f"water_mask 长度需为 {n}（{width}×{height}），实际为 {len(water_mask)}"
         )
-    # 无水体源（全陆）时"距水"无定义：fail fast 而非返回全 0——
-    # 全 0 会与"水体本身=0"混淆，消费方无法区分。大陆生成保证有海。
+    # 无水体源（全陆）时"距水"无定义：fail fast。
     if not any(water_mask):
         raise ValueError("water_mask 无水体源（全陆）：距水距离无定义")
-    # bool 序列 → uint8 缓冲：array('B') 比逐元素 unpack 快 ~10x，
-    # from_buffer 零拷贝传给 C（BFS 本身毫秒级，包装层不再成为瓶颈）。
+    # bool 序列 → uint8 缓冲（array('B')），from_buffer 零拷贝传给 C。
     mask_buf = (ctypes.c_uint8 * n).from_buffer(array("B", water_mask))
     dist = array("d", [0.0]) * n
     dist_ptr = (ctypes.c_double * n).from_buffer(dist)

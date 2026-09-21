@@ -1,17 +1,16 @@
 """实体 pawn 渲染器 — 按体型规格生成分层 Sprite2D 部件列表（纯逻辑）。
 
 形态由"体型规格（body spec）"驱动：规格 = 部件槽位（头/躯干/附肢/变异层/
-装备层）× 各槽位的部件（矩形色块占位，像素风）。后端 genome/body grammar
-定型前使用默认物种规格（CREATURE 人形 / PLANT 植物 / 其余建筑石块）；
-基因外观差异后续仅需替换 spec 的颜色与部件即可，渲染路径不变
-（视觉风格设计文档：部件按槽位拆分拼接、基因变异层叠加）。
+装备层）× 各槽位的部件（矩形色块占位，像素风）。默认物种规格为
+CREATURE 人形 / PLANT 植物 / 其余建筑石块；外观差异由 spec 的颜色与
+部件表达（视觉风格设计文档：部件按槽位拆分拼接、基因变异层叠加）。
 
 本类只做数据：build_parts 输出确定性的部件字典列表（尺寸/偏移/颜色/叠层），
 main_world 负责实例化 Sprite2D 节点。无场景依赖，可纯逻辑单测。
 
 部件坐标约定：节点原点 = 脚底中心（pawn 落地面），y 轴向上；
 offsets 为整数像素偏移。facing_left 时水平镜像偏移（实体朝向反转，
-左右附肢随之换位——solid 色块无需逐部件翻转纹理）。
+左右附肢随之换位）。
 """
 
 class_name PawnRenderer
@@ -111,7 +110,7 @@ static func default_spec(entity_type: String) -> Dictionary:
 
 
 ## 由规格产出部件列表（确定性顺序：SLOT_ORDER 槽位序，槽内按数组序）。
-## facing_left 时部件 x 偏移镜像（对称色块，左右附肢随镜像换位）。
+## facing_left 时部件 x 偏移镜像（左右附肢随镜像换位）。
 static func build_parts(spec: Dictionary, facing_left: bool = false) -> Array:
 	var width: int = int(spec.get(SPEC_WIDTH, 14))
 	var parts: Array = []
@@ -136,7 +135,6 @@ static func build_parts(spec: Dictionary, facing_left: bool = false) -> Array:
 
 
 ## 部件占位纹理缓存：{size_x}_{size_y}_{color8 键} -> ImageTexture。
-## 朝向切换重建部件时避免重复生成色块（实体少、变向频繁）。
 static var _texture_cache: Dictionary = {}
 
 

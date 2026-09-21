@@ -17,7 +17,7 @@ from .result import CommandResult
 class TimeCommandsMixin:
     """time 指令组实现。"""
 
-    # time tick 单次执行上限（step 同步触发日历边界回调，过大冻结游戏线程）
+    # time tick 单次执行上限
     MAX_TICK_STEPS: int = 10_000
 
     # time 指令组子命令注册表（sub → 处理器(executor, rest)）
@@ -157,8 +157,8 @@ class TimeCommandsMixin:
     def _cmd_tick(self, count: int = 1) -> str:
         """手动推进 N tick（忽略暂停和速度，调试用）。
 
-        每次 step 都会触发日历边界回调，超大 count 会冻结游戏线程，
-        因此限制单次执行上限（见 _h_time_tick）。
+        每次 step 都会触发日历边界回调，超大 count 会冻结游戏线程
+        （单次上限见 _h_time_tick）。
 
         Args:
             count: 要推进的 tick 数。

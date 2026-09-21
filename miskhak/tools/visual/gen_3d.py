@@ -23,7 +23,7 @@ def generate(seed: int = 42, downsample: int = 4) -> None:
 
     Args:
         seed: 世界种子。
-        downsample: 降采样因子（4 → 250×150 网格，平衡性能和细节）。
+        downsample: 降采样因子（4 → 250×150 网格）。
     """
     from olam.generation.continent import ContinentGenerator
 
@@ -142,7 +142,7 @@ def generate(seed: int = 42, downsample: int = 4) -> None:
 
             lw = lx_max - lx_min + 1
             lh = ly_max - ly_min + 1
-            # 湖面略高于地形避免 z-fighting
+            # 湖面略高于地形（+1.0）
             lake_plane = [[surface_elev + 1.0] * lw for _ in range(lh)]
 
             fig.add_trace(go.Surface(

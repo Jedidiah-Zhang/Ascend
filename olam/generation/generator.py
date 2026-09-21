@@ -41,10 +41,8 @@ from olam.constants import NOISE_FREQ_DERIVED as _FREQ_DERIVED, MOISTURE_TILE_FR
 class ContinentFingerprintMismatch(RuntimeError):
     """大陆缓存指纹与当前生成环境不一致（WC-1.2 / WC-9.1 fail-closed）。
 
-    身份（生成算法/参数）已变即新世界：按当前算法解释旧缓存会静默
-    改变已创建世界的轨迹，必须拒绝加载而不是沿用或静默重算。异常
-    消息携带可执行指引（恢复原环境 / 新建世界 / continent regen /
-    --regen-continent）。
+    加载缓存时抛出，拒绝按当前算法解释该缓存。异常消息携带可执行
+    指引（恢复原环境 / 新建世界 / continent regen / --regen-continent）。
     """
 
 # 生成环境指纹覆盖的管线源码（相对本模块目录 olam/generation/）。
@@ -126,8 +124,7 @@ class WorldGenerator:
             executor: 外部线程池，None 时每次并行创建临时线程池。
             continent_cache_path: 大陆宏观场缓存文件路径（None 不落盘）。
                 由 GameEngine 传入存档内的 continent.bin——大陆是
-                (seed, land_ratio, 尺寸) 的确定性函数，缓存随档分发，
-                保证换机后首次加载也秒开。
+                (seed, land_ratio, 尺寸) 的确定性函数，缓存随档分发。
             land_ratio: 目标陆地比例 [0-1]；None 用默认 0.55
                 （创建世界调参时由存档 gen_params 传入）。
             width_km: 大陆东西宽度 (km)；None 用默认 100
@@ -138,9 +135,8 @@ class WorldGenerator:
                 chunk 数据与新场可能出现接缝不一致。也是指纹不一致
                 拒绝加载（ContinentFingerprintMismatch）的显式越过开关。
 
-        参数归一化：None 一律落为 ContinentParams() 默认值，大陆是
-        (seed, land_ratio, 尺寸) 的确定性函数，缓存校验与生成统一
-        使用归一化后的参数。
+        参数归一化：None 一律落为 ContinentParams() 默认值；缓存校验
+        与生成统一使用归一化后的参数。
         """
         self._seed = seed
         self._executor = executor
@@ -191,8 +187,8 @@ class WorldGenerator:
     ) -> "ContinentData":
         """主动生成并缓存宏观大陆数据，返回 ContinentData。
 
-        供 GameEngine 在启动时主动触发（首选方式：可带阶段进度
-        回调），并把 ContinentData 暴露给出生点选择 / TileGenerator。
+        供 GameEngine 在启动时主动触发（可带阶段进度回调），并把
+        ContinentData 暴露给出生点选择 / TileGenerator。
         惰性路径（get_altitude 首触）走同一创建入口（_create_continent），
         两路径产出同一份大陆（含沙漠 moisture 动态值域与磁盘缓存）。
 
@@ -215,20 +211,18 @@ class WorldGenerator:
 
         ensure_continent 与 get_altitude 共用：磁盘缓存恢复/校验 →
         未命中则生成 + 补充沙漠档 moisture 动态值域 + 落盘缓存。
-        保证任何首次触达路径产出同一份 _continent（缓存读写与
-        沙漠校准不因路径而异），并发首触由锁收敛为一次生成。
+        任何首次触达路径产出同一份 _continent；并发首触由锁收敛为
+        一次生成。
 
         缓存失败语义（WC-9.1）：
-          - 参数不符（seed/land_ratio/尺寸）：视为未命中重新生成（调参
-            结果混入/错档拷贝）；
-          - 无指纹（旧格式/手工写入）：无法校验生成环境，按未命中
-            重新生成（沿用既有"版本/损坏 → 重新生成"路径）；
-          - 指纹不符：显式拒绝（ContinentFingerprintMismatch）——按
-            当前算法解释旧缓存会静默改变轨迹，不静默沿用也不静默
-            重算；--regen-continent / continent regen 可显式越过。
+          - 参数不符（seed/land_ratio/尺寸）：视为未命中重新生成；
+          - 无指纹（缓存未携带指纹）：无法校验生成环境，按未命中
+            重新生成；
+          - 指纹不符：显式拒绝（ContinentFingerprintMismatch）；
+            --regen-continent / continent regen 可显式越过。
         """
         # 尺寸由网格数 × cell_size 反推（序列化不存尺寸字段）：
-        # 缓存必须与期望尺寸一致，避免同 seed 不同尺寸的调参结果混入
+        # 缓存必须与期望尺寸一致。
         cache_path = self._continent_cache_path
         if cache_path and not self._ignore_cache:
             self._continent = self._load_continent_cache(cache_path)
@@ -268,27 +262,22 @@ class WorldGenerator:
             if self._continent is not None:
                 stored_fp = self._continent.gen_fingerprint
                 if not stored_fp:
-                    # 无指纹缓存（旧格式/手工写入）：没有身份摘要就无法
-                    # 证明它与当前算法一致，按既有"版本/损坏 → 未命中
-                    # 重新生成"路径处理（CONTINENT_CACHE_VERSION 校验
-                    # 兜底）；不静默沿用无法验证的派生数据。
+                    # 无指纹缓存：无法校验生成环境，按未命中重新生成
+                    # （CONTINENT_CACHE_VERSION 校验兜底）。
                     logger.warning(
-                        "大陆缓存无生成环境指纹（旧格式/手工写入），"
-                        "无法校验一致性，重新生成: %s", cache_path,
+                        "大陆缓存无生成环境指纹，无法校验一致性，"
+                        "重新生成: %s", cache_path,
                     )
                     self._continent = None
                 else:
                     current_fp = compute_gen_fingerprint()
                     if stored_fp != current_fp:
-                        # 生成环境漂移 = 身份变更即新世界（WC-1.2）：
-                        # 沿用旧缓存并按当前算法解释派生层会静默改变
-                        # 轨迹（WC-9.1 定义域 fail-closed），显式拒绝。
-                        # 先清引用：拒绝后不得留下可被复用的缓存对象。
+                        # 指纹不一致（WC-1.2）：先清引用后拒绝——拒绝后
+                        # 不留下可被复用的缓存对象。
                         self._continent = None
                         raise ContinentFingerprintMismatch(
                             "大陆缓存生成环境与当前算法不一致，拒绝加载"
-                            "（fail-closed：按当前算法解释旧缓存会静默"
-                            "改变轨迹）。缓存: "
+                            "（fail-closed）。缓存: "
                             f"{cache_path}（缓存指纹 {stored_fp[:12]}…，"
                             f"当前指纹 {current_fp[:12]}…）。可执行指引："
                             "① 恢复创建该存档时的代码/参数环境后重试；"
@@ -298,11 +287,9 @@ class WorldGenerator:
                             "（③④ 对存档世界有破坏性：玩家已改动的 "
                             "chunk 与新场可能出现接缝不一致）。"
                         )
-                    # 指纹一致：缓存可用。派生缓存随缓存持久化且受指纹
-                    # 背书（同一算法、同一宏观场 → 同值），加载即信任；
-                    # 仅当缓存缺少派生段（旧格式）时才注入重建入口惰性
-                    # 重算——重算输入不落盘，与生成值非逐位一致，不能
-                    # 作为首选路径。
+                    # 指纹一致：缓存可用。派生缓存随缓存持久化，加载即
+                    # 信任；缓存缺派生段时注入重建入口惰性重算（重算
+                    # 输入不落盘，与生成值非逐位一致）。
                     if not self._continent._derived_ready:
                         self._continent.attach_derived_rebuilder(
                             self._rebuild_derived_caches)
@@ -341,16 +328,14 @@ class WorldGenerator:
     def _rebuild_derived_caches(self, cont: "ContinentData") -> None:
         """按当前生成算法从持久化宏观场重建派生缓存（加载路径专用）。
 
-        continent_io 反序列化时丢弃磁盘上的 subdiv_ranges/_chunk_climate；
         二者是 (seed, 参数, 持久化宏观场) 的确定性函数，此处复用
-        generate() 同序的气候/校准/兜底/提取步骤重算，保证"删除磁盘
-        派生值重算"与生成管线同式（WC-3.3 / WC-9.1）。由 ContinentData
-        首次访问（get_chunk_climate / subdiv_ranges）惰性触发一次。
+        generate() 同序的气候/校准/兜底/提取步骤重算（WC-3.3 / WC-9.1）。
+        由 ContinentData 首次访问（get_chunk_climate / subdiv_ranges）
+        惰性触发一次。
         """
         w, h = cont.grid_width, cont.grid_height
         # 重建参数从缓存宏观场反推（网格×格尺寸）：sample_resolution
-        # 必须取缓存实际值，否则噪声频率/直减率换算与生成时不一致
-        # （WorldGenerator 的默认参数只覆盖 100m 分辨率）。
+        # 取缓存实际值（默认参数只覆盖 100m 分辨率）。
         params = ContinentParams(
             width_km=w * cont.cell_size / 1000.0,
             height_km=h * cont.cell_size / 1000.0,
@@ -392,9 +377,8 @@ class WorldGenerator:
         """补充沙漠档 moisture 噪声的动态值域。
 
         遍历所有 chunk，取气候档为 DESERT 的 chunk 采样 moisture 噪声。
-        生成路径与加载重建路径共用：cont 缺省取 self._continent（生成
-        路径）；重建路径显式传入（重建器可能晚于 _continent 重新赋值，
-        不能按 self._continent 取）。
+        生成路径与加载重建路径共用；cont 缺省取 self._continent（生成
+        路径），重建路径显式传入。
         """
         cont = cont if cont is not None else self._continent
         if cont is None:
@@ -476,11 +460,9 @@ class WorldGenerator:
     def _sample_moisture_at_chunk(self, cx: int, cy: int) -> float:
         """采样 chunk 中心 moisture（世界坐标场，与 tile 层同一噪声场）。
 
-        chunk 级群系标签与 tile 级隶属度必须来自同一噪声场：tile 层
-        （tile_gen）在世界 tile 坐标采样 MOISTURE_TILE_FREQUENCY 场，
-        此处取 chunk 中心世界坐标采样同场，保证 chunk 标签与中心 tile
-        的群系细分一致。不带相位偏移（相位仅用于 chunk 级独用通道的
-        种子去相关；moisture 跨两级使用，必须去掉）。
+        tile 层（tile_gen）在世界 tile 坐标采样 MOISTURE_TILE_FREQUENCY
+        场，此处取 chunk 中心世界坐标采样同场。不带相位偏移（相位仅用于
+        chunk 级独用通道的种子去相关）。
 
         Args:
             cx, cy: 分块坐标。

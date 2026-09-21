@@ -2,10 +2,10 @@
 
 纯逻辑在 scripts/settings/ 下的 RefCounted 类（SettingsStore /
 KeybindMap / LocaleCatalog / SettingsApplier）；本壳只负责装配、
-应用与信号广播。注意不声明 class_name（与 autoload 名冲突）。
+应用与信号广播，不声明 class_name。
 
-后端语言同步不在此处：main_world 监听 locale_changed / world_initialized
-后经 terminal_cmd 幂等发送（本门面不感知进程模型）。
+后端语言同步不经本门面：main_world 监听 locale_changed /
+world_initialized 后发送。
 """
 
 extends Node
@@ -56,10 +56,12 @@ func _stored_binds() -> Dictionary:
 
 # ── 语言 ──────────────────────────────────────────────────
 
+## 当前语言（如 zh_CN / en_US）。
 func get_locale() -> String:
 	return str(store.get_value("language/locale"))
 
 
+## 写入并落盘语言，应用后广播 locale_changed；与当前值相同时不动作。
 func set_locale(locale: String) -> void:
 	if locale == get_locale():
 		return
@@ -71,6 +73,7 @@ func set_locale(locale: String) -> void:
 
 # ── 显示 ──────────────────────────────────────────────────
 
+## 显示设置：resolution 与 window_mode 两个字符串值。
 func get_display() -> Dictionary:
 	return {
 		"resolution": str(store.get_value("display/resolution")),
@@ -78,6 +81,7 @@ func get_display() -> Dictionary:
 	}
 
 
+## 写入并落盘显示设置，应用后广播 display_changed；与当前值相同时不动作。
 func set_display(resolution: String, window_mode: String) -> void:
 	if get_display() == {"resolution": resolution, "window_mode": window_mode}:
 		return
@@ -95,6 +99,7 @@ func get_fps_limit() -> int:
 	return int(store.get_value("display/fps_limit"))
 
 
+## 写入并落盘帧率上限，应用后广播 fps_limit_changed；与当前值相同时不动作。
 func set_fps_limit(limit: int) -> void:
 	if limit == get_fps_limit():
 		return
@@ -111,6 +116,7 @@ func get_debug_mode() -> bool:
 	return bool(store.get_value("debug/debug_mode"))
 
 
+## 写入并落盘调试开关，广播 debug_mode_changed；与当前值相同时不动作。
 func set_debug_mode(enabled: bool) -> void:
 	if enabled == get_debug_mode():
 		return
@@ -129,11 +135,13 @@ func add_bind(action: String, event_dict: Dictionary) -> Dictionary:
 	return result
 
 
+## 移除某动作的第 index 个绑定并落盘应用。
 func remove_bind(action: String, index: int) -> void:
 	keybinds.remove_bind(action, index)
 	_persist_binds()
 
 
+## 全部动作恢复默认绑定并落盘应用。
 func reset_keybinds() -> void:
 	keybinds.reset()
 	_persist_binds()

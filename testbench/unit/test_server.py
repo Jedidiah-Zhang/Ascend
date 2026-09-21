@@ -1,11 +1,8 @@
 """GameServer accept 循环错误处理单元测试。
 
-回归：瞬时 OSError（ECONNABORTED 等）不得使 accept 循环永久退出——
-否则监听 socket 仍在、新连接照常完成 TCP 握手却无人 accept，服务器
-"看似运行实则瘫痪"（前端连得上但永远等不到 hello_ack）。
+瞬时 OSError（ECONNABORTED 等）时 accept 循环继续处理新连接，不永久退出。
 
-说明：socket 实例属性只读，通过 patch.object 临时替换类方法；
-单测在进程内串行执行，patch 上下文退出即恢复，不影响其他测试。
+说明：socket 实例属性只读，通过 patch.object 临时替换类方法。
 """
 
 import errno

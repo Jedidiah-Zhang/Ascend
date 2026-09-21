@@ -161,7 +161,7 @@ class TestMapPreview:
     # ── 气候图层（温度/降雨/气候带）────────────────────────
 
     def test_layers_omitted_by_default(self, handlers):
-        """缺省不计算气候图层（向后兼容：旧客户端仅海拔）。"""
+        """缺省不计算气候图层（响应仅含海拔）。"""
         payload = handlers["map_preview"](
             _req("map_preview", {"seed": "3039", "land_ratio": 0.55})
         )["payload"]
@@ -253,7 +253,7 @@ class TestMapPreview:
                 ))
 
     def test_layers_empty_list_is_elevation_only(self, handlers):
-        """空 layers 列表 = 仅海拔（合法、向后兼容）。"""
+        """空 layers 列表 = 仅海拔（合法）。"""
         payload = handlers["map_preview"](_req(
             "map_preview",
             {"seed": "3039", "land_ratio": 0.55, "layers": []},

@@ -21,8 +21,7 @@
     {seed: int, gen_params: {land_ratio: float, ...}}
 
 依赖步骤通过 setup() 收到的 params 读取前置产出；顺序由
-SetupFlow.build_steps() 的数组顺序固定（地图 → 群落 → 物种），
-新步骤按依赖插入对应位置即可，无需改动容器。
+SetupFlow.build_steps() 的数组顺序固定（地图 → 群落 → 物种）。
 """
 
 class_name SetupStep

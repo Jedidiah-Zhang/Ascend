@@ -22,7 +22,6 @@ from olam.generation.terrain import TerrainType
 from olam.content.tile_grid import TileGrid, TILE_MAP_SIZE
 
 # 不参与湿地 fringe 的材质（水体 + 非土壤岩岸：裸岩/砾石/冻土）。
-# 湖边岩壁保持 ROCK，不因季节性淹没概率变成沼泽。
 _NON_MARSH: frozenset = frozenset({
     TerrainType.WATER,
     TerrainType.ROCK,
@@ -203,7 +202,6 @@ def _generate_wetland_fringe(
                 continue
 
             # 只有土壤类 tile 可以变为湿地——裸岩/砾石/冻土岩岸不沼泽
-            # （材质由低频场判定，湿地 fringe 只作用在土壤上）
             current = tile_grid.get(tx, ty)
             if current in _NON_MARSH:
                 continue

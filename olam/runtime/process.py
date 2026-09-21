@@ -111,14 +111,17 @@ class WorldProcess:
 
     @property
     def program(self) -> object:
+        """本进程运行的世界程序。"""
         return self._program
 
     @property
     def seed(self) -> int:
+        """本进程的世界种子（地址随机根）。"""
         return self._seed
 
     @property
     def tick(self) -> int:
+        """当前世界帧（已提交推进到的 tick）。"""
         return self._tick
 
     @property

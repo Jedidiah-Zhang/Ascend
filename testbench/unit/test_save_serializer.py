@@ -70,14 +70,14 @@ class TestCollectState:
 
 
 class TestStateVersion:
-    """状态格式版本（无向后兼容，fail-closed）。"""
+    """状态格式版本（fail-closed：版本不符即拒绝）。"""
 
     def test_accepts_current_version(self):
         assert require_state_version({"state_version": STATE_VERSION}) == \
             STATE_VERSION
 
     def test_missing_version_rejected(self):
-        """旧格式（无版本字段）拒绝加载。"""
+        """缺版本字段的载荷拒绝加载。"""
         with pytest.raises(ValueError, match="state_version"):
             require_state_version({"clock": {"time": 1}})
 
@@ -86,7 +86,7 @@ class TestStateVersion:
             require_state_version({"state_version": STATE_VERSION + 1})
 
     def test_bool_version_rejected(self):
-        """bool 是 int 子类，必须显式拒绝（否则 True == 1 混过校验）。"""
+        """bool 版本值被拒绝（bool 是 int 子类）。"""
         with pytest.raises(ValueError, match="整数"):
             require_state_version({"state_version": True})
 
@@ -155,7 +155,7 @@ class TestApplyState:
             apply_state(state, clock, player)
 
     def test_nan_clock_time_rejected(self, clock, player):
-        """NaN 时钟时间被熔断（NaN 比较恒 False，< 0 校验形同虚设）。"""
+        """NaN 时钟时间被拒绝。"""
         state = {
             "state_version": STATE_VERSION,
             "clock": {"time": float("nan"), "speed": 1.0, "paused": False},
@@ -242,7 +242,7 @@ class TestAlignedTime:
         assert aligned_time(state) == 500
 
     def test_archive_ahead(self):
-        """归档比 state 新时取归档（防时间倒流）。"""
+        """归档比 state 新时取归档。"""
         state = {
             "clock": {"time": 300},
             "archive_max_timestamp": 450,

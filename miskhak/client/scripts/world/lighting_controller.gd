@@ -1,6 +1,6 @@
 """2D 光照调制 — CanvasModulate 全局昼夜色调 + 昼夜判据。
 
-2D 正俯视地形无遮挡与阴影问题，只需全局色调调制（视觉风格设计文档）。
+2D 正俯视地形无遮挡与阴影，仅需全局色调调制（视觉风格设计文档）。
 持有 CanvasModulate 引用，状态（游戏时间/日出日落/日照强度）由调用方喂入。
 局部光源开关（火把/营火）由 is_night 纯判据驱动。
 """
@@ -10,7 +10,7 @@ extends RefCounted
 
 
 
-## 太阳高度角渐入上界：0→0.35 间平滑过渡，消除亮度跳变
+## 太阳高度角渐入上界（0→0.35 间平滑过渡）
 const SUN_RAMP_CEIL: float = 0.35
 ## 白天/夜晚 CanvasModulate 色调（夜晚蓝紫暗色，白天中性）
 const DAY_COLOR: Color = Color(1, 1, 1, 1)
@@ -20,7 +20,7 @@ const WEATHER_DIM_MIN: float = 0.85
 
 
 var _modulate: CanvasModulate
-## 最近一次计算的太阳高度角（保留给未来相机/局部光使用）
+## 最近一次计算的太阳高度角。
 var _last_sun_altitude: float = 0.5
 
 
@@ -35,7 +35,7 @@ func last_sun_altitude() -> float:
 
 
 ## 是否为夜晚（游戏时间在日出前/日落后）：局部光源（火把/营火）的开关判据。
-## 昼夜参数异常（daylight<=0）时保守视为白天（不点灯）。
+## 昼夜参数异常（sunset - sunrise <= 0）时返回 false。
 func is_night(game_hour: float, game_minute: int,
 		sunrise: float, sunset: float) -> bool:
 	var hour_float: float = game_hour + game_minute / 60.0
@@ -45,7 +45,7 @@ func is_night(game_hour: float, game_minute: int,
 
 
 ## 按游戏时间与天气调制全局色调：太阳高度角驱动昼夜插值，
-## 雨天（日照强度低）整体略暗；日出日落平滑 ramp 无跳变。
+## 雨天（日照强度低）整体略暗，日出日落按 ramp 过渡。
 ##
 ## Args:
 ##     game_hour/game_minute: 当前游戏时间。
@@ -66,7 +66,7 @@ func update(game_hour: float, game_minute: int,
 	var sun_altitude: float = sin(day_progress * PI) if is_day else 0.0
 	_last_sun_altitude = sun_altitude
 
-	# 日出日落平滑 ramp：高度角 0→SUN_RAMP_CEIL 间渐入渐出，无跳变
+	# 日出日落平滑 ramp：高度角 0→SUN_RAMP_CEIL 间渐入渐出
 	var sun_ramp: float = smoothstep(0.0, SUN_RAMP_CEIL, sun_altitude)
 	# 天气调制：日照强度低（雨/阴）时整体略暗
 	var dim: float = WEATHER_DIM_MIN + (1.0 - WEATHER_DIM_MIN) * sunshine_intensity

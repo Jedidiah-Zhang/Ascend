@@ -3,10 +3,7 @@
 #
 # 用法: bash build/nuitka/build_backend.sh
 #
-# 输出到 build/work/nuitka/server/（目录形态：二进制 + 依赖库）。
-# 不用 onefile：其一 file 在 Linux 上会 fork 出子进程（bootstrap 监督
-# 进程 + 真实服务），前端按 PID 无法可靠终止；standalone 下二进制即
-# 服务本身，PID/SIGTERM 语义与前端进程模型一致。
+# 输出到 build/work/nuitka/server/（standalone 目录形态：二进制 + 依赖库）。
 #
 # 世界区与游戏区是两个独立包（olam / miskhak）：
 # 编译时以仓库根作为 {PYTHONPATH}（两个包均在根）。

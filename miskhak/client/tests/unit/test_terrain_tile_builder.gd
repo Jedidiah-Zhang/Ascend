@@ -80,7 +80,7 @@ func test_cell_coords_row_major() -> void:
 
 
 func test_terrain_mapping_length_matches_backend() -> void:
-	"""8 材质映射与后端 TerrainType 枚举对齐（阶段 1 全部列索引 = terrain_id）。"""
+	"""8 材质映射与后端 TerrainType 枚举对齐（全部列索引 = terrain_id）。"""
 	assert_eq(TerrainTileBuilder.TERRAIN_TO_TILE.size(), 8)
 
 
@@ -291,7 +291,7 @@ func _neighbor_edge(edge: String, terr: PackedInt32Array,
 
 
 func test_empty_neighbors_identical_to_no_args() -> void:
-	"""空邻居字典与不传邻居等价（旧调用兼容）。"""
+	"""空邻居字典与不传邻居参数等价。"""
 	var terr := _flat_terrain(0)
 	var elev := _flat_elevation(10.0)
 	var a: Dictionary = TerrainTileBuilder.build_cells(terr, elev)
@@ -314,7 +314,7 @@ func test_cliff_continues_across_west_seam_with_neighbor() -> void:
 
 
 func test_cliff_boundary_without_neighbor_skipped() -> void:
-	"""无邻居上下文：边界按无邻居语义跳过（旧行为保持，不误报）。"""
+	"""无邻居上下文：边界按无邻居语义跳过（不误报）。"""
 	var cells: Dictionary = TerrainTileBuilder.build_cells(
 		_flat_terrain(0), _flat_elevation(120.0))
 	assert_eq(cells[TerrainTileBuilder.LAYER_CLIFF].size(), 0,

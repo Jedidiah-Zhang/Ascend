@@ -91,11 +91,7 @@ func test_unknown_live_origin_chains_at_end() -> void:
 
 
 func test_live_dangling_origin_never_chains_head() -> void:
-	"""防护：LIVE 悬空来源 + 游戏时间 0 时不能成为链头。
-
-	LIVE 的 time 若取 0（排序最前），悬空来源时会成为链头，
-	初始快照反成其子节点，树整体反转。
-	"""
+	"""LIVE 悬空来源 + 游戏时间 0 时不能成为链头（初始快照仍为链头）。"""
 	var snaps: Array = [_snap("s1", "", 100, 0.0, "manual", 0)]
 	var tree: Dictionary = TimelineLayout.build(snaps, 0, "ghost")
 	var depths: Dictionary = {}
@@ -124,8 +120,7 @@ func test_live_dangling_origin_after_newer_snapshots() -> void:
 # ── 来源过滤 ───────────────────────────────────────────────
 
 func test_auto_snapshots_visible_quit_filtered() -> void:
-	"""自动保护快照参与时间线（分支延续节点，隐藏会让旧分支消失）；
-	quit 等其它来源仍过滤。"""
+	"""自动保护快照参与时间线（分支延续节点）；quit 等其它来源仍过滤。"""
 	var snaps: Array = [
 		_snap("m1", "", 100, 0.0, "manual"),
 		_snap("a1", "m1", 150, 0.0, "auto"),
@@ -224,7 +219,7 @@ func test_fork_branches_get_distinct_slots() -> void:
 
 
 func test_dirty_snapshot_entries_skipped() -> void:
-	"""无 file / 非字典条目应跳过（弱后端容错）。"""
+	"""无 file / 非字典条目应跳过。"""
 	var snaps: Array = [
 		"bad",
 		42,
@@ -295,7 +290,7 @@ func test_save_order_seq_ignores_rollback_time_reversal() -> void:
 
 
 func test_legacy_mixed_seq_falls_back_to_saved_at() -> void:
-	"""旧档（全 seq=0）回退 saved_at 排序（同秒游戏时间兜底）。"""
+	"""全 seq=0（无 seq 数据）时回退 saved_at 排序（同秒游戏时间兜底）。"""
 	var snaps: Array = [
 		_snap("s3", "", 300, 3000.0),
 		_snap("s1", "", 100, 1000.0),

@@ -16,9 +16,9 @@ rainfall 为噪声场全域值。climate 档位仅陆地有意义（海域未校
 
 预览走 ContinentGenerator.generate_preview：只算海拔 + 陆地掩码，
 layers 请求时补算气候（跳过侵蚀/水文），采样分辨率 1000m
-（默认 100×60 网格），秒级返回。地形噪声场与分辨率无关，预览为
-同一地形的粗采样缩略图（海拔未经侵蚀，与最终世界略有偏差，仅作
-参考；气候值与最终世界一致）。
+（默认 100×60 网格）。地形噪声场与分辨率无关，预览为
+同一地形的粗采样缩略图（海拔未经侵蚀，与最终世界略有偏差；
+气候值与最终世界一致）。
 """
 
 import math
@@ -60,8 +60,8 @@ def _parse_preview_payload(msg: dict) -> tuple[int, float, float | None, float |
         raise ValueError("payload 必须为对象")
     seed = parse_seed(payload.get("seed", ""))
     if seed == 0:
-        # 随机占位：预览即定案（种子唯一随机源 = 后端，与随机系统的
-        # "随机性全部可追溯"一致），响应回传 hex 种子供创建复用。
+        # 随机占位：预览即定案（种子唯一随机源 = 后端），
+        # 响应回传 hex 种子供创建复用。
         seed = random.randint(1, SEED_MAX)
     land_ratio = float(payload.get("land_ratio", CONTINENT_LAND_RATIO))
     if not math.isfinite(land_ratio) or not (0.0 < land_ratio <= LAND_RATIO_MAX):

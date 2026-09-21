@@ -2,7 +2,7 @@
 
 - 全部生产模块与演练模块（含 momentum）必须零缺口；
 - 判别力：人为破坏的模块必须报出对应类别；
-- 豁免不腐烂：terrain 的登记豁免必须仍是承重的（移除豁免即出现缺口）。
+- 豁免承重：terrain 的登记豁免移除即出现缺口。
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ class TestProtocolDiscrimination:
         }
 
     def test_exemptions_are_load_bearing(self, monkeypatch):
-        """terrain 的登记豁免必须仍是承重的：移除豁免即出现缺口。"""
+        """terrain 的登记豁免是承重的：移除豁免即出现缺口。"""
         monkeypatch.setattr(protocol, "PROTOCOL_EXEMPTIONS", {})
         issues = module_protocol_issues(terrain.MODULE)
         assert issues

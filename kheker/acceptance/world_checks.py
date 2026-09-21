@@ -62,6 +62,7 @@ class CheckResult:
     first_divergence: str | None = None
 
     def plain(self) -> dict:
+        """判据结果的普通字典视图（供 JSON 序列化）。"""
         return {
             "code": self.code,
             "title": self.title,
@@ -182,14 +183,17 @@ def _acceptance_result(code: str) -> CheckResult:
 
 
 def check_w0() -> CheckResult:
+    """W0「帧内顺序」判据结果（转发 run_acceptance）。"""
     return _acceptance_result("W0-帧内顺序")
 
 
 def check_w1() -> CheckResult:
+    """W1「节点干预与 CRN」判据结果（转发 run_acceptance）。"""
     return _acceptance_result("W1-节点干预与CRN")
 
 
 def check_w2() -> CheckResult:
+    """W2「值干预时长」判据结果（转发 run_acceptance）。"""
     return _acceptance_result("W2-值干预时长")
 
 

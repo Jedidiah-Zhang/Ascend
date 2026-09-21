@@ -218,7 +218,7 @@ func test_reset_clears_all() -> void:
 
 func test_state_order_follows_first_truth_keys() -> void:
 	var chaser: Chaser = _make_chaser()
-	# 反序键 + ice 非零（否则 ice 无初始格子，首格被 snow 占据）
+	# 反序键 + ice 非零（ice 零值时无初始格子，首格被 snow 占据）
 	var states := _make_states(0, 0, 200)
 	var reordered: Dictionary = {
 		"ice": states["ice"],

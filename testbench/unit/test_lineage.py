@@ -60,7 +60,7 @@ class TestLoad:
         assert store.load("a" * 32) is None
 
     def test_load_corrupt_returns_none(self, store) -> None:
-        """JSON 损坏 → None（按损坏处理，防反向对账误删）。"""
+        """JSON 损坏 → None。"""
         world_id = "b" * 32
         path = store.lineage_path(world_id)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -75,7 +75,7 @@ class TestLoad:
         assert store.load(world_id) is None
 
     def test_load_unsigned_returns_none(self, store) -> None:
-        """历史无签名格式（合法 JSON）→ None（严格：不兼容、不信任）。"""
+        """无签名格式（合法 JSON）→ None（严格模式）。"""
         world_id = "d" * 32
         _write_lineage_file(
             store, world_id, {"live_origin": "", "snapshots": {}},
@@ -110,7 +110,7 @@ class TestLoad:
         assert store.load(world_id) is None
 
     def test_load_without_keys_returns_none(self, store_no_keys) -> None:
-        """密钥不可用 → 无法验签 → None（宁缺勿删）。"""
+        """密钥不可用 → 无法验签 → None。"""
         world_id = "g" * 32
         store = store_no_keys
         _world_dir_ready(store, world_id)

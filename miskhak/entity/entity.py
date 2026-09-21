@@ -1,14 +1,12 @@
 """实体数据结构 — 游戏世界中一切存在物的基类。
 
 使用 __slots__ 消除 per-instance __dict__，data 懒分配，position 拆为独立 int 字段。
-大规模实体场景下内存效率显著优于普通 dataclass。
 
-设计原则:
+约定:
   - 实体类型是存在形态分类（生物/植物/物品/建筑），"被谁控制"不是类型
-    —— 玩家只是 controller=PLAYER 的 CREATURE，与 NPC 唯一的区别是
-    决策模块由玩家输入替代 AI。这是意识转移玩法的架构基础。
-  - 组合优于继承：实体 = ID + 位置 + 组件集合。data dict 为朴素组合
-    容器，组件 schema（genome/body/needs）等上游系统定型后规范化。
+    —— 玩家只是 controller=PLAYER 的 CREATURE，决策模块由玩家输入
+    替代 AI。
+  - 实体 = ID + 位置 + 组件集合；data dict 为组件容器。
 """
 
 import uuid
@@ -22,7 +20,7 @@ class EntityType(IntEnum):
     """实体存在形态枚举。
 
     按"是什么"分类，不按"被谁控制"分类。
-    使用 int 枚举，内存和比较效率优于字符串。
+    使用 int 枚举。
 
     序列化约定：跨进程/持久化一律使用 ``.name`` 字符串，禁止使用
     数值——枚举成员可能增删重排，数值序列化会在版本间静默错位。

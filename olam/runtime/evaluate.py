@@ -142,7 +142,7 @@ def evaluate_mechanism(
                 fields[slot].set(coords, value)
         return dict(fields)
     raise NotImplementedError(
-        f"机制 {mechanism.id}: 实例类型 {instance.kind} 的运行时支持尚未交付"
+        f"机制 {mechanism.id}: 实例类型 {instance.kind} 无运行时求值支持"
     )
 
 

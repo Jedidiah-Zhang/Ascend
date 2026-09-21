@@ -138,7 +138,7 @@ class TestMessageDispatcher:
 
         dispatcher.process()
 
-        # 内部异常细节不回传客户端（防泄漏路径/SQL），只给类型名
+        # 内部异常细节不回传客户端，只给类型名
         expected_error = {
             "type": "error",
             "request_type": "crash",

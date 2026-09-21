@@ -61,7 +61,7 @@ func test_load_all_registers_both_locales() -> void:
 
 
 func test_load_all_idempotent() -> void:
-	"""重复注册应先移除旧 Translation，避免翻译叠加。"""
+	"""重复注册应移除先前注册的 Translation（不叠加）。"""
 	var catalog := LocaleCatalog.new()
 	catalog.load_all(REPO_LANG_DIR)
 	catalog.load_all(REPO_LANG_DIR)

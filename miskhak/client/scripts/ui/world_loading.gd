@@ -4,8 +4,7 @@
 「启动世界进程 → 生成地形(stage 逐阶段) → 进入世界」。
 
 world_initialized 事件由 main_world 消费（出生点/初始状态请求），
-本页在切场景后下一帧转发该事件（Relay 持有强引用，跨场景存活），
-保证 main_world 订阅就位时事件不丢失。
+本页在切场景后下一帧转发该事件（Relay 持有强引用，跨场景存活）。
 
 失败兜底: 后端启动失败 / 连接中断 / 超时 → 错误态（返回主菜单 / 重试）。
 
@@ -49,10 +48,9 @@ const BUTTON_GAP: float = 12.0
 # ── 转发 Relay（跨场景存活） ──────────────────────────────
 
 ## 切场景后一帧转发 world_initialized：SceneTree 的 process_frame
-## ONE_SHOT 连接持有本对象；自持引用保证局部变量失效后（本帧末
+## ONE_SHOT 连接持有本对象；自持引用使局部变量失效后（本帧末
 ## 场景切换）仍存活；_fire 触发后解除自持，随 ONE_SHOT 断开释放。
-## 注：CONNECT_REFERENCE_COUNTED|ONE_SHOT 组合在当前引擎下不会
-## 触发，故用自持引用替代。
+## 注：CONNECT_REFERENCE_COUNTED|ONE_SHOT 组合在当前引擎下不会触发。
 class Relay:
 	extends RefCounted
 
@@ -330,7 +328,7 @@ func _input(event: InputEvent) -> void:
 			_leave_to_main_menu()
 
 
-## 离开回主菜单：必须先标记输入已处理（本节点仍在树中），再切场景——
+## 离开回主菜单：必须先标记输入已处理（本节点尚在树中），再切场景——
 ## change_scene_to_file 会立即释放当前场景，之后 get_viewport() 返回 null
 ## → set_input_as_handled 崩溃。
 func _leave_to_main_menu() -> void:

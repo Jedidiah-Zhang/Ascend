@@ -10,9 +10,8 @@ var _real_handshake: Object
 var _real_worker: Object
 
 
-## 注入假层：本文件只驱动 send 队列（白盒 readback），不能有真实流量
-## 流到运行中的后端（旧代码靠 disconnect 测试的 set_process(false) 冻结
-## 真实处理链，注入了假层后由 _process 继续无副作用驱动）。
+## 注入假层：本文件只驱动 send 队列（白盒 readback），不产生真实流量
+## 流到运行中的后端（假层由 _process 无副作用驱动）。
 func before_each() -> void:
 	# 断言中文文案：固定 zh_CN，与用户设置文件 locale 解耦
 	TranslationServer.set_locale("zh_CN")
@@ -64,12 +63,11 @@ func _make_world_instance() -> Node2D:
 	# 白盒：模拟已连接（_stream_chunks 的 gate 判定），不 stub 网络层
 	Connection.status = Connection.Status.CONNECTED
 	Connection._force_handshake_acked()
-	# 禁用帧处理：测试全部显式调用方法；否则残留实例的 _process 会在
-	# 帧间继续发请求，污染共享 Connection 发送队列（回归：队列里
-	# 出现前一个测试实例发出的完整请求）。
+	# 禁用帧处理：测试全部显式调用方法；残留实例的 _process 不在帧间
+	# 继续发请求、污染共享 Connection 发送队列。
 	instance.process_mode = Node.PROCESS_MODE_DISABLED
 	# 注入同步网格构建器：构建结果立即入队（_poll_build_results 挂载），
-	# 测试无需等待后台线程，断言与旧同步语义一致。契约与异步任务相同：
+	# 测试无需等待后台线程。契约与异步任务相同：
 	# 入队纯数据（build_cells），由 _poll_build_results 在主线程组 mesh。
 	instance.tile_builder = func(key, terr, elev, neighbors, seq):
 		instance._build_results.append(
@@ -194,14 +192,10 @@ func test_birth_chunk_only_set_once() -> void:
 	assert_eq(main._birth_chunk, Vector2i(2, 2), "出生区块只应设置一次")
 
 
-# ── 世界就绪事件（服务器/世界观解耦后的就绪信号） ─────────
+# ── 世界就绪事件（world_initialized） ─────────
 
 func test_world_initialized_sets_birth_and_requests_state() -> void:
-	"""world_initialized 事件：设置出生点并重新拉取权威玩家状态。
-
-	回归：连接全程不断线后，entity_snapshot / player_state 原由
-	_on_connected 触发，读档重建后必须由事件重新请求。
-	"""
+	"""world_initialized 事件：设置出生点并重新拉取权威玩家状态。"""
 	var main: Node2D = _make_world_instance()
 
 	main._on_world_initialized({"birth_chunk": [5, 3]})
@@ -214,7 +208,7 @@ func test_world_initialized_sets_birth_and_requests_state() -> void:
 
 
 func test_world_initialized_resets_previous_world_state() -> void:
-	"""world_initialized 应清空旧世界的 chunk/地形（换世界读档）。"""
+	"""world_initialized 应清空上一个世界的 chunk/地形（换世界读档）。"""
 	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(2, 2)
 	main._chunks[Vector2i(0, 0)] = {"elevation": []}
@@ -284,7 +278,7 @@ func test_completion_fallback_forces_world_visible() -> void:
 
 	正常路径：覆盖层补满 → completed → _finish_world_visible。若覆盖层
 	异常导致信号永不发出，COMPLETION_FALLBACK_SEC 兜底计时器随
-	main._process 倒计时归零后强制收尾，防玩家永久卡在加载层。
+	main._process 倒计时归零后强制收尾。
 	"""
 	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(0, 0)
@@ -483,11 +477,8 @@ func test_unload_preserves_nearby_chunks() -> void:
 # ── 请求状态机（UNKNOWN → FIELD_REQUESTED → TILE_REQUESTED → RECEIVED → BUILT） ──
 
 func test_field_only_response_stores_data_keeps_field_requested() -> void:
-	"""字段响应：缓存数据，状态保持 FIELD_REQUESTED（等待流循环发完整请求）。
-
-	防护：字段响应不得清 _pending 标记——否则完整请求标记被抹掉、
-	每帧重发 include_tiles=true 请求直到响应到达（双请求竞态）。
-	"""
+	"""字段响应：缓存数据，状态保持 FIELD_REQUESTED，不清 _pending 标记
+	（完整请求由流循环限流发出）。"""
 	var main: Node2D = _make_world_instance()
 	var key := Vector2i(0, 0)
 	main._set_birth_chunk(0, 0)
@@ -578,7 +569,7 @@ func test_signal_layers_mount_with_chunk() -> void:
 	assert_true(main._terrain_parent.has_node(NodePath("Cliff_0_0")), "崖壁层应挂载")
 	assert_true(main._terrain_parent.has_node(NodePath("Shadow_0_0")), "投影层应挂载")
 	assert_false(main._terrain_parent.has_node(NodePath("Decor_0_0")),
-		"装饰层暂不挂载（单格散点呈噪点观感，待成簇重构后恢复）")
+		"装饰层暂不挂载（单格散点呈噪点观感）")
 	assert_false(main._terrain_parent.has_node(NodePath("Contour_0_0")),
 		"等高线调试层默认关闭，不应挂载")
 
@@ -777,8 +768,8 @@ func test_refresh_response_dropped_after_unload() -> void:
 
 
 func test_refresh_response_corrupt_keeps_old_cache() -> void:
-	"""刷新 BLOB 损坏（长度不符）：缓存回滚旧字典（地形/高程不丢失），
-	真值保持旧值——瞬时失败可容忍且不损坏已解码数据。"""
+	"""刷新 BLOB 损坏（长度不符）：缓存保留先前的字典（地形/高程不丢失），
+	真值不变。"""
 	var main: Node2D = _make_world_instance()
 	var key := Vector2i(0, 0)
 	main._set_birth_chunk(0, 0)
@@ -820,12 +811,7 @@ func test_refresh_response_corrupt_keeps_old_cache() -> void:
 
 
 func test_tile_response_rejects_version_mismatch() -> void:
-	"""版本头不匹配的 BLOB 应被拒绝并标记失败，而非静默解码或无限重试。
-
-	回归：后端 tile_grid.from_bytes 校验版本，前端此前只校验长度——
-	前后端 BLOB 布局漂移且长度恰好不变时，会静默解码出错误地形；
-	且版本漂移是永久性契约错误，重排队会每帧无限重发完整请求。
-	"""
+	"""版本头不匹配的 BLOB 应被拒绝并标记失败，而非静默解码或重试。"""
 	var main: Node2D = _make_world_instance()
 	var key := Vector2i(0, 0)
 	main._set_birth_chunk(0, 0)
@@ -893,8 +879,7 @@ func test_stale_response_after_unload_ignored() -> void:
 func test_disconnect_demotes_inflight_states() -> void:
 	"""断线后：在途请求作废（无数据 → UNKNOWN），有数据降级重发完整请求。
 
-	防护：断线必须清 _pending——否则重连后这些 chunk 永远被跳过，
-	玩家周围地形永久缺失。
+	断线时清空 _pending 登记。
 	"""
 	var main: Node2D = _make_world_instance()
 
@@ -928,13 +913,7 @@ func test_disconnect_demotes_inflight_states() -> void:
 
 
 func test_fast_movement_keeps_inflight_chunks() -> void:
-	"""快速移动：在途请求的 chunk 不应被卸载圈立即作废（白请求）。
-
-	回归：玩家快速移动时，请求发出 → 玩家跑出卸载圈（stream_r+1）→
-	chunk 被卸载 → 响应到达被当陈旧丢弃 → 重新请求 → 又跑出圈……
-	前方区块永远加载不出来（日志：一帧内卸载 13 个 chunk，含距出生
-	点仅 1 格的 chunk）。
-	"""
+	"""快速移动：在途请求的 chunk 不应被卸载圈立即作废（白请求）。"""
 	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(0, 0)
 	main._player_pos = Vector3(0, 0, 0)
@@ -964,8 +943,7 @@ func test_fast_movement_keeps_inflight_chunks() -> void:
 func test_single_chunk_two_requests_from_enter_to_built() -> void:
 	"""集成场景：chunk 从进入视野到构建完成恰好 2 次请求（字段 + 完整）。
 
-	防护：字段请求在途时 tile 队列分支不得同样命中（_chunks 以 null
-	占位已存在）——否则同一 chunk 并发发出 字段+完整 双请求。
+	字段请求在途时 tile 队列分支不命中（_chunks 以 null 占位已存在）。
 	"""
 	var main: Node2D = _make_world_instance()
 	main._set_birth_chunk(0, 0)
@@ -1045,7 +1023,7 @@ func test_world_initialized_records_world_id() -> void:
 
 
 func test_world_initialized_keeps_world_id_when_missing() -> void:
-	"""事件缺 world_id（旧后端）时保留已有值。"""
+	"""事件缺 world_id 时保留已有值。"""
 	var main: Node2D = _make_world_instance()
 	main._world_id = "w-keep"
 
@@ -1209,10 +1187,7 @@ func test_entity_snapshot_consumes_player_entity() -> void:
 # ── 权威位置容差（SNAP_TOLERANCE） ─────────────────────────
 
 func test_player_move_small_delta_keeps_local_position() -> void:
-	"""权威位置与本地差距小于容差（RTT 内继续移动的距离）→ 不吸附。
-
-	防护：小差距不得无条件吸附——否则每 0.2s 一次回跳（橡皮筋）。
-	"""
+	"""权威位置与本地差距小于容差（RTT 内继续移动的距离）→ 不吸附。"""
 	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 
@@ -1227,11 +1202,7 @@ func test_player_move_small_delta_keeps_local_position() -> void:
 
 
 func test_player_move_clamped_position_snapped() -> void:
-	"""权威差距超阈值（真钳制/传送）→ 平滑过渡到权威位置，后端权威保留。
-
-	防护：超阈值差距不得直接瞬跳吸附（每 0.2s 一次回跳的橡皮筋）；
-	中等差距走 SNAP_DURATION 平滑过渡。
-	"""
+	"""权威差距超阈值（真钳制/传送）→ 平滑过渡到权威位置，后端权威保留。"""
 	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 
@@ -1316,8 +1287,7 @@ func test_snap_transition_then_input_applies() -> void:
 func test_player_move_follows_reported_keeps_local() -> void:
 	"""后端原样回显上报（回声，seq 对齐）→ 零纠正。
 
-	防护：按差距吸附会把"滞后"误当"偏离"（每 0.2s 拉回一次）；
-	差距 3 tiles（> SNAP_TOLERANCE）时同样不应纠正。
+	差距 3 tiles（> SNAP_TOLERANCE）时同样不纠正。
 	"""
 	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(109.0, 0.0, 100.0)
@@ -1349,11 +1319,9 @@ func test_player_move_reverse_follows_reported_keeps_local() -> void:
 
 
 func test_player_move_speed_change_echoes_keeps_local() -> void:
-	"""上报窗口内变速 → 权威位置仍是旧上报回声，零纠正。
+	"""上报窗口内变速 → 权威位置仍是上一次上报回声，零纠正。
 
-	防护：不得比较"权威位移 vs 最新上报窗口位移"——变速使两窗口位移
-	错位（δ_权威 = 6 ≠ δ_上报 = 12）→ 误判偏离触发拉回；seq 对齐后
-	权威位置 ≈ 该次上报位置即可判定认可。
+	seq 对齐后权威位置 ≈ 该次上报位置即判定认可。
 	"""
 	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(118.0, 0.0, 100.0)
@@ -1387,8 +1355,7 @@ func test_player_move_clamped_delta_snaps_back() -> void:
 
 
 func test_snap_input_accumulates_across_frames() -> void:
-	"""过渡期间连续多帧输入不丢失（防护：每帧从固定起点插值会覆盖
-	上一帧输入位移，0.15s 内玩家只前进约一帧）。"""
+	"""过渡期间连续多帧输入不丢失。"""
 	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 	main._handle_response({
@@ -1414,7 +1381,7 @@ func test_snap_input_accumulates_across_frames() -> void:
 
 
 func test_teleport_resets_authority_state() -> void:
-	"""传送事件应重置吸附过渡与对账基准：在途过渡不会把位置插值"撤销"回旧目标。"""
+	"""传送事件应重置吸附过渡与对账基准：在途过渡不会把位置插值"撤销"回先前目标。"""
 	var main: Node2D = _make_world_instance()
 	main._player_pos = Vector3(10.0, 0.0, 20.0)
 	main._handle_response({
@@ -1531,7 +1498,7 @@ func test_disconnect_discards_inflight_result_then_rebuild() -> void:
 	assert_eq(main._stream_machine.get_state(key), main.ChunkState.RECEIVED,
 		"断线后构建在途应降级 RECEIVED（数据保留）")
 
-	# 等待旧任务结束并消费结果（应被丢弃）
+	# 等待先前任务结束并消费结果（应被丢弃）
 	var t0 := Time.get_ticks_msec()
 	while main._building.has(key) and Time.get_ticks_msec() - t0 < 5000:
 		await get_tree().process_frame
@@ -1580,7 +1547,7 @@ func test_inflight_limit_keeps_received() -> void:
 	main._poll_build_results()
 
 
-# ── 实体 pawn 渲染（阶段4） ────────────────────────────────
+# ── 实体 pawn 渲染 ────────────────────────────────
 
 func test_player_pawn_has_parts_nameplate_and_torch() -> void:
 	"""玩家 pawn 应由 PawnRenderer 铺设部件 + 名称浮层 + 火炬光源。"""
@@ -1687,8 +1654,8 @@ func test_entity_died_event_despawns_pawn() -> void:
 
 
 func test_entity_born_skips_player_controller() -> void:
-	"""玩家自己的 entity_born（后端 birth 必发）不得建 pawn——玩家由
-	player_state/快照独占消费，否则与 _player 双渲染分身。"""
+	"""玩家自己的 entity_born（后端 birth 必发）不得建 pawn：玩家由
+	player_state/快照独占消费。"""
 	var main: Node2D = _make_world_instance()
 	main._handle_event({
 		"type": "event", "event_type": "entity_born",
@@ -1774,7 +1741,7 @@ func test_torch_lights_up_at_night() -> void:
 	assert_true(main._player.get_node("PlayerTorch").visible, "凌晨也应亮")
 
 
-# ── 接缝上下文（构建邻居边条，阶段 6） ────────────────────
+# ── 接缝上下文（构建邻居边条） ────────────────────
 
 func _inject_full_chunk_response_elev(main: Node2D, cx: int, cy: int,
 		elev_value: float) -> void:

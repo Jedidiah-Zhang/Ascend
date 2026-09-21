@@ -1,9 +1,9 @@
 """感知与基线派生 — 天气分级 / 降水类型判定 / 季节振幅与纬度推导。
 
-纯函数集合（无状态、无 IO），从 WeatherEngine 拆出：
-  - 分级的唯一实现（事件 tier / 终端显示 / 查询 API 共用同一阈值语义）
-  - 降水类型判定（事件侧与查询侧共用的单一实现）
-  - 季节振幅 / 纬度连续推导（保证气候带边界无跳变）
+纯函数集合（无状态、无 IO）：
+  - 分级函数（事件 tier / 终端显示 / 查询 API 的调用入口）
+  - 降水类型判定（事件侧与查询侧共用）
+  - 季节振幅 / 纬度连续推导（气候带边界无跳变）
 
 公式单一事实来源：precip_type_for / derive_seasonal_amp /
 derive_diurnal_amp / derive_humidity_seasonal_amp /
@@ -11,8 +11,7 @@ derive_humidity_diurnal_amp / derive_latitude 委托声明方程执行
 （``olam/modules/weather``，参数值取自 olam/constants.py）。分级阈值事实
 来源 = olam/constants.py 的 *_TIER_BOUNDARIES 系列常量。
 
-fail-closed 契约：声明委托函数在输入越出声明值域时抛 ValueError，
-与研究声明的值域语义一致。
+fail-closed 契约：声明委托函数在输入越出声明值域时抛 ValueError。
 """
 
 from dataclasses import dataclass
@@ -39,7 +38,7 @@ _WEATHER_PROGRAM = None
 
 
 def _weather_program():
-    """惰性编译天气声明程序（避免导入环与进程启动开销）。"""
+    """惰性编译天气声明程序（首次调用时编译并缓存）。"""
     global _WEATHER_PROGRAM
     if _WEATHER_PROGRAM is None:
         from olam import Schedule, WorldSpec, compile_world
@@ -75,8 +74,8 @@ class DaySummary:
 def precip_type_for(temperature: float) -> str:
     """降水类型判定 — 事件侧与查询侧（weather_handler）共用的单一实现。
 
-    冰点阈值 0°C：<=0 为雪、>0 为雨。统一先 round(1) 再判定，
-    保证事件广播与 UI 显示文案一致。
+    冰点阈值 0°C：<=0 为雪、>0 为雨。先 round(1) 再判定，
+    事件广播与 UI 显示文案一致。
 
     Args:
         temperature: 气温 (°C)。
@@ -117,7 +116,6 @@ def classify_temperature(temp: float,
     Args:
         temp: 温度 (°C)。
         boundaries: 可选自定义阈值，默认用全局配置。
-                    用于不同物种/场景的分级调整。
 
     Returns:
         int，等级索引（0=最冷，len(boundaries)=最热）。
@@ -192,7 +190,7 @@ def derive_seasonal_amp(temperature: float, rainfall: float) -> float:
     干旱区（低降雨）大陆性气候 → 振幅偏大（+最多 4°C）；
     高降雨区海洋调节 → 振幅偏小（-最多 2°C）。
 
-    保证空间连续：相邻 chunk 的 baseline 温度/降雨接近 →
+    空间连续：相邻 chunk 的 baseline 温度/降雨接近 →
     seasonal_amp 接近，无气候带边界跳变。
 
     Args:
@@ -217,9 +215,7 @@ def derive_seasonal_amp(temperature: float, rainfall: float) -> float:
 def derive_diurnal_amp(seasonal_amp: float) -> float:
     """昼夜温度振幅 = 季节振幅 × DIURNAL_TO_SEASONAL_RATIO（声明方程）。
 
-    季节振幅由 :func:`derive_seasonal_amp` 产出；本函数与湿度振幅
-    委托各自 chunk 派生机制求值，保证 register_chunk 落盘的振幅族
-    与声明图一致（生产消费审计，见 test_weather）。
+    季节振幅由 :func:`derive_seasonal_amp` 产出。
 
     Args:
         seasonal_amp: 季节温度振幅 (°C)。
@@ -276,7 +272,7 @@ def derive_latitude(sea_level_temp: float) -> float:
     """从海平面温度连续推导纬度 (°)。
 
     海平面温度是连续场（纬度噪声推导），不受海拔/气候档位离散判定影响，
-    保证气候带交界处纬度连续 → 日照季节振幅 + 日出/日落时刻无跳变。
+    气候带交界处纬度连续 → 日照季节振幅 + 日出/日落时刻无跳变。
 
     线性映射：sea_temp=-5（极地）→ lat=80，sea_temp=35（赤道）→ lat=0。
 

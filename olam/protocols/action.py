@@ -1,4 +1,4 @@
-"""行动协议 Γ 与冲突解析 Res（WC-10.3；第二/三阶段的接入点）。
+"""行动协议 Γ 与冲突解析 Res（WC-10.3）。
 
 行动不直接写世界：候选行动经具身映射转化为**世界干预**，多个主体的候选
 经 Res 合并为联合干预后进入帧事务。当前最小可执行形式：单目标值干预
@@ -50,6 +50,7 @@ class Intervention:
     duration: int = 1
 
     def active(self, tick: int) -> bool:
+        """该干预在 ``tick`` 帧是否生效（含起始帧、不含结束帧）。"""
         return self.start_tick <= tick < self.start_tick + self.duration
 
 
@@ -61,8 +62,7 @@ def gamma(
 ) -> Intervention:
     """具身映射 Γ：行动 → 世界干预（最小形式：恒等 + 时长）。
 
-    ``body_state`` 是身体状态的只读视图（实体切片接入失败模式与资源
-    约束后在此展开）；当前实现不读取它，但接口保留。
+    ``body_state`` 是身体状态的只读视图；当前实现不读取它。
     """
     del body_state
     return Intervention(

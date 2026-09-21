@@ -50,7 +50,7 @@ class TestEncryptDecrypt:
         assert keys.decrypt(token) == b"hello world"
 
     def test_ciphertext_is_scrambled(self):
-        """密文不包含明文（防其他工具直读）。"""
+        """密文不包含明文。"""
         keys = SaveKeys.generate()
         token = keys.encrypt(b"secret-player-position")
         assert b"secret-player-position" not in token

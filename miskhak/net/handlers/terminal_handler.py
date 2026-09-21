@@ -1,7 +1,6 @@
 """终端指令网络处理程序 — 将 Godot 前端的终端指令路由到 CommandExecutor。
 
-通过 make_terminal_handler() 工厂函数创建，返回 {request_type: handler} 映射，
-与 map_handler.py 中 make_map_handlers() 的模式一致。
+通过 make_terminal_handler() 工厂函数创建，返回 {request_type: handler} 映射。
 """
 
 from miskhak.log import get_logger

@@ -1,8 +1,9 @@
 """群系细分可视化 — 展示不同群系 chunk 的地形分布差异。
 
-生成两张图：
-1. terrain_comparison.png — 多个不同群系 chunk 并排，地形类型着色
-2. biome_membership.png — 跨群系边界的隶属度渐变带
+生成三张图：
+1. biome_overview.png — 大范围 chunk 区域的群系分布俯瞰
+2. biome_terrain_comparison.png — 多个不同群系 chunk 并排，地形类型着色
+3. biome_membership_band.png — 跨群系边界的隶属度渐变带
 
 用法:
     .venv/bin/python -m miskhak.tools.visual.render_biome_chunks

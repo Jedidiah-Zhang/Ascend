@@ -1,11 +1,9 @@
-"""变量层因果图 — 世界树的"根"：世界参数静态因果图（SCM）。
+"""变量层因果图 — 世界参数静态因果图（SCM）。
 
 节点 = 世界参数变量（连续/离散、外生/内生），边 = 结构方程
-`node = f(Pa)`。与事件层（graph.py 的 EventGraph，动态实例图）
-相对：本图声明一次、结构不变，事件层将来引用它作为"根"
-（第一阶段实施定义的研究日志要求：父节点快照与方程版本追踪）。
+`node = f(Pa)`。本图声明一次、结构不变。
 
-边的角色（role）纪律是承重设计：
+边的角色（role）纪律：
 - structural：正向因果结构边，构成真正的 SCM 因果子图
   （do-operator / 误差递推 / 02 篇命题只作用在这上面）；
 - inverse：仅用于不参与模拟求值的反推/分析关系，方向与执行依赖相反，
@@ -224,10 +222,9 @@ class VariableGraph(DirectedGraph):
     # ── 禁用的基类变更操作 ────────────────────────────
 
     def warmup(self, edges: list[tuple[str, str, str]]) -> int:
-        """批量添加边 — 变量层禁用。
+        """批量添加边 — 变量层禁用（恒抛 ``NotImplementedError``）。
 
-        声明式图的节点/边元数据（_variables/_edge_meta）必须与
-        邻接表同步，基类的裸批量添加会破坏该不变量。
+        声明式图请用 :meth:`declare_edge` 逐条声明。
 
         Raises:
             NotImplementedError: 始终抛出。
@@ -236,10 +233,9 @@ class VariableGraph(DirectedGraph):
             "VariableGraph 是声明式图，请用 declare_edge 逐条声明")
 
     def remove_nodes(self, node_ids: set[str]) -> None:
-        """批量移除节点 — 变量层禁用。
+        """批量移除节点 — 变量层禁用（恒抛 ``NotImplementedError``）。
 
-        基类实现只清邻接表，会遗留 _variables/_edge_meta 中的
-        陈旧声明，导致 edges()/toposort() 与邻接表不一致。
+        声明一次、结构不变。
 
         Raises:
             NotImplementedError: 始终抛出。

@@ -56,7 +56,7 @@ const DECOR_DENSITY_PERCENT: PackedInt32Array = [2, 5, 10, 16]
 ## 装饰 atlas 列：0 砾石 / 1 岩石 / 2 大岩块（覆雪由状态层表达，不设雪顶装饰）
 const DECOR_TILE_ROCKS: Array[int] = [0, 1, 2]
 
-## 地形 atlas 占位纯色（terrain_id 顺序；像素资产未开始，渲染管线先用色块）
+## 地形 atlas 占位纯色（terrain_id 顺序）。
 const TERRAIN_TILE_COLORS: Array[Color] = [
 	Color(0.45, 0.62, 0.35),  # 0 GRASSLAND
 	Color(0.85, 0.78, 0.5),   # 1 SAND
@@ -90,7 +90,7 @@ const DECOR_TILE_COLORS: Array[Color] = [
 	Color(0.42, 0.38, 0.33, 1.0),
 ]
 
-## 等高线调试层 atlas 占位纯色（高对比亮色，调试期醒目）
+## 等高线调试层 atlas 占位纯色（高对比亮色）。
 const CONTOUR_TILE_COLORS: Array[Color] = [
 	Color(0.95, 0.9, 0.2, 0.8),
 ]
@@ -115,8 +115,8 @@ const STATES_TILE_COLORS: Array[Color] = [
 
 
 ## 构建 chunk 的 tile 层 cell 数据（后台线程安全）：五信号全部在单次调用内
-## 完成（逐 tile 单遍 + 邻居探测，均为纯数组运算，无随机源——装饰用
-## 确定性哈希，结果跨线程/跨调用稳定）。纯数据不创建 TileMapLayer/材质。
+## 完成（逐 tile 单遍 + 邻居探测，均为纯数组运算；装饰用确定性哈希，
+## 结果跨线程/跨调用稳定）。纯数据不创建 TileMapLayer/材质。
 ##
 ## Args:
 ##     terrain: 长度 CHUNK_SIZE² 的 terrain_id 数组（行优先，越界补 0）。
@@ -265,9 +265,8 @@ static func _receives_shadow(terrain: PackedInt32Array, elevation: PackedFloat32
 	return false
 
 
-## 装饰判定：海拔越高岩石装饰越密（确定性哈希决定落点，非随机源——
-## 同 chunk 数据任何线程/任何次构建结果一致）；覆雪由状态层渲染，
-## 此处不做雪顶装饰。
+## 装饰判定：海拔越高岩石装饰越密（确定性哈希决定落点，
+## 任何线程/任何次构建结果一致）；覆雪由状态层渲染，不做雪顶装饰。
 ## Returns:
 ##     decor atlas 列索引；无装饰返回 -1。
 static func _decor_at(elev: float, x: int, z: int, idx: int) -> int:
@@ -282,8 +281,8 @@ static func _decor_at(elev: float, x: int, z: int, idx: int) -> int:
 	return DECOR_TILE_ROCKS[_decor_hash(z, x, idx) % DECOR_TILE_ROCKS.size()]
 
 
-## 确定性整数哈希（位置混合）：跨线程/跨构建稳定（Godot hash() 不保证
-## 跨版本稳定，视觉缓存也不可依赖全局随机源——chunk 装载顺序无影响）。
+## 确定性整数哈希（位置混合）：跨线程/跨构建稳定（不依赖 Godot hash()
+## 与全局随机源，结果与 chunk 装载顺序无关）。
 static func _decor_hash(a: int, b: int, c: int) -> int:
 	var h: int = a * 73856093 ^ b * 19349663 ^ c * 83492791
 	h = (h ^ (h >> 13)) * 1274126177

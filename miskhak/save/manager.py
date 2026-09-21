@@ -20,7 +20,7 @@ GameEngine 负责把运行时状态喂给 write_state，读档时从 read_state 
         snapshots/             # 该世界的回退点集合（回滚时保留自身）
             @<ts>-<suffix>.ascendsave
 
-快照模型（设计意图：auto 节点 = 当前线的滚动记录，永无下游）:
+快照模型（auto 节点 = 当前线的滚动记录，永无下游）:
   - manual/quit = 玩家保存的不可变节点（树的分叉点）；
   - auto = 当前状态记录。恒为叶子：当前记录在保存时晋升为
     manual、在离开该线时原地冻结刷新，从不新增子节点；
@@ -32,8 +32,6 @@ GameEngine 负责把运行时状态喂给 write_state，读档时从 read_state 
 目录，旧活目录整体抛弃（其内容在回滚前已冻结进快照树，见
 enter_snapshot）；墓碑与临时目录确定性命名 + 挂起标记，进程
 崩溃后由 _recover_interrupted_extract 向前补全（见该函数）。
-
-快照 .ascendsave 格式与增量链模型见 snapshot.py 模块 docstring。
 """
 
 import json
@@ -62,7 +60,7 @@ logger = get_logger(__name__)
 # world_id 规范格式：32 位小写十六进制（uuid4().hex）；也拦截
 # "…32 个任意字符"伪装——字符集限定防目录穿越的最终防线
 _WORLD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
-# 大陆宏观场缓存（可再生数据，随档分发保证换机后首次加载也秒开）
+# 大陆宏观场缓存（可再生数据，随档分发）
 CONTINENT_FILE: str = "continent.bin"
 
 # 回滚（extract）换目录操作的墓碑/临时目录/挂起标记前缀：
@@ -72,12 +70,11 @@ EXTRACT_BACKUP_PREFIX: str = ".old-"
 EXTRACT_TMP_PREFIX: str = ".extract-"
 EXTRACT_PENDING_PREFIX: str = ".extract-pending-"
 # 挂起标记后缀：内容 {"snapshot": 被展开的快照文件名}——恢复时
-# 据此还原 live_origin，没有它回滚后血缘串链无从接续
+# 据此还原 live_origin
 EXTRACT_PENDING_SUFFIX: str = ".json"
 
 # 存档位活目录中的规范文件集合（导出/复制只拷这些，排除 WAL/临时文件；
-# 含 continent.bin——同 seed 确定性产物，随档复制保证副本首次加载秒开；
-# lineage.json 随档复制，保证副本的时间线上下文完整）
+# 含 continent.bin 与 lineage.json）
 _LIVE_ENTRIES: tuple[str, ...] = SNAPSHOT_ENTRIES + (CONTINENT_FILE, LINEAGE_FILE)
 
 
@@ -160,9 +157,11 @@ class SaveManager:
         return os.path.join(self.world_dir(world_id), SNAPSHOT_DIR)
 
     def manifest_path(self, world_id: str) -> str:
+        """世界 manifest 文件路径。"""
         return os.path.join(self.world_dir(world_id), MANIFEST_NAME)
 
     def state_path(self, world_id: str) -> str:
+        """世界状态文件路径（加密状态 state.json.enc）。"""
         return os.path.join(self.world_dir(world_id), STATE_FILE)
 
     def lineage_path(self, world_id: str) -> str:
@@ -194,8 +193,7 @@ class SaveManager:
         """创建新的存档位（活目录 + 密钥 + 初版 manifest）。
 
         种子在创建时定案：seed=0（前端"随机"占位）在此随机化并写入
-        manifest——存档身份（world_id+seed）出生即一致，密钥混淆层
-        （secrets_blob 绑定 world_id+seed）不会与 manifest 失配。
+        manifest；密钥混淆层 secrets_blob 绑定 world_id+seed。
 
         gen_params 为创建世界流程的调参产出，随档定案：
         目前含 land_ratio；非法值抛 ValueError（与 Manifest 校验一致）。
@@ -262,8 +260,7 @@ class SaveManager:
             return result
         for entry in sorted(os.listdir(self._root)):
             # 跳过点号前缀的运行期残留/临时目录（.extract-* / .old-* /
-            # .preview-* / 挂起标记）——墓碑内 manifest 与活目录重复，
-            # 绝不能把崩溃残留列成幽灵世界
+            # .preview-* / 挂起标记）
             if entry.startswith("."):
                 continue
             path = os.path.join(self._root, entry)
@@ -330,8 +327,7 @@ class SaveManager:
         排除运行期残留的 -wal/-shm/.tmp 等垃圾；快照逐个改绑新世界
         ID（rebind_snapshot：头部与内嵌 manifest 的世界身份换为副本
         ID，钥匙不变）——副本自包含：预览/回滚沿副本自身血缘与
-        快照目录解析，不依赖原世界。任一快照损坏即整体失败，
-        不留半成品目录。
+        快照目录解析。任一快照损坏即整体失败，不留半成品目录。
 
         Raises:
             SaveCryptoError: 快照损坏/篡改（改绑需解密每个快照）。
@@ -377,7 +373,7 @@ class SaveManager:
             new_manifest.created_at = _real_time.time()
             new_manifest.write(self.manifest_path(new_id))
         except Exception:
-            # 副本必须完整自洽：任何一步失败整体放弃，不留半成品
+            # 任一步失败即整体放弃，删除新目录
             shutil.rmtree(new_dir, ignore_errors=True)
             raise
         logger.info("复制存档: %s → %s (%s)", world_id, new_id, new_manifest.name)
@@ -435,8 +431,7 @@ class SaveManager:
         Returns:
             {"live_origin": str|"", "snapshots": {file: {parent, game_time,
              saved_at, seq}}}。文件缺失或损坏时返回空血缘（初始世界
-             无快照 / 损坏按空处理，反向对账由 LineageStore.load
-             另行把关）。
+             无快照）。
         """
         self._validate_world_id(world_id)
         return self._lineage.get(world_id)
@@ -482,8 +477,8 @@ class SaveManager:
         if base_same_as_live:
             # 空增量特例：仅当锚点 == 直接父节点（刚写入的 manual，
             # 其内容必 == 活目录）时成立；血缘写失败等异常态下
-            # live_origin 仍是旧 auto 记录，锚点 ≠ 父 → 退化为
-            # 真实 diff（write_snapshot），避免写入错误内容
+            # live_origin 仍是前一条 auto 记录，锚点 ≠ 父 → 退化为
+            # 真实 diff（write_snapshot）
             anchor = self._snap.anchor_of(world_id, parent)
             if anchor is not None and anchor == parent:
                 try:
@@ -508,7 +503,7 @@ class SaveManager:
         )
         logger.info("创建快照: %s → %s", world_id, filename)
         if not lineage_ok:
-            # 血缘未落盘：跳过保留策略（反向对账会误删本文件）
+            # 血缘未落盘：跳过保留策略
             return filename
         # 保留策略：每次创建后淘汰超量快照（失败不阻断快照本身）
         try:
@@ -690,9 +685,8 @@ class SaveManager:
         目标 → 手动/退出目标在其下游开启新 auto 当前记录（分叉点）。
         auto 目标 = 继续：目标本身成为当前记录，不新建任何节点。
 
-        冻结是语义优化而非回滚硬前置：离开记录文件缺失等异常态
-        下降级为 warning 继续展开（回滚是用户恢复手段，不得中断）；
-        展开后的新当前记录创建同理降级（活目录已替换成功，
+        离开记录冻结失败（文件缺失等异常态）降级为 warning 并继续
+        展开；展开后的新当前记录创建失败同样降级（活目录已替换成功，
         live_origin 落手动节点，下次保存/进入自愈）。
 
         Args:
@@ -814,8 +808,7 @@ class SaveManager:
 
         子树定义 = 节点 + 后代（血缘森林中沿 parent 链可到达该节点的
         全体节点）；兄弟分支（parent 相同但非该节点后代）不在删除集内。
-        删除集算完统一走 remove_snapshots 原语，与保留策略（
-        _prune_snapshots）无耦合。
+        删除集算完统一走 remove_snapshots 原语。
 
         Args:
             world_id: 世界 ID。
@@ -860,14 +853,12 @@ class SaveManager:
         规则：
           - auto（当前/冻结记录）环形保留最近 keep_auto 个；
           - quit（退出保存）保留最近 keep_quit 个；
-          - live_origin 指向的快照永不淘汰（当前记录，淘汰会让
-            时间线的「当前点」悬空）；
+          - live_origin 指向的快照永不淘汰（当前记录）；
           - 血缘条目存在但文件已缺失的孤儿条目一并清理（重接父链）；
           - 磁盘上无血缘条目的残留快照文件（如晋升时旧文件删除失败
             的幽灵节点）一并删除（反向对账）。
-          - 血缘缺失/损坏/无有效签名时不做任何淘汰并告警（宁缺勿删）：
-            空血缘下按文件名序淘汰会误删最近的记录，反向对账会把
-            全部文件当幽灵——文件保留待修复。
+          - 血缘缺失/损坏/无有效签名时不做任何淘汰并告警（宁缺勿删），
+            文件保留待修复。
         淘汰列表算齐后统一经 remove_snapshots 原语删除（血缘重接、
         live_origin 回退、文件容忍由原语结构性保证）。
 
@@ -895,9 +886,8 @@ class SaveManager:
                 to_delete.append(name)
 
         # 1b. 反向对账：磁盘上无血缘条目的残留快照文件（幽灵节点）
-        #     直接删除（不产生血缘变更；live_origin 文件永不误删）。
-        #     血缘已在上方验签把关（不可验签时提前返回），known
-        #     可信：不会把有主文件当幽灵
+        #     直接删除（不产生血缘变更；live_origin 文件不删）。
+        #     血缘已在上方验签把关（不可验签时提前返回）
         known = set(lineage.get(SNAPSHOTS_KEY, {}))
         for name in on_disk:
             if SNAPSHOT_SUFFIX + ".tmp-" in name:
@@ -1078,15 +1068,15 @@ class SaveManager:
                 if embedded_id != world_id:
                     # 跨世界快照展开（显式覆盖，如把 A 世界快照展开
                     # 进 B）：展开后 live_origin 指向目标世界内可能
-                    # 不存在的文件名，血缘会短暂悬空（前端串链兜底、
-                    # 删除时归一），记录 warning 供排查
+                    # 不存在的文件名，血缘会短暂悬空，记录 warning
+                    # 供排查
                     logger.warning(
                         "快照内嵌世界 %s 与目标 %s 不一致（跨世界展开？）",
                         embedded_id, world_id,
                     )
                 manifest.world_id = world_id
                 # 密钥混淆层绑定存档身份：换 ID 后需用原 ID 解出、
-                # 新 ID 重新混淆，否则新档位无法解出密钥
+                # 新 ID 重新混淆
                 if manifest.secrets_blob:
                     world_keys = SaveKeys.from_protected(
                         manifest.secrets_blob, embedded_id, manifest.seed,
@@ -1208,7 +1198,7 @@ class SaveManager:
     def _move_preserved_assets(self, backup: str, wdir: str) -> bool:
         """把世界级资产从墓碑目录搬入新活目录（rename，原子且幂等）。
 
-        血缘/回退点/大陆缓存不随快照打包：交换后必须从旧目录搬回。
+        血缘/回退点/大陆缓存不随快照打包，交换后从旧目录搬回。
         每项独立搬运，目标已存在即跳过（上次搬运已完成或活目录已
         产生新内容——新内容优先保留）；快照目录目标已存在时按文件
         合并（同名冲突保留活目录版本）。
@@ -1246,9 +1236,9 @@ class SaveManager:
         """合并墓碑血缘的快照条目进活目录血缘（活目录版本优先）。
 
         仅在两者文件同时存在且墓碑血缘可验签时有效（资产搬运失败后
-        活目录又产生了新血缘的罕见态）：把旧条目录入活目录血缘，
-        避免已搬入的回退点因血缘缺失被反向对账当成幽灵。墓碑血缘
-        不可验签（历史无签名/被篡改）时不信任其内容，跳过合并。
+        活目录又产生了新血缘的罕见态）：把墓碑条目录入活目录血缘，
+        使已搬入的回退点在血缘中可查。墓碑血缘不可验签（被篡改等）
+        时跳过合并。
         """
         src_path = os.path.join(backup, LINEAGE_FILE)
         if not os.path.isfile(src_path) or not os.path.isfile(
@@ -1287,7 +1277,7 @@ class SaveManager:
             临时目录上位，同样抛弃旧活目录（向前补全）；
           - 活目录缺失、临时目录缺失：防御性回滚——墓碑整目录移回，
             本次回滚按未发生处理；
-          - 历史遗留 uuid 命名墓碑：从墓碑内 manifest 反查世界身份。
+          - 非规范命名的墓碑（uuid 命名）：从墓碑内 manifest 反查世界身份。
 
         任一搬运失败即保留墓碑与标记，下次启动重试。自愈在构造期
         执行（任何 handler 注册之前），不存在在途回滚可踩踏。
@@ -1309,7 +1299,7 @@ class SaveManager:
             world_id = suffix if _WORLD_ID_RE.fullmatch(suffix) else ""
             backup = os.path.join(self._root, entry)
             if not world_id:
-                # 历史遗留（uuid 命名）：从墓碑内 manifest 反查世界身份
+                # 非规范命名（uuid）：从墓碑内 manifest 反查世界身份
                 try:
                     world_id = Manifest.read(
                         os.path.join(backup, MANIFEST_NAME)
@@ -1334,8 +1324,8 @@ class SaveManager:
     def _pre_extract_residue(self, world_id: str) -> None:
         """回滚前的交换残留处理（extract 两个入口共用）。
 
-        分发单线程，同世界不存在并发回滚：挂起标记在 = 真正在途
-        → 拒绝防踩踏；墓碑/临时目录残留 = 上次软失败/崩溃遗留，
+        分发单线程，同世界不存在并发回滚：挂起标记在 = 在途
+        → 拒绝；墓碑/临时目录残留 = 上次软失败/崩溃残留，
         就地补全后继续（与启动自愈同一原语 _resolve_swap_residue），
         无需重启。
 

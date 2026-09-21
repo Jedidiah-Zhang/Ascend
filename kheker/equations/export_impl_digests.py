@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """世界声明 → 打包实现摘要表（打包时嵌入）。
 
-打包（Nuitka，无源码）模式无法 ``inspect.getsource`` 实现函数、也无法读
-内核源文件；本表在源码模式下按与运行期完全相同的算法
+本表在源码模式下按与运行期完全相同的算法
 （``olam/meta/validate.source_digest`` / ``kernel_digest``）计算每条实现与
-内核的摘要，随包配送，使打包身份与源码身份逐位一致。禁用手改：表由本
+内核的摘要，随包配送；打包身份与源码身份逐位一致。禁用手改：表由本
 脚本生成，``--check`` 为漂移门禁。
 """
 
@@ -96,6 +95,7 @@ def check(path: Path = DEFAULT_OUT) -> tuple[bool, str]:
 
 
 def main() -> int:
+    """生成或巡检实现摘要表；返回退出码。"""
     parser = argparse.ArgumentParser(
         description="生产声明 -> 打包实现摘要表",
     )

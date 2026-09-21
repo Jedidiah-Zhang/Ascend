@@ -1,6 +1,6 @@
 """地形状态引擎 — 统一演化内核 + 声明更新点的单一积分器。
 
-分层（数据算法分离；数据在 state_defs.py，存储在 TileGrid）：
+分层（数据在 state_defs.py，存储在 TileGrid）：
   1. 统一演化内核：``state_evolve``——生产经声明式地形模块求值
      （逐 tile 数值循环下沉模块 C 内核；直调路径见
      ``olam/modules/terrain/kernel.evolve_accelerated_into``）。
@@ -32,11 +32,8 @@ from olam.content.tile_grid import TileGrid
 
 logger = logging.getLogger(__name__)
 
-# ── 状态元数据（参数表由声明式地形模块自持；此处只保留键序与槽位数） ──
+# ── 状态元数据（键序与槽位数；参数表由声明式地形模块自持） ──
 
-# ── 参数表（注册表 → 256 宽地形索引表，模块级一次性构建） ──
-# 表是纯数据（矩阵定稿后不可变），构建一次全局复用；Python 参考实现
-# 参数表由声明式地形模块自持（olam/modules/terrain/data.py 读 data/terrain.json）。
 _N_STATES = len(STATE_TYPES)
 _KEYS = state_keys()
 
@@ -153,7 +150,7 @@ class TileStateEngine:
     # ── 注册 ──────────────────────────────────────────────
 
     def register_chunk(self, chunk) -> None:
-        """登记 chunk（不积分——on_tiles_ready 触发，保证数组就绪）。"""
+        """登记 chunk（不积分；tile 就绪后由 ``on_tiles_ready`` 补齐）。"""
         key = (chunk.cx, chunk.cy)
         with self._lock:
             self._chunks[key] = chunk

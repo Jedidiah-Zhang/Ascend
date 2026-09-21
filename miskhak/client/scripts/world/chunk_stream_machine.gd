@@ -89,7 +89,7 @@ func select_full_requests(has_field_data: Callable, max_pending: int) -> Array:
 	return selected
 
 
-## 字段版响应到达：保持 FIELD_REQUESTED；若此前在 TILE_REQUESTED
+## 字段版响应到达：保持 FIELD_REQUESTED；处于 TILE_REQUESTED 时
 ## （服务器对完整请求回字段版，异常）→ 降级重发完整请求。
 func on_field_response(key: Vector2i) -> void:
 	if _states.get(key) == ChunkState.TILE_REQUESTED:

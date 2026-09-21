@@ -302,12 +302,7 @@ class TestMapHandlers:
 
 
 class TestMapHandlersWithStateEngine:
-    """include_tiles + tile_state_engine 组合。
-
-    回归：_generate_tiles 无返回值时 future.result() 为 None，
-    on_tiles_ready(None.cx) 崩溃（reviewer 实测）；注册-生成-就绪
-    时序必须闭环。
-    """
+    """include_tiles + tile_state_engine 组合：注册-生成-就绪时序闭环。"""
 
     def test_include_tiles_with_state_engine_ready(self, gen, continent):
         """注入状态引擎：tile 生成后就绪并结算，chunk 状态可查。"""

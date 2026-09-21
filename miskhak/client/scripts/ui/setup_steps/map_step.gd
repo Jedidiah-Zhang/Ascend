@@ -2,7 +2,7 @@
 
 可调参数:
   - 种子：默认随机定案，可「随机」重新掷，或点击数值弹输入框手输
-    ——任意文本统一映射为 256-bit hex 种子（合法 hex 直通，其余
+    ——任意文本映射为 256-bit hex 种子（合法 hex 直通，其余
     SHA-256 定案），输入即同规格
   - 大陆占比：自绘滑块拖拽，10%-90%（步进 1%）
   - 地图尺寸：三档（小 60×36 / 中 100×60 / 大 150×90 km），
@@ -11,13 +11,13 @@
 预览：
   参数变化即请求 map_preview（后端秒级返回）；后端串行处理，
   响应按到达顺序应用，在途请求自动合并（响应返回后若参数已
-  变化则补发最新参数，无需防抖定时器/seq 丢弃）；预览为当前
+  变化则补发最新参数）；预览为当前
   尺寸的海拔缩略图按高度着色，叠加实测陆地占比。
 
 气候图层视图：
   请求固定携带 layers（temp/rain/climate，后端一次算全）；
   预览面板顶部可切换 地形 / 温度 / 降雨 / 气候 视图——切换
-  仅换着色函数，零往返零重算。响应缺图层字段（旧后端）时
+  仅换着色函数。响应缺图层字段时
   自动降级为仅地形视图。温度/降雨为海陆全域场（海域温度 =
   海面温度，无深海伪影）；气候带仅陆地有意义，气候视图海域
   保持深蓝。
@@ -72,7 +72,7 @@ const PREVIEW_CELL: float = 4.0
 # ── 气候图层视图 ──────────────────────────────────────────
 
 ## 预览视图定义: {key, label_key, field}——field 为预览 payload 字段名，
-## 缺该字段（旧后端）时视图不可用（自动降级地形）。
+## 缺该字段时视图不可用（自动降级地形）。
 const VIEWS: Array = [
 	{"key": "elevation", "label_key": "ui.map.view_elevation", "field": "elevation"},
 	{"key": "temp", "label_key": "ui.map.view_temp", "field": "temperature"},
@@ -151,14 +151,17 @@ func _send_default(message: Dictionary) -> void:
 
 # ── 生命周期（SetupStep 契约） ────────────────────────────
 
+## 步骤 ID（"map"）。
 func step_id() -> String:
 	return "map"
 
 
+## 步骤标题（ui.map.title）。
 func title() -> String:
 	return TranslationServer.tr("ui.map.title")
 
 
+## 进入步骤：从 params 恢复种子 / 大陆占比 / 尺寸档位，并请求预览。
 func setup(params: Dictionary) -> void:
 	# 种子 = 协议层 hex 字符串；"" / "0" 视为未定案（随机占位），
 	# 由后端预览时随机定案并回传（种子唯一随机源 = 后端）。
@@ -189,6 +192,7 @@ func _match_size(width_km: Variant, height_km: Variant) -> int:
 	return 1
 
 
+## 本步骤产出：{seed, gen_params: {land_ratio, width_km, height_km}}。
 func get_params() -> Dictionary:
 	var opt: Dictionary = SIZE_OPTIONS[_size_index]
 	return {
@@ -201,6 +205,7 @@ func get_params() -> Dictionary:
 	}
 
 
+## 校验当前输入；本步骤无可拦截输入，恒返回空串。
 func validate() -> String:
 	return ""
 
@@ -210,8 +215,7 @@ func validate() -> String:
 func _request_preview() -> void:
 	"""参数变化即起草最新请求；在途时只标记脏，响应后补发。
 
-	后端串行处理，在途请求至多 1 个——响应按到达顺序应用，
-	无需 seq 丢弃或防抖定时器。
+	后端串行处理，在途请求至多 1 个——响应按到达顺序应用。
 	"""
 	var opt: Dictionary = SIZE_OPTIONS[_size_index]
 	_draft_request = SaveApi.preview_request(
@@ -240,7 +244,7 @@ func on_preview_response(payload: Dictionary) -> void:
 
 	种子定案：payload.seed 为后端回传的 hex 种子。仅在发出请求时
 	种子为占位（未定案）才用响应回写——手输/恢复的显式种子由
-	用户持有，在途旧响应不得覆盖（竞态防护）。
+	用户持有，在途响应不得覆盖（竞态防护）。
 	"""
 	_on_request_done()
 	if payload.is_empty():
@@ -253,12 +257,13 @@ func on_preview_response(payload: Dictionary) -> void:
 
 
 func on_preview_failed() -> void:
-	"""预览请求失败（error 消息）：保留旧预览，补发变化后的最新参数。"""
+	"""预览请求失败（error 消息）：保留当前预览，补发变化后的最新参数。"""
 	_on_request_done()
 
 
 # ── 绘制 ──────────────────────────────────────────────────
 
+## 绘制步骤内容区：左侧参数区（种子 / 大陆占比 / 地图尺寸），右侧预览面板。
 func draw_page(canvas: Control, rect: Rect2, font: Font) -> void:
 	_page_rect = rect
 
@@ -294,7 +299,7 @@ func _draw_params(canvas: Control, rect: Rect2, font: Font) -> void:
 	_draw_slider(canvas, slider_rect, font)
 	_slider_rect = slider_rect
 
-	# 地图尺寸行（三档选择，切换不刷新预览）
+	# 地图尺寸行（三档选择，切换尺寸重新请求预览）
 	var size_y: float = ratio_y + 30.0 + 24.0 + 26.0
 	draw_label(canvas, font, rect.position + Vector2(0, size_y + 16),
 		TranslationServer.tr("ui.map.map_size").format({
@@ -381,7 +386,7 @@ func _draw_preview(canvas: Control, rect: Rect2, font: Font) -> void:
 
 
 func _current_view() -> Dictionary:
-	"""当前视图定义；所请求的图层在响应中缺失（旧后端）时降级地形。"""
+	"""当前视图定义；所请求的图层在响应中缺失时降级地形。"""
 	var view: Dictionary = {}
 	for v in VIEWS:
 		if v["key"] == _view_mode:
@@ -483,12 +488,14 @@ func _draw_size_button(canvas: Control, rect: Rect2, font: Font, index: int) -> 
 		label, SMALL_FONT_SIZE, TEXT_COLOR)
 
 
+## 在步骤画布上左对齐绘制一行文本。
 func draw_label(canvas: Control, font: Font, pos: Vector2, text: String, size: int, color: Color = TEXT_COLOR) -> void:
 	canvas.draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
 
 
 # ── 输入 ──────────────────────────────────────────────────
 
+## 步骤内输入分发：滑块拖拽、种子框 / 随机 / 尺寸 / 视图按钮点击；返回 true = 已消费。
 func handle_input(event: InputEvent, _rect: Rect2) -> bool:
 	if _editing_seed:
 		# 输入框打开期间：回车由容器 LineEdit 回调处理；Esc 关闭
@@ -580,7 +587,7 @@ func _set_size(index: int) -> void:
 
 
 ## 切换预览视图（地形/温度/降雨/气候）：仅换着色，不重请求。
-## 响应缺该图层字段（旧后端）时忽略并保留当前视图。
+## 响应缺该图层字段时忽略并保留当前视图。
 func _set_view_mode(index: int) -> void:
 	if index < 0 or index >= VIEWS.size():
 		return

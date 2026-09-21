@@ -16,10 +16,9 @@ const SNAP_HARD_THRESHOLD: float = 8.0
 ## 平滑过渡时长（秒）
 const SNAP_DURATION: float = 0.15
 ## 回声容差（tiles）：权威位置与该次上报位置的逐分量差 ≤ 该值视为后端原样
-## 回显（认可），而非裁决偏离——浮点往返无损，理论误差为 0，仅防御性放宽。
+## 回显（认可），而非裁决偏离。
 const SNAP_ECHO_TOLERANCE: float = 0.01
-## 上报 seq 记录上限：超出丢弃最旧（响应滞后超过该数量时回声判定失效，
-## 回退距离判定，仍能正确钳制纠正，只是丢失一次零纠正机会）
+## 上报 seq 记录上限：超出丢弃最旧。
 const REPORT_SEQ_MAX: int = 32
 
 ## 权威纠正判定结果（main_world 据此执行副作用）
@@ -62,8 +61,8 @@ static func classify_correction(ax: float, az: float, current: Vector3) -> int:
 ## 推进平滑吸附过渡一帧。
 ##
 ## 每帧按本帧完成比例从「当前实际位置」（可能已叠加输入位移）向目标推进，
-## 输入不丢失；结束帧精确落在目标 XZ（权威位置），y 保留当前值——
-## 过渡期间贴地逻辑可能已更新 y（悬浮/下陷不得被过渡结束拉回）。
+## 输入不丢失；结束帧精确落在目标 XZ（权威位置），y 保留当前值
+## （过渡期间贴地逻辑可能已更新 y）。
 ##
 ## Args:
 ##     delta: 帧时长（秒）。
@@ -80,17 +79,14 @@ static func advance_snap(delta: float, snap_time: float,
 	var t_new := snap_time + delta
 	if t_new >= SNAP_DURATION:
 		return [Vector3(snap_target.x, current.y, snap_target.z), -1.0]
-	# 中间帧：剩余差距 × 本帧完成比例（t 线性推进 → 每帧推进比例递增，
-	# 指数逼近曲线，平滑单调）
+	# 中间帧：剩余差距 × 本帧完成比例（t 线性推进）
 	var prev_t := clampf(snap_time / SNAP_DURATION, 0.0, 1.0)
 	var t := clampf(t_new / SNAP_DURATION, 0.0, 1.0)
 	var weight := (t - prev_t) / maxf(1.0 - prev_t, 0.0001)
 	return [current + (snap_target - current) * weight, t_new]
 
 
-## 移动输入 → 朝向判定：x 分量符号决定左右朝向。
-## 纯逻辑：main_world 据此调用 _set_pawn_facing（副作用留在调用方），
-## 输入预测/对账链路的判定部分收敛到此纯逻辑类。
+## 移动输入 → 朝向判定：x 分量符号决定左右朝向（副作用留在调用方）。
 ##
 ## Returns:
 ##     -1 朝左 / 0 静止（x 无分量）/ 1 朝右。

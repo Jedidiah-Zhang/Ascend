@@ -68,7 +68,7 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
         evidence=("testbench/integration/test_game_engine.py",
                   "testbench/world/test_assembly.py"),
         positive="身份组分变化即新世界；manifest 记录声明/程序视图",
-        negative="旧身份存档 fail-closed 拒载（声明不一致测试）",
+        negative="身份不一致存档 fail-closed 拒载（声明不一致测试）",
     ),
     ClauseEvidence(
         "WC-1.3", "covered",
@@ -360,7 +360,7 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
         evidence=("testbench/world/test_assembly.py",
                   "testbench/integration/test_game_engine.py"),
         positive="manifest 记录声明/程序视图（身份 + 模块摘要 + 观测协议摘要）",
-        negative="旧身份/异种子/篡改声明拒绝加载（fail-closed）",
+        negative="身份不一致/异种子/篡改声明拒绝加载（fail-closed）",
     ),
     ClauseEvidence(
         "WC-9.1", "covered",

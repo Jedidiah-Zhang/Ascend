@@ -5,9 +5,8 @@
 偏移分类阈值，chunk 边界因隶属度混合而连续。
 
 分类输入全为**低频连续场**（宏观海拔 / 面内坡度 / 距水距离 / 气候 /
-湿度）；细节噪声只用于海拔存储、不参与分类——噪声纹理不产生窄带碎斑
-（如 SAND 0–10m 带）与虚假陡坡。材质在连续场上逐 tile 判定，相邻 tile
-输入连续 → 区域自然连续。
+湿度）；细节噪声只用于海拔存储、不参与分类。材质在连续场上逐 tile
+判定，相邻 tile 输入连续 → 区域自然连续。
 
 层次判定（顺序即优先级）：
   1. 宏观海拔 < 0            → WATER（海洋；河/湖由 render 后叠加）
@@ -77,7 +76,7 @@ class TileGenerator:
         """生成一个 200×200 chunk 的详细地形。
 
         从 ContinentData 采样 chunk 中心气候属性计算群系隶属度，
-        tile 间仅海拔/距水/湿度等连续场变化，保证 chunk 边界连续。
+        tile 间仅海拔/距水/湿度等连续场变化。
 
         Args:
             cx: chunk X 坐标。
@@ -89,10 +88,10 @@ class TileGenerator:
         return self._generate(cx, cy)
 
     def generate_chunk_for(self, chunk) -> TileGrid:
-        """为已生成的 ChunkData 生成详细地形（推荐入口）。
+        """为已生成的 ChunkData 生成详细地形。
 
         复用 chunk 级气候属性，与 chunk.biome 保持一致。
-        tile 级仍重新采样连续场算隶属度（保证边界连续）。
+        tile 级仍重新采样连续场算隶属度（边界连续）。
 
         Args:
             chunk: ChunkData（大地图层数据）。
@@ -131,15 +130,14 @@ class TileGenerator:
         )
 
         # 批量采样 moisture 噪声 — 世界坐标场，与 chunk 级
-        # （generator._sample_moisture_at_chunk）同一频率同一八度数，
-        # 保证 chunk 标签与 tile 隶属度一致
+        # （generator._sample_moisture_at_chunk）同一频率同一八度数
         moisture_field = self._moisture_noise.octave_grid(
             world_x0 + 0.5, world_y0 + 0.5, size, size,
             frequency=_MOISTURE_FREQ, octaves=4,
         )
 
-        # Pass 0: 宏观海拔场（分类/坡度输入；不含 ±50m 细节噪声——
-        # 噪声纹理不应产生虚假陡坡/裸岩；湖泊渲染复用）
+        # Pass 0: 宏观海拔场（分类/坡度输入，不含 ±50m 细节噪声；
+        # 湖泊渲染复用）
         macro_elev_arr = [0.0] * (size * size)
         for ty in range(size):
             for tx in range(size):
@@ -285,7 +283,7 @@ class TileGenerator:
         """按层次规则判定 tile 地表材质。
 
         输入全为低频连续场（宏观海拔/坡度/距水/气候/湿度），无细节
-        噪声——相邻 tile 输入连续 → 材质区域连续，避免窄带碎斑。
+        噪声——相邻 tile 输入连续 → 材质区域连续。
         河/湖由后续 render 步骤覆盖为 WATER（不在此判定）。
 
         Args:
@@ -348,8 +346,7 @@ def _compute_slopes(grid: TileGrid, source: list[float] | None = None) -> None:
     Args:
         grid: 目标 TileGrid。
         source: 可选高程源数组（如宏观海拔）。为 None 时用 grid 自身
-            高程（含细节噪声）。坡度应反映地形而非噪声纹理，生成
-            管线传宏观海拔数组。
+            高程（含细节噪声）。
     """
     size = grid.size
     directions = [(-1, -1, 141.4), (0, -1, 100.0), (1, -1, 141.4),

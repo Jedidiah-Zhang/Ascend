@@ -32,11 +32,11 @@ const TOKEN_FILE_REL: String = ".ascend_token"
 const CONNECTING_TIMEOUT: float = 10.0
 ## 连接建立后最后收包超时（秒）：超过该时长未收到任何数据视为后端挂死，断开重连
 const RECEIVE_TIMEOUT: float = 60.0
-## 请求超时（秒）：请求发出后未收到响应即投本地错误（UI 复位忙状态，防假死）
+## 请求超时（秒）：请求发出后未收到响应即投本地错误（UI 复位忙状态）
 const REQUEST_TIMEOUT: float = 10.0
 ## 握手（hello/hello_ack）超时（秒）
 const HELLO_TIMEOUT: float = 10.0
-## 后端启动超时：大陆生成（侵蚀+水文）耗时 5-30s+，须覆盖整个启动窗口
+## 后端启动超时（秒）：大陆生成（侵蚀+水文）耗时 5-30s+
 const BACKEND_STARTUP_TIMEOUT: float = 60.0
 
 # ═══════════════════════════════════════════════════════════

@@ -1,6 +1,6 @@
 """存档清单 — manifest.json 的读写与校验。
 
-manifest 明文存储（存档选择页必须在免密钥下展示列表信息），
+manifest 明文存储（存档选择页在免密钥下展示列表信息），
 记录世界的元信息：名称、seed、出生点、游戏时间、运行时长等。
 """
 
@@ -24,9 +24,9 @@ MANIFEST_NAME: str = "manifest.json"
 # 协议层 seed 以 64 字符小写 hex 字符串传输（Godot JSON 仅 int64，
 # 整数直传会精度丢失）——见 seed_to_hex / parse_seed。
 SEED_MAX: int = 2**256 - 1
-# 陆地比例范围 (0, 1]：严格大于 0（无纯海洋世界）
+# 陆地比例范围 (0, 1]：严格大于 0
 LAND_RATIO_MAX: float = 1.0
-# 地图尺寸范围 [20, 200] km（UI 档位 60/100/150 km，含余量）
+# 地图尺寸范围 [20, 200] km（UI 档位 60/100/150 km）
 SIZE_KM_MIN: float = 20.0
 SIZE_KM_MAX: float = 200.0
 
@@ -48,7 +48,7 @@ def seed_to_hex(seed: int) -> str:
 
 
 def parse_seed(raw) -> int:
-    """解析协议层 seed 字段（hex 字符串或兼容 int）。
+    """解析协议层 seed 字段（hex 字符串或 int）。
 
     契约（设计文档）: "" / "0" / 缺省 / null = 0（随机占位，创建/预览
     时随机定案）。严格无符号无前缀 hex——"0x"、"+"、"-" 前缀显式拒绝。
@@ -92,14 +92,14 @@ class Manifest:
     """存档位元信息。
 
     secrets_blob: 密钥混淆串（SaveKeys.protect 输出）。密钥不落盘为
-        明文 key.json，而是加密后藏于此字段随档分发（混淆层，防直读；
-        真实防线仍是 HMAC，见 crypto.py 威胁模型说明）。
+        明文 key.json，而是加密后藏于此字段随档分发（未持有存档身份
+        无法直接读取密钥；完整性由 HMAC 保证，见 crypto.py）。
     mechanism_declaration: 世界设置中的机制声明版本（声明 ID + 全量摘要 +
         观测协议版本，``WorldProgram.declaration_settings()``）；
-        None = 旧存档尚未记录（首次加载时补写）。读档前与当前世界声明
-        程序比对，不一致拒绝加载（见 settings.validate_world_settings）。
+        None = manifest 未记录该字段（首次加载时补写）。读档前与当前
+        世界声明程序比对，不一致拒绝加载（见 settings.validate_world_settings）。
     world_program: 世界程序身份视图（``WorldProgram.settings()``：身份摘要 +
-        契约版本 + 各分量摘要）；None = 旧存档尚未记录（首次加载时补写）。
+        契约版本 + 各分量摘要）；None = manifest 未记录该字段（首次加载时补写）。
         读档前与当前编译产物比对，不一致拒绝加载
         （见 settings.validate_world_program）。
     """
@@ -115,8 +115,7 @@ class Manifest:
     snapshot_count: int = 0
     secrets_blob: str | None = None
     # 世界生成调参（创建世界流程的产出）：目前含
-    # land_ratio（目标陆地比例 [0-1]）。种子之外再生的不确定性来源，
-    # 创建时定案，与 seed 同权重。
+    # land_ratio（目标陆地比例 [0-1]），创建时定案。
     gen_params: dict | None = None
     mechanism_declaration: dict | None = None
     world_program: dict | None = None
@@ -134,8 +133,8 @@ class Manifest:
         """校验并规范化生成参数。
 
         land_ratio 必须为 (0, 1] 内的有限浮点；width_km/height_km 必须为
-        [20, 200] 内的有限浮点（地图尺寸档位 60/100/150 km，含余量）。
-        未知键保留（向前兼容，其余参数由各自模块校验）。
+        [20, 200] 内的有限浮点（地图尺寸档位 60/100/150 km）。
+        未知键保留（其余参数由各自模块校验）。
         非法时抛 SaveFormatError。
         """
         result = dict(gen_params)

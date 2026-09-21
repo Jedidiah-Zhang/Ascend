@@ -47,6 +47,7 @@ def _elev_to_rgb(e: float) -> tuple[int, int, int]:
 
 
 def main() -> None:
+    """生成河流流线渲染对比图，保存到 output/ 目录。"""
     seed = 42
     data = ContinentGenerator(seed=seed).generate()
     w, h = data.grid_width, data.grid_height

@@ -68,10 +68,6 @@ const ACTIONS: Array = [
 	{"key": "delete", "label_key": "ui.saves.delete", "danger": true},
 ]
 
-# ── 时间线视图常量 ─────────────────────────────────────────
-
-
-
 # ── 属性 ──────────────────────────────────────────────────
 
 ## 解析后的世界摘要列表
@@ -203,8 +199,7 @@ func _exit_tree() -> void:
 
 
 ## 连接就绪回调（握手完成）：进入世界流程中则切场景，否则拉取存档列表。
-## 进入场景时若连接尚在握手窗口，_ready 的首次请求会被 send() 丢弃——
-## 统一由本信号驱动，保证每次连接就绪都刷新。
+## 进入场景时若连接尚在握手窗口，_ready 的首次请求会被 send() 丢弃。
 func _on_connected(_host: String, _port: int) -> void:
 	if _entering_world:
 		# 世界进程已就绪（握手完成）：切换主世界场景
@@ -242,7 +237,7 @@ func _on_simple_refresh(message: Dictionary) -> void:
 	_refresh_list()
 
 
-## 请求失败统一处理：关闭确认弹窗、显示解析后的错误文本。
+## 请求失败处理：关闭确认弹窗、显示解析后的错误文本。
 func _on_request_error(message: Dictionary) -> void:
 	_close_confirm_dialog()
 	_set_error(tr("ui.common.request_failed").format({
@@ -254,7 +249,7 @@ func _on_request_error(message: Dictionary) -> void:
 func _apply_worlds(payload: Dictionary) -> void:
 	"""应用 save_list 响应。
 
-	若此前有展开的时间线，数据刷新后重建保持展开（删除节点后
+	若已有展开的时间线，数据刷新后重建保持展开（删除节点后
 	不收起时间轴）；展开的世界行若已不存在（世界被删除）则收起。
 	"""
 	_worlds = SaveApi.parse_worlds(payload)
@@ -288,7 +283,7 @@ func _set_error(text: String) -> void:
 
 # ── 连接失效 ──────────────────────────────────────────────
 
-## 连接失效：挂起请求由 Connection 统一作废（回调收到本地 error，
+## 连接失效：挂起请求由 Connection 作废（回调收到本地 error，
 ## 忙状态随回调复位），此处兜底复位全局状态。
 func _on_backend_failed(reason: String) -> void:
 	"""后端启动失败：同样复位忙状态。"""

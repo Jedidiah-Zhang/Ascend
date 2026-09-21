@@ -26,9 +26,8 @@ const TILE_PIXEL_SIZE: int = Config.TILE_PIXEL_SIZE
 const CHUNK_SIZE: int = Config.TILE_MAP_SIZE
 const STREAM_MARGIN: int = 1
 const UNLOAD_MARGIN: int = 1
-## 在途响应缓冲（chunk 格数）：玩家快速移动时，已发出请求的 chunk
-## 在此缓冲圈内不卸载——响应到达后仍能缓存/构建，避免「请求 → 玩家跑出
-## 卸载圈 → 响应被丢弃」的白请求循环（区块加载不出来）。
+## 在途响应缓冲（chunk 格数）：已发出请求的 chunk 在此缓冲圈内不卸载，
+## 响应到达后仍正常缓存/构建。
 const UNLOAD_BUFFER: int = 1
 const MAX_PENDING: int = 3
 
@@ -43,8 +42,8 @@ const _TILE_BLOB_ELEV: int = CHUNK_SIZE * CHUNK_SIZE * 4
 ## TILE_GRID_VERSION（后端数据格式权威版本），前端以其解码/校验；
 ## 握手前默认客户端已知版本 Config.TILE_BLOB_VERSION。
 var _blob_version: int = Config.TILE_BLOB_VERSION
-## 状态段按 BLOB 版本强关联（后端 STATE_TYPES 增删状态必须 bump 版本，
-## 前端解码按版本查表，防止分段错位）：v1 = moisture/snow/ice
+## 状态段按 BLOB 版本关联（后端 STATE_TYPES 增删状态须 bump 版本，
+## 前端按版本查表解码）：v1 = moisture/snow/ice
 const _STATE_NAMES_BY_VERSION: Dictionary = {
 	1: ["moisture", "snow", "ice"],
 }
@@ -58,9 +57,9 @@ const MOVE_REPORT_INTERVAL: float = 0.2
 ## 周期拉取完整响应换真值（显示值逐帧追赶，见 _process_state_chase）。
 const STATE_REFRESH_INTERVAL: float = 8.0
 ## 真值刷新半径（chunk 格数）：玩家 chunk 周围 (2r+1)² 内已 BUILT 的
-## 区块进入刷新圈（其余区块加载即快，无需刷新）。
+## 区块进入刷新圈。
 const STATE_REFRESH_RADIUS: int = 1
-## 单周期真值刷新上限（条）：限流网络，防 8s 周期瞬时拉爆
+## 单周期真值刷新上限（条）：限流网络请求
 const STATE_REFRESH_MAX_PER_CYCLE: int = 3
 
 
@@ -232,7 +231,7 @@ var _game_minute: int = 0
 ## 日出日落时间（从后端天气查询获取）
 var _sunrise: float = 6.0
 var _sunset: float = 18.0
-## 太阳方位角（0-360，从后端种子派生；2D 无方向光，保留供未来局部光/调试）
+## 太阳方位角（0-360，从后端种子派生；2D 无方向光，无消费方）
 var _sun_azimuth: float = 45.0
 ## 日照强度（0-1，来自后端）
 var _sunshine_intensity: float = 0.5
@@ -263,7 +262,7 @@ func _ready() -> void:
 	_water_parent = $World/Water
 
 	# 状态动态层容器：运行时创建为 Terrain 的兄弟节点（排在 ChunkPool 之后，
-	# 恒在全部 chunk 层之上；ChunkPool 内按挂载序 append 无法保证后置）
+	# 恒在全部 chunk 层之上）
 	if not $World/Terrain.has_node("StatesPool"):
 		var states_pool := Node2D.new()
 		states_pool.name = "StatesPool"
@@ -283,8 +282,8 @@ func _ready() -> void:
 	_configure_camera()
 
 
-## 节点退出：断开 Connection 与暂停菜单信号，防止悬挂回调；清空后台构建
-## 结果队列（工作线程仍在跑的任务结果直接丢弃，防止实例释放后挂载悬垂）。
+## 节点退出：断开 Connection 与暂停菜单信号；清空后台构建结果队列
+## （在跑任务的结果直接丢弃）。
 func _exit_tree() -> void:
 	if Connection.connection_established.is_connected(_on_connected):
 		Connection.connection_established.disconnect(_on_connected)
@@ -341,14 +340,13 @@ func _create_player() -> void:
 	_player = player
 	_player.visible = false  # 等出生点和地形就绪后再显示
 	_entities_root().add_child(_player)
-	# 注：不复位 _player_pos——惰性创建可能发生在权威位置已写入之后
-	# （_apply_authoritative_position → _ensure_player 时位置会被清零）
+	# 注：不复位 _player_pos（惰性创建可能发生在权威位置写入之后）
 	_player.position = _world_to_screen(_player_pos)
 	print("MainWorld2D: player created")
 
 
 ## 实体 pawn 挂载层（$World/Entities，Y-sort 渲染排序——实体与地形/植物
-## 按 y 深度正确遮挡）。场景缺失时兜底创建（防御性）。
+## 按 y 深度正确遮挡）。场景缺失时兜底创建。
 func _entities_root() -> Node2D:
 	var root := $World/Entities
 	if root == null:
@@ -407,8 +405,7 @@ func _torch_light_texture() -> ImageTexture:
 func _create_loading_overlay() -> void:
 	"""世界生成/地形加载中的全屏加载动画层（地形就绪后隐藏）。
 
-	不透明背景完全盖住 2D 世界：进入存档后玩家看不到地形 chunk
-	流式加载的过程，出生点就绪、玩家归位后直接看到加载完成的世界。
+	不透明背景盖住 2D 世界，出生点就绪后隐藏。
 	"""
 	var layer := CanvasLayer.new()
 	layer.name = "LoadingLayer"
@@ -475,9 +472,8 @@ func _check_terrain_ready(force: bool = false) -> void:
 	"""出生点周围地形加载完成后切换为可见世界。
 
 	判定：出生 chunk 的 TERRAIN_READY_RADIUS 邻域全部 BUILT；
-	force=true（超时兜底）跳过判定直接就绪，防后端异常时玩家永久卡住。
-	两条路径都先补满进度条到 100%（completed 信号）后才显示世界与玩家
-	——加载画面始终以满格收尾，不会半截消失。
+	force=true（超时兜底）跳过判定直接就绪。
+	两条路径都先补满进度条到 100%（completed 信号）后才显示世界与玩家。
 	"""
 	if _world_visible or not _has_birth:
 		return
@@ -490,7 +486,7 @@ func _check_terrain_ready(force: bool = false) -> void:
 
 ## 进度条补满收尾（幂等）：补满 100% 并停留片刻后显示世界。
 ## 超时兜底与正常就绪共用：若 completed 信号异常未触发（覆盖层隐藏/销毁等），
-## COMPLETION_FALLBACK_SEC 兜底计时器强制收尾，防玩家永久卡在加载层。
+## COMPLETION_FALLBACK_SEC 兜底计时器强制收尾。
 func _begin_completion() -> void:
 	if not _loading_flow.begin_completion():
 		return
@@ -517,8 +513,8 @@ func _finish_world_visible() -> void:
 	print("MainWorld2D: 出生点地形就绪，世界可见")
 
 
-## 按出生点邻域已构建 chunk 数推进加载进度条（90% → 100% 区间）：
-## 每挂载一个 chunk 即更新一次，地形加载接近完成时进度条逐渐补满。
+## 按出生点邻域已构建 chunk 数推进加载进度条（90% → 100% 区间）；
+## 每挂载一个 chunk 更新一次。
 func _update_loading_progress() -> void:
 	if _loading_overlay == null or not _has_birth:
 		return
@@ -547,8 +543,8 @@ func _on_world_initialized(data: Dictionary) -> void:
 	"""新世界就绪（世界进程构建完成）：接入并拉取权威状态。
 
 	进程模型下每次进入世界都是新连接：_on_connected 已主动请求
-	玩家实体/状态；此处再请求一次保证 world_initialized 之后拿到
-	（覆盖世界生成期间连接建立、事件先到的情况）。
+	玩家实体/状态；此处再请求一次以覆盖世界生成期间连接建立、
+	事件先到的情况。
 	"""
 	_reset_world_state()
 	_world_id = str(data.get("world_id", _world_id))
@@ -569,14 +565,14 @@ func _on_world_initialized(data: Dictionary) -> void:
 
 
 func _reset_world_state() -> void:
-	"""清空旧世界的 chunk 状态/数据与地形节点（世界重建后旧数据失效）。"""
+	"""清空 chunk 状态/数据与地形节点（世界重建时调用）。"""
 	_has_birth = false
 	_world_visible = false
 	_loading_flow.reset()
 	_birth_chunk = Vector2i.ZERO
 	_reset_authority_state()
-	# 换世界后玩家实体 ID 可能变化：清空避免旧 ID 过滤掉快照中的新玩家
-	# （否则 PLAYER 独占消费被 continue 跳过，仅剩 player_state 兜底）
+	# 换世界后玩家实体 ID 可能变化：清空后快照中的第一个 PLAYER 实体
+	# 会重新写入 _player_entity_id
 	_player_entity_id = ""
 	_stream_machine.reset()
 	_chunks.clear()
@@ -599,7 +595,7 @@ func _reset_world_state() -> void:
 		_loading_overlay.visible = true
 
 
-## 清空全部实体 pawn（世界重建/断线后旧实体数据失效；转发 PawnManager）。
+## 清空全部实体 pawn（世界重建/断线时调用；转发 PawnManager）。
 func _clear_pawns() -> void:
 	_pawn_mgr.clear()
 
@@ -735,8 +731,7 @@ func _mount_built_chunk(key: Vector2i, cells: Dictionary) -> void:
 	if _stream_machine.get_state(key) != ChunkState.CONSTRUCTING:
 		return
 	if _terrain_parent.has_node(NodePath("Chunk_%d_%d" % [key.x, key.y])):
-		# 节点已存在（重复构建/双响应竞态）：补记 BUILT 防状态卡死
-		# CONSTRUCTING（不再被刷新/统计失真/加载层永不就绪）
+		# 节点已存在（重复构建/双响应竞态）：补记 BUILT
 		_stream_machine.mark_built(key)
 		return
 
@@ -763,15 +758,12 @@ func _mount_built_chunk(key: Vector2i, cells: Dictionary) -> void:
 		_water_parent.add_child(wml)
 		_fill_cells(wml, water_cells)
 
-	# 五信号层：崖壁 / 固定方向投影 / 装饰（暂挂起）/ 等高线调试层（可关）
+	# 五信号层：崖壁 / 固定方向投影 / 装饰（不挂载）/ 等高线调试层（可关）
 	_mount_signal_layer(key, offset, cells, TerrainTileBuilder.LAYER_CLIFF,
 		_terrain_parent)
 	_mount_signal_layer(key, offset, cells, TerrainTileBuilder.LAYER_SHADOW,
 		_terrain_parent)
-	# 装饰层暂不挂载：确定性哈希逐 tile 撒点无空间连贯性，灰褐色单格
-	# 散点呈"噪点"观感（LAYER_DECOR 数据仍由 TerrainTileBuilder 产出）
-	# _mount_signal_layer(key, offset, cells, TerrainTileBuilder.LAYER_DECOR,
-	# 	_terrain_parent)
+	# 装饰层不挂载（LAYER_DECOR 数据仍由 TerrainTileBuilder 产出）
 	if Config.CONTOUR_LAYER_ENABLED:
 		_mount_signal_layer(key, offset, cells, TerrainTileBuilder.LAYER_CONTOUR,
 			_terrain_parent)
@@ -820,8 +812,7 @@ static func _node_prefix(layer: String) -> String:
 	return "Chunk"
 
 
-## 批量填充 tile 层（逐格 set_cell；单 chunk 上限 40k 格，主线程一次性
-## 填充 ~ms 级可接受）。
+## 批量填充 tile 层（逐格 set_cell；单 chunk 上限 40k 格）。
 func _fill_cells(layer: TileMapLayer, cells: Array) -> void:
 	for cell in cells:
 		layer.set_cell(cell[0], cell[1], cell[2])
@@ -888,7 +879,7 @@ func _process(delta: float) -> void:
 	if _weather_query_timer >= WEATHER_QUERY_INTERVAL:
 		_weather_query_timer = 0.0
 		_query_weather()
-	# 光照更新节流：昼夜色调随游戏分钟/天气事件变化，墙钟 0.5s 重算一次足够平滑
+	# 光照更新节流：墙钟 0.5s 重算一次
 	_lighting_timer += delta
 	if _lighting_timer >= LIGHTING_UPDATE_INTERVAL:
 		_lighting_timer = 0.0
@@ -1039,7 +1030,7 @@ func _on_connected(host: String, port: int) -> void:
 
 ## 连接断开回调：作废在途请求（重连后 _stream_chunks 自动重新入队）。
 ##
-## 状态降级规则（由 ChunkStreamMachine 统一实现）：
+## 状态降级规则（由 ChunkStreamMachine 实现）：
 ##   - FIELD_REQUESTED 且无数据（字段在途）→ UNKNOWN（重连后重新字段请求）
 ##   - FIELD_REQUESTED 有数据 / TILE_REQUESTED → 保留数据置 FIELD_REQUESTED（重连后重发完整请求）
 ##   - RECEIVED / BUILT → 保留（数据仍有效，重连后恢复构建）
@@ -1092,7 +1083,7 @@ func _handle_event(message: Dictionary) -> void:
 
 	# 实体生灭/移动事件 → pawn 增量维护（快照是全量，事件是增量）。
 	# 玩家实体由 player_state/快照独占消费——entity_born 携带
-	# controller=PLAYER 时跳过（否则与 _player 双渲染分身）
+	# controller=PLAYER 时跳过
 	if event_type == "entity_born":
 		var born_id: String = str(data.get("entity_id", ""))
 		var born_controller: String = str(data.get("controller", ""))
@@ -1130,7 +1121,7 @@ func _handle_event(message: Dictionary) -> void:
 					"x": "%.0f" % tx, "y": "%.0f" % tz})])
 		return
 
-	# 天气事件 → 显示值追赶加速（初雪/暴雪"快下快铺"，见 StateDisplayChaser）
+	# 天气事件 → 显示值追赶加速（见 StateDisplayChaser）
 	_chaser.on_weather_event(event_type, payload)
 
 	if _debug_overlay:
@@ -1166,12 +1157,12 @@ func _handle_response(message: Dictionary) -> void:
 				if _stream_machine.should_drop_response(key):
 					continue
 
-				# 数据缓存：字段或完整数据（响应后覆盖旧值，两种响应同一字典）
+				# 数据缓存：字段或完整数据（两种响应写入同一字典）
 				var prev_chunk: Variant = _chunks.get(key)
 				_chunks[key] = chunk
 
 				# 真值刷新响应（周期拉取的已加载 chunk）：只换真值，不重建地形；
-				# 刷新失败恢复旧缓存（含已解码地形数据，防缓存损坏）
+				# 刷新失败恢复上一次缓存（含已解码地形数据）
 				if _refresh_pending.has(key):
 					_refresh_pending.erase(key)
 					if has_tiles:
@@ -1179,7 +1170,7 @@ func _handle_response(message: Dictionary) -> void:
 							_chunks[key] = prev_chunk
 					elif prev_chunk is Dictionary:
 						# 刷新响应异常缺 tile 段（后端字段版响应）：缓存已被
-						# 覆盖为无地形字典，恢复旧缓存防 BUILT chunk 数据丢失
+						# 覆盖为无地形字典，恢复上一次缓存
 						_chunks[key] = prev_chunk
 					continue
 
@@ -1196,9 +1187,8 @@ func _handle_response(message: Dictionary) -> void:
 					_stream_machine.on_full_response(key, false)
 					continue
 				if tiles_raw.decode_u32(0) != _blob_version:
-					# 版本漂移（前后端 BLOB 契约不一致，协议版本握手未覆盖的
-					# 流程失误）：重试不可能自愈——报错并标记失败，防止每帧
-					# 无限重发完整请求（协议版本应随 BLOB 格式变更同步 bump）
+					# 版本漂移（前后端 BLOB 契约不一致）：报错并标记失败，
+					# 停止重发完整请求（协议版本应随 BLOB 格式变更同步 bump）
 					push_error("MainWorld2D: chunk BLOB 版本 %d 不匹配（期望 %d），契约漂移" % [
 						tiles_raw.decode_u32(0), _blob_version])
 					chunk["_blob_version_failed"] = true
@@ -1305,14 +1295,13 @@ var _snap_time: float = -1.0
 
 ## 上报 seq 记录（seq → 上报位置）：响应与上报一一对应（TCP 有序），
 ## 响应携带的 seq 精确对齐到那次上报，据此区分"回声认可"（零纠正）
-## 与"钳制偏离"（距离三档纠正）——变速/掉头期间权威位置仍是某次上报
-## 位置，位移窗口错位不再误判；历史超限丢最旧，滞后恢复后回退距离判定。
+## 与"钳制偏离"（距离三档纠正）；超出 REPORT_SEQ_MAX 丢最旧。
 var _report_seq_pos: Dictionary = {}
 var _move_report_seq: int = 0
 
 
-## 重置对账基准与吸附过渡：传送/出生/世界重建后，在途过渡与未回应的
-## 上报记录均已失效，必须清空，否则会被插值"撤销"或被误判偏离。
+## 重置对账基准与吸附过渡：传送/出生/世界重建后清空在途过渡与
+## 未回应的上报记录。
 func _reset_authority_state() -> void:
 	_snap_time = -1.0
 	_report_seq_pos.clear()
@@ -1323,10 +1312,9 @@ func _apply_authoritative_position(payload: Dictionary) -> void:
 
 	客户端预测 + 服务器对账：player_move 响应携带上报 seq（TCP 有序，
 	响应与上报一一对应），先按 seq 对齐判定后端是否认可了那次上报：
-	  - 认可（回声）：权威位置 ≈ 该次上报位置 → 零纠正——正常滞后
-	    （变速/掉头期间位移窗口错位也成立），消除每 0.2s 一次的回跳；
+	  - 认可（回声）：权威位置 ≈ 该次上报位置 → 零纠正；
 	  - 未认可（钳制/复位，或 player_state/快照等无 seq 响应）：
-	    真实裁决偏离 → 按距离三档纠正（PlayerSync.classify_correction）：
+	    按距离三档纠正（PlayerSync.classify_correction）：
 	      IGNORE       微小偏差，认可本地；
 	      HARD_SNAP    硬吸（传送/读档复位/初始定位）；
 	      SMOOTH_START 启动平滑过渡，由 _process 推进。
@@ -1353,7 +1341,7 @@ func _apply_authoritative_position(payload: Dictionary) -> void:
 			_camera_focus = _world_to_screen(_player_pos)
 			_apply_camera_transform()
 			_ensure_player()
-			# 地形就绪前不显示玩家（出生点加载完成后由 _check_terrain_ready 统一显示）
+			# 地形就绪前不显示玩家（出生点加载完成后由 _check_terrain_ready 显示）
 			_player.visible = _world_visible
 			return
 		PlayerSync.Correction.SMOOTH_START:
@@ -1396,7 +1384,7 @@ func _stream_chunks() -> void:
 		_try_build_received_chunk(key)
 
 	# 3. 字段已到（数据 Dictionary）且未请求完整 → 限流发完整请求。
-	#    排除 BLOB 版本漂移已标记失败的 chunk（永久性错误，重试不自愈）
+	#    排除 BLOB 版本漂移已标记失败的 chunk
 	for key in _stream_machine.select_full_requests(
 			func(k): return _chunks.get(k) is Dictionary and not _chunks[k].get("_blob_version_failed", false),
 			MAX_PENDING):
@@ -1418,7 +1406,7 @@ func _try_build_received_chunk(key: Vector2i) -> void:
 	var terr: PackedInt32Array = chunk.get("terrain", PackedInt32Array())
 	var elev: PackedFloat32Array = chunk.get("elevation", PackedFloat32Array())
 	if terr.size() < CHUNK_SIZE * CHUNK_SIZE or elev.size() < CHUNK_SIZE * CHUNK_SIZE:
-		# 数据不全（异常响应）：重新入队完整请求而非死等
+		# 数据不全（异常响应）：重新入队完整请求
 		_stream_machine.on_full_response(key, false)
 		return
 	if _building.has(key):
@@ -1436,8 +1424,8 @@ func _try_build_received_chunk(key: Vector2i) -> void:
 ## 收集相邻 chunk 的紧邻边条数据（方向 → {terrain, elevation} 长度 CS 数组）。
 ## 仅当邻居已加载（含完整 terrain/elevation 数组）时提供，缺失方向省略——
 ## 五信号边界判定回退无邻居语义（见 TerrainTileBuilder 邻居契约）。
-## 在提交时刻主线程快照：工作线程读取期间邻居缓存可能更新/淘汰，
-## 本快照保证线程安全（PackedArray 写时复制）。
+## 在提交时刻主线程快照（PackedArray 写时复制）：工作线程读取期间
+## 邻居缓存更新/淘汰不影响本快照。
 func _collect_neighbor_context(key: Vector2i) -> Dictionary:
 	var ctx: Dictionary = {}
 	_collect_edge(ctx, "west", Vector2i(key.x - 1, key.y), "east")
@@ -1483,18 +1471,17 @@ func _collect_edge(ctx: Dictionary, dir: String, nkey: Vector2i,
 ## 默认 tile 层构建器：WorkerThreadPool 后台构建（纯数据计算，不碰场景树、
 ## RenderingServer 与材质），完成后结果入队（Mutex 保护），
 ## 由主线程 _poll_build_results 创建 TileMapLayer 并挂载。TileSet 就绪检查在
-## 提交处完成（_try_build_received_chunk 已懒加载），builder 不接收 TileSet——
-## 资源永不跨线程。
+## 提交处完成（_try_build_received_chunk 已懒加载），builder 不接收 TileSet。
 func _default_tile_builder(key: Vector2i, terr: PackedInt32Array, elev: PackedFloat32Array,
 		neighbors: Dictionary, seq: int) -> void:
 	WorkerThreadPool.add_task(_tile_build_task.bind(key, terr, elev, neighbors, seq))
 
 
 ## 后台构建任务：只生成 tile 层数据（TerrainTileBuilder.build_cells，纯数组运算），
-## 不创建 TileMapLayer/TileSet——资源与场景树仅在主线程 _poll_build_results
-## 中使用，规避退出时工作线程访问已销毁的 RenderingServer。
-## 契约：terr/elev/neighbors 的引用主线程绝不原地修改（只整体替换/清除
-## chunk 条目），PackedArray 写时复制保证工作线程读取期间数据不被破坏。
+## 不创建 TileMapLayer/TileSet；资源与场景树仅在主线程 _poll_build_results
+## 中使用。
+## 契约：terr/elev/neighbors 的引用主线程不原地修改（只整体替换/清除
+## chunk 条目），PackedArray 写时复制。
 func _tile_build_task(key: Vector2i, terr: PackedInt32Array, elev: PackedFloat32Array,
 		neighbors: Dictionary, seq: int) -> void:
 	var cells: Dictionary = TerrainTileBuilder.build_cells(terr, elev, neighbors)
@@ -1552,10 +1539,9 @@ func _refresh_state_truth() -> void:
 			_send_chunk_request([[key.x, key.y]], true)
 
 
-## 刷新响应的状态段落地：解码完整 BLOB（terrain/elevation/slope/states——
-## 与初次完整响应同形状，刷新替换的缓存字典保持完整）后替换真值
-## （显示值保持，由 chaser 逐帧收敛）。校验失败返回 false——调用方
-## 恢复旧缓存（瞬时失败可容忍，不损坏已解码数据）。
+## 刷新响应的状态段落地：解码完整 BLOB（terrain/elevation/slope/states，
+## 与初次完整响应同形状）后替换真值（显示值保持，由 chaser 逐帧收敛）。
+## 校验失败返回 false，由调用方恢复上一次缓存。
 ##
 ## Returns:
 ##     true = 解码成功且真值已更新；false = BLOB 损坏/版本漂移（缓存未动）。
@@ -1621,8 +1607,8 @@ func _send_chunk_request(coords: Array[Array], include_tiles: bool) -> void:
 
 ## 卸载远离玩家的 chunk（距中心超出流半径 + 卸载余量 + 在途缓冲）：
 ## 释放地形节点并清空状态与数据（BUILT/RECEIVED → UNKNOWN，在途请求作废）。
-## 卸载判定统一在此处（每帧）：响应处理不因越界丢弃数据——
-## 缓冲圈内的在途响应到达后正常缓存/构建，越过缓冲圈才作废。
+## 卸载判定只在此处（每帧）：缓冲圈内的在途响应到达后仍正常
+## 缓存/构建。
 func _unload_distant_chunks(center_cx: int, center_cy: int, stream_r: int) -> void:
 	var unload_r := stream_r + UNLOAD_MARGIN + UNLOAD_BUFFER
 	for key in _stream_machine.keys():
@@ -1659,7 +1645,7 @@ func _forget_chunk(key: Vector2i) -> void:
 
 
 ## 服务端错误处理：打印错误信息；快照请求失败时清空回查文件并在暂停菜单显示失败原因；
-## get_chunks 失败时清空真值刷新在途登记（否则该 chunk 被在途表永久挡住不刷新）。
+## get_chunks 失败时清空真值刷新在途登记（在途表会挡住该 chunk 的刷新）。
 func _handle_error(message: Dictionary) -> void:
 	var error_msg: String = message.get("error", "unknown error")
 	push_error("MainWorld2D: server error: %s" % error_msg)
@@ -1686,7 +1672,7 @@ func _query_weather() -> void:
 ## 昼夜插值，CanvasModulate 颜色随日出日落平滑 ramp。
 func _update_lighting() -> void:
 	# 局部光源（玩家火炬）：昼夜循环驱动开关——夜晚亮、白天灭。
-	# 独立于 CanvasModulate（纯判据，场景缺调制器时火炬仍应工作）
+	# 独立于 CanvasModulate（场景缺调制器时火炬仍工作）
 	if _player:
 		var torch: PointLight2D = _player.get_node_or_null("PlayerTorch")
 		if torch:

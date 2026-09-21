@@ -103,7 +103,7 @@ def test_entry_rejects_unknown_channel():
 ])
 def test_entry_rejects_unknown_platform(argv):
     # 入口必须在主 shell 校验平台：映射函数内的 ascend_die 只退出命令替换子 shell，
-    # 漏校验会让脚本带着空平台继续跑（历史缺陷）。
+    # 漏校验会让脚本带着空平台继续跑。
     result = subprocess.run(
         ["bash", *argv], cwd=REPO, capture_output=True, text=True,
     )

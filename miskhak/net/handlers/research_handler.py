@@ -14,8 +14,8 @@
 未知字段一律拒绝；运行内机制替换不受支持（WC-1.3，结构变体 = 换世界），
 ``rep`` / ``mechanism_id`` 返回 ``{success: false, error}``。
 
-特征核控制（space="feature"）转发到 ``WeatherEngine.force_feature``——
-与终端 `weather feature` 同一写入路径，不产生"只登记不生效"的幽灵记录；
+特征核控制（space="feature"）转发到 ``WeatherEngine.force_feature``
+（与终端 `weather feature` 同一写入路径）；
 该空间只接受 ``space/target/instance/value{active}``，其余字段一律拒绝。
 """
 
@@ -33,8 +33,7 @@ from olam.protocols.timeline import (
 
 logger = get_logger(__name__)
 
-# 研究日志查询的缺省/最大页长：单帧有 MAX_MESSAGE_SIZE 上限，
-# 一次返回上万条会超限被前端静默丢弃。
+# 研究日志查询的缺省/最大页长（单帧上限见 MAX_MESSAGE_SIZE）。
 TRACE_PAGE_DEFAULT: int = 200
 TRACE_PAGE_MAX: int = 1000
 
@@ -67,6 +66,7 @@ def make_research_handler(
     """
 
     def handle_research_do(msg: dict) -> dict:
+        """登记一条计划条目（结构化 JSON），返回 {success, plan}。"""
         payload = msg.get("payload", {})
         space = payload.get("space", "node")
         if space == "feature":
@@ -87,6 +87,7 @@ def make_research_handler(
         )
 
     def handle_research_do_clear(msg: dict) -> dict:
+        """撤销指定计划（feature 空间为解除注入核），返回 {success, stopped|changed}。"""
         payload = msg.get("payload", {})
         space = payload.get("space", "node")
         target = payload.get("target", "")
@@ -101,8 +102,7 @@ def make_research_handler(
         if extra:
             return _fail("research_do_clear", f"未知字段: {extra}")
         if space == "feature":
-            # 特征核的单一事实源是注入核：解除必须走 force_feature，
-            # 否则会留下"计划已停、核仍在"的孤儿状态。
+            # 特征核的单一事实源是注入核：解除走 force_feature
             if weather_engine is None:
                 return _fail(
                     "research_do_clear",
@@ -132,6 +132,7 @@ def make_research_handler(
         )
 
     def handle_research_do_list(_msg: dict) -> dict:
+        """返回当前生效计划与已发生记录的确定性快照。"""
         return make_response(
             "research_do_list",
             {
@@ -150,6 +151,7 @@ def make_research_handler(
         return log
 
     def handle_trace_list(msg: dict) -> dict:
+        """分页返回研究日志记录（可按 frame/node_id/kind 过滤），附计数与丢弃数。"""
         payload = msg.get("payload", {})
         try:
             log = _trace_log()
@@ -192,6 +194,7 @@ def make_research_handler(
         )
 
     def handle_trace_replay(msg: dict) -> dict:
+        """重算指定 node_id 的最后一条研究日志记录，返回记录与重算结果。"""
         payload = msg.get("payload", {})
         try:
             log = _trace_log()
@@ -220,6 +223,7 @@ def make_research_handler(
         )
 
     def handle_trace_clear(_msg: dict) -> dict:
+        """清空研究日志，返回清除的记录数。"""
         try:
             log = _trace_log()
         except ValueError as exc:
@@ -307,7 +311,7 @@ def _plan_from_payload(
         raise ValueError(f"非法目标空间: {space!r}")
     if "rep" in payload or "mechanism_id" in payload:
         raise ValueError(
-            "运行内机制替换已废除（WC-1.3）；结构变体 = 换世界，"
+            "不支持运行内机制替换（WC-1.3）；结构变体 = 换世界，"
             "见独立参考对拍"
         )
     extra = sorted(set(payload) - _PLAN_FIELDS)

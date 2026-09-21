@@ -32,7 +32,7 @@
 
 **边界**：大陆/水文宏观管线（``_hydrology.c::compute_climate``，含
 exp 大陆度修正）与 `biome.py` 的 float 路径（动态 ``subdiv_ranges``）
-仍是显式 `slice_boundary`，不在本模块；本模块是世界生成机制（研究事实
+属显式 `slice_boundary`，不在本模块；本模块是世界生成机制（研究事实
 源）的实现。
 """
 
@@ -60,7 +60,7 @@ __all__ = [
 
 
 def _q(value: float) -> int:
-    """边界量化（Q(bits)）；语义核内部不再接触浮点。"""
+    """边界量化（Q(bits)）；语义核内部不接触浮点。"""
     return _quantize(value, _BITS)
 
 

@@ -13,8 +13,7 @@
 干预时间线投影重建（``WeatherEngine._project_injected_features``）；
 低层 ``persist_injected`` / ``restore_injected`` 供工具/测试路径使用。
 
-气候带判定：低频气候代理场（ClimateProxy，纯噪声近似），
-特征频率统计在统计层面正确，个别位置偏差可接受（文档注记）。
+气候带判定：低频气候代理场（ClimateProxy，纯噪声近似）。
 
 线程安全：缓存读写经内部锁；PerlinNoise 只读。
 """
@@ -226,9 +225,8 @@ class FeatureCore:
 def _canonical_order(cores: list[FeatureCore]) -> list[FeatureCore]:
     """核的规范顺序：算术合成前的稳定排序（WC-3.2）。
 
-    浮点求和/叠乘对顺序敏感：同一 W_t（核集合相同）若插入或恢复顺序
-    不同，逐点合成可能出现末位差异并翻转阈值判定。按核的稳定身份
-    （类型、出生、core_id）排序，使"同一状态重算"与插入历史解耦。
+    浮点求和/叠乘对顺序敏感，故按核的稳定身份（类型、出生、core_id）
+    排序，使同一核集合的合成结果与插入/恢复顺序无关。
     """
     return sorted(
         cores,
@@ -250,7 +248,7 @@ def _require_int(value: object, label: str, *, minimum: int) -> int:
 
 
 def _require_finite(value: object, label: str) -> float:
-    """有限数值，否则 ValueError（NaN 恒 False 的比较会绕过范围校验）。"""
+    """有限数值，否则 ValueError。"""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"注入核 {label} 必须为数值: {value!r}")
     result = float(value)
@@ -273,10 +271,9 @@ def _segment_seed(world_seed: int, bx: int, by: int, seg_idx: int) -> int:
 class ClimateProxy:
     """低频气候代理场 — 纯噪声近似气候档位。
 
-    特征生成频率与降水校准需要"任意位置的气候带"，但不允许依赖
-    chunk 数据（场是解析量，独立于加载状态）。用低频温度/降雨
-    噪声近似判定气候档位（海拔忽略——代理无法表达构造地形，
-    高山核频率偏差可接受，见模块 docstring）。
+    用低频温度/降雨噪声近似判定气候档位；不读取 chunk 数据，
+    任意 (world_x, world_y) 可独立求值。海拔不参与判定
+    （ALPINE 不产生）。
 
     用法:
         proxy = ClimateProxy(seed=42)
@@ -364,7 +361,7 @@ class FeatureField:
             climate_proxy: 气候代理（None 时内部创建）。
             block_size: 空间块边长 (m)。
             max_radius: 特征核半径上限 (m)（邻块查询范围推导）。
-            seed_override: 保留参数（兼容注入自定义 seed 的场景）。
+            seed_override: 未使用（保留参数）。
         """
         self._seed = seed
         self._proxy = climate_proxy or ClimateProxy(seed=seed)
@@ -464,7 +461,7 @@ class FeatureField:
         seg_start = seg_idx * GAME_YEAR
         cores: list[FeatureCore] = []
         t = seg_start
-        # 段首核延时（0~1 个平均间隔），避免跨段衔接过密
+        # 段首核延时（0~1 个平均间隔）
         mean_interval = GAME_YEAR / total_rate
         t += int(mean_interval * rng.random())
         while t < seg_start + GAME_YEAR:
@@ -600,8 +597,7 @@ class FeatureField:
     def clear_injected(self) -> int:
         """清空全部注入核并返回移除数量（整体替换的第一步）。
 
-        供时间线投影使用：读档时先清空，再按生效计划重建，
-        目标世界的残留核不得存活。
+        供时间线投影使用：读档时先清空，再按生效计划重建。
         """
         with self._lock:
             count = len(self._injected)
@@ -623,7 +619,7 @@ class FeatureField:
 
         **引擎状态载荷不使用本方法**（WC-6.5）：注入核是外部
         输入的时间线投影，读档由 ``WeatherEngine._project_injected_features``
-        从干预时间线重建。本方法保留为工具/测试路径（低层 ``inject_core``
+        从干预时间线重建。本方法供工具/测试路径使用（低层 ``inject_core``
         直连场景）。
         """
         with self._lock:
@@ -636,8 +632,8 @@ class FeatureField:
     def restore_injected(self, payload) -> int:
         """从载荷恢复注入核（低层工具/测试路径，fail-closed）。
 
-        校验全部字段后**整体替换**现有注入核集合——载荷是唯一事实源，
-        不把已有残留核与新核混在一起。任一条非法即拒绝，不留半成品。
+        校验全部字段后**整体替换**现有注入核集合——载荷是唯一事实源。
+        任一条非法即拒绝，集合不变。
 
         Args:
             payload: ``persist_injected`` 输出的列表。

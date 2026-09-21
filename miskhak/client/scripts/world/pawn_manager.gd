@@ -13,7 +13,7 @@ const TILE_PIXEL_SIZE: int = Config.TILE_PIXEL_SIZE
 
 ## 实体 pawn 表：entity_id -> Node2D（含玩家外的生物/植物/建筑）
 var _pawns: Dictionary = {}
-## 各 pawn 的体型规格/朝向（实体数量少，字典开销可忽略）
+## 各 pawn 的体型规格/朝向
 var _pawn_specs: Dictionary = {}
 var _pawn_facing: Dictionary = {}
 
@@ -28,8 +28,8 @@ func bind(parent: Node2D, visible_fn: Callable) -> void:
 	_visible_fn = visible_fn
 
 
-## 注册外部节点到规格/朝向表（玩家专用：节点由调用方持有，不入 _pawns
-## 表——玩家由 player_state/快照独占消费，避免与实体事件双渲染）。
+## 注册外部节点到规格/朝向表（玩家专用：节点由调用方持有，
+## 不入 _pawns 表）。
 func register_node(node: Node2D, spec: Dictionary, facing_left: bool) -> void:
 	_pawn_specs[node] = spec
 	_pawn_facing[node] = facing_left
@@ -91,13 +91,13 @@ func despawn(entity_id: String) -> void:
 		node.queue_free()
 
 
-## 世界就绪后显示全部非玩家 pawn（_place_pawn 在未就绪时隐藏过）。
+## 世界就绪后显示全部非玩家 pawn（未就绪期间已被隐藏）。
 func show_all() -> void:
 	for node in _pawns.values():
 		node.visible = true
 
 
-## 清空全部实体 pawn（世界重建/断线后旧实体数据失效）。
+## 清空全部实体 pawn（世界重建/断线时调用）。
 func clear() -> void:
 	for entity_id in _pawns.keys():
 		var node: Node2D = _pawns[entity_id]
@@ -128,17 +128,15 @@ static func apply_parts(node: Node2D, spec: Dictionary, facing_left: bool) -> vo
 		node.add_child(sprite)
 
 
-## 头顶名称浮层：独立 Label 悬浮在头部上方（不占身体像素预算），
-## 显示本地化实体类型名。
+## 头顶名称浮层：独立 Label 悬浮在头部上方，显示本地化实体类型名。
 static func add_nameplate(node: Node2D, spec: Dictionary,
 		entity_type: String) -> void:
 	var label := Label.new()
 	label.name = "Nameplate"
-	# tr() 是 Node 实例方法，静态函数（RefCounted）用 TranslationServer 单例
+	# 静态上下文用 TranslationServer 单例
 	label.text = TranslationServer.translate(
 		"entity.type.%s" % entity_type.to_lower())
-	# 固定 64px 宽度并以锚点水平居中：内容宽随语言/字号变化，
-	# 锚点即头部中心上方（左端 = 锚点.x - 32）
+	# 固定 64px 宽度并水平居中（锚点即头部中心上方，左端 = 锚点.x - 32）
 	label.custom_minimum_size = Vector2(64, 0)
 	label.position = PawnRenderer.nameplate_offset(spec) - Vector2(32, 0)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

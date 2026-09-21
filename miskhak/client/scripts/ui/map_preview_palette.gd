@@ -2,7 +2,7 @@
 
 地图预览的纯渲染逻辑（RefCounted，无节点依赖，可单测）：
   - 单格着色：海拔深度渐变 / 温度冷蓝→暖红 / 降雨干黄→湿蓝 / 气候档定色
-  - 图层视图语义：海域在地形视图保留深度渐变、气候视图统一深蓝
+  - 图层视图语义：海域在地形视图保留深度渐变、气候视图固定深蓝
     （气候带仅陆地有意义），温度/降雨视图显示海域数据
   - 信息行：当前视图数值范围 + 悬停格数值（气候视图为档位名/海洋）
 
@@ -49,7 +49,7 @@ var map_w: int = 0
 var map_h: int = 0
 
 
-## 单格着色：海域在地形视图保留深度渐变、气候视图统一深蓝
+## 单格着色：海域在地形视图保留深度渐变、气候视图固定深蓝
 ## （气候带仅陆地有意义），温度/降雨视图显示海域数据
 ## （后端 temperature 海域 = 海面温度，rainfall 为全域场）。
 func cell_color(view: Dictionary, e: float, value: Variant) -> Color:
@@ -75,6 +75,7 @@ func layer_color(view: Dictionary, _elevation: float, value: Variant) -> Color:
 	return SEA_COLOR
 
 
+## 单格海拔着色（米）：海域按深度取色，陆地按海拔分段取色。
 func elevation_color(e: float) -> Color:
 	if e <= 0.0:
 		var depth: float = clampf(-e / 2000.0, 0.0, 1.0)

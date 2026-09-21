@@ -1,7 +1,6 @@
 """通用有向图 — 带类型边的有向图基类。
 
-事件层（graph.py 的 EventGraph）与变量层（root/ 的 VariableGraph）
-共用同一套存储与遍历原语，避免两份邻接表实现漂移。
+本模块提供与领域无关的存储与遍历原语，供事件层与变量层复用。
 
 内部使用邻接表存储：正向邻接 from_id → [(to_id, relation_type)]，
 反向邻接 to_id → [(from_id, relation_type)] 用于加速反向查询。

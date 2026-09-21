@@ -19,9 +19,8 @@ class EntityCommandsMixin:
     def _h_entity(self, args: list[str]) -> CommandResult:
         """处理 entity 指令组：list 列表 / birth 诞生 / death 死亡。
 
-        调试用生灭入口：birth/death 是世界内因果
-        事件，经 EntityManager 发布 entity_born/entity_died 到世界树，
-        EventBridge 广播后前端应实时渲染/移除。
+        birth/death 是世界内因果事件，经 EntityManager 发布
+        entity_born/entity_died 到世界树。
 
         Args:
             args: 参数列表。
@@ -123,9 +122,8 @@ class EntityCommandsMixin:
     def _h_entity_death(self, args: list[str]) -> CommandResult:
         """处理 entity death <id前缀>：实体死亡。
 
-        接受唯一的 ID 前缀（≥4 字符），避免手输完整 UUID。
-        拒绝玩家控制的实体——PlayerService 会持有悬垂引用，
-        且玩家死亡应走死亡机制而非调试命令。
+        接受唯一的 ID 前缀（≥4 字符）。
+        玩家控制的实体拒绝删除。
 
         Args:
             args: [id_prefix]。

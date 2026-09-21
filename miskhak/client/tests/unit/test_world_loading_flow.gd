@@ -18,7 +18,7 @@ func test_tick_accumulates_until_ready_timeout() -> void:
 
 
 func test_tick_stops_accumulating_after_completion_started() -> void:
-	"""补满收尾开始后不再累积就绪计时（避免重复触发强判）。"""
+	"""补满收尾开始后不再累积就绪计时。"""
 	var flow := WorldLoadingFlow.new()
 	assert_true(flow.begin_completion())
 	assert_false(flow.begin_completion(), "幂等：重复开始返回 false")

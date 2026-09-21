@@ -11,6 +11,8 @@ from miskhak.events.event import WorldEvent
 
 @dataclass
 class MinuteChange(WorldEvent):
+    """分钟变化事件。"""
+
     event_type: ClassVar[str] = "minute_change"
     day: int
     hour: int
@@ -20,6 +22,8 @@ class MinuteChange(WorldEvent):
 
 @dataclass
 class HourChange(WorldEvent):
+    """小时变化事件。"""
+
     event_type: ClassVar[str] = "hour_change"
     day: int
     hour: int
@@ -29,6 +33,8 @@ class HourChange(WorldEvent):
 
 @dataclass
 class DayChange(WorldEvent):
+    """日变化事件。"""
+
     event_type: ClassVar[str] = "day_change"
     day: int
     previous_day: int

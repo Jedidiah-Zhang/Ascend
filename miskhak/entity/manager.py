@@ -2,9 +2,9 @@
 
 语义约定:
   - birth/death: 实体在虚拟世界的生灭 —— 世界内因果事件，走世界树
-    （entity_born / entity_died），是 NPC 未来可感知的历史事实。
+    （entity_born / entity_died），是世界内的因果历史事实。
   - spawn/despawn: 实体进入/离开前端渲染视野 —— 表现层概念，不在
-    本模块职责内。现阶段视野=全部（前端收 born 即渲染、died 即移除）。
+    本模块职责内。现阶段视野=全部。
   - 停服等世界外操作不得调用 death()——那会向因果历史写入虚假死亡。
 """
 
@@ -144,9 +144,7 @@ class EntityManager:
     ) -> Entity:
         """静默恢复实体（读档用），不发布 entity_born 事件。
 
-        读档 = 重建内存状态——实体不是此刻诞生的，发布事件会向因果
-        历史写入虚假诞生。本方法供存档系统
-        恢复实体表（当前仅玩家实体使用）。
+        本方法供存档系统恢复实体表（当前仅玩家实体使用）。
 
         Args:
             entity_id: 实体原 ID（保持存档身份不变）。
@@ -233,17 +231,14 @@ class EntityManager:
     ) -> bool:
         """移动实体到新位置（同层内），默认发布 entity_moved 事件。
 
-        跨层移动不在本方法职责内——跨层是离散动作（进入洞穴/出洞穴），
-        应通过专用 transition API 实现，避免误操作。
+        跨层移动不在本方法职责内；跨层经专用 transition API 实现。
 
         Args:
             entity_id: 实体 ID。
             chunk_x, chunk_y: 新 chunk 坐标。
             tile_x, tile_y: 新 tile 坐标，可为 None。
             game_time: 当前游戏时间。
-            publish: False = 静默移动（读档校准用），不发布事件——
-                读档是重建内存状态，移动事件会向因果历史写入虚假记录
-                （含 game_time=0 的伪造时间戳）。
+            publish: False = 静默移动（读档校准用），不发布事件。
 
         Returns:
             True 表示移动成功，False 表示实体不存在。
@@ -292,9 +287,6 @@ class EntityManager:
     @staticmethod
     def _discard_from_index(index: dict, key, entity_id: str) -> None:
         """从索引桶移除实体 ID，桶空时删除键。
-
-        空间索引键空间无上限（层 × chunk × sub-cell），残留空集
-        在高周转下是无界内存泄漏，必须随手清理。
 
         Args:
             index: 目标索引字典（值为 set）。

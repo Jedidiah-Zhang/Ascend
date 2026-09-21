@@ -3,7 +3,7 @@
 测试覆盖:
   1. TestFlowDirection — D8 流向正确性（严格下坡）
   2. TestFlowAccumulation — 累积流量单调不减
-  3. TestRiverExtraction — 河流网络提取 + Strahler 分级
+  3. TestFillDepressions — 填洼语义 + 退化路径
   4. TestHydraulicErosion — 侵蚀降低河道海拔 + 质量守恒
 """
 

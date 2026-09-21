@@ -156,7 +156,7 @@ class TestClockRunTo:
             clock.run_to(50)
 
     def test_T17_run_to_zero_speed_raises(self):
-        """speed=0 时 run_to 抛 ValueError（否则死循环）。"""
+        """speed=0 时 run_to 抛 ValueError。"""
         clock = WorldClock(epoch=0)
         clock.speed = 0.0
         with pytest.raises(ValueError):

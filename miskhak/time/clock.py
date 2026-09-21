@@ -30,8 +30,7 @@ class WorldClock:
     以 tick 为原子时间单位。tick() 每帧由 GameEngine 调用，
     按当前 speed 倍率推进；暂停时 tick() 空转不推进。
 
-    tick 不经过 WorldTree——高频时钟信号通过直接回调分发，
-    日历等订阅者检测到分钟/小时/天边界后自行发布语义事件。
+    tick 不经过 WorldTree——高频时钟信号通过直接回调分发。
 
     用法:
         clock = WorldClock()
@@ -262,9 +261,11 @@ class WorldClock:
         logger.info("模拟完成: → %d (%d tick, speed=%.1f)", self._time, tick_count, self._speed)
 
     def game_days(self) -> float:
+        """世界经过的游戏天数（``time`` / GAME_DAY）。"""
         return self._time / GAME_DAY
 
     def game_years(self) -> float:
+        """世界经过的游戏年数（``time`` / GAME_YEAR）。"""
         return self._time / GAME_YEAR
 
     def __repr__(self) -> str:

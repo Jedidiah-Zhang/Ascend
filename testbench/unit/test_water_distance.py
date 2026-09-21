@@ -88,10 +88,7 @@ class TestComputeWaterDistance:
         assert dist[2 * w + 2] == 400.0
 
     def test_all_land_rejected(self):
-        """全陆地（无水体源）：距水无定义，fail fast 抛 ValueError。
-
-        避免"全陆=全 0"与"水体=0"语义混淆。
-        """
+        """全陆地（无水体源）：距水无定义，抛 ValueError。"""
         with pytest.raises(ValueError, match="无水体源"):
             compute_water_distance([False] * 9, 3, 3, cell_size=100.0)
 

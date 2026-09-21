@@ -53,8 +53,7 @@ func _ready() -> void:
 		overlay.toggled.connect(_on_debug_toggled)
 
 
-## 节流刷新：有新事件后累计计时，达到 REFRESH_INTERVAL 才触发一次
-## 重绘（避免高频事件导致每帧重绘）。
+## 节流刷新：有新事件后累计计时，达到 REFRESH_INTERVAL 才触发一次重绘。
 func _process(delta: float) -> void:
 	if not _pending_redraw:
 		return
@@ -151,7 +150,7 @@ func _on_debug_toggled(shown: bool) -> void:
 ##     data: 载荷的 data 字段（取具体数值）。
 ##     ts: 格式化时间戳（HH:MM）。
 func _push_weather_event(event_type: String, payload: Dictionary, data: Dictionary, ts: String) -> void:
-	# location 可能缺失或为 null（弱后端）：统一兜底为空数组
+	# location 可能缺失或为 null（弱后端）：一律兜底为空数组
 	var loc: Variant = payload.get("location", [])
 	if not loc is Array:
 		loc = []

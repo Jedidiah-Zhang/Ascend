@@ -2,7 +2,7 @@
 
 标准控件 + 傍晚营地主题（assets/ui/settings_theme.tres）；逻辑全部经
 Settings 自动加载门面，本壳只装配控件与转发。主菜单与暂停菜单两处
-入口共用（CanvasLayer layer=400，process_mode ALWAYS 保证游戏暂停
+入口共用（CanvasLayer layer=400，process_mode ALWAYS，游戏暂停
 期间可交互）。
 
 按键捕获：点击「＋ 添加」进入捕获态，下一个按键/鼠标键成为新绑定；
@@ -60,8 +60,7 @@ func _ready() -> void:
 	hide()
 
 
-## 主题运行时加载（不入库资源）：缺失时回退引擎默认主题，避免编译期
-## 硬依赖导致无该文件的机器无法启动（与 FontUtils 的回退约定一致）。
+## 主题运行时加载（不入库资源）：文件缺失或加载失败时回退引擎默认主题。
 func _load_theme() -> Theme:
 	if ResourceLoader.exists(THEME_PATH):
 		var theme := load(THEME_PATH) as Theme
@@ -90,6 +89,7 @@ func close() -> void:
 	closed.emit()
 
 
+## 覆盖层当前是否可见。
 func is_open() -> bool:
 	return visible
 
@@ -445,7 +445,7 @@ func _fps_item_text(limit: int) -> String:
 	return "%d FPS" % limit
 
 
-## 按键页整页重建（行数少，重建最省心；同时复位捕获按钮引用）。
+## 按键页整页重建（同时复位捕获按钮引用）。
 ## 先 remove_child 再 queue_free：信号回调内安全，且释放不占名，
 ## 新行立即拿到干净的 Row_<action> 名称。
 func _refresh_keys() -> void:

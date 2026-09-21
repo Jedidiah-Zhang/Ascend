@@ -50,6 +50,7 @@ def check(path: Path = DEFAULT_OUT) -> tuple[bool, str]:
 
 
 def main() -> int:
+    """生成或巡检声明快照；返回退出码。"""
     parser = argparse.ArgumentParser(description="世界声明 -> 研究快照")
     parser.add_argument("--check", action="store_true", help="仅巡检，不写文件")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="输出 JSON 路径")

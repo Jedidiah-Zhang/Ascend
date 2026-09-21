@@ -6,7 +6,7 @@
     湿度季节曲线系数 humidity_sharpness；引擎取后者算曲线形状，
     seasonality 为模式元数据，契约测试绑定两者一致）。
   - 温雨由大陆 C 模型物理计算并缓存为 chunk 级值，tile 级仅海拔和
-    moisture 噪声变化，避免 chunk 边界跳变。
+    moisture 噪声变化。
 
 所有函数为纯函数，无内部状态，天然线程安全。
 """
@@ -23,7 +23,7 @@ _WORLDGEN_PROGRAM = None
 
 
 def _worldgen_program():
-    """惰性编译世界声明程序（避免导入环与进程启动开销）。"""
+    """惰性编译世界声明程序。"""
     global _WORLDGEN_PROGRAM
     if _WORLDGEN_PROGRAM is None:
         from olam import Schedule, WorldSpec, compile_world
@@ -74,14 +74,14 @@ class ClimateZone(IntEnum):
         return f"ClimateZone.{self.name}"
 
 
-# ── 季节性模式（预留，供未来季节系统使用，当前仅存储不算）─────────
+# ── 季节性模式（当前仅存储，不参与求值）─────────────────────────
 
 
 class SeasonalityMode(IntEnum):
     """季节性模式 — 气候档位的季节特征标签。
 
-    作为 ClimateTemplate 的元数据存储，供 WeatherEngine 选择湿度季节曲线
-    形状（标准余弦 vs 季风阶梯化）。
+    作为 ClimateTemplate 的元数据存储；湿度季节曲线形状取
+    humidity_sharpness。
     """
 
     NONE = 0          # 无明显季节（赤道常年）
@@ -103,8 +103,8 @@ class ClimateTemplate:
         climate: 对应的 ClimateZone。
         humidity_range: 相对湿度区间 (%)。
         wind_speed_range: 风速区间 (m/s)。
-        seasonality: 季节性模式（元数据；引擎实际取 humidity_sharpness
-            决定曲线形状——指数与模式绑定，契约测试防双轨漂移）。
+        seasonality: 季节性模式（元数据；与 humidity_sharpness 的
+            一致性由契约测试绑定）。
         display_color: UI 显示色（hex），在此统一定义供渲染层引用。
     """
 
@@ -128,7 +128,7 @@ def _parse_climate_template(ns_id: str, raw: Mapping) -> tuple[ClimateTemplate, 
     """单行 JSON → (ClimateTemplate, label_key)（不就地修改枚举成员）。
 
     校验枚举一致性、seasonality 合法；label_key 由调用方在全部校验
-    通过后统一填充，避免解析中途失败留下半修改的枚举状态。
+    通过后统一填充。
     """
     zone = ClimateZone[split_ns_id(ns_id)[1].upper()]
     if int(raw["value"]) != zone.value:
@@ -232,9 +232,9 @@ def sea_level_temperature(latitude_noise: float) -> float:
     """纬度噪声 → 海平面年均温度（经世界声明机制，定点实现）。
 
     生产求值经世界声明机制（``world.gen.derive_sea_level_temperature.v1``，
-    Q30 定点；与 C 标量 ``hydrology.sea_level_temperature_c`` 的差异
-    登记在 ``kheker/equations/reference_check._TOLERANCES``）。C 标量
-    仍供 bulk 大陆管线使用。
+    Q30 定点）。C 标量 ``hydrology.sea_level_temperature_c`` 供 bulk
+    大陆管线使用；两者差异登记在
+    ``kheker/equations/reference_check._TOLERANCES``。
 
     Args:
         latitude_noise: 纬度噪声值 [-1, 1]。
@@ -256,8 +256,8 @@ def sea_level_temperature(latitude_noise: float) -> float:
 def apply_lapse_rate(sea_level_temp: float, altitude: float) -> float:
     """气温直减率：海拔每升高 1000m 温度下降 LAPSE_RATE °C（经世界声明机制，定点）。
 
-    语义：直减率仅作用于陆地（altitude>0），海域返回海面温度本身——
-    负海拔不产生深度伪影；陆地 clamp [-20, 36]。生产求值经世界声明机制
+    语义：直减率仅作用于陆地（altitude>0），海域返回海面温度本身；
+    陆地 clamp [-20, 36]。生产求值经世界声明机制
     （``world.gen.derive_annual_mean_temperature.v1``，Q30 定点）。
 
     Args:

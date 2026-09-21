@@ -97,7 +97,7 @@ func test_seed_submitted_empty_keeps_seed() -> void:
 
 
 func test_inflight_response_does_not_override_explicit_seed() -> void:
-	"""竞态防护：在途旧响应（随机定案）不得覆盖用户手输的显式种子。
+	"""在途响应（随机定案）不得覆盖用户手输的显式种子。
 
 	时序：占位预览 R1 在途 → 用户手输 "2a"（dirty 不发送）→ R1 响应
 	（携带随机 seed "b7e1"）到达并补发 R2("2a")——此时 _seed 必须
@@ -131,7 +131,7 @@ func test_display_seed_truncates_long_hex() -> void:
 
 
 func test_setup_restores_land_ratio() -> void:
-	"""返回本步骤时恢复此前调参的占比。"""
+	"""返回本步骤时恢复已调参的占比。"""
 	var step: MapSetupStep = _make_step()
 	step.setup({"seed": "1", "gen_params": {"land_ratio": 0.35}})
 	assert_eq(step.get_params()["gen_params"]["land_ratio"], 0.35)
@@ -161,7 +161,7 @@ func test_get_params_shape() -> void:
 # ── 地图尺寸 ──────────────────────────────────────────────
 
 func test_setup_restores_size() -> void:
-	"""返回本步骤时恢复此前调参的尺寸档位。"""
+	"""返回本步骤时恢复已调参的尺寸档位。"""
 	var step: MapSetupStep = _make_step()
 	step.setup({"seed": "1", "gen_params": {"width_km": 60.0, "height_km": 36.0}})
 	assert_eq(step._size_index, 0, "小档应被恢复")
@@ -345,7 +345,7 @@ func test_view_defaults_to_elevation() -> void:
 
 
 func test_view_switch_requires_layer_data() -> void:
-	"""响应缺图层字段（旧后端）时切换被忽略，视图降级地形。"""
+	"""响应缺图层字段时切换被忽略，视图降级地形。"""
 	var step: MapSetupStep = _make_step()
 	step.setup({"seed": "2a", "gen_params": {}})
 	step.on_preview_response({

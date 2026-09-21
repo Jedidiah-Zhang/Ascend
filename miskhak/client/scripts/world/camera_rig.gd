@@ -1,7 +1,7 @@
 """2D 正俯视相机 — Camera2D 摆位/缩放与可视范围计算。
 
-Camera2D 跟随 + 滚轮缩放（zoom 倍率钳制）；几何计算只保留
-visible_radius（2D 屏幕对角线 → 世界 tile 半径，流式半径用）。
+Camera2D 跟随 + 滚轮缩放（zoom 倍率钳制）；visible_radius 提供
+2D 屏幕对角线 → 世界 tile 半径换算（流式半径用）。
 """
 
 class_name CameraRig

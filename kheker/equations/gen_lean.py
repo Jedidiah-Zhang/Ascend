@@ -342,6 +342,7 @@ def check(json_path: Path = DEFAULT_JSON, out_path: Path = OUT_PATH) -> tuple[bo
 
 
 def main() -> int:
+    """生成或巡检 GenDeclarationData.lean；返回退出码。"""
     ap = argparse.ArgumentParser(
         description="声明数据 → Lean 生成器（防漂移）")
     ap.add_argument("--check", action="store_true",

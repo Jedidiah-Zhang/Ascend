@@ -27,7 +27,7 @@ def test_all_mechanisms_covered_and_matching():
     assert report.problems == [], (
         f"独立参考与生产不一致: {report.problems[:5]}"
     )
-    # 采样覆盖下界（防对拍退化为空转）
+    # 采样覆盖下界
     assert report.samples - report.skipped >= 500, report
     assert report.expression_ids and report.impl_ids
 

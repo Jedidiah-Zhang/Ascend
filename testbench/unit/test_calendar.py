@@ -137,7 +137,7 @@ class TestCalendarBoundaries:
             cal.shutdown()
 
     def test_T6_day_end_before_day_change(self, capture):
-        """跨天时先发 day_end（旧日）再发 day_change（新日）。"""
+        """跨天时先发 day_end（结束日）再发 day_change（新日）。"""
         clock = WorldClock(epoch=6 * GAME_HOUR)
         cal = GameCalendar(clock)
         try:

@@ -2123,7 +2123,7 @@ class TestGlobalEvents:
     """全局事件测试 — season_change（全局）+ sunrise/sunset（per-chunk 昼夜）。"""
 
     def test_first_tick_no_global_event(self):
-        """首次 tick 不发 season_change（last None，避免启动刷屏）。
+        """首次 tick 不发 season_change（last None）。
         sunrise/sunset 是 per-chunk，首次 tick 也不发（last_is_daytime=None）。"""
         from olam.adapters.weather.weather_engine import WeatherEngine
         wt = WorldTree()
@@ -2439,7 +2439,7 @@ class TestForceControl:
         e.shutdown()
 
     def test_front_injects_velocity(self):
-        """锋面核带移动矢量（带形需要速度，wind set 指令的底层）。"""
+        """锋面核带移动矢量（wind set 指令的底层）。"""
         e, _, _ = self._make_engine()
         assert e.force_feature(0, 0, "front", True) is True
         core = e._field.features._injected[(0, 0, "front")]
@@ -2511,11 +2511,7 @@ class TestWeatherQueryConcurrency:
 
 
 class TestRegistryProductionAudit:
-    """注册表-生产消费审计：已声明机制必须全部进入生产求值路径。
-
-    防回归：chunk 振幅族与区域降水校准必须经注册表求值——退化为
-    内联公式（与注册表分叉）时以下测试立即失败。
-    """
+    """注册表-生产消费审计：已声明机制必须全部进入生产求值路径。"""
 
     def test_register_chunk_amplitudes_flow_through_registry(self):
         """register_chunk 落盘的振幅族 == 注册表链式求值结果。"""

@@ -60,8 +60,8 @@ def encode_message(message: dict, version: int = PROTOCOL_VERSION) -> bytes:
     """
     if version != PROTOCOL_VERSION:
         raise ValueError(f"不支持的协议版本: {version:#04x}")
-    # allow_nan=False：NaN/Infinity 虽能被 json 编码，但非标准 JSON，
-    # 前端解码器与其它语言实现可能解析失败——异常比静默产生坏数据好
+    # allow_nan=False：NaN/Infinity 可被 json 编码，但非标准 JSON，
+    # 前端解码器与其它语言实现可能解析失败
     body = json.dumps(message, ensure_ascii=False, allow_nan=False).encode("utf-8")
     length = len(body)
     return struct.pack(">BI", version, length) + body

@@ -59,6 +59,7 @@ def _recorded_impl_digests() -> dict[str, str]:
 
 
 def impl_key(function: object) -> str:
+    """实现函数的记录键：``模块.限定名``。"""
     module = getattr(function, "__module__", "?")
     qualname = getattr(function, "__qualname__", repr(function))
     return f"{module}.{qualname}"

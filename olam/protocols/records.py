@@ -128,8 +128,7 @@ class TraceLog:
         self._program = program
         self._capacity = capacity
         self._records: list[TraceRecord] = []
-        # 容量淘汰计数（丢失报告）：有界内存意味着超量记录会被丢弃，
-        # 研究侧必须知道丢了多少，而不是把"看不到"当成"没发生"。
+        # 容量淘汰计数（丢失报告）：超量记录被丢弃时累加，供研究侧读取丢失量。
         self._dropped = 0
 
     def __repr__(self) -> str:
@@ -140,6 +139,7 @@ class TraceLog:
 
     @property
     def program(self) -> object:
+        """绑定的不可变世界程序（重算与校验用）。"""
         return self._program
 
     def __len__(self) -> int:

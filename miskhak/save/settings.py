@@ -5,14 +5,12 @@
 身份**（WorldProgram 的声明编译产物摘要：槽位/地址/更新点/日历刻度的
 组合）。前两者随存档位创建时定案，其余由当前进程的编译产物提供。
 
-读档时若记录与当前进程不一致，说明这个世界的生成规律已经变了：用新
-公式继续跑旧状态会得到一条"合法但不属于任何已声明世界"的轨迹
-（静默错误）。本模块只做一件事——把这种不一致挡在加载之前。
+读档时记录与当前进程不一致即拒绝加载。
 
 模块边界：本模块不解析世界内部结构，只比较调用方传入的两份视图——
 **声明视图**（``WorldProgram.declaration_settings()``：声明 ID、全量
 摘要、观测协议版本）与**程序视图**（``WorldProgram.settings()``：
-程序身份摘要与分量摘要），因此存档层不依赖世界层。
+程序身份摘要与分量摘要）。
 """
 
 from __future__ import annotations
@@ -35,7 +33,7 @@ def validate_world_settings(manifest, declaration: Mapping[str, object]) -> None
 
     Args:
         manifest: ``Manifest`` 实例（其 ``mechanism_declaration`` 可为
-            None = 旧存档尚未记录，由调用方随后补写）。
+            None = manifest 未记录，由调用方随后补写）。
         declaration: 当前声明视图，``WorldProgram.declaration_settings()``。
 
     Raises:
@@ -48,8 +46,7 @@ def validate_world_settings(manifest, declaration: Mapping[str, object]) -> None
             raise ValueError(f"声明视图缺少字段 {field}: {value!r}")
     stored = manifest.mechanism_declaration
     if stored is None:
-        # 旧存档：未记录声明版本。调用方校验通过后必须立即补写，
-        # 使下一次加载有可比对的事实（不做静默"总是接受"）。
+        # manifest 未记录声明版本：调用方校验通过后补写字段
         return
     if not isinstance(stored, Mapping):
         raise ValueError(f"manifest 机制声明必须为映射: {stored!r}")
@@ -70,7 +67,7 @@ def validate_world_program(manifest, program: Mapping[str, object]) -> None:
 
     Args:
         manifest: ``Manifest`` 实例（其 ``world_program`` 可为 None =
-            旧存档尚未记录，由调用方随后补写）。
+            manifest 未记录，由调用方随后补写）。
         program: 当前世界设置视图，``WorldProgram.settings()``。
 
     Raises:
@@ -83,8 +80,7 @@ def validate_world_program(manifest, program: Mapping[str, object]) -> None:
             raise ValueError(f"世界程序视图缺少字段 {field}: {value!r}")
     stored = manifest.world_program
     if stored is None:
-        # 旧存档：未记录程序身份。调用方校验通过后必须立即补写，
-        # 使下一次加载有可比对的事实（不做静默"总是接受"）。
+        # manifest 未记录程序身份：调用方校验通过后补写字段
         return
     if not isinstance(stored, Mapping):
         raise ValueError(f"manifest 世界程序必须为映射: {stored!r}")

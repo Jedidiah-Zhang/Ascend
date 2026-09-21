@@ -2,13 +2,11 @@
 
 后端 states（moisture/snow/ice，uint8 0-255）是真值，前端逐帧渐进收敛
 （"显示值追赶"）：每帧随机抽样一部分 tile，被抽中的 tile 显示值向真值
-步进（不同 tile 错开推进——降雪时雪"一片片铺开"，避免整块同步变白）。
+步进（不同 tile 错开推进）。
 
-性能设计（真实 chunk 40k tile × 9 块）：热循环用与状态序对齐的
-PackedByteArray 数组（无字典查找）；全局每帧抽样预算上限
-MAX_SAMPLES_PER_FRAME 防止低帧率/多区块时成本失控；已收敛 chunk
-（set_truth 时全量比对，无差异）直接跳过抽样——常态每帧零成本，
-仅在真值刷新后的追赶期产生抽样开销。
+热循环用与状态序对齐的 PackedByteArray 数组（无字典查找）；每帧抽样
+总数上限 MAX_SAMPLES_PER_FRAME；已收敛 chunk（set_truth 时全量比对
+无差异）不参与抽样。
 
 渲染契约（主线程调用方消费）：
   - set_truth 返回新 chunk 的初始格子（真值已有的雪/冰/湿润立即可见）
@@ -16,11 +14,10 @@ MAX_SAMPLES_PER_FRAME 防止低帧率/多区块时成本失控；已收敛 chunk
   - atlas 列 = 状态序（首个 set_truth 的字典键序）× LEVELS + 量化档位；
     档位 0 不渲染（擦除）
 
-天气事件加速（"快下快铺"）：
+天气事件加速：
   - precipitation_start（precip_type == "snow"）→ 初雪：抽样密度 ×2（30s）
   - storm_start → 暴雪：抽样密度 ×3（20s）
-  - 加速只影响抽样密度（收敛速度），不改真值——真值刷新由调用方
-    （MainWorld2D 周期 get_chunks）驱动。
+  - 加速只影响抽样密度（收敛速度），不改真值；真值刷新由调用方驱动。
 
 纯视觉缓存：不进存档、不参与逻辑；随机抽样仅影响视觉分布（无决策）。
 """
@@ -35,8 +32,7 @@ const CHASE_STEP: int = 10
 ## 每 tile 每秒抽样次数（基准，无加速时每 tile 约 0.6 次/秒 →
 ## 9 块真实 chunk 约 2160 次/帧，铺满约 40s）
 const SAMPLE_PER_SEC: float = 0.6
-## 每帧抽样预算上限（防低帧率 delta 放大 / 大量区块时成本失控；
-## 暴雪期 9 块 chunk ≈ 6480 次/帧，25 块 ≈ 1.8 万 → 截断到上限）
+## 每帧抽样预算上限（暴雪期 9 块 chunk ≈ 6480 次/帧，25 块 ≈ 1.8 万）。
 const MAX_SAMPLES_PER_FRAME: int = 12000
 
 ## 初雪加速：抽样密度倍率 / 持续时长（秒）
@@ -60,7 +56,7 @@ var _truth_arrays: Dictionary = {}
 ## 显示值数组（与 _state_order 对齐）: {key: Array[PackedByteArray]}
 var _display_arrays: Dictionary = {}
 ## 追赶中标记: {key: bool}——set_truth 时全量比对显示值 vs 真值，
-## 有差异才标记追赶（常态全收敛 → 跳过抽样，每帧零开销）。
+## 有差异才标记追赶。
 var _chasing: Dictionary = {}
 
 ## 当前抽样密度倍率（加速期 > 1）
@@ -88,7 +84,7 @@ func set_truth(key: Vector2i, states: Dictionary) -> Array:
 		for name in states.keys():
 			_state_order.append(String(name))
 	if _truth.has(key):
-		# 真值字典与显示值字典都做独立副本（防调用方复用/原地改篡改内部状态）
+		# 真值与显示值都做独立副本
 		_truth[key] = _copy_states(states)
 		_truth_arrays[key] = _aligned_arrays(_truth[key])
 		_chasing[key] = _scan_dirty(key)
@@ -100,11 +96,11 @@ func set_truth(key: Vector2i, states: Dictionary) -> Array:
 	_truth[key] = _copy_states(states)
 	_truth_arrays[key] = _aligned_arrays(_truth[key])
 	_display_arrays[key] = _aligned_arrays(display)
-	_chasing[key] = false  # 新 chunk 显示值 ≡ 真值（初始格子已渲染），无追赶需求
+	_chasing[key] = false  # 新 chunk 显示值 ≡ 真值（初始格子已渲染）
 	return _initial_cells(key, states)
 
 
-## 遗忘一个 chunk（卸载）：清显示/真值，其后 advance 不再触碰。
+## 遗忘一个 chunk（卸载）：清显示/真值，其后 advance 不触碰。
 func forget(key: Vector2i) -> void:
 	_truth.erase(key)
 	_display.erase(key)
@@ -127,15 +123,14 @@ func reset() -> void:
 
 
 ## 加速钩子：临时提高抽样密度倍率（多次加速取较大者，时长取剩余较长者）。
-## 到期后倍率自动回落 1.0（自然衰减，无显式取消）。倍率被拒绝时
-## 时长也不延长（弱加速不应续上强加速的剩余时长）。
+## 到期后倍率自动回落 1.0。倍率被拒绝时时长也不延长。
 func add_boost(multiplier: float, duration: float) -> void:
 	if multiplier >= _boost_mult:
 		_boost_mult = multiplier
 		_boost_remaining = maxf(_boost_remaining, duration)
 
 
-## 天气事件 → 加速映射（"快下快铺"）。payload 同时兼容事件字段直挂
+## 天气事件 → 加速映射。payload 支持事件字段直挂
 ## payload 或嵌套 payload.data 两种形态。
 func on_weather_event(event_type: String, payload: Dictionary) -> void:
 	var data: Dictionary = payload.get("data", {})
@@ -218,8 +213,8 @@ func advance(delta: float) -> Dictionary:
 ## 立即可见，不做渐变动画）。
 func _initial_cells(_key: Vector2i, states: Dictionary) -> Array:
 	# 状态集须与 _state_order 同构（键 ∈ _state_order，缺失键跳过）：
-	# atlas 列偏移 = _state_order.find(name) × LEVELS，契约外的新键会
-	# 产生负偏移——main_world 按 BLOB 版本表构造，恒满足
+	# atlas 列偏移 = _state_order.find(name) × LEVELS，契约外的新键
+	# 会产生负偏移
 	var cells: Array = []
 	var tiles: int = _tiles_of(states)
 	if tiles <= 0:
@@ -248,8 +243,7 @@ func _aligned_arrays(states: Dictionary) -> Array:
 	return out
 
 
-## 复制 states 字典（{name: PackedByteArray} 各数组独立副本）：内部真值
-## 持有独立数据，调用方后续复用/原地改字典不会篡改 chaser 内部状态。
+## 复制 states 字典（{name: PackedByteArray} 各数组独立副本）。
 static func _copy_states(states: Dictionary) -> Dictionary:
 	var out: Dictionary = {}
 	for name in states:
@@ -257,8 +251,8 @@ static func _copy_states(states: Dictionary) -> Dictionary:
 	return out
 
 
-## 全量比对显示值 vs 真值（仅在 set_truth 更新真值时调用，每次刷新
-## 一次——常态 8s 一次，成本可忽略）：有任一 tile 差异 → 标记追赶。
+## 全量比对显示值 vs 真值（仅 set_truth 更新真值时调用）：
+## 有任一 tile 差异 → 标记追赶。
 func _scan_dirty(key: Vector2i) -> bool:
 	var truth_arrs: Array = _truth_arrays.get(key, [])
 	var display_arrs: Array = _display_arrays.get(key, [])

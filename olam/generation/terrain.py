@@ -11,7 +11,7 @@ elevation 反推水深），从场推导。
 
 身份约定（Mod 三层基础设施第 1 层，从首发即启用命名空间）：
 - **注册表键 / 持久化标识 = 命名空间 id**（`<ns>:<local>`，如
-  `ascend:grassland`），ns 天然隔离不同来源，避免撞车。
+  `ascend:grassland`），ns 隔离不同来源。
 - **枚举值 = 持久化契约**（chunk BLOB 内 terrain id）：显式声明、
   全局唯一且连续 0..n-1，已发布值不可改，新材质只能追加（value=n）。
 - 枚举成员名 = local 大写（`TerrainType.GRASSLAND`）——仅供代码
@@ -240,12 +240,11 @@ def water_passability(terrain: TerrainType, elevation: float) -> tuple[bool, flo
     """水体通行性按水深实时推导。
 
     非水体返回注册表基线。水体（WATER）：水深 = −海拔（海洋；湖底
-    高于海平面时 depth=0 视为可涉水——湖泊精确水深需湖面高程，推后
-    到玩法阶段）。水深 ≤ WATER_WADE_DEPTH_M 可涉水，否则不可通行。
+    高于海平面时 depth=0 视为可涉水）。水深 ≤ WATER_WADE_DEPTH_M
+    可涉水，否则不可通行。
 
     **消费方注意**：水面通行必须走本函数（实时按水深推导）；注册表
-    is_passable/movement_cost 的 WATER 基线 = 不可通行（保守默认），
-    直接查基线会误判浅水可涉水，勿绕过本函数。
+    is_passable/movement_cost 的 WATER 基线 = 不可通行，勿绕过本函数。
 
     Args:
         terrain: 地形类型。

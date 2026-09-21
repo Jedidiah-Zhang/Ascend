@@ -1,7 +1,7 @@
 """完整世界状态序列化 — 时钟、玩家、干预表、注入核与格式版本。
 
 存档是状态通道（世界外元操作）：不产生历史、不进因果图。本模块只做
-纯函数转换，不依赖 GameEngine——由调用方传入各子系统实例，避免循环依赖。
+纯函数转换，不依赖 GameEngine，各子系统实例由调用方传入。
 
 **完整状态**（W4 状态充分性）只包含"无法由世界设置重算"
 的部分：
@@ -19,11 +19,8 @@
 天气侧两项由 ``WeatherEngine.persist_state`` / ``restore_state`` 提供
 （本模块只做搬运，不认识天气内部结构）。
 
-漏掉任何一项，读档后的未来轨迹就可能与未存档的对照世界分叉；把可重算量
-也存进来，则会让"删除缓存并由状态重算"这条纪律失去检验意义。
-
-读档时钟对齐规则: ``time = max(存档 game_time, 归档最新事件时间戳)``，
-防止恢复的世界"时间倒流"——事件归档实时落盘，可能比 state 更新。
+读档时钟对齐规则: ``time = max(存档 game_time, 归档最新事件时间戳)``
+（事件归档实时落盘，可能比 state 更新）。
 """
 
 from __future__ import annotations
@@ -31,9 +28,7 @@ from __future__ import annotations
 import math
 from typing import Mapping
 
-# 状态载荷格式版本。**无向后兼容**：读档只接受本版本，旧格式与未来格式
-# 一律拒绝（fail-closed），不做静默兜底——"看起来能跑"比拒绝加载更危险。
-# v3：注入核由干预时间线投影重建，天气载荷不含 feature_cores。
+# 状态载荷格式版本：读档只接受本版本，其它格式一律拒绝（fail-closed）。
 STATE_VERSION: int = 3
 
 
@@ -83,13 +78,13 @@ def require_state_version(state: Mapping) -> int:
     """校验状态载荷版本并返回它（fail-closed）。
 
     读档前调用：版本字段缺失、非整数或与 :data:`STATE_VERSION` 不符时
-    抛 ValueError。旧档没有该字段即"未声明格式"，属于必须拒绝的输入。
+    抛 ValueError。
     """
     if not isinstance(state, Mapping):
         raise ValueError(f"状态载荷必须为映射: {type(state).__name__}")
     raw = state.get("state_version")
     if raw is None:
-        raise ValueError("状态载荷缺少 state_version（旧格式存档，不支持）")
+        raise ValueError("状态载荷缺少 state_version（不支持）")
     if not isinstance(raw, int) or isinstance(raw, bool):
         raise ValueError(f"state_version 必须为整数: {raw!r}")
     if raw != STATE_VERSION:
@@ -103,7 +98,7 @@ def aligned_time(state: dict) -> int:
     """读档时钟对齐：max(state 时钟, 归档最新事件时间戳)。
 
     事件实时落盘（trim 写归档），可能比周期写入的 state 更新；
-    恢复时钟取两者较大值，防止世界时间倒流。
+    取两者较大值。
 
     Args:
         state: collect_state 输出的状态字典。
@@ -156,9 +151,6 @@ def apply_state(
 def apply_clock(state: dict, clock) -> None:
     """恢复时钟（读档用，不触发任何回调）。
 
-    日历无需单独恢复——它由时钟派生（GameCalendar(clock) 在引擎
-    启动时以恢复后的 epoch 创建）。
-
     Args:
         state: collect_state 输出的字典（或从存档解密的结果）。
         clock: WorldClock 实例（未启动）。
@@ -198,7 +190,7 @@ def apply_player(state: dict, player_service) -> None:
 
 
 def _validate_finite(value, name: str) -> float:
-    """校验数值为有限浮点（NaN 熔断：NaN 恒 False 的比较会绕过 < 0 校验）。"""
+    """校验数值为有限浮点（NaN/Inf 抛 ValueError）。"""
     v = float(value)
     if not math.isfinite(v):
         raise ValueError(f"非法数值 {name}: {value!r}")

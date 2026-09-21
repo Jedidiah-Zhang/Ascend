@@ -6,13 +6,12 @@
   - 启动超时（BACKEND_STARTUP_TIMEOUT）→ FAILED 终态 + failed 信号
   - 停止序列：SIGTERM（按 PID + 按名清理孤儿）→ 等端口释放
     → 超时强杀（按 PID -9 + 开发/打包按名 pattern）→ 端口仍占用则
-    FAILED（不谎报 stopped——重启预探测会连上旧进程旧参数）
+    FAILED（不发射 stopped）
   - 参数语义：args 持有当前模式（[] 菜单 / ["--world-id", id, ...] 世界），
     world_id() 唯一解析处
 
-时序全部由 tick(delta) 驱动（不使用 OS.delay_msec 忙等；stop_sync 例外，
-仅供应用退出时使用）。测试注入 process_creator / probe_factory / kill 命令
-即可确定性驱动。
+时序全部由 tick(delta) 驱动（stop_sync 例外，仅供应用退出时使用）。
+测试注入 process_creator / probe_factory / kill 命令即可确定性驱动。
 
 依赖方向：connection(门面) → 本层；本层不感知其他子层。
 """
@@ -79,9 +78,8 @@ var probe_factory: Callable = _probe_default
 ## 优雅终止命令 (pid)，默认按 OS 分支。
 var kill_command: Callable = _kill_term_default
 
-## 强杀命令 (pid)，默认按 OS 分支。三路清理：按 PID -9（standalone
-## 布局下跟踪 PID 即真实服务进程）+ 开发模式按脚本路径 pattern +
-## 打包模式按服务二进制名（PID 跟踪不到的孤儿进程场景）。
+## 强杀命令 (pid)，默认按 OS 分支。三路清理：按 PID -9 + 开发模式
+## 按脚本路径 pattern + 打包模式按服务二进制名。
 
 var force_kill_command: Callable = _force_kill_default
 
@@ -127,13 +125,8 @@ func _kill_term_default(p_pid: int) -> void:
 func _force_kill_commands(p_pid: int) -> Array:
 	"""强杀命令清单（纯函数，测试可断言内容）。
 
-	三路清理：
-	  - 按 PID SIGKILL（standalone 布局下跟踪 PID 即真实服务进程；
-	    仅 pid > 0 时加入，防 kill -9 -1 误杀）；
-	  - 开发模式按脚本路径（项目根绝对路径正则转义后精确匹配，
-	    不误伤其它 python 进程）；
-	  - 打包模式按服务二进制名（覆盖 PID 跟踪不到的孤儿
-	    进程场景）。
+	三路清理：按 PID SIGKILL（仅 pid > 0 时加入）、开发模式按脚本
+	路径、打包模式按服务二进制名。
 	"""
 	if _is_windows():
 		var wcmds: Array = []
@@ -173,9 +166,8 @@ func _kill_untracked_default() -> void:
 		OS.execute(cmd[0], cmd[1])
 
 
-## 开发模式后端的 pkill 匹配 pattern：项目内 run_server.py 绝对路径
-## （pkill -f 按正则匹配整条命令行，元字符须转义；绝对路径保证
-## 不误伤其它项目的开发后端）。
+## 开发模式后端的 pkill -f 匹配 pattern：项目内 run_server.py 的
+## 绝对路径（正则元字符已转义）。
 func _dev_backend_pattern() -> String:
 	return _regex_escape(project_root.path_join(BACKEND_SCRIPT_REL))
 
@@ -263,8 +255,7 @@ func _tick_starting(delta: float) -> void:
 			if _startup_timer > BACKEND_STARTUP_TIMEOUT:
 				push_warning("Connection: backend startup timed out after %.0fs" % BACKEND_STARTUP_TIMEOUT)
 				_close_probe()
-				# 超时收尾：按名 + 按 PID 清理悬挂进程（不等待端口释放：
-				# 已进入 FAILED 终态，无连接会命中该端口）
+				# 超时收尾：按名 + 按 PID 清理悬挂进程（不等待端口释放）
 				kill_untracked_command.call()
 				if pid > 0:
 					kill_command.call(pid)
@@ -379,9 +370,8 @@ func _on_stop_probe_open() -> void:
 			_stop_elapsed = 0.0
 	else:
 		if _stop_elapsed >= FORCE_KILL_WAIT_MS / 1000.0:
-			# 强杀后端口仍未释放：不再谎报 stopped——重启预探测会
-			# 命中旧进程并连上旧参数。置 FAILED 终态，由门面中止
-			# 重启并通知 UI（须人工介入）。
+			# 强杀后端口仍未释放：置 FAILED 终态（不发 stopped），
+			# 由门面中止重启并通知 UI。
 			_close_probe()
 			pid = -1
 			_enter_failed_state(

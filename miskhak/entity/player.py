@@ -15,7 +15,7 @@
   - 对外统一使用全局 float tile 坐标 (x, y)，chunk = floor(x / TILE_MAP_SIZE)
   - float 精确值存 entity.data["fx"/"fy"]；Entity 的 chunk/tile 整数字段
     为 floor 派生值，供空间索引与事件位置使用
-  - entity_moved 事件仅在跨整数 tile 时发布，避免高频移动刷总线
+  - entity_moved 事件仅在跨整数 tile 时发布
 """
 
 from olam.constants import TILE_MAP_SIZE
@@ -204,8 +204,7 @@ class PlayerService:
             entity.set_data("fy", clamped[1])
             if (entity.chunk_x, entity.chunk_y, entity.tile_x, entity.tile_y) \
                     != (cx, cy, tx, ty):
-                # 静默移动：读档是重建内存状态，发布事件会以 game_time=0
-                # 写入伪造的移动历史
+                # 静默移动：不发布移动事件
                 self._manager.move(entity.id, cx, cy, tx, ty, publish=False)
         self._entity = entity
         logger.info(

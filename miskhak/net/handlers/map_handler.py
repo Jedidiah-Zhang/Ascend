@@ -14,8 +14,8 @@ from miskhak.net.handlers import parse_coord
 logger = get_logger(__name__)
 
 # 默认 tile 生成线程池（模块级兜底：独立使用/测试时未注入引擎池）。
-# 生产路径由 GameEngine 注入自有池子并负责关闭（见 game.py），
-# 本默认池仅作兼容，生命周期不归任何模块显式管理。
+# 生产路径由 GameEngine 注入自有池子并负责关闭，
+# 本默认池无显式生命周期管理。
 _DEFAULT_TILE_POOL = ThreadPoolExecutor(
     max_workers=TILE_WORKERS, thread_name_prefix="tile-gen"
 )
@@ -72,9 +72,7 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
                 continue
             coord_tuples.append(parsed)
 
-        # 请求量上限：chunk 生成（含 tile 层）同步跑在游戏线程，
-        # 无上限的单条消息可冻结引擎数秒（与 weather_handler 的
-        # MAX_WEATHER_QUERY_CHUNKS 同理）。
+        # 请求量上限：chunk 生成（含 tile 层）同步跑在游戏线程。
         if len(coord_tuples) > MAX_CHUNK_QUERY:
             logger.warning(
                 "get_chunks: 请求 %d 个 chunk 超过上限 %d，截断",
@@ -162,8 +160,8 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
                 })
             if include_tiles and tile_gen is not None:
                 # tile 数据二进制化：单字段 base64（版本头+uint16 LE 地形
-                # +float32 LE 高程/坡度，见 TileGrid.to_bytes），比 JSON 数组
-                # 省约 55% 流量；前端 Marshalls.base64_to_raw 直接解码
+                # +float32 LE 高程/坡度，见 TileGrid.to_bytes）；前端
+                # Marshalls.base64_to_raw 直接解码
                 grid = c.tile_grid
                 entry["tiles_b64"] = (
                     base64.b64encode(grid.to_bytes()).decode("ascii")
@@ -173,8 +171,7 @@ def make_map_handlers(gen, tile_gen=None, chunk_store=None,
 
         logger.debug("get_chunks: 返回 %d 个块 (缓存 %d, 新生成 %d)",
                      len(result_chunks), len(coord_tuples) - len(missing), len(missing))
-        # include_tiles 回显：前端据此区分"字段版/完整版"响应，
-        # 不依赖 terrain 数组长度等数据形状启发式
+        # include_tiles 回显：前端据此区分"字段版/完整版"响应
         return make_response(
             "get_chunks",
             {"chunks": result_chunks, "include_tiles": include_tiles},

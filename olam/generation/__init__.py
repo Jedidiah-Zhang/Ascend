@@ -36,7 +36,7 @@ __all__ = [
     "generation_identity",
 ]
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]  # world 区根（开发）/ server（发布）
+BACKEND_ROOT = Path(__file__).resolve().parents[2]  # 对外根（开发：仓库根；发布：server/）
 
 _IDENT = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*$")
 
@@ -60,7 +60,7 @@ class GenerationDecl:
         inputs: 声明的输入（种子/参数/上游内容）。
         outputs: 产出的内容名（不含槽位 id）。
         feeds: 喂给的声明槽位（游戏程序的 external 槽位；边界来源证据）。
-        source_files: 参与指纹的源码文件（world 区根相对路径）。
+        source_files: 参与指纹的源码文件（相对对外根路径）。
         constants: 参与指纹的配置常量名（``olam.constants``）。
         determinism: 确定性说明（同输入同输出）。
         sampling: 采样协议（证据取样方式）。

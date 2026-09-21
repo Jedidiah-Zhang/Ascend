@@ -6,13 +6,13 @@
   - on_message()：消费握手完成前的服务器消息：
       hello_ack → acked 信号（门面据此发 connection_established 并放行 send）
       error/hello → rejected(kind, reason)（门面据此重试或终态）
-      其他 → 返回 false（调用方丢弃：认证前后端不会发普通消息）
-  - ack 后停止计时，避免连接误触发 hello 超时重连
+      其他 → 返回 false（调用方丢弃）
+  - ack 后停止计时
 
 拒绝分类（RejectKind）：
-  - VERSION_MISMATCH：服务端发 error 帧（协议版本不兼容，唯一会发的握手拒绝）
-    ——永久性失败，重试无意义，策略应直接终态
-  - ANOMALY：服务端行为异常（不应主动发 hello）——可重试
+  - VERSION_MISMATCH：服务端发 error 帧（协议版本不兼容）——永久性失败，
+    策略直接终态
+  - ANOMALY：服务端行为异常（如主动发 hello）——可重试
 
 注入点：send_frame（门面注入 transport.send_frame）、token_path、codec。
 依赖方向：connection(门面) → 本层；本层不感知其他子层。
@@ -108,21 +108,22 @@ func tick(delta: float) -> void:
 	if state != State.HELLO_SENT:
 		return
 	_elapsed += delta
-	if _elapsed > HELLO_TIMEOUT:  # 严格大于（等于时继续累计，防边界抖动）
+	if _elapsed > HELLO_TIMEOUT:  # 严格大于（等于时继续累计）
 		state = State.IDLE
 		_elapsed = 0.0
 		timeout.emit()
 
 
+## 是否已完成握手。
 func is_acked() -> bool:
 	return state == State.ACKED
 
 
-## 消费握手完成前的服务器消息。返回 true = 已消费（不再广播）。
+## 消费握手完成前的服务器消息。返回 true = 已消费（不广播）。
 func on_message(msg: Dictionary) -> bool:
 	if msg.get("type", "") == "hello_ack":
 		state = State.ACKED
-		_elapsed = 0.0  # ack 后停止计时，防 10s 后误超时
+		_elapsed = 0.0  # ack 后停止计时
 		# 服务端 BLOB 版本协商结果：以此作为 tile 数据解码基准
 		# （前端本地上报的 Config.TILE_BLOB_VERSION 仅作握手前的客户端声明）
 		blob_version = int(msg.get("payload", {}).get("blob_version", 0))

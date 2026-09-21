@@ -2,7 +2,7 @@
 
 前端资产（assets/）为闭源商业资源不入库：字体与主题仅存在于本地
 开发环境；资源缺失（CI 或新机器）时回退到项目主题默认字体，再缺
-回退引擎内置 fallback 字体——保证任何环境不崩、本地体验完整。
+回退引擎内置 fallback 字体。
 """
 
 class_name FontUtils
@@ -11,7 +11,7 @@ extends RefCounted
 ## 内置等宽字体路径（商业资产，见 miskhak/client/assets/fonts/，不入库）
 const MONO_FONT_PATH: String = "res://assets/fonts/NotoSansMonoCJKsc-Regular.otf"
 
-## 缓存加载结果（Resource 常驻，避免每次调用重读磁盘）
+## 缓存加载结果（Resource 常驻）。
 static var _mono_font: Font = null
 
 

@@ -94,6 +94,7 @@ class WeatherCore:
 
     @property
     def program(self) -> object:
+        """编译后的世界程序。"""
         return self._program
 
     @property

@@ -27,6 +27,7 @@ def make_zip(stage: Path, top: str, output: Path) -> None:
 
 
 def main() -> int:
+    """解析命令行参数并生成 zip，返回退出码（0 = 成功，1 = 舞台目录不存在）。"""
     parser = argparse.ArgumentParser(description="舞台目录 → zip 归档")
     parser.add_argument("--stage", required=True, help="舞台目录")
     parser.add_argument("--top", required=True, help="归档内顶层目录名")

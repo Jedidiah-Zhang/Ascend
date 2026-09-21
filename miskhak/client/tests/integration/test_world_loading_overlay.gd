@@ -126,7 +126,7 @@ func test_reset_clears_progress() -> void:
 
 
 func test_process_skips_when_hidden() -> void:
-	"""隐藏后动画停走（不浪费每帧重绘）。"""
+	"""隐藏后动画停走。"""
 	var overlay: WorldLoadingOverlay = _make_overlay()
 	overlay.visible = false
 	overlay.set_stage("elevation")
@@ -141,7 +141,7 @@ func test_background_is_opaque() -> void:
 
 
 func test_main_world_uses_overlay_for_loading() -> void:
-	"""main_world 的加载提示应挂载为全屏覆盖层（而非纯文字 Label）。"""
+	"""main_world 的加载提示应挂载为全屏覆盖层。"""
 	var scene: PackedScene = load("res://scenes/main.tscn")
 	var main: Node2D = autoqfree(scene.instantiate())
 	add_child(main)

@@ -15,7 +15,7 @@
 /* D8 方向偏移 */
 static const int DX[8] = {1, -1, 0, 0, 1, -1, 1, -1};
 static const int DY[8] = {0, 0, 1, -1, 1, 1, -1, -1};
-/* D8 方向距离倒数（1/轴距, 1/对角距），用于斜率计算时乘法替代除法 */
+/* D8 方向距离倒数（1/轴距, 1/对角距），供斜率计算使用 */
 static const double INV_DIST[8] = {1.0, 1.0, 1.0, 1.0,
                                     0.70710678, 0.70710678, 0.70710678, 0.70710678};
 
@@ -268,7 +268,7 @@ void hydrology_erode_step(
        sediment_out[i] = 累积净沉积（增量，调用方负责累加）
 
        侵蚀量 = K × sqrt(flow) × slope
-       限制：不超过 slope × 0.5（不能把山削成坑）
+       限制：不超过 slope × 0.5
 
        海洋边界（侵蚀基准面 = 海平面）：
        - 海洋格（dem < 0）不参与侵蚀（跳过）
@@ -525,7 +525,7 @@ void hydrology_distance_to_ocean(
     free(queue);
 }
 
-/* ── water_distance（距水距离场，issue #42） ──────────────── */
+/* ── water_distance（距水距离场） ──────────────── */
 
 /* 多源 BFS（4 邻域）计算每个格到最近水体（海/河/湖）的平面距离 (m)。
    water_mask: uint8 数组，非 0 = 水体源（距离 0）；其余格 = 到最近源的
@@ -716,7 +716,7 @@ static void _rain_shadow_single_dir(
                 /* 上风是海洋 → 抬升归零 */
                 src_uplift = 0.0;
             } else {
-                /* 最近邻采样（步长=1时避免自依赖，且比双线性更好处理海岸） */
+                /* 最近邻采样（步长=1 时不产生自依赖） */
                 int sx = (int)(src_x + 0.5);
                 int sy = (int)(src_y + 0.5);
                 if (sx < 0) sx = 0;
@@ -730,8 +730,7 @@ static void _rain_shadow_single_dir(
 
         double cur_elev = elevation[idx];
 
-        /* 上坡量（仅正高程差，且仅陆地——海洋无地形抬升，
-           负海拔不得产生伪抬升） */
+        /* 上坡量（仅正高程差，且仅陆地） */
         double uplift = 0.0;
         if (cur_elev > 0.0 && cur_elev < src_elev) {
             uplift = src_elev - cur_elev;
@@ -749,7 +748,7 @@ static void _rain_shadow_single_dir(
     free(entries);
     free(uplift_eff);
 
-    /* 高斯模糊平滑（消除海陆边界和其他局部跳变） */
+    /* 高斯模糊平滑 */
     _gaussian_blur_inplace(factors, w, h, 2.0);
 }
 
@@ -851,8 +850,7 @@ void hydrology_rain_shadow_omnidirectional(
 
 /* 气候常量：单一事实源在 olam/constants.py，经
    hydrology_set_climate_constants 于导入期注入（hydrology.py）。
-   未注入时保持 0——hydrology.py 与扩展加载同一导入路径，
-   加载后立即注入，无遗漏窗口。 */
+   未注入时保持 0。 */
 
 static double g_lapse_rate;
 static double g_rainfall_min;
@@ -905,8 +903,7 @@ static int classify_climate(double temp, double rainfall, double altitude) {
 /* ── 标量物理函数导出 ──────────────────────────────────────── */
 
 /* 纯函数导出：供 ctypes 直接调用，Python 侧 climate.py 的对应
-   纯函数一律绑定此处（单源 C，杜绝 Python 侧双实现漂移）。
-   场计算路径（compute_climate）亦调用此处——同一文件内单源。 */
+   纯函数绑定此处。场计算路径（compute_climate）亦调用此处。 */
 
 double hydrology_sea_level_temperature(double latitude_noise) {
     /* 纬度噪声 → 海平面温度（clamp [-20, 38]） */
@@ -928,7 +925,7 @@ double hydrology_apply_lapse_rate(double sea_level_temp, double altitude) {
     /* 气温直减率：海拔每升高 1000m 温度下降 g_lapse_rate °C
        （g_lapse_rate 由 config 经 set_climate_constants 注入）。
        与 compute_climate 统一语义：直减率仅作用于陆地（altitude>0），
-       海域返回海面温度本身（无深度伪影）；陆地 clamp [-20, 36]。 */
+       海域返回海面温度本身；陆地 clamp [-20, 36]。 */
     double t = sea_level_temp;
     if (altitude > 0.0) {
         t -= altitude * g_lapse_rate / 1000.0;
@@ -957,7 +954,7 @@ void hydrology_compute_climate(
 
        统一语义：温度场为地表温度——海域 = 海面温度（纬度梯度 + 微量
        摆动，clamp [-20, 38]，不含直减率），陆地 = 海面温度 - 海拔×直减率
-       （直减率仅作用于陆地，负海拔不产生海底温度伪影）。
+       （直减率仅作用于陆地）。
 
        大陆度修正：距海越远 → 年均温越低，饱和指数曲线
        （海洋格距海距离为 0，修正因子为 0，不生效）。

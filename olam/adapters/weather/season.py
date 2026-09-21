@@ -114,8 +114,7 @@ def seasonal_humidity_offset(
 ) -> float:
     """季节湿度偏移 — 同向于温度曲线（夏季高湿、冬季低湿）。
 
-    当 sharpness=0 时使用标准余弦曲线；sharpness>0 时用 tanh 阶梯化
-    （适合季风气候 — 旱湿两季切换更突兀）。
+    当 sharpness=0 时使用标准余弦曲线；sharpness>0 时用 tanh 阶梯化。
 
     Args:
         season: 当前季节。

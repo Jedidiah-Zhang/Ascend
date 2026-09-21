@@ -6,7 +6,7 @@
 压力级别（可通过 STRESS_SCALE 环境变量控制）:
   small  — CI 快速验证（默认）
   medium — 中等压力
-  large  — 等同于最终发布场景 ×1000（30M 事件，仅手动运行）
+  large  — 30M 事件（仅手动运行）
 """
 
 import os

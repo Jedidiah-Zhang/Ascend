@@ -15,7 +15,7 @@ extends Control
 ## 进度条补满到 100% 后发出（供 main_world 隐藏覆盖层、显示世界与玩家）。
 signal completed
 
-## 背景色：alpha=1.0 全不透明——必须遮住下方正在构建的地形
+## 背景色（alpha=1.0 全不透明）：遮住下方正在构建的地形
 const BG_COLOR: Color = Color(0.05, 0.05, 0.10, 1.0)
 ## 进度条轨道/填充色（与 world_loading 同色系）
 const PROGRESS_TRACK_COLOR: Color = Color(1, 1, 1, 0.10)
@@ -34,7 +34,7 @@ const BAR_OFFSET: float = 28.0
 
 ## 阶段进度的封顶比例（剩余 10% 留给出生点地形加载）
 const STAGE_PROGRESS_CAP: float = 0.9
-## 补满到 100% 后的满格停留时间（秒）：让"加载完成"有可感知的收尾
+## 补满到 100% 后的满格停留时间（秒）
 const COMPLETION_HOLD_SEC: float = 0.45
 
 ## 等宽字体（懒加载）
@@ -88,7 +88,7 @@ func set_terrain_progress(ratio: float) -> void:
 
 
 ## 进度补满：目标置 100% 并触发快速补间；满格停留后发出 completed 信号
-## （main_world 据此隐藏覆盖层——进度条始终以满格收尾，不会半截消失）。
+## （main_world 据此隐藏覆盖层）。
 func complete() -> void:
 	_lerp.target_ratio = 1.0
 	_lerp.start_catchup()
@@ -114,7 +114,7 @@ func _process(delta: float) -> void:
 		return
 	_lerp.advance(delta)
 	queue_redraw()
-	# 到达 100% 后满格停留片刻再发 completed：收尾可感知（满格 → 世界出现）
+	# 到达 100% 后满格停留片刻再发 completed（满格 → 世界出现）
 	if not _completion_emitted and _lerp.display_ratio >= 1.0:
 		if _completion_hold_left < 0.0:
 			_completion_hold_left = COMPLETION_HOLD_SEC
@@ -134,7 +134,7 @@ func _draw() -> void:
 		_font = FontUtils.get_mono_font()
 	var vsize: Vector2 = size
 
-	# 不透明背景：遮住下方正在构建的地形（本需求核心）
+	# 不透明背景：遮住下方正在构建的地形
 	draw_rect(Rect2(Vector2.ZERO, vsize), BG_COLOR)
 
 	# 进度条（与新建世界进度页同款）：轨道 + 填充

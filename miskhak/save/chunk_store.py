@@ -1,12 +1,11 @@
 """ChunkStore — 分块数据 LRU 缓存 + SQLite 持久化。
 
 职责:
-  1. LRU 内存缓存 ChunkData（有界地图可控容量）
+  1. LRU 内存缓存 ChunkData
   2. **已加载 chunk 全量落盘**——首次加载的 chunk（含确定性生成的
-     clean chunk）在周期保存时写入 SQLite，避免重访/读档时重新生成
-     （~1s/chunk）；重访的 chunk 靠 _persisted_coords 集合识别，
-     内容不变则不重写
-  3. 玩家改动（dirty chunk）落盘是强制的（玩家修改不可再生）
+     clean chunk）在周期保存时写入 SQLite；重访的 chunk 靠
+     _persisted_coords 集合识别，内容不变则不重写
+  3. 玩家改动（dirty chunk）落盘是强制的
   4. 从 SQLite 恢复已持久化的改动 chunk
   5. flush() 在正常退出与快照前保存所有待落盘 chunk
 
@@ -21,12 +20,12 @@ _persisted_coords 只增不删（库中行无删除路径）、启动时从库�
 与库必然一致；落盘后 dirty 清除、坐标入集合。
 
 淘汰策略（write-back on eviction）：
-   待落盘 chunk 在淘汰时写库提交（周期保存之间的安全网）；
-   已落盘 clean chunk 淘汰即弃（库中已有，重访直接恢复）。
+   待落盘 chunk 在淘汰时写库提交；
+   已落盘 clean chunk 淘汰即弃。
    SQLite WAL 模式保证写入中途崩溃不会损坏数据库。
 
-存储格式：TileGrid BLOB 经 zlib 压缩，前缀区分压缩/旧版明文
-（"ZC" = zlib，无前缀 = 旧库明文），读取自动兼容。
+存储格式：TileGrid BLOB 经 zlib 压缩，前缀标识压缩
+（"ZC" = zlib，无前缀 = 明文），读取按前缀分流。
 """
 
 import os
@@ -46,8 +45,8 @@ from olam.content.tile_grid import TileGrid
 
 logger = get_logger(__name__)
 
-# 存储 BLOB 前缀：压缩（"ZC" + zlib 数据）/ 旧版明文（无前缀），
-# 读取按前缀自动分流，旧库兼容。
+# 存储 BLOB 前缀：压缩（"ZC" + zlib 数据）/ 明文（无前缀），
+# 读取按前缀自动分流。
 _BLOB_ZLIB: bytes = b"ZC"
 
 
@@ -80,7 +79,7 @@ class ChunkStore:
     """分块数据缓存与持久化存储。
 
     持久化策略：
-      - 已加载 chunk 全量落盘（含确定性 clean chunk，免重访重生成）；
+      - 已加载 chunk 全量落盘（含确定性 clean chunk）；
         _persisted_coords（单调集合，启动时从库重建）记录已落盘坐标，
         内容不变不重写；
       - SQLite 中的行 = 已加载 chunk（含玩家改动），经 load_tiles
@@ -134,8 +133,8 @@ class ChunkStore:
             "integrated_through INTEGER NOT NULL DEFAULT 0, "
             "PRIMARY KEY (cx, cy))"
         )
-# 旧库补列（建表早于该列引入）：就地补 integrated_through（旧行默认
-# 0 = 未积分）。BLOB 版本不符一律被 from_bytes 拒绝——无向后兼容。
+# 建表缺 integrated_through 列时就地补列（已有行默认 0 = 未积分）。
+# BLOB 版本不符由 from_bytes 拒绝。
         cols = {
             r["name"]
             for r in self._db.execute("PRAGMA table_info(chunk_tiles)").fetchall()
@@ -186,8 +185,7 @@ class ChunkStore:
         """将 chunk 放入缓存，触发 LRU 淘汰。
 
         若同一对象已在缓存中：仅移到末尾（重复 put 刷新顺序）。
-        若坐标已被另一脏 chunk 占用：拒绝替换——替换会静默丢弃
-        其未落盘的脏状态。
+        若坐标已被另一未落盘的脏 chunk 占用：拒绝替换。
 
         Args:
             chunk: 要缓存的 ChunkData。
@@ -223,14 +221,17 @@ class ChunkStore:
             return len(self._cache)
 
     def items(self):
+        """返回缓存的 (坐标, ChunkData) 列表快照。"""
         with self._lock:
             return list(self._cache.items())
 
     def values(self):
+        """返回缓存的 ChunkData 列表快照。"""
         with self._lock:
             return list(self._cache.values())
 
     def keys(self):
+        """返回缓存的坐标列表快照。"""
         with self._lock:
             return list(self._cache.keys())
 
@@ -239,8 +240,7 @@ class ChunkStore:
     def mark_dirty(self, cx: int, cy: int) -> None:
         """标记缓存中的 chunk 为已修改（玩家改动）。
 
-        只允许标记持有网格的缓存 chunk：脏 chunk 的网格是淘汰/
-        退出时落盘的数据源，无网格则无从落盘。
+        只允许标记持有网格的缓存 chunk。
 
         幂等：重复标记无副作用。
 
@@ -283,11 +283,10 @@ class ChunkStore:
         try:
             grid = TileGrid.from_bytes(blob)
         except ValueError as exc:
-            # v1 存档（无状态段）加载失败是硬性不兼容——给出明确
-            # 中文提示而非让上层崩溃/泛化"处理失败"
+            # BLOB 解码失败抛 RuntimeError，附中文原因与坐标
             raise RuntimeError(
                 f"chunk ({cx},{cy}) 数据无法解码（{exc}）——"
-                f"旧版存档与当前版本不兼容，无法加载该区块"
+                f"区块数据版本与当前版本不兼容，无法加载该区块"
             ) from exc
         return grid, int(row["integrated_through"])
 
@@ -295,7 +294,7 @@ class ChunkStore:
         """从 SQLite 加载已持久化的 TileGrid。
 
         库中行 = 已加载 chunk（含玩家改动）。BLOB 为 zlib 压缩格式，
-        旧版明文（无前缀）自动兼容读取。调用方应以
+        无前缀的明文同样可读。调用方应以
         ChunkData.restore_tiles 恢复网格。需要取积分游标的调用方用
         load_tiles_with_day。
 
@@ -336,8 +335,7 @@ class ChunkStore:
     def _persist(self, chunk: ChunkData) -> None:
         """将待落盘 chunk 的网格写回 SQLite 并更新状态。
 
-        调用方须持有 _lock。脏标记不变量（dirty ⇒ 持有网格）
-        保证网格在场；违反时抛错而非静默跳过——脏数据不可丢失。
+        调用方须持有 _lock。脏 chunk 无网格时抛错，不静默跳过。
 
         落盘后：脏标记清除、坐标记入 _persisted_coords（重访不再重写）。
 
@@ -464,7 +462,7 @@ class ChunkStore:
         )
 
     def verify(self) -> None:
-        """校验数据库完整性（PRAGMA integrity_check，设计文档承诺）。
+        """校验数据库完整性（PRAGMA integrity_check）。
 
         读档时调用：数据库是明文 SQLite，防篡改靠完整性校验——
         损坏/被外部工具改写时拒绝加载。
@@ -495,10 +493,8 @@ class ChunkStore:
     def _evict_if_needed(self) -> None:
         """淘汰 LRU 头部（最久未访问）直到缓存不超限。
 
-        待落盘 chunk（dirty 或首次加载未落盘）淘汰前先持久化——
-        dirty 不可再生、首次加载的 clean chunk 不落盘则重访仍要
-        重新生成；已落盘 clean chunk 淘汰即弃（库中已有，重访
-        直接恢复）。写入提交后才算安全，跨进程重启不丢失。
+        待落盘 chunk（dirty 或首次加载未落盘）淘汰前先持久化，
+        提交后才算落盘；已落盘 clean chunk 淘汰即弃。
         """
         wrote = False
         while len(self._cache) >= self._max_size:

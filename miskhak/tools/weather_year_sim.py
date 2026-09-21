@@ -77,7 +77,7 @@ def run(seed: int, fraction: float) -> dict:
         weather.register_chunk(cx, cy, chunk.annual_baseline, chunk.climate_zone, chunk.sea_level_temp)
     print(f"── 天气引擎接入 {len(loaded)} chunk")
 
-    # 启用世界树内存裁剪（避免长模拟 OOM）
+    # 启用世界树内存裁剪（max_memory_events=100_000）
     world_tree.configure(max_memory_events=100_000)
 
     # ── 4. 实时统计（O(1) 内存，不囤积事件）───────────
@@ -238,6 +238,7 @@ def run(seed: int, fraction: float) -> dict:
 
 
 def print_report(r: dict) -> None:
+    """打印 run() 统计结果的模拟报告。"""
     print()
     print("=" * 64)
     print(f"  天气系统年模拟报告  seed={r['seed']}")
@@ -310,6 +311,7 @@ def print_report(r: dict) -> None:
 
 
 def main():
+    """命令行入口：解析 --seed/--fraction 并运行模拟后打印报告。"""
     parser = argparse.ArgumentParser(description="天气系统年模拟")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--fraction", type=float, default=1.0,

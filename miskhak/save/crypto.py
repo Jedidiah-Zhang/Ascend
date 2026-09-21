@@ -1,21 +1,14 @@
 """存档加密 — 密钥生成、管理与文件加解密。
 
-加密目的：防止其他工具直读/篡改存档，
-不追求防读取/防拷走——密钥随档分发（藏于 manifest 的混淆层），
-游戏自动解锁，存档可移植、可分享。
-
-威胁模型（"防君子不防小人"）：
-  - 密钥不落盘为明文 base64，而是用 world_id + seed 派生密钥加密后
-    藏进 manifest.json 的 secrets_blob 字段——普通工具看到的只是乱码；
-  - world_id/seed 本身在 manifest 明文，派生密钥可被推算，因此这只是
-    混淆层（防直读/防手贱），不是真实加密（真实加密见 PBKDF2 用户密码方案）；
-  - 防篡改的真实防线是 HMAC（decrypt 先验签名）；
-  - lineage.json（快照血缘）明文可读，以同一 sign_key 独立签名
-    （见 lineage.py）——与存档文件同级：防直读/防手贱，不防推导。
+密钥随档分发（藏于 manifest 的混淆层），游戏自动解锁，存档可移植、可分享。
+world_id/seed 在 manifest 明文，可被推算，因此 secrets_blob 只是混淆层，
+只防直读，不提供真实加密强度；防篡改由 HMAC 保证（decrypt 先验签名）。
+lineage.json（快照血缘）明文可读，以同一 sign_key 独立签名
+（见 lineage.py）——防直读，不防推导。
 
 文件加密格式:
     HMAC_SHA256(ciphertext) || ciphertext
-    - 外部 HMAC 覆盖整个密文（防替换/截断/拼接）
+    - 外部 HMAC 覆盖整个密文
     - ciphertext 为 Fernet token（Fernet 自身亦带完整性校验）
     - 解密流程: 校验 HMAC → Fernet 解密
 
@@ -23,8 +16,7 @@
 加密后藏于 manifest.secrets_blob（随档分发，可移植）。
 
 快照文件（.ascendsave）的会话钥匙同样经 protect 混淆后藏入
-快照头部 secrets_blob（world_id/seed 明文在头部，为解锁派生
-输入）——与存档位同级：防直读/防手贱，不防推导。
+快照头部 secrets_blob（world_id/seed 明文在头部，为解锁派生输入）。
 """
 
 import base64
@@ -41,7 +33,7 @@ from cryptography.fernet import Fernet, InvalidToken
 # 前缀区长度：HMAC-SHA256 摘要 32 字节
 HMAC_LEN: int = 32
 
-# 密钥混淆层的派生域分隔（防与其它派生用途碰撞）
+# 密钥混淆层的派生域分隔
 _SECRETS_DOMAIN: bytes = b"ascend-secrets-v1"
 
 
@@ -153,8 +145,8 @@ class SaveKeys:
     def _derive_obfuscation_key(world_id: str, seed: int) -> bytes:
         """从存档身份（world_id + seed）派生混淆密钥。
 
-        两者都在 manifest 明文，故可被推算——本层只防直读，
-        不提供真实安全性（威胁模型见模块文档）。
+        两者都在 manifest 明文，可被推算——本层只防直读，
+        不提供真实安全性。
         """
         return base64.urlsafe_b64encode(hashlib.sha256(
             _SECRETS_DOMAIN

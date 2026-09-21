@@ -68,7 +68,7 @@ class TestPlayerMove:
     """player_move 请求测试。"""
 
     def test_move_accepts_and_echoes(self, handlers, service):
-        """合法上报被接受，回传权威位置（壳子=原样）。
+        """合法上报被接受，回传权威位置（原样回传）。
 
         Arrange:
             已 birth 的 service。
@@ -89,7 +89,7 @@ class TestPlayerMove:
         assert resp["payload"]["seq"] == 42
 
     def test_move_without_seq_omits_seq(self, handlers, service):
-        """无 seq 的上报 → 响应不回传 seq 字段（player_state 兼容）。"""
+        """无 seq 的上报 → 响应不回传 seq 字段。"""
         resp = handlers["player_move"]({"payload": {"x": 1.0, "y": 2.0}})
         assert "seq" not in resp["payload"]
 

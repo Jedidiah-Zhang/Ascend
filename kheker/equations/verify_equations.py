@@ -58,10 +58,12 @@ TOL = 1e-12
 
 
 def line(name: str, ok: bool, detail: str = "") -> str:
+    """格式化单条判据结果行。"""
     return f"[{'PASS' if ok else 'FAIL'}] {name} | {detail}"
 
 
 def main() -> int:
+    """运行 V0–V4 判据并打印结果；返回退出码。"""
     ap = argparse.ArgumentParser(description="声明层验证")
     ap.add_argument("--fast", action="store_true",
                     help="减少采样点（快速模式）")
@@ -75,7 +77,7 @@ def main() -> int:
 
     # ── V0 声明快照与生成物漂移巡检 ──────────────────
     # 固定锚定默认单一事实来源 equations.json（生成物入库对应它，
-    # 不跟随 --json 的自定义路径，避免对拍临时片段误报入库产物漂移）。
+    # 不跟随 --json 的自定义路径）。
     registry_ok, registry_detail = export_registry.check()
     results.append(("V0 声明快照漂移", registry_ok, registry_detail))
     digests_ok, digests_detail = export_impl_digests.check()

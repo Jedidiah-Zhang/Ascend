@@ -28,9 +28,8 @@ static func apply_display(resolution: String, window_mode: String) -> void:
 			_center_window(size)
 
 
-## 运行时改窗口尺寸必须走 Window.size 而非 DisplayServer.window_set_size：
-## X11 下后者的 OS 窗口实际会变，但 Godot 内部 Window 收不到尺寸事件，
-## 视口拉伸矩形（stretch 缩放）不会重算 → UI 不随窗口缩放。
+## 设置主窗口尺寸：运行期经主窗口 Window.size，无 SceneTree 时回退
+## DisplayServer.window_set_size。
 static func _set_window_size(size: Vector2i) -> void:
 	var window: Window = _main_window()
 	if window != null:
@@ -57,8 +56,8 @@ static func _center_window(size: Vector2i) -> void:
 		usable.position + Vector2i(((usable.size - size) / 2.0).round()))
 
 
-## 应用按键绑定：逐动作清空重建（InputMap 无动作时补建，防御性）。
-## 非字典条目直接跳过（损坏 cfg 的数据不应触发运行时错误）。
+## 应用按键绑定：逐动作清空重建（InputMap 无动作时补建）；
+## 非字典条目跳过。
 static func apply_keybinds(binds: Dictionary) -> void:
 	for action in KeybindMap.ACTIONS:
 		if not InputMap.has_action(action):
@@ -72,10 +71,11 @@ static func apply_keybinds(binds: Dictionary) -> void:
 				InputMap.action_add_event(action, event)
 
 
+## 设置 TranslationServer 当前语言。
 static func apply_locale(locale: String) -> void:
 	TranslationServer.set_locale(locale)
 
 
-## 应用帧率上限：0 = 不限。headless 下同样生效（引擎属性，非窗口）。
+## 应用帧率上限：0 = 不限；headless 下同样生效。
 static func apply_fps_limit(limit: int) -> void:
 	Engine.max_fps = limit

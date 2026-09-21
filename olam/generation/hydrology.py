@@ -167,9 +167,8 @@ def set_climate_constants(
 ) -> None:
     """向 C 扩展注入气候分类与气候常量（运行时生效）。
 
-    单一事实源在 olam/constants.py：本模块加载后立即以常量
-    值调用（apply_config_climate_constants），C 侧不内置阈值副本，
-    config 变更无需重编译。
+    单一事实源在 olam/constants.py：本模块加载后立即以常量值调用
+    （apply_config_climate_constants），C 侧不内置阈值副本。
     """
     _HYDRO.hydrology_set_climate_constants(
         lapse_rate, rainfall_min, rainfall_max,
@@ -289,7 +288,7 @@ def _rain_shadow_omnidirectional_c(
 
     沿风向累积地形抬升量，指数衰减映射到平滑分段线性雨影因子。
     支持主次双风向加权混合。
-    海洋格无地形抬升（负海拔不产生伪抬升），仅继承上风陆地的
+    海洋格无地形抬升（负海拔不参与抬升计算），仅继承上风陆地的
     衰减抬升——近岸海域保留干燥气团出海的残余雨影，开阔海洋
     因子为 1.0。
 
@@ -451,8 +450,7 @@ def _fill_depressions_c(dem: array, w: int, h: int) -> array:
 class ErosionResult:
     """erode() 的完整返回 — 最终海拔 + 全部水文状态。
 
-    将原本丢弃的流向、累积量、盆地信息打包返回，
-    供下游构建河流树和湖泊盆地。
+    含最后一轮的填洼结果、流向、累积量，供下游构建河流树和湖泊盆地。
 
     Attributes:
         dem: 侵蚀后的海拔数组 (m)。
@@ -511,7 +509,7 @@ class HydrologyData:
     flow_acc: list[float]
     directions: list[int]
     filled_dem: list[float]
-    river_network: object | None = None  # RiverNetwork(避免循环导入)
+    river_network: object | None = None  # RiverNetwork
 
     def __repr__(self) -> str:
         network_pts = 0
@@ -591,11 +589,6 @@ def flow_accumulation(
     src_arr = array('d', source) if source is not None else None
     result = _flow_accumulation_c(dirs_arr, w, h, source=src_arr)
     return result.tolist()
-
-
-# ════════════════════════════════════════════════════════════════
-# 河流提取
-# ════════════════════════════════════════════════════════════════
 
 
 # ════════════════════════════════════════════════════════════════
@@ -785,8 +778,8 @@ def extract_lake_basins(
     洼地 = 填洼后上升 > 1m 的陆地像素。
     BFS 找连通分量，每个分量的溢出口高程 = 湖面。
 
-    与 find_lakes() 不同，此函数返回结构化的 LakeBasin 对象
-    （含 surface_elev 和 area_km2），供 Tile 层渲染使用。
+    返回结构化的 LakeBasin 对象（含 surface_elev 和 area_km2），
+    供 Tile 层渲染使用。
 
     Args:
         dem: 行优先原始海拔。
@@ -840,9 +833,9 @@ def extract_lake_basins(
 def river_width_log(ratio: float) -> float:
     """河流宽度归一化系数 — 对数压缩（单一事实来源）。
 
-    流量比值 [0, 1] → [0, 1] 的对数映射：上游收窄、下游拓宽，
-    避免宽度随流量线性爆炸。与 river_render._river_width 回退分支
-    共用，任一改动需同步另一侧（tests 锁定行为）。
+    流量比值 [0, 1] → [0, 1] 的对数映射：上游收窄、下游拓宽。
+    与 river_render._river_width 共用，任一改动需同步另一侧
+    （tests 锁定行为）。
 
     Args:
         ratio: 流量与最大流量之比 [0, 1]。
@@ -904,7 +897,7 @@ def compute_river_width(
         dirs = compute_d8(filled, w, h)
         acc = flow_accumulation(dirs, w, h)
 
-    # 直接筛选河流像素（O(n)），代替 extract_rivers 的 O(n²) 源头检测
+    # 直接筛选河流像素（O(n)）
     river_indices = [i for i in range(n)
                      if dirs[i] >= 0 and acc[i] >= threshold and dem[i] > 0]
     if river_indices:

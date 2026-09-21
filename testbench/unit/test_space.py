@@ -165,12 +165,7 @@ class TestClimateZone:
         assert classify(30.0, 3000.0, 2500.0) == ClimateZone.ALPINE
 
     def test_classify_matches_python_reference(self):
-        """C 分类与独立 Python 参考实现逐点一致（参考读 config 常量）。
-
-        防护：C 侧阈值由 config 经导入期注入，本测试以独立参考
-        实现锁定判定树结构与数值——config 变更后参考同步、C 经
-        注入同步，任一侧漂移都会红。
-        """
+        """C 分类与独立 Python 参考实现逐点一致（参考读 config 常量）。"""
         from olam.constants import ALPINE_ALTITUDE, POLAR_TEMP, DESERT_RAINFALL, STEPPE_RAINFALL, STEPPE_MIN_TEMP, TROPICAL_TEMP, TEMPERATE_TEMP, RAINFOREST_RAINFALL, TAIGA_RAINFALL
         from olam.generation.hydrology import classify_climate_c
 
@@ -213,9 +208,6 @@ class TestClimateZone:
 
     def test_climate_constants_injection(self):
         """C 侧气候常量由 config 注入：运行时修改即刻生效，可重置。
-
-        防护：C 侧不内置阈值副本——改 config 常量无需重编译，
-        C 管线（``classify_climate_c`` / ``apply_lapse_rate_c``）行为随注入值变化。
 
         注：注册表机制（``climate.classify`` 等）为定点实现，
         阈值单一事实源 = ``olam.constants``（不读 C 注入）；本测试验证 C/bulk
@@ -279,10 +271,7 @@ class TestClimateZone:
         assert t0 - t1 == pytest.approx(9.0)
 
     def test_lapse_rate_sea_returns_surface_temp(self):
-        """直减率仅作用于陆地：海域（负海拔）返回海面温度本身。
-
-        与场计算统一语义——负海拔不产生深度伪影（不得 +18°C）。
-        """
+        """直减率仅作用于陆地：海域（负海拔）返回海面温度本身。"""
         from olam.generation.climate import apply_lapse_rate
         assert apply_lapse_rate(10.0, -400.0) == 10.0
         assert apply_lapse_rate(10.0, 0.0) == 10.0
@@ -308,7 +297,7 @@ class TestWeatherParams:
         assert w.humidity == 60.0
 
     def test_annual_baseline_new_api(self):
-        """新 API：海拔+海平面温度+降雨+气候 → 完整参数。"""
+        """annual_baseline：海拔+海平面温度+降雨+气候 → 完整参数。"""
         w = annual_baseline(
             altitude=500.0,
             sea_level_temp=20.0,
@@ -519,7 +508,7 @@ class TestChunkData:
         assert c.tile_grid.size == TILE_MAP_SIZE
 
     def test_tiles_overwrite(self):
-        """重复调用 generate_tiles 覆盖旧数据。"""
+        """重复调用 generate_tiles：新网格整体替换。"""
         c = ChunkData(
             cx=0, cy=0,
             biome=BiomeType.TEMPERATE_DECIDUOUS_FOREST,
@@ -533,7 +522,7 @@ class TestChunkData:
 
         grid2 = TileGrid()
         c.generate_tiles(grid2)
-        # 新 grid 覆盖后，旧数据不存在
+        # 新 grid 覆盖后，前一网格的数据不存在
         assert c.tile_grid is grid2
         assert c.tile_grid.get(50, 50) == TerrainType.GRASSLAND
 
@@ -643,7 +632,7 @@ class TestChunkData:
 
 
 # ══════════════════════════════════════════════════════════
-# WorldGenerator — 待 Voronoi 构造模块实现后恢复测试
+# WorldGenerator
 # ══════════════════════════════════════════════════════════
 
 
@@ -774,7 +763,7 @@ class TestTileGrid:
             TileGrid.from_bytes(b"\x02\x00\x00\x00" + b"\x00" * 100)
 
     def test_from_bytes_wrong_version_rejected(self):
-        """版本不符（其他格式/未来产物）明确拒绝，不提供兼容转换。"""
+        """版本不符（其他格式/未来产物）明确拒绝。"""
         # 构造当前尺寸的合法 blob 但版本头不同
         wrong_len = 4 + TILE_MAP_SIZE * TILE_MAP_SIZE * (2 + 4 + 4) \
             + TILE_MAP_SIZE * TILE_MAP_SIZE * len(STATE_TYPES)
@@ -1268,12 +1257,7 @@ class TestTileGenerator:
         )
 
     def test_chunk_center_climate_vs_tile(self):
-        """Chunk 中心气候在各 tile 上的一致性已验证。
-
-        本测试确认 get_chunk_climate 在生产 pipeline 中正确工作。
-        （等价性验证在之前的变更中已通过 —— 被移除的 per-tile 采样
-        与 chunk 中心采样产生的误匹配率 < 0.5%）
-        """
+        """get_chunk_climate 在生产 pipeline 中可用（各代表性 chunk 的 tile 分类可跑通）。"""
         from olam.generation.continent import ContinentGenerator
         from olam.generation.tile_gen import TileGenerator
         from olam.content.tile_grid import TILE_MAP_SIZE
@@ -1401,8 +1385,7 @@ class TestTileGenerator:
             assert isinstance(result1[2], float)
             assert isinstance(result1[3], int)
 
-        # 越界 chunk 返回一致的极地深海默认（不再返回与 -20°C 矛盾的
-        # 热带雨林 zone=0）
+        # 越界 chunk 返回一致的极地深海默认
         invalid = cont.get_chunk_climate(-1, -1)
         assert invalid == (
             -20.0, 0.0, -20.0, int(ClimateZone.POLAR_TUNDRA),

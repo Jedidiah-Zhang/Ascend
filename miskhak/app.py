@@ -180,8 +180,8 @@ class GameEngine:
     ) -> Callable[[], None]:
         """构造逆操作：先执行 teardown（若有）再清除属性引用。
 
-        供生命周期栈 push 使用——装配时登记，拆卸逆序执行时
-        先释放资源再清引用（避免 teardown 后属性仍指向已关闭实例）。
+        供生命周期栈 push 使用：装配时登记，拆卸逆序执行时
+        先释放资源再清引用。
 
         Args:
             attr: 引擎属性名（装配时已赋值，拆卸时置 None）。
@@ -235,8 +235,7 @@ class GameEngine:
         """服务模式启动：只开 TCP 服务 + 存档管理，不生成世界。
 
         主菜单只需 save_list / save_create / save_rename / save_delete /
-        save_export；世界由前端以 --world-id 拉起世界进程时生成，
-        避免后端启动即等待大陆生成（5-30s+）。
+        save_export；世界由前端以 --world-id 拉起世界进程时生成。
 
         时钟不推进（无日历事件、不进归档）；tick 循环仅处理网络消息。
 
@@ -327,8 +326,7 @@ class GameEngine:
         self._service_mode = False
 
         # 0. 网络层先就绪（幂等）：世界生成 5-30s 期间端口已开放，
-        #    前端可连接并收 world_progress 进度（进程模型下每次进入
-        #    世界都是新进程，必须先开端口再生成）。
+        #    前端可连接并收 world_progress 进度。
         self._ensure_network()
 
         # 0a. 存档准备
@@ -339,10 +337,9 @@ class GameEngine:
             self._manifest = manifest
             self.world_id = world_id
             self.seed = manifest.seed
-            # 世界设置校验（fail-closed，先于昂贵的世界生成）：
-            # 声明版本不一致 = 这个世界的生成规律已经变了，用新公式
-            # 继续跑旧状态会得到"合法但不属于任何已声明世界"的轨迹。
-            # 世界程序身份覆盖全部声明模块、参数、内核与驱动周期。
+            # 世界设置校验（fail-closed，先于世界生成）：声明版本或
+            # 程序身份不一致即拒绝加载。世界程序身份覆盖全部声明
+            # 模块、参数、内核与驱动周期。
             from olam.assembly import build_game_program
             self.world_program = build_game_program()
             validate_world_settings(
@@ -352,16 +349,14 @@ class GameEngine:
             # state 文件存在才读档恢复；新世界首次进入尚无 state
             if os.path.isfile(self.save_manager.state_path(world_id)):
                 self._load_state = self.save_manager.read_state(world_id)
-                # 状态格式版本校验（无向后兼容：旧格式拒绝加载）
+                # 状态格式版本校验（版本不一致拒绝加载）
                 require_state_version(self._load_state)
         else:
             self.world_id = None
 
         # 0b. 读档时钟对齐 + 恢复（须先于日历创建与 chunk 注册）。
-        #     时钟必须在 chunk 服务注册（5c → on_tiles_ready → _now_day）
-        #     之前就位，否则地形状态积分会以 day 1 为"当前日"，把已推进
-        #     的历史重放一遍并把 integrated_through 游标回退。完整状态
-        #     （玩家/干预表/注入核）仍在天气引擎就绪后统一恢复，见 5d。
+        #     完整状态（玩家/干预表/注入核）见 5d，在天气引擎就绪后
+        #     统一恢复。
         if self._load_state is not None:
             self._load_state.setdefault("clock", {})["time"] = aligned_time(self._load_state)
             apply_clock(self._load_state, self.clock)
@@ -484,8 +479,8 @@ class GameEngine:
             self._unset("weather_engine", self.weather_engine.shutdown)
         )
         # 5c. 地形状态引擎（按声明更新点每游戏小时积分；chunk 接入统一走
-        # chunk_services 注册器——新增引擎 = registry.add(service)，
-        # 生命周期广播（register/on_tiles_ready/unregister）零改动）
+        # chunk_services 注册器，生命周期广播 register/on_tiles_ready/
+        # unregister）
         from olam.adapters.terrain.tile_state import TileStateEngine
         self.tile_state_engine = TileStateEngine(
             self.clock, self.weather_engine, wt=world_tree,
@@ -575,7 +570,7 @@ class GameEngine:
         self._register_world_handlers()
 
         # 9. 世界树：归档 + 内存限制 + 图预热
-        # （读档时切换到存档内归档路径，旧归档自动关闭）
+        # （读档时切换到存档内归档路径，已打开的归档自动关闭）
         archive_path = (
             self.save_manager.events_db_path(self.world_id)
             if self.world_id else WT_ARCHIVE_PATH
@@ -619,7 +614,7 @@ class GameEngine:
         由 run_server --world-id/--snapshot/--regen-continent 调用。回滚时活目录即目标世界
         的当前状态（上一进程退出时已最终保存）；进入语义（冻结离开
         记录 → 展开 → 手动档开启新当前记录）由 SaveManager.enter_snapshot
-        统一保证——auto 节点是当前线的滚动记录，永无下游、永不重复新建。
+        统一保证。
 
         regen_continent=True 时无视大陆缓存强制重建（开发者/研究侧
         调参用；对存档世界有破坏性——玩家改动的 chunk 与新场可能
@@ -652,8 +647,8 @@ class GameEngine:
                 )
             self.start(world_id=world_id)
         except Exception:
-            # 构建失败：清理已创建的网络层（否则 _running 未置位，
-            # stop() 幂等短路，server socket 泄漏阻塞端口重 bind）
+            # 构建失败：清理已创建的网络层（_running 未置位时
+            # stop() 幂等短路）。
             self._cleanup()
             raise
 
@@ -661,7 +656,7 @@ class GameEngine:
         """停止引擎并清理所有子系统。
 
         退出前执行最终保存（flush + 最终 state 落盘），
-        等价于最后一次完整落盘——实时存档保证此步幂等、开销小。
+        等价于最后一次完整落盘。
 
         幂等：已停止时调用无效果。
         """
@@ -695,12 +690,11 @@ class GameEngine:
     def _cleanup_world(self) -> None:
         """释放世界观子系统（退出共用）。
 
-        停服是世界外操作：不发 entity_died（那会向因果历史写入虚假
-        死亡），直接释放内存；实体状态持久化是存档系统的职责。
+        停服是世界外操作：不发 entity_died，直接释放内存；
+        实体状态持久化由存档系统负责。
 
         先提交再回滚：await_async（等待异步回调）+ 最终保存（依赖
-        各子系统存活）在前，随后按装配逆序执行世界层生命周期栈——
-        "后创建的先销毁"由栈派生，无需手写清单。
+        各子系统存活）在前，随后按装配逆序执行世界层生命周期栈。
 
         网络层（服务器/分发器/事件桥）在此保留，由 _cleanup 统一
         释放（读档重建时 stop() 的清理顺序复用本方法）。
@@ -795,8 +789,7 @@ class GameEngine:
           - 至少一个 8 邻居是海洋（elevation<0）
         优先海拔 0-50m 的海岸低地（沙滩/草地带，海陆地形多样）。
 
-        以 chunk 中心而非任意像素判定，保证出生 chunk 主体是陆地
-        而非像素碰巧落在海岸但 chunk 整体在深海。
+        以 chunk 中心判定（而非任意像素），出生 chunk 主体为陆地。
 
         Args:
             continent: ContinentData。
@@ -946,7 +939,7 @@ class GameEngine:
         handlers.update(make_terminal_handler(self._executor))
         handlers.update(make_research_handler(self.intervention_table, self.weather_engine))
         # 占位 handler：尚未实现的功能返回显式"未实现"标记而非空成功
-        # 响应——前端可感知功能缺口并提示，不让缺口被系统性掩盖。
+        # 响应。
         def _not_implemented(msg: dict) -> dict:
             return make_response(
                 msg.get("request_type", ""), {"implemented": False},
@@ -975,9 +968,8 @@ class GameEngine:
         manifest = self._manifest
         if self.birth_chunk:
             manifest.birth_chunk = self.birth_chunk
-        # 世界设置补写：记录当前声明视图与程序身份，使下一次加载有可
-        # 比对的事实（校验已在 start 读档前完成；旧身份存档在
-        # 校验处即被 fail-closed 拒绝，不会走到这里）。
+        # 世界设置补写：记录当前声明视图与程序身份，供下一次加载比对
+        # （校验已在 start 读档前完成）。
         if self.world_program is not None:
             manifest.mechanism_declaration = (
                 self.world_program.declaration_settings()
@@ -1078,7 +1070,7 @@ class GameEngine:
         """将帧边界捕获的世界状态写入 state.json.enc（周期保存步骤）。
 
         `state` 是 `_capture_save` 的捕获结果——本方法只写盘，
-        不自行采集，避免保存线程边跑边取。
+        不自行采集。
         """
         if not self.world_id or not self.save_manager:
             return
@@ -1175,8 +1167,7 @@ class GameEngine:
 
         - 退出清理（`raise_on_failure=False`）：失败记录并可见，
           不阻断资源释放；
-        - 快照打包（`raise_on_failure=True`）：失败必须抛出——
-          否则会把不一致的活目录当作有效快照打包。
+        - 快照打包（`raise_on_failure=True`）：失败必须抛出。
         """
         try:
             self._run_save()
@@ -1188,9 +1179,8 @@ class GameEngine:
     def snapshot_current(self, world_id: str | None = None, suffix: str = "manual") -> str:
         """创建一致性快照：flush 全部缓存 → 两库 WAL checkpoint → 打包。
 
-        必须经此入口而非直接调 save_manager.create_snapshot——
-        WAL 模式下直接拷贝 .db 文件会丢失未 checkpoint 的数据
-        （实测快照回滚后 chunk/事件表完全缺失）。
+        必须经此入口而非直接调 save_manager.create_snapshot：
+        WAL 模式下直接拷贝 .db 文件会丢失未 checkpoint 的数据。
 
         Args:
             world_id: 目标存档位；None = 当前已加载世界。
@@ -1212,9 +1202,8 @@ class GameEngine:
             raise ValueError("当前无存档位，无法创建快照")
         if world_id == self.world_id:
             # 当前加载的世界：DB 打开中，先同步完整保存（事件 flush →
-            # state 写入 → chunk 提交 → manifest）再 checkpoint，否则打包
-            # 的 .db 缺 WAL 内数据、快照缺近期事件。保存失败必须抛出
-            # （raise_on_failure）：不得把不一致活目录当作有效快照打包。
+            # state 写入 → chunk 提交 → manifest）再 checkpoint。保存失败
+            # 必须抛出（raise_on_failure）。
             self._final_save(raise_on_failure=True)
             if self.chunk_store is not None:
                 self.chunk_store.checkpoint()
@@ -1234,8 +1223,7 @@ class GameEngine:
         """Tick 循环（后台线程，进程生命周期内常驻）。
 
         异常防护：
-          - 单次 _tick 异常不中断循环，但异常路径也会 sleep，
-            避免紧循环占满 CPU 刷日志；
+          - 单次 _tick 异常不中断循环，但异常路径也会 sleep；
           - 连续异常达到 _MAX_CONSECUTIVE_ERRORS 次触发熔断，
             自动清除运行标志退出循环（资源清理仍由 stop() 负责）。
         """
@@ -1269,8 +1257,7 @@ class GameEngine:
         属性先抓局部快照再使用，避免 stop() 在其他线程将属性
         置 None 时出现 check-then-use 竞态。
 
-        世界失效（提交相位失败，WC-9.2）：停表并停止保存——
-        时间继续走而世界不推进会让"失效"看起来像"正常运行"。
+        世界失效（提交相位失败，WC-9.2）：停表并停止保存。
         """
         clock = self.clock
         executor = self._executor
