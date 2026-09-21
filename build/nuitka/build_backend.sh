@@ -8,6 +8,9 @@
 # 进程 + 真实服务），前端按 PID 无法可靠终止；standalone 下二进制即
 # 服务本身，PID/SIGTERM 语义与前端进程模型一致。
 #
+# 世界区与游戏区是两个独立包（olam / miskhak）：
+# 编译时以仓库根作为 {PYTHONPATH}（两个包均在根）。
+#
 # 版本号仅发布时使用（见 build/ci/publish_release.sh）。
 #
 # 前置: ../.venv/bin/pip install -r build/nuitka/requirements-build.txt
@@ -33,17 +36,18 @@ while IFS= read -r line; do
   EXCLUDES+=(--nofollow-import-to="$line")
 done < "$ROOT/build/nuitka/excludes.txt"
 
+PYPATH="$ROOT"
 # C 加速模块（ctypes 加载）：先确保 .so 为最新（缺失/过期自动重编译）。
-# tile_state 模块级 load_c_extension → 一并编译 _state.c（地形状态内核）。
-cd "$ROOT/backend"
-PYTHONPATH="$ROOT/backend" "$VENV_PY" -c \
-  "from ascend.space import noise, hydrology, streamlines; from ascend.space.tile_state import _N_STATES; print('C 扩展就绪')"
+# generation 三件 + 地形状态内核（olam/modules/terrain/_state.c）。
+cd "$ROOT/olam"
+PYTHONPATH="$PYPATH" "$VENV_PY" -c \
+  "from olam.generation import noise, hydrology, streamlines; from olam.adapters.terrain.tile_state import _N_STATES; print('C 扩展就绪')"
 cd "$ROOT"
 
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-"$VENV_PY" -m nuitka \
+PYTHONPATH="$PYPATH" "$VENV_PY" -m nuitka \
   --standalone \
   --output-dir="$OUT_DIR" \
   --output-filename="$DIST_NAME" \
@@ -51,13 +55,14 @@ mkdir -p "$OUT_DIR"
   --jobs=8 \
   --clang \
   --include-package=cryptography \
-  --include-data-files="$ROOT/backend/ascend/space/*.so=ascend/space/" \
-  --include-data-files="$ROOT/backend/ascend/world_tree/schema.sqlite.sql=ascend/world_tree/" \
-  --include-data-files="$ROOT/backend/ascend/world/declarations/*.json=ascend/world/declarations/" \
+  --include-data-files="$ROOT/olam/generation/*.so=olam/generation/" \
+  --include-data-files="$ROOT/olam/modules/terrain/*.so=olam/modules/terrain/" \
+  --include-data-files="$ROOT/miskhak/events/schema.sqlite.sql=miskhak/events/" \
+  --include-data-files="$ROOT/olam/declarations/*.json=olam/declarations/" \
   "${EXCLUDES[@]}" \
   --product-name="Ascend" \
   --product-version="$PRODUCT_VERSION" \
-  "$ROOT/backend/run_server.py"
+  "$ROOT/miskhak/run_server.py"
 
 # Nuitka 的 dist 目录名取自脚本名（run_server.dist），统一改为 server/
 # （与发行布局 <根>/server/server 一致，前端按此路径探测）

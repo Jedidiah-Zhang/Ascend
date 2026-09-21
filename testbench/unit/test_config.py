@@ -1,0 +1,100 @@
+"""config 常量关系一致性测试。
+
+验证时间/季节/边界常量之间的数学关系，防止单独改动一处导致失配。
+"""
+
+from olam import constants as config
+from miskhak import config as game_config
+
+
+class TestTimeConstants:
+    """时间常量关系。"""
+
+    def test_T1_tick_dt_matches_rate(self):
+        """TICK_DT × TICK_RATE = 1 秒。"""
+        assert config.TICK_DT * config.TICK_RATE == 1.0
+
+    def test_T2_minute_hour_day_chain(self):
+        """分/时/天换算链一致。"""
+        assert config.GAME_HOUR == 60 * config.GAME_MINUTE
+        assert config.GAME_DAY == 24 * config.GAME_HOUR
+
+    def test_T3_year_is_360_days(self):
+        """1 年 = 360 天（4 季 × 90 天）。"""
+        assert config.GAME_YEAR == 360 * config.GAME_DAY
+        assert config.SEASONS_PER_YEAR * config.SEASON_LENGTH_DAYS == 360
+        assert config.SEASON_LENGTH * config.SEASONS_PER_YEAR == config.GAME_YEAR
+
+
+class TestBoundsConstants:
+    """物理边界一致性。"""
+
+    def test_T4_param_bounds_align_with_dedicated_bounds(self):
+        """PARAM_BOUNDS 与单独定义的 *_BOUNDS 数值一致。"""
+        assert config.PARAM_BOUNDS["temperature"] == config.TEMP_BOUNDS
+        assert config.PARAM_BOUNDS["humidity"] == config.HUMIDITY_BOUNDS
+        assert config.PARAM_BOUNDS["wind_speed"] == config.WIND_BOUNDS
+        assert config.PARAM_BOUNDS["sunshine"] == config.SUNSHINE_BOUNDS
+
+    def test_T5_bounds_are_ordered(self):
+        """所有边界 (lo, hi) 满足 lo < hi。"""
+        for name, (lo, hi) in config.PARAM_BOUNDS.items():
+            assert lo < hi, f"PARAM_BOUNDS[{name}] 无序"
+
+
+class TestWorldConstants:
+    """世界生成常量。"""
+
+    def test_T6_birth_elevation_range_ordered(self):
+        """出生点海拔范围有序。"""
+        assert config.BIRTH_ELEV_MIN < config.BIRTH_ELEV_MAX
+
+    def test_T7_positive_sizes(self):
+        """尺寸/容量常量为正（世界结构 + 游戏运行参数）。"""
+        assert config.TILE_MAP_SIZE > 0
+        assert game_config.CHUNK_STORE_MAX_SIZE > 0
+        assert game_config.INITIAL_CHUNK_RADIUS >= 0
+        assert game_config.TILE_WORKERS > 0
+
+
+class TestGenFingerprintConstants:
+    """生成环境指纹常量名单。"""
+
+    def test_T8_constant_names_all_resolve(self):
+        """名单内每个名字必须可解析（防名单漂移——漏改=指纹失真）。"""
+        for name in config.CONTINENT_GEN_CONSTANT_NAMES:
+            assert hasattr(config, name), f"指纹名单常量缺失: {name}"
+            assert isinstance(getattr(config, name), (int, float, tuple)), (
+                f"指纹名单常量类型异常: {name}"
+            )
+
+    def test_T9_fingerprint_covers_climate_thresholds(self):
+        """气候阈值（注入 C 的常量）必须在指纹覆盖内。"""
+        for name in (
+            "LAPSE_RATE", "ALPINE_ALTITUDE", "POLAR_TEMP", "DESERT_RAINFALL",
+            "STEPPE_RAINFALL", "STEPPE_MIN_TEMP", "TROPICAL_TEMP",
+            "TEMPERATE_TEMP", "RAINFOREST_RAINFALL", "TAIGA_RAINFALL",
+        ):
+            assert name in config.CONTINENT_GEN_CONSTANT_NAMES
+
+
+class TestTerrainDistributionConstants:
+    """地形分布阈值常量。"""
+
+    def test_T10_band_widths_ordered(self):
+        """距水带宽度递增：沙滩 < 冲积 < 湿地。"""
+        assert 0 < config.SAND_BEACH_BAND_M < config.ALLUVIAL_BAND_M
+        assert config.ALLUVIAL_BAND_M < config.WETLAND_BAND_M
+
+    def test_T11_gravel_band_ordered(self):
+        """GRAVEL 海拔区间有序。"""
+        lo, hi = config.GRAVEL_ALT_BAND
+        assert 0 < lo < hi
+
+    def test_T12_thresholds_sane(self):
+        """阈值取值域合理。"""
+        assert config.ROCK_LINE_ELEV > 0
+        assert 0 < config.BARE_ROCK_SLOPE < 1.0  # 坡度比值域 (0,1)
+        assert config.ARID_RAINFALL_MM > 0
+        assert config.PERMAFROST_TEMP_C < 0
+

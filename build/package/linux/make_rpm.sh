@@ -39,7 +39,7 @@ AI 原生 2D 俯视生存经营模拟游戏 — 基因改造驱动群体演化�
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}/opt/ascend %{buildroot}/usr/bin
-cp -r "$STAGE"/ascend.x86_64 "$STAGE"/ascend.pck "$STAGE"/server %{buildroot}/opt/ascend/
+cp -r "$STAGE"/ascend.x86_64 "$STAGE"/ascend.pck "$STAGE"/server "$STAGE"/data "$STAGE"/lang %{buildroot}/opt/ascend/
 ln -s /opt/ascend/ascend.x86_64 %{buildroot}/usr/bin/ascend
 mkdir -p %{buildroot}/usr/share/applications %{buildroot}/usr/share/icons/hicolor/256x256/apps
 cp "$ROOT"/build/package/linux/ascend.desktop %{buildroot}/usr/share/applications/

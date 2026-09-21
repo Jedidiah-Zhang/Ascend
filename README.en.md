@@ -47,6 +47,19 @@ The currently implemented game features are limited to world generation, time an
 
 Engineering-level development principles (deep modules and low coupling, no patch-style code, frontend/backend separation, etc.) are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Package Structure
+
+Core packages use lowercase ASCII transliterations of Hebrew names:
+
+| Package | Hebrew and meaning | Responsibility |
+| --- | --- | --- |
+| `olam` | עולם · world | World declarations, compilation, simulation runtime, and causal protocols |
+| `miskhak` | משחק · game | Game wrapper, server, and Godot client (`miskhak/client/`) |
+| `nefesh` | נפש · life, self, and psyche | Agent cognition for Phase 2 (reserved) |
+| `kheker` | חקר · inquiry | Research probes, declaration verification, acceptance checks, and Lean proofs |
+
+`testbench/` contains the Python test suites.
+
 ## Getting Started
 
 Requirements: Python 3.14, Godot 4.x.
@@ -54,10 +67,10 @@ Requirements: Python 3.14, Godot 4.x.
 ```bash
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
-cd backend && ../.venv/bin/python run_server.py   # start the backend (localhost by default)
+.venv/bin/python miskhak/run_server.py   # run from the repo root (localhost by default)
 ```
 
-Open `frontend/` with Godot to run the game. Packaging and release: see [build/README.md](build/README.md).
+Open `miskhak/client/` with Godot to run the game. Packaging and release: see [build/README.md](build/README.md).
 
 ## Documentation
 
@@ -71,6 +84,5 @@ Open `frontend/` with Godot to run the game. Packaging and release: see [build/R
 See [CONTRIBUTING.md](CONTRIBUTING.md) (design principles, development workflow, testing and commit conventions). Please read [CLA.md](CLA.md) before submitting a PR.
 
 ## License
-
 
 Licensed under the [CC BY-NC-SA 4.0](LICENSE) license. Commercial use requires contacting the author.

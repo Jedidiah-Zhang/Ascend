@@ -11,11 +11,11 @@ __pycache__/
 logs/
 .ascend_token
 
-# 覆盖率数据（生成在 backend/tests/ 下）
+# 覆盖率数据（生成在 testbench/ 下）
 .coverage
 .coverage.*
-backend/tests/.coverage
-backend/tests/.coverage.*
+testbench/.coverage
+testbench/.coverage.*
 
 # testmon 依赖库（本地生成，每台机器独立）
 .testmondata
@@ -29,33 +29,33 @@ backend/tests/.coverage.*
 .ascend_history
 
 # 运行数据（归档、存档等，根目录 save/；注意 /save/ 锚定，
-# 否则会误排除 backend/ascend/save/ 源码模块）
+# 否则会误排除 miskhak/save/ 源码模块）
 /save/
 
 # 可视化输出（测试生成的 PNG，不提交）
-backend/tools/visual/output/
+miskhak/tools/visual/output/
 
 # 研究探针的可视化输出（运行期生成）
-research/figures/
+kheker/figures/
 
-# Lean 项目（research/lean/）：构建缓存与依赖不提交
-research/lean/.lake/
-research/lean/lake-packages/
+# Lean 项目（kheker/lean/）：构建缓存与依赖不提交
+kheker/lean/.lake/
+kheker/lean/lake-packages/
 
 # Godot 编辑器插件（开发工具，非游戏代码；GUT 本地手动安装后前端测试本地运行）
-frontend/addons/
+miskhak/client/addons/
 
-# 打包时从 repo/lang/ 同步的语言副本（开发期前端直读 res://../lang）
-frontend/lang/
+# 打包时从 miskhak/lang 同步的语言副本（开发期客户端直读 res://../lang = miskhak/lang）
+miskhak/client/lang/
 
 # 打包时从 build/nuitka/version.txt 同步的版本文件（主菜单显示用）
-frontend/version.txt
+miskhak/client/version.txt
 
 # 前端资源文件（不开源：美术素材、音频等）
-frontend/assets/
+miskhak/client/assets/
 
 # GUT 测试报告（生成文件）
-frontend/test_report.xml
+miskhak/client/test_report.xml
 
 # 构建产物（build/ 下的脚本与配置正常提交）
 #   work/  = 中间产物（导出、编译缓存、舞台目录，构建时清空）

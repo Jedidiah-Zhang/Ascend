@@ -6,11 +6,13 @@
 
 流程:
     1. 轮询 TCP 连接直到端口就绪（打包产物启动中，默认最长 45s）
-    2. 发送 hello{token, protocol_version}，等待 hello_ack
+    2. 发送 hello{token, protocol_version, tile_blob_version}，等待 hello_ack
     3. 发送 save_list 请求，等待 response（验证 handler 注册与存档层就绪）
 
-帧格式与 backend/ascend/net/protocol.py 保持一致（1B 版本 + 4B 大端长度 + JSON 体）；
+帧格式与 miskhak/net/protocol.py 保持一致（1B 版本 + 4B 大端长度 + JSON 体）；
 故意独立实现（不 import 后端代码），使冒烟能暴露打包产物自身的协议破损。
+协议常量随产物契约手动同步（版本表见 miskhak/net/protocol.py 与
+miskhak/client/scripts/config.gd）。
 
 退出码: 0 = 通过；1 = 失败（附时间线，便于与产物日志对照）。
 """
@@ -23,13 +25,15 @@ import sys
 import time
 
 VERSION_BYTE: int = 0x01
+# tile 数据 BLOB 版本（与 olam/content/tile_grid.py 的 TILE_GRID_VERSION 对账）
+TILE_BLOB_VERSION: int = 1
 MAX_MESSAGE: int = 64 * 1024 * 1024
 DEFAULT_TIMEOUT: float = 45.0
 RECV_CHUNK: int = 4096
 
 
 def encode_message(msg: dict) -> bytes:
-    """编码一帧（JSON 体 + 版本与长度前缀）。"""
+    """按产物协议编码一帧；帧布局由 smoke 独立实现，不 import 后端。"""
     body = json.dumps(msg, ensure_ascii=False).encode("utf-8")
     return struct.pack(">BI", VERSION_BYTE, len(body)) + body
 
@@ -108,7 +112,11 @@ def main() -> int:
 
         sock.sendall(encode_message({
             "type": "hello",
-            "payload": {"token": token, "protocol_version": VERSION_BYTE},
+            "payload": {
+                "token": token,
+                "protocol_version": VERSION_BYTE,
+                "tile_blob_version": TILE_BLOB_VERSION,
+            },
         }))
         ack = recv_frame(sock, buf, deadline)
         if ack.get("type") != "hello_ack":

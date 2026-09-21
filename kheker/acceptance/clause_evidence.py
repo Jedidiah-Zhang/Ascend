@@ -1,0 +1,454 @@
+"""条款↔证据对账表（《世界契约》附录 D.5 / WC-11.2）。
+
+每条条款一行：``clause``（契约条款号）、``status``（covered / partial /
+gap）、``checks``（验收判据码，见 ``world_checks.ALL_CHECKS``）、
+``evidence``（测试/文档路径，相对仓库根）、``positive``/``negative``
+（正/负证据的一句话）、``note``（partial/gap 必须给出原因与补齐计划）。
+
+门禁：``clause_ledger.py --check`` 校验条款集合、状态、检查码与证据文件；
+本表与契约条款一一对应，缺条款/未知条款/悬空引用即红。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+__all__ = ["CLAUSES", "ClauseEvidence"]
+
+
+@dataclass(frozen=True, slots=True)
+class ClauseEvidence:
+    """一条条款的证据登记。"""
+
+    clause: str
+    status: str
+    checks: tuple[str, ...] = ()
+    evidence: tuple[str, ...] = ()
+    positive: str = ""
+    negative: str = ""
+    note: str = ""
+    tags: tuple[str, ...] = field(default=())
+
+
+CLAUSES: tuple[ClauseEvidence, ...] = (
+
+    ClauseEvidence(
+        "WC-0.1", "covered",
+        evidence=("docs/研究理论/世界契约.md",),
+        positive="承诺范围（世界语义/研究层边界）成文",
+        negative="范围外事项不主张（综述与阶段二文档承接）",
+    ),
+    ClauseEvidence(
+        "WC-0.2", "covered",
+        evidence=("docs/研究理论/世界契约.md",
+                  "docs/研究理论/世界架构/00-总纲.md"),
+        positive="契约 = 唯一规范源；总纲为其工程形态",
+        negative="文档冲突以契约为准（WC-11.4）",
+    ),
+    ClauseEvidence(
+        "WC-0.3", "covered",
+        evidence=("docs/研究理论/世界契约.md",
+                  "kheker/acceptance/clause_evidence.py"),
+        positive="条款真值地位（规范/说明/实现注记分级）",
+        negative="实现注记不具规范效力（条款引用以契约为准）",
+    ),
+    ClauseEvidence(
+        "WC-1.1", "covered",
+        checks=("C0", "C1"),
+        evidence=("testbench/world/test_compile.py",
+                  "testbench/world/test_assembly.py",
+                  "olam/generation/__init__.py",
+                  "testbench/world/test_generation.py"),
+        positive="程序身份 = 契约 + 模块摘要 + 参数 + 旋钮 + 调度 + 内核；世界身份 = 程序身份 + 种子；生成程序身份 = 版本 + 常量 + 源码指纹",
+        negative="改任一模块/参数/生成源码/常量 → 身份变（复现性与清单对齐测试）",
+    ),
+    ClauseEvidence(
+        "WC-1.2", "covered",
+        checks=("C0",),
+        evidence=("testbench/integration/test_game_engine.py",
+                  "testbench/world/test_assembly.py"),
+        positive="身份组分变化即新世界；manifest 记录声明/程序视图",
+        negative="旧身份存档 fail-closed 拒载（声明不一致测试）",
+    ),
+    ClauseEvidence(
+        "WC-1.3", "covered",
+        evidence=("testbench/world/test_timeline.py",
+                  "testbench/world/test_protocol.py"),
+        positive="结构变更 = 换世界；运行内机制替换不在干预目标空间",
+        negative="timeline 拒绝 mechanism 空间（结构替换不在一局运行内）",
+    ),
+    ClauseEvidence(
+        "WC-1.4", "covered",
+        checks=("I0", "I1"),
+        evidence=("testbench/world/test_research.py",
+                  "testbench/world/test_research_protocols.py"),
+        positive="同程序 + 不同种子 = 世界族；控制世界模板构造配对世界",
+        negative="身份不符即拒载（跨世界配对需同程序）",
+    ),
+    ClauseEvidence(
+        "WC-2.1", "covered",
+        checks=("W3",),
+        evidence=("testbench/world/test_dynamic_instances.py",
+                  "testbench/world/test_instances.py"),
+        positive="实例域 = 声明（lattice/entity/global）+ 坐标元数（axes）",
+        negative="越界/未物化/不存在实体的实例操作拒绝",
+    ),
+    ClauseEvidence(
+        "WC-2.2", "covered",
+        checks=("W3",),
+        evidence=("testbench/world/test_instances.py",
+                  "testbench/world/test_research_protocols.py"),
+        positive="spatial 偏移 + 边界算子 + 聚合 = 支撑域；level/link 关系显式声明",
+        negative="reject 边界越界抛错；悬空链接 fail-closed",
+    ),
+    ClauseEvidence(
+        "WC-2.3", "covered",
+        checks=("W3", "W4"),
+        evidence=("testbench/world/test_dynamic_instances.py",
+                  "testbench/world/test_instances.py",
+                  "testbench/world/test_generation.py"),
+        positive="物化无关：多 chunk / 不同物化序逐位一致；生成侧与生成顺序/批量形状无关",
+        negative="未物化实例不参与求值（无隐式加载）",
+    ),
+    ClauseEvidence(
+        "WC-3.1", "covered",
+        checks=("C0", "L3-状态"),
+        evidence=("testbench/world/test_meta.py",
+                  "testbench/world/test_protocol.py"),
+        positive="槽位声明字段（载体/持久类/值域/权限/写者/重算）+ 研究元数据",
+        negative="未声明槽位不存在（引用即编译失败）",
+    ),
+    ClauseEvidence(
+        "WC-3.2", "covered",
+        checks=("C0", "L3-状态"),
+        evidence=("testbench/world/test_compile.py",),
+        positive="闭合公理：单写者 + 引用存在 + 无环（编译期）",
+        negative="双写者/未知引用/同帧逆序即编译失败",
+    ),
+    ClauseEvidence(
+        "WC-3.3", "covered",
+        checks=("W2", "W7"),
+        evidence=("testbench/world/test_harvest.py",
+                  "testbench/world/test_conservation.py"),
+        positive="事件 = 状态槽位 + 触发机制（采集/结算）；义务即状态（周期游标）",
+        negative="不触发事件世界不动（事件门控判据 + 变异探针）",
+    ),
+    ClauseEvidence(
+        "WC-3.4", "covered",
+        checks=("L3-状态",),
+        evidence=("testbench/world/test_runtime.py",
+                  "testbench/world/test_assembly.py"),
+        positive="state 入档 / derived 重算 / parameter 装配 / external 输入",
+        negative="派生与外部槽位不入快照（快照校验拒绝混入）",
+    ),
+    ClauseEvidence(
+        "WC-3.5", "covered",
+        checks=("L3-状态", "W4"),
+        evidence=("testbench/world/test_transaction.py",
+                  "testbench/world/test_kernel.py"),
+        positive="规范载荷（标量/场/稀疏场）+ 规范摘要",
+        negative="载荷含未声明槽位或字段即拒绝",
+    ),
+    ClauseEvidence(
+        "WC-3.6", "covered",
+        checks=("W5",),
+        evidence=("testbench/world/test_research.py",
+                  "testbench/world/test_timeline.py"),
+        positive="intervene / observe / record 权限门禁（时间线 + 观测审计）",
+        negative="未授权观测/干预拒绝（泄漏审计）",
+    ),
+    ClauseEvidence(
+        "WC-4.1", "covered",
+        checks=("C0", "C2"),
+        evidence=("testbench/world/test_compile.py",),
+        positive="机制 = 父引用 + 方程 + 实现；微步 = 更新组序（阶段/周期/事件）",
+        negative="同帧父引用必须由更早的组写入（编译拒绝）",
+    ),
+    ClauseEvidence(
+        "WC-4.2", "covered",
+        checks=("C2", "W0"),
+        evidence=("testbench/world/test_driver.py",
+                  "testbench/world/test_runtime.py"),
+        positive="纯函数求值 + 只读已提交/本帧影子 + 唯一驱动者（调度器）",
+        negative="世界写路径不得自建订阅（门禁扫描）",
+    ),
+    ClauseEvidence(
+        "WC-4.3", "covered",
+        checks=("W0", "L3-历史"),
+        evidence=("testbench/world/test_records.py",),
+        positive="机制无内部持久内存：记录回放逐位一致",
+        negative="记录不完整（缺父值/方程版本）即拒绝登记",
+    ),
+    ClauseEvidence(
+        "WC-4.4", "covered",
+        checks=("C1",),
+        evidence=("testbench/world/test_kernel.py",
+                  "testbench/world/test_kernel_fixed.py",
+                  "testbench/world/test_kernel_tables.py",
+                  "testbench/world/test_kernel_enclosure.py"),
+        positive="定点原语 + 预计算表超越函数 + 整数随机；内核摘要进世界身份",
+        negative="打包缺实现摘要即 fail-closed（打包身份回退测试）",
+    ),
+    ClauseEvidence(
+        "WC-4.5", "covered",
+        checks=("C0", "L3-CRN"),
+        evidence=("testbench/world/test_kernel.py",
+                  "testbench/world/test_compile.py"),
+        positive="禁用 hash()、地址纯函数、摘要规范编码（跨进程一致）",
+        negative="编译身份复现（同装配同身份）",
+    ),
+    ClauseEvidence(
+        "WC-5.1", "covered",
+        checks=("L3-CRN",),
+        evidence=("testbench/world/test_kernel.py",),
+        positive="地址 = 命名空间 + 实例 + 用途 + 时间 + 序号；(种子, 地址) → 值纯函数",
+        negative="地址分量序不同即不同值（编码无歧义测试）",
+    ),
+    ClauseEvidence(
+        "WC-5.2", "covered",
+        checks=("L3-CRN",),
+        evidence=("testbench/world/test_kernel.py",),
+        positive="求值顺序无关（同地址同值）；跳过不回收",
+        negative="draw_index 变化即不同值（顺序无关性测试）",
+    ),
+    ClauseEvidence(
+        "WC-5.3", "covered",
+        checks=("W7",),
+        evidence=("testbench/world/test_instances.py",
+                  "testbench/world/test_harvest.py"),
+        positive="实体身份稳定（驱动层派生 ID，跨帧不变）",
+        negative="悬空引用 fail-closed；未指派走声明的缺失值",
+    ),
+    ClauseEvidence(
+        "WC-5.4", "partial",
+        evidence=("testbench/world/test_compile.py",),
+        positive="地址登记唯一（编译器拒绝重复 (namespace, purpose)）",
+        negative="重复声明即编译失败",
+        note="跨机制显式共享同一地址的声明形式（共享声明）待阶段二按需引入；当前共享只能经同一机制的多次抽取。",
+    ),
+    ClauseEvidence(
+        "WC-5.5", "covered",
+        checks=("C0",),
+        evidence=("testbench/world/test_compile.py",
+                  "testbench/world/test_protocol.py"),
+        positive="AddressUse 进模块摘要与世界身份；命名空间/用途全局唯一",
+        negative="重复地址声明即拒绝",
+    ),
+    ClauseEvidence(
+        "WC-5.6", "covered",
+        checks=("L3-CRN",),
+        evidence=("testbench/world/test_kernel.py",),
+        positive="256-bit → 离散区间取模映射；span ≤ 2⁶⁴ 偏差可忽略",
+        negative="空区间（max < min）拒绝",
+    ),
+    ClauseEvidence(
+        "WC-5.7", "covered",
+        evidence=("olam/generation/__init__.py",
+                  "testbench/world/test_generation.py",
+                  "olam/generation/weather_field/field.py"),
+        positive="统一天气场声明为 generation.weather_field（指纹 + 采样协议）；噪声通道经地址随机派生，单点与批量共享同一合成路径",
+        negative="采样顺序/批量形状不影响取值（生成程序测试）；裸 seed 偏移在审查约定外",
+    ),
+    ClauseEvidence(
+        "WC-5.8", "covered",
+        checks=("L3-历史",),
+        evidence=("testbench/world/test_records.py",),
+        positive="记录携带随机地址与取值；重算逐位一致",
+        negative="缺声明的随机地址即拒绝登记",
+    ),
+    ClauseEvidence(
+        "WC-6.1", "covered",
+        checks=("W2",),
+        evidence=("testbench/world/test_timeline.py",),
+        positive="逐帧值替换（计划窗口 [start, stop)）；参数/特征核干预",
+        negative="非法窗口/目标/时长类别拒绝",
+    ),
+    ClauseEvidence(
+        "WC-6.2", "covered",
+        checks=("W2", "L3-历史"),
+        evidence=("testbench/world/test_timeline.py",),
+        positive="记录只追加；撤销 = 后续帧不再记录，既有记录不改写",
+        negative="撤销后历史帧仍命中当时记录",
+    ),
+    ClauseEvidence(
+        "WC-6.3", "covered",
+        checks=("W5",),
+        evidence=("testbench/world/test_timeline.py",
+                  "testbench/world/test_runtime.py"),
+        positive="登记校验：目标存在/由机制写入/权限/值域/实例域/参数被消费",
+        negative="未接线/未物化/越域/越界实例拒绝",
+    ),
+    ClauseEvidence(
+        "WC-6.4", "covered",
+        checks=("W1", "W2"),
+        evidence=("testbench/world/test_timeline.py",
+                  "testbench/world/test_runtime.py"),
+        positive="同帧后到覆盖先到；被替换实例断开原入边（写者跳过）",
+        negative="值覆盖不消费随机地址（CRN 配对）",
+    ),
+    ClauseEvidence(
+        "WC-6.5", "covered",
+        checks=("W4",),
+        evidence=("testbench/unit/test_save_completeness.py",),
+        positive="干预不入状态；注入核由时间线投影重建",
+        negative="载荷缺核规格/未注册特征类型拒绝（fail-closed）",
+    ),
+    ClauseEvidence(
+        "WC-7.1", "covered",
+        checks=("W4",),
+        evidence=("testbench/unit/test_save_completeness.py",
+                  "testbench/world/test_driver.py"),
+        positive="同初态 + 同输入 → 逐位同轨迹（双跑一致）",
+        negative="世界失效后拒绝推进/保存（不重放）",
+    ),
+    ClauseEvidence(
+        "WC-7.2", "covered",
+        checks=("I1",),
+        evidence=("testbench/world/test_research.py",),
+        positive="实验单位 ω（种子 + 世界身份）+ 臂；按单位划分",
+        negative="跨单位混样不在协议内（控制世界模板按单位构造）",
+    ),
+    ClauseEvidence(
+        "WC-7.3", "covered",
+        checks=("I1", "L3-CRN"),
+        evidence=("testbench/world/test_research.py",),
+        positive="未干预随机地址逐位一致（CRN 配对）",
+        negative="地址随机有序变异探针变红",
+    ),
+    ClauseEvidence(
+        "WC-7.4", "covered",
+        checks=("I1",),
+        evidence=("testbench/world/test_research.py",),
+        positive="反事实 = 同 ω 下臂间配对效应（可复现）",
+        negative="无效干预控制世界（I1 对照）",
+    ),
+    ClauseEvidence(
+        "WC-7.5", "covered",
+        checks=("W4", "L3-状态"),
+        evidence=("testbench/world/test_momentum.py",
+                  "testbench/world/test_dynamic_instances.py"),
+        positive="快照携带 lag 历史（lag=2 已锁定）；恢复续跑逐位一致",
+        negative="去掉历史轨迹分叉（历史是承重的）",
+    ),
+    ClauseEvidence(
+        "WC-7.6", "covered",
+        checks=("W4",),
+        evidence=("testbench/world/test_transaction.py",
+                  "testbench/world/test_driver.py"),
+        positive="影子写 + 整帧原子提交；记录回调在提交后",
+        negative="提交前失败整帧回滚（不变量 reject 回滚测试）",
+    ),
+    ClauseEvidence(
+        "WC-8.1", "covered",
+        checks=("W4", "L3-状态"),
+        evidence=("testbench/world/test_runtime.py",
+                  "testbench/world/test_instances.py"),
+        positive="快照 = state 槽位 + 物化集合 + 实体集合 + lag 历史",
+        negative="缺槽位/多槽位/身份不符拒绝",
+    ),
+    ClauseEvidence(
+        "WC-8.2", "covered",
+        checks=("W4",),
+        evidence=("testbench/unit/test_save_completeness.py",
+                  "testbench/world/test_transaction.py"),
+        positive="提交失败保留最后有效检查点；state 先于 chunk 的恢复组合",
+        negative="世界失效拒绝覆盖检查点",
+    ),
+    ClauseEvidence(
+        "WC-8.3", "covered",
+        checks=("W4",),
+        evidence=("testbench/world/test_assembly.py",
+                  "testbench/integration/test_game_engine.py"),
+        positive="manifest 记录声明/程序视图（身份 + 模块摘要 + 观测协议摘要）",
+        negative="旧身份/异种子/篡改声明拒绝加载（fail-closed）",
+    ),
+    ClauseEvidence(
+        "WC-9.1", "covered",
+        checks=("C0",),
+        evidence=("testbench/world/test_meta.py",
+                  "testbench/world/test_timeline.py"),
+        positive="槽位/参数声明值域（类型 + 界 + 枚举 + 缺失值）",
+        negative="越域输入/干预拒绝（fail-closed）",
+    ),
+    ClauseEvidence(
+        "WC-9.2", "covered",
+        checks=("W4",),
+        evidence=("testbench/world/test_driver.py",
+                  "testbench/world/test_transaction.py"),
+        positive="提交相位失败 → 世界失效（轨迹作废），不重试不重放",
+        negative="失效后推进/保存拒绝",
+    ),
+    ClauseEvidence(
+        "WC-9.3", "partial",
+        evidence=("miskhak/app.py",
+                  "miskhak/net/"),
+        positive="世界核心提供失效信号（WorldInvalidatedError）与拒绝保存路径",
+        negative="失效世界拒绝落盘（保留最后有效检查点）",
+        note="表现层降级（前端提示/会话处理）属游戏前端职责；世界核心只提供信号，降级行为随游戏层测试。",
+    ),
+    ClauseEvidence(
+        "WC-9.4", "covered",
+        checks=("C1",),
+        evidence=("testbench/world/test_kernel.py",
+                  "testbench/world/test_kernel_tables.py"),
+        positive="定点溢出显式失败；预计算表误差声明化（ε 进声明）",
+        negative="越界即拒绝（clamp 必须由机制显式声明）",
+    ),
+    ClauseEvidence(
+        "WC-10.1", "covered",
+        checks=("W5",),
+        evidence=("testbench/world/test_research.py",
+                  "testbench/unit/test_observation_boundary.py"),
+        positive="研究通道与玩法事件分库（记录只在研究 API/终端）",
+        negative="消费 handler 不得导入研究记录（源码门禁）",
+    ),
+    ClauseEvidence(
+        "WC-10.2", "covered",
+        checks=("W5",),
+        evidence=("testbench/world/test_research.py",
+                  "testbench/world/test_research_protocols.py"),
+        positive="观测白名单 + 量化/缺失/噪声协议 + 泄漏审计",
+        negative="未授权槽位/未知槽位观测拒绝",
+    ),
+    ClauseEvidence(
+        "WC-10.3", "covered",
+        checks=("I0", "I1"),
+        evidence=("testbench/world/test_research_protocols.py",
+                  "testbench/world/test_research.py"),
+        positive="G / Γ·Res / E 协议 + oracle + 控制世界模板",
+        negative="机制替换控制世界（结构变更 = 换世界）",
+    ),
+    ClauseEvidence(
+        "WC-10.4", "covered",
+        checks=("L3-历史",),
+        evidence=("testbench/world/test_records.py",),
+        positive="记录是证据：逐机制留痕 + 可重算（逐位一致）",
+        negative="坏记录拒绝登记（fail-closed）",
+    ),
+    ClauseEvidence(
+        "WC-11.1", "covered",
+        evidence=("docs/研究理论/世界契约.md",),
+        positive="条文语气分级（规范/说明/实现注记）",
+        negative="实现注记不具规范效力",
+    ),
+    ClauseEvidence(
+        "WC-11.2", "covered",
+        evidence=("kheker/acceptance/clause_evidence.py",
+                  "kheker/acceptance/clause_ledger.py"),
+        positive="本对账表 + 门禁（条款集合/状态/检查码/证据文件）",
+        negative="缺条款/未知条款/悬空检查码/缺证据文件即红",
+    ),
+    ClauseEvidence(
+        "WC-11.3", "covered",
+        evidence=("docs/研究理论/世界契约.md",),
+        positive="契约变更记录成文（v0.1 → v0.2）；声明数据变更只改世界身份",
+        negative="实现先行不豁免变更登记（身份变更与契约版本分别记录）",
+    ),
+    ClauseEvidence(
+        "WC-11.4", "covered",
+        evidence=("docs/研究理论/世界契约.md",
+                  "docs/研究理论/世界架构/00-总纲.md"),
+        positive="文档从属：总纲/技术文档低于契约，冲突以契约为准",
+        negative="实现注记与契约冲突时以契约为准（降级文档只允许引用条款）",
+    ),
+)

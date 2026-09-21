@@ -22,7 +22,7 @@ rm -rf "$PKG"
 mkdir -p "$PKG/DEBIAN" "$PKG/opt/ascend" "$PKG/usr/bin" \
   "$PKG/usr/share/applications" "$PKG/usr/share/icons/hicolor/256x256/apps"
 
-cp -r "$STAGE/ascend.x86_64" "$STAGE/ascend.pck" "$STAGE/server" "$PKG/opt/ascend/"
+cp -r "$STAGE/ascend.x86_64" "$STAGE/ascend.pck" "$STAGE/server" "$STAGE/data" "$STAGE/lang" "$PKG/opt/ascend/"
 ln -s /opt/ascend/ascend.x86_64 "$PKG/usr/bin/ascend"
 cp "$ROOT/build/package/linux/ascend.desktop" "$PKG/usr/share/applications/"
 cp "$ROOT/build/assets/ascend.svg" "$PKG/usr/share/icons/hicolor/256x256/apps/"

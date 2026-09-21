@@ -57,8 +57,8 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp -r "$SERVER_SRC" "$STAGE/server"
 # 后端 i18n 按模块相对路径解析：Nuitka standalone 下 __file__ 含包前缀，
-# ascend/i18n.py 上三级 = 舞台根 → lang 配送到 STAGE/lang
-cp -r "$ROOT/lang" "$STAGE/lang"
+# i18n 以 miskhak 包为锚向外查找 lang → 语言文件配送到 STAGE/lang
+cp -r "$ROOT/miskhak/lang" "$STAGE/lang"
 # 后端内容数据（第 1 层数据驱动，import 期强依赖；→ STAGE/data）
 cp -r "$ROOT/data" "$STAGE/data"
 

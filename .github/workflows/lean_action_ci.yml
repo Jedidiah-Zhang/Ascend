@@ -3,17 +3,13 @@ name: Lean Action CI
 on:
   push:
     paths: &paths
-      - "research/lean/**"
-      - "research/equations/**"
-      - "research/acceptance/**"
-      - "backend/ascend/world/**"
-      - "backend/ascend/weather/**"
-      - "backend/ascend/space/**"
-      - "backend/ascend/save/**"
-      - "backend/ascend/game.py"
-      - "backend/ascend/config.py"
-      - "backend/tests/**"
-      - "data/world.json"
+      - "kheker/lean/**"
+      - "kheker/equations/**"
+      - "kheker/acceptance/**"
+      - "olam/**"
+      - "miskhak/**"
+      - "testbench/**"
+      - "data/**"
   pull_request:
     paths: *paths
   workflow_dispatch:
@@ -25,21 +21,22 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: 生产声明快照漂移巡检
-        run: python3 research/equations/export_registry.py --check
+        run: python3 kheker/equations/export_registry.py --check
       # 声明数据漂移巡检（防漂移①）：来源改动未重新生成 GenDeclarationData.lean 时
-      # lake build 不会变红，必须独立门禁。gen_lean.py 仅用 stdlib + ascend.config（stdlib-only）。
+      # lake build 不会变红，必须独立门禁。gen_lean.py 仅用 stdlib + 世界常量
+      # （stdlib-only）。
       - name: 声明数据漂移巡检（gen_lean.py --check）
-        run: python3 research/equations/gen_lean.py --check
+        run: python3 kheker/equations/gen_lean.py --check
       # 实现内容摘要表漂移巡检（实现内容摘要）：改实现未重生成 impl_digests.json
       # 时打包身份会静默漂移，必须独立门禁（verify_equations 亦含该步）。
       - name: 实现内容摘要表漂移巡检
-        run: python3 research/equations/export_impl_digests.py --check
+        run: python3 kheker/equations/export_impl_digests.py --check
       - uses: leanprover/lean-action@v1
         with:
-          lake-package-directory: research/lean
+          lake-package-directory: kheker/lean
 
   # 世界验收门禁（判据全绿）：C0–C2 / W0–W5 / I0–I1 任一判据失败即红。
-  # 只依赖 Python 标准库 + 后端源码（不编译 C 扩展的路径也不引入 Lean）。
+  # 只依赖 Python 标准库 + 世界源码（不编译 C 扩展的路径也不引入 Lean）。
   acceptance:
     runs-on: ubuntu-latest
 
@@ -51,20 +48,20 @@ jobs:
       - name: 安装后端依赖
         run: python -m pip install -q -r requirements.txt
       - name: Lean 实例漂移巡检（生产声明 → UnrolledDag）
-        run: python research/acceptance/run_acceptance.py --check
+        run: python kheker/acceptance/run_acceptance.py --check
       # 误差界一致性门禁：G7 核验线性边差商 ≤ L 与
       # 跳变边 jump_bound；G3 复核反事实误差界（含跳变条件标注）。
       - name: 声明图与见证一致性巡检（graph_check G7）
-        run: python research/equations/graph_check.py
+        run: python kheker/equations/graph_check.py
       - name: 世界验收 runner（C0–C2 / W0–W7 / I0–I1 / L3）
-        run: python research/acceptance/run_acceptance.py --json acceptance.json
+        run: python kheker/acceptance/run_acceptance.py --json acceptance.json
       # 条款↔证据对账（WC-11.2）：契约条款、判据码与证据文件一一对应
       - name: 条款↔证据对账门禁
-        run: python research/acceptance/clause_ledger.py --check
+        run: python kheker/acceptance/clause_ledger.py --check
       # 变异探针（判别力）：破坏一处生产实现（观测不量化 / 泄露检测恒真 /
       # 边界算子环绕 / 注入核投影置空），对应判据必须变红——防止判据徒有其表。
       - name: 生产实现变异探针
-        run: python research/acceptance/run_acceptance.py --mutation
+        run: python kheker/acceptance/run_acceptance.py --mutation
       - name: 上传验收产物
         if: always()
         uses: actions/upload-artifact@v4
@@ -73,7 +70,7 @@ jobs:
           path: acceptance.json
           if-no-files-found: ignore
 
-  # 世界核心门禁：元模型/编译器/运行时/研究层/验收构造。
+  # 世界核心门禁：元模型/编译器/运行时/研究协议/验收构造。
   world-core:
     runs-on: ubuntu-latest
 
@@ -84,5 +81,5 @@ jobs:
           python-version: "3.14"
       - name: 安装后端依赖
         run: python -m pip install -q -r requirements.txt
-      - name: 世界核心测试（tests/world）
-        run: cd backend && PYTHONPATH=. python -m pytest tests/world -q
+      - name: 世界核心测试（testbench/world）
+        run: python -m pytest testbench/world -q

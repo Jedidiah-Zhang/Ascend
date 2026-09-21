@@ -49,9 +49,9 @@ if [ ! -d "$STAGE/lang" ] && [ ! -d "$STAGE/server/lang" ]; then
 fi
 # 世界声明配送检查：打包身份依赖随包配送的实现摘要表
 # （Nuitka standalone 须 --include-data-files 显式配送，见 build/nuitka/*.sh）
-if [ ! -f "$STAGE/server/ascend/world/declarations/impl_digests.json" ]; then
+if [ ! -f "$STAGE/server/olam/declarations/impl_digests.json" ]; then
   echo "    [冒烟] 失败：缺少世界声明 impl_digests.json" \
-       "（server/ascend/world/declarations/）" >&2
+       "（server/olam/declarations/）" >&2
   exit 1
 fi
 

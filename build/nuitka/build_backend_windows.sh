@@ -9,6 +9,8 @@
 #   Nuitka 本体编译使用其自行下载的 winlibs gcc（忽略外部 mingw），
 #   本机 mingw 仅用于交叉编译 C 加速模块为 .dll。
 #
+# 世界区与游戏区是两个独立包（olam / miskhak）：
+# 编译时以仓库根作为 PYTHONPATH（两个包均在根）。
 # 输出到 build/work/nuitka-win/（构建前清空，非版本化）。
 #
 # 前置:
@@ -26,6 +28,7 @@ WIN_PYTHON="${WIN_PYTHON:-C:\\Python312\\python.exe}"
 MINGW_GCC="${MINGW_GCC:-$HOME/mingw64/bin/gcc.exe}"
 OUT_DIR="$ROOT/build/work/nuitka-win"
 WINE_ROOT="Z:$(echo "$ROOT" | sed 's|/|\\|g')"
+WINE_PYPATH="$WINE_ROOT"
 
 if ! command -v wine >/dev/null 2>&1; then
   echo "需要 wine" >&2
@@ -33,20 +36,25 @@ if ! command -v wine >/dev/null 2>&1; then
 fi
 
 # 1. C 加速模块 → .dll（交叉编译，Windows 加载用）
-cd "$ROOT/backend/ascend/space"
-for c in _perlin _hydrology _streamlines _state; do
+cd "$ROOT/olam/generation"
+for c in _perlin _hydrology _streamlines; do
   if [ ! -f "$c.dll" ] || [ "$c.c" -nt "$c.dll" ]; then
     echo "编译 $c.dll ..."
     wine "$MINGW_GCC" -O3 -funroll-loops -shared -fPIC -o "$c.dll" "$c.c" -lm 2>/dev/null
   fi
 done
+cd "$ROOT/olam/modules/terrain"
+if [ ! -f _state.dll ] || [ _state.c -nt _state.dll ]; then
+  echo "编译 _state.dll ..."
+  wine "$MINGW_GCC" -O3 -funroll-loops -shared -fPIC -o _state.dll _state.c -lm 2>/dev/null
+fi
 cd "$ROOT"
 
 # 2. Nuitka 编译（wine 下运行 Windows Python；standalone 目录模式——
 #    不用 onefile：Linux 上 onefile 会 fork 子进程破坏前端 PID 语义）
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
-wine "$WIN_PYTHON" -m nuitka \
+PYTHONPATH="$WINE_PYPATH" wine "$WIN_PYTHON" -m nuitka \
   --standalone \
   --mingw64 \
   --output-dir="$WINE_ROOT\\build\\work\\nuitka-win" \
@@ -56,14 +64,15 @@ wine "$WIN_PYTHON" -m nuitka \
   --lto=no \
   --jobs=4 \
   --include-package=cryptography \
-  --include-data-files="$WINE_ROOT\\backend\\ascend\\space\\*.dll=ascend\\space\\" \
-  --include-data-files="$WINE_ROOT\\backend\\ascend\\world_tree\\schema.sqlite.sql=ascend\\world_tree\\" \
-  --include-data-files="$WINE_ROOT\\backend\\ascend\\world\\declarations\\*.json=ascend\\world\\declarations\\" \
+  --include-data-files="$WINE_ROOT\\olam\\generation\\*.dll=olam/generation/" \
+  --include-data-files="$WINE_ROOT\\olam\\modules\\terrain\\*.dll=olam/modules/terrain/" \
+  --include-data-files="$WINE_ROOT\\miskhak\\events\\schema.sqlite.sql=miskhak/events/" \
+  --include-data-files="$WINE_ROOT\\olam\\declarations\\*.json=olam/declarations/" \
   --nofollow-import-to=pytest \
-  --nofollow-import-to=tests \
+  --nofollow-import-to=testbench \
   --product-name="Ascend" \
   --product-version="$PRODUCT_VERSION" \
-  "$WINE_ROOT\\backend\\run_server.py"
+  "$WINE_ROOT\\miskhak\\run_server.py"
 
 # Nuitka 的 dist 目录名取自脚本名（run_server.dist），统一改为 server/
 # （与发行布局 <根>/server/server.exe 一致，前端按此路径探测）

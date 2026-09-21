@@ -101,12 +101,10 @@ jobs:
         run: python -m pip install -q -r requirements.txt
 
       - name: 后端单元测试（并行）
-        run: |
-          cd backend && PYTHONPATH=. python -m pytest tests/unit -n 4 -q
+        run: python -m pytest testbench/unit -n 4 -q
 
       - name: 后端集成测试（串行，真实 server 子进程）
-        run: |
-          cd backend && PYTHONPATH=. python -m pytest tests/integration -q
+        run: python -m pytest testbench/integration -q
 
   release:
     name: 发布 GitHub Release

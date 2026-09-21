@@ -70,52 +70,52 @@ Ascend 兼具双重身份：
 每次代码变更后，请运行受影响的单元测试（日常开发不必跑全量）：
 
 ```bash
-cd backend && PYTHONPATH=. ../.venv/bin/python -m pytest --testmon -n 4 -q
+.venv/bin/python -m pytest --testmon -n 4 -q
 ```
 
 - `-n 4` 为保守的并行数：若用 `-n auto`，会按本机核数开满 worker，可能导致世界生成时内存/CPU 双爆、进程卡死。该命令仅用于单元测试
-- 集成测试必须串行（端口/子进程冲突）：`cd backend && ../.venv/bin/python -m pytest tests/integration/ -v`
+- 集成测试必须串行（端口/子进程冲突）：`.venv/bin/python -m pytest testbench/integration -v`
 - 全量测试无需本地手动执行，发布前由 CI 的 `test` job 自动运行
 
 ### 前端（GDScript / GUT）
 
 ```bash
-cd frontend && ./run_tests.sh unit
+cd miskhak/client && ./run_tests.sh unit
 ```
 
-GUT 不随仓库分发（`frontend/addons/gut` 只需在本地安装），因此前端测试仅在本地运行。
+GUT 不随仓库分发（`miskhak/client/addons/gut` 只需在本地安装），因此前端测试仅在本地运行。
 
 ### 研究声明管线
 
-研究方程的唯一事实源是 `backend/ascend/world/modules/` 的模块声明（六种声明 +
-实现绑定），研究侧投影为 `research/equations/equations.json`。修改任何方程、
+研究方程的唯一事实源是 `olam/modules/` 的模块声明（六种声明 +
+实现绑定），研究侧投影为 `kheker/equations/equations.json`。修改任何方程、
 参数、节点声明或 `data/*.json` 后，必须重新生成并提交生成物，否则 CI 漂移
 门禁会失败：
 
 ```bash
-.venv/bin/python research/equations/export_registry.py          # 世界声明 → equations.json
-.venv/bin/python research/equations/gen_lean.py                 # equations.json → Lean 数据段
-.venv/bin/python research/equations/export_impl_digests.py      # 实现摘要表（打包身份）
-.venv/bin/python research/equations/export_frozen_tables.py     # 预计算表（仅表规格变更时运行）
-.venv/bin/python research/equations/verify_equations.py --fast  # 全链对拍（V0–V4）
-.venv/bin/python research/equations/graph_check.py              # 图健康巡检（G0–G7）
+.venv/bin/python kheker/equations/export_registry.py          # 世界声明 → equations.json
+.venv/bin/python kheker/equations/gen_lean.py                 # equations.json → Lean 数据段
+.venv/bin/python kheker/equations/export_impl_digests.py      # 实现摘要表（打包身份）
+.venv/bin/python kheker/equations/export_frozen_tables.py     # 预计算表（仅表规格变更时运行）
+.venv/bin/python kheker/equations/verify_equations.py --fast  # 全链对拍（V0–V4）
+.venv/bin/python kheker/equations/graph_check.py              # 图健康巡检（G0–G7）
 ```
 
 `equations.json`、`GenDeclarationData.lean`、`impl_digests.json` 与
-`world/kernel/frozen_tables.py` 均为生成物，禁止手改。
+`olam/kernel/frozen_tables.py` 均为生成物，禁止手改。
 
-**干预执行器**（见《世界契约》WC-6）：研究者干预经 `world/research/timeline.py`
+**干预执行器**（见《世界契约》WC-6）：研究者干预经 `olam/protocols/timeline.py`
 登记为计划与逐帧记录，在求值点替换生成；时间线校验以编译程序为唯一事实源
 （槽位存在且由机制写入、权限/值域/实例域、参数须被已接线机制消费），改动后
-由 `tests/world/test_timeline.py` 与接线漂移测试盯防。
+由 `testbench/world/test_timeline.py` 与接线漂移测试盯防。
 
 **验收 runner**：改声明/引擎后跑
-`.venv/bin/python research/acceptance/run_acceptance.py`（C0–C2/W0–W7/I0–I1/L3，任一
+`.venv/bin/python kheker/acceptance/run_acceptance.py`（C0–C2/W0–W7/I0–I1/L3，任一
 判据失败即红）；改声明后还需 `run_acceptance.py --check` 巡检 Lean UnrolledDag 实例（含机器证明的 `WellFormed`，声明漂移即失败）。
 
 **研究记录**（见《世界契约》WC-10）：研究日志与玩法事件分库——新增机制自动
 被记录；**不要把记录字段写进事件载荷**（有门禁测试）；求值记录走
-`world/research/records.py` 的 `TraceLog`，引擎在挂载记录时逐机制捕获。
+`olam/protocols/records.py` 的 `TraceLog`，引擎在挂载记录时逐机制捕获。
 
 **完整存档**（见《世界契约》WC-7.5、WC-8）：新增"无法由世界设置重算"的运行时
 状态（研究者施加的量、随机制演化的标记）时，必须同步 `state.json.enc` 载荷与

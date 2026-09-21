@@ -69,50 +69,50 @@ Conventions:
 After every code change, run the affected unit tests (no need to run the full suite during day-to-day development):
 
 ```bash
-cd backend && PYTHONPATH=. ../.venv/bin/python -m pytest --testmon -n 4 -q
+.venv/bin/python -m pytest --testmon -n 4 -q
 ```
 
 - `-n 4` is a deliberately conservative degree of parallelism: with `-n auto`, workers are spawned to match the machine's core count, which can OOM/saturate the CPU during world generation. This command is for unit tests only
-- Integration tests must run serially (port/subprocess conflicts): `cd backend && ../.venv/bin/python -m pytest tests/integration/ -v`
+- Integration tests must run serially (port/subprocess conflicts): `.venv/bin/python -m pytest testbench/integration -v`
 - No need to run the full suite locally; CI's `test` job runs it automatically before release
 
 ### Frontend (GDScript / GUT)
 
 ```bash
-cd frontend && ./run_tests.sh unit
+cd miskhak/client && ./run_tests.sh unit
 ```
 
-GUT is not distributed with the repo (`frontend/addons/gut` only needs to be installed locally), so frontend tests run only locally.
+GUT is not distributed with the repo (`miskhak/client/addons/gut` only needs to be installed locally), so frontend tests run only locally.
 
 ### Research declaration pipeline (drift gates)
 
 The single source of truth for research equations is the module declarations in
-`backend/ascend/world/modules/` (six declaration kinds + implementation bindings);
-the research-side projection is `research/equations/equations.json`. After modifying
+`olam/modules/` (six declaration kinds + implementation bindings);
+the research-side projection is `kheker/equations/equations.json`. After modifying
 any equation, parameter, node declaration, or `data/*.json`, you must regenerate and
 commit the generated artifacts, or the CI drift gates will fail:
 
 ```bash
-.venv/bin/python research/equations/export_registry.py          # world declarations → equations.json
-.venv/bin/python research/equations/gen_lean.py                 # equations.json → Lean data section
-.venv/bin/python research/equations/export_impl_digests.py      # implementation digest table (packaged identity)
-.venv/bin/python research/equations/export_frozen_tables.py     # precomputed tables (only when the table spec changes)
-.venv/bin/python research/equations/verify_equations.py --fast  # full reconciliation (V0–V4)
-.venv/bin/python research/equations/graph_check.py              # graph health checks (G0–G7)
+.venv/bin/python kheker/equations/export_registry.py          # world declarations → equations.json
+.venv/bin/python kheker/equations/gen_lean.py                 # equations.json → Lean data section
+.venv/bin/python kheker/equations/export_impl_digests.py      # implementation digest table (packaged identity)
+.venv/bin/python kheker/equations/export_frozen_tables.py     # precomputed tables (only when the table spec changes)
+.venv/bin/python kheker/equations/verify_equations.py --fast  # full reconciliation (V0–V4)
+.venv/bin/python kheker/equations/graph_check.py              # graph health checks (G0–G7)
 ```
 
 `equations.json`, `GenDeclarationData.lean`, `impl_digests.json`, and
-`world/kernel/frozen_tables.py` are generated artifacts — never edit them by hand.
+`olam/kernel/frozen_tables.py` are generated artifacts — never edit them by hand.
 
 **Intervention executor** (see the World Contract, WC-6): researcher interventions are
-registered through `world/research/timeline.py` as plans plus append-only per-frame
+registered through `olam/protocols/timeline.py` as plans plus append-only per-frame
 records, and replace the generated value at evaluation points. Timeline validation
 uses the compiled program as the single source of truth (slot exists and is
 mechanism-written, permissions/domains/instances, parameters consumed by wired
-mechanisms); `tests/world/test_timeline.py` and the wiring drift tests guard it.
+mechanisms); `testbench/world/test_timeline.py` and the wiring drift tests guard it.
 
 **Acceptance runner**: after changing a declaration or engine path, run
-`.venv/bin/python research/acceptance/run_acceptance.py`
+`.venv/bin/python kheker/acceptance/run_acceptance.py`
 (C0–C2/W0–W7/I0–I1/L3; any failing criterion turns CI red). After changing a declaration, also
 run `run_acceptance.py --check` to detect Lean UnrolledDag instance drift (including the
 machine-checked `WellFormed`).
@@ -120,7 +120,7 @@ machine-checked `WellFormed`).
 **Research records** (see the World Contract, WC-10): the research log and gameplay
 events live in separate stores — new mechanisms are recorded automatically; never put
 record fields into event payloads (a gate test enforces this); evaluation records go
-through the `TraceLog` in `world/research/records.py`, captured per mechanism when the
+through the `TraceLog` in `olam/protocols/records.py`, captured per mechanism when the
 engine mounts a log.
 
 **Complete save** (see the World Contract, WC-7.5 and WC-8): when adding runtime

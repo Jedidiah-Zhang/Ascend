@@ -32,8 +32,8 @@ body:
     attributes:
       label: 涉及端
       options:
-        - 后端 (backend/)
-        - 前端 (frontend/)
+        - 后端 (miskhak/)
+        - 前端 (miskhak/client/)
         - 通信 (net 协议层)
         - 存档 (save/)
         - 不确定

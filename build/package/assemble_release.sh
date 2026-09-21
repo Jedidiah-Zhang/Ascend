@@ -60,7 +60,7 @@ done
 if [ -n "$MISSING" ]; then
   echo "缺少构建产物，请先导出前端并编译后端:"
   echo "$MISSING" | sed 's/^/  - /'
-  echo "  前端: godot --headless --path frontend --export-release \"$PLATFORM\""
+  echo "  前端: godot --headless --path miskhak/client --export-release \"$PLATFORM\""
   echo "  后端: bash build/nuitka/build_backend.sh（Linux）或 build_backend_windows.sh（Windows）"
   [ "$PLATFORM" = "windows" ] && \
     echo "  （Windows 版后端须执行 build/nuitka/build_backend_windows.sh，在 Linux 上用 wine 交叉编译）"
@@ -74,10 +74,10 @@ cp "$EXPORTS_DIR/$GAME_EXE" "$STAGE/"
 cp "$EXPORTS_DIR/ascend.pck" "$STAGE/"
 cp -r "$SERVER_SRC" "$STAGE/"
 # 后端 i18n 按模块相对路径解析：Nuitka standalone 下 __file__ 含包前缀，
-# ascend/i18n.py 上三级 = 舞台根 → lang 配送到 STAGE/lang
-cp -r "$ROOT/lang" "$STAGE/lang"
-# 后端内容数据（第 1 层数据驱动，import 期强依赖；ascend/data.py 上三级
-# = 舞台根 → data 配送到 STAGE/data；data.py 内置 server/data 回退）
+# miskhak/i18n.py 以包目录为锚向外解析 → lang 配送到 STAGE/lang
+cp -r "$ROOT/miskhak/lang" "$STAGE/lang"
+# 后端内容数据（第 1 层数据驱动，import 期强依赖；olam/content/loader.py
+# 以包目录为锚向外解析 → data 配送到 STAGE/data；内置 server/data 回退）
 cp -r "$ROOT/data" "$STAGE/data"
 
 cat > "$STAGE/README.txt" <<EOF

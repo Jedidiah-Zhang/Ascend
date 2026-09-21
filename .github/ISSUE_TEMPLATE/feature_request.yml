@@ -21,7 +21,7 @@ body:
       label: 所属模块
       description: 主涉及模块（可在下方补充说明跨模块影响）
       options:
-        - world_tree (世界树/演化)
+        - events (世界树/事件总线)
         - entity (实体系统)
         - net (网络层)
         - save (存档)

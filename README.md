@@ -45,6 +45,19 @@
 - **真值声明，而非事后发现** — 世界的生成机制作为因果真值被明确声明；事件记录与研究日志只用于追溯与验证，不是因果机制本身。
 - **可复现是基础设施** — 世界生成、随机过程与干预执行均有确定性的重放机制，同一随机实验单位可生成严格配对的平行轨迹。
 
+## 包结构
+
+核心包采用希伯来语名称的小写 ASCII 转写：
+
+| 包 | 原词与含义 | 职责 |
+| --- | --- | --- |
+| `olam` | עולם · 世界 | 世界声明、编译、模拟运行与因果协议 |
+| `miskhak` | משחק · 游戏 | 游戏包装、服务端与 Godot 客户端（`miskhak/client/`） |
+| `nefesh` | נפש · 生命、自我与心智 | 第二阶段主体心智区（预留） |
+| `kheker` | חקר · 探究 | 研究探针、声明验证、验收与 Lean 证明 |
+
+`testbench/` 为 Python 测试台。
+
 ## 快速开始
 
 依赖：Python 3.14、Godot 4.x。
@@ -52,10 +65,10 @@
 ```bash
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
-cd backend && ../.venv/bin/python run_server.py   # 启动后端（默认 localhost）
+.venv/bin/python miskhak/run_server.py   # 在仓库根启动后端（默认 localhost）
 ```
 
-用 Godot 打开 `frontend/` 运行游戏。打包与发行见 [build/README.md](build/README.md)。
+用 Godot 打开 `miskhak/client/` 运行游戏。打包与发行见 [build/README.md](build/README.md)。
 
 ## 文档
 
@@ -69,6 +82,5 @@ cd backend && ../.venv/bin/python run_server.py   # 启动后端（默认 localh
 见 [CONTRIBUTING.md](CONTRIBUTING.md)（设计原则、开发流程、测试与提交约定）。提交 PR 前请阅读 [CLA.md](CLA.md)。
 
 ## License
-
 
 根据 [CC BY-NC-SA 4.0](LICENSE) 许可证授权。商业使用需联系作者。

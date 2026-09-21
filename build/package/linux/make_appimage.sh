@@ -31,7 +31,7 @@ fi
 # ── 组装 AppDir ──────────────────────────────────────────
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
-cp -r "$STAGE/ascend.x86_64" "$STAGE/ascend.pck" "$STAGE/server" "$APPDIR/"
+cp -r "$STAGE/ascend.x86_64" "$STAGE/ascend.pck" "$STAGE/server" "$STAGE/data" "$STAGE/lang" "$APPDIR/"
 cp "$ROOT/build/package/linux/ascend.desktop" "$APPDIR/ascend.desktop"
 cp "$ROOT/build/package/linux/ascend.desktop" "$APPDIR/usr/share/applications/"
 cp "$ROOT/build/assets/ascend.svg" "$APPDIR/usr/share/icons/hicolor/256x256/apps/"

@@ -4,7 +4,7 @@
 
 | 路径 | 内容 | 是否进 git |
 |---|---|---|
-| `nuitka/` | 后端编译脚本（Linux `build_backend.sh`、Windows 交叉编译 `build_backend_windows.sh`）、`excludes.txt`、`version.txt` | ✅ |
+| `nuitka/` | 后端编译脚本（Linux `build_backend.sh`、Windows 交叉编译 `build_backend_windows.sh`、Windows 原生 `build_backend_windows_native.sh`）、`excludes.txt`、`version.txt` | ✅ |
 | `package/` | 舞台目录组装 `assemble_release.sh` + 各平台归档脚本 | ✅ |
 | `ci/` | CI 工作流与发布脚本 `publish_release.sh` | ✅ |
 | `work/` | **中间产物**：Godot 导出、Nuitka 编译缓存、舞台目录（构建前清空，非版本化） | ❌ |
@@ -17,7 +17,7 @@ bash build/build_release.sh all       # 本地全量：前端 + 后端（linux +
 bash build/build_release.sh linux     # 或单平台
 ```
 
-流程：同步语言文件（repo 根 `lang/*.json` → `frontend/lang/`，进 PCK）→
+流程：同步语言文件（`miskhak/lang/*.json` → `miskhak/client/lang/`，进 PCK）→
 导出前端 → 编译后端 → 组装舞台目录（`data/`、`lang/` 配送到舞台根）→
 冒烟测试（协议级握手 + 内容数据检查）→ 打归档。
 产物：`build/dist/release/ascend-linux.tar.gz`、`ascend-windows.zip`。
@@ -26,18 +26,18 @@ bash build/build_release.sh linux     # 或单平台
 GitHub Releases，本地不留历史产物）。
 
 **发布清单（生成算法变更时）**：若本版本改了大陆生成算法或
-`config.py` 中影响宏观场的常量（见 `CONTINENT_GEN_CONSTANT_NAMES`），
-递增 `ascend/config.py` 的 `CONTINENT_GEN_VERSION`——打包环境的
+`olam/constants.py` 中影响宏观场的常量（见 `CONTINENT_GEN_CONSTANT_NAMES`），
+递增 `olam/constants.py` 的 `CONTINENT_GEN_VERSION`——打包环境的
 大陆缓存漂移诊断依赖它（开发环境靠源码哈希自动覆盖，无需维护）。
 
-**发布清单（C 扩展变更时）**：改了 `backend/ascend/space/_*.c` 后，
+**发布清单（C 扩展变更时）**：改了 `olam/generation/_*.c` 或 `olam/modules/terrain/_state.c` 后，
 须重建各平台二进制（Linux `.so` / Windows `.dll`，见 `nuitka/`
 构建脚本）——本地 `.dll` 等旧构建不含新符号，Windows 打包前不
 重建会导致符号缺失。
 
 ## CI 打包后端（研究平台发行）
 
-前端为闭源商业资产（`frontend/assets/` 不入库），CI 不参与前端构建；
+前端为闭源商业资产（`miskhak/client/assets/` 不入库），CI 不参与前端构建；
 CI 仅打包后端供研究平台使用：
 
 ```bash
@@ -64,9 +64,9 @@ Ascend-<平台>/
 ```
 
 `data/` 与 `lang/` 的落位按后端模块相对路径解析（Nuitka standalone 下
-`__file__` 含包前缀，`ascend/<mod>.py` 上三级 = 舞台根 → `STAGE/data`、
-`STAGE/lang`）；`data.py`/`i18n.py` 内置 `server/<dir>` 回退，两种配送
-布局均兼容。
+`__file__` 含包前缀，`olam/content/loader.py` 与 `miskhak/i18n.py`
+以各自包目录为锚向外解析 → `STAGE/data`、`STAGE/lang`；两者内置
+`server/<dir>` 回退，两种配送布局均兼容。
 
 后端为 **standalone 目录模式**（非 onefile）：onefile 在 Linux 上会 fork
 出子进程（bootstrap 监督进程 + 真实服务），前端按 PID 无法可靠终止、
@@ -76,12 +76,13 @@ Ascend-<平台>/
 ## 手动分步流程（调试用）
 
 ```bash
-# 0. 同步语言文件（开发期前端直读仓库根 lang/，仅打包需要这一步）
-rm -rf frontend/lang && mkdir -p frontend/lang && cp lang/*.json frontend/lang/
+# 0. 同步语言文件（开发期前端直读 miskhak/lang/，仅打包需要这一步）
+rm -rf miskhak/client/lang && mkdir -p miskhak/client/lang && cp miskhak/lang/*.json miskhak/client/lang/
 
 # 1. 导出前端（输出 build/work/exports/）
-godot --headless --path frontend --export-release "Windows Desktop"
-godot --headless --path frontend --export-release "Linux X11"
+mkdir -p build/work/exports/windows build/work/exports/linux
+godot --headless --path miskhak/client --export-release "Windows Desktop"
+godot --headless --path miskhak/client --export-release "Linux X11"
 
 # 2. 编译后端（Linux 本机 / Windows 用 wine 交叉编译）
 bash build/nuitka/build_backend.sh
@@ -112,7 +113,7 @@ push tag v* ──► [ubuntu-latest]  Linux 后端 ──┐
 
 - 版本号单一来源：`build/nuitka/version.txt`（当前 0.0.2-alpha）——Release 命名、
   产物文件名、Windows exe 属性、主菜单显示（`build_release.sh` 拷入前端 PCK）全部
-  由此派生；`frontend/project.godot` 无版本字段。打 tag 前跑
+  由此派生；`miskhak/client/project.godot` 无版本字段。打 tag 前跑
   `bash build/ci/check_version.sh --tag v<版本>` 对账（CI 的 check-version job 自动执行）
 - **本地永远只有最新版**：中间产物构建前清空；产物固定名每次覆盖；
   历史版本归档只存在于 GitHub Releases（或制品库），不进工作区

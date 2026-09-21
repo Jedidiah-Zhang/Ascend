@@ -44,6 +44,8 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Source: "{#Stage}\ascend.exe"; DestDir: "{app}"
 Source: "{#Stage}\ascend.pck"; DestDir: "{app}"
 Source: "{#Stage}\server\*"; DestDir: "{app}\server"; Flags: recursesubdirs createallsubdirs
+Source: "{#Stage}\data\*"; DestDir: "{app}\data"; Flags: recursesubdirs createallsubdirs
+Source: "{#Stage}\lang\*"; DestDir: "{app}\lang"; Flags: recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\Ascend"; Filename: "{app}\ascend.exe"

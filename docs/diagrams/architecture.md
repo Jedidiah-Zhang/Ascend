@@ -26,11 +26,11 @@ graph TD
         ENT["EntityManager<br/>实体生灭/移动"]
     end
 
-    subgraph World["🧬 世界核心（world/）"]
+    subgraph World["🧬 世界核心（olam/）"]
         REG["WorldProgram（compile/）<br/>声明编译：C0/C1/C2 静态校验 + 身份"]
-        IVT["InterventionTimeline（research/timeline.py）<br/>干预时间线：登记·校验·覆盖解析"]
+        IVT["InterventionTimeline（olam/protocols/timeline.py）<br/>干预时间线：登记·校验·覆盖解析"]
         SNAP["equations.json → Lean<br/>研究快照（自动生成）"]
-        TRC["TraceLog / TraceRecord（research/records.py）<br/>研究记录：逐机制留痕·可重算"]
+        TRC["TraceLog / TraceRecord（olam/protocols/records.py）<br/>研究记录：逐机制留痕·可重算"]
         DRV["FrameScheduler（runtime/driver.py）<br/>声明周期驱动 + 帧事务"]
     end
 

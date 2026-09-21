@@ -13,8 +13,8 @@
 
 ## 测试
 
-- [ ] 后端单元测试通过（`cd backend && PYTHONPATH=. ../.venv/bin/python -m pytest --testmon -n 4 -q`）
-- [ ] 前端单元测试通过（`cd frontend && ./run_tests.sh unit`）
+- [ ] 后端单元测试通过（`.venv/bin/python -m pytest --testmon -n 4 -q`）
+- [ ] 前端单元测试通过（`cd miskhak/client && ./run_tests.sh unit`）
 - [ ] 已手工验证相关功能
 
 ## 第三方材料
@@ -27,6 +27,6 @@
 ## 贡献者确认
 
 - [ ] 我的贡献为原创，或我已获权利人授权
-- [ ] 我已阅读并同意 [CLA.md](CLA.md)（贡献者许可协议）的全部条款
+- [ ] 我已阅读并同意 [CLA.md](../CLA.md)（贡献者许可协议）的全部条款
 
 <!-- 未勾选"我已阅读并同意"的 PR 将被自动化流程标记，不予合并。 -->
