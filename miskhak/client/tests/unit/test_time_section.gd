@@ -14,10 +14,10 @@ func test_no_data_shows_dash() -> void:
 	assert_eq(lines[0], "—")
 
 
-func test_minute_change_updates_time() -> void:
+func test_time_sync_updates_time() -> void:
 	var section: TimeSection = TimeSection.new()
 	var data: Dictionary = {"day": 5}
-	section.on_world_event("minute_change", {"data": data, "game_hour": 14, "game_minute": 30})
+	section.on_world_event("time_sync", {"data": data, "game_hour": 14, "game_minute": 30})
 	assert_eq(section._has_data, true)
 	assert_eq(section.day, 5)
 	assert_eq(section.hour, 14)
@@ -26,7 +26,7 @@ func test_minute_change_updates_time() -> void:
 
 func test_get_lines_after_update() -> void:
 	var section: TimeSection = TimeSection.new()
-	section.on_world_event("minute_change", {"data": {"day": 3}, "game_hour": 8, "game_minute": 5})
+	section.on_world_event("time_sync", {"data": {"day": 3}, "game_hour": 8, "game_minute": 5})
 	var lines: PackedStringArray = section.get_lines()
 	assert_string_contains(lines[0], "第 3 天 08:05")
 

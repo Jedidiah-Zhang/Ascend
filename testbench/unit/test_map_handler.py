@@ -308,7 +308,7 @@ class TestMapHandlersWithStateEngine:
         """注入状态引擎：tile 生成后就绪并结算，chunk 状态可查。"""
         from olam.generation.tile_gen import TileGenerator
         from olam.adapters.terrain.tile_state import TileStateEngine
-        from miskhak.time import WorldClock
+        from olam.runtime import WorldClock
         from olam.adapters.weather.weather_engine import WeatherEngine, WeatherParams
         from olam.generation.climate import ClimateZone
 

@@ -22,7 +22,7 @@ from miskhak.save import (
     require_state_version,
 )
 from olam.generation.climate import ClimateZone, WeatherParams
-from miskhak.time import WorldClock
+from olam.runtime import WorldClock
 from olam.adapters.weather.weather_engine import WeatherEngine
 from olam.modules.ids import (
     INSTANT_HUMIDITY,

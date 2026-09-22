@@ -32,9 +32,6 @@ testbench/.coverage.*
 # 否则会误排除 miskhak/save/ 源码模块）
 /save/
 
-# 可视化输出（测试生成的 PNG，不提交）
-miskhak/tools/visual/output/
-
 # 研究探针的可视化输出（运行期生成）
 kheker/figures/
 

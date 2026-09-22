@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from olam.constants import GAME_DAY, GAME_MINUTE, GAME_YEAR
 from olam.generation.climate import ClimateZone, WeatherParams
-from miskhak.time import WorldClock
+from olam.runtime import WorldClock
 from olam.adapters.weather.weather_engine import WeatherEngine
 from miskhak.events import WorldTree
 

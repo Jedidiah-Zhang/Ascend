@@ -166,9 +166,9 @@ func test_broadcast_event_to_all_sections() -> void:
 	var section2: TestSection = autoqfree(TestSection.new("S1"))
 	o.add_section(section1)
 	o.add_section(section2)
-	o.broadcast_event("minute_change", {})
+	o.broadcast_event("time_sync", {})
 	assert_eq(section1.event_calls, 1)
-	assert_eq(section1.last_event, "minute_change")
+	assert_eq(section1.last_event, "time_sync")
 	assert_eq(section2.event_calls, 1)
 
 

@@ -12,8 +12,7 @@
 过渡豁免（显式登记）：
 - ``miskhak.events``：世界侧仅驱动层订阅作用域与运行适配事件发布
   （天气/地形/实体；事件总线属游戏事件层，保留最小接触面）；
-- ``miskhak.time``：世界适配层的类型提示（引擎持有 WorldClock 引用）；
-- 研究侧仅归档探针（kheker/historical/）构造时钟与事件总线。
+- 研究侧仅归档探针（kheker/historical/）构造事件总线。
 """
 
 from __future__ import annotations
@@ -37,7 +36,6 @@ _MISSING = object()
 TRANSITIONAL_WORLD: dict[str, set[str] | None] = {
     "miskhak.log": None,
     "olam.kernel.mathutil": None,
-    "miskhak.time": None,
     # 事件总线属游戏事件层；当前登记在驱动层、运行适配（天气/地形/实体）
     # 与天气事件契约
     "miskhak.events": {
@@ -47,7 +45,6 @@ TRANSITIONAL_WORLD: dict[str, set[str] | None] = {
     },
 }
 TRANSITIONAL_RESEARCH: dict[str, set[str] | None] = {
-    "miskhak.time": None,
     # 归档探针构造 WeatherEngine 需要事件总线；入口在 kheker/historical/
     "miskhak.events": {"kheker/historical/"},
 }

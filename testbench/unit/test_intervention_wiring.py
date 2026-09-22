@@ -18,18 +18,13 @@ from pathlib import Path
 import pytest
 
 from olam.protocols.timeline import PlannedIntervention
-from miskhak.time import WorldClock, GameCalendar
+from olam.runtime import WorldClock
 from miskhak.i18n import I18n
 
 
 @pytest.fixture
 def clock() -> WorldClock:
     return WorldClock()
-
-
-@pytest.fixture
-def calendar(clock):
-    return GameCalendar(clock)
 
 
 @pytest.fixture
@@ -55,12 +50,12 @@ def weather_engine(clock):
 
 
 @pytest.fixture
-def executor(clock, calendar, i18n, weather_engine):
+def executor(clock, i18n, weather_engine):
     from miskhak.terminal.executor import CommandExecutor, ExecutorConfig
 
     engine, table = weather_engine
     return CommandExecutor(
-        clock=clock, calendar=calendar, i18n=i18n,
+        clock=clock, i18n=i18n,
         config=ExecutorConfig(
             weather_engine=engine, default_chunk=(0, 0),
             intervention_table=table,
@@ -400,24 +395,24 @@ class TestDoCommands:
         assert result.success is False
         assert "未声明" in result.output
 
-    def test_do_without_table(self, clock, calendar, i18n):
+    def test_do_without_table(self, clock, i18n):
         from miskhak.terminal.executor import CommandExecutor, ExecutorConfig
 
         executor = CommandExecutor(
-            clock=clock, calendar=calendar, i18n=i18n,
+            clock=clock, i18n=i18n,
             config=ExecutorConfig(default_chunk=(0, 0)),
         )
         result = executor.execute("do list")
         assert result.success is False
         assert "未挂载" in result.output
 
-    def test_do_help_is_localized(self, clock, calendar, weather_engine):
+    def test_do_help_is_localized(self, clock, weather_engine):
         """do 指令组文案走 i18n（en_US 下为英文）。"""
         from miskhak.terminal.executor import CommandExecutor, ExecutorConfig
 
         engine, table = weather_engine
         executor = CommandExecutor(
-            clock=clock, calendar=calendar, i18n=I18n("en_US"),
+            clock=clock, i18n=I18n("en_US"),
             config=ExecutorConfig(
                 weather_engine=engine, default_chunk=(0, 0),
                 intervention_table=table,

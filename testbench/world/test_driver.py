@@ -20,7 +20,7 @@ from olam.runtime import (
     WorldInvalidatedError,
     bind_periods,
 )
-from miskhak.time import WorldClock
+from olam.runtime import WorldClock
 
 
 class _Log:

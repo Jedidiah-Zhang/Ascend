@@ -23,7 +23,7 @@ from olam.adapters.entity import (
 )
 from olam.constants import TILE_MAP_SIZE
 from miskhak.log import get_logger
-from miskhak.time import WorldClock
+from olam.runtime import WorldClock
 from miskhak.events import world_tree as _default_wt, Event, AffectedParty
 
 from .events import PlayerTeleported

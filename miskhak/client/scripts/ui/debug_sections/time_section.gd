@@ -1,4 +1,4 @@
-"""时间分区 — 事件型，由 minute_change 事件驱动更新。
+"""时间分区 — 事件型，由 time_sync 事件驱动更新。
 """
 
 class_name TimeSection
@@ -16,14 +16,14 @@ func _init() -> void:
 	label_key = "debug.section.time"
 
 
-## 响应 minute_change 事件刷新时间显示：天数取自 data.day，
+## 响应 time_sync 事件刷新时间显示：天数取自 data.day，
 ## 时/分直接取自 payload 的 game_hour/game_minute，并标记已收到数据。
 ##
 ## Args:
-##     event_type: 事件类型，仅处理 "minute_change"。
+##     event_type: 事件类型，仅处理 "time_sync"。
 ##     payload: 事件载荷（含 data.day 与 game_hour/game_minute）。
 func on_world_event(event_type: String, payload: Dictionary) -> void:
-	if event_type != "minute_change":
+	if event_type != "time_sync":
 		return
 	var data: Dictionary = payload.get("data", {})
 	day = int(data.get("day", 0))

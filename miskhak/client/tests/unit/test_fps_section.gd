@@ -24,7 +24,7 @@ func test_on_world_event_updates_tps() -> void:
 	section._prev_real_msec = Time.get_ticks_msec()
 	await wait_seconds(0.2)
 	var data: Dictionary = {"game_time": 10}
-	section.on_world_event("minute_change", {"data": data})
+	section.on_world_event("time_sync", {"data": data})
 	assert_gt(section.tps, 0.0, "TPS 应 > 0")
 
 

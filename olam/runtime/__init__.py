@@ -1,7 +1,8 @@
-"""运行时 — 状态容器、模板求值与帧事务进程；驱动层帧调度与提交存储。"""
+"""运行时 — 状态容器、模板求值与帧事务进程；驱动层逻辑时钟、帧调度与提交存储。"""
 
 from __future__ import annotations
 
+from .clock import WorldClock, tick_to_day, tick_to_hms
 from .driver import (
     FrameScheduler,
     UpdatePoint,
@@ -32,6 +33,7 @@ __all__ = [
     "LatticeField",
     "StateStore",
     "UpdatePoint",
+    "WorldClock",
     "WorldInvalidatedError",
     "WorldProcess",
     "bind_periods",
@@ -39,4 +41,6 @@ __all__ = [
     "evaluate_mechanism",
     "export_value",
     "load_value",
+    "tick_to_day",
+    "tick_to_hms",
 ]

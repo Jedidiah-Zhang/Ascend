@@ -14,7 +14,7 @@ from olam.runtime import FrameScheduler, FrameStateStore
 from olam.content.tile_grid import TileGrid
 from olam.adapters.terrain.tile_state import TileStateEngine, state_evolve
 from olam.generation.terrain import TerrainType
-from miskhak.time import WorldClock
+from olam.runtime import WorldClock
 from miskhak.events import WorldTree
 
 

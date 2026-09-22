@@ -6,23 +6,14 @@
 
 import pytest
 from miskhak.terminal import CommandExecutor, ExecutorConfig, CommandResult
-from miskhak.time import GAME_HOUR
+from olam.constants import GAME_DAY, GAME_HOUR
 
 
 @pytest.fixture
 def clock():
     """使用默认起始时间的 WorldClock 固件。"""
-    from miskhak.time import WorldClock
+    from olam.runtime import WorldClock
     return WorldClock()
-
-
-@pytest.fixture
-def calendar(clock):
-    """使用默认起始日的 GameCalendar 固件，测试后自动清理订阅。"""
-    from miskhak.time import GameCalendar
-    cal = GameCalendar(clock=clock)
-    yield cal
-    cal.shutdown()
 
 
 @pytest.fixture
@@ -33,9 +24,9 @@ def i18n():
 
 
 @pytest.fixture
-def executor(clock, calendar, i18n):
+def executor(clock, i18n):
     """标准 CommandExecutor 固件（无天气引擎）。"""
-    return CommandExecutor(clock=clock, calendar=calendar, i18n=i18n)
+    return CommandExecutor(clock=clock, i18n=i18n)
 
 
 @pytest.fixture
@@ -58,10 +49,10 @@ def weather_engine(clock):
 
 
 @pytest.fixture
-def executor_weather(clock, calendar, i18n, weather_engine):
+def executor_weather(clock, i18n, weather_engine):
     """含 WeatherEngine + 默认 chunk (0,0) 的 CommandExecutor 固件。"""
     return CommandExecutor(
-        clock=clock, calendar=calendar, i18n=i18n,
+        clock=clock, i18n=i18n,
         config=ExecutorConfig(
             weather_engine=weather_engine, default_chunk=(0, 0),
         ),
@@ -353,10 +344,10 @@ class TestTimeJump:
         Assert:
             游戏日至少推进 1 天。
         """
-        before_day = executor._calendar.day
+        before_day = executor._clock.time // GAME_DAY + 1
         result = executor.execute("time jump")
         assert result.success is True
-        assert executor._calendar.day >= before_day + 1
+        assert executor._clock.time // GAME_DAY + 1 >= before_day + 1
 
     def test_T16_jump_with_days(self, executor):
         """execute("time jump 7") 跳 7 天。
@@ -368,10 +359,10 @@ class TestTimeJump:
         Assert:
             游戏日推进至少 7 天。
         """
-        before_day = executor._calendar.day
+        before_day = executor._clock.time // GAME_DAY + 1
         result = executor.execute("time jump 7")
         assert result.success is True
-        assert executor._calendar.day >= before_day + 7
+        assert executor._clock.time // GAME_DAY + 1 >= before_day + 7
 
     def test_T17_jump_invalid(self, executor):
         """execute("time jump abc") 与 "time jump 0" 参数错误。
@@ -675,10 +666,10 @@ class TestTeleportCommand:
         return svc
 
     @pytest.fixture
-    def executor_player(self, clock, calendar, i18n, player_service):
+    def executor_player(self, clock, i18n, player_service):
         """含 PlayerService 的 CommandExecutor 固件。"""
         return CommandExecutor(
-            clock=clock, calendar=calendar, i18n=i18n,
+            clock=clock, i18n=i18n,
             config=ExecutorConfig(player_service=player_service),
         )
 
@@ -774,10 +765,10 @@ class TestEntityCommand:
         return EntityManager(world_tree_arg=WorldTree())
 
     @pytest.fixture
-    def executor_entity(self, clock, calendar, i18n, entity_manager):
+    def executor_entity(self, clock, i18n, entity_manager):
         """含 EntityManager 的 CommandExecutor 固件。"""
         return CommandExecutor(
-            clock=clock, calendar=calendar, i18n=i18n,
+            clock=clock, i18n=i18n,
             config=ExecutorConfig(entity_manager=entity_manager),
         )
 
@@ -847,7 +838,7 @@ class TestEntityCommand:
         assert events[0].data["entity_type"] == "ITEM"
 
     def test_entity_birth_default_position_from_player(
-        self, clock, calendar, i18n, entity_manager,
+        self, clock, i18n, entity_manager,
     ):
         """缺省坐标时 birth 落在玩家当前位置。
 
@@ -867,7 +858,7 @@ class TestEntityCommand:
         svc.birth()
         svc.move_to(77.5, 88.5)
         executor = CommandExecutor(
-            clock=clock, calendar=calendar, i18n=i18n,
+            clock=clock, i18n=i18n,
             config=ExecutorConfig(
                 player_service=svc, entity_manager=manager,
             ),
@@ -920,7 +911,7 @@ class TestEntityCommand:
         assert entity_manager.count == 0
         assert len(events) == 1
 
-    def test_entity_death_player_protected(self, clock, calendar, i18n):
+    def test_entity_death_player_protected(self, clock, i18n):
         """玩家控制的实体禁止用 death 命令移除。
 
         Arrange:
@@ -937,7 +928,7 @@ class TestEntityCommand:
             EntityType.CREATURE, 0, 0, 0, 0, controller=Controller.PLAYER,
         )
         executor = CommandExecutor(
-            clock=clock, calendar=calendar, i18n=i18n,
+            clock=clock, i18n=i18n,
             config=ExecutorConfig(entity_manager=manager),
         )
         result = executor.execute(f"entity death {player.id[:8]}")
@@ -1233,9 +1224,9 @@ class TestRepr:
 class TestContinentCommand:
     """continent status / regen 指令测试。"""
 
-    def _executor_with(self, clock, calendar, i18n, tmp_path, fp="cur-fp"):
+    def _executor_with(self, clock, i18n, tmp_path, fp="cur-fp"):
         return CommandExecutor(
-            clock=clock, calendar=calendar, i18n=i18n,
+            clock=clock, i18n=i18n,
             config=ExecutorConfig(
                 continent_path=str(tmp_path / "continent.bin"),
                 gen_fingerprint_fn=lambda: fp,
@@ -1255,39 +1246,39 @@ class TestContinentCommand:
         )
         path.write_bytes(zlib.compress(head))
 
-    def test_status_no_save_mode(self, clock, calendar, i18n):
+    def test_status_no_save_mode(self, clock, i18n):
         """无存档模式（未注入 continent_path）：明确报不可用。"""
-        ex = CommandExecutor(clock=clock, calendar=calendar, i18n=i18n)
+        ex = CommandExecutor(clock=clock, i18n=i18n)
         r = ex.execute("continent status")
         assert r.success is False
         assert "没有大陆记录" in r.output
 
-    def test_status_no_cache_file(self, clock, calendar, i18n, tmp_path):
+    def test_status_no_cache_file(self, clock, i18n, tmp_path):
         """缓存文件不存在：报告并提示下次进入生成。"""
-        ex = self._executor_with(clock, calendar, i18n, tmp_path)
+        ex = self._executor_with(clock, i18n, tmp_path)
         r = ex.execute("continent status")
         assert r.success is True
         assert "尚未记录" in r.output
 
-    def test_status_drift_detected(self, clock, calendar, i18n, tmp_path):
+    def test_status_drift_detected(self, clock, i18n, tmp_path):
         """缓存指纹与当前生成环境不一致：输出漂移提示。"""
-        ex = self._executor_with(clock, calendar, i18n, tmp_path, fp="cur-fp")
+        ex = self._executor_with(clock, i18n, tmp_path, fp="cur-fp")
         self._write_cache(tmp_path / "continent.bin", "old-fp")
         r = ex.execute("continent status")
         assert r.success is True
         assert "法则" in r.output
 
-    def test_status_match(self, clock, calendar, i18n, tmp_path):
+    def test_status_match(self, clock, i18n, tmp_path):
         """缓存指纹与当前生成环境一致：报告一致。"""
-        ex = self._executor_with(clock, calendar, i18n, tmp_path, fp="cur-fp")
+        ex = self._executor_with(clock, i18n, tmp_path, fp="cur-fp")
         self._write_cache(tmp_path / "continent.bin", "cur-fp")
         r = ex.execute("continent status")
         assert r.success is True
         assert "一致" in r.output
 
-    def test_regen_removes_cache(self, clock, calendar, i18n, tmp_path):
+    def test_regen_removes_cache(self, clock, i18n, tmp_path):
         """regen 删除缓存文件并提示重新进入生效。"""
-        ex = self._executor_with(clock, calendar, i18n, tmp_path)
+        ex = self._executor_with(clock, i18n, tmp_path)
         path = tmp_path / "continent.bin"
         self._write_cache(path, "old-fp")
         r = ex.execute("continent regen")
@@ -1295,16 +1286,16 @@ class TestContinentCommand:
         assert "已清除" in r.output
         assert not path.exists()
 
-    def test_regen_missing_cache(self, clock, calendar, i18n, tmp_path):
+    def test_regen_missing_cache(self, clock, i18n, tmp_path):
         """regen 对不存在的缓存报告无需删除。"""
-        ex = self._executor_with(clock, calendar, i18n, tmp_path)
+        ex = self._executor_with(clock, i18n, tmp_path)
         r = ex.execute("continent regen")
         assert r.success is True
         assert "可清除" in r.output
 
-    def test_unknown_subcommand(self, clock, calendar, i18n, tmp_path):
+    def test_unknown_subcommand(self, clock, i18n, tmp_path):
         """未知子命令返回用法提示。"""
-        ex = self._executor_with(clock, calendar, i18n, tmp_path)
+        ex = self._executor_with(clock, i18n, tmp_path)
         r = ex.execute("continent frobnicate")
         assert r.success is False
         assert "用法" in r.output

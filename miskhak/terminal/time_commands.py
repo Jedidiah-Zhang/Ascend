@@ -1,15 +1,15 @@
 """time 指令组 — 时间控制（speed/pause/resume/jump/tick）。
 
 Mixin，依赖宿主 CommandExecutor 提供的:
-  self._clock / self._calendar / self._i18n / self._parse_int
+  self._clock / self._i18n / self._parse_int
   self._fmt_time_of_day / self._speed_label
 """
 
 import math
 from collections.abc import Callable
 
-from olam.constants import SUNRISE_HOUR
-from miskhak.time import GAME_DAY, GAME_HOUR
+from olam.constants import SUNRISE_HOUR, GAME_DAY, GAME_HOUR
+from olam.runtime import tick_to_day
 
 from .result import CommandResult
 
@@ -65,7 +65,8 @@ class TimeCommandsMixin:
     def _h_time_tick(self, rest: list[str]) -> CommandResult:
         """time tick <count>：手动推进 N tick（校验与单次上限）。
 
-        step() 同步触发日历边界回调，超大 count 会冻结游戏线程数秒。
+        step() 同步触发 on_tick 回调（世界周期更新与观察者派生），
+        超大 count 会冻结游戏线程数秒。
         """
         count = self._parse_int(rest, 0, 1)
         if count is None or count < 1:
@@ -120,7 +121,7 @@ class TimeCommandsMixin:
         Returns:
             包含日、时间、速度、状态的字符串。
         """
-        day = self._calendar.day
+        day = tick_to_day(self._clock.time)
         state = self._i18n.t(
             "console.state_paused" if self._clock.paused else "console.state_running"
         )
@@ -157,8 +158,8 @@ class TimeCommandsMixin:
     def _cmd_tick(self, count: int = 1) -> str:
         """手动推进 N tick（忽略暂停和速度，调试用）。
 
-        每次 step 都会触发日历边界回调，超大 count 会冻结游戏线程
-        （单次上限见 _h_time_tick）。
+        每次 step 都会触发 on_tick 回调（世界周期更新与观察者派生），
+        超大 count 会冻结游戏线程（单次上限见 _h_time_tick）。
 
         Args:
             count: 要推进的 tick 数。
@@ -179,8 +180,11 @@ class TimeCommandsMixin:
         Returns:
             跳转后状态文本。
         """
-        target_day = self._calendar.day + days
+        target_day = tick_to_day(self._clock.time) + days
         target = (target_day - 1) * GAME_DAY + SUNRISE_HOUR * GAME_HOUR
         skipped = target - self._clock.time
         self._clock.skip(skipped)
-        return self._i18n.t("console.jumped", days=days, day=self._calendar.day)
+        return self._i18n.t(
+            "console.jumped", days=days,
+            day=tick_to_day(self._clock.time),
+        )

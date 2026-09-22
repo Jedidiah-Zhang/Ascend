@@ -41,7 +41,7 @@ class TestConsumerTruthIsolation:
     def test_weather_query_payload_only_scalars(self):
         """天气查询返回只含标量（无嵌套真值结构）。"""
         from olam.generation.climate import ClimateZone, WeatherParams
-        from miskhak.time import WorldClock
+        from olam.runtime import WorldClock
         from olam.adapters.weather.weather_engine import WeatherEngine
         from miskhak.events import WorldTree
 

@@ -9,7 +9,7 @@ import pytest
 from olam.constants import TILE_MAP_SIZE
 from olam.adapters.entity import Controller, EntityManager, EntityType
 from miskhak.entity import PlayerService
-from miskhak.time import WorldClock
+from olam.runtime import WorldClock
 from miskhak.events import WorldTree
 
 

@@ -4,7 +4,7 @@
 """
 
 from miskhak.log import get_logger
-from miskhak.time.calendar import tick_to_hms
+from olam.runtime import tick_to_hms
 from miskhak.events import SubscriptionScope
 from miskhak.events.event import Event
 from miskhak.net.server import GameServer
@@ -77,7 +77,7 @@ class EventBridge:
         Args:
             event: WorldTree 事件。
         """
-        # 时间换算：tick → 小时/分钟（与 calendar/executor 同一事实源）
+        # 时间换算：tick → 小时/分钟（与 executor 共用 olam.runtime.tick_to_hms）
         game_hour, game_minute, _ = tick_to_hms(event.timestamp)
         message = {
             "type": "event",

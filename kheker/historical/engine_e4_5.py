@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from olam.constants import GAME_DAY, GAME_YEAR
 from olam.generation.climate import ClimateZone, WeatherParams
-from miskhak.time import WorldClock
+from olam.runtime import WorldClock
 from olam.adapters.weather.weather_engine import WeatherEngine
 from miskhak.events import WorldTree
 
@@ -171,7 +171,7 @@ def _e5(fast=False):
     # ── 2. 同 seed 双跑：基线 vs do 干预 ──
     from olam.constants import GAME_DAY, GAME_MINUTE, GAME_YEAR
     from olam.kernel import Address, address_value
-    from miskhak.time import WorldClock
+    from olam.runtime import WorldClock
     from olam.adapters.weather.weather_engine import WeatherEngine
 
     def _run(intervene: bool):

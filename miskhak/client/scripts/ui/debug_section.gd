@@ -50,7 +50,7 @@ func on_world_event(_event_type: String, _payload: Dictionary) -> void:
 	"""后端推送事件时广播，子类自行判断是否处理。
 
 	Args:
-		_event_type: 事件类型（如 "minute_change"）。
+		_event_type: 事件类型（如 "time_sync"）。
 		_payload: 完整事件载荷（含 payload.data）。
 	"""
 	pass

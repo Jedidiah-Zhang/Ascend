@@ -12,16 +12,13 @@ def test_application_logging_captures_package_namespaces(tmp_path):
 import logging
 import sys
 from pathlib import Path
-from miskhak.log import get_logger, quiet_console, setup_logging
+from miskhak.log import get_logger, setup_logging
 
 path = setup_logging(log_dir=Path(sys.argv[1]))
 assert setup_logging(log_dir=Path(sys.argv[1])) == path
 logging.getLogger('olam.generation').info('WORLD_LOG')
 get_logger('miskhak.app').info('GAME_LOG')
 get_logger('__main__').debug('SCRIPT_DEBUG')
-quiet_console()
-get_logger('miskhak.app').info('FILE_ONLY_LOG')
-get_logger('miskhak.app').warning('CONSOLE_WARNING')
 logging.shutdown()
 """, str(tmp_path)],
         cwd=Path(__file__).resolve().parents[2],
@@ -30,10 +27,8 @@ logging.shutdown()
     logs = list(tmp_path.glob("ascend_*.log"))
     assert len(logs) == 1
     content = logs[0].read_text(encoding="utf-8")
-    for marker in ("WORLD_LOG", "GAME_LOG", "SCRIPT_DEBUG", "FILE_ONLY_LOG", "CONSOLE_WARNING"):
+    for marker in ("WORLD_LOG", "GAME_LOG", "SCRIPT_DEBUG"):
         assert content.count(marker) == 1
     assert "WORLD_LOG" in result.stdout
     assert "GAME_LOG" in result.stdout
-    assert "CONSOLE_WARNING" in result.stdout
     assert "SCRIPT_DEBUG" not in result.stdout
-    assert "FILE_ONLY_LOG" not in result.stdout

@@ -7,7 +7,7 @@
 import pytest
 
 from olam.constants import GAME_HOUR, GAME_DAY, GAME_YEAR
-from miskhak.time import WorldClock
+from olam.runtime import WorldClock
 
 
 class TestClockInit:
@@ -216,3 +216,38 @@ class TestClockDerived:
         clock = WorldClock(epoch=GAME_DAY * 2)
         assert clock.game_days() == pytest.approx(2.0)
         assert clock.game_years() == pytest.approx(2 * GAME_DAY / GAME_YEAR)
+
+
+class TestTimeConversions:
+    """时刻换算入口：tick → 日 / 时:分:秒。"""
+
+    def test_T23_tick_to_day(self):
+        """日从 1 开始，跨天边界逐日递增。"""
+        from olam.runtime import tick_to_day
+
+        assert tick_to_day(0) == 1
+        assert tick_to_day(GAME_DAY - 1) == 1
+        assert tick_to_day(GAME_DAY) == 2
+        assert tick_to_day(3 * GAME_DAY + 5) == 4
+
+    def test_T24_tick_to_hms(self):
+        """当日时刻换算：小时/分钟/秒范围与边界。"""
+        from olam.runtime import tick_to_hms
+        from olam.constants import GAME_MINUTE
+
+        assert tick_to_hms(0) == (0, 0, 0)
+        assert tick_to_hms(6 * GAME_HOUR) == (6, 0, 0)
+        assert tick_to_hms(GAME_HOUR + GAME_MINUTE) == (1, 1, 0)
+        # 跨天回绕：时刻只取当日偏移
+        assert tick_to_hms(GAME_DAY + 6 * GAME_HOUR) == (6, 0, 0)
+        # 秒换算：每分钟 60 秒
+        assert tick_to_hms(GAME_MINUTE // 2)[2] == 30
+
+    def test_T25_helpers_agree_with_clock(self):
+        """换算入口与时钟派生一致（日/时/分互洽）。"""
+        from olam.runtime import tick_to_day, tick_to_hms
+
+        clock = WorldClock(epoch=2 * GAME_DAY + 13 * GAME_HOUR)
+        assert tick_to_day(clock.time) == 3
+        hour, minute, _ = tick_to_hms(clock.time)
+        assert (hour, minute) == (13, 0)

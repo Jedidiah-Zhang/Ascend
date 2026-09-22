@@ -21,7 +21,7 @@ static func hhmm_string(hour: int, minute: int) -> String:
 static func game_time_string(ticks: int) -> String:
 	"""tick 数 → "第 N 天 HH:MM"。
 
-	天从 1 开始（与后端日历一致）；刻度取整到游戏分钟。
+	天从 1 开始（与后端 tick→日 派生一致）；刻度取整到游戏分钟。
 	"""
 	if ticks < 0:
 		ticks = 0

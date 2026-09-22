@@ -107,11 +107,11 @@ func set_player_chunk(chunk: Vector2i) -> void:
 	_player_chunk = chunk
 
 
-## 处理世界事件：minute_change 在换日时插入日期分隔行；
+## 处理世界事件：time_sync 在换日时插入日期分隔行；
 ## 各类天气事件转交 _push_weather_event 格式化并按视野过滤。
 ##
 ## Args:
-##     event_type: 事件类型（minute_change / temperature_change 等）。
+##     event_type: 事件类型（time_sync / temperature_change 等）。
 ##     payload: 事件载荷（含 data 与可选 location 字段）。
 func on_world_event(event_type: String, payload: Dictionary) -> void:
 	var data: Dictionary = payload.get("data", {})
@@ -120,7 +120,7 @@ func on_world_event(event_type: String, payload: Dictionary) -> void:
 		int(payload.get("game_minute", 0)))
 
 	match event_type:
-		"minute_change":
+		"time_sync":
 			var day: int = int(data.get("day", 0))
 			if day != _current_game_day:
 				_current_game_day = day

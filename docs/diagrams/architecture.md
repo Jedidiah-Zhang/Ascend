@@ -4,7 +4,7 @@
 
 ```mermaid
 graph TD
-    subgraph GameEngine["🎮 GameEngine (game.py)"]
+    subgraph GameEngine["🎮 GameEngine (miskhak/app.py)"]
         direction LR
     end
 
@@ -15,9 +15,8 @@ graph TD
         WT_Contract["WorldEvent 契约类<br/>事件 data 结构"]
     end
 
-    subgraph Time["⏰ 时间模块"]
+    subgraph Time["⏰ 时间模块（olam/runtime）"]
         CLK["WorldClock<br/>tick/变速/暂停"]
-        CAL["GameCalendar<br/>日/时/分 边界检测"]
     end
 
     subgraph Space["🌍 空间模块"]
@@ -46,7 +45,6 @@ graph TD
 
     WT_Tree --> WT_Graph
     WT_Tree --> WT_Archive
-    CLK --> CAL
     GEN --> WEA
     WEA -->|"求值子集声明（modules/weather）"| REG
     REG -->|"编译产物：引擎求值面"| IVT
@@ -72,7 +70,6 @@ graph TD
 ```mermaid
 graph LR
     subgraph 发布者
-        CAL2["GameCalendar"]
         WEA2["WeatherEngine"]
         ENT2["EntityManager"]
         GAME2["GameEngine"]
@@ -84,48 +81,42 @@ graph LR
     end
 
     subgraph 订阅者
-        WEA_SUB["WeatherEngine"]
         BRIDGE["EventBridge<br/>→ Godot前端"]
         FUTURE["(未来: 群体/心智/基因)"]
     end
 
-    CAL2 -->|"minute_change<br/>hour_change<br/>day_change<br/>day_end"| PUB
     WEA2 -->|"season_change<br/>temperature_change<br/>humidity_change<br/>wind_change<br/>sunshine_change<br/>precipitation_start/stop<br/>cold_snap/heat_wave/storm"| PUB
     ENT2 -->|"entity_born<br/>entity_died<br/>entity_moved"| PUB
     GAME2 -->|"world_initialized"| PUB
 
     PUB --> SUB
-    SUB -->|"minute_change"| WEA_SUB
     SUB -->|"* (通配符)"| BRIDGE
     SUB -->|"(预留)"| FUTURE
 ```
+
+> 时间推进不经过世界树：`FrameScheduler` 直接订阅 `clock.on_tick/on_skip`
+> 按声明周期驱动世界更新；表现层的 `time_sync` 由引擎直接广播（非世界树事件）。
 
 ## 3. 时间模块内部
 
 ```mermaid
 graph TD
-    subgraph Clock["WorldClock"]
+    subgraph Clock["WorldClock (olam/runtime)"]
         TICK["tick() / step() / skip()"]
         CB["on_tick / on_skip 回调列表"]
         STATE["_time / _speed / _paused"]
     end
 
-    subgraph Calendar["GameCalendar"]
-        BOUND["_check_boundaries()"]
-        MIN["→ 发布 minute_change"]
-        HOUR["→ 发布 hour_change"]
-        DAY_END["→ 发布 day_end"]
-        DAY["→ 发布 day_change"]
+    subgraph Drivers["订阅者（直接回调，不经世界树）"]
+        DRV2["FrameScheduler.bind_clock<br/>按声明周期推进世界"]
+        VIEW["表现层/工具<br/>本地派生日/时/分"]
     end
 
     TICK --> CB
-    CB -->|"_on_tick_advance"| BOUND
-    BOUND --> MIN
-    BOUND --> HOUR
-    BOUND --> DAY_END
-    DAY_END --> DAY
+    CB -->|"game_time"| DRV2
+    CB -->|"game_time"| VIEW
 
-    CAL_INJECT["外部注入<br/>WeatherEngine / CommandExecutor"] --> TICK
+    CAL_INJECT["GameEngine 每帧调用 tick()"] --> TICK
 ```
 
 ## 4. 空间模块管线
@@ -164,7 +155,6 @@ graph TD
     GE["GameEngine"]
 
     GE -->|"__init__ 创建"| CLK3["WorldClock"]
-    GE -->|"__init__ 创建"| CAL3["GameCalendar"]
     GE -->|"__init__ 创建"| I18N["I18n"]
 
     GE -->|"start() 创建"| GEN3["WorldGenerator"]
@@ -176,13 +166,11 @@ graph TD
     GE -->|"start() 创建"| DISP3["MessageDispatcher"]
     GE -->|"start() 创建"| CMD3["CommandExecutor"]
 
-    CLK3 -->|注入| CAL3
     CLK3 -->|注入| WEA3
     CLK3 -->|注入| CMD3
 
     GEN3 -->|"ContinentData"| TILE3
 
-    CAL3 -->|注入| CMD3
     I18N -->|注入| CMD3
     WEA3 -->|注入| CMD3
     PLR3 -->|注入| CMD3
@@ -224,15 +212,6 @@ classDiagram
         +on_tick(callback)
         +time: int
         +speed: float
-    }
-
-    class GameCalendar {
-        +day: int
-        +hour: int
-        +minute: int
-        +elapsed_days: int
-        +day_at(game_time)
-        +shutdown()
     }
 
     class WorldGenerator {
@@ -315,7 +294,6 @@ classDiagram
     }
 
     GameEngine *-- WorldClock
-    GameEngine *-- GameCalendar
     GameEngine *-- WorldGenerator
     GameEngine *-- WeatherEngine
     GameEngine *-- EntityManager
@@ -325,8 +303,6 @@ classDiagram
     GameEngine *-- CommandExecutor
     GameEngine *-- SaveManager
 
-    GameCalendar ..> WorldClock : 回调注入
-    GameCalendar ..> WorldTree : 发布事件
     WeatherEngine ..> WorldClock : 读取时间
     WeatherEngine ..> WorldTree : 订阅+发布
     EntityManager ..> WorldTree : 发布事件

@@ -118,7 +118,6 @@
   "console.lang_switched": "语言已切换为: {lang}",
   "console.report_game_time": "游戏时间",
   "console.report_elapsed": "经过天数",
-  "console.report_day_changes": "日期变更",
   "console.report_ticks": "累计 tick",
   "console.report_events": "总线事件",
   "console.unknown_cmd": "未知指令 '{cmd}'，输入 ? 查看帮助",

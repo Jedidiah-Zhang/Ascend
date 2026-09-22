@@ -1,4 +1,6 @@
-"""游戏循环整合测试 — 串联事件总线、世界时钟、日历系统，模拟游戏运行。
+"""游戏循环整合测试 — 串联世界时钟与运行统计，模拟游戏运行。
+
+日期边界是 tick 的派生观察量：本运行器本地检测（不依赖日历组件）。
 
 用法:
     # 作为 pytest 运行
@@ -11,8 +13,8 @@
 import time as _real_time
 from dataclasses import dataclass, field
 
-from miskhak.events import world_tree
-from miskhak.time import WorldClock, GameCalendar, GAME_DAY, GAME_HOUR
+from olam.constants import GAME_DAY, GAME_HOUR
+from olam.runtime import WorldClock
 from miskhak.log import setup_logging, get_logger
 
 logger = get_logger(__name__)
@@ -25,10 +27,10 @@ class GameSession:
     """一次模拟会话的状态快照。"""
 
     clock: WorldClock
-    calendar: GameCalendar
 
     # 统计
     tick_count: int = 0
+    current_day: int = 1
     day_changes: list[dict] = field(default_factory=list)
     tick_events: list[dict] = field(default_factory=list)
     start_real_time: float = 0.0
@@ -39,9 +41,9 @@ class GameSession:
 
 
 class GameLoop:
-    """游戏主循环 — 串联所有已实现系统。
+    """游戏主循环 — 串联时钟推进与运行统计。
 
-    管理时钟推进、日历追踪和事件监控，
+    管理时钟推进与日期边界观察（本地派生游标），
     可作为测试工具或开发阶段的"游戏运行器"。
 
     用法:
@@ -53,37 +55,40 @@ class GameLoop:
     """
 
     def __init__(self) -> None:
-        """初始化游戏循环，创建时钟和日历。"""
+        """初始化游戏循环，创建时钟。"""
         setup_logging()
         logger.info("══════ Ascend 游戏启动 ══════")
 
         self.clock = WorldClock()
-        self.calendar = GameCalendar(clock=self.clock)
         self.session: GameSession | None = None
 
-        # 监控事件
+        # 监控时钟推进
         self._unsubscribers: list = []
         self._setup_monitors()
 
-        logger.info("系统就绪: WorldTree, WorldClock, GameCalendar")
+        logger.info("系统就绪: WorldClock")
 
     def _setup_monitors(self) -> None:
-        """订阅关键事件，记录运行统计。"""
+        """订阅时钟推进，记录运行统计（日期边界本地派生检测）。"""
         def on_tick(game_time: int):
-            if self.session:
-                self.session.tick_count += 1
-                self.session.tick_events.append({
-                    "game_time": game_time,
-                    "speed": self.clock.speed,
+            if not self.session:
+                return
+            self.session.tick_count += 1
+            self.session.tick_events.append({
+                "game_time": game_time,
+                "speed": self.clock.speed,
+            })
+            day = game_time // GAME_DAY + 1
+            if day != self.session.current_day:
+                self.session.day_changes.append({
+                    "day": day,
+                    "previous_day": self.session.current_day,
+                    "elapsed_days": day - 1,
                 })
-
-        def on_day_change(event):
-            if self.session:
-                self.session.day_changes.append(event.data)
-            logger.info("📅 新的一天: 第 %d 天", event.data["day"])
+                self.session.current_day = day
+                logger.info("📅 新的一天: 第 %d 天", day)
 
         self._unsubscribers.append(self.clock.on_tick(on_tick))
-        self._unsubscribers.append(world_tree.subscribe("day_change", on_day_change))
 
     # ── 生命周期 ──────────────────────────────────────────────────
 
@@ -95,12 +100,12 @@ class GameLoop:
         """
         self.session = GameSession(
             clock=self.clock,
-            calendar=self.calendar,
+            current_day=self.clock.time // GAME_DAY + 1,
             start_real_time=_real_time.monotonic(),
         )
         logger.info(
             "会话开始 | speed=×%.1f 第 %d 天",
-            self.clock.speed, self.calendar.day,
+            self.clock.speed, self.session.current_day,
         )
         return self.session
 
@@ -109,7 +114,6 @@ class GameLoop:
         for unsub in self._unsubscribers:
             unsub()
         self._unsubscribers.clear()
-        self.calendar.shutdown()
         logger.info("会话结束")
 
     # ── 模拟运行 ──────────────────────────────────────────────────
@@ -135,8 +139,8 @@ class GameLoop:
             if frame % 600 == 0 and frame > 0:
                 logger.info(
                     "  游戏时间: 第 %d 天 %.1f 小时",
-                    self.calendar.day,
-                    self.calendar.time_of_day(self.clock.time) / GAME_HOUR,
+                    self.clock.time // GAME_DAY + 1,
+                    (self.clock.time % GAME_DAY) / GAME_HOUR,
                 )
 
     def run_days(self, days: int) -> None:
@@ -189,14 +193,12 @@ class GameLoop:
             "  Ascend 游戏运行报告",
             "=" * 50,
             f"  游戏时间:      {s.clock.time:,} tick",
-            f"  当前日:        第 {s.calendar.day} 天",
-            f"  经过天数:      {s.calendar.elapsed_days} 天",
-            f"  日期变更:      {s.calendar.day_change_count} 次",
+            f"  当前日:        第 {s.clock.time // GAME_DAY + 1} 天",
+            f"  经过天数:      {s.clock.time // GAME_DAY} 天",
+            f"  日期变更:      {len(s.day_changes)} 次",
             f"  速度:          ×{s.clock.speed:.1f}" + (" (暂停)" if s.clock.paused else ""),
             f"  累计 tick:     {s.clock.tick_count:,}",
             f"  真实耗时:      {s.elapsed_real():.2f}s",
-            f"  总线事件数:    {world_tree.event_count:,}",
-            f"  活跃订阅:      {world_tree.subscriber_count}",
             "=" * 50,
         ]
         report = "\n".join(lines)
@@ -210,7 +212,7 @@ class TestGameLoop:
     """游戏循环整合测试。"""
 
     def test_full_session(self):
-        """完整会话：启动 → 快进多天 → 验证系统联动。"""
+        """完整会话：启动 → 快进多天 → 验证时钟与边界派生。"""
         loop = GameLoop()
 
         try:
@@ -218,30 +220,29 @@ class TestGameLoop:
             session = loop.start()
             initial_time = 6 * GAME_HOUR
             assert session is not None
-            assert loop.calendar.day == 1
+            assert loop.clock.time // GAME_DAY + 1 == 1
             assert loop.clock.time == initial_time
 
             # 快进 3 天
             loop.run_days(3)
 
             # 验证：3 天后应该是第 4 天
-            assert loop.calendar.day == 4, f"期望 day=4，实际 day={loop.calendar.day}"
-            assert loop.calendar.elapsed_days == 3
-            assert loop.calendar.day_change_count == 3
+            assert loop.clock.time // GAME_DAY + 1 == 4, \
+                f"期望 day=4，实际 day={loop.clock.time // GAME_DAY + 1}"
+            assert loop.clock.time // GAME_DAY == 3
 
             # 验证：时钟时间应该接近 initial + 3 * GAME_DAY
             expected = initial_time + 3 * GAME_DAY
             assert loop.clock.time == expected, \
                 f"期望 time={expected}，实际 time={loop.clock.time}"
 
-            # 验证：总线上应该有 game_tick 事件和 day_change 事件
-            assert world_tree.event_count > 0, "总线应该有事件"
+            # 验证：逐 tick 模拟应检测到 3 次日期边界
             assert len(session.day_changes) == 3, \
-                f"应该有 3 次 day_change，实际 {len(session.day_changes)}"
+                f"应该有 3 次日期变更，实际 {len(session.day_changes)}"
 
             # 再快进 2 天
             loop.run_days(2)
-            assert loop.calendar.day == 6
+            assert loop.clock.time // GAME_DAY + 1 == 6
             assert len(session.day_changes) == 5
 
             # 打印报告
@@ -263,8 +264,8 @@ class TestGameLoop:
                 loop.clock.tick()
 
             # 应该没有触发日期变更
-            assert loop.calendar.day == 1
-            assert loop.calendar.day_change_count == 0
+            assert loop.clock.time // GAME_DAY + 1 == 1
+            assert len(loop.session.day_changes) == 0
 
             # 但时间应该前进了
             assert loop.clock.time > 0
@@ -272,8 +273,8 @@ class TestGameLoop:
         finally:
             loop.stop()
 
-    def test_day_change_events(self):
-        """验证 day_change 事件的数据正确性。"""
+    def test_day_change_derivation(self):
+        """验证本地日期边界派生数据的正确性。"""
         loop = GameLoop()
 
         try:
@@ -301,7 +302,7 @@ class TestGameLoop:
             # 高速模式快进
             loop.clock.speed = 120
             loop.run_days(1)
-            assert loop.calendar.day == 2
+            assert loop.clock.time // GAME_DAY + 1 == 2
 
             # 恢复实时速度
             loop.clock.speed = 1.0
@@ -322,11 +323,11 @@ if __name__ == "__main__":
 
         print("\n  ▶ 实时运行 2 秒（约 120 tick）...")
         loop.run_realtime(2.0)
-        print(f"     游戏时间: {loop.clock.time} tick, 第 {loop.calendar.day} 天")
+        print(f"     游戏时间: {loop.clock.time} tick, 第 {loop.clock.time // GAME_DAY + 1} 天")
 
         print("\n  ▶ 快进到第 2 天...")
         loop.run_days(1)
-        print(f"     游戏时间: {loop.clock.time} tick, 第 {loop.calendar.day} 天")
+        print(f"     游戏时间: {loop.clock.time} tick, 第 {loop.clock.time // GAME_DAY + 1} 天")
 
         print("\n  ▶ 快进 4 天（到第 6 天）...")
         loop.run_days(4)

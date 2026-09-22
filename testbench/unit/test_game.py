@@ -394,6 +394,7 @@ class TestWorldInvalidation:
 
     class _FakeClock:
         paused = False
+        time = 0
 
         def tick(self) -> None:
             pass
@@ -431,3 +432,74 @@ class TestWorldInvalidation:
         first = engine.world_invalidated
         engine._tick()
         assert engine.world_invalidated == first
+
+
+class TestTimeSyncBroadcast:
+    """表现层时间同步：跨游戏分钟边界广播 time_sync（不进世界树）。"""
+
+    class _FakeServer:
+        def __init__(self) -> None:
+            self.messages: list[dict] = []
+
+        def broadcast(self, message: dict) -> None:
+            self.messages.append(message)
+
+    class _FakeClock:
+        def __init__(self) -> None:
+            self.time = 0
+
+        def tick(self) -> None:
+            self.time += 1
+
+    def _engine(self) -> GameEngine:
+        engine = GameEngine(seed=1)
+        engine.clock = self._FakeClock()
+        engine.server = self._FakeServer()
+        engine._save_thread = None
+        return engine
+
+    def test_first_tick_broadcasts_current_time(self):
+        """首帧广播一次当前时刻（初始游标为 -1）。"""
+        from olam.constants import GAME_HOUR
+
+        engine = self._engine()
+        engine.clock.time = 6 * GAME_HOUR  # 06:00
+        engine._tick()
+
+        assert len(engine.server.messages) == 1
+        msg = engine.server.messages[0]
+        assert msg["type"] == "event"
+        assert msg["event_type"] == "time_sync"
+        assert msg["payload"]["game_hour"] == 6
+        assert msg["payload"]["game_minute"] == 0
+        assert msg["payload"]["data"]["day"] == 1
+        assert msg["payload"]["data"]["game_time"] == engine.clock.time
+
+    def test_same_minute_not_rebroadcast(self):
+        """同一游戏分钟内不重复广播。"""
+        engine = self._engine()
+        for _ in range(10):
+            engine._tick()
+        assert len(engine.server.messages) == 1
+
+    def test_minute_boundary_rebroadcasts(self):
+        """跨游戏分钟边界广播新时刻（跳转后同样一次到位）。"""
+        from olam.constants import GAME_DAY, GAME_MINUTE
+
+        engine = self._engine()
+        engine._tick()
+        engine.clock.time = 2 * GAME_DAY + 3 * GAME_MINUTE + 5  # 跳到第 3 天
+        engine._tick()
+
+        assert len(engine.server.messages) == 2
+        payload = engine.server.messages[-1]["payload"]
+        assert payload["game_hour"] == 0
+        assert payload["game_minute"] == 3
+        assert payload["data"]["day"] == 3
+
+    def test_service_mode_does_not_broadcast(self):
+        """服务模式（无世界）不广播时间同步。"""
+        engine = self._engine()
+        engine._service_mode = True
+        engine._tick()
+        assert engine.server.messages == []

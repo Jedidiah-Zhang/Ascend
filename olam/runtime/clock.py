@@ -14,14 +14,56 @@
 回调接口：
     clock.on_tick(cb)    — 每 tick 调用 cb(game_time:int)，返回 unsubscribe
     clock.on_skip(cb)    — 跳转时调用 cb(skipped:int, game_time:int)
+
+时刻换算：
+    tick_to_day(t)       — tick → 游戏日（从 1 开始）
+    tick_to_hms(t)       — tick → (时, 分, 秒)（显示与事件载荷的统一入口）
+
+驱动层语义：时钟是运行时的逻辑时间源，帧调度器经 on_tick/on_skip
+订阅推进信号（``FrameScheduler.bind_clock``）；世界内时间语义由声明
+承载（``olam/modules/clock.py`` 的 ``world.clock.tick`` external 槽位），
+时钟自身不发布世界树事件。
 """
 
+import logging
 from typing import Callable
 
-from miskhak.log import get_logger
-from olam.constants import GAME_HOUR, GAME_DAY, GAME_YEAR
+from olam.constants import GAME_HOUR, GAME_DAY, GAME_MINUTE, GAME_YEAR
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
+
+
+def tick_to_day(game_time: int) -> int:
+    """tick 数 → 游戏日（从 1 开始），日派生的统一入口。
+
+    经过天数 = ``tick_to_day(t) - 1``。
+
+    Args:
+        game_time: 游戏时间（tick 数）。
+
+    Returns:
+        游戏日（从 1 开始）。
+    """
+    return game_time // GAME_DAY + 1
+
+
+def tick_to_hms(game_time: int) -> tuple[int, int, int]:
+    """tick 数 → (当日小时, 当日分钟, 当日秒)，时刻换算的统一入口。
+
+    事件广播（EventBridge）、终端时间显示（executor）等所有时刻换算
+    均经此函数。
+
+    Args:
+        game_time: 游戏时间（tick 数）。
+
+    Returns:
+        (小时, 分钟, 秒)，小时范围 [0, 24)。
+    """
+    tod = game_time % GAME_DAY
+    hour = tod // GAME_HOUR
+    minute = (tod % GAME_HOUR) // GAME_MINUTE
+    second = (tod % GAME_MINUTE) * 60 // GAME_MINUTE
+    return hour, minute, second
 
 
 class WorldClock:
@@ -203,7 +245,9 @@ class WorldClock:
     def skip(self, ticks: int) -> None:
         """瞬间跳转 N tick，不模拟中间过程。
 
-        通知所有 on_skip 回调（如日历需要检测跨过的日/时边界）。
+        通知所有 on_skip 回调：FrameScheduler 据此推进至当前时刻，
+        跨过的多个边界由世界机制按状态游标自行补齐（WC-3.3），
+        不逐边界补发。
 
         Args:
             ticks: 要跳过的 tick 数，必须 > 0。
@@ -230,8 +274,8 @@ class WorldClock:
     def run_to(self, target: int) -> None:
         """以当前 speed 逐 tick 推进到目标时间。
 
-        每个中间 tick 都触发 on_tick 回调，日历等模块正常运作。
-        用于睡眠、快速旅行等需要中间事件的场景。
+        每个中间 tick 都触发 on_tick 回调：世界周期更新与观察者派生
+        按 tick 逐次发生。用于睡眠、快速旅行等需要中间过程的场景。
 
         Args:
             target: 目标时间（tick 数），必须大于当前时间。

@@ -12,7 +12,7 @@ import pytest
 from olam.protocols.timeline import PlannedIntervention
 from miskhak.i18n import I18n
 from olam.generation.climate import ClimateZone, WeatherParams
-from miskhak.time import GameCalendar, WorldClock
+from olam.runtime import WorldClock
 from olam.adapters.weather.weather_engine import WeatherEngine
 from olam.modules.ids import INSTANT_TEMPERATURE
 from miskhak.events import WorldTree
@@ -49,7 +49,7 @@ def executor(clock, i18n, engine):
 
     weather, table = engine
     return CommandExecutor(
-        clock=clock, calendar=GameCalendar(clock), i18n=i18n,
+        clock=clock, i18n=i18n,
         config=ExecutorConfig(
             weather_engine=weather, default_chunk=_CHUNK,
             intervention_table=table,
@@ -237,7 +237,7 @@ class TestTerminalTraceCommands:
 
         weather, table = engine
         executor = CommandExecutor(
-            clock=clock, calendar=GameCalendar(clock), i18n=I18n("en_US"),
+            clock=clock, i18n=I18n("en_US"),
             config=ExecutorConfig(
                 weather_engine=weather, default_chunk=_CHUNK,
                 intervention_table=table,

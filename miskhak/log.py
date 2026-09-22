@@ -81,16 +81,6 @@ def setup_logging(level: int = logging.DEBUG, log_dir: Path | None = None) -> st
         return _log_path
 
 
-def quiet_console() -> None:
-    """将控制台 handler 级别提升到 WARNING，抑制 INFO/DEBUG 输出。
-
-    日志文件不受影响。用于交互式控制台等不希望日志干扰屏幕输出的场景。
-    """
-    for h in logging.getLogger().handlers:
-        if isinstance(h, logging.StreamHandler) and h.stream is sys.stdout:
-            h.setLevel(logging.WARNING)
-
-
 def get_logger(name: str) -> logging.Logger:
     """获取模块级 logger。
 

@@ -20,11 +20,11 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from olam.constants import GAME_YEAR
+from olam.runtime import WorldClock, tick_to_day, tick_to_hms
 from miskhak.events import world_tree
 from miskhak.log import get_logger
 from miskhak.i18n import I18n
-from miskhak.time import WorldClock, GameCalendar, GAME_YEAR
-from miskhak.time.calendar import tick_to_hms
 
 from .continent_commands import ContinentCommandsMixin
 from .entity_commands import EntityCommandsMixin
@@ -82,7 +82,7 @@ class CommandExecutor(
     注入新指令。
 
     Usage:
-        executor = CommandExecutor(clock, calendar, I18n(),
+        executor = CommandExecutor(clock, I18n(),
                                    config=ExecutorConfig(...))
         result = executor.execute("status")
         print(result.output)
@@ -94,25 +94,22 @@ class CommandExecutor(
     def __init__(
         self,
         clock: WorldClock,
-        calendar: GameCalendar,
         i18n: I18n,
         config: ExecutorConfig | None = None,
     ) -> None:
         """初始化指令执行器。
 
-        核心依赖（时钟/日历/国际化）为必选参数；可选运行时服务
+        核心依赖（时钟/国际化）为必选参数；可选运行时服务
         （天气/实体/玩家/大陆等）经 ExecutorConfig 聚合传入。
 
         Args:
             clock: 世界时钟实例。
-            calendar: 游戏日历实例。
             i18n: 国际化实例。
             config: 可选运行时服务依赖；None = 全部缺省
                 （weather/entity/continent 等指令不可用）。
         """
         config = config or ExecutorConfig()
         self._clock = clock
-        self._calendar = calendar
         self._i18n = i18n
         self._weather = config.weather_engine
         self._default_chunk = config.default_chunk or (0, 0)
@@ -348,18 +345,18 @@ class CommandExecutor(
             "console.state_paused" if self._clock.paused else "console.state_running"
         )
         stats = self._wt.stats
+        day = tick_to_day(self._clock.time)
         lines = [
             self._i18n.t(
                 "console.status",
                 active=self._fmt_active_time(),
-                day=self._calendar.day,
+                day=day,
                 time=self._fmt_time_of_day(),
                 mode=self._speed_label(),
                 state=state,
             ),
             f"  {self._i18n.t('console.report_game_time')}:    {self._clock.time:,}t",
-            f"  {self._i18n.t('console.report_elapsed')}:    {self._calendar.elapsed_days}",
-            f"  {self._i18n.t('console.report_day_changes')}:    {self._calendar.day_change_count}",
+            f"  {self._i18n.t('console.report_elapsed')}:    {tick_to_day(self._clock.time) - 1}",
             f"  {self._i18n.t('console.report_ticks')}:   {self._clock.tick_count:,}",
             f"  {self._i18n.t('console.report_events')}:    {self._wt.event_count:,}",
             f"  ---",

@@ -1,6 +1,7 @@
 """跨领域事件契约统一测试。
 
-覆盖 time/entity/game 各领域事件（weather 事件样本见 test_weather.py）：
+覆盖 entity/game 各领域事件（time 域随日历删除；weather 事件样本见
+test_weather.py）：
   - as_dict 键 == dataclass 字段集合
   - event_type 全局唯一非空（含 weather 域，锁全项目碰撞）
   - as_dict 输出为 JSON 形状（tuple→list），可被 json.dumps 直接序列化
@@ -11,7 +12,6 @@ import json
 import pytest
 from dataclasses import fields
 
-from miskhak.time.events import MinuteChange, HourChange, DayChange, DayEnd
 from olam.adapters.entity.events import EntityBorn, EntityDied, EntityMoved
 from miskhak.entity.events import PlayerTeleported
 from miskhak.app import WorldInitialized
@@ -24,13 +24,6 @@ from olam.generation.weather_field.events import (
 
 
 SAMPLES: dict[type, dict] = {
-    MinuteChange: dict(day=1, hour=5, minute=30, game_time=36000),
-    HourChange: dict(day=1, hour=6, previous_hour=5, hour_change_count=1),
-    DayChange: dict(
-        day=2, previous_day=1, elapsed_days=2,
-        day_change_count=1, skipped_days=0,
-    ),
-    DayEnd: dict(day=1, elapsed_days=1),
     EntityBorn: dict(
         entity_id="abc", entity_type="CREATURE", controller="NONE",
         position=[3, 5, 2, 2], layer_id=0, x=98, y=102,
@@ -65,7 +58,7 @@ class TestEventContracts:
             assert d[name] == value
 
     def test_event_types_unique_and_nonempty(self):
-        """全项目 event_type 唯一非空（跨 time/entity/game/weather 域）。"""
+        """全项目 event_type 唯一非空（跨 entity/game/weather 域）。"""
         seen: dict[str, type] = {}
         for cls in ALL_CLASSES:
             assert cls.event_type, f"{cls.__name__}.event_type 为空"

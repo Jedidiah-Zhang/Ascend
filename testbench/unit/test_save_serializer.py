@@ -10,7 +10,7 @@ from miskhak.save.serializer import (
     STATE_VERSION, collect_state, apply_state, apply_clock, apply_player,
     aligned_time, require_state_version,
 )
-from miskhak.time import WorldClock
+from olam.runtime import WorldClock
 from olam.adapters.entity import EntityManager
 from miskhak.entity import PlayerService
 from miskhak.events import world_tree as _real_wt

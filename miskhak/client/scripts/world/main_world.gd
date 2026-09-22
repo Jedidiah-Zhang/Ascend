@@ -1062,8 +1062,8 @@ func _on_message(message: Dictionary) -> void:
 
 
 ## 事件分发：world_progress/initialized 世界就绪信号直接处理不记日志；
-## minute_change 更新时间（落入通用广播）、player_teleported 同步位置并记日志（提前返回）；
-## 其余事件（含 minute_change）广播给调试覆盖层与事件日志。
+## time_sync 更新时间（落入通用广播）、player_teleported 同步位置并记日志（提前返回）；
+## 其余事件（含 time_sync）广播给调试覆盖层与事件日志。
 func _handle_event(message: Dictionary) -> void:
 	var event_type: String = message.get("event_type", "")
 	var payload: Dictionary = message.get("payload", {})
@@ -1077,7 +1077,7 @@ func _handle_event(message: Dictionary) -> void:
 		_on_world_initialized(data)
 		return
 
-	if event_type == "minute_change":
+	if event_type == "time_sync":
 		_game_hour = float(payload.get("game_hour", _game_hour))
 		_game_minute = int(payload.get("game_minute", _game_minute))
 

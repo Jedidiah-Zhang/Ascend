@@ -223,7 +223,7 @@ func process_sections(delta: float) -> void:
 ## 将后端事件广播给所有启用分区（调用各分区 on_world_event）。
 ##
 ## Args:
-##     event_type: 事件类型（如 "minute_change"）。
+##     event_type: 事件类型（如 "time_sync"）。
 ##     payload: 完整事件载荷（含 payload.data）。
 func broadcast_event(event_type: String, payload: Dictionary) -> void:
 	for section: DebugSection in _sections:

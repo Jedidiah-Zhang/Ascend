@@ -16,7 +16,8 @@
   3. 随机选取出生点（海岸低地，避开河流/湖泊，海陆地形多样）
   4. 预生成出生点周边 radius 个 chunk 的详细 tile 层
   5. 创建实体管理器接入事件管线
-  6. 配置世界树归档 + 启动 tick 循环（时钟+日历随之运转）
+  6. 配置世界树归档 + 启动 tick 循环（时钟推进，FrameScheduler 按声明
+     周期驱动世界更新）
 """
 
 import os
@@ -30,7 +31,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import ClassVar
 
-from olam.constants import TICK_RATE, TICK_DT, BIRTH_ELEV_MIN, BIRTH_ELEV_MAX
+from olam.constants import TICK_RATE, TICK_DT, GAME_MINUTE, BIRTH_ELEV_MIN, BIRTH_ELEV_MAX
+from olam.runtime import WorldClock, tick_to_day, tick_to_hms
 from miskhak.config import SERVER_HOST, SERVER_PORT, INITIAL_CHUNK_RADIUS, CHUNK_STORE_MAX_SIZE, CHUNK_STORE_DB_PATH, WT_MAX_MEMORY_EVENTS, WT_ARCHIVE_PATH, WT_GRAPH_WARMUP_EVENTS, SAVE_ROOT, AUTOSAVE_INTERVAL, TILE_WORKERS
 from miskhak.log import get_logger
 from miskhak.net import GameServer, MessageDispatcher, EventBridge
@@ -59,7 +61,6 @@ from miskhak.entity import PlayerService
 from olam.adapters.weather.region_tracker import DEFAULT_REGION_RADIUS
 from olam.adapters.weather.weather_engine import WeatherEngine
 from miskhak.terminal import CommandExecutor
-from miskhak.time import WorldClock, GameCalendar
 from miskhak.i18n import I18n, get_default
 from miskhak.lifecycle import LifecycleStack
 from miskhak.events import world_tree, Event, AffectedParty, WorldEvent
@@ -141,7 +142,6 @@ class GameEngine:
         # 世界声明程序（WorldProgram；声明编译产物，启动/读档时装配）。
         self.world_program = None
         self._scheduler = None                # 帧调度器（world 启动时装配）
-        self.calendar: GameCalendar | None = None  # start() 时创建（世界存在才需要日历）
         self.i18n: I18n = get_default()  # 进程共享实例：set_lang 全局生效（枚举 label 亦跟随）
         self._executor: CommandExecutor | None = None
         self.entity_manager: EntityManager | None = None
@@ -171,6 +171,8 @@ class GameEngine:
         self._service_mode: bool = False      # 服务模式：仅网络+存档，无世界
         self._running: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
+        # 时间同步游标（表现层通道；非世界状态）：上次已广播的分钟索引
+        self._last_time_sync_minute: int = -1
         # 装配/拆卸生命周期栈：装配时登记逆操作，拆卸时按逆序回滚
         # （世界层与网络层分开，见 start/_ensure_network/_cleanup_*）
         self._world_stack: LifecycleStack = LifecycleStack()
@@ -186,7 +188,7 @@ class GameEngine:
 
         Args:
             attr: 引擎属性名（装配时已赋值，拆卸时置 None）。
-            teardown: 可选资源释放回调（如 calendar.shutdown）。
+            teardown: 可选资源释放回调（如天气引擎 shutdown）。
 
         Returns:
             无参逆操作闭包。
@@ -238,7 +240,8 @@ class GameEngine:
         主菜单只需 save_list / save_create / save_rename / save_delete /
         save_export；世界由前端以 --world-id 拉起世界进程时生成。
 
-        时钟不推进（无日历事件、不进归档）；tick 循环仅处理网络消息。
+        时钟不推进（不产生时间同步与世界事件、不进归档）；tick 循环
+        仅处理网络消息。
 
         网络层（服务器/分发器/事件桥）在此常驻启动：之后 start()
         读档只替换世界观，不重启服务器，客户端全程不断线。
@@ -355,18 +358,14 @@ class GameEngine:
         else:
             self.world_id = None
 
-        # 0b. 读档时钟对齐 + 恢复（须先于日历创建与 chunk 注册）。
+        # 0b. 读档时钟对齐 + 恢复（须先于 chunk 注册）。
         #     完整状态（玩家/干预表/注入核）见 5d，在天气引擎就绪后
         #     统一恢复。
         if self._load_state is not None:
             self._load_state.setdefault("clock", {})["time"] = aligned_time(self._load_state)
             apply_clock(self._load_state, self.clock)
-
-        # 0c. 重建日历（基于恢复后的时钟；stop 后为 None 或需重启）
-        if self.calendar is not None:
-            self.calendar.shutdown()
-        self.calendar = GameCalendar(clock=self.clock)
-        self._world_stack.push(self._unset("calendar", self.calendar.shutdown))
+        # 时间同步游标重置：读档后首帧广播一次当前时刻
+        self._last_time_sync_minute = -1
 
         # 1. 种子（seed=0 仅在无存档模式启动时随机；存档世界在
         # create_world 时已定案——见 SaveManager.create_world）。
@@ -545,7 +544,7 @@ class GameEngine:
         # 8. 终端指令执行器
         from miskhak.terminal.executor import ExecutorConfig
         self._executor = CommandExecutor(
-            self.clock, self.calendar, self.i18n,
+            self.clock, self.i18n,
             config=ExecutorConfig(
                 weather_engine=self.weather_engine,
                 default_chunk=self.birth_chunk,
@@ -598,7 +597,8 @@ class GameEngine:
         self._publish_world_initialized()
         self._persist_manifest()
 
-        # 11. 启动 tick 循环——clock.tick() 推进时间，calendar 自动收事件。
+        # 11. 启动 tick 循环——clock.tick() 推进时间，FrameScheduler 按
+        #     声明周期驱动世界更新。
         self._last_save_at = _real_time.monotonic()
         self._world_start_monotonic = self._last_save_at
         self._running.set()
@@ -962,6 +962,33 @@ class GameEngine:
                 "payload": {"data": {"stage": stage}},
             })
 
+    def _sync_time_broadcast(self, game_time: int) -> None:
+        """跨游戏分钟边界时广播时间同步（表现层通道，非世界树事件）。
+
+        前端时间显示 / 昼夜光照 / TPS 估算 / 事件日志日期分隔均由此
+        驱动；世界树只承载因果事件，时间边界是派生观察量，不进总线。
+        """
+        minute_index = game_time // GAME_MINUTE
+        if minute_index == self._last_time_sync_minute:
+            return
+        if self.server is None:
+            return
+        self._last_time_sync_minute = minute_index
+        hour, minute, _ = tick_to_hms(game_time)
+        self.server.broadcast({
+            "type": "event",
+            "event_type": "time_sync",
+            "payload": {
+                "timestamp": game_time,
+                "game_hour": hour,
+                "game_minute": minute,
+                "data": {
+                    "day": tick_to_day(game_time),
+                    "game_time": game_time,
+                },
+            },
+        })
+
     def _persist_manifest(self) -> None:
         """回写 manifest（出生点/游玩信息/世界设置），存档选择页数据源。"""
         if not self.world_id or not self.save_manager or not self._manifest:
@@ -1265,6 +1292,7 @@ class GameEngine:
         dispatcher = self.dispatcher
         if not self._service_mode and clock:
             clock.tick()
+            self._sync_time_broadcast(clock.time)
             if executor is not None:
                 executor.add_active_time(TICK_DT)
         self._check_world_invalidated(clock)

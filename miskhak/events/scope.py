@@ -22,7 +22,7 @@ class SubscriptionScope:
 
     用法:
         scope = SubscriptionScope()
-        scope.subscribe(wt, "minute_change", on_minute)
+        scope.subscribe(wt, "temperature_change", on_temperature)
         scope.subscribe(clock, "tick", on_tick)      # 任意提供 subscribe 的对象
         ...
         scope.close()   # 撤销全部

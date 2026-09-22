@@ -7,7 +7,7 @@ import pytest
 import random as _random
 from dataclasses import fields
 
-from miskhak.time import WorldClock
+from olam.runtime import WorldClock
 from olam.constants import GAME_HOUR, GAME_DAY, GAME_YEAR
 from miskhak.events import WorldTree, Event, AffectedParty
 from olam.content.chunk import TILE_MAP_SIZE
@@ -1563,8 +1563,8 @@ class TestWeatherEngine:
         e.shutdown()
 
     def test_world_tree_events_do_not_drive_engine(self):
-        """事件总线不是驱动路径：minute_change 不触发天气推进。"""
-        from olam.constants import GAME_DAY, GAME_HOUR
+        """事件总线不是驱动路径：发布世界事件不触发天气推进。"""
+        from olam.constants import GAME_DAY
         from olam.adapters.weather.weather_engine import WeatherEngine
         wt = WorldTree()
         events = []
@@ -1575,22 +1575,19 @@ class TestWeatherEngine:
         _advance_weather(e, clock.time)  # 首刻静默初始化
         _force_perception_reset(e, 0, 0, "temp")
         clock.skip(1)
-        tod = clock.time % GAME_DAY
         wt.publish(Event(
             timestamp=clock.time,
             location=(0, 0, None, None),
             initiator_type="system",
             initiator_id="test",
             affected=[AffectedParty("world", "subject")],
-            event_type="minute_change",
+            event_type="world_tick_hint",
             data={
                 "game_time": clock.time,
                 "day": clock.time // GAME_DAY + 1,
-                "hour": int(tod / GAME_HOUR),
-                "minute": int((tod % GAME_HOUR) / (GAME_HOUR // 60)),
             },
         ))
-        assert events == [], "发布 minute_change 不应驱动天气求值"
+        assert events == [], "发布世界事件不应驱动天气求值"
         _advance_weather(e, clock.time)
         assert len(events) == 1, "调度器推进才产生天气事件"
         e.shutdown()
@@ -2422,7 +2419,7 @@ class TestForceControl:
         e.shutdown()
 
     def test_emits_events_on_next_minute(self):
-        """强制核的状态切换由下一次 minute_change 发布 start/stop。"""
+        """强制核的状态切换由下一次调度推进（minute 更新点）发布 start/stop。"""
         e, wt, clock = self._make_engine()
         events = []
         for t in ("cold_snap_start", "cold_snap_stop"):

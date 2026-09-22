@@ -1,6 +1,6 @@
 """性能分区 — FPS / TPS / MSPT / 各环节耗时。
 
-FPS 和 MSPT 从引擎 Performance 单例获取；TPS 由 minute_change 事件间隔推算；
+FPS 和 MSPT 从引擎 Performance 单例获取；TPS 由 time_sync 事件间隔推算；
 各环节耗时从世界脚本 get_debug_timing() 拉取。
 """
 
@@ -8,7 +8,7 @@ class_name FPSSection
 extends "res://scripts/ui/debug_section.gd"
 
 
-## 实测 TPS（tick per second），由 minute_change 事件间隔推算
+## 实测 TPS（tick per second），由 time_sync 事件间隔推算
 var tps: float = 24.0
 
 ## MSPT 指数移动平均，平滑帧间抖动（alpha=0.3，~2s 收敛）
@@ -52,14 +52,14 @@ func process_section(_delta: float) -> void:
 		_conn_us = timing.get("conn", 0)
 
 
-## 响应 minute_change 事件：用游戏时间增量与两次事件间的真实流逝时间
+## 响应 time_sync 事件：用游戏时间增量与两次事件间的真实流逝时间
 ## 推算实测 TPS；首帧（无上一状态）或游戏时间回退时仅记录不计算。
 ##
 ## Args:
-##     event_type: 事件类型，仅处理 "minute_change"。
+##     event_type: 事件类型，仅处理 "time_sync"。
 ##     payload: 事件载荷，读取 data.game_time 作为游戏时间戳。
 func on_world_event(event_type: String, payload: Dictionary) -> void:
-	if event_type != "minute_change":
+	if event_type != "time_sync":
 		return
 	var data: Dictionary = payload.get("data", {})
 	var gt: int = int(data.get("game_time", 0))

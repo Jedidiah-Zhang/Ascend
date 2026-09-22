@@ -23,7 +23,7 @@ from typing import Mapping
 from olam.constants import GAME_DAY, GAME_HOUR, TILE_MAP_SIZE
 import logging
 from olam.generation.climate import ClimateZone, WeatherParams, get_climate_template
-from miskhak.time import WorldClock
+from olam.runtime import WorldClock
 from olam.protocols.records import TraceLog, record_from_trace
 from olam.protocols.timeline import (
     InterventionTimeline,
