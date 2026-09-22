@@ -8,7 +8,7 @@ Mixin，依赖宿主 CommandExecutor 提供的:
 import math
 
 from olam.constants import TILE_MAP_SIZE
-from miskhak.entity import EntityType, split_coords, Controller
+from olam.adapters.entity import EntityType, split_coords, Controller
 
 from .result import CommandResult
 

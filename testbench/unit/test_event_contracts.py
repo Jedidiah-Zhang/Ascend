@@ -12,9 +12,8 @@ import pytest
 from dataclasses import fields
 
 from miskhak.time.events import MinuteChange, HourChange, DayChange, DayEnd
-from miskhak.entity.events import (
-    EntityBorn, EntityDied, EntityMoved, PlayerTeleported,
-)
+from olam.adapters.entity.events import EntityBorn, EntityDied, EntityMoved
+from miskhak.entity.events import PlayerTeleported
 from miskhak.app import WorldInitialized
 from olam.generation.weather_field.events import (
     TemperatureChange, HumidityChange, WindChange, SunshineChange,

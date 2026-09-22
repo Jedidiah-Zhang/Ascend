@@ -6,7 +6,8 @@
 
 import pytest
 
-from miskhak.entity import EntityManager, PlayerService
+from olam.adapters.entity import EntityManager
+from miskhak.entity import PlayerService
 from miskhak.net.handlers.player_handler import make_player_handler
 from miskhak.time import WorldClock
 from miskhak.events import WorldTree

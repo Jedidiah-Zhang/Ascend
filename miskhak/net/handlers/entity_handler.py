@@ -11,7 +11,7 @@
     ]}}
 """
 
-from miskhak.entity import Entity, EntityManager
+from olam.adapters.entity import Entity, EntityManager
 from miskhak.log import get_logger
 from miskhak.net.protocol import make_response
 

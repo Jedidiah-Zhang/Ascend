@@ -54,7 +54,8 @@ from olam.adapters.chunks.chunk_services import (
     WeatherChunkService,
     TileStateChunkService,
 )
-from miskhak.entity import EntityManager, PlayerService
+from olam.adapters.entity import EntityManager
+from miskhak.entity import PlayerService
 from olam.adapters.weather.region_tracker import DEFAULT_REGION_RADIUS
 from olam.adapters.weather.weather_engine import WeatherEngine
 from miskhak.terminal import CommandExecutor

@@ -6,7 +6,7 @@
 
 import pytest
 
-from miskhak.entity import Controller, EntityManager, EntityType
+from olam.adapters.entity import Controller, EntityManager, EntityType
 from miskhak.net.handlers.entity_handler import make_entity_handlers, serialize_entity
 from miskhak.events import WorldTree
 

@@ -665,7 +665,8 @@ class TestTeleportCommand:
     @pytest.fixture
     def player_service(self, clock):
         """出生 chunk (2, 3)、已 birth 的 PlayerService 固件（隔离 WorldTree）。"""
-        from miskhak.entity import EntityManager, PlayerService
+        from olam.adapters.entity import EntityManager
+        from miskhak.entity import PlayerService
         from miskhak.events import WorldTree
         wt = WorldTree()
         manager = EntityManager(world_tree_arg=wt)
@@ -768,7 +769,7 @@ class TestEntityCommand:
     @pytest.fixture
     def entity_manager(self):
         """隔离 WorldTree 的 EntityManager 固件。"""
-        from miskhak.entity import EntityManager
+        from olam.adapters.entity import EntityManager
         from miskhak.events import WorldTree
         return EntityManager(world_tree_arg=WorldTree())
 
@@ -823,7 +824,7 @@ class TestEntityCommand:
         assert result.success is True
         assert entity_manager.count == 1
         entity = entity_manager.all_entities()[0]
-        from miskhak.entity import EntityType
+        from olam.adapters.entity import EntityType
         assert entity.entity_type == EntityType.CREATURE
         assert entity.global_xy == (100.0, 200.0)
 
@@ -857,7 +858,8 @@ class TestEntityCommand:
         Assert:
             新实体位置 = 玩家位置。
         """
-        from miskhak.entity import EntityManager, PlayerService
+        from olam.adapters.entity import EntityManager
+        from miskhak.entity import PlayerService
         from miskhak.events import WorldTree
         wt = WorldTree()
         manager = EntityManager(world_tree_arg=wt)
@@ -928,7 +930,7 @@ class TestEntityCommand:
         Assert:
             success=False,实体仍存活。
         """
-        from miskhak.entity import Controller, EntityManager, EntityType
+        from olam.adapters.entity import Controller, EntityManager, EntityType
         from miskhak.events import WorldTree
         manager = EntityManager(world_tree_arg=WorldTree())
         player = manager.birth(

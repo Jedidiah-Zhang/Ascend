@@ -18,14 +18,15 @@
   - entity_moved 事件仅在跨整数 tile 时发布
 """
 
+from olam.adapters.entity import (
+    Controller, Entity, EntityManager, EntityType, split_coords,
+)
 from olam.constants import TILE_MAP_SIZE
 from miskhak.log import get_logger
 from miskhak.time import WorldClock
 from miskhak.events import world_tree as _default_wt, Event, AffectedParty
 
-from .entity import Entity, EntityType, Controller, split_coords
 from .events import PlayerTeleported
-from .manager import EntityManager
 
 logger = get_logger(__name__)
 

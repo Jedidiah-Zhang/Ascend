@@ -1,7 +1,7 @@
 """实体系统单元测试。"""
 
 from olam.constants import TILE_MAP_SIZE
-from miskhak.entity import (
+from olam.adapters.entity import (
     Controller, Entity, EntityType, EntityManager, split_coords,
 )
 from miskhak.events import WorldTree, world_tree

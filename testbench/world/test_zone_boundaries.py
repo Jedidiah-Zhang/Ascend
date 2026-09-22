@@ -10,8 +10,8 @@
 - R5 kheker（仓库根工具链）只依赖 olam 与自身，不得依赖游戏服务。
 
 过渡豁免（显式登记）：
-- ``miskhak.events``：世界侧仅驱动层订阅作用域与天气事件契约使用
-  （事件总线属游戏事件层，保留最小接触面）；
+- ``miskhak.events``：世界侧仅驱动层订阅作用域与运行适配事件发布
+  （天气/地形/实体；事件总线属游戏事件层，保留最小接触面）；
 - ``miskhak.time``：世界适配层的类型提示（引擎持有 WorldClock 引用）；
 - 研究侧仅归档探针（kheker/historical/）构造时钟与事件总线。
 """
@@ -38,7 +38,8 @@ TRANSITIONAL_WORLD: dict[str, set[str] | None] = {
     "miskhak.log": None,
     "olam.kernel.mathutil": None,
     "miskhak.time": None,
-    # 事件总线属游戏事件层；当前登记在驱动层与运行适配/天气事件契约
+    # 事件总线属游戏事件层；当前登记在驱动层、运行适配（天气/地形/实体）
+    # 与天气事件契约
     "miskhak.events": {
         "olam/runtime/driver.py",
         "olam/adapters/",

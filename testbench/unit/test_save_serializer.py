@@ -11,7 +11,8 @@ from miskhak.save.serializer import (
     aligned_time, require_state_version,
 )
 from miskhak.time import WorldClock
-from miskhak.entity import EntityManager, PlayerService
+from olam.adapters.entity import EntityManager
+from miskhak.entity import PlayerService
 from miskhak.events import world_tree as _real_wt
 
 
@@ -289,9 +290,9 @@ class TestEntityRestore:
         wt = WorldTree()
         manager = EntityManager(world_tree_arg=wt)
         manager.restore(
-            "eid-1", __import__("miskhak.entity", fromlist=["EntityType"]).EntityType.CREATURE,
+            "eid-1", __import__("olam.adapters.entity", fromlist=["EntityType"]).EntityType.CREATURE,
             0, 0, 5, 5, controller=__import__(
-                "miskhak.entity", fromlist=["Controller"],
+                "olam.adapters.entity", fromlist=["Controller"],
             ).Controller.PLAYER, data={"fx": 5.0, "fy": 5.0},
         )
         assert manager.count == 1
@@ -300,7 +301,7 @@ class TestEntityRestore:
     def test_restore_preserves_identity(self, clock):
         """restore 保持实体 ID 与索引一致。"""
         from miskhak.events.tree import WorldTree
-        from miskhak.entity import EntityType, Controller
+        from olam.adapters.entity import EntityType, Controller
         wt = WorldTree()
         manager = EntityManager(world_tree_arg=wt)
         entity = manager.restore(
