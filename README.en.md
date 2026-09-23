@@ -37,7 +37,9 @@ The research questions fall into three progressive phases:
 
 See the [Research Overview](docs/研究理论/研究综述.md) for the full motivation, unified formal system, four research protocols, and phase plan.
 
-The currently implemented game features are limited to world generation, time and weather progression, event recording, save rollback, and a debug terminal; NPCs, collective society, and player gameplay are still in the design phase. The game vision is described in [Game Overview and Worldview](docs/游戏综述与世界观.md).
+The currently implemented game features are limited to world generation, time and weather progression, event recording, save rollback, and a debug terminal; NPCs, collective society, and player gameplay are still in the design phase. A complete rewrite is being designed around two libraries and two platforms. Space and time foundations are settled, detailed interfaces remain open, and the new architecture is not yet implemented. See the documentation links below.
+
+The causal-ground-truth and strict-reproducibility goals above apply to the corresponding research configurations. The new architecture permits community game mods with new algorithms that do not satisfy research protocols. The research platform checks applicability, while the game prioritizes playability and compatible save continuation.
 
 ## Design Philosophy
 
@@ -49,7 +51,7 @@ Engineering-level development principles (deep modules and low coupling, no patc
 
 ## Package Structure
 
-Core packages use lowercase ASCII transliterations of Hebrew names:
+The current implementation's core packages use lowercase ASCII transliterations of Hebrew names; this layout does not constrain the new architecture:
 
 | Package | Hebrew and meaning | Responsibility |
 | --- | --- | --- |
@@ -75,9 +77,16 @@ Open `miskhak/client/` with Godot to run the game. Packaging and release: see [b
 ## Documentation
 
 - [Research Overview](docs/研究理论/研究综述.md) — the sole master document for research goals, concept definitions, and notation
-- [Phase 1 Implementation Definition](docs/研究理论/第一阶段实施定义.md) — the minimal contract for world declaration and engine implementation
-- [Game Overview and Worldview](docs/游戏综述与世界观.md)
-- [Design Documents](docs/) — organized by module: world framework, living individuals, mind system, gene system, collective society, player actions, presentation layer
+- [World Contract](docs/研究理论/世界契约.md) — research-side world semantics requirements; the research platform maps applicability to the new architecture
+- [Phase 1 Implementation Definition](docs/研究理论/第一阶段实施定义.md) — existing implementation notes, subordinate to the World Contract
+- [Overall Architecture](docs/整体架构.md) — language and library boundaries, dependency rules, packaging, and interface principles
+- [World](docs/世界/综述.md) — space and time foundations settled; state and mechanism interfaces discussed module by module
+- [Agents](docs/智能体/综述.md) — agent implementation, cognition, and decisions
+- [Game Platform](docs/游戏平台/综述.md) — gameplay, sessions, and presentation
+- [Research Platform](docs/研究平台/综述.md) — experiments, data, and evaluation
+- [Archived Design](docs/归档/README.md) — former game and engineering designs and diagrams, for historical reference
+
+Reading order: overall architecture → module overview → leaf design → implementation and verification. Design and implementation status are separate; candidates are not implementation requirements. See [Documentation Maintenance](CONTRIBUTING.en.md#documentation-maintenance) for writing and maintenance conventions.
 
 ## Contributing
 

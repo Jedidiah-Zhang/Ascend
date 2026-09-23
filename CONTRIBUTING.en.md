@@ -27,7 +27,7 @@ Never write hacks that work around a problem. When you hit a bug, locate the **r
 
 ### Frontend/Backend Separation
 
-The backend owns logic; the frontend owns rendering, UI, input, and audio. The two communicate only through the protocol (currently JSON over TCP) and never call each other directly.
+The backend owns world and agent logic; the frontend owns rendering, UI, input, and audio, with responsibilities separated through explicit interfaces. The current implementation uses JSON over TCP. Bindings and transport for the complete rewrite remain undecided; follow confirmed decisions in [Overall Architecture](docs/整体架构.md).
 
 ### Data and Algorithms Decoupled
 
@@ -37,7 +37,11 @@ Data is data, algorithms are algorithms; each evolves independently without coup
 
 There is no legacy burden at this stage. Refactoring takes priority; interface changes are allowed. Do not keep redundant design just for backward compatibility.
 
+This principle concerns development interfaces and refactoring, not the new architecture's game-save compatibility goal. See [Mod Management](docs/游戏平台/模组管理/设计.md) for continuing games after mod changes.
+
 ## Development Workflow
+
+The world and game architecture is being redesigned. See the [World](docs/世界/综述.md), [Agents](docs/智能体/综述.md), [Game Platform](docs/游戏平台/综述.md), and [Research Platform](docs/研究平台/综述.md) overviews for module topics and discussion order. Open design questions are not implementation requirements; the [Archived Design](docs/归档/README.md) is for historical reference. The data, testing, and release instructions below continue to apply to the existing implementation and will be updated as designs are confirmed.
 
 When developing a new module, follow this fixed order:
 
@@ -45,6 +49,58 @@ When developing a new module, follow this fixed order:
 2. **Define the interface**: settle the module's external contract
 3. **Write tests first**: encode expected behavior
 4. **Implement**: write code until tests pass
+
+## Documentation Maintenance
+
+This section is the maintenance entry for engineering documentation conventions. It applies to [Overall Architecture](docs/整体架构.md) and the world, agents, game-platform, and research-platform partitions. Research theory retains its existing organization and normative scope; archives are historical references.
+
+### Responsibilities and Single Sources
+
+| Document | Responsibility |
+| --- | --- |
+| `docs/整体架构.md` | Cross-partition responsibilities, library/platform boundaries, dependencies, and assembly principles; link to module details |
+| Parent `综述.md` | Responsibilities, child navigation, dependencies, and design progress; do not duplicate complete leaf rules |
+| Leaf `设计.md` | Goals, concepts, behavior, interface semantics, configuration, tradeoffs, acceptance, and open questions |
+| Leaf `实现.md` | Implementation proposals, actual delivery, code/build entry points, tests, and performance evidence |
+| Research theory | Hypotheses, formalization, and protocols; the research platform documents applicability |
+| Archives | Historical material, not current implementation requirements |
+
+- Each rule has one owning document. Other documents summarize and link to it. Ownership follows responsibility, not whichever file is higher-level, newer, or more strongly worded.
+- World documents define general capabilities and mechanisms; gameplay and save-continuation policies belong to the game platform, experiment locking and research validation to the research platform, and cognition implementation to agents.
+- Record theory/engineering scope differences and unresolved mappings in the research platform; do not rewrite theory or duplicate clauses to hide a conflict.
+- Keep the module hierarchy: parent overviews, paired leaf design/implementation files. Unstarted topics can remain in the parent inventory; do not mass-create empty directories.
+
+### Separate Status Dimensions
+
+- **Design status**: `待讨论` (topics only), `讨论中` (some rules settled), `基础确定` (responsibility and core behavior available to depend on), `可实施` (interfaces, edge cases, and acceptance sufficient for the stated scope). Paused discussion is an annotation, not completion.
+- **Decision status**: `已确认` (confirmed requirement), `暂定` (provisional basis with an explicit review condition), `候选` (comparison only). Collect open decisions separately.
+- **Implementation status**: `未实施` (not implemented), `部分实施` (partial), `已实现` (implemented). State verification scope and evidence; matching legacy code names do not prove the new design is implemented.
+- A commit, move, formatting pass, change of discussion topic, or lack of objection does not approve a candidate. Editors must not promote recommendations to confirmed rules without an explicit design decision.
+
+Headers state status, scope, and navigation. Design headers also identify settled and uncovered scope. Implementation files link to design rather than duplicating its status. Parent progress summaries must agree with child documents.
+
+### Leaf Templates
+
+Order `设计.md` as follows; combine short sections where useful. Keep unstarted documents brief rather than inventing content to fill a template:
+
+1. **Goals and responsibilities**: problem, use cases, and neighboring responsibilities.
+2. **Concepts and terminology**: objects, state, and definitions.
+3. **Confirmed rules**: define each rule once by topic; label provisional decisions and their review conditions separately.
+4. **External contracts**: inputs, outputs, preconditions, effects, effective timing, and failure behavior; semantics before signatures.
+5. **Configuration and edge cases**: units, ranges, defaults, mutability, and applicable exceptional cases.
+6. **Tradeoffs and candidates**: reasons, costs, alternatives, and undecided parts.
+7. **Acceptance criteria**: checkable conditions, operations, and expectations; distinguish candidate checks from confirmed rules.
+8. **Open questions**: impact, whether implementation is blocked, and the responsible module or phase.
+
+Order `实现.md` as: **Design basis → Implementation proposals → Current delivery → Code/build entry points → Verification/performance**. Separate proposed work, actual facts, and gaps. State when code or measurements do not exist; never invent paths, commands, or results.
+
+### Quality and Maintenance Workflow
+
+- Important rules may have stable module-local IDs for contracts and acceptance references; not every paragraph needs one. Mark illustrative values so they cannot be mistaken for defaults.
+- Replace vague goals such as "deterministic" or "fast" with scoped behavior or measurement targets. Ordinary engineering acceptance does not automatically require research proofs.
+- Record candidates during discussion; update the owning rule when confirmed; consolidate duplicates, obsolete candidates, and conversational corrections at milestones, retaining relevant rationale. Git preserves ordinary history; use separate decision records only when justified.
+- Implementation changes update delivery and evidence; design changes review consumers. Moves repair relative links and update parent navigation and relevant bilingual entry points.
+- Documentation-only changes check whitespace diffs, local links and anchors, navigation, and status consistency. Verify preserved research/archive contents when promised. Formatting checks do not establish semantic correctness; avoid unrelated code tests for documentation changes.
 
 ## World Content Data (JSON)
 
