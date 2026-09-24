@@ -3,7 +3,7 @@
 运行: .venv/bin/python kheker/equations/graph_check.py [--json PATH]
 
 与 verify_equations.py（L1 自洽性）互补：本工具回答"设计是否合理"，
-判据来自 docs/研究理论/世界基座/02-误差传播与反事实.md 的已证明命题与
+判据来自 docs/归档/研究理论/世界基座/02-误差传播与反事实.md 的已证明命题与
 Lean 证书：
   - 推论 2.2/2.3（Contraction.lean）：环收缩性、收缩/发散两律
   - 命题 2.5（DagPathExpansion.lean / ExplicitPaths.lean）：路径权重和

@@ -4,7 +4,7 @@
 
 独立于后端的最小可运行脚本，打印 PASS/FAIL 供人工阅读（无退出码语义），
 不在 CI 中运行，依赖未固化（numpy/scipy/sklearn 不在 requirements.txt）。
-理论与适用范围见 docs/研究理论/世界基座/。
+理论与适用范围见 docs/归档/研究理论/世界基座/。
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@ import AscendLean.CausalVerification.DagPathExpansion
 /-!
 # Lipschitz 函数层 — 从"真实预测误差"到"路径和闭式"的完整闭环
 
-出处：`docs/研究理论/世界基座/02-误差传播与反事实.md`
+出处：`docs/归档/研究理论/世界基座/02-误差传播与反事实.md`
 
 记号对照：代码内部名 `X`/`Xh` 表示真值/模型轨迹值，即 02 篇通用记法的节点值 `x`/`x̂`；正文公式按文档记号书写。
 

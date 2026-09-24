@@ -35,7 +35,7 @@ The research questions fall into three progressive phases:
 - **Phase 2 · Identification Boundaries and Single-Agent Capability (not started)** — whether an embodied agent can, within a pre-registered history distribution, intervention range, and prediction window, make correct probabilistic predictions of the consequences of interventions it has not seen.
 - **Phase 3 · Multi-Agent Causality and Macrostructure (not started)** — whether individuals can distinguish physical consequences, others' responses, and the influence of joint policies, and whether local interactions can produce stable macrostructures.
 
-See the [Research Overview](docs/研究理论/研究综述.md) for the full motivation, unified formal system, four research protocols, and phase plan.
+The author-written [Research Overview](docs/研究理论/研究综述.md) is the highest guiding authority for the research motivation, conceptual framework, and three progressive research directions. Specific research constraints and validation plans will be reconsidered for the new architecture.
 
 The currently implemented game features are limited to world generation, time and weather progression, event recording, save rollback, and a debug terminal; NPCs, collective society, and player gameplay are still in the design phase. A complete rewrite is being designed around two libraries and two platforms. Space and time foundations are settled, detailed interfaces remain open, and the new architecture is not yet implemented. See the documentation links below.
 
@@ -78,14 +78,14 @@ Open `miskhak/client/` with Godot to run the game. Packaging and release: see [b
 
 ## Documentation
 
-- [Research Overview](docs/研究理论/研究综述.md) — the sole master document for research goals, concept definitions, and notation
-- [World Contract](docs/研究理论/世界契约.md) — research-side world semantics requirements; the research platform maps applicability to the new architecture
-- [Phase 1 Implementation Definition](docs/研究理论/第一阶段实施定义.md) — existing implementation notes, subordinate to the World Contract
+- [Research Overview](docs/研究理论/研究综述.md) — the author-written highest research authority, preserved unchanged
+- [Research Documentation](docs/研究方案与理论.md) — current authority, scope for renewed discussion, and historical navigation
+- [Archived Research](docs/归档/研究理论/README.md) — former contracts, formalization, protocols, and implementation notes, for historical reference
 - [Overall Architecture](docs/整体架构.md) — language and library boundaries, dependency rules, packaging, and interface principles
 - [World](docs/世界/综述.md) — space and time foundations settled; state and mechanism interfaces discussed module by module
 - [Agents](docs/智能体/综述.md) — agent implementation, cognition, and decisions
 - [Game Platform](docs/游戏平台/综述.md) — gameplay, sessions, and presentation
-- [Research Platform](docs/研究平台/综述.md) — experiments, data, and evaluation
+- [Research Platform](docs/研究平台/综述.md) — declaration engine, causal modeling workbench, and experiment development plan
 - [Archived Design](docs/归档/README.md) — former game and engineering designs and diagrams, for historical reference
 
 Reading order: overall architecture → module overview → leaf design → implementation and verification. Design and implementation status are separate; candidates are not implementation requirements. See [Documentation Maintenance](CONTRIBUTING.en.md#documentation-maintenance) for writing and maintenance conventions.

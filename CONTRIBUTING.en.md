@@ -52,7 +52,7 @@ When developing a new module, follow this fixed order:
 
 ## Documentation Maintenance
 
-This section is the maintenance entry for engineering documentation conventions. It applies to [Overall Architecture](docs/整体架构.md) and the world, agents, game-platform, and research-platform partitions. Research theory retains its existing organization and normative scope; archives are historical references.
+This section is the maintenance entry for engineering documentation conventions. It applies to [Overall Architecture](docs/整体架构.md) and the world, agents, game-platform, and research-platform partitions. The author-written [Research Overview](docs/研究理论/研究综述.md) is the highest research authority and is preserved unchanged. Other former research materials are archived; specific research constraints and validation plans must be reconsidered.
 
 ### Responsibilities and Single Sources
 
@@ -62,12 +62,12 @@ This section is the maintenance entry for engineering documentation conventions.
 | Parent `综述.md` | Responsibilities, child navigation, dependencies, and design progress; do not duplicate complete leaf rules |
 | Leaf `设计.md` | Goals, concepts, behavior, interface semantics, configuration, tradeoffs, acceptance, and open questions |
 | Leaf `实现.md` | Implementation proposals, actual delivery, code/build entry points, tests, and performance evidence |
-| Research theory | Hypotheses, formalization, and protocols; the research platform documents applicability |
+| Research Overview | Highest research authority; subsequent constraints, formalization, and protocols must be discussed on this basis, without precedence for the old contract |
 | Archives | Historical material, not current implementation requirements |
 
 - Each rule has one owning document. Other documents summarize and link to it. Ownership follows responsibility, not whichever file is higher-level, newer, or more strongly worded.
 - World documents define general capabilities and mechanisms; gameplay and save-continuation policies belong to the game platform, experiment locking and research validation to the research platform, and cognition implementation to agents.
-- Record theory/engineering scope differences and unresolved mappings in the research platform; do not rewrite theory or duplicate clauses to hide a conflict.
+- Record differences between the Research Overview and engineering scope, and unresolved mappings, in the research platform. Do not rewrite the overview or copy old clauses to hide a conflict. Archived research proposals require explicit discussion before reuse.
 - Keep the module hierarchy: parent overviews, paired leaf design/implementation files. Unstarted topics can remain in the parent inventory; do not mass-create empty directories.
 
 ### Separate Status Dimensions
@@ -119,6 +119,8 @@ Conventions:
   and `lang/` automatically
 
 ## Testing
+
+The research declaration pipeline and WC references below maintain the existing implementation under the [archived World Contract](docs/归档/研究理论/世界契约.md). Passing legacy checks does not establish research requirements or completion for the new architecture.
 
 ### Backend (Python / pytest)
 

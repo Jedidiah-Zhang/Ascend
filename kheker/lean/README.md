@@ -1,7 +1,7 @@
 # ascend-lean
 
 Ascend 研究理论的 Lean/Mathlib 形式化。
-每个文件的模块级 docstring 均标注 `docs/研究理论/` 对应文档与命题出处，形成可追溯的协议证书。文档重排不会依赖易漂移的行号。
+文件的模块级 docstring 标注对应文档与命题出处，旧研究来源现位于 `docs/归档/研究理论/`。这些证书与下文完成情况对应旧实现，不自动证明新架构满足研究要求；当前研究最高依据为[研究综述](../../docs/研究理论/研究综述.md)。文档重排不会依赖易漂移的行号。
 
 ![Lean](https://img.shields.io/badge/Lean-v4.34-blue) ![Mathlib](https://img.shields.io/badge/depends-Mathlib-2596be)
 

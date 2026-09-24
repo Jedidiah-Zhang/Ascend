@@ -34,20 +34,20 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
 
     ClauseEvidence(
         "WC-0.1", "covered",
-        evidence=("docs/研究理论/世界契约.md",),
+        evidence=("docs/归档/研究理论/世界契约.md",),
         positive="承诺范围（世界语义/研究层边界）成文",
         negative="范围外事项不主张（综述与阶段二文档承接）",
     ),
     ClauseEvidence(
         "WC-0.2", "covered",
-        evidence=("docs/研究理论/世界契约.md",
-                  "docs/研究理论/世界架构/00-总纲.md"),
+        evidence=("docs/归档/研究理论/世界契约.md",
+                  "docs/归档/研究理论/世界架构/00-总纲.md"),
         positive="契约 = 唯一规范源；总纲为其工程形态",
         negative="文档冲突以契约为准（WC-11.4）",
     ),
     ClauseEvidence(
         "WC-0.3", "covered",
-        evidence=("docs/研究理论/世界契约.md",
+        evidence=("docs/归档/研究理论/世界契约.md",
                   "kheker/acceptance/clause_evidence.py"),
         positive="条款真值地位（规范/说明/实现注记分级）",
         negative="实现注记不具规范效力（条款引用以契约为准）",
@@ -427,7 +427,7 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
     ),
     ClauseEvidence(
         "WC-11.1", "covered",
-        evidence=("docs/研究理论/世界契约.md",),
+        evidence=("docs/归档/研究理论/世界契约.md",),
         positive="条文语气分级（规范/说明/实现注记）",
         negative="实现注记不具规范效力",
     ),
@@ -440,14 +440,14 @@ CLAUSES: tuple[ClauseEvidence, ...] = (
     ),
     ClauseEvidence(
         "WC-11.3", "covered",
-        evidence=("docs/研究理论/世界契约.md",),
+        evidence=("docs/归档/研究理论/世界契约.md",),
         positive="契约变更记录成文（v0.1 → v0.2）；声明数据变更只改世界身份",
         negative="实现先行不豁免变更登记（身份变更与契约版本分别记录）",
     ),
     ClauseEvidence(
         "WC-11.4", "covered",
-        evidence=("docs/研究理论/世界契约.md",
-                  "docs/研究理论/世界架构/00-总纲.md"),
+        evidence=("docs/归档/研究理论/世界契约.md",
+                  "docs/归档/研究理论/世界架构/00-总纲.md"),
         positive="文档从属：总纲/技术文档低于契约，冲突以契约为准",
         negative="实现注记与契约冲突时以契约为准（降级文档只允许引用条款）",
     ),

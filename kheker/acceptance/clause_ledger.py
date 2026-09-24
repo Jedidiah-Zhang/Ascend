@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""条款↔证据对账门禁（《世界契约》附录 D.5 / WC-11.2）。
+"""旧实现条款↔证据对账门禁（归档《世界契约》附录 D.5 / WC-11.2）。
 
 校验 ``clause_evidence.py`` 的对账表与契约正文、验收判据、证据文件一致：
 
@@ -29,7 +29,7 @@ import clause_evidence  # noqa: E402
 
 import world_checks  # noqa: E402
 
-CONTRACT = ROOT / "docs" / "研究理论" / "世界契约.md"
+CONTRACT = ROOT / "docs" / "归档" / "研究理论" / "世界契约.md"
 _CLAUSE_RE = re.compile(r"^\*\*(WC-\d+\.\d+)")
 _STATUSES = ("covered", "partial", "gap")
 
