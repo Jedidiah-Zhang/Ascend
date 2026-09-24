@@ -27,7 +27,7 @@ The core idea:
 - **Executable causal ground truth** — the world's complete state, structural equations, random sources, and legal interventions are all explicitly declared; engine trajectories are traceable node by node, with implementation checked against declaration.
 - **Unit-level counterfactuals** — the same random experimental unit can produce strictly paired intervention/baseline parallel trajectories (CRN), separating intervention effects from two independent random fluctuations.
 - **Falsifiable agent evaluation** — judged by operational causal capability: pre-registered query families, held-out test interventions, and strict scoring rules; no claims that cannot be refuted by experiment.
-- **One source for research and play** — players and agents live in the same declared world; research conclusions and gameplay design share the same world mechanisms.
+- **One source for research and play** — when using the official world, research and gameplay share its declared mechanisms. The new architecture also allows researchers to declare other causal systems and replace the experimental environment entirely.
 
 The research questions fall into three progressive phases:
 
@@ -40,6 +40,8 @@ See the [Research Overview](docs/研究理论/研究综述.md) for the full moti
 The currently implemented game features are limited to world generation, time and weather progression, event recording, save rollback, and a debug terminal; NPCs, collective society, and player gameplay are still in the design phase. A complete rewrite is being designed around two libraries and two platforms. Space and time foundations are settled, detailed interfaces remain open, and the new architecture is not yet implemented. See the documentation links below.
 
 The causal-ground-truth and strict-reproducibility goals above apply to the corresponding research configurations. The new architecture permits community game mods with new algorithms that do not satisfy research protocols. The research platform checks applicability, while the game prioritizes playability and compatible save continuation.
+
+The new [research platform](docs/研究平台/综述.md#自定义因果实验环境) accepts causal systems declared under the research rules as experimental environments, without requiring a game world, spatial geometry, entities, or a game clock. The official world is one implementation; generic environment declarations and integration interfaces are still being designed.
 
 ## Design Philosophy
 
