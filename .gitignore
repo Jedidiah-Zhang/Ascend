@@ -3,6 +3,9 @@
 *.uid
 /android/
 
+# Editor workspace settings
+/.vscode/
+
 # Python
 __pycache__/
 *.pyc

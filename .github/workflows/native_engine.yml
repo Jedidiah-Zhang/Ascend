@@ -1,0 +1,30 @@
+name: Native Engine CI
+
+on:
+  push:
+    paths: &paths
+      - "kheker/native/**"
+      - "testbench/native/**"
+      - ".github/workflows/native_engine.yml"
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: 配置无界面核心
+        run: cmake -S kheker/native -B build/work/native -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: 编译核心、示例与测试
+        run: cmake --build build/work/native --config Release --parallel 4
+      - name: 运行接口与执行测试
+        run: ctest --test-dir build/work/native --build-config Release --output-on-failure
