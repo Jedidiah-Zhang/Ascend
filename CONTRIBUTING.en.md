@@ -134,6 +134,18 @@ After every code change, run the affected unit tests (no need to run the full su
 - Integration tests must run serially (port/subprocess conflicts): `.venv/bin/python -m pytest testbench/integration -v`
 - No need to run the full suite locally; CI's `test` job runs it automatically before release
 
+### Headless C++ declaration engine
+
+The new core in `kheker/native/` uses C++17, CMake 3.20, and CTest without Qt. After changes, run from the repository root:
+
+```bash
+cmake -S kheker/native -B build/work/native -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/work/native --config Debug --parallel 4
+ctest --test-dir build/work/native --build-config Debug --output-on-failure
+```
+
+Tests live in `testbench/native/`; build outputs go under the ignored `build/work/` directory. [Native Engine CI](.github/workflows/native_engine.yml) builds the same suite on Linux, Windows, and macOS. Local verification results are recorded in the [implementation document](docs/研究平台/实验环境与声明接入/实现.md#5-验证与性能).
+
 ### Frontend (GDScript / GUT)
 
 ```bash

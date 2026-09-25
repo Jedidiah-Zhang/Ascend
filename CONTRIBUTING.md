@@ -135,6 +135,18 @@ Ascend 兼具双重身份：
 - 集成测试必须串行（端口/子进程冲突）：`.venv/bin/python -m pytest testbench/integration -v`
 - 全量测试无需本地手动执行，发布前由 CI 的 `test` job 自动运行
 
+### C++ 无界面声明引擎
+
+新核心位于 `kheker/native/`，使用 C++17、CMake 3.20 与 CTest，不依赖 Qt。修改后在仓库根目录执行：
+
+```bash
+cmake -S kheker/native -B build/work/native -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/work/native --config Debug --parallel 4
+ctest --test-dir build/work/native --build-config Debug --output-on-failure
+```
+
+测试放在 `testbench/native/`，构建产物放在已忽略的 `build/work/`。[Native Engine CI](.github/workflows/native_engine.yml)在 Linux、Windows、macOS 上构建同一测试集；本地验证记录见[实现文档](docs/研究平台/实验环境与声明接入/实现.md#5-验证与性能)。
+
 ### 前端（GDScript / GUT）
 
 ```bash

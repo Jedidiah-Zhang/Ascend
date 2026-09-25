@@ -37,7 +37,7 @@ The research questions fall into three progressive phases:
 
 The author-written [Research Overview](docs/研究理论/研究综述.md) is the highest guiding authority for the research motivation, conceptual framework, and three progressive research directions. Specific research constraints and validation plans will be reconsidered for the new architecture.
 
-The currently implemented game features are limited to world generation, time and weather progression, event recording, save rollback, and a debug terminal; NPCs, collective society, and player gameplay are still in the design phase. A complete rewrite is being designed around two libraries and two platforms. Space and time foundations are settled, detailed interfaces remain open, and the new architecture is not yet implemented. See the documentation links below.
+The currently implemented game features are limited to world generation, time and weather progression, event recording, save rollback, and a debug terminal; NPCs, collective society, and player gameplay are still in the design phase. A complete rewrite is being developed around two libraries and two platforms. Space and time foundations are designed but not yet implemented. The research platform now has an initial headless C++ module registration, binding, and invocation slice; its future workbench will use Qt. See the documentation links below.
 
 The causal-ground-truth and strict-reproducibility goals above apply to the corresponding research configurations. The new architecture permits community game mods with new algorithms that do not satisfy research protocols. The research platform checks applicability, while the game prioritizes playability and compatible save continuation.
 
@@ -62,7 +62,7 @@ The current implementation's core packages use lowercase ASCII transliterations 
 | `nefesh` | נפש · life, self, and psyche | Agent cognition for Phase 2 (reserved) |
 | `kheker` | חקר · inquiry | Research probes, declaration verification, acceptance checks, and Lean proofs |
 
-`testbench/` contains the Python test suites.
+`testbench/` contains the test suites. `testbench/native/` tests the new C++ core in `kheker/native/`; the other existing backend tests use Python.
 
 ## Getting Started
 
@@ -75,6 +75,8 @@ python -m venv .venv
 ```
 
 Open `miskhak/client/` with Godot to run the game. Packaging and release: see [build/README.md](build/README.md).
+
+The headless C++ engine builds independently with CMake 3.20 and a C++17 compiler. Its example and tests do not require Qt. Build commands and the current verification scope are in the [engine implementation document](docs/研究平台/实验环境与声明接入/实现.md#4-代码与构建入口).
 
 ## Documentation
 
