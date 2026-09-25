@@ -21,17 +21,11 @@ body:
       label: 所属模块
       description: 主涉及模块（可在下方补充说明跨模块影响）
       options:
-        - events (世界树/事件总线)
-        - entity (实体系统)
-        - net (网络层)
-        - save (存档)
-        - space (地形/区块)
-        - time (时间/日历)
-        - weather (天气系统)
-        - terminal (终端)
-        - i18n (本地化)
-        - game (核心基础设施)
-        - frontend (Godot 前端)
+        - 世界库
+        - 智能体库
+        - 游戏平台（Godot）
+        - 研究平台（C++/Qt）
+        - 跨模块
         - 新增模块
     validations:
       required: true
@@ -39,7 +33,7 @@ body:
     id: interface
     attributes:
       label: 接口设计
-      description: 对外接口/数据结构/通信消息格式（含与 frontend 的 JSON over TCP 交互）
+      description: 对外契约、数据结构、依赖边界或交互流程；请链接相关设计文档。
   - type: textarea
     id: acceptance
     attributes:
@@ -56,10 +50,11 @@ body:
     attributes:
       label: 测试范围
       options:
-        - 后端 pytest
-        - 前端 GUT
-        - 两者
+        - C++ / CTest
+        - Godot 客户端
+        - 文档检查
         - 无需测试
+        - 待定
   - type: textarea
     id: impact
     attributes:

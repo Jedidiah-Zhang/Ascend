@@ -1,64 +1,31 @@
-# Godot 4+ specific ignores
+# Godot-generated files
 .godot/
 *.uid
 /android/
 
-# Editor workspace settings
+# Local editor settings
 /.vscode/
 
-# Python
+# Python development environment and caches
 __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
-logs/
-.ascend_token
 
-# 覆盖率数据（生成在 testbench/ 下）
+# Local runtime and test output
+logs/
 .coverage
 .coverage.*
-testbench/.coverage
-testbench/.coverage.*
+/save/
 
-# testmon 依赖库（本地生成，每台机器独立）
-.testmondata
-.testmondata-*
-
-# 编译产物（从 .c 自动生成；.dll 为 Windows 交叉编译产物）
+# Native build artifacts
 *.so
 *.dll
 
-# 控制台历史
-.ascend_history
-
-# 运行数据（归档、存档等，根目录 save/；注意 /save/ 锚定，
-# 否则会误排除 miskhak/save/ 源码模块）
-/save/
-
-# 研究探针的可视化输出（运行期生成）
-kheker/figures/
-
-# Lean 项目（kheker/lean/）：构建缓存与依赖不提交
-kheker/lean/.lake/
-kheker/lean/lake-packages/
-
-# Godot 编辑器插件（开发工具，非游戏代码；GUT 本地手动安装后前端测试本地运行）
+# Local Godot editor tools and non-distributed game assets
 miskhak/client/addons/
-
-# 打包时从 miskhak/lang 同步的语言副本（开发期客户端直读 res://../lang = miskhak/lang）
-miskhak/client/lang/
-
-# 打包时从 build/version/miskhak.txt 同步的版本文件（主菜单显示用）
-miskhak/client/version.txt
-
-# 前端资源文件（不开源：美术素材、音频等）
 miskhak/client/assets/
 
-# GUT 测试报告（生成文件）
-miskhak/client/test_report.xml
-
-# 构建产物（build/ 下的脚本与配置正常提交）
-#   work/  = 中间产物（导出、编译缓存、舞台目录，构建时清空）
-#   dist/  = 最终交付物（固定名，每次覆盖）
+# Local build output
 build/work/
 build/dist/

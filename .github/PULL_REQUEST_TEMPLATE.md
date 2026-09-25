@@ -13,8 +13,7 @@
 
 ## 测试
 
-- [ ] 后端单元测试通过（`.venv/bin/python -m pytest --testmon -n 4 -q`）
-- [ ] 前端单元测试通过（`cd miskhak/client && ./run_tests.sh unit`）
+- [ ] 原生核心测试通过（`ctest --test-dir build/work/native --build-config Debug --output-on-failure`）
 - [ ] 已手工验证相关功能
 
 ## 第三方材料

@@ -1,9 +1,0 @@
-# Ascend 后端依赖
-# 安装: python -m venv .venv && .venv/bin/pip install -r requirements.txt
-
-msgpack>=1.0
-pytest>=8.0
-pytest-xdist>=3.6
-pytest-testmon>=2.2
-Pillow>=10.0
-cryptography>=42.0

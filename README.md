@@ -1,98 +1,47 @@
 # Ascend
 
-> 构造具有完整因果真值的可交互世界，并以真实生成机制评价智能体的认知与行为。
+> 面向因果世界模型研究与模拟游戏的 AI 原生平台。项目当前处于完全重构阶段。
 
 [English](README.en.md) | 中文
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/C-99-A8B9CC?logo=c&logoColor=white" alt="C">
-  <img src="https://img.shields.io/badge/Godot-4.x-478CBF?logo=godotengine&logoColor=white" alt="Godot">
-  <img src="https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white" alt="SQLite">
-  <img src="https://img.shields.io/badge/JSON-over%20TCP-000000?logo=json&logoColor=white" alt="JSON over TCP">
-  <img src="https://img.shields.io/badge/Lean-4.34%20%2B%20Mathlib-000000" alt="Lean + Mathlib">
+  <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white" alt="C++17">
+  <img src="https://img.shields.io/badge/Godot-4.x-478CBF?logo=godotengine&logoColor=white" alt="Godot 4.x">
   <img src="https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-EF9421" alt="License">
 </p>
 
-## 简介
+## 当前进度
 
-**Ascend** 是一个面向研究与游戏的 AI 原生世界模拟平台。世界不是 NPC 的静态背景，而是一个持续演化的系统：其完整状态、帧内更新顺序、结构方程、外生随机源与合法干预全部由研究者明确声明，构成因果真值；智能体只能在受限感知与行动中逐步认识它。
+新架构按世界库、智能体库、游戏平台和研究平台逐步建设。目前落地的是研究平台的一个 C++17 无界面切片：模块注册、公开量与方法的检查、类型化绑定和调用。它不代表完整研究协议、世界库或游戏平台已经实现。
 
-核心思想：
+尚未实施的主要部分包括世界库、智能体、研究工作台、实验组织，以及可玩的 Godot 客户端。`miskhak/client/` 目前只保留 Godot 项目壳和启动场景。
 
-> 构造一个具有完整因果真值的可交互世界，使初始状态、外生随机性、干预和观测过程都能够被明确声明，并以真实生成机制产生的结果评价智能体的世界模型。
+## 架构与研究依据
 
-## 核心亮点
+- [整体架构](docs/整体架构.md) — 两库两平台职责、依赖方向与待决边界
+- [世界](docs/世界/综述.md) — 世界库职责与设计进度
+- [智能体](docs/智能体/综述.md) — 智能体职责与设计进度
+- [游戏平台](docs/游戏平台/综述.md) — 游戏装配、会话与表现
+- [研究平台](docs/研究平台/综述.md) — 因果实验环境、声明引擎与研究计划
+- [研究综述](docs/研究理论/研究综述.md) — 作者撰写的研究最高指导依据
 
-- **可执行因果真值** — 世界的完整状态、结构方程、随机源与合法干预全部显式声明，引擎轨迹逐节点可追溯，实现与声明对拍验收。
-- **单位级反事实** — 同一随机实验单位可生成严格配对的干预/基线平行轨迹（CRN），把干预效应与两次独立随机波动区分开来。
-- **可证伪的智能体评价** — 以操作性因果能力为判据：预注册查询族、保留测试干预与严格评分规则，不做无法被实验反驳的声明。
-- **研究与游戏同源** — 采用官方世界时，研究与玩法共享被声明的世界机制；新架构也允许研究者声明其他因果系统，整体替换实验环境。
+设计状态与实现状态分开记录；候选方案不是实施要求。文档维护规则见[贡献指南](CONTRIBUTING.md#文档维护)。
 
-研究问题分为三个递进阶段：
+## 构建与验证
 
-- **第一阶段 · 可执行的因果真值（施工中）** — 把世界声明变成唯一可执行、可追溯、可干预的动态结构因果系统，并验证引擎实现与声明一致。
-- **第二阶段 · 识别边界与单智能体能力（未开始）** — 具身智能体能否在预注册的历史分布、干预范围与预测窗口内，对未见干预的后果作出正确的概率预测。
-- **第三阶段 · 多智能体因果与宏观结构（未开始）** — 个体能否区分物理后果、他者响应与联合策略的影响，局部交互能否产生稳定的宏观结构。
-
-研究动机、概念框架与三个递进研究方向见作者撰写的[研究综述](docs/研究理论/研究综述.md)，它是研究工作的最高指导依据。具体研究约束与验证方案将随新架构重新讨论。
-
-当前实现的游戏功能限于世界生成、时间与天气推进、事件记录、存档回滚与调试终端；NPC、群体社会与玩家玩法尚在设计阶段。项目正在按两库两平台完全重构，空间与时间基础设计已确定、尚未实现；研究侧已完成首个 C++ 无界面模块注册、绑定与调用切片，后续工作台采用 Qt；见下方文档入口。
-
-上述因果真值和严格复现目标适用于相应研究配置；新架构允许社区游戏模组提供不满足研究协议的新算法。研究适用性由研究平台检查，游戏以可玩性及兼容续玩为目标。
-
-新架构中的[研究平台](docs/研究平台/综述.md#自定义因果实验环境)以按研究规则声明的因果系统为实验环境，不要求具有游戏世界、空间、实体或游戏时钟。官方世界是其中一种实现；通用实验环境的声明与接入接口仍在设计中。
-
-## 设计理念
-
-- **世界先于智能体** — 因果世界独立于任何智能体的知识而存在；智能体只能通过自身的观测与行动逐步认识世界，其内部表征不等于世界的真实状态。
-- **真值声明，而非事后发现** — 世界的生成机制作为因果真值被明确声明；事件记录与研究日志只用于追溯与验证，不是因果机制本身。
-- **可复现是基础设施** — 世界生成、随机过程与干预执行均有确定性的重放机制，同一随机实验单位可生成严格配对的平行轨迹。
-
-## 包结构
-
-现有实现的核心包采用希伯来语名称的小写 ASCII 转写；此布局不约束新架构：
-
-| 包 | 原词与含义 | 职责 |
-| --- | --- | --- |
-| `olam` | עולם · 世界 | 世界声明、编译、模拟运行与因果协议 |
-| `miskhak` | משחק · 游戏 | 游戏包装、服务端与 Godot 客户端（`miskhak/client/`） |
-| `nefesh` | נפש · 生命、自我与心智 | 第二阶段主体心智区（预留） |
-| `kheker` | חקר · 探究 | 研究探针、声明验证、验收与 Lean 证明 |
-
-`testbench/` 为测试台；`testbench/native/` 验证新 C++ 核心，其他现有后端测试采用 Python。新核心位于 `kheker/native/`。
-
-## 快速开始
-
-依赖：Python 3.14、Godot 4.x。
+当前 C++ 核心需要 CMake 3.20 和支持 C++17 的编译器。在仓库根目录运行：
 
 ```bash
-python -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python miskhak/run_server.py   # 在仓库根启动后端（默认 localhost）
+cmake -S kheker/native -B build/work/native -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/work/native --config Debug --parallel 4
+ctest --test-dir build/work/native --build-config Debug --output-on-failure
 ```
 
-用 Godot 打开 `miskhak/client/` 运行游戏。打包与发行见 [build/README.md](build/README.md)。
-
-C++ 无界面引擎独立构建，依赖 CMake 3.20 和 C++17 编译器，示例与测试不依赖 Qt。构建、运行命令及当前验证范围见[声明引擎实现](docs/研究平台/实验环境与声明接入/实现.md#4-代码与构建入口)。
-
-## 文档
-
-- [研究综述](docs/研究理论/研究综述.md) — 作者撰写的研究最高指导依据，原文保留
-- [研究文档入口](docs/研究方案与理论.md) — 当前依据、重新讨论范围与历史材料导航
-- [旧研究材料](docs/归档/研究理论/README.md) — 原契约、形式化、协议与实施说明，仅供追溯
-- [整体架构](docs/整体架构.md) — 语言与库边界、依赖规则、打包与接口原则
-- [世界](docs/世界/综述.md) — 空间与时间基础确定，状态与机制接口逐项讨论
-- [智能体](docs/智能体/综述.md) — 主体实现与认知、决策设计
-- [游戏平台](docs/游戏平台/综述.md) — 玩法、会话与表现
-- [研究平台](docs/研究平台/综述.md) — 声明引擎、因果建模工作台及实验推进计划
-- [旧设计归档](docs/归档/README.md) — 原游戏、工程设计与架构图，仅供追溯
-
-阅读顺序：整体架构 → 所属模块综述 → 叶模块设计 → 实现与验证。设计状态与实现状态分开记录；候选内容不是实施要求。写作与维护规则见[文档维护](CONTRIBUTING.md#文档维护)。
+构建产物位于已忽略的 `build/work/native/`。当前验证范围及限制见[声明引擎实现文档](docs/研究平台/实验环境与声明接入/实现.md#4-代码与构建入口)。
 
 ## 参与贡献
 
-见 [CONTRIBUTING.md](CONTRIBUTING.md)（设计原则、开发流程、测试与提交约定）。提交 PR 前请阅读 [CLA.md](CLA.md)。
+见 [CONTRIBUTING.md](CONTRIBUTING.md)（设计原则、文档维护、测试与提交约定）。提交 PR 前请阅读 [CLA.md](CLA.md)。
 
 ## License
 

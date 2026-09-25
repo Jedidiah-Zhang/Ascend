@@ -1,5 +1,5 @@
 name: 优化/重构
-description: 性能/结构优化或调整既有模块的实现，不改变对外行为
+description: 调整模块结构或实现；行为变更按新设计明确记录
 title: 'refactor: '
 labels: [refactor]
 body:
@@ -23,17 +23,10 @@ body:
       label: 涉及模块
       description: 主涉及模块
       options:
-        - events (世界树/事件总线)
-        - entity (实体系统)
-        - net (网络层)
-        - save (存档)
-        - space (地形/区块)
-        - time (时间/日历)
-        - weather (天气系统)
-        - terminal (终端)
-        - i18n (本地化)
-        - game (核心基础设施)
-        - frontend (Godot 前端)
+        - 世界库
+        - 智能体库
+        - 游戏平台（Godot）
+        - 研究平台（C++/Qt）
         - 跨模块
     validations:
       required: true
@@ -43,10 +36,10 @@ body:
       label: 实施计划
       description: 拆解步骤，便于分步提交
       value: |
-        - [ ] 梳理现有接口与调用方
-        - [ ] 编写/调整测试覆盖行为
-        - [ ] 逐步迁移（保持中间态可运行）
-        - [ ] 清理旧代码与冗余
+        - [ ] 对齐已确认的新设计与接口
+        - [ ] 明确行为变更及受影响模块
+        - [ ] 编写/调整测试覆盖已确认行为
+        - [ ] 精简实现并清理冗余
         - [ ] 相关测试全部通过
   - type: textarea
     id: behavior
