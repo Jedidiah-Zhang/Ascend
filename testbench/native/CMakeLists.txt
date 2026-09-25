@@ -25,3 +25,25 @@ foreach(case IN ITEMS
 )
     add_test(NAME engine.${case} COMMAND ascend_engine_tests ${case})
 endforeach()
+
+add_executable(ascend_assembly_tests test_assembly.cpp)
+target_link_libraries(ascend_assembly_tests PRIVATE ascend::engine)
+foreach(case IN ITEMS
+    model
+    discovery
+    stimulus
+    missing
+    mismatches
+    names
+    boundaries
+    exports
+    forwarding
+    order
+    cycles
+    lifetime
+    closed
+    context_identity
+    failures
+)
+    add_test(NAME assembly.${case} COMMAND ascend_assembly_tests ${case})
+endforeach()

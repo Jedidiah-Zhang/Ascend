@@ -12,7 +12,7 @@
 
 ## Current Status
 
-The new architecture is being built across the world library, agent library, game platform, and research platform. The current implementation is one headless C++17 research-platform slice: module registration, public value and method checks, typed bindings, and invocation. It does not constitute a complete research protocol, world library, or game platform.
+The new architecture is being built across the world library, agent library, game platform, and research platform. The headless C++17 research core now covers module registration, public values and methods, individual interface requirements, explicit connections, nested composition, and typed invocation. A multi-module testbench verifies changing inputs, explicitly advancing the system, sampling outputs after each step, and isolating instances. This does not constitute a complete research protocol, world library, or game platform.
 
 The world library, agent library, research workbench, experiment organization, and playable Godot client are not implemented yet. `miskhak/client/` currently retains only the Godot project shell and bootstrap scene.
 

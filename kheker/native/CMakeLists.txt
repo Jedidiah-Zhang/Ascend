@@ -20,6 +20,9 @@ endif()
 add_executable(ascend_minimal_model examples/minimal_model.cpp)
 target_link_libraries(ascend_minimal_model PRIVATE ascend::engine)
 
+add_executable(ascend_assembled_model examples/assembled_model.cpp)
+target_link_libraries(ascend_assembled_model PRIVATE ascend::engine)
+
 include(CTest)
 if(BUILD_TESTING)
     add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../testbench/native"
@@ -27,4 +30,7 @@ if(BUILD_TESTING)
     add_test(NAME engine.minimal_model COMMAND ascend_minimal_model)
     set_tests_properties(engine.minimal_model PROPERTIES
         PASS_REGULAR_EXPRESSION "baseline=8 alternate=12")
+    add_test(NAME assembly.testbench COMMAND ascend_assembled_model)
+    set_tests_properties(assembly.testbench PROPERTIES
+        PASS_REGULAR_EXPRESSION "pulse=3 baseline=8 alternate=12")
 endif()
