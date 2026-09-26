@@ -47,3 +47,30 @@ foreach(case IN ITEMS
 )
     add_test(NAME assembly.${case} COMMAND ascend_assembly_tests ${case})
 endforeach()
+
+add_executable(ascend_assembly_record_tests test_assembly_record.cpp)
+target_link_libraries(ascend_assembly_record_tests PRIVATE ascend::engine)
+foreach(case IN ITEMS
+    factories
+    definition
+    roundtrip
+    config_change
+    wiring
+    independence
+    config_values
+    record_errors
+    factory_errors
+    factory_target
+    factory_causes
+    assembly_errors
+    builder_errors
+    rollback
+    file
+    diagnostic_locations
+    forward_transaction
+    json_depth
+    utf8_serialization
+    pointer_paths
+)
+    add_test(NAME record.${case} COMMAND ascend_assembly_record_tests ${case})
+endforeach()

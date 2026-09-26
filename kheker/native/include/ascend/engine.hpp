@@ -46,12 +46,25 @@ enum class ErrorCode {
     duplicate_connection,
     unconnected_requirement,
     contract_mismatch,
+    duplicate_definition,
+    unknown_definition,
+    invalid_config,
+    invalid_assembly,
+    invalid_json,
+    unsupported_format_version,
+    io_failure,
 };
 
+// source 与 path 供装配记录等外部来源定位；同进程引擎诊断留空。
 struct Diagnostic {
     ErrorCode code;
     Reference target;
     std::string message;
+    std::string source{};
+    std::string path{};
+    // 工厂构造失败时 target 定位所构造的实例；cause 保留内部原始诊断。
+    // 构造中的模块尚未建立完整归属，cause.target 可能仅为局部引用。
+    std::shared_ptr<const Diagnostic> cause{};
 };
 
 class EngineError : public std::runtime_error {
@@ -109,6 +122,11 @@ template <class Type> class ValueRequirement;
 template <class Result, class... Args> class MethodRequirement;
 
 namespace detail {
+
+struct SourceLocation {
+    std::string source;
+    std::string path;
+};
 
 struct Runtime;
 class AssemblyBuilder;
@@ -255,14 +273,21 @@ public:
     MethodRequirement<Result, Args...> require_method(std::string name, std::string contract,
                                                       std::string description = {});
 
+    // 实例名由装配方给出；工厂返回的模块以该名参与作用域身份。
+    const std::string& name() const noexcept { return name_; }
+
     void add(Module child);
     void connect(Reference requirement, Reference provider);
     void disconnect(const Reference& requirement);
     void forward(std::string requirement, Reference child_requirement);
+    // 同名需求尚未声明时，按目标子需求的种类、签名与契约声明后再转接；
+    // 已声明时与 forward 相同，按已声明签名检查。
+    void forward_inherited(std::string requirement, Reference child_requirement);
     void export_symbol(std::string name, Reference child_symbol);
 
 private:
     friend class Engine;
+    friend class AssemblyDefinition;
     friend class detail::AssemblyBuilder;
     void add_entry(std::shared_ptr<const detail::Entry> entry);
     void add_requirement(std::shared_ptr<const Requirement> requirement);
@@ -275,6 +300,10 @@ private:
     std::vector<Module> children_;
     std::map<Reference, Connection> connections_;
     std::map<std::string, Reference> exports_;
+    detail::SourceLocation source_;
+    std::map<std::string, detail::SourceLocation> requirement_sources_;
+    std::map<Reference, detail::SourceLocation> connection_sources_;
+    std::map<std::string, detail::SourceLocation> export_sources_;
 };
 
 template <class Type>
@@ -375,6 +404,9 @@ public:
     Engine() = default;
     Engine(const Engine&) = delete;
     Engine& operator=(const Engine&) = delete;
+    // 支持按值返回新装配；移动后的原对象状态未指定。
+    Engine(Engine&&) = default;
+    Engine& operator=(Engine&&) = default;
 
     void add(Module module, const std::string& scope = {});
     void connect(Reference requirement, Reference provider, const std::string& scope = {});
@@ -405,6 +437,7 @@ public:
     }
 
 private:
+    friend class AssemblyDefinition;
     Module& find_scope(const std::string& scope);
     const Module& find_scope(const std::string& scope) const;
     std::shared_ptr<const detail::Entry> require_entry(const Reference& reference) const;

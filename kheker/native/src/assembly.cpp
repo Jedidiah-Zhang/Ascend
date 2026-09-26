@@ -1,0 +1,709 @@
+#include <ascend/assembly.hpp>
+
+#include "json.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <stdexcept>
+
+namespace ascend {
+namespace {
+
+std::string scope_join(const std::string& parent, const std::string& name) {
+    return parent.empty() ? name : parent + '/' + name;
+}
+
+std::string record_join(const std::string& parent, const std::string& segment) {
+    return detail::json_pointer_join(parent, segment);
+}
+
+bool valid_scope_name(const std::string& name) {
+    return !name.empty() && name.find('/') == std::string::npos;
+}
+
+}  // namespace
+
+Config Config::boolean(bool value) {
+    Config config;
+    config.kind_ = Kind::boolean;
+    config.boolean_ = value;
+    return config;
+}
+
+Config Config::integer(std::int64_t value) {
+    Config config;
+    config.kind_ = Kind::integer;
+    config.integer_ = value;
+    return config;
+}
+
+Config Config::number(double value) {
+    if (!std::isfinite(value)) throw std::invalid_argument("Config number must be finite");
+    Config config;
+    config.kind_ = Kind::number;
+    config.number_ = value;
+    return config;
+}
+
+Config Config::string(std::string value) {
+    Config config;
+    config.kind_ = Kind::string;
+    config.string_ = std::move(value);
+    return config;
+}
+
+Config Config::array(std::vector<Config> values) {
+    Config config;
+    config.kind_ = Kind::array;
+    config.elements_ = std::move(values);
+    return config;
+}
+
+Config Config::object(std::vector<std::pair<std::string, Config>> members) {
+    for (std::size_t index = 0; index < members.size(); ++index) {
+        for (std::size_t other = 0; other < index; ++other) {
+            if (members[index].first == members[other].first) {
+                throw std::invalid_argument("Duplicate object member '" + members[index].first + "'");
+            }
+        }
+    }
+    Config config;
+    config.kind_ = Kind::object;
+    config.members_ = std::move(members);
+    return config;
+}
+
+Config::Kind Config::kind() const noexcept { return kind_; }
+bool Config::is_null() const noexcept { return kind_ == Kind::null_value; }
+
+bool Config::boolean() const {
+    if (kind_ != Kind::boolean) throw std::invalid_argument("Config value is not a boolean");
+    return boolean_;
+}
+
+std::int64_t Config::integer() const {
+    if (kind_ != Kind::integer) throw std::invalid_argument("Config value is not an integer");
+    return integer_;
+}
+
+double Config::number() const {
+    if (kind_ != Kind::number) throw std::invalid_argument("Config value is not a number");
+    return number_;
+}
+
+const std::string& Config::string() const {
+    if (kind_ != Kind::string) throw std::invalid_argument("Config value is not a string");
+    return string_;
+}
+
+const std::vector<Config>& Config::elements() const {
+    if (kind_ != Kind::array) throw std::invalid_argument("Config value is not an array");
+    return elements_;
+}
+
+const std::vector<std::pair<std::string, Config>>& Config::members() const {
+    if (kind_ != Kind::object) throw std::invalid_argument("Config value is not an object");
+    return members_;
+}
+
+const Config* Config::find(const std::string& name) const {
+    if (kind_ != Kind::object) return nullptr;
+    for (const auto& member : members_) {
+        if (member.first == name) return &member.second;
+    }
+    return nullptr;
+}
+
+bool Config::operator==(const Config& other) const {
+    if (kind_ != other.kind_) return false;
+    switch (kind_) {
+        case Kind::null_value: return true;
+        case Kind::boolean: return boolean_ == other.boolean_;
+        case Kind::integer: return integer_ == other.integer_;
+        case Kind::number: return number_ == other.number_;
+        case Kind::string: return string_ == other.string_;
+        case Kind::array: return elements_ == other.elements_;
+        case Kind::object:
+            if (members_.size() != other.members_.size()) return false;
+            for (const auto& member : members_) {
+                const Config* found = other.find(member.first);
+                if (!found || !(*found == member.second)) return false;
+            }
+            return true;
+    }
+    return false;
+}
+
+void ModuleFactoryDirectory::add_definition(std::string definition, Factory factory) {
+    const Reference target{definition, {}};
+    if (definition.empty()) {
+        detail::fail(ErrorCode::invalid_declaration, target, "Definition identifier must not be empty");
+    }
+    if (!factory) {
+        detail::fail(ErrorCode::invalid_declaration, target, "Definition constructor must be set");
+    }
+    if (!factories_.emplace(std::move(definition), std::move(factory)).second) {
+        detail::fail(ErrorCode::duplicate_definition, target, "Definition is already registered");
+    }
+}
+
+bool ModuleFactoryDirectory::contains(const std::string& definition) const {
+    return factories_.count(definition) != 0;
+}
+
+std::vector<std::string> ModuleFactoryDirectory::definitions() const {
+    std::vector<std::string> result;
+    result.reserve(factories_.size());
+    for (const auto& item : factories_) result.push_back(item.first);
+    return result;
+}
+
+Module ModuleFactoryDirectory::create(const std::string& definition, const std::string& instance,
+                                      const Config& config) const {
+    const auto found = factories_.find(definition);
+    if (found == factories_.end()) {
+        detail::fail(ErrorCode::unknown_definition, {instance, {}},
+                     "Module definition '" + definition + "' is not registered");
+    }
+    Module module = [&] {
+        try {
+            return found->second(instance, config);
+        } catch (const EngineError& error) {
+            // 构造期尚无完整模块树，实例与内部位置分别保存，不按名称猜测归属。
+            throw EngineError({error.diagnostic().code, {instance, {}},
+                               "Factory '" + definition + "' failed during construction", {}, {},
+                               std::make_shared<const Diagnostic>(error.diagnostic())});
+        } catch (const std::exception& error) {
+            detail::fail(ErrorCode::invalid_config, {instance, {}}, error.what());
+        } catch (...) {
+            detail::fail(ErrorCode::invalid_config, {instance, {}},
+                         "Factory threw a non-standard exception");
+        }
+    }();
+    if (module.name() != instance) {
+        detail::fail(ErrorCode::invalid_config, {instance, {}},
+                     "Factory returned module '" + module.name() + "' for instance '" + instance + "'");
+    }
+    return module;
+}
+
+AssemblyDefinition::AssemblyDefinition() {
+    Scope root;
+    root.path.clear();
+    scopes_.emplace("", std::move(root));
+}
+
+const AssemblyDefinition::Scope& AssemblyDefinition::require_scope(const std::string& path) const {
+    const auto found = scopes_.find(path);
+    if (found == scopes_.end()) {
+        throw EngineError({ErrorCode::invalid_assembly, {path, {}}, "Assembly scope not found", source_, {}});
+    }
+    return found->second;
+}
+
+AssemblyDefinition::Scope& AssemblyDefinition::require_scope(const std::string& path) {
+    return const_cast<Scope&>(std::as_const(*this).require_scope(path));
+}
+
+void AssemblyDefinition::add_scope(const std::string& name, const std::string& scope) {
+    Scope& parent = require_scope(scope);
+    if (!valid_scope_name(name)) {
+        throw EngineError({ErrorCode::invalid_assembly, {scope_join(scope, name), {}},
+                           "Scope name must be non-empty and must not contain '/'", source_, {}});
+    }
+    const std::string path = scope_join(scope, name);
+    if (scopes_.count(path) != 0) {
+        throw EngineError({ErrorCode::invalid_assembly, {path, {}},
+                           "Duplicate scope name '" + name + "'", source_, {}});
+    }
+    parent.children.push_back(name);
+    Scope child;
+    child.name = name;
+    child.path = path;
+    scopes_.emplace(path, std::move(child));
+}
+
+void AssemblyDefinition::add_instance(std::string definition, std::string name, Config config,
+                                      const std::string& scope) {
+    require_scope(scope).instances.push_back({std::move(definition), std::move(name), std::move(config)});
+}
+
+void AssemblyDefinition::connect(Reference requirement, Reference provider, const std::string& scope) {
+    require_scope(scope).connections.push_back({std::move(requirement), std::move(provider)});
+}
+
+void AssemblyDefinition::forward_inherited(std::string requirement, Reference child_requirement,
+                                           const std::string& scope) {
+    if (scope.empty()) {
+        throw EngineError({ErrorCode::invalid_assembly, {requirement, {}},
+                           "The root scope cannot forward requirements", source_, {}});
+    }
+    require_scope(scope).forwards.push_back({std::move(requirement), std::move(child_requirement)});
+}
+
+void AssemblyDefinition::export_symbol(std::string name, Reference child_symbol, const std::string& scope) {
+    if (scope.empty()) {
+        throw EngineError({ErrorCode::invalid_assembly, {name, {}},
+                           "The root scope cannot export symbols", source_, {}});
+    }
+    require_scope(scope).exports.push_back({std::move(name), std::move(child_symbol)});
+}
+
+std::string AssemblyDefinition::to_json() const {
+    return detail::write_json(scope_config(require_scope(""), true), source_);
+}
+
+Config AssemblyDefinition::scope_config(const Scope& scope, bool root, const std::string& record,
+                                        std::size_t depth) const {
+    if (depth >= assembly_json_max_depth) {
+        fail_record(ErrorCode::invalid_json, record, "JSON container nesting limit exceeded");
+    }
+    std::vector<std::pair<std::string, Config>> members;
+    if (root) {
+        members.emplace_back("format", Config::string(assembly_format));
+        members.emplace_back("version", Config::integer(assembly_format_version));
+    } else {
+        members.emplace_back("name", Config::string(scope.name));
+    }
+    std::vector<Config> instances;
+    instances.reserve(scope.instances.size());
+    for (std::size_t index = 0; index < scope.instances.size(); ++index) {
+        const auto& instance = scope.instances[index];
+        const auto item = record_join(record_join(record, "instances"), std::to_string(index));
+        // 先检查，再复制配置，避免过深配置在编解码检查之前递归复制。
+        detail::validate_json(instance.config, source_, record_join(item, "config"), depth + 3);
+        instances.push_back(Config::object({{"definition", Config::string(instance.definition)},
+                                            {"name", Config::string(instance.name)},
+                                            {"config", instance.config}}));
+    }
+    members.emplace_back("instances", Config::array(std::move(instances)));
+    std::vector<Config> scopes;
+    scopes.reserve(scope.children.size());
+    for (std::size_t index = 0; index < scope.children.size(); ++index) {
+        const auto item = record_join(record_join(record, "scopes"), std::to_string(index));
+        scopes.push_back(scope_config(require_scope(scope_join(scope.path, scope.children[index])), false,
+                                      item, depth + 2));
+    }
+    members.emplace_back("scopes", Config::array(std::move(scopes)));
+    std::vector<Config> connections;
+    connections.reserve(scope.connections.size());
+    for (const auto& connection : scope.connections) {
+        connections.push_back(Config::object({{"requirement", reference_config(connection.requirement, "symbol")},
+                                              {"provider", reference_config(connection.provider, "symbol")}}));
+    }
+    members.emplace_back("connections", Config::array(std::move(connections)));
+    std::vector<Config> forwards;
+    forwards.reserve(scope.forwards.size());
+    for (const auto& forward : scope.forwards) {
+        forwards.push_back(Config::object({{"requirement", Config::string(forward.requirement)},
+                                           {"target", reference_config(forward.target, "requirement")}}));
+    }
+    members.emplace_back("forwards", Config::array(std::move(forwards)));
+    std::vector<Config> exports;
+    exports.reserve(scope.exports.size());
+    for (const auto& item : scope.exports) {
+        exports.push_back(Config::object({{"name", Config::string(item.name)},
+                                          {"target", reference_config(item.target, "symbol")}}));
+    }
+    members.emplace_back("exports", Config::array(std::move(exports)));
+    return Config::object(std::move(members));
+}
+
+Config AssemblyDefinition::reference_config(const Reference& reference, const std::string& second) {
+    return Config::object({{"module", Config::string(reference.module)}, {second, Config::string(reference.symbol)}});
+}
+
+void AssemblyDefinition::save(const std::string& path) const {
+    std::string text;
+    try {
+        text = to_json();
+    } catch (const EngineError& error) {
+        auto diagnostic = error.diagnostic();
+        if (diagnostic.source.empty()) diagnostic.source = path;
+        throw EngineError(std::move(diagnostic));
+    }
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    if (!stream.is_open()) {
+        throw EngineError({ErrorCode::io_failure, {path, {}}, "Cannot open assembly record for writing", path, {}});
+    }
+    stream << text << '\n';
+    stream.close();
+    if (!stream) {
+        throw EngineError({ErrorCode::io_failure, {path, {}}, "Cannot write assembly record", path, {}});
+    }
+}
+
+AssemblyDefinition AssemblyDefinition::load(const std::string& path) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream.is_open()) {
+        throw EngineError({ErrorCode::io_failure, {path, {}}, "Cannot open assembly record for reading", path, {}});
+    }
+    std::string text;
+    char chunk[4096];
+    while (stream) {
+        stream.read(chunk, sizeof(chunk));
+        text.append(chunk, static_cast<std::size_t>(stream.gcount()));
+    }
+    // 读取中途失败时流未到达文件结尾；残缺内容不送入解析，与格式错误分开报告。
+    if (!stream.eof()) {
+        throw EngineError({ErrorCode::io_failure, {path, {}}, "Cannot read assembly record", path, {}});
+    }
+    return parse(text, path);
+}
+
+AssemblyDefinition AssemblyDefinition::parse(const std::string& text, std::string source) {
+    Config document = detail::parse_json(text, source);
+    AssemblyDefinition definition;
+    definition.source_ = std::move(source);
+    definition.scopes_.clear();
+    if (document.kind() != Config::Kind::object) {
+        definition.fail_record(ErrorCode::invalid_assembly, "", "Assembly record must be a JSON object");
+    }
+    const Config* format = document.find("format");
+    if (!format || format->kind() != Config::Kind::string) {
+        definition.fail_record(ErrorCode::invalid_assembly, "/format", "Record format identifier must be a string");
+    }
+    if (format->string() != assembly_format) {
+        definition.fail_record(ErrorCode::invalid_assembly, "/format",
+                               "Unknown record format '" + format->string() + "'");
+    }
+    const Config* version = document.find("version");
+    if (!version || version->kind() != Config::Kind::integer) {
+        definition.fail_record(ErrorCode::invalid_assembly, "/version", "Record format version must be an integer");
+    }
+    if (version->integer() != assembly_format_version) {
+        definition.fail_record(ErrorCode::unsupported_format_version, "/version",
+                               "Unsupported assembly record version " + std::to_string(version->integer()) +
+                                   "; this build reads version " + std::to_string(assembly_format_version));
+    }
+    definition.read_scope(document, "", "", true);
+    return definition;
+}
+
+void AssemblyDefinition::read_scope(const Config& object, const std::string& record,
+                                    const std::string& parent_path, bool root) {
+    const std::vector<std::string> allowed =
+        root ? std::vector<std::string>{"format", "version", "instances", "scopes", "connections", "forwards", "exports"}
+             : std::vector<std::string>{"name", "instances", "scopes", "connections", "forwards", "exports"};
+    check_keys(object, record, allowed);
+    std::string name;
+    std::string path = parent_path;
+    if (!root) {
+        const Config* field = object.find("name");
+        if (!field || field->kind() != Config::Kind::string || !valid_scope_name(field->string())) {
+            fail_record(ErrorCode::invalid_assembly, record_join(record, "name"),
+                        "Scope name must be a non-empty string without '/'");
+        }
+        name = field->string();
+        path = scope_join(parent_path, name);
+        if (scopes_.count(path) != 0) {
+            fail_record(ErrorCode::invalid_assembly, record_join(record, "name"),
+                        "Duplicate scope name '" + name + "'");
+        }
+    }
+    Scope scope;
+    scope.name = name;
+    scope.path = path;
+    if (const Config* instances = object.find("instances")) {
+        if (instances->kind() != Config::Kind::array) {
+            fail_record(ErrorCode::invalid_assembly, record_join(record, "instances"),
+                        "Field 'instances' must be an array");
+        }
+        const auto& elements = instances->elements();
+        for (std::size_t index = 0; index < elements.size(); ++index) {
+            const std::string item = record_join(record_join(record, "instances"), std::to_string(index));
+            const Config& element = elements[index];
+            if (element.kind() != Config::Kind::object) {
+                fail_record(ErrorCode::invalid_assembly, item, "Instance must be an object");
+            }
+            check_keys(element, item, {"definition", "name", "config"});
+            const Config* definition = element.find("definition");
+            if (!definition || definition->kind() != Config::Kind::string) {
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "definition"),
+                            "Field 'definition' must be a string");
+            }
+            const Config* instance_name = element.find("name");
+            if (!instance_name || instance_name->kind() != Config::Kind::string) {
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "name"),
+                            "Field 'name' must be a string");
+            }
+            const Config* config = element.find("config");
+            scope.instances.push_back({definition->string(), instance_name->string(), config ? *config : Config{}});
+        }
+    }
+    if (const Config* scopes = object.find("scopes")) {
+        if (scopes->kind() != Config::Kind::array) {
+            fail_record(ErrorCode::invalid_assembly, record_join(record, "scopes"), "Field 'scopes' must be an array");
+        }
+        const auto& elements = scopes->elements();
+        for (std::size_t index = 0; index < elements.size(); ++index) {
+            const std::string item = record_join(record_join(record, "scopes"), std::to_string(index));
+            const Config& element = elements[index];
+            if (element.kind() != Config::Kind::object) {
+                fail_record(ErrorCode::invalid_assembly, item, "Scope must be an object");
+            }
+            const Config* child_name = element.find("name");
+            if (!child_name || child_name->kind() != Config::Kind::string || !valid_scope_name(child_name->string())) {
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "name"),
+                            "Scope name must be a non-empty string without '/'");
+            }
+            scope.children.push_back(child_name->string());
+            read_scope(element, item, path, false);
+        }
+    }
+    if (const Config* connections = object.find("connections")) {
+        if (connections->kind() != Config::Kind::array) {
+            fail_record(ErrorCode::invalid_assembly, record_join(record, "connections"),
+                        "Field 'connections' must be an array");
+        }
+        const auto& elements = connections->elements();
+        for (std::size_t index = 0; index < elements.size(); ++index) {
+            const std::string item = record_join(record_join(record, "connections"), std::to_string(index));
+            const Config& element = elements[index];
+            if (element.kind() != Config::Kind::object) {
+                fail_record(ErrorCode::invalid_assembly, item, "Connection must be an object");
+            }
+            check_keys(element, item, {"requirement", "provider"});
+            const Config* requirement = element.find("requirement");
+            if (!requirement) {
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "requirement"),
+                            "Field 'requirement' is required");
+            }
+            const Config* provider = element.find("provider");
+            if (!provider) {
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "provider"),
+                            "Field 'provider' is required");
+            }
+            scope.connections.push_back({read_reference(*requirement, record_join(item, "requirement"), "symbol"),
+                                         read_reference(*provider, record_join(item, "provider"), "symbol")});
+        }
+    }
+    if (const Config* forwards = object.find("forwards")) {
+        if (forwards->kind() != Config::Kind::array) {
+            fail_record(ErrorCode::invalid_assembly, record_join(record, "forwards"),
+                        "Field 'forwards' must be an array");
+        }
+        const auto& elements = forwards->elements();
+        if (root && !elements.empty()) {
+            fail_record(ErrorCode::invalid_assembly, record_join(record, "forwards"),
+                        "The root scope cannot forward requirements");
+        }
+        for (std::size_t index = 0; index < elements.size(); ++index) {
+            const std::string item = record_join(record_join(record, "forwards"), std::to_string(index));
+            const Config& element = elements[index];
+            if (element.kind() != Config::Kind::object) {
+                fail_record(ErrorCode::invalid_assembly, item, "Forward must be an object");
+            }
+            check_keys(element, item, {"requirement", "target"});
+            const Config* requirement = element.find("requirement");
+            if (!requirement || requirement->kind() != Config::Kind::string) {
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "requirement"),
+                            "Field 'requirement' must be a string");
+            }
+            const Config* target = element.find("target");
+            if (!target) {
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "target"), "Field 'target' is required");
+            }
+            scope.forwards.push_back(
+                {requirement->string(), read_reference(*target, record_join(item, "target"), "requirement")});
+        }
+    }
+    if (const Config* exports = object.find("exports")) {
+        if (exports->kind() != Config::Kind::array) {
+            fail_record(ErrorCode::invalid_assembly, record_join(record, "exports"),
+                        "Field 'exports' must be an array");
+        }
+        const auto& elements = exports->elements();
+        if (root && !elements.empty()) {
+            fail_record(ErrorCode::invalid_assembly, record_join(record, "exports"),
+                        "The root scope cannot export symbols");
+        }
+        for (std::size_t index = 0; index < elements.size(); ++index) {
+            const std::string item = record_join(record_join(record, "exports"), std::to_string(index));
+            const Config& element = elements[index];
+            if (element.kind() != Config::Kind::object) {
+                fail_record(ErrorCode::invalid_assembly, item, "Export must be an object");
+            }
+            check_keys(element, item, {"name", "target"});
+            const Config* name_field = element.find("name");
+            if (!name_field || name_field->kind() != Config::Kind::string) {
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "name"), "Field 'name' must be a string");
+            }
+            const Config* target = element.find("target");
+            if (!target) {
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "target"), "Field 'target' is required");
+            }
+            scope.exports.push_back({name_field->string(), read_reference(*target, record_join(item, "target"), "symbol")});
+        }
+    }
+    scopes_.emplace(path, std::move(scope));
+}
+
+Reference AssemblyDefinition::read_reference(const Config& value, const std::string& record,
+                                             const std::string& second) const {
+    if (value.kind() != Config::Kind::object) {
+        fail_record(ErrorCode::invalid_assembly, record, "Reference must be an object");
+    }
+    check_keys(value, record, {"module", second});
+    const Config* module = value.find("module");
+    if (!module || module->kind() != Config::Kind::string) {
+        fail_record(ErrorCode::invalid_assembly, record_join(record, "module"), "Field 'module' must be a string");
+    }
+    const Config* symbol = value.find(second);
+    if (!symbol || symbol->kind() != Config::Kind::string) {
+        fail_record(ErrorCode::invalid_assembly, record_join(record, second),
+                    "Field '" + second + "' must be a string");
+    }
+    return {module->string(), symbol->string()};
+}
+
+void AssemblyDefinition::check_keys(const Config& object, const std::string& record,
+                                    const std::vector<std::string>& allowed) const {
+    for (const auto& member : object.members()) {
+        if (std::find(allowed.begin(), allowed.end(), member.first) == allowed.end()) {
+            fail_record(ErrorCode::invalid_assembly, record_join(record, member.first),
+                        "Unknown field '" + member.first + "'");
+        }
+    }
+}
+
+void AssemblyDefinition::fail_record(ErrorCode code, const std::string& record, std::string message) const {
+    throw EngineError({code, {}, std::move(message), source_, record});
+}
+
+EngineError AssemblyDefinition::attach(const EngineError& error, const std::string& record,
+                                       const std::string& scope) const {
+    Diagnostic diagnostic = error.diagnostic();
+    if (diagnostic.source.empty()) diagnostic.source = source_;
+    if (diagnostic.path.empty()) diagnostic.path = record;
+    if (!scope.empty()) {
+        diagnostic.target.module = diagnostic.target.module.empty()
+                                       ? scope
+                                       : scope_join(scope, diagnostic.target.module);
+    }
+    return EngineError(std::move(diagnostic));
+}
+
+Module AssemblyDefinition::create_module(const ModuleFactoryDirectory& factories, const AssemblyInstance& instance,
+                                         const std::string& record, const std::string& engine_path) const {
+    try {
+        Module module = factories.create(instance.definition, instance.name, instance.config);
+        module.source_ = {source_, record};
+        return module;
+    } catch (const EngineError& error) {
+        Diagnostic diagnostic = error.diagnostic();
+        if (diagnostic.path.empty()) {
+            if (diagnostic.cause) {
+                // 作者提供的来源信息保留在 cause，外层关联本次装配的工厂实例。
+                diagnostic.path = record;
+            } else if (diagnostic.code == ErrorCode::unknown_definition) {
+                diagnostic.path = record_join(record, "definition");
+            } else if (diagnostic.code == ErrorCode::invalid_config) {
+                diagnostic.path = record_join(record, "config");
+            } else {
+                diagnostic.path = record;
+            }
+        }
+        throw attach(EngineError(std::move(diagnostic)), record, engine_path);
+    }
+}
+
+Module AssemblyDefinition::build_scope(const ModuleFactoryDirectory& factories, const Scope& scope,
+                                       const std::string& record, const std::string& engine_path) const {
+    Module module(scope.name);
+    module.source_ = {source_, record};
+    for (std::size_t index = 0; index < scope.instances.size(); ++index) {
+        const std::string item = record_join(record_join(record, "instances"), std::to_string(index));
+        Module child = create_module(factories, scope.instances[index], item, engine_path);
+        try {
+            module.add(std::move(child));
+        } catch (const EngineError& error) {
+            throw attach(error, item, engine_path);
+        }
+    }
+    for (std::size_t index = 0; index < scope.children.size(); ++index) {
+        const std::string item = record_join(record_join(record, "scopes"), std::to_string(index));
+        const std::string child_path = scope_join(engine_path, scope.children[index]);
+        Module child = build_scope(factories, require_scope(scope_join(scope.path, scope.children[index])), item,
+                                   child_path);
+        try {
+            module.add(std::move(child));
+        } catch (const EngineError& error) {
+            throw attach(error, item, engine_path);
+        }
+    }
+    for (std::size_t index = 0; index < scope.connections.size(); ++index) {
+        const std::string item = record_join(record_join(record, "connections"), std::to_string(index));
+        try {
+            module.connect(scope.connections[index].requirement, scope.connections[index].provider);
+            module.connection_sources_[scope.connections[index].requirement] = {source_, item};
+        } catch (const EngineError& error) {
+            throw attach(error, item, engine_path);
+        }
+    }
+    for (std::size_t index = 0; index < scope.forwards.size(); ++index) {
+        const std::string item = record_join(record_join(record, "forwards"), std::to_string(index));
+        try {
+            module.forward_inherited(scope.forwards[index].requirement, scope.forwards[index].target);
+            module.connection_sources_[scope.forwards[index].target] = {source_, item};
+            module.requirement_sources_.emplace(scope.forwards[index].requirement,
+                                                detail::SourceLocation{source_, item});
+        } catch (const EngineError& error) {
+            throw attach(error, item, engine_path);
+        }
+    }
+    for (std::size_t index = 0; index < scope.exports.size(); ++index) {
+        const std::string item = record_join(record_join(record, "exports"), std::to_string(index));
+        try {
+            module.export_symbol(scope.exports[index].name, scope.exports[index].target);
+            module.export_sources_[scope.exports[index].name] = {source_, item};
+        } catch (const EngineError& error) {
+            Diagnostic diagnostic = error.diagnostic();
+            if (diagnostic.target.module == module.name()) {
+                // 导出名错误以作用域自身为目标；子符号错误保留直接子模块定位。
+                diagnostic.target = {engine_path, diagnostic.target.symbol};
+                throw attach(EngineError(std::move(diagnostic)), item, "");
+            }
+            throw attach(error, item, engine_path);
+        }
+    }
+    return module;
+}
+
+Engine AssemblyDefinition::instantiate(const ModuleFactoryDirectory& factories) const {
+    const Scope& root = require_scope("");
+    Engine engine;
+    engine.root_.source_ = {source_, ""};
+    for (std::size_t index = 0; index < root.instances.size(); ++index) {
+        const std::string record = record_join("/instances", std::to_string(index));
+        Module module = create_module(factories, root.instances[index], record, "");
+        try {
+            engine.add(std::move(module));
+        } catch (const EngineError& error) {
+            throw attach(error, record, "");
+        }
+    }
+    for (std::size_t index = 0; index < root.children.size(); ++index) {
+        const std::string record = record_join("/scopes", std::to_string(index));
+        const Scope& scope = require_scope(root.children[index]);
+        Module module = build_scope(factories, scope, record, scope.name);
+        try {
+            engine.add(std::move(module));
+        } catch (const EngineError& error) {
+            throw attach(error, record, "");
+        }
+    }
+    for (std::size_t index = 0; index < root.connections.size(); ++index) {
+        const std::string record = record_join("/connections", std::to_string(index));
+        try {
+            engine.connect(root.connections[index].requirement, root.connections[index].provider);
+            engine.root_.connection_sources_[root.connections[index].requirement] = {source_, record};
+        } catch (const EngineError& error) {
+            throw attach(error, record, "");
+        }
+    }
+    return engine;
+}
+
+}  // namespace ascend

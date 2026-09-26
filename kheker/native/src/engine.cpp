@@ -60,11 +60,31 @@ Mismatch requirement_mismatch(const Declaration& declaration, const Requirement&
     return {};
 }
 
+// 来源、记录内路径与引擎目标均可出现；空部分不产生多余分隔。
+std::string describe(const Diagnostic& diagnostic) {
+    std::string result;
+    for (const Diagnostic* current = &diagnostic; current; current = current->cause.get()) {
+        if (current != &diagnostic) result += "\nCaused by: ";
+        std::string location = current->source;
+        if (!current->path.empty()) {
+            if (!location.empty()) location += ' ';
+            location += current->path;
+        }
+        const std::string target = label(current->target);
+        if (!target.empty()) {
+            if (!location.empty()) location += ' ';
+            location += target;
+        }
+        if (!location.empty()) result += location + ": ";
+        result += current->message;
+    }
+    return result;
+}
+
 }  // namespace
 
 EngineError::EngineError(Diagnostic diagnostic)
-    : std::runtime_error(label(diagnostic.target) + ": " + diagnostic.message),
-      diagnostic_(std::move(diagnostic)) {}
+    : std::runtime_error(describe(diagnostic)), diagnostic_(std::move(diagnostic)) {}
 
 namespace detail {
 
@@ -140,15 +160,16 @@ public:
             for (const auto& item : node.second->exports_) {
                 const Reference target{node.first, item.first};
                 if (!output(target)) {
-                    diagnostics.push_back({ErrorCode::missing_symbol, target,
-                        "Export target not found: " + label({path_join(node.first, item.second.module), item.second.symbol})});
+                    report(ErrorCode::missing_symbol, target,
+                        "Export target not found: " + label({path_join(node.first, item.second.module), item.second.symbol}),
+                        source(node.first, node.second->export_sources_, item.first));
                 }
             }
             for (const auto& item : node.second->connections_) {
                 const Reference target{path_join(node.first, item.first.module), item.first.symbol};
                 if (!requirement(target)) {
-                    diagnostics.push_back({ErrorCode::missing_requirement, target,
-                                           "Connection names an undeclared requirement"});
+                    report(ErrorCode::missing_requirement, target, "Connection names an undeclared requirement",
+                           source(node.first, node.second->connection_sources_, item.first));
                 }
             }
         }
@@ -165,11 +186,11 @@ public:
                     const Reference absolute{path_join(parent_path(item.first.module), reference.module), reference.symbol};
                     const auto target = reference.module.find('/') == std::string::npos ? output(absolute) : nullptr;
                     if (!target) {
-                        diagnostics.push_back({ErrorCode::missing_symbol, item.first,
-                                               "Unresolved dependency: " + label(absolute)});
+                        report(ErrorCode::missing_symbol, item.first,
+                               "Unresolved dependency: " + label(absolute), source(item.first.module));
                     } else if (target->declaration.kind != SymbolKind::value) {
-                        diagnostics.push_back({ErrorCode::wrong_kind, item.first,
-                                               "Read/write dependency must be a value: " + label(absolute)});
+                        report(ErrorCode::wrong_kind, item.first,
+                               "Read/write dependency must be a value: " + label(absolute), source(item.first.module));
                     }
                     reference = absolute;
                 }
@@ -184,6 +205,30 @@ public:
     std::vector<Diagnostic> diagnostics;
 
 private:
+    SourceLocation source(std::string path) const {
+        // 工厂内部声明没有记录字段时，回退到最近的实例／作用域。
+        while (true) {
+            const auto node = nodes_.find(path);
+            if (node != nodes_.end()) {
+                const auto& location = node->second->source_;
+                if (!location.source.empty() || !location.path.empty()) return location;
+            }
+            if (path.empty()) return {};
+            path = parent_path(path);
+        }
+    }
+
+    template <class Key>
+    SourceLocation source(const std::string& path, const std::map<Key, SourceLocation>& locations,
+                          const Key& key) const {
+        const auto found = locations.find(key);
+        return found == locations.end() ? source(path) : found->second;
+    }
+
+    void report(ErrorCode code, const Reference& target, std::string message, const SourceLocation& location) {
+        diagnostics.push_back({code, target, std::move(message), location.source, location.path});
+    }
+
     void collect(const Module& module, const std::string& path) {
         nodes_.emplace(path, &module);
         for (const auto& child : module.children_) collect(child, path_join(path, child.name_));
@@ -218,9 +263,11 @@ private:
         const auto& connections = nodes_.at(parent)->connections_;
         const auto found = connections.find({local_name(reference.module), reference.symbol});
         if (found == connections.end()) {
-            diagnostics.push_back({ErrorCode::unconnected_requirement, reference, "Required interface is not connected"});
+            report(ErrorCode::unconnected_requirement, reference, "Required interface is not connected",
+                   source(reference.module, nodes_.at(reference.module)->requirement_sources_, reference.symbol));
             return {};
         }
+        const auto location = source(parent, nodes_.at(parent)->connection_sources_, found->first);
         const auto& connection = found->second;
         const Reference provider{connection.forwarded ? parent : path_join(parent, connection.provider.module),
                                  connection.provider.symbol};
@@ -228,8 +275,8 @@ private:
         if (connection.forwarded) {
             const auto parent_requirement = requirement(provider);
             if (!parent_requirement) {
-                diagnostics.push_back({ErrorCode::missing_requirement, reference,
-                                       "Forwarded requirement not declared: " + label(provider)});
+                report(ErrorCode::missing_requirement, reference,
+                       "Forwarded requirement not declared: " + label(provider), location);
                 return {};
             }
             // 核对声明本身，避免实际提供方缺失时掩盖转接契约错误。
@@ -237,7 +284,7 @@ private:
                                   {}, {}, {}, {}, parent_requirement->contract};
             for (const auto& type : parent_requirement->parameters) signature.parameters.push_back({{}, type});
             if (auto mismatch = requirement_mismatch(signature, *needed)) {
-                diagnostics.push_back({mismatch->first, reference, "Forward from " + label(provider) + ": " + mismatch->second});
+                report(mismatch->first, reference, "Forward from " + label(provider) + ": " + mismatch->second, location);
                 return {};
             }
             resolved = input(provider);
@@ -245,13 +292,12 @@ private:
         } else {
             resolved = output(provider);
             if (!resolved) {
-                diagnostics.push_back({ErrorCode::missing_symbol, reference,
-                                       "Provider not found: " + label(provider)});
+                report(ErrorCode::missing_symbol, reference, "Provider not found: " + label(provider), location);
                 return {};
             }
         }
         if (auto mismatch = requirement_mismatch(resolved->declaration, *needed)) {
-            diagnostics.push_back({mismatch->first, reference, "Provider " + label(provider) + ": " + mismatch->second});
+            report(mismatch->first, reference, "Provider " + label(provider) + ": " + mismatch->second, location);
             return {};
         }
         runtime_->inputs.emplace(reference, Input{needed, resolved});
@@ -339,6 +385,7 @@ void Module::add_connection(Connection connection) {
     if (!connections_.emplace(connection.requirement, connection).second) {
         detail::fail(ErrorCode::duplicate_connection, connection.requirement, "Requirement already has a connection");
     }
+    connection_sources_.erase(connection.requirement);
 }
 
 void Module::connect(Reference requirement, Reference provider) {
@@ -348,10 +395,35 @@ void Module::connect(Reference requirement, Reference provider) {
 void Module::disconnect(const Reference& requirement) {
     local_reference(requirement);
     connections_.erase(requirement);
+    connection_sources_.erase(requirement);
 }
 
 void Module::forward(std::string requirement, Reference child_requirement) {
     add_connection({std::move(child_requirement), {{}, std::move(requirement)}, true});
+}
+
+void Module::forward_inherited(std::string requirement, Reference child_requirement) {
+    bool inserted = false;
+    if (!requirement.empty() && requirements_.count(requirement) == 0) {
+        const auto child = std::find_if(children_.begin(), children_.end(), [&](const Module& item) {
+            return item.name_ == child_requirement.module;
+        });
+        if (child != children_.end()) {
+            const auto found = child->requirements_.find(child_requirement.symbol);
+            if (found != child->requirements_.end()) {
+                Requirement inherited = *found->second;
+                inherited.reference = {name_, requirement};
+                add_requirement(std::make_shared<const Requirement>(std::move(inherited)));
+                inserted = true;
+            }
+        }
+    }
+    try {
+        forward(requirement, std::move(child_requirement));
+    } catch (...) {
+        if (inserted) requirements_.erase(requirement);
+        throw;
+    }
 }
 
 void Module::export_symbol(std::string name, Reference child_symbol) {

@@ -22,6 +22,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+      - name: 准备逗号小数区域（Linux）
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v locale-gen >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y locales
+          fi
+          sudo locale-gen de_DE.UTF-8
+          locale -a | grep -i de_DE
       - name: 配置无界面核心
         run: cmake -S kheker/native -B build/work/native -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: 编译核心、示例与测试

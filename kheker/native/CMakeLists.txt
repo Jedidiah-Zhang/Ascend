@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_library(ascend_engine STATIC src/engine.cpp)
+add_library(ascend_engine STATIC src/engine.cpp src/json.cpp src/assembly.cpp)
 add_library(ascend::engine ALIAS ascend_engine)
 target_compile_features(ascend_engine PUBLIC cxx_std_17)
 target_include_directories(ascend_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -23,6 +23,9 @@ target_link_libraries(ascend_minimal_model PRIVATE ascend::engine)
 add_executable(ascend_assembled_model examples/assembled_model.cpp)
 target_link_libraries(ascend_assembled_model PRIVATE ascend::engine)
 
+add_executable(ascend_assembly_record examples/assembly_record.cpp)
+target_link_libraries(ascend_assembly_record PRIVATE ascend::engine)
+
 include(CTest)
 if(BUILD_TESTING)
     add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../testbench/native"
@@ -32,5 +35,8 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "baseline=8 alternate=12")
     add_test(NAME assembly.testbench COMMAND ascend_assembled_model)
     set_tests_properties(assembly.testbench PROPERTIES
+        PASS_REGULAR_EXPRESSION "pulse=3 baseline=8 alternate=12")
+    add_test(NAME record.testbench COMMAND ascend_assembly_record)
+    set_tests_properties(record.testbench PROPERTIES
         PASS_REGULAR_EXPRESSION "pulse=3 baseline=8 alternate=12")
 endif()

@@ -1,0 +1,151 @@
+#pragma once
+
+#include <ascend/engine.hpp>
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace ascend {
+
+// 装配记录格式标识与当前支持版本；格式版本表示解释记录的方式，不等于模块实现版本。
+inline constexpr const char* assembly_format = "ascend.assembly";
+inline constexpr std::int64_t assembly_format_version = 1;
+// JSON 读写采用相同的容器嵌套上限（根对象算一层）。
+inline constexpr std::size_t assembly_json_max_depth = 128;
+
+// JSON 可表达的构造配置。整数保持 std::int64_t 精确值；访问器不做隐式转换。
+class Config {
+public:
+    enum class Kind { null_value, boolean, integer, number, string, array, object };
+
+    Config() = default;
+    static Config boolean(bool value);
+    static Config integer(std::int64_t value);
+    static Config number(double value);
+    static Config string(std::string value);
+    static Config array(std::vector<Config> values);
+    // 对象成员名重复时抛出 std::invalid_argument。
+    static Config object(std::vector<std::pair<std::string, Config>> members);
+
+    Kind kind() const noexcept;
+    bool is_null() const noexcept;
+    bool boolean() const;
+    std::int64_t integer() const;
+    double number() const;
+    const std::string& string() const;
+    const std::vector<Config>& elements() const;
+    const std::vector<std::pair<std::string, Config>>& members() const;
+    // 对象成员查找；非对象或成员不存在时返回空指针。
+    const Config* find(const std::string& name) const;
+
+    // 对象成员按名称比较，不要求顺序；数组按位置比较。
+    bool operator==(const Config& other) const;
+    bool operator!=(const Config& other) const { return !(*this == other); }
+
+private:
+    Kind kind_ = Kind::null_value;
+    bool boolean_ = false;
+    std::int64_t integer_ = 0;
+    double number_ = 0.0;
+    std::string string_;
+    std::vector<Config> elements_;
+    std::vector<std::pair<std::string, Config>> members_;
+};
+
+// 模块定义标识到构造入口的显式注册目录；定义标识用于选择工厂，实例名用于作用域身份。
+class ModuleFactoryDirectory {
+public:
+    using Factory = std::function<Module(const std::string& instance, const Config& config)>;
+
+    void add_definition(std::string definition, Factory factory);
+    bool contains(const std::string& definition) const;
+    std::vector<std::string> definitions() const;
+    // 每次调用重新执行构造入口并返回独立实例。
+    // 工厂抛出的 EngineError 以实例为目标包装，原始诊断保留在 cause 中。
+    Module create(const std::string& definition, const std::string& instance, const Config& config) const;
+
+private:
+    std::map<std::string, Factory> factories_;
+};
+
+struct AssemblyInstance {
+    std::string definition;
+    std::string name;
+    Config config;
+};
+
+struct AssemblyConnection {
+    Reference requirement;
+    Reference provider;
+};
+
+struct AssemblyForward {
+    std::string requirement;
+    Reference target;
+};
+
+struct AssemblyExport {
+    std::string name;
+    Reference target;
+};
+
+// 可由普通 C++ 装配代码创建的装配定义；同一份描述驱动保存与实例化。
+// 作用域路径以 '/' 分隔，空路径为根作用域；根作用域不承载需求转接与接口导出。
+class AssemblyDefinition {
+public:
+    AssemblyDefinition();
+
+    void add_scope(const std::string& name, const std::string& scope = {});
+    void add_instance(std::string definition, std::string name, Config config = {},
+                      const std::string& scope = {});
+    void connect(Reference requirement, Reference provider, const std::string& scope = {});
+    void forward_inherited(std::string requirement, Reference child_requirement,
+                           const std::string& scope = {});
+    void export_symbol(std::string name, Reference child_symbol, const std::string& scope = {});
+
+    const std::string& source() const noexcept { return source_; }
+    std::string to_json() const;
+    void save(const std::string& path) const;
+    static AssemblyDefinition parse(const std::string& text, std::string source = {});
+    static AssemblyDefinition load(const std::string& path);
+
+    // 用工厂目录创建独立运行实例；返回未封闭的引擎，检查与封闭由调用方完成。
+    Engine instantiate(const ModuleFactoryDirectory& factories) const;
+
+private:
+    struct Scope {
+        std::string name;
+        std::string path;
+        std::vector<AssemblyInstance> instances;
+        std::vector<AssemblyConnection> connections;
+        std::vector<AssemblyForward> forwards;
+        std::vector<AssemblyExport> exports;
+        std::vector<std::string> children;  // 子作用域名，保持加入顺序
+    };
+
+    const Scope& require_scope(const std::string& path) const;
+    Scope& require_scope(const std::string& path);
+    void read_scope(const Config& object, const std::string& record, const std::string& parent_path, bool root);
+    Reference read_reference(const Config& value, const std::string& record, const std::string& second) const;
+    void check_keys(const Config& object, const std::string& record,
+                    const std::vector<std::string>& allowed) const;
+    [[noreturn]] void fail_record(ErrorCode code, const std::string& record, std::string message) const;
+    Config scope_config(const Scope& scope, bool root, const std::string& record = {},
+                        std::size_t depth = 0) const;
+    static Config reference_config(const Reference& reference, const std::string& second);
+    Module create_module(const ModuleFactoryDirectory& factories, const AssemblyInstance& instance,
+                         const std::string& record, const std::string& engine_path) const;
+    Module build_scope(const ModuleFactoryDirectory& factories, const Scope& scope,
+                       const std::string& record, const std::string& engine_path) const;
+    EngineError attach(const EngineError& error, const std::string& record, const std::string& scope) const;
+
+    std::map<std::string, Scope> scopes_;
+    std::string source_;
+};
+
+}  // namespace ascend
