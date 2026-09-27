@@ -1,35 +1,50 @@
 # Ascend
 
-> An AI-native platform for causal world-model research and simulation games. The project is undergoing a complete rewrite.
+> Ascend explores whether artificial intelligence can learn how a simulated world works through interaction, with a long-term goal of a simulation game centered on genetic engineering and population evolution.
 
 [中文](README.md) | English
 
-<p align="center">
-  <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white" alt="C++17">
-  <img src="https://img.shields.io/badge/Godot-4.x-478CBF?logo=godotengine&logoColor=white" alt="Godot 4.x">
-  <img src="https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-EF9421" alt="License">
-</p>
+## About the Project
 
-## Current Status
+Observing a correlation between events does not, by itself, tell us what would happen if one condition changed. Ascend plans to build simulations with explicit rules and controllable conditions. Researchers will be able to vary starting conditions, change the actions of AI programs that perceive and act in the environment (agents), and compare outcomes. This can help assess whether agents learn causal relationships rather than relying only on patterns in past observations.
 
-The new architecture is being built across the world library, agent library, game platform, and research platform. The headless C++17 research core now covers module registration, public values and methods, individual interface requirements, explicit connections, nested composition, and typed invocation. A multi-module testbench verifies changing inputs, explicitly advancing the system, sampling outputs after each step, and isolating instances. This does not constitute a complete research protocol, world library, or game platform.
+The project's long-term goals also include a simulation game centered on genetic engineering and population evolution. The game and research tools are related but distinct: research can use the game's simulated world or an environment built specifically for an experiment.
 
-The world library, agent library, research workbench, experiment organization, and playable Godot client are not implemented yet. `miskhak/client/` currently retains only the Godot project shell and bootstrap scene.
+## Project Structure and Research Stages
 
-## Architecture and Research Basis
+The planned architecture has two parallel tracks built on shared world-simulation capabilities:
 
-- [Overall Architecture](docs/整体架构.md) — responsibilities, dependencies, and open boundaries across the two libraries and platforms
-- [World](docs/世界/综述.md) — world-library responsibilities and design progress
-- [Agents](docs/智能体/综述.md) — agent responsibilities and design progress
-- [Game Platform](docs/游戏平台/综述.md) — game assembly, sessions, and presentation
-- [Research Platform](docs/研究平台/综述.md) — causal environments, declaration engine, and research plan
-- [Research Overview](docs/研究理论/研究综述.md) — the author-written highest research authority
+```text
+Planned shared world core
+├── Research track (three progressive stages)
+│   ├── 1. Build a world with explicit causal rules
+│   ├── 2. Introduce a single agent into the world
+│   └── 3. Study interactions among multiple agents
+└── Game track: develop gameplay and a client around the shared core
+```
 
-Design status and implementation status are tracked separately; candidates are not implementation requirements. See [CONTRIBUTING.en.md](CONTRIBUTING.en.md#documentation-maintenance) for documentation conventions.
+These are parallel tracks, not consecutive project phases. Sharing the world core means sharing simulation capabilities, not using the same running world instance. Research may also use environments created specifically by researchers, rather than the game's world.
 
-## Build and Verify
+## Project status
 
-The current C++ core requires CMake 3.20 and a C++17 compiler. Run from the repository root:
+Ascend is in the early stages of a rewrite. The core currently includes a developer-facing C++ prototype with no graphical interface. It can connect and run code-defined components and return their results. This prototype validates basic component interaction; it is not a complete simulation or an end-to-end research system.
+
+The full world simulation, AI agents, research experiment management and evaluation tools, and a playable game client have not yet been implemented. The Godot client currently contains only a basic startup scene; gameplay is not yet available.
+
+## Documentation
+
+- [Research questions and theory](docs/研究理论/研究综述.md) — what the project aims to study and how its concepts are defined
+- [Overall architecture](docs/整体架构.md) — planned components and their responsibilities
+- [Research platform](docs/研究平台/综述.md) — research-tool design, current progress, and open questions
+- [World simulation](docs/世界/综述.md) — the world library's role and design progress
+- [AI agents](docs/智能体/综述.md) — agent responsibilities and design progress
+- [Game direction](docs/游戏平台/综述.md) — gameplay, client, and mod plans
+
+Most detailed design documents are currently available in Chinese.
+
+## Build and test the C++ prototype
+
+For developers: these commands build and run the C++ core's automated tests; they do not launch a game or graphical interface. You need CMake 3.20 and a C++17-compatible compiler. Run them from the repository root:
 
 ```bash
 cmake -S kheker/native -B build/work/native -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
@@ -37,11 +52,11 @@ cmake --build build/work/native --config Debug --parallel 4
 ctest --test-dir build/work/native --build-config Debug --output-on-failure
 ```
 
-Build outputs go under the ignored `build/work/native/` directory. See the [declaration-engine implementation document](docs/研究平台/实验环境与声明接入/实现.md#4-代码与构建入口) for the current verification scope and limitations.
+Build outputs go under `build/work/native/`. See the [core test notes](docs/研究平台/实验环境与声明接入/测试.md) for the current test coverage and limitations.
 
 ## Contributing
 
-See [CONTRIBUTING.en.md](CONTRIBUTING.en.md) for design principles, documentation, testing, and commit conventions. Please read [CLA.md](CLA.md) before submitting a PR.
+See [CONTRIBUTING.en.md](CONTRIBUTING.en.md) for development and documentation conventions. Please read the [Contributor License Agreement](CLA.en.md) before submitting a pull request.
 
 ## License
 

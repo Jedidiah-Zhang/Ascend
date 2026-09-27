@@ -61,13 +61,14 @@ This section is the maintenance entry for engineering documentation conventions.
 | `docs/整体架构.md` | Cross-partition responsibilities, library/platform boundaries, dependencies, and assembly principles; link to module details |
 | Parent `综述.md` | Responsibilities, child navigation, dependencies, and design progress; do not duplicate complete leaf rules |
 | Leaf `设计.md` | Goals, concepts, behavior, interface semantics, configuration, tradeoffs, acceptance, and open questions |
-| Leaf `实现.md` | Implementation proposals, actual delivery, code/build entry points, tests, and performance evidence |
+| Leaf `实现.md` | Current engineering approach, code structure, delivery, limitations, and build entry points; links to verification evidence |
+| Leaf `测试.md` | Test purposes, related goals, verification environments, results, and coverage limits; create when actual verification content exists |
 | Research Overview | Highest research authority; subsequent constraints, formalization, and protocols must be discussed on this basis, without precedence for the old contract |
 
 - Each rule has one owning document. Other documents summarize and link to it. Ownership follows responsibility, not whichever file is higher-level, newer, or more strongly worded.
 - World documents define general capabilities and mechanisms; gameplay and save-continuation policies belong to the game platform, experiment locking and research validation to the research platform, and cognition implementation to agents.
 - Record differences between the Research Overview and engineering scope, and unresolved mappings, in the research platform. Do not rewrite the overview to hide a conflict.
-- Keep the module hierarchy: parent overviews, paired leaf design/implementation files. Unstarted topics can remain in the parent inventory; do not mass-create empty directories.
+- Keep the module hierarchy: parent overviews, paired leaf design/implementation files, and test documents when verification content exists. Unstarted topics can remain in the parent inventory; do not mass-create empty directories or test documents.
 
 ### Separate Status Dimensions
 
@@ -82,20 +83,23 @@ Headers state status, scope, and navigation. Design headers also identify settle
 
 Order `设计.md` as follows; combine short sections where useful. Keep unstarted documents brief rather than inventing content to fill a template:
 
-1. **Goals and responsibilities**: problem, use cases, and neighboring responsibilities.
-2. **Concepts and terminology**: objects, state, and definitions.
-3. **Confirmed rules**: define each rule once by topic; label provisional decisions and their review conditions separately.
-4. **External contracts**: inputs, outputs, preconditions, effects, effective timing, and failure behavior; semantics before signatures.
-5. **Configuration and edge cases**: units, ranges, defaults, mutability, and applicable exceptional cases.
-6. **Tradeoffs and candidates**: reasons, costs, alternatives, and undecided parts.
-7. **Acceptance criteria**: checkable conditions, operations, and expectations; distinguish candidate checks from confirmed rules.
+1. **Goals and rationale**: problem, use cases, and neighboring responsibilities.
+2. **Goals and progress**: goals, current status, and checkable acceptance criteria; distinguish design maturity from implementation progress, link test evidence, and label candidate checks separately.
+3. **Concepts and terminology**: objects, state, and definitions.
+4. **Confirmed rules**: define each rule once by topic; label provisional decisions and their review conditions separately.
+5. **External contracts**: inputs, outputs, preconditions, effects, effective timing, and failure behavior; semantics before signatures.
+6. **Boundaries and failure behavior**: units, ranges, defaults, mutability, and applicable exceptional cases.
+7. **Tradeoffs and candidates**: reasons, costs, alternatives, and undecided parts.
 8. **Open questions**: impact, whether implementation is blocked, and the responsible module or phase.
 
-Order `实现.md` as: **Design basis → Implementation proposals → Current delivery → Code/build entry points → Verification/performance**. Separate proposed work, actual facts, and gaps. State when code or measurements do not exist; never invent paths, commands, or results.
+Order `实现.md` as: **Design basis → Code structure and engineering approach → Current scope and limitations → Build/run entry points**, with links to test documents. Unimplemented modules may use only design basis and current status; keep candidates in design documents and never invent code paths or commands.
+
+Order `测试.md` as: **Purpose and scope → Commands and verification environments → Grouped cases and results**. Explain conditions, operations, expectations, and related goals; shared environments and pass status may be stated once. Verification records identify the date, toolchain, build configuration, and actual test count; historical results do not automatically cover new cases. Performance conclusions require measurement conditions and results.
 
 ### Quality and Maintenance Workflow
 
 - Important rules may have stable module-local IDs for contracts and acceptance references; not every paragraph needs one. Mark illustrative values so they cannot be mistaken for defaults.
+- Use prose for purpose and tradeoffs, and tables or lists for parallel cases and behaviors. Simplification must preserve interface preconditions and failure semantics. Keep rule headings unique and link goal summaries to rules so duplicate headings do not redirect anchors to the wrong section.
 - Replace vague goals such as "deterministic" or "fast" with scoped behavior or measurement targets. Ordinary engineering acceptance does not automatically require research proofs.
 - Record candidates during discussion; update the owning rule when confirmed; consolidate duplicates, obsolete candidates, and conversational corrections at milestones, retaining relevant rationale. Git preserves ordinary history; use separate decision records only when justified.
 - Implementation changes update delivery and evidence; design changes review consumers. Moves repair relative links and update parent navigation and relevant bilingual entry points.
@@ -111,7 +115,7 @@ cmake --build build/work/native --config Debug --parallel 4
 ctest --test-dir build/work/native --build-config Debug --output-on-failure
 ```
 
-Tests live in `testbench/native/`; build outputs go under the ignored `build/work/` directory. [Native Engine CI](.github/workflows/native_engine.yml) builds the same suite on Linux, Windows, and macOS. Local verification results are recorded in the [implementation document](docs/研究平台/实验环境与声明接入/实现.md#5-验证与性能).
+Tests live in `testbench/native/`; build outputs go under the ignored `build/work/` directory. [Native Engine CI](.github/workflows/native_engine.yml) builds the same suite on Linux, Windows, and macOS. Local verification results are recorded in the [test document](docs/研究平台/实验环境与声明接入/测试.md).
 
 ## Commit Conventions
 
