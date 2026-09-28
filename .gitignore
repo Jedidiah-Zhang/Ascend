@@ -27,5 +27,4 @@ miskhak/client/addons/
 miskhak/client/assets/
 
 # Local build output
-build/work/
-build/dist/
+build/

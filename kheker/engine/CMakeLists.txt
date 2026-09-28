@@ -31,7 +31,7 @@ target_link_libraries(ascend_text_catalog PRIVATE ascend::engine)
 
 include(CTest)
 if(BUILD_TESTING)
-    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../testbench/native"
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../testbench/engine"
                      "${CMAKE_CURRENT_BINARY_DIR}/tests")
     add_test(NAME engine.minimal_model COMMAND ascend_minimal_model)
     set_tests_properties(engine.minimal_model PROPERTIES

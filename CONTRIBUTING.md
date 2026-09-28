@@ -107,21 +107,21 @@ Ascend 兼具双重身份：
 
 ## 测试
 
-当前自动化测试覆盖两个部分：`kheker/native/` 的 C++17 无界面声明引擎，与 `olam/` 世界库的空间基础切片。两者都使用 CMake 3.20 与 CTest，不依赖 Qt。修改后在仓库根目录执行：
+当前自动化测试覆盖两个部分：`kheker/engine/` 的 C++17 无界面声明引擎，与 `olam/` 世界库的空间基础切片。两者都使用 CMake 3.20 与 CTest，不依赖 Qt。修改后在仓库根目录执行：
 
 ```bash
-cmake -S kheker/native -B build/work/native -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/work/native --config Debug --parallel 4
-ctest --test-dir build/work/native --build-config Debug --output-on-failure
+cmake -S kheker/engine -B build/engine -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/engine --config Debug --parallel 4
+ctest --test-dir build/engine --build-config Debug --output-on-failure
 ```
 
 ```bash
-cmake -S olam -B build/work/olam -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/work/olam --config Debug --parallel 4
-ctest --test-dir build/work/olam --build-config Debug --output-on-failure
+cmake -S olam -B build/olam -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/olam --config Debug --parallel 4
+ctest --test-dir build/olam --build-config Debug --output-on-failure
 ```
 
-测试分别放在 `testbench/native/` 与 `testbench/olam/`，构建产物放在已忽略的 `build/work/`。[Native Engine CI](.github/workflows/native_engine.yml)与 [Olam World CI](.github/workflows/olam_world.yml)在 Linux 与 Windows 上构建对应测试集，macOS 暂未纳入；本地验证记录见[核心测试文档](docs/研究平台/实验环境与声明接入/测试.md)与[空间测试文档](docs/世界/世界框架/空间系统/测试.md)。
+测试分别放在 `testbench/engine/` 与 `testbench/olam/`，构建产物放在已忽略的 `build/`。[Engine CI](.github/workflows/engine.yml)与 [Olam World CI](.github/workflows/olam_world.yml)在 Linux 与 Windows 上构建对应测试集，macOS 暂未纳入；本地验证记录见[核心测试文档](docs/研究平台/实验环境与声明接入/测试.md)与[空间测试文档](docs/世界/世界框架/空间系统/测试.md)。
 
 ## 提交约定
 

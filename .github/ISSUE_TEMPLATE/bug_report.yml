@@ -32,7 +32,7 @@ body:
     attributes:
       label: 涉及端
       options:
-        - C++ 研究声明引擎（kheker/native）
+        - C++ 研究声明引擎（kheker/engine）
         - Godot 项目壳
         - CI / 构建
         - 文档

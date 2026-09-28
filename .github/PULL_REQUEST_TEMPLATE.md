@@ -13,7 +13,7 @@
 
 ## 测试
 
-- [ ] 原生核心测试通过（`ctest --test-dir build/work/native --build-config Debug --output-on-failure`）
+- [ ] 声明引擎测试通过（`ctest --test-dir build/engine --build-config Debug --output-on-failure`）
 - [ ] 已手工验证相关功能
 
 ## 第三方材料

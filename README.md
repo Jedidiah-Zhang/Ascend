@@ -45,20 +45,20 @@
 以下步骤供开发者使用：它们会构建并运行 C++ 核心与世界库空间切片的自动化测试，不会启动游戏或图形界面。需要 CMake 3.20 及支持 C++17 的编译器；请在仓库根目录运行：
 
 ```bash
-cmake -S kheker/native -B build/work/native -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/work/native --config Debug --parallel 4
-ctest --test-dir build/work/native --build-config Debug --output-on-failure
+cmake -S kheker/engine -B build/engine -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/engine --config Debug --parallel 4
+ctest --test-dir build/engine --build-config Debug --output-on-failure
 ```
 
 世界库空间切片独立构建：
 
 ```bash
-cmake -S olam -B build/work/olam -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/work/olam --config Debug --parallel 4
-ctest --test-dir build/work/olam --build-config Debug --output-on-failure
+cmake -S olam -B build/olam -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/olam --config Debug --parallel 4
+ctest --test-dir build/olam --build-config Debug --output-on-failure
 ```
 
-构建产物分别位于 `build/work/native/` 与 `build/work/olam/`。当前测试覆盖范围及限制见[核心测试说明](docs/研究平台/实验环境与声明接入/测试.md)与[空间测试说明](docs/世界/世界框架/空间系统/测试.md)。
+构建产物分别位于 `build/engine/` 与 `build/olam/`。当前测试覆盖范围及限制见[核心测试说明](docs/研究平台/实验环境与声明接入/测试.md)与[空间测试说明](docs/世界/世界框架/空间系统/测试.md)。
 
 ## 参与贡献
 

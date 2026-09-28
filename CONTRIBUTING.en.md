@@ -107,21 +107,21 @@ Order `测试.md` as: **Purpose and scope → Commands and verification environm
 
 ## Testing
 
-The current automated suite covers two parts: the headless C++17 declaration engine in `kheker/native/` and the world library's space slice in `olam/`. Both use CMake 3.20 and CTest without Qt. After changes, run from the repository root:
+The current automated suite covers two parts: the headless C++17 declaration engine in `kheker/engine/` and the world library's space slice in `olam/`. Both use CMake 3.20 and CTest without Qt. After changes, run from the repository root:
 
 ```bash
-cmake -S kheker/native -B build/work/native -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/work/native --config Debug --parallel 4
-ctest --test-dir build/work/native --build-config Debug --output-on-failure
+cmake -S kheker/engine -B build/engine -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/engine --config Debug --parallel 4
+ctest --test-dir build/engine --build-config Debug --output-on-failure
 ```
 
 ```bash
-cmake -S olam -B build/work/olam -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/work/olam --config Debug --parallel 4
-ctest --test-dir build/work/olam --build-config Debug --output-on-failure
+cmake -S olam -B build/olam -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/olam --config Debug --parallel 4
+ctest --test-dir build/olam --build-config Debug --output-on-failure
 ```
 
-Tests live in `testbench/native/` and `testbench/olam/`; build outputs go under the ignored `build/work/` directory. [Native Engine CI](.github/workflows/native_engine.yml) and [Olam World CI](.github/workflows/olam_world.yml) build the corresponding suites on Linux and Windows; macOS is not included yet. Local verification results are recorded in the [core test document](docs/研究平台/实验环境与声明接入/测试.md) and the [space test document](docs/世界/世界框架/空间系统/测试.md).
+Tests live in `testbench/engine/` and `testbench/olam/`; build outputs go under the ignored `build/` directory. [Engine CI](.github/workflows/engine.yml) and [Olam World CI](.github/workflows/olam_world.yml) build the corresponding suites on Linux and Windows; macOS is not included yet. Local verification results are recorded in the [core test document](docs/研究平台/实验环境与声明接入/测试.md) and the [space test document](docs/世界/世界框架/空间系统/测试.md).
 
 ## Commit Conventions
 

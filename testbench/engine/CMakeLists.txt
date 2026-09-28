@@ -78,7 +78,7 @@ endforeach()
 add_executable(ascend_text_tests test_text.cpp)
 target_link_libraries(ascend_text_tests PRIVATE ascend::engine)
 target_compile_definitions(ascend_text_tests PRIVATE
-    ASCEND_I18N_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../kheker/native/i18n")
+    ASCEND_I18N_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../kheker/engine/i18n")
 foreach(case IN ITEMS
     define_resolve
     locale_fallback
