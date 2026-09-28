@@ -3,6 +3,7 @@
 #include <ascend/text.hpp>
 
 #include <any>
+#include <cstddef>
 #include <functional>
 #include <map>
 #include <memory>
@@ -89,6 +90,11 @@ private:
 
 enum class SymbolKind { value, method };
 
+// 引擎可传输的值类型：不是引用或 cv 限定，且可复制构造。
+template <class Type>
+inline constexpr bool is_value_type = std::is_same_v<Type, std::decay_t<Type>> &&
+                                     std::is_copy_constructible_v<Type>;
+
 // 参数名称与精确 C++ 类型；名称用于目录与诊断。
 struct Parameter {
     std::string name;
@@ -134,84 +140,40 @@ struct Connection {
     bool forwarded = false;
 };
 
+// 已解析绑定的不透明句柄：内部状态只保存在 src 中，调用方无法构造或拆解。
+class BindingHandle {
+private:
+    friend class Engine;
+    friend class Context;
+    template <class Type> friend class ValueBinding;
+    template <class Result, class... Args> friend class MethodBinding;
+
+    BindingHandle(std::shared_ptr<const void> entry, std::shared_ptr<const void> runtime,
+                  Reference reference);
+    std::any read() const;
+    std::any call(const std::vector<std::any>& arguments) const;
+    // 在 catch 块内调用：把当前异常转换为执行诊断并重新抛出。
+    [[noreturn]] void report_transport_failure() const;
+
+    std::shared_ptr<const void> entry_;
+    std::shared_ptr<const void> runtime_;
+    Reference reference_;
+};
+
 class Context;
 template <class Type> class ValueRequirement;
 template <class Result, class... Args> class MethodRequirement;
 
-namespace detail {
-
-// 装配记录的来源位置：source 为记录标识，path 为记录内字段路径。
-struct SourceLocation {
-    std::string source;
-    std::string path;
-};
-
-struct Runtime;
-class AssemblyBuilder;
-
-struct Entry {
-    Declaration declaration;
-    std::function<std::any(const Context&)> getter;
-    std::function<std::any(const Context&, const std::vector<std::any>&)> method;
-};
-
-struct BoundEntry {
-    std::shared_ptr<const Entry> entry;
-    std::shared_ptr<const Runtime> runtime;
-};
-
-// 作者文本作为原文进入诊断；内置消息保留模板与参数，不提前渲染。
-[[noreturn]] void fail(ErrorCode code, const Reference& target, std::string message);
-[[noreturn]] void fail_text(ErrorCode code, const Reference& target, TextRef text);
-Diagnostic wrap_diagnostic(ErrorCode code, const Reference& target, TextRef text, const Diagnostic& cause);
-enum class FailureBoundary { getter, method, validation, transport };
-// 仅在 catch 内调用；统一保存 EngineError 原因链、作者原文和非标准异常消息。
-[[noreturn]] void rethrow_boundary(FailureBoundary boundary, const Reference& target);
-std::any read_entry(const Entry& entry, const std::shared_ptr<const Runtime>& runtime);
-std::any call_entry(const Entry& entry, const std::shared_ptr<const Runtime>& runtime,
-                    const std::vector<std::any>& arguments);
-
-// 只包围引擎内部的值封装／解包；调用检查产生的诊断不在此重新包装。
-template <class Function>
-auto transport_value(const Reference& target, Function&& function) {
-    try {
-        return std::forward<Function>(function)();
-    } catch (...) {
-        rethrow_boundary(FailureBoundary::transport, target);
-    }
-}
-
-template <class Type>
-constexpr bool value_type = std::is_same_v<Type, std::decay_t<Type>> &&
-                            std::is_copy_constructible_v<Type>;
-
-template <class Result, class... Args, std::size_t... Indices>
-std::any invoke_native(const std::function<Result(const Context&, const Args&...)>& function,
-                        const Context& context,
-                        const std::vector<std::any>& arguments,
-                        std::index_sequence<Indices...>) {
-    if constexpr (std::is_void_v<Result>) {
-        function(context, std::any_cast<const Args&>(arguments[Indices])...);
-        return {};
-    } else {
-        return std::make_any<Result>(function(context, std::any_cast<const Args&>(arguments[Indices])...));
-    }
-}
-
-}  // namespace detail
-
 // 仅解析当前实例声明的需求；复制上下文不会延长运行时寿命。
 class Context {
 private:
+    friend class BindingHandle;
     template <class Type> friend class ValueRequirement;
     template <class Result, class... Args> friend class MethodRequirement;
-    friend std::any detail::read_entry(const detail::Entry&, const std::shared_ptr<const detail::Runtime>&);
-    friend std::any detail::call_entry(const detail::Entry&, const std::shared_ptr<const detail::Runtime>&,
-                                      const std::vector<std::any>&);
-    Context(const std::shared_ptr<const detail::Runtime>& runtime, std::string module)
-        : runtime_(runtime), module_(std::move(module)) {}
-    detail::BoundEntry resolve(const std::shared_ptr<const Requirement>& requirement) const;
-    std::weak_ptr<const detail::Runtime> runtime_;
+    Context(std::shared_ptr<const void> runtime, std::string module)
+        : runtime_(std::move(runtime)), module_(std::move(module)) {}
+    BindingHandle resolve(const std::shared_ptr<const Requirement>& requirement) const;
+    std::weak_ptr<const void> runtime_;
     std::string module_;
 };
 
@@ -227,7 +189,7 @@ public:
     template <class Type, class Getter>
     void add_value(std::string name, Getter&& getter, TextRef description = {},
                     std::string contract = {}) {
-        static_assert(detail::value_type<Type>, "Public values must be copyable value types");
+        static_assert(is_value_type<Type>, "Public values must be copyable value types");
         const Reference reference{name_, std::move(name)};
         std::function<Type(const Context&)> function;
         if constexpr (std::is_invocable_r_v<Type, Getter&, const Context&>) {
@@ -238,17 +200,16 @@ public:
                 function = [plain = std::move(plain)](const Context&) { return plain(); };
             }
         }
-        if (!function) {
-            detail::fail_text(ErrorCode::invalid_declaration, reference,
-                              {{engine_text_domain, "engine.declaration.missing_getter"}, "Missing value getter"});
-        }
         Declaration declaration{reference, SymbolKind::value, typeid(Type), {},
                                 std::move(description), {}, {}, std::move(contract)};
-        auto read = [function = std::move(function)](const Context& context) -> std::any {
-            return std::make_any<Type>(function(context));
-        };
-        add_entry(std::make_shared<detail::Entry>(
-            detail::Entry{std::move(declaration), std::move(read), {}}));
+        // 回调为空时不构造擦除回调，由非模板入口报告缺少读取实现。
+        std::function<std::any(const Context&)> read;
+        if (function) {
+            read = [function = std::move(function)](const Context& context) -> std::any {
+                return std::make_any<Type>(function(context));
+            };
+        }
+        add_value_entry(std::move(declaration), std::move(read));
     }
 
     // 登记公开方法；parameters 为参数名称，数量与绑定签名一致。
@@ -256,9 +217,9 @@ public:
     template <class Result, class... Args, class Function>
     void add_method(std::string name, std::vector<std::string> parameters,
                     Function&& method, MethodOptions options = {}) {
-        static_assert(std::is_void_v<Result> || detail::value_type<Result>,
+        static_assert(std::is_void_v<Result> || is_value_type<Result>,
                         "Method results must be void or copyable value types");
-        static_assert((detail::value_type<Args> && ...),
+        static_assert((is_value_type<Args> && ...),
                         "Method parameters must be copyable value types");
         const Reference reference{name_, std::move(name)};
         std::function<Result(const Context&, const Args&...)> function;
@@ -272,29 +233,20 @@ public:
                 };
             }
         }
-        if (!function) {
-            detail::fail_text(ErrorCode::invalid_declaration, reference,
-                              {{engine_text_domain, "engine.declaration.missing_method"}, "Missing method implementation"});
-        }
-        if (parameters.size() != sizeof...(Args)) {
-            detail::fail_text(ErrorCode::invalid_declaration, reference,
-                              {{engine_text_domain, "engine.declaration.parameter_count"},
-                               "Parameter names do not match the declared signature"});
-        }
         Declaration declaration{reference, SymbolKind::method, typeid(Result), {},
                                 std::move(options.description), std::move(options.reads),
                                 std::move(options.writes), std::move(options.contract)};
-        const std::vector<std::type_index> types{typeid(Args)...};
-        for (std::size_t index = 0; index < types.size(); ++index) {
-            declaration.parameters.push_back({std::move(parameters[index]), types[index]});
+        // 回调为空时不构造擦除回调，由非模板入口报告缺少方法实现。
+        std::function<std::any(const Context&, const std::vector<std::any>&)> invoke;
+        if (function) {
+            invoke = [function = std::move(function)](const Context& context,
+                                                      const std::vector<std::any>& arguments) -> std::any {
+                return invoke_method<Result, Args...>(function, context, arguments,
+                                                      std::index_sequence_for<Args...>{});
+            };
         }
-        auto invoke = [function = std::move(function)](const Context& context,
-                                                       const std::vector<std::any>& arguments) {
-            return detail::invoke_native<Result, Args...>(
-                function, context, arguments, std::index_sequence_for<Args...>{});
-        };
-        add_entry(std::make_shared<detail::Entry>(
-            detail::Entry{std::move(declaration), {}, std::move(invoke)}));
+        add_method_entry(std::move(declaration), std::move(parameters),
+                         std::vector<std::type_index>{typeid(Args)...}, std::move(invoke));
     }
 
     // 声明值需求与操作需求；contract 必须非空，作为连接时核对的接口身份。
@@ -326,22 +278,51 @@ public:
 private:
     friend class Engine;
     friend class AssemblyDefinition;
-    friend class detail::AssemblyBuilder;
-    void add_entry(std::shared_ptr<const detail::Entry> entry);
+    // 内部装配构建器：定义在 src，仅用于遍历模块结构。
+    friend class AssemblyBuilder;
+
+    // 非模板登记入口：校验声明并保存擦除类型后的回调。
+    void add_value_entry(Declaration declaration, std::function<std::any(const Context&)> getter);
+    void add_method_entry(Declaration declaration, std::vector<std::string> names,
+                          std::vector<std::type_index> types,
+                          std::function<std::any(const Context&, const std::vector<std::any>&)> method);
     void add_requirement(std::shared_ptr<const Requirement> requirement);
     void add_connection(Connection connection);
 
+    // 记录来源位置，供装配记录诊断；由 AssemblyDefinition 写入。
+    struct Location {
+        std::string source;
+        std::string path;
+    };
+    void set_source(std::string source, std::string path);
+    void set_requirement_source(const std::string& symbol, std::string source, std::string path);
+    void set_connection_source(const Reference& requirement, std::string source, std::string path);
+    void set_export_source(const std::string& name, std::string source, std::string path);
+
+    // 擦除参数后按声明顺序还原并调用；调用方负责参数数量与类型已在绑定或调用时核对。
+    template <class Result, class... Args, class Function, std::size_t... Indices>
+    static std::any invoke_method(const Function& function, const Context& context,
+                                  const std::vector<std::any>& arguments,
+                                  std::index_sequence<Indices...>) {
+        if constexpr (std::is_void_v<Result>) {
+            function(context, std::any_cast<const Args&>(arguments[Indices])...);
+            return {};
+        } else {
+            return std::make_any<Result>(function(context, std::any_cast<const Args&>(arguments[Indices])...));
+        }
+    }
+
     std::string name_;
     std::function<void()> validate_;
-    std::map<std::string, std::shared_ptr<const detail::Entry>> entries_;
+    std::map<std::string, std::shared_ptr<const void>> entries_;
     std::map<std::string, std::shared_ptr<const Requirement>> requirements_;
     std::vector<Module> children_;
     std::map<Reference, Connection> connections_;
     std::map<std::string, Reference> exports_;
-    detail::SourceLocation source_;
-    std::map<std::string, detail::SourceLocation> requirement_sources_;
-    std::map<Reference, detail::SourceLocation> connection_sources_;
-    std::map<std::string, detail::SourceLocation> export_sources_;
+    Location source_;
+    std::map<std::string, Location> requirement_sources_;
+    std::map<Reference, Location> connection_sources_;
+    std::map<std::string, Location> export_sources_;
 };
 
 // 已解析的公开量绑定；read 返回值副本，传输失败抛出执行诊断。
@@ -349,19 +330,19 @@ template <class Type>
 class ValueBinding {
 public:
     Type read() const {
-        auto result = detail::read_entry(*entry_, runtime_);
-        return detail::transport_value(entry_->declaration.reference, [&] {
-            return std::any_cast<Type>(std::move(result));
-        });
+        std::any value = handle_.read();
+        try {
+            return std::any_cast<Type>(std::move(value));
+        } catch (...) {
+            handle_.report_transport_failure();
+        }
     }
 
 private:
     friend class Engine;
-    friend class ValueRequirement<Type>;
-    explicit ValueBinding(detail::BoundEntry bound)
-        : entry_(std::move(bound.entry)), runtime_(std::move(bound.runtime)) {}
-    std::shared_ptr<const detail::Entry> entry_;
-    std::shared_ptr<const detail::Runtime> runtime_;
+    template <class> friend class ValueRequirement;
+    explicit ValueBinding(BindingHandle handle) : handle_(std::move(handle)) {}
+    BindingHandle handle_;
 };
 
 // 已解析的方法绑定；调用时封装参数、执行并解包结果，传输失败抛出执行诊断。
@@ -369,24 +350,27 @@ template <class Result, class... Args>
 class MethodBinding {
 public:
     Result operator()(const Args&... arguments) const {
-        const auto packed = detail::transport_value(entry_->declaration.reference, [&] {
-            return std::vector<std::any>{std::make_any<Args>(arguments)...};
-        });
-        auto result = detail::call_entry(*entry_, runtime_, packed);
+        std::vector<std::any> packed;
+        try {
+            packed = {std::make_any<Args>(arguments)...};
+        } catch (...) {
+            handle_.report_transport_failure();
+        }
+        std::any result = handle_.call(packed);
         if constexpr (!std::is_void_v<Result>) {
-            return detail::transport_value(entry_->declaration.reference, [&] {
+            try {
                 return std::any_cast<Result>(std::move(result));
-            });
+            } catch (...) {
+                handle_.report_transport_failure();
+            }
         }
     }
 
 private:
     friend class Engine;
-    friend class MethodRequirement<Result, Args...>;
-    explicit MethodBinding(detail::BoundEntry bound)
-        : entry_(std::move(bound.entry)), runtime_(std::move(bound.runtime)) {}
-    std::shared_ptr<const detail::Entry> entry_;
-    std::shared_ptr<const detail::Runtime> runtime_;
+    template <class, class...> friend class MethodRequirement;
+    explicit MethodBinding(BindingHandle handle) : handle_(std::move(handle)) {}
+    BindingHandle handle_;
 };
 
 // 回调中使用的类型化值需求；通过 Context 按当前实例解析。
@@ -420,7 +404,7 @@ private:
 template <class Type>
 ValueRequirement<Type> Module::require_value(std::string name, std::string contract,
                                               TextRef description) {
-    static_assert(detail::value_type<Type>, "Requirements need copyable value types");
+    static_assert(is_value_type<Type>, "Requirements need copyable value types");
     auto requirement = std::make_shared<const Requirement>(Requirement{
         {name_, std::move(name)}, SymbolKind::value, typeid(Type), {},
         std::move(contract), std::move(description)});
@@ -431,8 +415,8 @@ ValueRequirement<Type> Module::require_value(std::string name, std::string contr
 template <class Result, class... Args>
 MethodRequirement<Result, Args...> Module::require_method(std::string name, std::string contract,
                                                           TextRef description) {
-    static_assert(std::is_void_v<Result> || detail::value_type<Result>, "Invalid requirement result");
-    static_assert((detail::value_type<Args> && ...), "Invalid requirement parameters");
+    static_assert(std::is_void_v<Result> || is_value_type<Result>, "Invalid requirement result");
+    static_assert((is_value_type<Args> && ...), "Invalid requirement parameters");
     auto requirement = std::make_shared<const Requirement>(Requirement{
         {name_, std::move(name)}, SymbolKind::method, typeid(Result), {typeid(Args)...},
         std::move(contract), std::move(description)});
@@ -473,15 +457,15 @@ public:
     // 解析引用并核对种类、结果类型与参数后返回类型化绑定；约束同 read／call。
     template <class Type>
     ValueBinding<Type> bind_value(const Reference& reference) const {
-        static_assert(detail::value_type<Type>, "Bindings require a copyable value type");
+        static_assert(is_value_type<Type>, "Bindings require a copyable value type");
         return ValueBinding<Type>(bind_entry(reference, SymbolKind::value, typeid(Type), {}));
     }
 
     template <class Result, class... Args>
     MethodBinding<Result, Args...> bind_method(const Reference& reference) const {
-        static_assert(std::is_void_v<Result> || detail::value_type<Result>,
+        static_assert(std::is_void_v<Result> || is_value_type<Result>,
                         "Bindings require void or a copyable result type");
-        static_assert((detail::value_type<Args> && ...), "Bindings require copyable argument types");
+        static_assert((is_value_type<Args> && ...), "Bindings require copyable argument types");
         return MethodBinding<Result, Args...>(
             bind_entry(reference, SymbolKind::method, typeid(Result), {typeid(Args)...}));
     }
@@ -490,13 +474,20 @@ private:
     friend class AssemblyDefinition;
     Module& find_scope(const std::string& scope);
     const Module& find_scope(const std::string& scope) const;
-    std::shared_ptr<const detail::Entry> require_entry(const Reference& reference) const;
-    detail::BoundEntry bind_entry(
+    // 未封闭时的目录草稿：模块或连接变化后失效，避免反复浏览目录时重复构建整棵树。
+    void build_draft() const;
+    void invalidate_draft();
+    // 解析顶层公开项并核对签名；返回的句柄持有运行装配。
+    BindingHandle require_entry(const Reference& reference) const;
+    BindingHandle bind_entry(
         const Reference& reference, SymbolKind kind, std::type_index result,
         const std::vector<std::type_index>& parameters) const;
 
     Module root_{"$assembly"};
-    std::shared_ptr<const detail::Runtime> runtime_;
+    std::shared_ptr<const void> runtime_;
+    mutable std::shared_ptr<const void> draft_runtime_;
+    mutable std::vector<Diagnostic> draft_diagnostics_;
+    mutable bool draft_ready_ = false;
 };
 
 }  // namespace ascend

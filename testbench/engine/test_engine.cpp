@@ -159,6 +159,11 @@ void catalog_is_passive() {
     CHECK(render_text(catalog[2].description) == "Length in mm");
     catalog[2].description = "changed outside engine";
     CHECK(render_text(engine.catalog()[2].description) == "Length in mm");
+    // 模块变化后目录草稿失效：新增模块立即出现在下一次查询中。
+    Module later("b");
+    later.add_value<bool>("flag", [] { return false; });
+    engine.add(later);
+    CHECK(engine.catalog().size() == 4);
     engine.seal();
     CHECK(calls == 0);
 }

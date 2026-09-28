@@ -1,5 +1,6 @@
 #include <ascend/assembly.hpp>
 
+#include "engine_internal.hpp"
 #include "json.hpp"
 
 #include <ascend/text.hpp>
@@ -661,7 +662,7 @@ Module AssemblyDefinition::create_module(const ModuleFactoryDirectory& factories
 Module AssemblyDefinition::build_scope(const ModuleFactoryDirectory& factories, const Scope& scope,
                                        const std::string& record, const std::string& engine_path) const {
     Module module(scope.name);
-    module.source_ = {source_, record};
+    module.set_source(source_, record);
     for (std::size_t index = 0; index < scope.instances.size(); ++index) {
         const std::string item = record_join(record_join(record, "instances"), std::to_string(index));
         Module child = create_module(factories, scope.instances[index], item, engine_path);
@@ -686,7 +687,7 @@ Module AssemblyDefinition::build_scope(const ModuleFactoryDirectory& factories, 
         const std::string item = record_join(record_join(record, "connections"), std::to_string(index));
         try {
             module.connect(scope.connections[index].requirement, scope.connections[index].provider);
-            module.connection_sources_[scope.connections[index].requirement] = {source_, item};
+            module.set_connection_source(scope.connections[index].requirement, source_, item);
         } catch (const EngineError& error) {
             throw attach(error, item, engine_path);
         }
@@ -695,9 +696,8 @@ Module AssemblyDefinition::build_scope(const ModuleFactoryDirectory& factories, 
         const std::string item = record_join(record_join(record, "forwards"), std::to_string(index));
         try {
             module.forward_inherited(scope.forwards[index].requirement, scope.forwards[index].target);
-            module.connection_sources_[scope.forwards[index].target] = {source_, item};
-            module.requirement_sources_.emplace(scope.forwards[index].requirement,
-                                                detail::SourceLocation{source_, item});
+            module.set_connection_source(scope.forwards[index].target, source_, item);
+            module.set_requirement_source(scope.forwards[index].requirement, source_, item);
         } catch (const EngineError& error) {
             throw attach(error, item, engine_path);
         }
@@ -706,7 +706,7 @@ Module AssemblyDefinition::build_scope(const ModuleFactoryDirectory& factories, 
         const std::string item = record_join(record_join(record, "exports"), std::to_string(index));
         try {
             module.export_symbol(scope.exports[index].name, scope.exports[index].target);
-            module.export_sources_[scope.exports[index].name] = {source_, item};
+            module.set_export_source(scope.exports[index].name, source_, item);
         } catch (const EngineError& error) {
             Diagnostic diagnostic = error.diagnostic();
             if (diagnostic.target.module == module.name()) {
@@ -723,7 +723,7 @@ Module AssemblyDefinition::build_scope(const ModuleFactoryDirectory& factories, 
 Engine AssemblyDefinition::instantiate(const ModuleFactoryDirectory& factories) const {
     const Scope& root = require_scope("");
     Engine engine;
-    engine.root_.source_ = {source_, ""};
+    engine.root_.set_source(source_, "");
     for (std::size_t index = 0; index < root.instances.size(); ++index) {
         const std::string record = record_join("/instances", std::to_string(index));
         Module module = create_module(factories, root.instances[index], record, "");
@@ -747,7 +747,7 @@ Engine AssemblyDefinition::instantiate(const ModuleFactoryDirectory& factories) 
         const std::string record = record_join("/connections", std::to_string(index));
         try {
             engine.connect(root.connections[index].requirement, root.connections[index].provider);
-            engine.root_.connection_sources_[root.connections[index].requirement] = {source_, record};
+            engine.root_.set_connection_source(root.connections[index].requirement, source_, record);
         } catch (const EngineError& error) {
             throw attach(error, record, "");
         }

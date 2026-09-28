@@ -1,6 +1,8 @@
 #include <ascend/engine.hpp>
 #include <ascend/text.hpp>
 
+#include "engine_internal.hpp"
+
 #include <algorithm>
 #include <optional>
 #include <set>
@@ -72,6 +74,31 @@ Mismatch requirement_mismatch(const Declaration& declaration, const Requirement&
     return {};
 }
 
+// 公开项登记前的声明校验；重复符号由登记入口单独核对。
+void validate_declaration(const Declaration& declaration) {
+    if (declaration.reference.symbol.empty()) {
+        detail::fail_text(ErrorCode::invalid_declaration, declaration.reference,
+                     {{engine_text_domain, "engine.declaration.empty_symbol"}, "Symbol name must not be empty", {}});
+    }
+    std::set<std::string> names;
+    for (const auto& parameter : declaration.parameters) {
+        if (parameter.name.empty() || !names.insert(parameter.name).second) {
+            detail::fail_text(ErrorCode::invalid_declaration, declaration.reference,
+                         {{engine_text_domain, "engine.declaration.parameter_names"},
+                          "Parameter names must be non-empty and unique", {}});
+        }
+    }
+    for (const auto* dependencies : {&declaration.reads, &declaration.writes}) {
+        for (const auto& reference : *dependencies) {
+            if (reference.module.empty() || reference.symbol.empty()) {
+                detail::fail_text(ErrorCode::invalid_declaration, declaration.reference,
+                             {{engine_text_domain, "engine.declaration.dependency_reference"},
+                              "Dependency references must name a module and a symbol", {}});
+            }
+        }
+    }
+}
+
 }  // namespace
 
 // 来源、记录内路径与引擎目标均可出现；空部分不产生多余分隔。
@@ -101,16 +128,6 @@ EngineError::EngineError(Diagnostic diagnostic)
     : std::runtime_error(render_diagnostic(diagnostic)), diagnostic_(std::move(diagnostic)) {}
 
 namespace detail {
-
-struct Input {
-    std::shared_ptr<const Requirement> requirement;
-    std::shared_ptr<const Entry> provider;
-};
-
-struct Runtime {
-    std::map<Reference, std::shared_ptr<const Entry>> outputs;
-    std::map<Reference, Input> inputs;
-};
 
 void fail(ErrorCode code, const Reference& target, std::string message) {
     throw EngineError({code, target, std::move(message)});
@@ -159,55 +176,19 @@ void rethrow_boundary(FailureBoundary boundary, const Reference& target) {
     }
 }
 
-std::any read_entry(const Entry& entry, const std::shared_ptr<const Runtime>& runtime) {
-    const auto& declaration = entry.declaration;
-    if (declaration.kind != SymbolKind::value) {
-        fail_text(ErrorCode::wrong_kind, declaration.reference,
-             {{engine_text_domain, "engine.execution.expected_value"}, "Expected a public value", {}});
-    }
-    try {
-        return entry.getter(Context(runtime, declaration.reference.module));
-    } catch (...) {
-        rethrow_boundary(FailureBoundary::getter, declaration.reference);
-    }
-}
-
-std::any call_entry(const Entry& entry, const std::shared_ptr<const Runtime>& runtime,
-                    const std::vector<std::any>& arguments) {
-    const auto& declaration = entry.declaration;
-    if (declaration.kind != SymbolKind::method) {
-        fail_text(ErrorCode::wrong_kind, declaration.reference,
-             {{engine_text_domain, "engine.execution.expected_method"}, "Expected a public method", {}});
-    }
-    if (arguments.size() != declaration.parameters.size()) {
-        fail_text(ErrorCode::argument_count, declaration.reference,
-             {{engine_text_domain, "engine.execution.argument_count"}, "Expected {expected} arguments, received {received}",
-              {{"expected", std::to_string(declaration.parameters.size())},
-               {"received", std::to_string(arguments.size())}}});
-    }
-    for (std::size_t index = 0; index < arguments.size(); ++index) {
-        if (std::type_index(arguments[index].type()) != declaration.parameters[index].type) {
-            fail_text(ErrorCode::type_mismatch, declaration.reference,
-                 {{engine_text_domain, "engine.execution.parameter_type_mismatch"}, "Type mismatch for parameter '{parameter}'",
-                  {{"parameter", declaration.parameters[index].name}}});
-        }
-    }
-    try {
-        return entry.method(Context(runtime, declaration.reference.module), arguments);
-    } catch (...) {
-        rethrow_boundary(FailureBoundary::method, declaration.reference);
-    }
-}
+}  // namespace detail
 
 // 构建局部结果，验证完成前不发布任何绑定。不执行模块回调或激活逻辑。
+// 只遍历模块结构；Entry 以擦除形式存储，这里在内部还原。
 class AssemblyBuilder {
 public:
     explicit AssemblyBuilder(const Module& root) { collect(root, {}); }
 
-    std::shared_ptr<Runtime> build() {
+    std::shared_ptr<detail::Runtime> build() {
         for (const auto& node : nodes_) {
             for (const auto& item : node.second->entries_) {
-                auto entry = std::make_shared<Entry>(*item.second);
+                auto entry = std::make_shared<detail::Entry>(
+                    *static_cast<const detail::Entry*>(item.second.get()));
                 entry->declaration.reference.module = node.first;
                 concrete_.emplace(entry->declaration.reference, entry);
                 runtime_->outputs.emplace(entry->declaration.reference, entry);
@@ -270,7 +251,7 @@ public:
     std::vector<Diagnostic> diagnostics;
 
 private:
-    SourceLocation source(std::string path) const {
+    Module::Location source(std::string path) const {
         // 工厂内部声明没有记录字段时，回退到最近的实例／作用域。
         while (true) {
             const auto node = nodes_.find(path);
@@ -284,13 +265,13 @@ private:
     }
 
     template <class Key>
-    SourceLocation source(const std::string& path, const std::map<Key, SourceLocation>& locations,
-                          const Key& key) const {
+    Module::Location source(const std::string& path, const std::map<Key, Module::Location>& locations,
+                            const Key& key) const {
         const auto found = locations.find(key);
         return found == locations.end() ? source(path) : found->second;
     }
 
-    void report(ErrorCode code, const Reference& target, TextRef message, const SourceLocation& location) {
+    void report(ErrorCode code, const Reference& target, TextRef message, const Module::Location& location) {
         diagnostics.push_back({code, target, std::move(message), location.source, location.path});
     }
 
@@ -299,7 +280,7 @@ private:
         for (const auto& child : module.children_) collect(child, path_join(path, child.name_));
     }
 
-    std::shared_ptr<const Entry> output(const Reference& reference) {
+    std::shared_ptr<const detail::Entry> output(const Reference& reference) {
         if (auto found = runtime_->outputs.find(reference); found != runtime_->outputs.end()) return found->second;
         if (!visited_outputs_.insert(reference).second) return {};
         const auto node = nodes_.find(reference.module);
@@ -319,7 +300,7 @@ private:
         return found == node->second->requirements_.end() ? nullptr : found->second;
     }
 
-    std::shared_ptr<const Entry> input(const Reference& reference) {
+    std::shared_ptr<const detail::Entry> input(const Reference& reference) {
         if (auto found = runtime_->inputs.find(reference); found != runtime_->inputs.end()) return found->second.provider;
         if (!visited_inputs_.insert(reference).second) return {};
         const auto needed = requirement(reference);
@@ -337,7 +318,7 @@ private:
         const auto& connection = found->second;
         const Reference provider{connection.forwarded ? parent : path_join(parent, connection.provider.module),
                                  connection.provider.symbol};
-        std::shared_ptr<const Entry> resolved;
+        std::shared_ptr<const detail::Entry> resolved;
         if (connection.forwarded) {
             const auto parent_requirement = requirement(provider);
             if (!parent_requirement) {
@@ -377,33 +358,83 @@ private:
                    location);
             return {};
         }
-        runtime_->inputs.emplace(reference, Input{needed, resolved});
+        runtime_->inputs.emplace(reference, detail::Input{needed, resolved});
         return resolved;
     }
 
     std::map<std::string, const Module*> nodes_;
-    std::map<Reference, std::shared_ptr<Entry>> concrete_;
+    std::map<Reference, std::shared_ptr<detail::Entry>> concrete_;
     std::set<Reference> visited_outputs_;
     std::set<Reference> visited_inputs_;
-    std::shared_ptr<Runtime> runtime_ = std::make_shared<Runtime>();
+    std::shared_ptr<detail::Runtime> runtime_ = std::make_shared<detail::Runtime>();
 };
 
-}  // namespace detail
+BindingHandle::BindingHandle(std::shared_ptr<const void> entry, std::shared_ptr<const void> runtime,
+                             Reference reference)
+    : entry_(std::move(entry)), runtime_(std::move(runtime)), reference_(std::move(reference)) {}
 
-detail::BoundEntry Context::resolve(const std::shared_ptr<const Requirement>& requirement) const {
+std::any BindingHandle::read() const {
+    const auto* entry = static_cast<const detail::Entry*>(entry_.get());
+    const auto& declaration = entry->declaration;
+    if (declaration.kind != SymbolKind::value) {
+        detail::fail_text(ErrorCode::wrong_kind, declaration.reference,
+             {{engine_text_domain, "engine.execution.expected_value"}, "Expected a public value", {}});
+    }
+    const auto runtime = std::static_pointer_cast<const detail::Runtime>(runtime_);
+    try {
+        return entry->getter(Context(runtime, declaration.reference.module));
+    } catch (...) {
+        detail::rethrow_boundary(detail::FailureBoundary::getter, declaration.reference);
+    }
+}
+
+std::any BindingHandle::call(const std::vector<std::any>& arguments) const {
+    const auto* entry = static_cast<const detail::Entry*>(entry_.get());
+    const auto& declaration = entry->declaration;
+    if (declaration.kind != SymbolKind::method) {
+        detail::fail_text(ErrorCode::wrong_kind, declaration.reference,
+             {{engine_text_domain, "engine.execution.expected_method"}, "Expected a public method", {}});
+    }
+    if (arguments.size() != declaration.parameters.size()) {
+        detail::fail_text(ErrorCode::argument_count, declaration.reference,
+             {{engine_text_domain, "engine.execution.argument_count"}, "Expected {expected} arguments, received {received}",
+              {{"expected", std::to_string(declaration.parameters.size())},
+               {"received", std::to_string(arguments.size())}}});
+    }
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+        if (std::type_index(arguments[index].type()) != declaration.parameters[index].type) {
+            detail::fail_text(ErrorCode::type_mismatch, declaration.reference,
+                 {{engine_text_domain, "engine.execution.parameter_type_mismatch"}, "Type mismatch for parameter '{parameter}'",
+                  {{"parameter", declaration.parameters[index].name}}});
+        }
+    }
+    const auto runtime = std::static_pointer_cast<const detail::Runtime>(runtime_);
+    try {
+        return entry->method(Context(runtime, declaration.reference.module), arguments);
+    } catch (...) {
+        detail::rethrow_boundary(detail::FailureBoundary::method, declaration.reference);
+    }
+}
+
+void BindingHandle::report_transport_failure() const {
+    detail::rethrow_boundary(detail::FailureBoundary::transport, reference_);
+}
+
+BindingHandle Context::resolve(const std::shared_ptr<const Requirement>& requirement) const {
     const Reference target{module_, requirement->reference.symbol};
     const auto runtime = runtime_.lock();
     if (!runtime) {
         detail::fail_text(ErrorCode::execution_failed, target,
                      {{engine_text_domain, "engine.context.expired"}, "Assembly runtime has expired", {}});
     }
-    const auto found = runtime->inputs.find(target);
-    if (found == runtime->inputs.end() || found->second.requirement != requirement) {
+    const auto* state = static_cast<const detail::Runtime*>(runtime.get());
+    const auto found = state->inputs.find(target);
+    if (found == state->inputs.end() || found->second.requirement != requirement) {
         detail::fail_text(ErrorCode::missing_requirement, target,
                      {{engine_text_domain, "engine.context.foreign_requirement"},
                       "Requirement does not belong to this module context", {}});
     }
-    return {found->second.provider, runtime};
+    return BindingHandle{found->second.provider, runtime, target};
 }
 
 Module::Module(std::string name, std::function<void()> validate)
@@ -415,31 +446,43 @@ Module::Module(std::string name, std::function<void()> validate)
     }
 }
 
-void Module::add_entry(std::shared_ptr<const detail::Entry> entry) {
-    const auto& declaration = entry->declaration;
-    if (declaration.reference.symbol.empty()) {
+void Module::add_value_entry(Declaration declaration, std::function<std::any(const Context&)> getter) {
+    if (!getter) {
         detail::fail_text(ErrorCode::invalid_declaration, declaration.reference,
-                     {{engine_text_domain, "engine.declaration.empty_symbol"}, "Symbol name must not be empty", {}});
+                     {{engine_text_domain, "engine.declaration.missing_getter"}, "Missing value getter", {}});
     }
-    std::set<std::string> names;
-    for (const auto& parameter : declaration.parameters) {
-        if (parameter.name.empty() || !names.insert(parameter.name).second) {
-            detail::fail_text(ErrorCode::invalid_declaration, declaration.reference,
-                         {{engine_text_domain, "engine.declaration.parameter_names"},
-                          "Parameter names must be non-empty and unique", {}});
-        }
+    validate_declaration(declaration);
+    auto entry = std::make_shared<const detail::Entry>(
+        detail::Entry{std::move(declaration), std::move(getter), {}});
+    const auto& reference = entry->declaration.reference;
+    if (exports_.count(reference.symbol) || !entries_.emplace(reference.symbol, entry).second) {
+        detail::fail_text(ErrorCode::duplicate_symbol, reference,
+                     {{engine_text_domain, "engine.declaration.duplicate_symbol"}, "Duplicate public symbol", {}});
     }
-    for (const auto* dependencies : {&declaration.reads, &declaration.writes}) {
-        for (const auto& reference : *dependencies) {
-            if (reference.module.empty() || reference.symbol.empty()) {
-                detail::fail_text(ErrorCode::invalid_declaration, declaration.reference,
-                             {{engine_text_domain, "engine.declaration.dependency_reference"},
-                              "Dependency references must name a module and a symbol", {}});
-            }
-        }
+}
+
+void Module::add_method_entry(Declaration declaration, std::vector<std::string> names,
+                              std::vector<std::type_index> types,
+                              std::function<std::any(const Context&, const std::vector<std::any>&)> method) {
+    if (!method) {
+        detail::fail_text(ErrorCode::invalid_declaration, declaration.reference,
+                     {{engine_text_domain, "engine.declaration.missing_method"}, "Missing method implementation", {}});
     }
-    if (exports_.count(declaration.reference.symbol) || !entries_.emplace(declaration.reference.symbol, entry).second) {
-        detail::fail_text(ErrorCode::duplicate_symbol, declaration.reference,
+    if (names.size() != types.size()) {
+        detail::fail_text(ErrorCode::invalid_declaration, declaration.reference,
+                     {{engine_text_domain, "engine.declaration.parameter_count"},
+                      "Parameter names do not match the declared signature", {}});
+    }
+    declaration.parameters.clear();
+    for (std::size_t index = 0; index < names.size(); ++index) {
+        declaration.parameters.push_back({std::move(names[index]), types[index]});
+    }
+    validate_declaration(declaration);
+    auto entry = std::make_shared<const detail::Entry>(
+        detail::Entry{std::move(declaration), {}, std::move(method)});
+    const auto& reference = entry->declaration.reference;
+    if (exports_.count(reference.symbol) || !entries_.emplace(reference.symbol, entry).second) {
+        detail::fail_text(ErrorCode::duplicate_symbol, reference,
                      {{engine_text_domain, "engine.declaration.duplicate_symbol"}, "Duplicate public symbol", {}});
     }
 }
@@ -455,6 +498,22 @@ void Module::add_requirement(std::shared_ptr<const Requirement> requirement) {
         detail::fail_text(ErrorCode::duplicate_requirement, reference,
                      {{engine_text_domain, "engine.requirement.duplicate"}, "Duplicate requirement", {}});
     }
+}
+
+void Module::set_source(std::string source, std::string path) {
+    source_ = {std::move(source), std::move(path)};
+}
+
+void Module::set_requirement_source(const std::string& symbol, std::string source, std::string path) {
+    requirement_sources_[symbol] = {std::move(source), std::move(path)};
+}
+
+void Module::set_connection_source(const Reference& requirement, std::string source, std::string path) {
+    connection_sources_[requirement] = {std::move(source), std::move(path)};
+}
+
+void Module::set_export_source(const std::string& name, std::string source, std::string path) {
+    export_sources_[name] = {std::move(source), std::move(path)};
 }
 
 void Module::add(Module child) {
@@ -536,6 +595,20 @@ void Module::export_symbol(std::string name, Reference child_symbol) {
     }
 }
 
+void Engine::invalidate_draft() {
+    draft_ready_ = false;
+    draft_runtime_.reset();
+    draft_diagnostics_.clear();
+}
+
+void Engine::build_draft() const {
+    if (draft_ready_) return;
+    AssemblyBuilder builder(root_);
+    draft_runtime_ = builder.build();
+    draft_diagnostics_ = std::move(builder.diagnostics);
+    draft_ready_ = true;
+}
+
 const Module& Engine::find_scope(const std::string& scope) const {
     const Module* current = &root_;
     if (scope.empty()) return *current;
@@ -565,6 +638,7 @@ void Engine::add(Module module, const std::string& scope) {
         detail::fail_text(ErrorCode::registration_closed, target,
                      {{engine_text_domain, "engine.registration.closed"}, "Registration is closed", {}});
     }
+    invalidate_draft();
     if (module.name_.empty()) {
         detail::fail_text(ErrorCode::invalid_declaration, target,
                      {{engine_text_domain, "engine.module.name_empty"}, "Module name must not be empty", {}});
@@ -600,6 +674,7 @@ void Engine::add(Module module, const std::string& scope) {
         }
     }
     find_scope(scope).add(std::move(module));
+    invalidate_draft();
 }
 
 void Engine::connect(Reference requirement, Reference provider, const std::string& scope) {
@@ -608,6 +683,7 @@ void Engine::connect(Reference requirement, Reference provider, const std::strin
                      {path_join(scope, requirement.module), requirement.symbol},
                      {{engine_text_domain, "engine.registration.closed"}, "Registration is closed", {}});
     }
+    invalidate_draft();
     auto& parent = find_scope(scope);
     try {
         parent.connect(std::move(requirement), std::move(provider));
@@ -624,6 +700,7 @@ void Engine::disconnect(const Reference& requirement, const std::string& scope) 
                      {path_join(scope, requirement.module), requirement.symbol},
                      {{engine_text_domain, "engine.registration.closed"}, "Registration is closed", {}});
     }
+    invalidate_draft();
     auto& parent = find_scope(scope);
     try {
         parent.disconnect(requirement);
@@ -636,7 +713,13 @@ void Engine::disconnect(const Reference& requirement, const std::string& scope) 
 
 std::vector<Declaration> Engine::catalog(const std::string& scope) const {
     find_scope(scope);
-    const auto runtime = runtime_ ? runtime_ : detail::AssemblyBuilder(root_).build();
+    std::shared_ptr<const detail::Runtime> runtime;
+    if (runtime_) {
+        runtime = std::static_pointer_cast<const detail::Runtime>(runtime_);
+    } else {
+        build_draft();
+        runtime = std::static_pointer_cast<const detail::Runtime>(draft_runtime_);
+    }
     std::vector<Declaration> result;
     for (const auto& item : runtime->outputs) {
         if (parent_path(item.first.module) != scope) continue;
@@ -689,48 +772,49 @@ std::vector<Declaration> Engine::candidates(const Reference& reference, const st
 }
 
 std::vector<Diagnostic> Engine::check() const {
-    detail::AssemblyBuilder builder(root_);
-    builder.build();
-    return builder.diagnostics;
+    build_draft();
+    return draft_diagnostics_;
 }
 
 void Engine::seal() {
     if (runtime_) return;
-    detail::AssemblyBuilder builder(root_);
-    auto runtime = builder.build();
-    if (!builder.diagnostics.empty()) throw EngineError(std::move(builder.diagnostics.front()));
-    runtime_ = std::move(runtime);
+    build_draft();
+    if (!draft_diagnostics_.empty()) throw EngineError(draft_diagnostics_.front());
+    runtime_ = draft_runtime_;
+    invalidate_draft();
 }
 
-std::shared_ptr<const detail::Entry> Engine::require_entry(const Reference& reference) const {
+BindingHandle Engine::require_entry(const Reference& reference) const {
     if (!runtime_) {
         detail::fail_text(ErrorCode::registration_open, reference,
                      {{engine_text_domain, "engine.lifecycle.seal_required"},
                       "Seal registration before execution or binding", {}});
     }
-    const auto found = runtime_->outputs.find(reference);
-    if (reference.module.find('/') != std::string::npos || found == runtime_->outputs.end()) {
+    const auto* state = static_cast<const detail::Runtime*>(runtime_.get());
+    const auto found = state->outputs.find(reference);
+    if (reference.module.find('/') != std::string::npos || found == state->outputs.end()) {
         detail::fail_text(ErrorCode::missing_symbol, reference,
                      {{engine_text_domain, "engine.reference.top_level_missing"}, "Top-level public symbol not found", {}});
     }
-    return found->second;
+    return BindingHandle{found->second, runtime_, reference};
 }
 
-detail::BoundEntry Engine::bind_entry(const Reference& reference, SymbolKind kind,
-                                     std::type_index result, const std::vector<std::type_index>& parameters) const {
-    auto entry = require_entry(reference);
+BindingHandle Engine::bind_entry(const Reference& reference, SymbolKind kind,
+                                 std::type_index result, const std::vector<std::type_index>& parameters) const {
+    BindingHandle handle = require_entry(reference);
+    const auto* entry = static_cast<const detail::Entry*>(handle.entry_.get());
     if (auto mismatch = signature_mismatch(entry->declaration, kind, result, parameters)) {
         detail::fail_text(mismatch->first, reference, mismatch->second);
     }
-    return {std::move(entry), runtime_};
+    return handle;
 }
 
 std::any Engine::read(const Reference& reference) const {
-    return detail::read_entry(*require_entry(reference), runtime_);
+    return require_entry(reference).read();
 }
 
 std::any Engine::call(const Reference& reference, const std::vector<std::any>& arguments) const {
-    return detail::call_entry(*require_entry(reference), runtime_, arguments);
+    return require_entry(reference).call(arguments);
 }
 
 }  // namespace ascend

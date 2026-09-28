@@ -1,6 +1,7 @@
 #include <ascend/i18n.hpp>
 #include <ascend/engine.hpp>
 
+#include "engine_internal.hpp"
 #include "json.hpp"
 
 #include <fstream>

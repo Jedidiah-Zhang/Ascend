@@ -134,7 +134,7 @@ public:
     // 按层序与绝对位置定位；未命中返回空，不隐式创建、不跨层查找。
     const Space* locate(Layer layer, const AbsolutePosition& point) const noexcept;
 
-    // 登记顺序的只读列表。
+    // 登记顺序的只读列表；元素引用在下次 add 前有效。
     const std::vector<Space>& spaces() const noexcept { return spaces_; }
     std::size_t size() const noexcept { return spaces_.size(); }
     bool empty() const noexcept { return spaces_.empty(); }
