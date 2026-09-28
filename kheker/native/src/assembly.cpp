@@ -2,6 +2,8 @@
 
 #include "json.hpp"
 
+#include <ascend/text.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -16,6 +18,11 @@ std::string scope_join(const std::string& parent, const std::string& name) {
 
 std::string record_join(const std::string& parent, const std::string& segment) {
     return detail::json_pointer_join(parent, segment);
+}
+
+[[noreturn]] void fail_assembly(ErrorCode code, const Reference& target, TextRef message,
+                             const std::string& source, const std::string& record) {
+    throw EngineError({code, target, std::move(message), source, record});
 }
 
 bool valid_scope_name(const std::string& name) {
@@ -135,21 +142,41 @@ bool Config::operator==(const Config& other) const {
     return false;
 }
 
-void ModuleFactoryDirectory::add_definition(std::string definition, Factory factory) {
+void ModuleFactoryDirectory::add_definition(std::string definition, Factory factory,
+                                           std::vector<I18nResource> resources) {
     const Reference target{definition, {}};
     if (definition.empty()) {
-        detail::fail(ErrorCode::invalid_declaration, target, "Definition identifier must not be empty");
+        detail::fail_text(ErrorCode::invalid_declaration, target,
+                         {{engine_text_domain, "assembly.factory.empty_definition"},
+                          "Definition identifier must not be empty"});
     }
     if (!factory) {
-        detail::fail(ErrorCode::invalid_declaration, target, "Definition constructor must be set");
+        detail::fail_text(ErrorCode::invalid_declaration, target,
+                         {{engine_text_domain, "assembly.factory.empty_factory"}, "Definition constructor must be set"});
     }
-    if (!factories_.emplace(std::move(definition), std::move(factory)).second) {
-        detail::fail(ErrorCode::duplicate_definition, target, "Definition is already registered");
+    for (const auto& resource : resources) {
+        if (resource.domain.empty() || resource.path.empty()) {
+            detail::fail_text(ErrorCode::invalid_declaration, target,
+                {{engine_text_domain, "i18n.resource.invalid"}, "Resource domain and path must be non-empty"});
+        }
+    }
+    if (!factories_.emplace(std::move(definition), Definition{std::move(factory), std::move(resources)}).second) {
+        detail::fail_text(ErrorCode::duplicate_definition, target,
+                         {{engine_text_domain, "assembly.factory.duplicate_definition"},
+                          "Definition is already registered"});
     }
 }
 
 bool ModuleFactoryDirectory::contains(const std::string& definition) const {
     return factories_.count(definition) != 0;
+}
+
+const std::vector<I18nResource>& ModuleFactoryDirectory::i18n_resources(const std::string& definition) const {
+    const auto found = factories_.find(definition);
+    if (found == factories_.end()) detail::fail_text(ErrorCode::unknown_definition, {definition, {}},
+        {{engine_text_domain, "assembly.factory.unknown_definition"}, "Module definition '{definition}' is not registered",
+         {{"definition", definition}}});
+    return found->second.resources;
 }
 
 std::vector<std::string> ModuleFactoryDirectory::definitions() const {
@@ -163,27 +190,34 @@ Module ModuleFactoryDirectory::create(const std::string& definition, const std::
                                       const Config& config) const {
     const auto found = factories_.find(definition);
     if (found == factories_.end()) {
-        detail::fail(ErrorCode::unknown_definition, {instance, {}},
-                     "Module definition '" + definition + "' is not registered");
+        detail::fail_text(ErrorCode::unknown_definition, {instance, {}},
+                          {{engine_text_domain, "assembly.factory.unknown_definition"},
+                           "Module definition '{definition}' is not registered",
+                           {{"definition", definition}}});
     }
     Module module = [&] {
         try {
-            return found->second(instance, config);
+            return found->second.factory(instance, config);
         } catch (const EngineError& error) {
             // 构造期尚无完整模块树，实例与内部位置分别保存，不按名称猜测归属。
-            throw EngineError({error.diagnostic().code, {instance, {}},
-                               "Factory '" + definition + "' failed during construction", {}, {},
-                               std::make_shared<const Diagnostic>(error.diagnostic())});
+            throw EngineError(detail::wrap_diagnostic(
+                error.diagnostic().code, {instance, {}},
+                {{engine_text_domain, "assembly.factory.construction_failed"},
+                 "Factory '{definition}' failed during construction",
+                 {{"definition", definition}}}, error.diagnostic()));
         } catch (const std::exception& error) {
             detail::fail(ErrorCode::invalid_config, {instance, {}}, error.what());
         } catch (...) {
-            detail::fail(ErrorCode::invalid_config, {instance, {}},
-                         "Factory threw a non-standard exception");
+            detail::fail_text(ErrorCode::invalid_config, {instance, {}},
+                              {{engine_text_domain, "assembly.factory.non_standard_exception"},
+                               "Factory threw a non-standard exception"});
         }
     }();
     if (module.name() != instance) {
-        detail::fail(ErrorCode::invalid_config, {instance, {}},
-                     "Factory returned module '" + module.name() + "' for instance '" + instance + "'");
+        detail::fail_text(ErrorCode::invalid_config, {instance, {}},
+                          {{engine_text_domain, "assembly.factory.name_mismatch"},
+                           "Factory returned module '{returned}' for instance '{instance}'",
+                           {{"returned", module.name()}, {"instance", instance}}});
     }
     return module;
 }
@@ -197,7 +231,8 @@ AssemblyDefinition::AssemblyDefinition() {
 const AssemblyDefinition::Scope& AssemblyDefinition::require_scope(const std::string& path) const {
     const auto found = scopes_.find(path);
     if (found == scopes_.end()) {
-        throw EngineError({ErrorCode::invalid_assembly, {path, {}}, "Assembly scope not found", source_, {}});
+        fail_assembly(ErrorCode::invalid_assembly, {path, {}},
+                      {{engine_text_domain, "assembly.scope.missing"}, "Assembly scope not found"}, source_, {});
     }
     return found->second;
 }
@@ -209,13 +244,16 @@ AssemblyDefinition::Scope& AssemblyDefinition::require_scope(const std::string& 
 void AssemblyDefinition::add_scope(const std::string& name, const std::string& scope) {
     Scope& parent = require_scope(scope);
     if (!valid_scope_name(name)) {
-        throw EngineError({ErrorCode::invalid_assembly, {scope_join(scope, name), {}},
-                           "Scope name must be non-empty and must not contain '/'", source_, {}});
+        fail_assembly(ErrorCode::invalid_assembly, {scope_join(scope, name), {}},
+                      {{engine_text_domain, "assembly.scope.invalid_name"},
+                       "Scope name must be non-empty and must not contain '/'"},
+                      source_, {});
     }
     const std::string path = scope_join(scope, name);
     if (scopes_.count(path) != 0) {
-        throw EngineError({ErrorCode::invalid_assembly, {path, {}},
-                           "Duplicate scope name '" + name + "'", source_, {}});
+        fail_assembly(ErrorCode::invalid_assembly, {path, {}},
+                      {{engine_text_domain, "assembly.scope.duplicate"}, "Duplicate scope name '{name}'", {{"name", name}}},
+                      source_, {});
     }
     parent.children.push_back(name);
     Scope child;
@@ -236,16 +274,18 @@ void AssemblyDefinition::connect(Reference requirement, Reference provider, cons
 void AssemblyDefinition::forward_inherited(std::string requirement, Reference child_requirement,
                                            const std::string& scope) {
     if (scope.empty()) {
-        throw EngineError({ErrorCode::invalid_assembly, {requirement, {}},
-                           "The root scope cannot forward requirements", source_, {}});
+        fail_assembly(ErrorCode::invalid_assembly, {requirement, {}},
+                      {{engine_text_domain, "assembly.root.forward"}, "The root scope cannot forward requirements"},
+                      source_, {});
     }
     require_scope(scope).forwards.push_back({std::move(requirement), std::move(child_requirement)});
 }
 
 void AssemblyDefinition::export_symbol(std::string name, Reference child_symbol, const std::string& scope) {
     if (scope.empty()) {
-        throw EngineError({ErrorCode::invalid_assembly, {name, {}},
-                           "The root scope cannot export symbols", source_, {}});
+        fail_assembly(ErrorCode::invalid_assembly, {name, {}},
+                      {{engine_text_domain, "assembly.root.export"}, "The root scope cannot export symbols"},
+                      source_, {});
     }
     require_scope(scope).exports.push_back({std::move(name), std::move(child_symbol)});
 }
@@ -257,7 +297,7 @@ std::string AssemblyDefinition::to_json() const {
 Config AssemblyDefinition::scope_config(const Scope& scope, bool root, const std::string& record,
                                         std::size_t depth) const {
     if (depth >= assembly_json_max_depth) {
-        fail_record(ErrorCode::invalid_json, record, "JSON container nesting limit exceeded");
+        fail_record(ErrorCode::invalid_json, record, {{engine_text_domain, "json.depth.limit"}, "JSON container nesting limit exceeded"});
     }
     std::vector<std::pair<std::string, Config>> members;
     if (root) {
@@ -325,19 +365,22 @@ void AssemblyDefinition::save(const std::string& path) const {
     }
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
     if (!stream.is_open()) {
-        throw EngineError({ErrorCode::io_failure, {path, {}}, "Cannot open assembly record for writing", path, {}});
+        fail_assembly(ErrorCode::io_failure, {path, {}},
+                      {{engine_text_domain, "assembly.io.open_write"}, "Cannot open assembly record for writing"}, path, {});
     }
     stream << text << '\n';
     stream.close();
     if (!stream) {
-        throw EngineError({ErrorCode::io_failure, {path, {}}, "Cannot write assembly record", path, {}});
+        fail_assembly(ErrorCode::io_failure, {path, {}},
+                      {{engine_text_domain, "assembly.io.write"}, "Cannot write assembly record"}, path, {});
     }
 }
 
 AssemblyDefinition AssemblyDefinition::load(const std::string& path) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream.is_open()) {
-        throw EngineError({ErrorCode::io_failure, {path, {}}, "Cannot open assembly record for reading", path, {}});
+        fail_assembly(ErrorCode::io_failure, {path, {}},
+                      {{engine_text_domain, "assembly.io.open_read"}, "Cannot open assembly record for reading"}, path, {});
     }
     std::string text;
     char chunk[4096];
@@ -347,7 +390,8 @@ AssemblyDefinition AssemblyDefinition::load(const std::string& path) {
     }
     // 读取中途失败时流未到达文件结尾；残缺内容不送入解析，与格式错误分开报告。
     if (!stream.eof()) {
-        throw EngineError({ErrorCode::io_failure, {path, {}}, "Cannot read assembly record", path, {}});
+        fail_assembly(ErrorCode::io_failure, {path, {}},
+                      {{engine_text_domain, "assembly.io.read"}, "Cannot read assembly record"}, path, {});
     }
     return parse(text, path);
 }
@@ -358,24 +402,27 @@ AssemblyDefinition AssemblyDefinition::parse(const std::string& text, std::strin
     definition.source_ = std::move(source);
     definition.scopes_.clear();
     if (document.kind() != Config::Kind::object) {
-        definition.fail_record(ErrorCode::invalid_assembly, "", "Assembly record must be a JSON object");
+        definition.fail_record(ErrorCode::invalid_assembly, "", {{engine_text_domain, "assembly.record.object_required"}, "Assembly record must be a JSON object"});
     }
     const Config* format = document.find("format");
     if (!format || format->kind() != Config::Kind::string) {
-        definition.fail_record(ErrorCode::invalid_assembly, "/format", "Record format identifier must be a string");
+        definition.fail_record(ErrorCode::invalid_assembly, "/format", {{engine_text_domain, "assembly.record.format_type"}, "Record format identifier must be a string"});
     }
     if (format->string() != assembly_format) {
         definition.fail_record(ErrorCode::invalid_assembly, "/format",
-                               "Unknown record format '" + format->string() + "'");
+                               {{engine_text_domain, "assembly.record.format_unknown"}, "Unknown record format '{format}'",
+                                {{"format", format->string()}}});
     }
     const Config* version = document.find("version");
     if (!version || version->kind() != Config::Kind::integer) {
-        definition.fail_record(ErrorCode::invalid_assembly, "/version", "Record format version must be an integer");
+        definition.fail_record(ErrorCode::invalid_assembly, "/version", {{engine_text_domain, "assembly.record.version_type"}, "Record format version must be an integer"});
     }
     if (version->integer() != assembly_format_version) {
         definition.fail_record(ErrorCode::unsupported_format_version, "/version",
-                               "Unsupported assembly record version " + std::to_string(version->integer()) +
-                                   "; this build reads version " + std::to_string(assembly_format_version));
+                               {{engine_text_domain, "assembly.record.version_unsupported"},
+                                "Unsupported assembly record version {found}; this build reads version {expected}",
+                                {{"found", std::to_string(version->integer())},
+                                 {"expected", std::to_string(assembly_format_version)}}});
     }
     definition.read_scope(document, "", "", true);
     return definition;
@@ -393,13 +440,14 @@ void AssemblyDefinition::read_scope(const Config& object, const std::string& rec
         const Config* field = object.find("name");
         if (!field || field->kind() != Config::Kind::string || !valid_scope_name(field->string())) {
             fail_record(ErrorCode::invalid_assembly, record_join(record, "name"),
-                        "Scope name must be a non-empty string without '/'");
+                        {{engine_text_domain, "assembly.scope.invalid_name"},
+                         "Scope name must be non-empty and must not contain '/'"});
         }
         name = field->string();
         path = scope_join(parent_path, name);
         if (scopes_.count(path) != 0) {
             fail_record(ErrorCode::invalid_assembly, record_join(record, "name"),
-                        "Duplicate scope name '" + name + "'");
+                        {{engine_text_domain, "assembly.scope.duplicate"}, "Duplicate scope name '{name}'", {{"name", name}}});
         }
     }
     Scope scope;
@@ -408,25 +456,25 @@ void AssemblyDefinition::read_scope(const Config& object, const std::string& rec
     if (const Config* instances = object.find("instances")) {
         if (instances->kind() != Config::Kind::array) {
             fail_record(ErrorCode::invalid_assembly, record_join(record, "instances"),
-                        "Field 'instances' must be an array");
+                        {{engine_text_domain, "assembly.field.instances_type"}, "Field 'instances' must be an array"});
         }
         const auto& elements = instances->elements();
         for (std::size_t index = 0; index < elements.size(); ++index) {
             const std::string item = record_join(record_join(record, "instances"), std::to_string(index));
             const Config& element = elements[index];
             if (element.kind() != Config::Kind::object) {
-                fail_record(ErrorCode::invalid_assembly, item, "Instance must be an object");
+                fail_record(ErrorCode::invalid_assembly, item, {{engine_text_domain, "assembly.instance.object_required"}, "Instance must be an object"});
             }
             check_keys(element, item, {"definition", "name", "config"});
             const Config* definition = element.find("definition");
             if (!definition || definition->kind() != Config::Kind::string) {
                 fail_record(ErrorCode::invalid_assembly, record_join(item, "definition"),
-                            "Field 'definition' must be a string");
+                            {{engine_text_domain, "assembly.field.definition_type"}, "Field 'definition' must be a string"});
             }
             const Config* instance_name = element.find("name");
             if (!instance_name || instance_name->kind() != Config::Kind::string) {
                 fail_record(ErrorCode::invalid_assembly, record_join(item, "name"),
-                            "Field 'name' must be a string");
+                            {{engine_text_domain, "assembly.field.name_type"}, "Field 'name' must be a string"});
             }
             const Config* config = element.find("config");
             scope.instances.push_back({definition->string(), instance_name->string(), config ? *config : Config{}});
@@ -434,19 +482,19 @@ void AssemblyDefinition::read_scope(const Config& object, const std::string& rec
     }
     if (const Config* scopes = object.find("scopes")) {
         if (scopes->kind() != Config::Kind::array) {
-            fail_record(ErrorCode::invalid_assembly, record_join(record, "scopes"), "Field 'scopes' must be an array");
+            fail_record(ErrorCode::invalid_assembly, record_join(record, "scopes"), {{engine_text_domain, "assembly.field.scopes_type"}, "Field 'scopes' must be an array"});
         }
         const auto& elements = scopes->elements();
         for (std::size_t index = 0; index < elements.size(); ++index) {
             const std::string item = record_join(record_join(record, "scopes"), std::to_string(index));
             const Config& element = elements[index];
             if (element.kind() != Config::Kind::object) {
-                fail_record(ErrorCode::invalid_assembly, item, "Scope must be an object");
+                fail_record(ErrorCode::invalid_assembly, item, {{engine_text_domain, "assembly.scope.object_required"}, "Scope must be an object"});
             }
             const Config* child_name = element.find("name");
             if (!child_name || child_name->kind() != Config::Kind::string || !valid_scope_name(child_name->string())) {
                 fail_record(ErrorCode::invalid_assembly, record_join(item, "name"),
-                            "Scope name must be a non-empty string without '/'");
+                            {{engine_text_domain, "assembly.scope.invalid_name"}, "Scope name must be non-empty and must not contain '/'"});
             }
             scope.children.push_back(child_name->string());
             read_scope(element, item, path, false);
@@ -455,25 +503,25 @@ void AssemblyDefinition::read_scope(const Config& object, const std::string& rec
     if (const Config* connections = object.find("connections")) {
         if (connections->kind() != Config::Kind::array) {
             fail_record(ErrorCode::invalid_assembly, record_join(record, "connections"),
-                        "Field 'connections' must be an array");
+                        {{engine_text_domain, "assembly.field.connections_type"}, "Field 'connections' must be an array"});
         }
         const auto& elements = connections->elements();
         for (std::size_t index = 0; index < elements.size(); ++index) {
             const std::string item = record_join(record_join(record, "connections"), std::to_string(index));
             const Config& element = elements[index];
             if (element.kind() != Config::Kind::object) {
-                fail_record(ErrorCode::invalid_assembly, item, "Connection must be an object");
+                fail_record(ErrorCode::invalid_assembly, item, {{engine_text_domain, "assembly.connection.object_required"}, "Connection must be an object"});
             }
             check_keys(element, item, {"requirement", "provider"});
             const Config* requirement = element.find("requirement");
             if (!requirement) {
                 fail_record(ErrorCode::invalid_assembly, record_join(item, "requirement"),
-                            "Field 'requirement' is required");
+                            {{engine_text_domain, "assembly.field.requirement_required"}, "Field 'requirement' is required"});
             }
             const Config* provider = element.find("provider");
             if (!provider) {
                 fail_record(ErrorCode::invalid_assembly, record_join(item, "provider"),
-                            "Field 'provider' is required");
+                            {{engine_text_domain, "assembly.field.provider_required"}, "Field 'provider' is required"});
             }
             scope.connections.push_back({read_reference(*requirement, record_join(item, "requirement"), "symbol"),
                                          read_reference(*provider, record_join(item, "provider"), "symbol")});
@@ -482,28 +530,28 @@ void AssemblyDefinition::read_scope(const Config& object, const std::string& rec
     if (const Config* forwards = object.find("forwards")) {
         if (forwards->kind() != Config::Kind::array) {
             fail_record(ErrorCode::invalid_assembly, record_join(record, "forwards"),
-                        "Field 'forwards' must be an array");
+                        {{engine_text_domain, "assembly.field.forwards_type"}, "Field 'forwards' must be an array"});
         }
         const auto& elements = forwards->elements();
         if (root && !elements.empty()) {
             fail_record(ErrorCode::invalid_assembly, record_join(record, "forwards"),
-                        "The root scope cannot forward requirements");
+                        {{engine_text_domain, "assembly.root.forward"}, "The root scope cannot forward requirements"});
         }
         for (std::size_t index = 0; index < elements.size(); ++index) {
             const std::string item = record_join(record_join(record, "forwards"), std::to_string(index));
             const Config& element = elements[index];
             if (element.kind() != Config::Kind::object) {
-                fail_record(ErrorCode::invalid_assembly, item, "Forward must be an object");
+                fail_record(ErrorCode::invalid_assembly, item, {{engine_text_domain, "assembly.forward.object_required"}, "Forward must be an object"});
             }
             check_keys(element, item, {"requirement", "target"});
             const Config* requirement = element.find("requirement");
             if (!requirement || requirement->kind() != Config::Kind::string) {
                 fail_record(ErrorCode::invalid_assembly, record_join(item, "requirement"),
-                            "Field 'requirement' must be a string");
+                            {{engine_text_domain, "assembly.field.requirement_type"}, "Field 'requirement' must be a string"});
             }
             const Config* target = element.find("target");
             if (!target) {
-                fail_record(ErrorCode::invalid_assembly, record_join(item, "target"), "Field 'target' is required");
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "target"), {{engine_text_domain, "assembly.field.target_required"}, "Field 'target' is required"});
             }
             scope.forwards.push_back(
                 {requirement->string(), read_reference(*target, record_join(item, "target"), "requirement")});
@@ -512,27 +560,27 @@ void AssemblyDefinition::read_scope(const Config& object, const std::string& rec
     if (const Config* exports = object.find("exports")) {
         if (exports->kind() != Config::Kind::array) {
             fail_record(ErrorCode::invalid_assembly, record_join(record, "exports"),
-                        "Field 'exports' must be an array");
+                        {{engine_text_domain, "assembly.field.exports_type"}, "Field 'exports' must be an array"});
         }
         const auto& elements = exports->elements();
         if (root && !elements.empty()) {
             fail_record(ErrorCode::invalid_assembly, record_join(record, "exports"),
-                        "The root scope cannot export symbols");
+                        {{engine_text_domain, "assembly.root.export"}, "The root scope cannot export symbols"});
         }
         for (std::size_t index = 0; index < elements.size(); ++index) {
             const std::string item = record_join(record_join(record, "exports"), std::to_string(index));
             const Config& element = elements[index];
             if (element.kind() != Config::Kind::object) {
-                fail_record(ErrorCode::invalid_assembly, item, "Export must be an object");
+                fail_record(ErrorCode::invalid_assembly, item, {{engine_text_domain, "assembly.export.object_required"}, "Export must be an object"});
             }
             check_keys(element, item, {"name", "target"});
             const Config* name_field = element.find("name");
             if (!name_field || name_field->kind() != Config::Kind::string) {
-                fail_record(ErrorCode::invalid_assembly, record_join(item, "name"), "Field 'name' must be a string");
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "name"), {{engine_text_domain, "assembly.field.name_type"}, "Field 'name' must be a string"});
             }
             const Config* target = element.find("target");
             if (!target) {
-                fail_record(ErrorCode::invalid_assembly, record_join(item, "target"), "Field 'target' is required");
+                fail_record(ErrorCode::invalid_assembly, record_join(item, "target"), {{engine_text_domain, "assembly.field.target_required"}, "Field 'target' is required"});
             }
             scope.exports.push_back({name_field->string(), read_reference(*target, record_join(item, "target"), "symbol")});
         }
@@ -543,17 +591,18 @@ void AssemblyDefinition::read_scope(const Config& object, const std::string& rec
 Reference AssemblyDefinition::read_reference(const Config& value, const std::string& record,
                                              const std::string& second) const {
     if (value.kind() != Config::Kind::object) {
-        fail_record(ErrorCode::invalid_assembly, record, "Reference must be an object");
+        fail_record(ErrorCode::invalid_assembly, record, {{engine_text_domain, "assembly.reference.object_required"}, "Reference must be an object"});
     }
     check_keys(value, record, {"module", second});
     const Config* module = value.find("module");
     if (!module || module->kind() != Config::Kind::string) {
-        fail_record(ErrorCode::invalid_assembly, record_join(record, "module"), "Field 'module' must be a string");
+        fail_record(ErrorCode::invalid_assembly, record_join(record, "module"), {{engine_text_domain, "assembly.field.module_type"}, "Field 'module' must be a string"});
     }
     const Config* symbol = value.find(second);
     if (!symbol || symbol->kind() != Config::Kind::string) {
         fail_record(ErrorCode::invalid_assembly, record_join(record, second),
-                    "Field '" + second + "' must be a string");
+                    {{engine_text_domain, "assembly.field.reference_symbol_type"}, "Field '{field}' must be a string",
+                     {{"field", second}}});
     }
     return {module->string(), symbol->string()};
 }
@@ -563,13 +612,13 @@ void AssemblyDefinition::check_keys(const Config& object, const std::string& rec
     for (const auto& member : object.members()) {
         if (std::find(allowed.begin(), allowed.end(), member.first) == allowed.end()) {
             fail_record(ErrorCode::invalid_assembly, record_join(record, member.first),
-                        "Unknown field '" + member.first + "'");
+                        {{engine_text_domain, "assembly.field.unknown"}, "Unknown field '{field}'", {{"field", member.first}}});
         }
     }
 }
 
-void AssemblyDefinition::fail_record(ErrorCode code, const std::string& record, std::string message) const {
-    throw EngineError({code, {}, std::move(message), source_, record});
+void AssemblyDefinition::fail_record(ErrorCode code, const std::string& record, TextRef message) const {
+    fail_assembly(code, {}, std::move(message), source_, record);
 }
 
 EngineError AssemblyDefinition::attach(const EngineError& error, const std::string& record,

@@ -1,5 +1,7 @@
 #include "json.hpp"
 
+#include <ascend/text.hpp>
+
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -44,6 +46,8 @@ std::size_t utf8_size(const std::string& text, std::size_t start) {
     return count;
 }
 
+[[noreturn]] void fail_json(const std::string& source, const std::string& path, TextRef message);
+
 void validate_string(const std::string& value, const std::string& source, const std::string& path) {
     for (std::size_t index = 0; index < value.size();) {
         if (static_cast<unsigned char>(value[index]) < 0x80) {
@@ -51,11 +55,16 @@ void validate_string(const std::string& value, const std::string& source, const 
         } else {
             const auto count = utf8_size(value, index);
             if (count == 0) {
-                throw EngineError({ErrorCode::invalid_json, {}, "Invalid UTF-8 sequence in string", source, path});
+                fail_json(source, path,
+                   {{engine_text_domain, "json.utf8.invalid_string"}, "Invalid UTF-8 sequence in string"});
             }
             index += count;
         }
     }
+}
+
+[[noreturn]] void fail_json(const std::string& source, const std::string& path, TextRef message) {
+    throw EngineError({ErrorCode::invalid_json, {}, std::move(message), source, path});
 }
 
 class Parser {
@@ -66,15 +75,21 @@ public:
         skip_space();
         Config value = parse_value("", 0);
         skip_space();
-        if (position_ != text_.size()) error("Unexpected content after the document", "");
+        if (position_ != text_.size()) error({{engine_text_domain, "json.document.trailing_content"}, "Unexpected content after the document"}, "");
         return value;
     }
 
 private:
-    [[noreturn]] void error(const std::string& message, const std::string& path) const {
-        const std::string detail =
-            message + " at line " + std::to_string(line_) + " column " + std::to_string(column_);
-        throw EngineError({ErrorCode::invalid_json, {}, detail, source_, path});
+    [[noreturn]] void error(TextRef message, const std::string& path) const {
+        // 解析器内部消息必须带默认模板，才能追加行列；遗漏属于代码声明错误。
+        if (!message.fallback()) {
+            throw std::logic_error("JSON parser diagnostic requires a default template");
+        }
+        auto arguments = message.arguments();
+        arguments.push_back({"line", std::to_string(line_)});
+        arguments.push_back({"column", std::to_string(column_)});
+        fail_json(source_, path, {message.key(), *message.fallback() + " at line {line} column {column}",
+                                  std::move(arguments)});
     }
 
     char peek() const { return position_ < text_.size() ? text_[position_] : '\0'; }
@@ -97,13 +112,13 @@ private:
 
     void expect_literal(const char* literal, const std::string& path) {
         for (const char* cursor = literal; *cursor != '\0'; ++cursor) {
-            if (take() != *cursor) error("Invalid literal", path);
+            if (take() != *cursor) error({{engine_text_domain, "json.literal.invalid"}, "Invalid literal"}, path);
         }
     }
 
     Config parse_value(const std::string& path, std::size_t depth) {
         if ((peek() == '{' || peek() == '[') && depth >= assembly_json_max_depth) {
-            error("JSON container nesting limit exceeded", path);
+            error({{engine_text_domain, "json.depth.limit_location"}, "JSON container nesting limit exceeded"}, path);
         }
         switch (peek()) {
             case '{': return parse_object(path, depth + 1);
@@ -114,7 +129,7 @@ private:
             case 'n': expect_literal("null", path); return Config();
             default:
                 if (peek() == '-' || is_digit(peek())) return parse_number(path);
-                error("Unexpected character in value", path);
+                error({{engine_text_domain, "json.value.unexpected_character"}, "Unexpected character in value"}, path);
         }
     }
 
@@ -128,21 +143,22 @@ private:
         }
         while (true) {
             skip_space();
-            if (peek() != '"') error("Expected an object member name", path);
+            if (peek() != '"') error({{engine_text_domain, "json.object.member_name_expected"}, "Expected an object member name"}, path);
             std::string key = parse_string(path);
             const std::string member_path = json_pointer_join(path, key);
             for (const auto& member : members) {
-                if (member.first == key) error("Duplicate object member '" + key + "'", member_path);
+                if (member.first == key) error({{engine_text_domain, "json.object.duplicate_member"}, "Duplicate object member '{member}'",
+                    {{"member", key}}}, member_path);
             }
             skip_space();
-            if (take() != ':') error("Expected ':' after the member name", member_path);
+            if (take() != ':') error({{engine_text_domain, "json.object.colon_expected"}, "Expected ':' after the member name"}, member_path);
             skip_space();
             members.emplace_back(std::move(key), parse_value(member_path, depth));
             skip_space();
             const char separator = take();
             if (separator == ',') continue;
             if (separator == '}') break;
-            error("Expected ',' or '}' in object", path);
+            error({{engine_text_domain, "json.object.separator_expected"}, "Expected ',' or '}' in object"}, path);
         }
         return Config::object(std::move(members));
     }
@@ -164,19 +180,19 @@ private:
             const char separator = take();
             if (separator == ',') continue;
             if (separator == ']') break;
-            error("Expected ',' or ']' in array", path);
+            error({{engine_text_domain, "json.array.separator_expected"}, "Expected ',' or ']' in array"}, path);
         }
         return Config::array(std::move(elements));
     }
 
     void append_codepoint(std::string& result, unsigned int code_point, const std::string& path) {
         if (code_point >= 0xD800 && code_point <= 0xDBFF) {
-            if (take() != '\\' || take() != 'u') error("High surrogate without a low surrogate", path);
+            if (take() != '\\' || take() != 'u') error({{engine_text_domain, "json.string.high_surrogate"}, "High surrogate without a low surrogate"}, path);
             const unsigned int low = parse_hex(path);
-            if (low < 0xDC00 || low > 0xDFFF) error("High surrogate without a low surrogate", path);
+            if (low < 0xDC00 || low > 0xDFFF) error({{engine_text_domain, "json.string.high_surrogate"}, "High surrogate without a low surrogate"}, path);
             code_point = 0x10000 + ((code_point - 0xD800) << 10) + (low - 0xDC00);
         } else if (code_point >= 0xDC00 && code_point <= 0xDFFF) {
-            error("Unexpected low surrogate", path);
+            error({{engine_text_domain, "json.string.low_surrogate"}, "Unexpected low surrogate"}, path);
         }
         if (code_point < 0x80) {
             result += static_cast<char>(code_point);
@@ -203,7 +219,7 @@ private:
             if (character >= '0' && character <= '9') digit = static_cast<unsigned int>(character - '0');
             else if (character >= 'a' && character <= 'f') digit = static_cast<unsigned int>(character - 'a' + 10);
             else if (character >= 'A' && character <= 'F') digit = static_cast<unsigned int>(character - 'A' + 10);
-            else error("Invalid hexadecimal escape", path);
+            else error({{engine_text_domain, "json.string.invalid_escape_hex"}, "Invalid hexadecimal escape"}, path);
             value = (value << 4) | digit;
         }
         return value;
@@ -212,7 +228,7 @@ private:
     void append_utf8(std::string& result, const std::string& path) {
         const std::size_t start = position_ - 1;  // 首字节已由 parse_string 消费。
         const auto count = utf8_size(text_, start);
-        if (count == 0) error("Invalid UTF-8 sequence", path);
+        if (count == 0) error({{engine_text_domain, "json.utf8.invalid"}, "Invalid UTF-8 sequence"}, path);
         for (std::size_t index = 1; index < count; ++index) take();
         result.append(text_, start, count);
     }
@@ -221,7 +237,7 @@ private:
         take();  // '"'
         std::string result;
         while (true) {
-            if (position_ >= text_.size()) error("Unterminated string", path);
+            if (position_ >= text_.size()) error({{engine_text_domain, "json.string.unterminated"}, "Unterminated string"}, path);
             const auto character = static_cast<unsigned char>(take());
             if (character == '"') break;
             if (character == '\\') {
@@ -235,10 +251,10 @@ private:
                     case 'r': result += '\r'; break;
                     case 't': result += '\t'; break;
                     case 'u': append_codepoint(result, parse_hex(path), path); break;
-                    default: error("Invalid escape sequence", path);
+                    default: error({{engine_text_domain, "json.string.invalid_escape"}, "Invalid escape sequence"}, path);
                 }
             } else if (character < 0x20) {
-                error("Unescaped control character in string", path);
+                error({{engine_text_domain, "json.string.control_character"}, "Unescaped control character in string"}, path);
             } else if (character < 0x80) {
                 result += static_cast<char>(character);
             } else {
@@ -256,20 +272,20 @@ private:
         } else if (is_digit(peek())) {
             while (is_digit(peek())) take();
         } else {
-            error("Invalid number", path);
+            error({{engine_text_domain, "json.number.invalid"}, "Invalid number"}, path);
         }
         bool integral = true;
         if (peek() == '.') {
             integral = false;
             take();
-            if (!is_digit(peek())) error("Expected a digit after the decimal point", path);
+            if (!is_digit(peek())) error({{engine_text_domain, "json.number.digit_after_point"}, "Expected a digit after the decimal point"}, path);
             while (is_digit(peek())) take();
         }
         if (peek() == 'e' || peek() == 'E') {
             integral = false;
             take();
             if (peek() == '+' || peek() == '-') take();
-            if (!is_digit(peek())) error("Expected a digit in the exponent", path);
+            if (!is_digit(peek())) error({{engine_text_domain, "json.number.digit_in_exponent"}, "Expected a digit in the exponent"}, path);
             while (is_digit(peek())) take();
         }
         const std::string literal = text_.substr(start, position_ - start);
@@ -277,7 +293,7 @@ private:
             std::int64_t value = 0;
             const auto result = std::from_chars(literal.data(), literal.data() + literal.size(), value);
             if (result.ec != std::errc() || result.ptr != literal.data() + literal.size()) {
-                error("Integer is out of range for a signed 64-bit value", path);
+                error({{engine_text_domain, "json.number.integer_range"}, "Integer is out of range for a signed 64-bit value"}, path);
             }
             return Config::integer(value);
         }
@@ -288,7 +304,7 @@ private:
         double value = 0.0;
         stream >> value;
         if (!stream || stream.peek() != std::char_traits<char>::eof() || !std::isfinite(value)) {
-            error("Number is out of range", path);
+            error({{engine_text_domain, "json.number.range"}, "Number is out of range"}, path);
         }
         return Config::number(value);
     }
@@ -401,7 +417,8 @@ std::string json_pointer_join(const std::string& parent, const std::string& segm
 void validate_json(const Config& value, const std::string& source, const std::string& path, std::size_t depth) {
     const auto kind = value.kind();
     if ((kind == Config::Kind::object || kind == Config::Kind::array) && depth >= assembly_json_max_depth) {
-        throw EngineError({ErrorCode::invalid_json, {}, "JSON container nesting limit exceeded", source, path});
+        fail_json(source, path,
+                   {{engine_text_domain, "json.depth.limit"}, "JSON container nesting limit exceeded"});
     }
     if (kind == Config::Kind::string) {
         validate_string(value.string(), source, path);

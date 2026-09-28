@@ -36,11 +36,11 @@ Diagnostic failure(ErrorCode code, Reference target, F&& function) {
         if (diagnostic.code != code || !(diagnostic.target == target)) {
             throw std::runtime_error(
                 "unexpected diagnostic " + diagnostic.target.module + '/' + diagnostic.target.symbol + ": " +
-                diagnostic.message + " (expected " + std::to_string(static_cast<int>(code)) + " at " +
+                render_diagnostic(diagnostic) + " (expected " + std::to_string(static_cast<int>(code)) + " at " +
                 target.module + '/' + target.symbol + ", received " +
                 std::to_string(static_cast<int>(diagnostic.code)) + ")");
         }
-        CHECK(!diagnostic.message.empty());
+        CHECK(!render_diagnostic(diagnostic).empty());
         return diagnostic;
     }
     throw std::runtime_error("expected EngineError");
@@ -405,7 +405,7 @@ void record_errors() {
 
     const Diagnostic syntax = failure(ErrorCode::invalid_json, {}, [&] { parse("{\"instances\": ["); });
     CHECK(syntax.source == "memory.record");
-    CHECK(syntax.message.find("line") != std::string::npos);
+    CHECK(render_diagnostic(syntax).find("line") != std::string::npos);
 
     const Diagnostic version = failure(ErrorCode::unsupported_format_version, {}, [&] {
         parse(R"({"format":"ascend.assembly","version":2})");
@@ -516,27 +516,27 @@ void factory_errors() {
                     R"({"definition":"example.accumulator","name":"dut"}]})");
     });
     CHECK(missing.path == "/instances/0/config");
-    CHECK(missing.message.find("initial") != std::string::npos);
+    CHECK(render_diagnostic(missing).find("initial") != std::string::npos);
 
     const Diagnostic range = failure(ErrorCode::invalid_config, {"group/dut", ""}, [&] {
         instantiate(R"({"format":"ascend.assembly","version":1,"scopes":[{"name":"group","instances":[)"
                     R"({"definition":"example.accumulator","name":"dut","config":{"initial":1000001}}]}]})");
     });
     CHECK(range.path == "/scopes/0/instances/0/config");
-    CHECK(range.message.find("out of range") != std::string::npos);
+    CHECK(render_diagnostic(range).find("out of range") != std::string::npos);
 
     const Diagnostic kind = failure(ErrorCode::invalid_config, {"dut", ""}, [&] {
         instantiate(R"({"format":"ascend.assembly","version":1,"instances":[)"
                     R"({"definition":"example.accumulator","name":"dut","config":{"initial":"0"}}]})");
     });
-    CHECK(kind.message.find("integer") != std::string::npos);
+    CHECK(render_diagnostic(kind).find("integer") != std::string::npos);
 
     directory.add_definition("example.renamed", [](const std::string&, const Config&) { return Module("fixed"); });
     const Diagnostic renamed = failure(ErrorCode::invalid_config, {"dut", ""}, [&] {
         instantiate(R"({"format":"ascend.assembly","version":1,"instances":[)"
                     R"({"definition":"example.renamed","name":"dut"}]})");
     });
-    CHECK(renamed.message.find("fixed") != std::string::npos);
+    CHECK(render_diagnostic(renamed).find("fixed") != std::string::npos);
 }
 
 void assembly_errors() {
@@ -682,7 +682,7 @@ void factory_target() {
         CHECK(direct.cause != nullptr);
         CHECK(direct.cause->target == Reference{local, "v"});
         CHECK(direct.cause->code == ErrorCode::duplicate_symbol);
-        CHECK(direct.cause->message == "Duplicate public symbol");
+        CHECK(render_text(direct.cause->text) == "Duplicate public symbol");
         CHECK(direct.source.empty());
 
         for (bool nested : {false, true}) {
@@ -696,7 +696,8 @@ void factory_target() {
             CHECK(error.path == (nested ? "/scopes/0/instances/0" : "/instances/0"));
             CHECK(error.cause != nullptr);
             CHECK(error.cause->target == Reference{local, "v"});
-            CHECK(error.cause->message == direct.cause->message);
+            CHECK(render_text(error.cause->text) == render_text(direct.cause->text));
+            CHECK(error.cause->text.key() == direct.cause->text.key());
             CHECK(error.cause->source.empty());
             CHECK(error.cause->path.empty());
             const std::string rendered = EngineError(error).what();
@@ -753,7 +754,7 @@ void factory_causes() {
     CHECK(original.code == ErrorCode::invalid_config);
     CHECK(original.source == "module.cfg");
     CHECK(original.path == "/tuning");
-    CHECK(original.message == "Invalid module parameter");
+    CHECK(render_text(original.text) == "Invalid module parameter");
     CHECK(!original.cause);
     const std::string rendered = EngineError(saved).what();
     CHECK(rendered.find("group/dut") != std::string::npos);
@@ -818,7 +819,7 @@ void rollback() {
         broken.instantiate(directory);
     });
     CHECK(diagnostic.path == "/instances/0/config");
-    CHECK(diagnostic.message.find("factory failure") != std::string::npos);
+    CHECK(render_diagnostic(diagnostic).find("factory failure") != std::string::npos);
 }
 
 void file() {

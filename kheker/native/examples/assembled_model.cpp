@@ -17,24 +17,31 @@ ascend::MethodOptions contract(std::string name) {
 // 工厂每次创建新的状态；模块名称由装配方提供。
 ascend::Module accumulator(std::string name, Integer initial) {
     ascend::Module model(std::move(name));
-    model.require_value<Integer>("input", "example.scalar.v1");
+    model.require_value<Integer>("input", "example.scalar.v1", {{"example.accumulator", "input"}, "One-step input"});
 
     auto value = std::make_shared<Integer>(initial);
     ascend::Module state("state");
     state.add_value<Integer>("value", [value] { return *value; },
-                            "Accumulated output", "example.scalar.v1");
+                            {{"example.accumulator", "state.value"}, "Accumulated output"}, "example.scalar.v1");
+    ascend::MethodOptions write_options = contract("example.write.v1");
+    write_options.description = {{"example.accumulator", "state.write"}, "Write accumulated output"};
     state.add_method<void, Integer>("write", {"next"}, [value](Integer next) {
         *value = next;
-    }, contract("example.write.v1"));
+    }, write_options);
 
     ascend::Module update("update");
-    const auto input = update.require_value<Integer>("input", "example.scalar.v1");
-    const auto old = update.require_value<Integer>("old", "example.scalar.v1");
-    const auto write = update.require_method<void, Integer>("write", "example.write.v1");
+    const auto input = update.require_value<Integer>("input", "example.scalar.v1",
+                                                     {{"example.accumulator", "update.input"}, "Input for this step"});
+    const auto old = update.require_value<Integer>("old", "example.scalar.v1",
+                                                   {{"example.accumulator", "update.old"}, "Previous accumulated output"});
+    const auto write = update.require_method<void, Integer>("write", "example.write.v1",
+                                                            {{"example.accumulator", "update.write"}, "Write back output"});
+    ascend::MethodOptions advance_options = contract("example.advance.v1");
+    advance_options.description = {{"example.accumulator", "update.advance"}, "b_next = b + 2 * a"};
     update.add_method<void>("advance", {}, [input, old, write](const ascend::Context& context) {
         const auto next = old.read(context) + 2 * input.read(context);
         write(context, next);
-    }, contract("example.advance.v1"));
+    }, advance_options);
 
     model.add(std::move(state));
     model.add(std::move(update));
@@ -48,7 +55,7 @@ ascend::Module accumulator(std::string name, Integer initial) {
 
 ascend::Module system(std::string name, Integer initial) {
     ascend::Module result(std::move(name));
-    result.require_value<Integer>("input", "example.scalar.v1");
+    result.require_value<Integer>("input", "example.scalar.v1", {{"example.accumulator", "input"}, "One-step input"});
     result.add(accumulator("model", initial));
     result.forward("input", {"model", "input"});
     result.export_symbol("advance", {"model", "advance"});
@@ -60,10 +67,12 @@ ascend::Module stimulus(std::string name, Integer initial) {
     ascend::Module result(std::move(name));
     auto value = std::make_shared<Integer>(initial);
     result.add_value<Integer>("value", [value] { return *value; },
-                             "Testbench-driven input", "example.scalar.v1");
+                             {{"example.stimulus", "value"}, "Testbench input"}, "example.scalar.v1");
+    ascend::MethodOptions drive_options = contract("example.scalar-drive.v1");
+    drive_options.description = {{"example.stimulus", "drive"}, "Set testbench input"};
     result.add_method<void, Integer>("drive", {"next"}, [value](Integer next) {
         *value = next;
-    }, contract("example.scalar-drive.v1"));
+    }, drive_options);
     return result;
 }
 }  // namespace
@@ -78,8 +87,7 @@ int main() {
         engine.connect({"baseline", "input"}, {"input_baseline", "value"});
         engine.connect({"alternate", "input"}, {"input_alternate", "value"});
         for (const auto& diagnostic : engine.check()) {
-            std::cerr << diagnostic.target.module << '/' << diagnostic.target.symbol
-                      << ": " << diagnostic.message << '\n';
+            std::cerr << ascend::render_diagnostic(diagnostic) << '\n';
         }
         engine.seal();
 

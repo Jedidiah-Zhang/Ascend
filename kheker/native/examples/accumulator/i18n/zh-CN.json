@@ -1,0 +1,15 @@
+{
+  "format": "ascend.i18n",
+  "version": 1,
+  "domain": "example.accumulator",
+  "locale": "zh-CN",
+  "entries": {
+    "input": "由装配方提供的一步输入值",
+    "state.value": "累计输出",
+    "state.write": "把累计输出写为给定值。",
+    "update.input": "本次推进使用的输入值",
+    "update.old": "推进前的累计输出",
+    "update.write": "写回累计输出的操作",
+    "update.advance": "读取旧状态与输入，计算 b_next = b + 2 * a 并写回。"
+  }
+}

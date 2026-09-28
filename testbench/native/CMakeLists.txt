@@ -74,3 +74,27 @@ foreach(case IN ITEMS
 )
     add_test(NAME record.${case} COMMAND ascend_assembly_record_tests ${case})
 endforeach()
+
+add_executable(ascend_text_tests test_text.cpp)
+target_link_libraries(ascend_text_tests PRIVATE ascend::engine)
+target_compile_definitions(ascend_text_tests PRIVATE
+    ASCEND_I18N_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../kheker/native/i18n")
+foreach(case IN ITEMS
+    define_resolve
+    locale_fallback
+    placeholders
+    load_merge
+    load_errors
+    diagnostic_texts
+    shipped_pack
+    depth_messages
+    parameter_literals
+    fallback_once
+    nested_messages
+    nested_diagnostics
+    boundary_diagnostics
+    domains
+    module_resources
+)
+    add_test(NAME text.${case} COMMAND ascend_text_tests ${case})
+endforeach()

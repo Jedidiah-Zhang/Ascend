@@ -25,7 +25,7 @@ Diagnostic error(ErrorCode code, Reference target, F&& function) {
     } catch (const EngineError& failure) {
         CHECK(failure.diagnostic().code == code);
         CHECK(failure.diagnostic().target == target);
-        CHECK(!failure.diagnostic().message.empty());
+        CHECK(!render_diagnostic(failure.diagnostic()).empty());
         return failure.diagnostic();
     }
     throw std::runtime_error("expected EngineError");
@@ -156,7 +156,7 @@ void discovery() {
     auto needs = engine.requirements();
     CHECK(needs.size() == 2);
     CHECK(needs[0].reference == Reference{"consumer", "input"});
-    CHECK(needs[0].description == "Required scalar");
+    CHECK(render_text(needs[0].description) == "Required scalar");
     needs[0].contract = "external edit";
     CHECK(engine.requirements()[0].contract == "example.scalar.v1");
     const auto candidates = engine.candidates({"consumer", "input"});
@@ -435,8 +435,9 @@ void failures() {
     engine.connect({"c", "invoke"}, {"p", "fail"});
     engine.seal();
     const auto diagnostic = error(ErrorCode::execution_failed, {"c", "run"}, [&] { engine.call({"c", "run"}, {}); });
-    CHECK(diagnostic.message.find("domain failure") != std::string::npos);
-    CHECK(diagnostic.message.find("p/fail") != std::string::npos);
+    CHECK(render_diagnostic(diagnostic).find("domain failure") != std::string::npos);
+    CHECK(diagnostic.cause && diagnostic.cause->target == Reference{"p", "fail"});
+    CHECK(render_diagnostic(diagnostic).find("p/fail") != std::string::npos);
 
     int validations = 0;
     Module group("group");

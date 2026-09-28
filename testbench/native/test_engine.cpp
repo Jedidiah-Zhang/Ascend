@@ -32,7 +32,7 @@ Diagnostic expect_error(ErrorCode code, Reference target, Function&& function) {
     } catch (const EngineError& error) {
         CHECK(error.diagnostic().code == code);
         CHECK(error.diagnostic().target == target);
-        CHECK(!error.diagnostic().message.empty());
+        CHECK(!render_diagnostic(error.diagnostic()).empty());
         return error.diagnostic();
     }
     throw std::runtime_error("expected EngineError");
@@ -156,9 +156,9 @@ void catalog_is_passive() {
     CHECK(catalog[1].parameters[0].type == typeid(Integer));
     CHECK(catalog[1].result_type == typeid(Integer));
     CHECK(catalog[1].reads == options.reads);
-    CHECK(catalog[2].description == "Length in mm");
+    CHECK(render_text(catalog[2].description) == "Length in mm");
     catalog[2].description = "changed outside engine";
-    CHECK(engine.catalog()[2].description == "Length in mm");
+    CHECK(render_text(engine.catalog()[2].description) == "Length in mm");
     engine.seal();
     CHECK(calls == 0);
 }
@@ -240,7 +240,7 @@ void configuration_validation() {
     const auto diagnostic = expect_error(ErrorCode::validation_failed, {"config", ""}, [&] {
         engine.add(module);
     });
-    CHECK(diagnostic.message.find("width must be positive") != std::string::npos);
+    CHECK(render_diagnostic(diagnostic).find("width must be positive") != std::string::npos);
     CHECK(engine.catalog().empty());
     valid = true;
     engine.add(module);
@@ -275,7 +275,7 @@ void unresolved_dependencies() {
     const auto diagnostic = expect_error(ErrorCode::missing_symbol, {"consumer", "run"}, [&] {
         engine.seal();
     });
-    CHECK(diagnostic.message.find("source") != std::string::npos);
+    CHECK(render_diagnostic(diagnostic).find("source") != std::string::npos);
     Module source("source");
     source.add_value<Integer>("input", [] { return Integer{2}; });
     source.add_value<Integer>("output", [] { return Integer{4}; });
@@ -382,7 +382,7 @@ void callback_failures() {
     const auto diagnostic = expect_error(ErrorCode::execution_failed, {"m", "unavailable"}, [&] {
         engine.read({"m", "unavailable"});
     });
-    CHECK(diagnostic.message.find("offline") != std::string::npos);
+    CHECK(render_diagnostic(diagnostic).find("offline") != std::string::npos);
     expect_error(ErrorCode::execution_failed, {"m", "fail"}, [&] { engine.call({"m", "fail"}, {}); });
     CHECK(state == 1);
     expect_error(ErrorCode::execution_failed, {"m", "unknown"}, [&] { engine.call({"m", "unknown"}, {}); });
@@ -452,7 +452,7 @@ void binding_argument_failures() {
             consume(input);
         });
         if (!unknown) {
-            CHECK(diagnostic.message.find("copy failed") != std::string::npos);
+            CHECK(render_diagnostic(diagnostic).find("copy failed") != std::string::npos);
         }
         CHECK(calls == 0);
     }
@@ -476,7 +476,7 @@ void binding_value_failures() {
             value.read();
         });
         if (!unknown) {
-            CHECK(diagnostic.message.find("second move failed") != std::string::npos);
+            CHECK(render_diagnostic(diagnostic).find("second move failed") != std::string::npos);
         }
     }
     CHECK(reads == 2);
@@ -498,7 +498,7 @@ void binding_result_failures() {
             produce(unknown);
         });
         if (!unknown) {
-            CHECK(diagnostic.message.find("second move failed") != std::string::npos);
+            CHECK(render_diagnostic(diagnostic).find("second move failed") != std::string::npos);
         }
     }
     CHECK(calls == 2);  // 结果取出失败不回滚已执行的方法。

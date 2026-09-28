@@ -46,7 +46,7 @@ int main() {
     } catch (const ascend::EngineError& error) {
         const auto& diagnostic = error.diagnostic();
         std::cerr << diagnostic.target.module << '/' << diagnostic.target.symbol
-                  << ": " << diagnostic.message << '\n';
+                  << ": " << ascend::render_text(diagnostic.text) << '\n';
         return 1;
     }
 }

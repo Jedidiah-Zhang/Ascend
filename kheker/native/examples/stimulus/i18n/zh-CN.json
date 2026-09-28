@@ -1,0 +1,10 @@
+{
+  "format": "ascend.i18n",
+  "version": 1,
+  "domain": "example.stimulus",
+  "locale": "zh-CN",
+  "entries": {
+    "value": "由测试驱动提供的外部输入值",
+    "drive": "更新由测试驱动提供的外部输入值。"
+  }
+}
