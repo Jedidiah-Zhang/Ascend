@@ -1,0 +1,31 @@
+name: Olam World CI
+
+on:
+  push:
+    paths: &paths
+      - "olam/**"
+      - "testbench/olam/**"
+      - ".github/workflows/olam_world.yml"
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      # macOS 暂未纳入：当前未做兼容，先保证 Linux 与 Windows 通过。
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: 配置世界库空间切片
+        run: cmake -S olam -B build/work/olam -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: 编译世界库与测试
+        run: cmake --build build/work/olam --config Release --parallel 4
+      - name: 运行空间测试
+        run: ctest --test-dir build/work/olam --build-config Release --output-on-failure

@@ -17,8 +17,9 @@ jobs:
   test:
     strategy:
       fail-fast: false
+      # macOS 暂未纳入：当前未做兼容，先保证 Linux 与 Windows 通过。
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5

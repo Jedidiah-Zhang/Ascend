@@ -44,7 +44,7 @@ Most detailed design documents are currently available in Chinese.
 
 ## Build and test the C++ prototype
 
-For developers: these commands build and run the C++ core's automated tests; they do not launch a game or graphical interface. You need CMake 3.20 and a C++17-compatible compiler. Run them from the repository root:
+For developers: these commands build and run the automated tests of the C++ core and the world library's space slice; they do not launch a game or graphical interface. You need CMake 3.20 and a C++17-compatible compiler. Run them from the repository root:
 
 ```bash
 cmake -S kheker/native -B build/work/native -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
@@ -52,7 +52,15 @@ cmake --build build/work/native --config Debug --parallel 4
 ctest --test-dir build/work/native --build-config Debug --output-on-failure
 ```
 
-Build outputs go under `build/work/native/`. See the [core test notes](docs/研究平台/实验环境与声明接入/测试.md) for the current test coverage and limitations.
+The world library's space slice builds independently:
+
+```bash
+cmake -S olam -B build/work/olam -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/work/olam --config Debug --parallel 4
+ctest --test-dir build/work/olam --build-config Debug --output-on-failure
+```
+
+Build outputs go under `build/work/native/` and `build/work/olam/`. See the [core test notes](docs/研究平台/实验环境与声明接入/测试.md) and the [space test notes](docs/世界/世界框架/空间系统/测试.md) for current coverage and limitations.
 
 ## Contributing
 
