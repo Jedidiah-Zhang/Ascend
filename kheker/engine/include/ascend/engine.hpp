@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ascend/state.hpp>
 #include <ascend/text.hpp>
 
 #include <any>
@@ -7,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -60,6 +62,10 @@ enum class ErrorCode {
     unsupported_format_version,
     io_failure,
     invalid_i18n,
+    state_incomplete,
+    state_mismatch,
+    invalid_state,
+    invalid_intervention,
 };
 
 // target 定位出错的引用或实例；text 是唯一的消息定义，字符串只在展示时生成。
@@ -275,11 +281,27 @@ public:
     // 将直接子模块的公开符号导出为本模块的公开符号。
     void export_symbol(std::string name, Reference child_symbol);
 
+    // 可选实验能力：声明模块的可捕获运行状态。capture 返回状态的结构化独立副本，
+    // restore 按同一契约恢复；contract 标识状态模式版本，必须非空。
+    // 每个模块至多声明一种状态能力（有状态或明确无状态）。
+    void add_state(std::string contract, std::function<Config()> capture,
+                   std::function<void(const Config&)> restore);
+    // 明确声明模块没有运行状态，使完整状态捕获可以判断边界。
+    void declare_stateless();
+
 private:
     friend class Engine;
     friend class AssemblyDefinition;
     // 内部装配构建器：定义在 src，仅用于遍历模块结构。
     friend class AssemblyBuilder;
+
+    // 模块声明的状态能力：契约、无状态标记与擦除后的捕获／恢复回调。
+    struct StateDeclaration {
+        std::string contract;
+        bool stateless = false;
+        std::function<Config()> capture;
+        std::function<void(const Config&)> restore;
+    };
 
     // 非模板登记入口：校验声明并保存擦除类型后的回调。
     void add_value_entry(Declaration declaration, std::function<std::any(const Context&)> getter);
@@ -319,6 +341,7 @@ private:
     std::vector<Module> children_;
     std::map<Reference, Connection> connections_;
     std::map<std::string, Reference> exports_;
+    std::optional<StateDeclaration> state_;
     Location source_;
     std::map<std::string, Location> requirement_sources_;
     std::map<Reference, Location> connection_sources_;
@@ -453,6 +476,14 @@ public:
     // 运行阶段读取顶层公开量或调用顶层公开方法；未封闭时报告 registration_open。
     std::any read(const Reference& reference) const;
     std::any call(const Reference& reference, const std::vector<std::any>& arguments) const;
+
+    // 状态交接：捕获完整运行状态。任一模块未声明状态能力（既未声明有状态也未明确无状态）
+    // 时报 state_incomplete；快照按值保存，与后续运行不共享可变状态。
+    StateSnapshot capture_state() const;
+    // 将快照恢复到本装配：模块集合、路径、状态契约与无状态标记必须与快照一致，
+    // 否则报 state_mismatch；模块恢复回调拒绝状态时报 invalid_state。
+    // 逐模块恢复，失败不回滚已恢复的模块；调用方应从检查点重建实例。
+    void restore_state(const StateSnapshot& snapshot);
 
     // 解析引用并核对种类、结果类型与参数后返回类型化绑定；约束同 read／call。
     template <class Type>

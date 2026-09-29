@@ -5,7 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_library(ascend_engine STATIC src/engine.cpp src/json.cpp src/assembly.cpp src/text.cpp src/i18n.cpp)
+add_library(ascend_engine STATIC src/engine.cpp src/config.cpp src/json.cpp src/assembly.cpp
+                                   src/experiment.cpp src/text.cpp src/i18n.cpp)
 add_library(ascend::engine ALIAS ascend_engine)
 target_compile_features(ascend_engine PUBLIC cxx_std_17)
 target_include_directories(ascend_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -26,6 +27,9 @@ target_link_libraries(ascend_assembled_model PRIVATE ascend::engine)
 add_executable(ascend_assembly_record examples/assembly_record.cpp)
 target_link_libraries(ascend_assembly_record PRIVATE ascend::engine)
 
+add_executable(ascend_experiment_branch examples/experiment_branch.cpp)
+target_link_libraries(ascend_experiment_branch PRIVATE ascend::engine)
+
 add_executable(ascend_text_catalog examples/text_catalog.cpp)
 target_link_libraries(ascend_text_catalog PRIVATE ascend::engine)
 
@@ -42,6 +46,9 @@ if(BUILD_TESTING)
     add_test(NAME record.testbench COMMAND ascend_assembly_record)
     set_tests_properties(record.testbench PROPERTIES
         PASS_REGULAR_EXPRESSION "pulse=3 baseline=8 alternate=12")
+    add_test(NAME experiment.branch COMMAND ascend_experiment_branch)
+    set_tests_properties(experiment.branch PROPERTIES
+        PASS_REGULAR_EXPRESSION "reference=ok")
     add_test(NAME engine.text_catalog COMMAND ascend_text_catalog
              "${CMAKE_CURRENT_SOURCE_DIR}/i18n/zh-CN.json"
              "${CMAKE_CURRENT_SOURCE_DIR}/examples/accumulator/i18n/zh-CN.json")

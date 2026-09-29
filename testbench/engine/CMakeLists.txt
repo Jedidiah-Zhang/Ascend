@@ -75,6 +75,31 @@ foreach(case IN ITEMS
     add_test(NAME record.${case} COMMAND ascend_assembly_record_tests ${case})
 endforeach()
 
+add_executable(ascend_experiment_tests test_experiment.cpp)
+target_link_libraries(ascend_experiment_tests PRIVATE ascend::engine)
+foreach(case IN ITEMS
+    state_declarations
+    capture_restore
+    deep_copy
+    branch_isolation
+    sampling_stability
+    lifetime
+    intervention_propagation
+    intervention_errors
+    nested_fields
+    restore_mismatches
+    spec_errors
+    step_failure
+    trace_record
+    nested_assembly
+    reentrant_operations
+    boundary_limit
+    observation_memory
+    trace_replay
+)
+    add_test(NAME experiment.${case} COMMAND ascend_experiment_tests ${case})
+endforeach()
+
 add_executable(ascend_text_tests test_text.cpp)
 target_link_libraries(ascend_text_tests PRIVATE ascend::engine)
 target_compile_definitions(ascend_text_tests PRIVATE

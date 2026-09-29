@@ -165,6 +165,16 @@ void rethrow_boundary(FailureBoundary boundary, const Reference& target) {
             key = "engine.transport.failed"; failed = "Value transport failed";
             non_standard_key = "engine.transport.non_standard";
             non_standard = "Value transport threw a non-standard exception"; break;
+        case FailureBoundary::state_capture:
+            code = ErrorCode::invalid_state;
+            key = "engine.state.capture_failed"; failed = "State capture failed";
+            non_standard_key = "engine.state.capture_non_standard";
+            non_standard = "State capture threw a non-standard exception"; break;
+        case FailureBoundary::state_restore:
+            code = ErrorCode::invalid_state;
+            key = "engine.state.restore_failed"; failed = "State restore failed";
+            non_standard_key = "engine.state.restore_non_standard";
+            non_standard = "State restore threw a non-standard exception"; break;
     }
     try { throw; }
     catch (const EngineError& error) {
@@ -193,6 +203,19 @@ public:
                 concrete_.emplace(entry->declaration.reference, entry);
                 runtime_->outputs.emplace(entry->declaration.reference, entry);
             }
+        }
+        for (const auto& node : nodes_) {
+            // 合成根不承载用户状态；其余模块逐一登记声明信息，缺失留待捕获时报告。
+            if (node.first.empty()) continue;
+            auto entry = std::make_shared<detail::StateEntry>();
+            if (node.second->state_) {
+                entry->declared = true;
+                entry->contract = node.second->state_->contract;
+                entry->stateless = node.second->state_->stateless;
+                entry->capture = node.second->state_->capture;
+                entry->restore = node.second->state_->restore;
+            }
+            runtime_->states.emplace(node.first, std::move(entry));
         }
         for (const auto& node : nodes_) {
             for (const auto& item : node.second->exports_) {
@@ -595,6 +618,37 @@ void Module::export_symbol(std::string name, Reference child_symbol) {
     }
 }
 
+void Module::add_state(std::string contract, std::function<Config()> capture,
+                       std::function<void(const Config&)> restore) {
+    const Reference target{name_, {}};
+    if (state_) {
+        detail::fail_text(ErrorCode::invalid_declaration, target,
+                     {{engine_text_domain, "engine.state.duplicate_declaration"},
+                      "Module already declares a state capability", {}});
+    }
+    if (contract.empty()) {
+        detail::fail_text(ErrorCode::invalid_declaration, target,
+                     {{engine_text_domain, "engine.state.empty_contract"},
+                      "State contract must not be empty", {}});
+    }
+    if (!capture || !restore) {
+        detail::fail_text(ErrorCode::invalid_declaration, target,
+                     {{engine_text_domain, "engine.state.missing_callbacks"},
+                      "State capture and restore callbacks are required", {}});
+    }
+    state_ = StateDeclaration{std::move(contract), false, std::move(capture), std::move(restore)};
+}
+
+void Module::declare_stateless() {
+    const Reference target{name_, {}};
+    if (state_) {
+        detail::fail_text(ErrorCode::invalid_declaration, target,
+                     {{engine_text_domain, "engine.state.duplicate_declaration"},
+                      "Module already declares a state capability", {}});
+    }
+    state_ = StateDeclaration{{}, true, {}, {}};
+}
+
 void Engine::invalidate_draft() {
     draft_ready_ = false;
     draft_runtime_.reset();
@@ -815,6 +869,116 @@ std::any Engine::read(const Reference& reference) const {
 
 std::any Engine::call(const Reference& reference, const std::vector<std::any>& arguments) const {
     return require_entry(reference).call(arguments);
+}
+
+StateSnapshot Engine::capture_state() const {
+    if (!runtime_) {
+        detail::fail_text(ErrorCode::registration_open, {},
+                     {{engine_text_domain, "engine.lifecycle.seal_required"},
+                      "Seal registration before execution or binding", {}});
+    }
+    const auto* state = static_cast<const detail::Runtime*>(runtime_.get());
+    // 先整体核对声明，再执行任何捕获回调：不产生部分快照，也不在有缺失时调用作者代码。
+    for (const auto& item : state->states) {
+        if (!item.second->declared) {
+            detail::fail_text(ErrorCode::state_incomplete, {item.first, {}},
+                         {{engine_text_domain, "engine.state.incomplete"},
+                          "Module '{module}' declares neither run state nor statelessness",
+                          {{"module", item.first}}});
+        }
+    }
+    StateSnapshot snapshot;
+    snapshot.modules.reserve(state->states.size());
+    for (const auto& item : state->states) {
+        ModuleState module;
+        module.path = item.first;
+        module.contract = item.second->contract;
+        module.stateless = item.second->stateless;
+        if (!module.stateless) {
+            try {
+                module.state = item.second->capture();
+            } catch (...) {
+                detail::rethrow_boundary(detail::FailureBoundary::state_capture, {item.first, {}});
+            }
+        }
+        snapshot.modules.push_back(std::move(module));
+    }
+    return snapshot;
+}
+
+void Engine::restore_state(const StateSnapshot& snapshot) {
+    if (!runtime_) {
+        detail::fail_text(ErrorCode::registration_open, {},
+                     {{engine_text_domain, "engine.lifecycle.seal_required"},
+                      "Seal registration before execution or binding", {}});
+    }
+    const auto* state = static_cast<const detail::Runtime*>(runtime_.get());
+    // 快照按模块路径建立索引：集合匹配与顺序无关，重复与空路径分别拒绝。
+    std::map<std::string, const ModuleState*> provided;
+    for (const auto& module : snapshot.modules) {
+        if (module.path.empty()) {
+            detail::fail_text(ErrorCode::state_mismatch, {},
+                         {{engine_text_domain, "engine.state.empty_module_path"},
+                          "Snapshot module path must not be empty", {}});
+        }
+        if (!provided.emplace(module.path, &module).second) {
+            detail::fail_text(ErrorCode::state_mismatch, {module.path, {}},
+                         {{engine_text_domain, "engine.state.snapshot_duplicate"},
+                          "Snapshot module '{module}' is duplicated", {{"module", module.path}}});
+        }
+    }
+    if (provided.size() != state->states.size()) {
+        detail::fail_text(ErrorCode::state_mismatch, {},
+                     {{engine_text_domain, "engine.state.count_mismatch"},
+                      "Snapshot has {snapshot} modules; assembly has {assembly}",
+                      {{"snapshot", std::to_string(provided.size())},
+                       {"assembly", std::to_string(state->states.size())}}});
+    }
+    for (const auto& entry : state->states) {
+        const auto found = provided.find(entry.first);
+        if (found == provided.end()) {
+            detail::fail_text(ErrorCode::state_mismatch, {entry.first, {}},
+                         {{engine_text_domain, "engine.state.snapshot_missing"},
+                          "Snapshot does not contain module '{module}'", {{"module", entry.first}}});
+        }
+        const ModuleState& module = *found->second;
+        if (!entry.second->declared) {
+            detail::fail_text(ErrorCode::state_mismatch, {entry.first, {}},
+                         {{engine_text_domain, "engine.state.undeclared_target"},
+                          "Module '{module}' does not declare a state capability",
+                          {{"module", entry.first}}});
+        }
+        if (entry.second->stateless != module.stateless) {
+            detail::fail_text(ErrorCode::state_mismatch, {entry.first, {}},
+                         {{engine_text_domain, "engine.state.stateless_mismatch"},
+                          "Module '{module}' statelessness does not match the snapshot",
+                          {{"module", entry.first}}});
+        }
+        if (module.stateless && !module.state.is_null()) {
+            detail::fail_text(ErrorCode::state_mismatch, {entry.first, {}},
+                         {{engine_text_domain, "engine.state.stateless_value"},
+                          "Stateless module '{module}' must carry a null state value",
+                          {{"module", entry.first}}});
+        }
+        if (entry.second->contract != module.contract) {
+            detail::fail_text(ErrorCode::state_mismatch, {entry.first, {}},
+                         {{engine_text_domain, "engine.state.contract_mismatch"},
+                          "State contract mismatch for module '{module}': expected '{expected}', received '{received}'",
+                          {{"module", entry.first},
+                           {"expected", entry.second->contract},
+                           {"received", module.contract}}});
+        }
+    }
+    // 逐模块写回；模块回调失败不回滚已经恢复的模块。
+    for (const auto& entry : state->states) {
+        if (!entry.second->declared || entry.second->stateless) continue;
+        const ModuleState& module = *provided.find(entry.first)->second;
+        try {
+            entry.second->restore(module.state);
+        } catch (...) {
+            detail::rethrow_boundary(detail::FailureBoundary::state_restore, {entry.first, {}});
+        }
+    }
 }
 
 }  // namespace ascend
