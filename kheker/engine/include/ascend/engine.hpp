@@ -479,6 +479,9 @@ public:
     std::any read(const Reference& reference) const;
     std::any call(const Reference& reference, const std::vector<std::any>& arguments) const;
 
+    // 查询模块声明的运行状态能力；既未声明有状态也未声明无状态时报 state_incomplete。
+    // 只读声明信息，可在封闭前调用（模块清单导出与核对使用）。
+    StateCapability state_capability(const Reference& reference) const;
     // 状态交接：捕获完整运行状态。任一模块未声明状态能力（既未声明有状态也未明确无状态）
     // 时报 state_incomplete；快照按值保存，与后续运行不共享可变状态。
     StateSnapshot capture_state() const;

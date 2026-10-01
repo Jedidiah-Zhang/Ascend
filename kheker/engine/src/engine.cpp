@@ -882,6 +882,17 @@ std::any Engine::call(const Reference& reference, const std::vector<std::any>& a
     return require_entry(reference).call(arguments);
 }
 
+StateCapability Engine::state_capability(const Reference& reference) const {
+    const Module& module = find_scope(reference.module);
+    if (!module.state_) {
+        detail::fail_text(ErrorCode::state_incomplete, {reference.module, {}},
+                     {{engine_text_domain, "engine.state.incomplete"},
+                      "Module '{module}' declares neither run state nor statelessness",
+                      {{"module", reference.module}}});
+    }
+    return StateCapability{module.state_->stateless, module.state_->contract};
+}
+
 StateSnapshot Engine::capture_state() const {
     if (!runtime_) {
         detail::fail_text(ErrorCode::registration_open, {},

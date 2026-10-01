@@ -105,6 +105,7 @@ foreach(case IN ITEMS
     experiment_file_round_trip
     experiment_file_depth_limits
     module_package_round_trip
+    module_library_load_unload
 )
     add_test(NAME experiment.${case} COMMAND ascend_experiment_tests ${case})
 endforeach()

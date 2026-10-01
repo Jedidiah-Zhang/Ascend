@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(ascend_engine STATIC src/engine.cpp src/config.cpp src/json.cpp src/assembly.cpp
-                                   src/experiment.cpp src/experiment_file.cpp src/container.cpp src/module_package.cpp src/text.cpp src/i18n.cpp)
+                                   src/experiment.cpp src/experiment_file.cpp src/container.cpp src/module_package.cpp src/module_library.cpp src/text.cpp src/i18n.cpp)
 add_library(ascend::engine ALIAS ascend_engine)
 target_compile_features(ascend_engine PUBLIC cxx_std_17)
 target_include_directories(ascend_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -51,6 +51,9 @@ if(ASCEND_ENGINE_BUILD_EXAMPLES)
 
     add_executable(ascend_text_catalog examples/text_catalog.cpp)
     target_link_libraries(ascend_text_catalog PRIVATE ascend::engine)
+
+    add_executable(ascend_module_library examples/module_library.cpp)
+    target_link_libraries(ascend_module_library PRIVATE ascend::engine)
 endif()
 
 include(CTest)
@@ -75,5 +78,9 @@ if(BUILD_TESTING AND ASCEND_ENGINE_BUILD_TESTS)
                  "${CMAKE_CURRENT_SOURCE_DIR}/examples/accumulator/i18n/zh-CN.json")
         set_tests_properties(engine.text_catalog PROPERTIES
             PASS_REGULAR_EXPRESSION "catalog=ok")
+        add_test(NAME engine.module_library COMMAND ascend_module_library
+                 "${CMAKE_CURRENT_BINARY_DIR}")
+        set_tests_properties(engine.module_library PROPERTIES
+            PASS_REGULAR_EXPRESSION "library=ok")
     endif()
 endif()

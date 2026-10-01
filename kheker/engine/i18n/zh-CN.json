@@ -174,6 +174,12 @@
     "json.utf8.invalid": "UTF-8 序列无效（第 {line} 行第 {column} 列）",
     "json.utf8.invalid_string": "字符串中存在无效的 UTF-8 序列",
     "json.value.unexpected_character": "值中出现意外字符（第 {line} 行第 {column} 列）",
+    "module_library.definition": "模块包缺少定义标识",
+    "module_library.duplicate": "该模块已装入；请先卸载",
+    "module_library.implementation": "模块包实现标识与内置实现不一致",
+    "module_library.implementation.empty": "内置实现标识不能为空",
+    "module_library.not_loaded": "该模块尚未装入",
+    "module_library.unknown_definition": "模块包定义标识没有对应的内置实现",
     "module_package.corrupt": "模块包结构损坏",
     "module_package.kind": "模块包文件种类不受支持",
     "module_package.magic": "文件不是模块包（魔数不匹配）",
@@ -181,7 +187,6 @@
     "module_package.mismatch": "模块清单与运行时声明不一致",
     "module_package.reference": "模块清单引用越出模块",
     "module_package.section": "模块包段结构非法",
-    "module_package.state": "模块清单导出无法确定实例的状态声明",
     "module_package.unsupported_type": "模块清单不支持该类型（首版仅支持 void、bool、int64、double、string）",
     "module_package.version": "模块包格式版本不受支持"
   }

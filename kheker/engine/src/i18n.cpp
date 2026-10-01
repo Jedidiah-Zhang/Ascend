@@ -48,7 +48,15 @@ void TextCatalog::load(const I18nResource& resource, TextConflict conflict) {
     }
     if (!stream.eof()) fail_i18n(ErrorCode::io_failure, path, {},
         {{engine_text_domain, "i18n.io.read"}, "Cannot read text catalog"});
+    load_text(I18nText{resource.domain, std::move(text), path}, conflict);
+}
 
+void TextCatalog::load_text(const I18nText& resource, TextConflict conflict) {
+    if (resource.domain.empty())
+        detail::fail_text(ErrorCode::invalid_i18n, {},
+            {{engine_text_domain, "i18n.resource.invalid"}, "Resource domain and path must be non-empty"});
+    const auto& text = resource.text;
+    const auto& path = resource.source;
     const Config document = detail::parse_json(text, path);
     if (document.kind() != Config::Kind::object) fail_i18n(ErrorCode::invalid_i18n, path, {},
         {{engine_text_domain, "i18n.record.object"}, "Text catalog must be a JSON object"});

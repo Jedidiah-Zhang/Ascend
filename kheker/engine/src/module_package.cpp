@@ -404,20 +404,10 @@ ModuleManifest export_module_manifest(const Engine& engine, const std::string& s
         item.description = requirement.description;
         manifest.requirements.push_back(std::move(item));
     }
-    const auto snapshot = engine.capture_state();
-    bool found = false;
-    for (const auto& module : snapshot.modules) {
-        if (module.path != instance) continue;
-        manifest.stateless = module.stateless;
-        manifest.state_contract = module.contract;
-        found = true;
-        break;
-    }
-    if (!found) {
-        fail(ErrorCode::state_incomplete, "module_package.state",
-             "Module manifest export cannot find the instance state declaration",
-             Reference{instance, {}});
-    }
+    // 状态能力直接读声明；不要求整体封闭，导出可在封闭前进行（ENV-17）。
+    const auto capability = engine.state_capability(Reference{instance, {}});
+    manifest.stateless = capability.stateless;
+    manifest.state_contract = capability.contract;
     return manifest;
 }
 

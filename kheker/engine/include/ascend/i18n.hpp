@@ -11,6 +11,13 @@ inline constexpr const char* i18n_format = "ascend.i18n";
 inline constexpr std::int64_t i18n_format_version = 1;
 enum class TextConflict { reject, replace };
 
+// 一条内存语言资源：文本域、语言文件文本与来源标识（诊断用，可为空）。
+struct I18nText {
+    std::string domain;
+    std::string text;
+    std::string source;
+};
+
 // 文本按语言、文本域与局部键组织；默认拒绝重复，覆盖必须显式指定。
 class TextCatalog {
 public:
@@ -18,6 +25,8 @@ public:
                 TextConflict conflict = TextConflict::reject);
     // 文件携带的 domain 必须与登记资源一致。整份资源检查成功后一次提交。
     void load(const I18nResource& resource, TextConflict conflict = TextConflict::reject);
+    // 内存资源：结构规则与 load 相同；source 仅用于诊断来源（可为空）。
+    void load_text(const I18nText& resource, TextConflict conflict = TextConflict::reject);
     void set_default_locale(std::string locale);
     const std::string& default_locale() const noexcept;
     bool contains(const std::string& locale, const TextKey& key) const;

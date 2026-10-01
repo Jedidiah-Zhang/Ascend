@@ -22,4 +22,10 @@ struct StateSnapshot {
     std::vector<ModuleState> modules;
 };
 
+// 模块声明的运行状态能力：无状态标记与状态契约；封闭前后都可查询。
+struct StateCapability {
+    bool stateless = false;
+    std::string contract;
+};
+
 }  // namespace ascend

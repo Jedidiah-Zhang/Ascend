@@ -1,5 +1,6 @@
 #include <ascend/experiment.hpp>
 #include <ascend/experiment_file.hpp>
+#include <ascend/module_library.hpp>
 #include <ascend/module_package.hpp>
 #include <ascend/example/experiment_model.hpp>
 #include <ascend/i18n.hpp>
@@ -1412,6 +1413,159 @@ void experiment_file_round_trip() {
 }
 
 
+// ---- 模块库测试模块（ENV-18）----
+
+Module make_library_source(const std::string& instance, const Config&) {
+    Module module(instance);
+    module.declare_stateless();
+    module.add_value<Integer>("value", [] { return Integer{7}; }, {}, "library.scalar.v1");
+    return module;
+}
+
+Module make_library_accumulator(const std::string& instance, const Config&) {
+    Module module(instance);
+    auto total = std::make_shared<Integer>(0);
+    module.add_value<Integer>("total", [total] { return *total; }, {}, "library.scalar.v1");
+    MethodOptions add_options;
+    add_options.contract = "library.accumulator.add.v1";
+    module.add_method<void, Integer>("add", {"amount"},
+                                     [total](Integer amount) { *total += amount; }, add_options);
+    module.add_state("library.accumulator.state.v1", [total] { return Config::integer(*total); },
+                     [total](const Config& state) { *total = state.integer(); });
+    return module;
+}
+
+Module make_library_relay(const std::string& instance, const Config&) {
+    Module module(instance);
+    auto input = module.require_value<Integer>("in", "library.scalar.v1");
+    module.declare_stateless();
+    module.add_value<Integer>("out", [input](const Context& context) { return input.read(context); },
+                              {}, "library.scalar.v1");
+    return module;
+}
+
+// 把模块（可含提供方）装配成探测引擎，导出清单并打包成模块包。
+template <typename Assemble>
+ModulePackage pack_library_module(Assemble&& assemble, const std::string& instance,
+                                  const std::string& definition, const std::string& implementation,
+                                  std::vector<ModuleResource> resources = {}) {
+    Engine engine;
+    assemble(engine);
+    engine.seal();
+    ModulePackage package;
+    package.manifest = export_module_manifest(engine, "", instance);
+    package.manifest.definition = definition;
+    package.manifest.version = "1.0";
+    package.manifest.implementation = implementation;
+    package.resources = std::move(resources);
+    return package;
+}
+
+void module_library_load_unload() {
+    // 宿主登记三个内置实现：无状态值、带状态方法、带需求与资源。
+    ModuleLibrary library;
+    library.register_implementation("library.source", "library.source.int.v1", make_library_source);
+    library.register_implementation("library.accumulator", "library.accumulator.int.v1",
+                                    make_library_accumulator);
+    library.register_implementation("library.relay", "library.relay.int.v1", make_library_relay);
+
+    const auto source_bytes = encode_module_package(pack_library_module(
+        [](Engine& engine) { engine.add(make_library_source("probe", {})); }, "probe",
+        "library.source", "library.source.int.v1"));
+    const auto accumulator_bytes = encode_module_package(pack_library_module(
+        [](Engine& engine) { engine.add(make_library_accumulator("probe", {})); }, "probe",
+        "library.accumulator", "library.accumulator.int.v1"));
+    const auto relay_bytes = encode_module_package(pack_library_module(
+        [](Engine& engine) {
+            Module provider("provider");
+            provider.declare_stateless();
+            provider.add_value<Integer>("value", [] { return Integer{1}; }, {}, "library.scalar.v1");
+            engine.add(std::move(provider));
+            engine.add(make_library_relay("probe", {}));
+            engine.connect({"probe", "in"}, {"provider", "value"});
+        },
+        "probe", "library.relay", "library.relay.int.v1",
+        {{"library.relay", "zh-CN",
+          R"({"format":"ascend.i18n","version":1,"domain":"library.relay","locale":"zh-CN","entries":{"out":"\u4e2d\u7ee7\u8f93\u51fa"}})"}}));
+
+    // 装入、列表与概要。
+    CHECK(!library.contains("library.source"));
+    CHECK(library.load(source_bytes) == "library.source");
+    CHECK(library.load(accumulator_bytes) == "library.accumulator");
+    CHECK(library.load(relay_bytes) == "library.relay");
+    CHECK(library.definitions().size() == 3);
+    const auto entries = library.entries();
+    CHECK(entries[0].definition == "library.accumulator");
+    CHECK(!entries[0].stateless);
+    CHECK(entries[0].state_contract == "library.accumulator.state.v1");
+    CHECK(entries[0].declarations == 2);
+    CHECK(entries[0].requirements == 0);
+    CHECK(entries[1].definition == "library.relay");
+    CHECK(entries[1].stateless);
+    CHECK(entries[1].declarations == 1);
+    CHECK(entries[1].requirements == 1);
+    CHECK(entries[1].resources == 1);
+    CHECK(entries[2].definition == "library.source");
+    CHECK(entries[2].declarations == 1);
+    CHECK(library.manifest("library.source").stateless);
+
+    // 重复装入拒绝；卸载后可再次装入。
+    failure(ErrorCode::duplicate_definition, Reference{"library.source", {}},
+            [&] { library.load(source_bytes); });
+    CHECK(library.unload("library.source"));
+    CHECK(!library.contains("library.source"));
+    CHECK(!library.unload("library.source"));
+    CHECK(library.load(source_bytes) == "library.source");
+
+    // 包内资源登记进宿主文案目录。
+    TextCatalog catalog;
+    for (const auto& resource : library.resources("library.relay")) catalog.load_text(resource);
+    CHECK(catalog.contains("zh-CN", TextKey{"library.relay", "out"}));
+    CHECK(catalog.resolve("zh-CN", TextRef(TextKey{"library.relay", "out"})) == "\u4e2d\u7ee7\u8f93\u51fa");
+
+    // 装入的实现可用于装配实例化。
+    Engine engine;
+    engine.add(library.factories().create("library.source", "source", {}));
+    engine.add(library.factories().create("library.accumulator", "acc", {}));
+    engine.seal();
+    CHECK(std::any_cast<Integer>(engine.read({"source", "value"})) == Integer{7});
+    engine.call({"acc", "add"}, {Integer{5}});
+    CHECK(std::any_cast<Integer>(engine.read({"acc", "total"})) == Integer{5});
+
+    // 失败路径：未登记定义、实现标识不符、清单篡改与资源非法都拒绝且不登记。
+    CHECK(library.unload("library.source"));
+    const auto unknown_bytes = encode_module_package(pack_library_module(
+        [](Engine& engine) { engine.add(make_library_source("probe", {})); }, "probe",
+        "library.unknown", "library.unknown.int.v1"));
+    failure(ErrorCode::invalid_declaration, Reference{"library.unknown", {}},
+            [&] { library.load(unknown_bytes); });
+
+    const auto mismatched_bytes = encode_module_package(pack_library_module(
+        [](Engine& engine) { engine.add(make_library_source("probe", {})); }, "probe",
+        "library.source", "library.source.int.v2"));
+    failure(ErrorCode::invalid_config, Reference{"library.source", {}},
+            [&] { library.load(mismatched_bytes); });
+
+    auto tampered = pack_library_module(
+        [](Engine& engine) { engine.add(make_library_source("probe", {})); }, "probe",
+        "library.source", "library.source.int.v1");
+    tampered.manifest.declarations[0].result_type = "string";
+    failure(ErrorCode::state_mismatch, Reference{"probe", "declarations"},
+            [&] { library.load(encode_module_package(tampered)); });
+    CHECK(!library.contains("library.source"));
+
+    auto broken = pack_library_module(
+        [](Engine& engine) { engine.add(make_library_source("probe", {})); }, "probe",
+        "library.source", "library.source.int.v1",
+        {{"library.source", "zh-CN", "not json"}});
+    failure(ErrorCode::invalid_json, {}, [&] { library.load(encode_module_package(broken)); });
+    CHECK(!library.contains("library.source"));
+
+    // 未装入时查询报诊断。
+    failure(ErrorCode::invalid_config, Reference{"library.source", {}},
+            [&] { library.manifest("library.source"); });
+}
+
 void module_package_round_trip() {
     // 带状态、公开量、方法与需求的模块：导出清单、打包、解码并核对。
     auto value = std::make_shared<Integer>(0);
@@ -1530,6 +1684,7 @@ int main(int argc, char** argv) {
         {"experiment_file_round_trip", experiment_file_round_trip},
         {"experiment_file_depth_limits", experiment_file_depth_limits},
         {"module_package_round_trip", module_package_round_trip},
+        {"module_library_load_unload", module_library_load_unload},
     };
     if (argc != 2 || tests.count(argv[1]) == 0) return 2;
     try {
