@@ -18,9 +18,9 @@
 
 namespace ascend::session {
 
-// 首版运行上限：单次命令的推进步数、单分支轨迹的边界总数与同组分支数。
+// 首版运行上限：单次命令的推进步数、单分支轨迹的逻辑帧总数与同组分支数。
 inline constexpr std::int64_t max_steps_per_command = 10000;
-inline constexpr std::int64_t max_trace_boundaries = 10000;
+inline constexpr std::int64_t max_trace_frames = 10000;
 inline constexpr std::size_t max_branches = 2;
 
 // 渲染后的诊断视图：保留类别、目标、来源、字段路径与原因链。
@@ -130,13 +130,13 @@ struct InterventionView {
 struct StepEvent {
     enum class Kind { completed, input_failed, advance_failed, sample_failed, stopped };
     Kind kind = Kind::completed;
-    std::int64_t boundary = 0;
+    std::int64_t frame = 0;
     std::optional<DiagnosticView> diagnostic;
 };
 
 struct TrackStatus {
     std::string label;
-    std::int64_t boundary = 0;
+    std::int64_t frame = 0;
     std::int64_t origin = 0;
     std::size_t samples = 0;
     std::size_t input_failures = 0;
@@ -158,7 +158,7 @@ struct Status {
     std::optional<std::uint64_t> run_id;
     bool dirty = false;  // draft_revision != run_revision
     bool has_checkpoint = false;
-    std::int64_t checkpoint_boundary = -1;
+    std::int64_t checkpoint_frame = -1;
     std::size_t recorded_inputs = 0;
     std::size_t branches = 0;
     std::vector<TrackStatus> tracks;  // 当前活动的分支轨迹；源模式为单条
@@ -169,7 +169,7 @@ struct Status {
 struct OperationResult {
     bool ok = false;
     std::size_t completed_steps = 0;  // 本次命令实际完成的推进步数
-    bool stopped = false;             // 停止请求在当前命令的步骤边界生效
+    bool stopped = false;             // 停止请求在当前命令的逻辑帧边界生效
     Status status;
     std::vector<DiagnosticView> diagnostics;
 };
@@ -184,7 +184,7 @@ struct CellView {
 };
 
 struct SampleView {
-    std::int64_t boundary = 0;
+    std::int64_t frame = 0;
     std::vector<CellView> observations;  // 按规格观测顺序
 };
 
@@ -205,10 +205,10 @@ struct TruthModuleView {
     std::vector<std::pair<std::string, std::string>> fields;  // 叶字段路径与显示值
 };
 
-// 某个边界的完整真值与观测详情。
+// 某个逻辑帧的完整真值与观测详情。
 struct SampleDetailView {
     bool found = false;
-    std::int64_t boundary = 0;
+    std::int64_t frame = 0;
     std::vector<TruthModuleView> truth;
     std::vector<std::pair<std::string, CellView>> observations;
 };
@@ -224,15 +224,15 @@ struct DiffCellView {
 struct ComparisonView {
     std::vector<std::string> variables;
     struct Row {
-        std::int64_t boundary = 0;
+        std::int64_t frame = 0;
         std::vector<DiffCellView> cells;
     };
-    std::vector<Row> rows;                     // 两分支都有采样的共同边界
-    std::vector<std::int64_t> unpaired;        // 仅一方有采样的边界
+    std::vector<Row> rows;                     // 两分支都有采样的共同逻辑帧
+    std::vector<std::int64_t> unpaired;        // 仅一方有采样的逻辑帧
 };
 
 struct InputRecordView {
-    std::int64_t boundary = 0;
+    std::int64_t frame = 0;
     std::string name;
     std::string value;
 };
@@ -252,8 +252,8 @@ struct BranchRequest {
 
 struct ReplayMismatchView {
     std::string branch;
-    std::int64_t boundary = 0;
-    std::string field;  // 模块/字段路径、观测名或输入边界说明
+    std::int64_t frame = 0;
+    std::string field;  // 模块/字段路径、观测名或主体说明
     std::string expected;
     std::string received;
 };
@@ -261,7 +261,7 @@ struct ReplayMismatchView {
 struct ReplayReport {
     bool ok = false;
     bool complete = false;  // 全部记录采样均已核对；存在未比较范围时为 false
-    std::size_t verified_boundaries = 0;
+    std::size_t verified_frames = 0;
     std::vector<std::string> notes;
     std::optional<ReplayMismatchView> first_mismatch;
     std::optional<DiagnosticView> diagnostic;
@@ -280,7 +280,7 @@ struct ModelTemplate {
 
 // 无界面实验会话：持有配置草稿、当前运行、检查点、分支轨迹与实验记录。
 // 全部命令同步执行且必须在同一宿主线程串行调用；运行中由宿主以
-// should_stop 回调请求在步骤边界停止，会话自身不创建线程。
+// should_stop 回调请求在逻辑帧边界停止，会话自身不创建线程。
 // 操作不会抛出引擎异常；失败以 OperationResult 与诊断返回。
 class Session {
 public:
@@ -320,7 +320,7 @@ public:
     // 轨迹尾部增量：从指定的采样与事件下标开始构造视图。
     TrackTraceView trace_delta(std::size_t series, std::size_t sample_begin,
                                std::size_t event_begin) const;
-    SampleDetailView sample_detail(std::size_t series, std::int64_t boundary) const;
+    SampleDetailView sample_detail(std::size_t series, std::int64_t frame) const;
     ComparisonView comparison() const;
     RecordView record() const;
 
@@ -335,16 +335,16 @@ public:
     OperationResult set_instance_config(const std::string& scope, const std::string& name, Config config);
     // 设置共同输入值；不改变草稿修订，实际值随记录保存。
     OperationResult set_input(const std::string& name, std::any value);
-    // 单步与有限步推进；should_stop 在每个步骤边界检查。
+    // 单步与有限步推进；should_stop 在每个逻辑帧边界检查。
     OperationResult step();
     OperationResult run(std::int64_t steps, const std::function<bool()>& should_stop = {});
-    // 在当前边界创建检查点（源模式；分支建立后不再创建）。
+    // 在当前逻辑帧创建检查点（源模式；分支建立后不再创建）。
     OperationResult create_checkpoint();
     // 从检查点建立对照与干预分支；要求恰好两个请求且位于源模式。
     OperationResult create_branches(std::vector<BranchRequest> branches);
     // 从保存的检查点与干预重建现有分支，清空其轨迹与记录输入。
     OperationResult reset_branches();
-    // 依据会话记录重建并逐边界核对；不修改当前运行与轨迹。
+    // 依据会话记录重建并逐逻辑帧核对；不修改当前运行与轨迹。
     ReplayReport replay();
 
 private:
@@ -358,7 +358,7 @@ private:
                            std::size_t completed_steps = 0, bool stopped = false);
     // 执行工厂、装配、规格与适配检查；成功实例化时刷新目录。
     CheckReport run_checks();
-    // 用草稿配置建立源运行（初态、边界 0 与首条采样），重置记录与检查点。
+    // 用草稿配置建立源运行（初态、逻辑帧 0 与首条采样），重置记录与检查点。
     void build_source_run();
     // 从检查点建立分支并用新轨迹替换当前跟踪；失败时不改变会话。
     OperationResult replace_with_branches(const std::vector<BranchRequest>& branches);

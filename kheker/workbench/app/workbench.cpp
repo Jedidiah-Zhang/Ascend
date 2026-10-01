@@ -120,7 +120,7 @@ void Workbench::shutdown() {
     stopped_ = true;
     if (controller_) controller_->requestStop();
     if (thread_ && thread_->isRunning()) {
-        // 阻塞等待当前命令在步骤边界结束后返回；随后退出线程事件循环。
+        // 阻塞等待当前命令在逻辑帧边界结束后返回；随后退出线程事件循环。
         QMetaObject::invokeMethod(controller_, "prepareShutdown", Qt::BlockingQueuedConnection);
         thread_->quit();
         thread_->wait();

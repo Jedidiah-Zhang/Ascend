@@ -55,7 +55,7 @@ int main() {
                                 {}, {}};
         const auto directory = example::factories();
 
-        // 先在初始边界之后运行到边界 2，作为两个分支的共同起点。
+        // 先在初始逻辑帧之后运行到逻辑帧 2，作为两个分支的共同起点。
         ExperimentRun source(record.assembly, directory, record.spec, "source");
         advance(source, 1);
         advance(source, 1);
@@ -86,27 +86,27 @@ int main() {
                     tuple(example::reference_control[2]));
         ok &= check("treated origin", subject_observation(treated.observe()),
                     tuple(example::reference_treated[2]));
-        std::cout << "origin boundary=" << origin.boundary << " control="
+        std::cout << "origin frame=" << origin.frame << " control="
                   << show(observed(control_trace.samples.front())) << " treated="
                   << show(observed(treated_trace.samples.front()))
                   << '\n';
 
-        // 宿主记录实际驱动的共同输入；记录边界是驱动前的位置。
-        for (Integer boundary = 2; boundary < 5; ++boundary) record.inputs.push_back({boundary, "a", {Integer{1}}});
+        // 宿主记录实际驱动的共同输入；记录的逻辑帧是驱动前的位置。
+        for (Integer frame = 2; frame < 5; ++frame) record.inputs.push_back({frame, "a", {Integer{1}}});
         for (const auto& input : record.inputs) {
-            if (control.boundary() != input.boundary || treated.boundary() != input.boundary) return 1;
+            if (control.frame() != input.frame || treated.frame() != input.frame) return 1;
             control.drive(input.name, input.arguments);
             treated.drive(input.name, input.arguments);
             control.step();
             treated.step();
-            const auto boundary = control.boundary();
+            const auto frame = control.frame();
             control_trace.samples.push_back(control.sample());
             treated_trace.samples.push_back(treated.sample());
             ok &= check("control", observed(control_trace.samples.back()),
-                        tuple(example::reference_control[boundary]));
+                        tuple(example::reference_control[frame]));
             ok &= check("treated", observed(treated_trace.samples.back()),
-                        tuple(example::reference_treated[boundary]));
-            std::cout << "boundary=" << boundary << " control=" << show(observed(control_trace.samples.back()))
+                        tuple(example::reference_treated[frame]));
+            std::cout << "frame=" << frame << " control=" << show(observed(control_trace.samples.back()))
                        << " treated=" << show(observed(treated_trace.samples.back())) << '\n';
         }
 
@@ -121,7 +121,7 @@ int main() {
             const auto verify = [&] {
                 const auto actual = replay.sample();
                 const auto& expected = trace.samples.at(index++);
-                if (actual.boundary != expected.boundary || actual.truth.modules.size() != expected.truth.modules.size()) return false;
+                if (actual.frame != expected.frame || actual.truth.modules.size() != expected.truth.modules.size()) return false;
                 for (std::size_t module = 0; module < actual.truth.modules.size(); ++module) {
                     const auto& a = actual.truth.modules[module];
                     const auto& b = expected.truth.modules[module];
@@ -131,7 +131,7 @@ int main() {
             };
             ok &= verify();
             for (const auto& input : record.inputs) {
-                if (replay.boundary() != input.boundary) return 1;
+                if (replay.frame() != input.frame) return 1;
                 replay.drive(input.name, input.arguments);
                 replay.step();
                 ok &= verify();

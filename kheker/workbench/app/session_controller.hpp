@@ -36,7 +36,7 @@ public:
     SessionController(session::ModelTemplate model, std::shared_ptr<const session::AdapterRegistry> adapters,
                       QObject* parent = nullptr);
 
-    // 线程安全：请求在步骤边界停止当前运行命令。
+    // 线程安全：请求在逻辑帧边界停止当前运行命令。
     void requestStop();
     // 线程安全：提交新的运行命令前清除上一次的停止请求。
     void clearStop();
@@ -55,7 +55,7 @@ public slots:
     void replay();
     void requestComparison();
     void requestRecord();
-    void requestSampleDetail(int series, std::int64_t boundary);
+    void requestSampleDetail(int series, std::int64_t frame);
     // 空操作：关闭窗口时用阻塞调用等待当前命令结束。
     void prepareShutdown();
 
@@ -71,7 +71,7 @@ signals:
     void checkFinished(const ascend::session::CheckReport& report);
     void replayFinished(const ascend::session::ReplayReport& report);
     void recordChanged(const ascend::session::RecordView& record);
-    void sampleDetailReady(int series, std::int64_t boundary, const ascend::session::SampleDetailView& detail);
+    void sampleDetailReady(int series, std::int64_t frame, const ascend::session::SampleDetailView& detail);
     void diagnosticsReported(const std::vector<ascend::session::DiagnosticView>& diagnostics);
 
 private:

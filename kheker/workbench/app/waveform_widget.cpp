@@ -70,22 +70,22 @@ QRect WaveformWidget::wave_rect() const {
 
 WaveformWidget::Bounds WaveformWidget::data_bounds() const {
     Bounds bounds;
-    const auto extend = [&bounds](std::int64_t boundary) {
+    const auto extend = [&bounds](std::int64_t frame) {
         if (!bounds.valid) {
-            bounds.min = boundary;
-            bounds.max = boundary;
+            bounds.min = frame;
+            bounds.max = frame;
             bounds.valid = true;
         } else {
-            bounds.min = std::min(bounds.min, boundary);
-            bounds.max = std::max(bounds.max, boundary);
+            bounds.min = std::min(bounds.min, frame);
+            bounds.max = std::max(bounds.max, frame);
         }
     };
     for (const auto& signal : signals_) {
         for (const auto& series : signal.series) {
-            for (const auto& point : series.points) extend(point.boundary);
+            for (const auto& point : series.points) extend(point.frame);
         }
     }
-    for (const auto& event : events_) extend(event.boundary);
+    for (const auto& event : events_) extend(event.frame);
     return bounds;
 }
 
@@ -131,12 +131,12 @@ void WaveformWidget::set_view(double minimum, double maximum) {
     update();
 }
 
-double WaveformWidget::x_for_boundary(double boundary, const QRect& wave) const {
+double WaveformWidget::x_for_frame(double frame, const QRect& wave) const {
     const double span = std::max(1e-9, view_max_ - view_min_);
-    return wave.left() + (boundary - view_min_) / span * wave.width();
+    return wave.left() + (frame - view_min_) / span * wave.width();
 }
 
-double WaveformWidget::boundary_for_x(double x, const QRect& wave) const {
+double WaveformWidget::frame_for_x(double x, const QRect& wave) const {
     const double span = view_max_ - view_min_;
     return view_min_ + (x - wave.left()) / std::max(1.0, static_cast<double>(wave.width())) * span;
 }
@@ -168,13 +168,13 @@ void WaveformWidget::paintEvent(QPaintEvent*) {
     const double first_tick = std::ceil(view_min_ / step) * step;
     painter.setPen(QColor(0xe4, 0xe4, 0xe4));
     for (double tick = first_tick; tick <= view_max_ + 1e-9; tick += step) {
-        const double x = x_for_boundary(tick, wave);
+        const double x = x_for_frame(tick, wave);
         painter.drawLine(QPointF(x, wave.top()), QPointF(x, wave.bottom()));
     }
     painter.setPen(QColor(0x99, 0x99, 0x99));
     painter.drawLine(wave.bottomLeft(), wave.bottomRight());
     for (double tick = first_tick; tick <= view_max_ + 1e-9; tick += step) {
-        const double x = x_for_boundary(tick, wave);
+        const double x = x_for_frame(tick, wave);
         painter.drawLine(QPointF(x, wave.bottom()), QPointF(x, wave.bottom() + 4));
         const double label_x = std::clamp(x, 30.0, static_cast<double>(width()) - 30.0);
         painter.drawText(QRectF(label_x - 30, wave.bottom() + 5, 60, kAxisHeight - 7),
@@ -196,7 +196,7 @@ void WaveformWidget::paintEvent(QPaintEvent*) {
         for (const auto& series : signal.series) {
             for (const auto& point : series.points) {
                 if (!point.numeric) continue;
-                if (point.boundary < view_min_ - 1.0 || point.boundary > view_max_ + 1.0) continue;
+                if (point.frame < view_min_ - 1.0 || point.frame > view_max_ + 1.0) continue;
                 if (!has) {
                     minimum = maximum = point.value;
                     has = true;
@@ -220,11 +220,11 @@ void WaveformWidget::paintEvent(QPaintEvent*) {
             painter.setPen(QPen(series.color, 1.4));
             const auto count = static_cast<std::size_t>(series.points.size());
             std::size_t begin = 0;
-            while (begin < count && series.points[begin].boundary < view_min_ - 1.0) ++begin;
+            while (begin < count && series.points[begin].frame < view_min_ - 1.0) ++begin;
             std::size_t end = begin;
-            while (end < count && series.points[end].boundary <= view_max_ + 1.0) ++end;
+            while (end < count && series.points[end].frame <= view_max_ + 1.0) ++end;
             if (end - begin > static_cast<std::size_t>(wave.width()) * 2) {
-                // 密集区间按像素列聚合：绘制成本与像素数同阶，不随边界数增长。
+                // 密集区间按像素列聚合：绘制成本与像素数同阶，不随逻辑帧数增长。
                 const auto columns = static_cast<std::size_t>(wave.width());
                 std::vector<double> column_minimum(columns, 0.0);
                 std::vector<double> column_maximum(columns, 0.0);
@@ -233,7 +233,7 @@ void WaveformWidget::paintEvent(QPaintEvent*) {
                     const auto& point = series.points[index];
                     if (!point.numeric) continue;
                     const int column = std::clamp(
-                        static_cast<int>(x_for_boundary(static_cast<double>(point.boundary), wave)) -
+                        static_cast<int>(x_for_frame(static_cast<double>(point.frame), wave)) -
                             wave.left(),
                         0, wave.width() - 1);
                     const double y = y_for(point.value);
@@ -261,7 +261,7 @@ void WaveformWidget::paintEvent(QPaintEvent*) {
                 for (std::size_t index = begin; index < end; ++index) {
                     const auto& point = series.points[index];
                     if (!point.numeric) continue;
-                    const double x = x_for_boundary(static_cast<double>(point.boundary), wave);
+                    const double x = x_for_frame(static_cast<double>(point.frame), wave);
                     const double y = y_for(point.value);
                     if (!started) {
                         painter.drawPoint(QPointF(x, y));
@@ -291,7 +291,7 @@ void WaveformWidget::paintEvent(QPaintEvent*) {
     painter.setPen(QColor(0xdd, 0xdd, 0xdd));
     painter.drawLine(0, kEventHeight - 1, width(), kEventHeight - 1);
     for (const auto& event : events_) {
-        const double x = x_for_boundary(static_cast<double>(event.boundary), wave);
+        const double x = x_for_frame(static_cast<double>(event.frame), wave);
         if (x < wave.left() - 2 || x > wave.right() + 2) continue;
         QPolygonF marker;
         marker << QPointF(x - 4.0, kEventHeight - 3.0) << QPointF(x + 4.0, kEventHeight - 3.0)
@@ -303,10 +303,10 @@ void WaveformWidget::paintEvent(QPaintEvent*) {
     painter.setBrush(Qt::NoBrush);
 
     // 游标
-    const auto draw_cursor = [&](std::int64_t boundary, bool valid, const QColor& color, bool dashed,
+    const auto draw_cursor = [&](std::int64_t frame, bool valid, const QColor& color, bool dashed,
                                  const QString& label) {
         if (!valid) return;
-        const double x = x_for_boundary(static_cast<double>(boundary), wave);
+        const double x = x_for_frame(static_cast<double>(frame), wave);
         if (x < wave.left() - 1 || x > wave.right() + 1) return;
         QPen pen(color, 1.2);
         if (dashed) pen.setStyle(Qt::DashLine);
@@ -362,7 +362,7 @@ void WaveformWidget::mouseDoubleClickEvent(QMouseEvent* event) {
 void WaveformWidget::wheelEvent(QWheelEvent* event) {
     const double factor = event->angleDelta().y() > 0 ? 0.8 : 1.25;
     const QRect wave = wave_rect();
-    const double anchor = boundary_for_x(event->position().x(), wave);
+    const double anchor = frame_for_x(event->position().x(), wave);
     view_auto_ = false;
     set_view(anchor - (anchor - view_min_) * factor, anchor + (view_max_ - anchor) * factor);
 }
@@ -372,19 +372,19 @@ void WaveformWidget::place_cursor(const QPoint& pos, bool secondary) {
     if (!wave.contains(pos)) return;
     const auto bounds = data_bounds();
     if (!bounds.valid) return;
-    std::int64_t boundary = static_cast<std::int64_t>(std::llround(boundary_for_x(pos.x(), wave)));
-    boundary = std::clamp(boundary, bounds.min, bounds.max);
+    std::int64_t frame = static_cast<std::int64_t>(std::llround(frame_for_x(pos.x(), wave)));
+    frame = std::clamp(frame, bounds.min, bounds.max);
     if (secondary) {
-        cursor_b_ = boundary;
+        cursor_b_ = frame;
         cursor_b_auto_ = false;
     } else {
-        cursor_a_ = boundary;
+        cursor_a_ = frame;
     }
     cursor_a_valid_ = true;
     cursor_b_valid_ = true;
     update();
     emit cursorsChanged();
-    emit boundarySelected(secondary ? cursor_b_ : cursor_a_);
+    emit frameSelected(secondary ? cursor_b_ : cursor_a_);
 }
 
 void WaveformWidget::update_tooltip(const QPoint& pos) {
@@ -394,11 +394,11 @@ void WaveformWidget::update_tooltip(const QPoint& pos) {
         return;
     }
     for (const auto& event : events_) {
-        const double x = x_for_boundary(static_cast<double>(event.boundary), wave);
+        const double x = x_for_frame(static_cast<double>(event.frame), wave);
         if (std::abs(x - pos.x()) > 6) continue;
         QToolTip::showText(mapToGlobal(pos),
                            ui_text(*texts_, "workbench.waveform.event_tooltip", "Boundary %1: %2")
-                               .arg(event.boundary)
+                               .arg(event.frame)
                                .arg(event.text),
                            this);
         return;

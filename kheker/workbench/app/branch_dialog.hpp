@@ -21,7 +21,7 @@ class BranchDialog : public QDialog {
     Q_OBJECT
 
 public:
-    BranchDialog(std::int64_t boundary, const std::vector<session::StateFieldView>& fields,
+    BranchDialog(std::int64_t frame, const std::vector<session::StateFieldView>& fields,
                  const session::ValueAdapter& integer_adapter, const UiTexts& texts, QWidget* parent = nullptr);
 
     // 干预分支请求；未选择字段时返回空列表。

@@ -225,7 +225,7 @@ void advance(ExperimentRun& run, Integer input) {
     run.step();
 }
 
-// 手工核对序列：a = 1 恒定。(0,0,0) 起步，干预在边界 2 施加 x := 10。
+// 手工核对序列：a = 1 恒定。(0,0,0) 起步，干预在逻辑帧 2 施加 x := 10。
 constexpr std::array<Tuple, 6> kControl = {Tuple{0, 0, 0}, Tuple{1, 0, 0}, Tuple{2, 1, 0},
                                           Tuple{3, 2, 1}, Tuple{4, 3, 3}, Tuple{5, 4, 6}};
 constexpr std::array<Tuple, 6> kTreated = {Tuple{0, 0, 0}, Tuple{1, 0, 0}, Tuple{10, 1, 0},
@@ -317,7 +317,7 @@ void capture_restore() {
     CHECK(std::any_cast<Integer>(second.read({"plant", "y"})) == 2);
     CHECK(std::any_cast<Integer>(second.read({"plant", "z"})) == 1);
 
-    // 相同后续输入下，恢复实例与源实例逐边界一致。
+    // 相同后续输入下，恢复实例与源实例逐逻辑帧一致。
     const auto step_second = second.bind_method<void>({"plant", "advance"});
     const auto drive_second = second.bind_method<void, Integer>({"input", "drive"});
     for (int index = 0; index < 2; ++index) {
@@ -341,7 +341,7 @@ void deep_copy() {
 
     // 运行继续变化，已有检查点保持不变。
     advance(run, 1);
-    CHECK(run.boundary() == 2);
+    CHECK(run.frame() == 2);
     CHECK(truth(checkpoint.truth, "x") == 1);
     CHECK(truth(copy.truth, "x") == 1);
     CHECK(module_state(checkpoint.truth, "plant/state").state ==
@@ -374,23 +374,23 @@ void branch_isolation() {
     treated.restore(apply_interventions(
         origin, {{"plant/state", "x", Config::integer(10)}}));
 
-    for (int boundary = 3; boundary <= 5; ++boundary) {
+    for (int frame = 3; frame <= 5; ++frame) {
         advance(control, 1);
         advance(treated, 1);
-        CHECK(observed(control.sample()) == kControl[boundary]);
-        CHECK(observed(treated.sample()) == kTreated[boundary]);
+        CHECK(observed(control.sample()) == kControl[frame]);
+        CHECK(observed(treated.sample()) == kTreated[frame]);
     }
 
     // 原始运行继续推进，结果与对照分支一致，不受两个分支影响。
-    for (int boundary = 3; boundary <= 5; ++boundary) advance(original, 1);
+    for (int frame = 3; frame <= 5; ++frame) advance(original, 1);
     CHECK(observed(original.sample()) == kControl[5]);
 
     // 同一检查点恢复两份无干预实例，逐步轨迹一致。
     ExperimentRun mirror(environment, directory, spec());
     mirror.restore(origin);
-    for (int boundary = 3; boundary <= 5; ++boundary) {
+    for (int frame = 3; frame <= 5; ++frame) {
         advance(mirror, 1);
-        CHECK(observed(mirror.sample()) == kControl[boundary]);
+        CHECK(observed(mirror.sample()) == kControl[frame]);
     }
 
     // 交换两个分支的推进先后，各自结果不变；分支之间状态互不影响。
@@ -399,11 +399,11 @@ void branch_isolation() {
     ExperimentRun treated_swapped(environment, directory, spec());
     treated_swapped.restore(apply_interventions(
         origin, {{"plant/state", "x", Config::integer(10)}}));
-    for (int boundary = 3; boundary <= 5; ++boundary) {
+    for (int frame = 3; frame <= 5; ++frame) {
         advance(treated_swapped, 1);
         advance(control_swapped, 1);
-        CHECK(observed(treated_swapped.sample()) == kTreated[boundary]);
-        CHECK(observed(control_swapped.sample()) == kControl[boundary]);
+        CHECK(observed(treated_swapped.sample()) == kTreated[frame]);
+        CHECK(observed(control_swapped.sample()) == kControl[frame]);
     }
     CHECK(observed(control.sample()) == kControl[5]);
     CHECK(observed(treated.sample()) == kTreated[5]);
@@ -422,10 +422,10 @@ void sampling_stability() {
     intensive.restore(origin);
     ExperimentRun sparse(environment, directory, spec());
     sparse.restore(origin);
-    for (int boundary = 3; boundary <= 5; ++boundary) {
+    for (int frame = 3; frame <= 5; ++frame) {
         advance(intensive, 1);
         for (int repeat = 0; repeat < 3; ++repeat) {
-            CHECK(observed(intensive.sample()) == kControl[boundary]);
+            CHECK(observed(intensive.sample()) == kControl[frame]);
         }
         advance(sparse, 1);
     }
@@ -463,7 +463,7 @@ void lifetime() {
     advance(surviving, 1);
     CHECK(observed(surviving.sample()) == kControl[3]);
     const Sample kept = surviving.sample();
-    for (int boundary = 4; boundary <= 5; ++boundary) advance(surviving, 1);
+    for (int frame = 4; frame <= 5; ++frame) advance(surviving, 1);
     CHECK(observed(surviving.sample()) == kControl[5]);
     CHECK(observed(kept) == kControl[3]);
 
@@ -496,11 +496,11 @@ void intervention_propagation() {
 
     // 直接结果在预测起点可见：x 已改变，y、z 尚未传播。
     const auto start = treated.sample();
-    CHECK(start.boundary == 2);
+    CHECK(start.frame == 2);
     CHECK(observed(start) == kTreated[2]);
     CHECK(observed(control.sample()) == kControl[2]);
 
-    // 下游传播逐边界出现：y 在下一步变化，z 再下一步变化。
+    // 下游传播逐逻辑帧出现：y 在下一步变化，z 再下一步变化。
     advance(control, 1);
     advance(treated, 1);
     CHECK(observed(control.sample()) == kControl[3]);
@@ -773,7 +773,7 @@ void spec_errors() {
     CHECK(factory_calls == 0);
 }
 
-// 推进入口先写入再抛错：用于验证失败不回滚且边界不前进。
+// 推进入口先写入再抛错：用于验证失败不回滚且逻辑帧不前进。
 Module fragile(const std::string& instance, const Config& config) {
     Integer initial = 0;
     if (!config.is_null()) initial = config.integer();
@@ -808,37 +808,37 @@ void step_failure() {
     const auto armed = apply_interventions(origin, {{"counter", "", Config::integer(99)}});
     run.restore(armed);
 
-    // 失败时边界不前进，先写入的值保留，不从检查点自动回滚；失败进入轨迹记录。
+    // 失败时逻辑帧不前进，先写入的值保留，不从检查点自动回滚；失败进入轨迹记录。
     RunTrace trace{"failing", origin, {{"counter", "", Config::integer(99)}}, {}, {}, {}};
     const auto diagnostic = failure(ErrorCode::execution_failed, {"counter", "advance"}, [&] { run.step(); });
-    trace.failures.push_back({run.boundary(), diagnostic});
-    CHECK(run.boundary() == 2);
+    trace.failures.push_back({run.frame(), diagnostic});
+    CHECK(run.frame() == 2);
     CHECK(observed(run.sample(), "x") == 100);
     // 失败后仍可采样继续，成功步骤只进入采样、不追加失败记录。
     trace.samples.push_back(run.sample());
     CHECK(trace.failures.size() == 1);
-    CHECK(trace.failures[0].boundary == 2);
+    CHECK(trace.failures[0].frame == 2);
     CHECK(trace.samples.size() == 1);
-    CHECK(trace.samples[0].boundary == 2);
+    CHECK(trace.samples[0].frame == 2);
 
-    // 恢复失败时边界同样保持不变；检查点边界必须非负。
+    // 恢复失败时逻辑帧同样保持不变；检查点逻辑帧必须非负。
     auto rejected = origin;
     module_state(rejected.truth, "counter").state = Config::object({});
     failure(ErrorCode::invalid_state, {"counter", {}}, [&] { run.restore(rejected); });
-    CHECK(run.boundary() == 2);
+    CHECK(run.frame() == 2);
     auto negative = origin;
-    negative.boundary = -1;
+    negative.frame = -1;
     failure(ErrorCode::invalid_declaration, {}, [&] { run.restore(negative); });
-    CHECK(run.boundary() == 2);
+    CHECK(run.frame() == 2);
     CHECK(observed(run.sample(), "x") == 100);
 
     // 从原检查点恢复，改走一条不再触发失败的分支。
     run.restore(origin);
-    CHECK(run.boundary() == 2);
+    CHECK(run.frame() == 2);
     CHECK(observed(run.sample(), "x") == 2);
     run.restore(apply_interventions(origin, {{"counter", "", Config::integer(10)}}));
     run.step();
-    CHECK(run.boundary() == 3);
+    CHECK(run.frame() == 3);
     CHECK(observed(run.sample(), "x") == 11);
 
     // 失败运行不影响其他实例。
@@ -863,17 +863,17 @@ void trace_record() {
     ExperimentRun treated(environment, directory, spec(), treated_trace.label);
     treated.restore(apply_interventions(treated_trace.origin, treated_trace.interventions));
 
-    for (int boundary = 3; boundary <= 5; ++boundary) {
+    for (int frame = 3; frame <= 5; ++frame) {
         advance(control, 1);
         advance(treated, 1);
         control_trace.samples.push_back(control.sample());
         treated_trace.samples.push_back(treated.sample());
     }
-    CHECK(control_trace.origin.boundary == 2);
-    CHECK(treated_trace.origin.boundary == 2);
+    CHECK(control_trace.origin.frame == 2);
+    CHECK(treated_trace.origin.frame == 2);
     CHECK(control_trace.samples.size() == 3);
-    CHECK(control_trace.samples[0].boundary == 3);
-    CHECK(control_trace.samples[2].boundary == 5);
+    CHECK(control_trace.samples[0].frame == 3);
+    CHECK(control_trace.samples[2].frame == 5);
     CHECK(observed(control_trace.samples[2]) == kControl[5]);
     CHECK(observed(treated_trace.samples[2]) == kTreated[5]);
 
@@ -973,31 +973,31 @@ void reentrant_operations() {
         hook = [] {};
         run.restore(origin);
         run.step();
-        CHECK(run.boundary() == 1);
+        CHECK(run.frame() == 1);
         CHECK(values->first == 1 && values->second == 1);
     }
 }
 
-void boundary_limit() {
+void frame_limit() {
     AssemblyDefinition environment;
     environment.add_instance("test.fragile", "counter", Config::integer(0));
     ModuleFactoryDirectory directory;
     directory.add_definition("test.fragile", fragile);
     ExperimentRun run(environment, directory, {{"counter", "advance"}, {}, {{"x", {"counter", "x"}}}}, "limit");
     auto checkpoint = run.checkpoint();
-    checkpoint.boundary = std::numeric_limits<Integer>::max() - 1;
+    checkpoint.frame = std::numeric_limits<Integer>::max() - 1;
     run.restore(checkpoint);
     run.step();
-    CHECK(run.boundary() == std::numeric_limits<Integer>::max());
+    CHECK(run.frame() == std::numeric_limits<Integer>::max());
     const auto before = run.checkpoint();
     failure(ErrorCode::execution_failed, {"limit", "step"}, [&] { run.step(); });
-    CHECK(run.boundary() == before.boundary);
+    CHECK(run.frame() == before.frame);
     CHECK(run.checkpoint().truth.modules.front().state == before.truth.modules.front().state);
     CHECK(observed(run.sample(), "x") == 1); // 拒绝发生在模型回调之前。
-    checkpoint.boundary = 0;
+    checkpoint.frame = 0;
     run.restore(checkpoint);
     run.step();
-    CHECK(run.boundary() == 1);
+    CHECK(run.frame() == 1);
 }
 
 void observation_memory() {
@@ -1047,7 +1047,7 @@ void observation_memory() {
     restored.restore(origin);
     const auto before = captures;
     const Observation kept = restored.observe();
-    CHECK(kept.boundary == 1);
+    CHECK(kept.frame == 1);
     CHECK(subject(kept) == 3);
     restored.step();
     CHECK(subject(restored.observe()) == 8); // 未恢复记忆时会错误得到 6。
@@ -1078,7 +1078,7 @@ void trace_replay() {
             run.restore(apply_interventions(trace.origin, trace.interventions));
             trace.samples.push_back(run.sample());
             for (const auto& input : result.inputs) {
-                CHECK(run.boundary() == input.boundary);
+                CHECK(run.frame() == input.frame);
                 run.drive(input.name, input.arguments);
                 run.step();
                 trace.samples.push_back(run.sample());
@@ -1097,13 +1097,13 @@ void trace_replay() {
         const auto verify = [&] {
             const auto actual = replay.sample();
             const auto& expected = trace.samples.at(index++);
-            CHECK(actual.boundary == expected.boundary);
+            CHECK(actual.frame == expected.frame);
             CHECK(observed(actual) == observed(expected));
             for (const auto& module : expected.truth.modules) CHECK(module_state(actual.truth, module.path).state == module.state);
         };
         verify();
         for (const auto& input : record.inputs) {
-            CHECK(replay.boundary() == input.boundary);
+            CHECK(replay.frame() == input.frame);
             replay.drive(input.name, input.arguments);
             replay.step();
             verify();
@@ -1134,8 +1134,8 @@ void run_directory() {
     CHECK(run.spec().inputs.front().first == "a");
     CHECK((run.spec().observations.front().second == Reference{"plant", "x"}));
     failure(ErrorCode::missing_module, {"absent", {}}, [&] { run.catalog("absent"); });
-    // 只读目录查询不改变边界与后续结果。
-    CHECK(run.boundary() == 0);
+    // 只读目录查询不改变逻辑帧与后续结果。
+    CHECK(run.frame() == 0);
     CHECK(observed(run.sample()) == kControl[0]);
     advance(run, 1);
     CHECK(observed(run.sample()) == kControl[1]);
@@ -1147,9 +1147,9 @@ void example_model() {
     // 可复用示例组件的装配、规格与参考序列手工核对一致。
     const auto directory = example::factories();
     ExperimentRun source(example::environment(), directory, example::specification());
-    for (int boundary = 1; boundary <= 2; ++boundary) {
+    for (int frame = 1; frame <= 2; ++frame) {
         advance(source, 1);
-        CHECK(observed(source.sample()) == tuple(example::reference_control[boundary]));
+        CHECK(observed(source.sample()) == tuple(example::reference_control[frame]));
     }
     const auto origin = source.checkpoint();
     ExperimentRun treated(example::environment(), directory, example::specification());
@@ -1157,9 +1157,9 @@ void example_model() {
         origin, {{example::reference_intervention_module, example::reference_intervention_field,
                   Config::integer(example::reference_intervention_value)}}));
     CHECK(observed(treated.sample()) == tuple(example::reference_treated[2]));
-    for (Integer boundary = 2; boundary < 5; ++boundary) {
+    for (Integer frame = 2; frame < 5; ++frame) {
         advance(treated, 1);
-        CHECK(observed(treated.sample()) == tuple(example::reference_treated[boundary + 1]));
+        CHECK(observed(treated.sample()) == tuple(example::reference_treated[frame + 1]));
     }
 
     // 共享语言资源按登记路径加载，说明解析为中文并能回退默认模板。
@@ -1173,16 +1173,16 @@ void example_model() {
     CHECK(catalog.resolve("zh-CN", declared->description) == "状态变量 x；下一步取 x + a");
     CHECK(catalog.resolve("en", declared->description) == "State variable x; next value is x + a");
 
-    // int64 边界输入：x + a 与 y + z 溢出分别报错，边界不前进且不产生有符号溢出。
+    // int64 极值输入：x + a 与 y + z 溢出分别报错，逻辑帧不前进且不产生有符号溢出。
     const auto maximum = std::numeric_limits<Integer>::max();
     ExperimentRun overflow_x(example::environment({maximum, 0, 0}, 1), directory, example::specification());
     const auto diagnostic =
         failure(ErrorCode::execution_failed, {"plant/update", "advance"}, [&] { overflow_x.step(); });
     CHECK(render_diagnostic(diagnostic).find("x + a") != std::string::npos);
-    CHECK(overflow_x.boundary() == 0);
+    CHECK(overflow_x.frame() == 0);
     ExperimentRun overflow_z(example::environment({0, maximum, 1}, 1), directory, example::specification());
     failure(ErrorCode::execution_failed, {"plant/update", "advance"}, [&] { overflow_z.step(); });
-    CHECK(overflow_z.boundary() == 0);
+    CHECK(overflow_z.frame() == 0);
     CHECK(observed(overflow_z.sample()) == Tuple{0, maximum, 1});
 }
 
@@ -1205,7 +1205,7 @@ int main(int argc, char** argv) {
         {"trace_record", trace_record},
         {"nested_assembly", nested_assembly},
         {"reentrant_operations", reentrant_operations},
-        {"boundary_limit", boundary_limit},
+        {"frame_limit", frame_limit},
         {"observation_memory", observation_memory},
         {"trace_replay", trace_replay},
         {"run_directory", run_directory},

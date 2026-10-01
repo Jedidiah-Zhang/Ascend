@@ -178,7 +178,7 @@ ModelTemplate poison_template() {
     return model;
 }
 
-// 双输入模型：同一驱动前边界上的两项输入按记录顺序驱动后只推进一次。
+// 双输入模型：同一驱动前逻辑帧上的两项输入按记录顺序驱动后只推进一次。
 constexpr const char* kDual = "test.dual";
 
 Module dual(const std::string& instance, const Config&) {
@@ -330,7 +330,7 @@ void load_and_check() {
     CHECK(!loaded.status.dirty);
     CHECK(!loaded.status.has_checkpoint);
     CHECK(loaded.status.tracks.size() == 1);
-    CHECK(loaded.status.tracks[0].boundary == 0);
+    CHECK(loaded.status.tracks[0].frame == 0);
     CHECK(loaded.status.tracks[0].samples == 1);
     CHECK(!session->status().last_failure.has_value());
     CHECK(session->resource_diagnostics().empty());
@@ -427,8 +427,8 @@ void config_revision() {
     CHECK(applied.status.run_revision == revision + 1);
     CHECK(!applied.status.dirty);
     CHECK(applied.status.tracks[0].samples == 1);
-    CHECK(applied.status.tracks[0].boundary == 0);
-    CHECK(applied.status.checkpoint_boundary == -1);
+    CHECK(applied.status.tracks[0].frame == 0);
+    CHECK(applied.status.checkpoint_frame == -1);
     CHECK(session->catalog().revision == revision + 1);
 
     CHECK(session->run(1).ok);
@@ -453,25 +453,25 @@ void step_run_stop() {
     CHECK(running->run(5).ok);
     CHECK(values_except_prefix(stepping->trace(0)) == values_except_prefix(running->trace(0)));
 
-    // 停止请求在步骤边界生效，实际完成边界如实报告。
+    // 停止请求在逻辑帧边界生效，实际完成逻辑帧如实报告。
     int checks = 0;
     const auto stopped = running->run(10, [&] { return checks++ >= 2; });
     CHECK(stopped.ok);
     CHECK(stopped.stopped);
     CHECK(stopped.completed_steps == 2);
     CHECK(stopped.status.phase == Phase::stopped);
-    CHECK(stopped.status.tracks[0].boundary == 7);
+    CHECK(stopped.status.tracks[0].frame == 7);
     CHECK(!stopped.status.last_failure.has_value());
     const auto stopped_trace = running->trace(0);
     CHECK(stopped_trace.events.back().kind == StepEvent::Kind::stopped);
 
-    // 继续运行至与单步会话相同的边界，结果一致。
+    // 继续运行至与单步会话相同的逻辑帧，结果一致。
     CHECK(running->run(3).ok);
     for (int index = 0; index < 5; ++index) {
         CHECK(advance(*stepping, 1).ok);
     }
-    CHECK(stepping->status().tracks[0].boundary == 10);
-    CHECK(running->status().tracks[0].boundary == 10);
+    CHECK(stepping->status().tracks[0].frame == 10);
+    CHECK(running->status().tracks[0].frame == 10);
     CHECK(values_except_prefix(stepping->trace(0)) == values_except_prefix(running->trace(0)));
 
     // 轻量轨迹访问：元数据计数与全量视图一致，尾部增量从指定下标开始。
@@ -481,7 +481,7 @@ void step_run_stop() {
     CHECK(running->trace_delta(0, 0, 0).samples.size() == running->trace(0).samples.size());
     const auto delta = running->trace_delta(0, 9, 9);
     CHECK(delta.samples.size() == 2);
-    CHECK(delta.samples.front().boundary == 9);
+    CHECK(delta.samples.front().frame == 9);
     CHECK(delta.events.size() == 2);
     CHECK(delta.events.front().kind == StepEvent::Kind::completed);
 }
@@ -496,7 +496,7 @@ void checkpoint_branches() {
     const auto checkpoint = session->create_checkpoint();
     CHECK(checkpoint.ok);
     CHECK(checkpoint.status.has_checkpoint);
-    CHECK(checkpoint.status.checkpoint_boundary == 2);
+    CHECK(checkpoint.status.checkpoint_frame == 2);
     const auto fields = session->state_fields();
     bool found_x = false;
     for (const auto& field : fields) {
@@ -543,12 +543,12 @@ void checkpoint_branches() {
     CHECK(!rejected.ok);
     CHECK(rejected.status.phase == Phase::runnable);
 
-    // 同步驱动到边界 5。
+    // 同步驱动到逻辑帧 5。
     CHECK(advance(*session, 1, 3).ok);
     const auto status = session->status();
     CHECK(status.tracks.size() == 2);
-    CHECK(status.tracks[0].boundary == 5);
-    CHECK(status.tracks[1].boundary == 5);
+    CHECK(status.tracks[0].frame == 5);
+    CHECK(status.tracks[1].frame == 5);
     CHECK(status.tracks[0].samples == 4);
     CHECK(status.tracks[1].samples == 4);
 
@@ -559,7 +559,7 @@ void checkpoint_branches() {
     check_values(treated_full, 1, 11, 10, 1);
     check_values(treated_full, 3, 13, 12, 22);
 
-    // 同边界差值：干预 − 对照；干预直接变化在起点可见，y、z 逐步传播。
+    // 同一逻辑帧差值：干预 − 对照；干预直接变化在起点可见，y、z 逐步传播。
     const auto comparison = session->comparison();
     CHECK((comparison.variables == std::vector<std::string>{"x", "y", "z"}));
     CHECK(comparison.rows.size() == 4);
@@ -567,7 +567,7 @@ void checkpoint_branches() {
     const std::map<std::int64_t, std::vector<Integer>> expected = {
         {2, {8, 0, 0}}, {3, {8, 8, 0}}, {4, {8, 8, 8}}, {5, {8, 8, 16}}};
     for (const auto& row : comparison.rows) {
-        const auto& want = expected.at(row.boundary);
+        const auto& want = expected.at(row.frame);
         for (std::size_t index = 0; index < row.cells.size(); ++index) {
             CHECK(row.cells[index].comparable);
             CHECK(row.cells[index].difference == std::to_string(want[index]));
@@ -575,7 +575,7 @@ void checkpoint_branches() {
     }
 
     // 检查点在分支运行后保持不变；真值详情可见 x 的直接变化。
-    CHECK(session->status().checkpoint_boundary == 2);
+    CHECK(session->status().checkpoint_frame == 2);
     const auto detail = session->sample_detail(2, 2);
     CHECK(detail.found);
     bool detail_x = false;
@@ -604,15 +604,15 @@ void branch_order() {
     CHECK(session->load().ok);
     CHECK(advance(*session, 1, 2).ok);
     CHECK(session->create_checkpoint().ok);
-    CHECK(advance(*session, 1, 3).ok);  // 探索运行继续到边界 5。
-    CHECK(session->status().tracks[0].boundary == 5);
+    CHECK(advance(*session, 1, 3).ok);  // 探索运行继续到逻辑帧 5。
+    CHECK(session->status().tracks[0].frame == 5);
 
     const auto branches = session->create_branches(
         {{"干预", {{example::reference_intervention_module, example::reference_intervention_field,
                     Config::integer(example::reference_intervention_value)}}},
          {"对照", {}}});
     CHECK(branches.ok);
-    CHECK(session->status().checkpoint_boundary == 2);
+    CHECK(session->status().checkpoint_frame == 2);
     CHECK(session->trace(1).origin == 2);
     CHECK(session->trace(2).origin == 2);
     CHECK(session->trace(0).samples.size() == 6);
@@ -628,7 +628,7 @@ void intervention_errors() {
     CHECK(advance(*session, 1, 2).ok);
     CHECK(session->create_checkpoint().ok);
 
-    // 非初始边界之外的目标：无状态容器、缺失字段、缺失模块分别被拒绝。
+    // 非初始逻辑帧上的目标：无状态容器、缺失字段、缺失模块分别被拒绝。
     const auto stateless = session->create_branches(
         {{"对照", {}}, {"干预", {{"plant", "x", Config::integer(1)}}}});
     CHECK(!stateless.ok);
@@ -671,32 +671,32 @@ void partial_branch_failure() {
         {{"对照", {}}, {"干预", {{"plant/state", "x", Config::integer(maximum - 1)}}}});
     CHECK(branches.ok);
 
-    // 第二步在干预分支溢出：命令停止，保留各自真实边界。
+    // 第二步在干预分支溢出：命令停止，保留各自实际到达的逻辑帧。
     const auto failed = advance(*session, 1, 2);
     CHECK(!failed.ok);
     CHECK(failed.completed_steps == 1);
     CHECK(failed.status.phase == Phase::failed);
-    CHECK(failed.status.tracks[0].boundary == 4);
-    CHECK(failed.status.tracks[1].boundary == 3);
+    CHECK(failed.status.tracks[0].frame == 4);
+    CHECK(failed.status.tracks[1].frame == 3);
     CHECK(failed.status.tracks[1].advance_failures == 1);
     CHECK(failed.status.tracks[1].failed);
     CHECK(failed.diagnostics.size() == 1);
 
-    // 失败状态禁止推进，只能在共同有效边界比较。
+    // 失败状态禁止推进，只能在共同有效逻辑帧比较。
     const auto blocked = session->step();
     CHECK(!blocked.ok);
-    CHECK(blocked.status.tracks[0].boundary == 4);
+    CHECK(blocked.status.tracks[0].frame == 4);
     const auto comparison = session->comparison();
     CHECK(comparison.rows.size() == 2);
     CHECK((comparison.unpaired == std::vector<std::int64_t>{4}));
     // 推进失败进入记录的分支轨迹。
     CHECK(session->record().failures == 1);
 
-    // 失败记录的重放：已记录采样逐边界核对；失败步骤的输入范围列入说明。
+    // 失败记录的重放：已记录采样逐逻辑帧核对；失败步骤的输入范围列入说明。
     const auto replay = session->replay();
     CHECK(replay.ok);
     CHECK(!replay.complete);
-    CHECK(replay.verified_boundaries == 5);
+    CHECK(replay.verified_frames == 5);
     CHECK(replay.notes.size() == 1);
     CHECK(replay.notes.front().find("干预") != std::string::npos);
     CHECK(!replay.diagnostic.has_value());
@@ -724,21 +724,21 @@ void failure_paths() {
     const auto failed = session->step();
     CHECK(!failed.ok);
     CHECK(failed.status.phase == Phase::failed);
-    CHECK(failed.status.tracks[0].boundary == 0);
+    CHECK(failed.status.tracks[0].frame == 0);
     CHECK(failed.status.tracks[0].advance_failures == 1);
     CHECK(failed.status.tracks[0].samples == 1);
     CHECK(failed.status.last_failure.has_value());
     CHECK(failed.diagnostics.front().message.find("x + a") != std::string::npos);
     CHECK(session->trace(0).events.back().kind == StepEvent::Kind::advance_failed);
 
-    // 输入失败与采样失败分别记录，不误报边界。
+    // 输入失败与采样失败分别记录，不误报逻辑帧。
     auto fragile = make_session(fragile_template());
     CHECK(fragile->load().ok);
     CHECK(set_input(*fragile, "a", 100).ok);
     const auto input_failed = fragile->step();
     CHECK(!input_failed.ok);
     CHECK(input_failed.status.tracks[0].input_failures == 1);
-    CHECK(input_failed.status.tracks[0].boundary == 0);
+    CHECK(input_failed.status.tracks[0].frame == 0);
     CHECK(!input_failed.diagnostics.empty());
     CHECK(fragile->trace(0).events.back().kind == StepEvent::Kind::input_failed);
 
@@ -748,8 +748,8 @@ void failure_paths() {
     const auto sample_failed = sampler->step();
     CHECK(!sample_failed.ok);
     CHECK(sample_failed.status.tracks[0].sample_failures == 1);
-    // 推进已完成：边界前进、采样失败只影响记录。
-    CHECK(sample_failed.status.tracks[0].boundary == 1);
+    // 推进已完成：逻辑帧前进、采样失败只影响记录。
+    CHECK(sample_failed.status.tracks[0].frame == 1);
     CHECK(sample_failed.status.tracks[0].samples == 1);
     CHECK(sampler->trace(0).events.back().kind == StepEvent::Kind::sample_failed);
 }
@@ -766,10 +766,10 @@ void record_inputs() {
     CHECK(record.branches == 1);
     CHECK(record.inputs == 4);
     CHECK(record.input_list.size() == 4);
-    CHECK(record.input_list[0].boundary == 0 && record.input_list[0].value == "1");
-    CHECK(record.input_list[1].boundary == 1 && record.input_list[1].value == "1");
-    CHECK(record.input_list[2].boundary == 2 && record.input_list[2].value == "2");
-    CHECK(record.input_list[3].boundary == 3 && record.input_list[3].value == "2");
+    CHECK(record.input_list[0].frame == 0 && record.input_list[0].value == "1");
+    CHECK(record.input_list[1].frame == 1 && record.input_list[1].value == "1");
+    CHECK(record.input_list[2].frame == 2 && record.input_list[2].value == "2");
+    CHECK(record.input_list[3].frame == 3 && record.input_list[3].value == "2");
     CHECK(session->status().recorded_inputs == 4);
 
     // 轨迹反映实际驱动的输入：x 依次为 0、1、2、4、6。
@@ -797,14 +797,14 @@ void replay() {
     const auto report = session->replay();
     CHECK(report.ok);
     CHECK(!report.first_mismatch.has_value());
-    CHECK(report.verified_boundaries == 8);
+    CHECK(report.verified_frames == 8);
     CHECK(report.notes.empty());
     CHECK(!report.diagnostic.has_value());
     // 重放不修改当前运行。
-    CHECK(session->status().tracks[0].boundary == before.tracks[0].boundary);
+    CHECK(session->status().tracks[0].frame == before.tracks[0].frame);
     CHECK(session->status().tracks[0].samples == before.tracks[0].samples);
 
-    // 重放同源性检查：实例化结果不同的模型在首个边界报告不一致。
+    // 重放同源性检查：实例化结果不同的模型在首个逻辑帧报告不一致。
     construction_counter() = 0;
     auto racing = make_session(racing_template());
     CHECK(racing->load().ok);
@@ -813,7 +813,7 @@ void replay() {
     CHECK(!mismatch.ok);
     CHECK(mismatch.first_mismatch.has_value());
     CHECK(mismatch.first_mismatch->branch == "运行");
-    CHECK(mismatch.first_mismatch->boundary == 0);
+    CHECK(mismatch.first_mismatch->frame == 0);
     CHECK(!mismatch.first_mismatch->field.empty());
     CHECK(!racing->status().last_failure.has_value());
 
@@ -849,15 +849,15 @@ void state_rules() {
     const auto autonomous = session->step();
     CHECK(autonomous.ok);
     CHECK(session->status().phase == Phase::runnable);
-    CHECK(session->status().tracks[0].boundary == 1);
+    CHECK(session->status().tracks[0].frame == 1);
     CHECK(set_input(*session, "a", 2).ok);
     CHECK(session->step().ok);
     CHECK(session->status().phase == Phase::runnable);
 
     // 检查不改变运行与轨迹。
-    const auto boundary = session->status().tracks[0].boundary;
+    const auto frame = session->status().tracks[0].frame;
     CHECK(session->check().passed);
-    CHECK(session->status().tracks[0].boundary == boundary);
+    CHECK(session->status().tracks[0].frame == frame);
 
     // 失败状态：禁止推进与检查点，允许检查与重建。
     const auto maximum = std::numeric_limits<Integer>::max();
@@ -890,15 +890,15 @@ void limits() {
     CHECK(!session->run(max_steps_per_command + 1).ok);
     const auto full = session->run(max_steps_per_command);
     CHECK(full.ok);
-    CHECK(full.status.tracks[0].boundary == max_trace_boundaries);
+    CHECK(full.status.tracks[0].frame == max_trace_frames);
     const auto over = session->run(1);
     CHECK(!over.ok);
-    CHECK(over.status.tracks[0].boundary == max_trace_boundaries);
+    CHECK(over.status.tracks[0].frame == max_trace_frames);
     CHECK(over.diagnostics.front().message.find("上限") != std::string::npos);
 }
 
 void dual_input_replay() {
-    // 多输入规格：同一驱动前边界上的两项输入按记录顺序驱动后只推进一次。
+    // 多输入规格：同一驱动前逻辑帧上的两项输入按记录顺序驱动后只推进一次。
     auto session = make_session(dual_template());
     CHECK(session->load().ok);
     CHECK(set_input(*session, "a", 1).ok);
@@ -911,15 +911,15 @@ void dual_input_replay() {
     const auto record = session->record();
     CHECK(record.inputs == 4);
     CHECK(record.input_list[0].name == "a" && record.input_list[1].name == "b");
-    CHECK(record.input_list[0].boundary == 0 && record.input_list[1].boundary == 0);
+    CHECK(record.input_list[0].frame == 0 && record.input_list[1].frame == 0);
     const auto report = session->replay();
     CHECK(report.ok);
-    CHECK(report.verified_boundaries == 3);
+    CHECK(report.verified_frames == 3);
     CHECK(report.notes.empty());
 }
 
 void autonomous_replay() {
-    // 自主演化（未驱动任何输入）同样逐边界核对全部记录采样。
+    // 自主演化（未驱动任何输入）同样逐逻辑帧核对全部记录采样。
     auto session = example_session();
     CHECK(session->load().ok);
     CHECK(session->run(3).ok);
@@ -928,10 +928,10 @@ void autonomous_replay() {
     const auto report = session->replay();
     CHECK(report.ok);
     CHECK(report.complete);
-    CHECK(report.verified_boundaries == 4);
+    CHECK(report.verified_frames == 4);
     CHECK(report.notes.empty());
 
-    // 先自主演化、随后驱动输入的混合记录同样逐边界核对。
+    // 先自主演化、随后驱动输入的混合记录同样逐逻辑帧核对。
     auto mixed = example_session();
     CHECK(mixed->load().ok);
     CHECK(mixed->run(2).ok);
@@ -942,7 +942,7 @@ void autonomous_replay() {
     const auto mixed_report = mixed->replay();
     CHECK(mixed_report.ok);
     CHECK(mixed_report.complete);
-    CHECK(mixed_report.verified_boundaries == 5);
+    CHECK(mixed_report.verified_frames == 5);
 }
 
 void partial_input_records() {
@@ -957,12 +957,12 @@ void partial_input_records() {
     const auto record = session->record();
     CHECK(record.inputs == 1);
     CHECK(record.input_list[0].name == "a");
-    CHECK(record.input_list[0].boundary == 0);
+    CHECK(record.input_list[0].frame == 0);
     CHECK(record.input_list[0].value == "7");
-    // 失败步骤不产生采样；已记录的采样逐边界核对。
+    // 失败步骤不产生采样；已记录的采样逐逻辑帧核对。
     const auto report = session->replay();
     CHECK(report.ok);
-    CHECK(report.verified_boundaries == 1);
+    CHECK(report.verified_frames == 1);
 }
 
 void exception_boundaries() {
@@ -993,7 +993,7 @@ void exception_boundaries() {
 }
 
 void comparison_limits() {
-    // 同边界差值溢出与不可比较的明确标注。
+    // 同一逻辑帧差值溢出与不可比较的明确标注。
     auto session = example_session();
     CHECK(session->load().ok);
     CHECK(advance(*session, 1, 2).ok);
@@ -1006,7 +1006,7 @@ void comparison_limits() {
               .ok);
     const auto comparison = session->comparison();
     CHECK(comparison.rows.size() == 1);
-    CHECK(comparison.rows.front().boundary == 2);
+    CHECK(comparison.rows.front().frame == 2);
     const auto& cells = comparison.rows.front().cells;
     CHECK(cells.size() == 3);
     CHECK(!cells[0].comparable);

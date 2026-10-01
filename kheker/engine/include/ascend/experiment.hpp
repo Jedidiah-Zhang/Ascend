@@ -12,7 +12,7 @@
 namespace ascend {
 
 // 实验规格：宿主驱动的推进入口、逐步输入入口与观测映射。
-// advance 是无参数顶层方法；每次成功推进记为一个边界。
+// advance 是无参数顶层方法；每次成功推进记为一个逻辑帧。
 // inputs 与 observations 的名称分别在其列表内唯一；引用的存在与签名在相应操作时核对。
 struct ExperimentSpec {
     Reference advance;
@@ -20,24 +20,24 @@ struct ExperimentSpec {
     std::vector<std::pair<std::string, Reference>> observations;
 };
 
-// 宿主传给主体的数据：只含边界与规格声明的观测，不含运行句柄或真值。
+// 宿主传给主体的数据：只含逻辑帧与规格声明的观测，不含运行句柄或真值。
 struct Observation {
-    std::int64_t boundary = 0;
+    std::int64_t frame = 0;
     std::map<std::string, std::any> values;
 };
 
-// 一次边界采样：边界编号（已完成的推进次数）、完整真值与按规格读取的观测。
+// 一次逻辑帧采样：逻辑帧编号（已完成的推进次数）、完整真值与按规格读取的观测。
 // 该类型属于研究入口并携带真值；主体观测入口不得直接取得 Sample，只能获得规定的观测数据。
 struct Sample {
-    std::int64_t boundary = 0;
+    std::int64_t frame = 0;
     StateSnapshot truth;
     std::map<std::string, std::any> observations;
 };
 
-// 可恢复的检查点：边界编号与完整真值；恢复后从该边界继续演化。
-// 边界由调用方维护且必须非负，恢复时核对。
+// 可恢复的检查点：逻辑帧编号与完整真值；恢复后从该逻辑帧继续演化。
+// 逻辑帧编号由调用方维护且必须非负，恢复时核对。
 struct Checkpoint {
-    std::int64_t boundary = 0;
+    std::int64_t frame = 0;
     StateSnapshot truth;
 };
 
@@ -55,16 +55,16 @@ struct Intervention {
 // 目标模块缺失、目标模块无状态、路径经过非对象或字段不存在时报 invalid_intervention。
 Checkpoint apply_interventions(const Checkpoint& checkpoint, const std::vector<Intervention>& requests);
 
-// 一次推进失败的结果：失败时停留的边界（不前进）与诊断；宿主可继续运行或从检查点重建。
+// 一次推进失败的结果：失败时停留的逻辑帧（不前进）与诊断；宿主可继续运行或从检查点重建。
 struct StepFailure {
-    std::int64_t boundary = 0;
+    std::int64_t frame = 0;
     Diagnostic diagnostic;
 };
 
-// 输入记录：boundary 是驱动前的边界；同边界的多项输入按列表顺序驱动。
+// 输入记录：frame 是驱动前的逻辑帧；同一逻辑帧的多项输入按列表顺序驱动。
 // 原生参数按值保存；含共享资源的参数由宿主保证记录稳定。
 struct DrivenInput {
-    std::int64_t boundary = 0;
+    std::int64_t frame = 0;
     std::string name;
     std::vector<std::any> arguments;
 };
@@ -101,20 +101,20 @@ public:
                   ExperimentSpec spec, std::string label = {});
 
     const std::string& label() const noexcept { return label_; }
-    std::int64_t boundary() const noexcept { return boundary_; }
+    std::int64_t frame() const noexcept { return frame_; }
 
     // 在推进前驱动一项命名输入；参数类型与数量由引擎调用检查核对。
     void drive(const std::string& input, std::vector<std::any> arguments = {});
-    // 显式推进一次；推进入口成功返回后边界加一，失败时边界不变。
+    // 显式推进一次；推进入口成功返回后逻辑帧加一，失败时逻辑帧不变。
     // 失败前已完成的状态变化按引擎约定保留，不回滚；计数达上限时在执行模型前拒绝。
     void step();
     // 只读取命名观测，不捕获完整状态；宿主将返回值交给主体。
     Observation observe() const;
-    // 采样当前边界：完整真值 + 按规格读取的观测。
+    // 采样当前逻辑帧：完整真值 + 按规格读取的观测。
     Sample sample() const;
-    // 当前边界的检查点。
+    // 当前逻辑帧的检查点。
     Checkpoint checkpoint() const;
-    // 从检查点恢复；成功后边界为检查点边界，失败时边界不变。
+    // 从检查点恢复；成功后逻辑帧编号与检查点一致，失败时逻辑帧不变。
     void restore(const Checkpoint& checkpoint);
 
     // 封闭后的只读运行目录视图：作用域路径（含根，空字符串）按路径排序；
@@ -133,7 +133,7 @@ private:
     Engine engine_;
     MethodBinding<void> advance_;
     std::string label_;
-    std::int64_t boundary_ = 0;
+    std::int64_t frame_ = 0;
     mutable bool operating_ = false;
 };
 

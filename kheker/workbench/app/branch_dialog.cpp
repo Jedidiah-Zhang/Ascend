@@ -11,14 +11,14 @@
 
 namespace ascend::workbench {
 
-BranchDialog::BranchDialog(std::int64_t boundary, const std::vector<session::StateFieldView>& fields,
+BranchDialog::BranchDialog(std::int64_t frame, const std::vector<session::StateFieldView>& fields,
                            const session::ValueAdapter& integer_adapter, const UiTexts& texts, QWidget* parent)
     : QDialog(parent), fields_(fields), adapter_(integer_adapter), texts_(texts) {
     setWindowTitle(ui_text(texts_, "workbench.branch.dialog_title", "Build control and treated branches"));
     auto* layout = new QVBoxLayout(this);
     auto* title = new QLabel(
-        ui_text(texts_, "workbench.branch.intro", "Shared checkpoint: boundary %1. The control branch keeps the state; the treated branch applies a one-time change to the selected integer field.")
-            .arg(boundary),
+        ui_text(texts_, "workbench.branch.intro", "Shared checkpoint: frame %1. The control branch keeps the state; the treated branch applies a one-time change to the selected integer field.")
+            .arg(frame),
         this);
     title->setWordWrap(true);
     layout->addWidget(title);

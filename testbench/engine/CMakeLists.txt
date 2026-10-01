@@ -36,7 +36,7 @@ foreach(case IN ITEMS
     missing
     mismatches
     names
-    boundaries
+    edge_cases
     exports
     forwarding
     order
@@ -97,7 +97,7 @@ foreach(case IN ITEMS
     trace_record
     nested_assembly
     reentrant_operations
-    boundary_limit
+    frame_limit
     observation_memory
     trace_replay
     run_directory

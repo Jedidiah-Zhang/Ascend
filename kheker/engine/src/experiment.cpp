@@ -154,13 +154,13 @@ void ExperimentRun::drive(const std::string& input, std::vector<std::any> argume
 
 void ExperimentRun::step() {
     const Operation operation(*this, "step");
-    if (boundary_ == std::numeric_limits<std::int64_t>::max()) {
+    if (frame_ == std::numeric_limits<std::int64_t>::max()) {
         fail_experiment(ErrorCode::execution_failed, {label_, "step"},
-                        {{engine_text_domain, "experiment.boundary.limit"},
-                         "Experiment boundary has reached the maximum supported value", {}});
+                        {{engine_text_domain, "experiment.frame.limit"},
+                         "Experiment frame has reached the maximum supported value", {}});
     }
     advance_();
-    ++boundary_;
+    ++frame_;
 }
 
 std::map<std::string, std::any> ExperimentRun::read_observations() const {
@@ -173,13 +173,13 @@ std::map<std::string, std::any> ExperimentRun::read_observations() const {
 
 Observation ExperimentRun::observe() const {
     const Operation operation(*this, "observe");
-    return {boundary_, read_observations()};
+    return {frame_, read_observations()};
 }
 
 Sample ExperimentRun::sample() const {
     const Operation operation(*this, "sample");
     Sample result;
-    result.boundary = boundary_;
+    result.frame = frame_;
     result.truth = engine_.capture_state();
     result.observations = read_observations();
     return result;
@@ -187,18 +187,18 @@ Sample ExperimentRun::sample() const {
 
 Checkpoint ExperimentRun::checkpoint() const {
     const Operation operation(*this, "checkpoint");
-    return {boundary_, engine_.capture_state()};
+    return {frame_, engine_.capture_state()};
 }
 
 void ExperimentRun::restore(const Checkpoint& checkpoint) {
     const Operation operation(*this, "restore");
-    if (checkpoint.boundary < 0) {
+    if (checkpoint.frame < 0) {
         fail_experiment(ErrorCode::invalid_declaration, {},
-                        {{engine_text_domain, "experiment.checkpoint.boundary"},
-                         "Checkpoint boundary must not be negative", {}});
+                        {{engine_text_domain, "experiment.checkpoint.frame"},
+                         "Checkpoint frame must not be negative", {}});
     }
     engine_.restore_state(checkpoint.truth);
-    boundary_ = checkpoint.boundary;
+    frame_ = checkpoint.frame;
 }
 
 std::vector<std::string> ExperimentRun::scopes() const {

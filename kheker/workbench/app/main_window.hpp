@@ -72,7 +72,7 @@ private Q_SLOTS:
     void onComparisonReady(const ascend::session::ComparisonView& comparison);
     void onCheckFinished(const ascend::session::CheckReport& report);
     void onReplayFinished(const ascend::session::ReplayReport& report);
-    void onSampleDetailReady(int series, std::int64_t boundary, const ascend::session::SampleDetailView& detail);
+    void onSampleDetailReady(int series, std::int64_t frame, const ascend::session::SampleDetailView& detail);
     void onDiagnostics(const std::vector<ascend::session::DiagnosticView>& diagnostics);
     void onRecordChanged(const ascend::session::RecordView& record);
 
@@ -132,7 +132,7 @@ private:
     bool closing_ = false;
     QString pending_;
     std::map<std::int64_t, int> row_index_;
-    std::int64_t selected_boundary_ = -1;
+    std::int64_t selected_frame_ = -1;
     int selected_series_ = 0;
     bool waveform_rebuilding_ = false;
 

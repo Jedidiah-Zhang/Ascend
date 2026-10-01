@@ -251,7 +251,7 @@ void names() {
     });
 }
 
-void boundaries() {
+void edge_cases() {
     error(ErrorCode::invalid_declaration, {"a/b", ""}, [] { Module invalid("a/b"); });
     Engine engine;
     engine.add(counter("group"));
@@ -453,7 +453,7 @@ int main(int argc, char** argv) {
     const std::map<std::string, std::function<void()>> tests = {
         {"model", model}, {"discovery", discovery}, {"missing", missing},
         {"stimulus", testbench_stimulus},
-        {"mismatches", mismatches}, {"names", names}, {"boundaries", boundaries},
+        {"mismatches", mismatches}, {"names", names}, {"edge_cases", edge_cases},
         {"exports", exports}, {"forwarding", forwarding}, {"order", order},
         {"cycles", cycles}, {"lifetime", lifetime}, {"closed", closed},
         {"context_identity", context_identity}, {"failures", failures},

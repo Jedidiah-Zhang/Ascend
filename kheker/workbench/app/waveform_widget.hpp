@@ -18,7 +18,7 @@ class WaveformWidget : public QWidget {
 
 public:
     struct Point {
-        std::int64_t boundary = 0;
+        std::int64_t frame = 0;
         bool numeric = false;
         double value = 0.0;
         bool exact = true;
@@ -33,7 +33,7 @@ public:
         QVector<Series> series;
     };
     struct Event {
-        std::int64_t boundary = 0;
+        std::int64_t frame = 0;
         QString text;
         QColor color;
     };
@@ -49,7 +49,7 @@ public:
 
 signals:
     void cursorsChanged();
-    void boundarySelected(std::int64_t boundary);
+    void frameSelected(std::int64_t frame);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -67,8 +67,8 @@ private:
     };
 
     Bounds data_bounds() const;
-    double x_for_boundary(double boundary, const QRect& wave) const;
-    double boundary_for_x(double x, const QRect& wave) const;
+    double x_for_frame(double frame, const QRect& wave) const;
+    double frame_for_x(double x, const QRect& wave) const;
     QRect wave_rect() const;
     void set_view(double minimum, double maximum);
     void fit_view();

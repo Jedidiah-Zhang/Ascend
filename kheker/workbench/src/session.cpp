@@ -365,7 +365,7 @@ Status Session::make_status() const {
     if (run_id_ != 0) status.run_id = run_id_;
     status.dirty = draft_revision_ != run_revision_;
     status.has_checkpoint = checkpoint_ != nullptr;
-    status.checkpoint_boundary = checkpoint_ ? checkpoint_->boundary : -1;
+    status.checkpoint_frame = checkpoint_ ? checkpoint_->frame : -1;
     status.recorded_inputs = record_.inputs.size();
     status.branches = record_.branches.size();
     status.last_failure = last_failure_;
@@ -373,8 +373,8 @@ Status Session::make_status() const {
         const auto& trace = record_.branches[track->index];
         TrackStatus view;
         view.label = trace.label;
-        view.boundary = track->run ? track->run->boundary() : trace.origin.boundary;
-        view.origin = trace.origin.boundary;
+        view.frame = track->run ? track->run->frame() : trace.origin.frame;
+        view.origin = trace.origin.frame;
         view.samples = trace.samples.size();
         view.input_failures = track->input_failures;
         view.advance_failures = track->advance_failures;
@@ -470,12 +470,12 @@ TrackTraceView Session::trace(std::size_t series) const { return trace_delta(ser
 std::vector<Session::SeriesInfo> Session::series_info() const {
     std::vector<SeriesInfo> result;
     if (has_exploration_) {
-        result.push_back(SeriesInfo{exploration_trace_.label, exploration_trace_.origin.boundary,
+        result.push_back(SeriesInfo{exploration_trace_.label, exploration_trace_.origin.frame,
                                     exploration_trace_.samples.size(), exploration_events_.size()});
     }
     for (const auto& track : tracks_) {
         const auto& trace = record_.branches[track->index];
-        result.push_back(SeriesInfo{trace.label, trace.origin.boundary, trace.samples.size(),
+        result.push_back(SeriesInfo{trace.label, trace.origin.frame, trace.samples.size(),
                                     track->events.size()});
     }
     return result;
@@ -496,13 +496,13 @@ TrackTraceView Session::trace_delta(std::size_t series, std::size_t sample_begin
         events = &tracks_[index]->events;
     }
     view.label = found->label;
-    view.origin = found->origin.boundary;
+    view.origin = found->origin.frame;
     view.variables = observation_names();
     view.interventions = intervention_views(found->origin, found->interventions, texts_, locale_);
     for (std::size_t position = sample_begin; position < found->samples.size(); ++position) {
         const auto& sample = found->samples[position];
         SampleView entry;
-        entry.boundary = sample.boundary;
+        entry.frame = sample.frame;
         for (const auto& name : view.variables) {
             const auto value = sample.observations.find(name);
             entry.observations.push_back(value == sample.observations.end()
@@ -517,7 +517,7 @@ TrackTraceView Session::trace_delta(std::size_t series, std::size_t sample_begin
     return view;
 }
 
-SampleDetailView Session::sample_detail(std::size_t series, std::int64_t boundary) const {
+SampleDetailView Session::sample_detail(std::size_t series, std::int64_t frame) const {
     SampleDetailView view;
     const RunTrace* found = nullptr;
     if (has_exploration_ && series == 0) {
@@ -528,10 +528,10 @@ SampleDetailView Session::sample_detail(std::size_t series, std::int64_t boundar
         found = &record_.branches[index];
     }
     const auto sample = std::find_if(found->samples.begin(), found->samples.end(),
-                                     [&](const Sample& item) { return item.boundary == boundary; });
+                                     [&](const Sample& item) { return item.frame == frame; });
     if (sample == found->samples.end()) return view;
     view.found = true;
-    view.boundary = sample->boundary;
+    view.frame = sample->frame;
     for (const auto& module : sample->truth.modules) {
         TruthModuleView module_view;
         module_view.path = module.path;
@@ -552,25 +552,25 @@ ComparisonView Session::comparison() const {
     if (tracks_.size() != 2) return view;
     const auto& control = record_.branches[tracks_[0]->index];
     const auto& treated = record_.branches[tracks_[1]->index];
-    std::vector<std::int64_t> control_boundaries;
-    for (const auto& sample : control.samples) control_boundaries.push_back(sample.boundary);
-    std::vector<std::int64_t> treated_boundaries;
-    for (const auto& sample : treated.samples) treated_boundaries.push_back(sample.boundary);
-    std::vector<std::int64_t> all = control_boundaries;
-    all.insert(all.end(), treated_boundaries.begin(), treated_boundaries.end());
+    std::vector<std::int64_t> control_frames;
+    for (const auto& sample : control.samples) control_frames.push_back(sample.frame);
+    std::vector<std::int64_t> treated_frames;
+    for (const auto& sample : treated.samples) treated_frames.push_back(sample.frame);
+    std::vector<std::int64_t> all = control_frames;
+    all.insert(all.end(), treated_frames.begin(), treated_frames.end());
     std::sort(all.begin(), all.end());
     all.erase(std::unique(all.begin(), all.end()), all.end());
-    for (const auto boundary : all) {
+    for (const auto frame : all) {
         const auto control_sample = std::find_if(control.samples.begin(), control.samples.end(),
-                                                 [&](const Sample& item) { return item.boundary == boundary; });
+                                                 [&](const Sample& item) { return item.frame == frame; });
         const auto treated_sample = std::find_if(treated.samples.begin(), treated.samples.end(),
-                                                 [&](const Sample& item) { return item.boundary == boundary; });
+                                                 [&](const Sample& item) { return item.frame == frame; });
         if (control_sample == control.samples.end() || treated_sample == treated.samples.end()) {
-            view.unpaired.push_back(boundary);
+            view.unpaired.push_back(frame);
             continue;
         }
         ComparisonView::Row row;
-        row.boundary = boundary;
+        row.frame = frame;
         for (const auto& name : view.variables) {
             DiffCellView cell;
             cell.variable = name;
@@ -616,7 +616,7 @@ RecordView Session::record() const {
             if (index != 0) value += ", ";
             value += argument_display(input.arguments[index], *adapters_, texts_, locale_);
         }
-        view.input_list.push_back(InputRecordView{input.boundary, input.name, value});
+        view.input_list.push_back(InputRecordView{input.frame, input.name, value});
     }
     return view;
 }
@@ -978,11 +978,11 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
         return reject(session_text("session.steps.range", "Steps must be between 1 and {limit}",
                                    {{"limit", std::to_string(max_steps_per_command)}}));
     }
-    std::int64_t boundary_cap = 0;
-    for (const auto& track : tracks_) boundary_cap = std::max(boundary_cap, track->run->boundary());
-    if (boundary_cap + steps > max_trace_boundaries) {
-        return reject(session_text("session.boundary.limit", "Trace boundary limit {limit} would be exceeded",
-                                   {{"limit", std::to_string(max_trace_boundaries)}}));
+    std::int64_t frame_cap = 0;
+    for (const auto& track : tracks_) frame_cap = std::max(frame_cap, track->run->frame());
+    if (frame_cap + steps > max_trace_frames) {
+        return reject(session_text("session.frame.limit", "Trace frame limit {limit} would be exceeded",
+                                   {{"limit", std::to_string(max_trace_frames)}}));
     }
 
     std::vector<DiagnosticView> diagnostics;
@@ -993,11 +993,11 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
         if (should_stop && should_stop()) {
             stopped = true;
             for (const auto& track : tracks_) {
-                track->events.push_back(StepEvent{StepEvent::Kind::stopped, track->run->boundary(), std::nullopt});
+                track->events.push_back(StepEvent{StepEvent::Kind::stopped, track->run->frame(), std::nullopt});
             }
             break;
         }
-        const auto boundary = tracks_.front()->run->boundary();
+        const auto frame = tracks_.front()->run->frame();
         // 驱动阶段：逐输入记录本分支实际成功执行的输入；共同输入随后由各分支结果整理。
         std::vector<char> common(model_.spec.inputs.size(), 1);
         bool any_driving = false;
@@ -1016,7 +1016,7 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
                 try {
                     track->run->drive(input.first, {found->second});
                     record_.branches[track->index].driven.push_back(
-                        DrivenInput{boundary, input.first, {found->second}});
+                        DrivenInput{frame, input.first, {found->second}});
                 } catch (const EngineError& error) {
                     branch_failed = true;
                     common[index] = 0;
@@ -1024,7 +1024,7 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
                     ++track->input_failures;
                     failed_cycle = true;
                     auto view = view_of(error.diagnostic(), texts_, locale_);
-                    track->events.push_back(StepEvent{StepEvent::Kind::input_failed, boundary, view});
+                    track->events.push_back(StepEvent{StepEvent::Kind::input_failed, frame, view});
                     diagnostics.push_back(std::move(view));
                 }
             }
@@ -1037,9 +1037,9 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
                 track->failed = true;
                 ++track->advance_failures;
                 failed_cycle = true;
-                record_.branches[track->index].failures.push_back(StepFailure{boundary, error.diagnostic()});
+                record_.branches[track->index].failures.push_back(StepFailure{frame, error.diagnostic()});
                 auto view = view_of(error.diagnostic(), texts_, locale_);
-                track->events.push_back(StepEvent{StepEvent::Kind::advance_failed, boundary, view});
+                track->events.push_back(StepEvent{StepEvent::Kind::advance_failed, frame, view});
                 diagnostics.push_back(std::move(view));
                 continue;
             }
@@ -1051,11 +1051,11 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
                 failed_cycle = true;
                 auto view = view_of(error.diagnostic(), texts_, locale_);
                 track->events.push_back(
-                    StepEvent{StepEvent::Kind::sample_failed, track->run->boundary(), view});
+                    StepEvent{StepEvent::Kind::sample_failed, track->run->frame(), view});
                 diagnostics.push_back(std::move(view));
                 continue;
             }
-            track->events.push_back(StepEvent{StepEvent::Kind::completed, track->run->boundary(), std::nullopt});
+            track->events.push_back(StepEvent{StepEvent::Kind::completed, track->run->frame(), std::nullopt});
         }
         if (!failed_cycle) ++completed_cycles;
         // 共同输入：所有参与分支都成功驱动的输入（按规格顺序）；部分成功的输入保留在分支轨迹中。
@@ -1065,7 +1065,7 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
                 const auto found = inputs_.find(model_.spec.inputs[index].first);
                 if (found == inputs_.end()) continue;
                 record_.inputs.push_back(
-                    DrivenInput{boundary, model_.spec.inputs[index].first, {found->second}});
+                    DrivenInput{frame, model_.spec.inputs[index].first, {found->second}});
             }
         }
         if (failed_cycle) break;
@@ -1235,11 +1235,11 @@ ReplayReport Session::replay() {
         }
     }
 
-    const auto mismatch = [&](const std::string& branch, std::int64_t boundary, std::string field,
+    const auto mismatch = [&](const std::string& branch, std::int64_t frame, std::string field,
                               std::string expected, std::string received) {
         report.ok = false;
         report.first_mismatch =
-            ReplayMismatchView{std::move(branch), boundary, std::move(field), std::move(expected), std::move(received)};
+            ReplayMismatchView{std::move(branch), frame, std::move(field), std::move(expected), std::move(received)};
     };
 
     try {
@@ -1253,13 +1253,13 @@ ReplayReport Session::replay() {
                 const auto& expected = trace.samples[index];
                 const auto actual = run.sample();
                 ++index;
-                if (actual.boundary != expected.boundary) {
-                    mismatch(trace.label, expected.boundary, render_session(texts_, locale_, "session.replay.subject.boundary", "boundary"),
-                             std::to_string(expected.boundary), std::to_string(actual.boundary));
+                if (actual.frame != expected.frame) {
+                    mismatch(trace.label, expected.frame, render_session(texts_, locale_, "session.replay.subject.frame", "frame"),
+                             std::to_string(expected.frame), std::to_string(actual.frame));
                     return true;
                 }
                 if (actual.truth.modules.size() != expected.truth.modules.size()) {
-                    mismatch(trace.label, expected.boundary, render_session(texts_, locale_, "session.replay.subject.module_count", "module count"),
+                    mismatch(trace.label, expected.frame, render_session(texts_, locale_, "session.replay.subject.module_count", "module count"),
                              std::to_string(expected.truth.modules.size()),
                              std::to_string(actual.truth.modules.size()));
                     return true;
@@ -1268,13 +1268,13 @@ ReplayReport Session::replay() {
                     const auto& expected_module = expected.truth.modules[module];
                     const auto& actual_module = actual.truth.modules[module];
                     if (expected_module.path != actual_module.path) {
-                        mismatch(trace.label, expected.boundary, render_session(texts_, locale_, "session.replay.subject.module_order", "module order"), expected_module.path, actual_module.path);
+                        mismatch(trace.label, expected.frame, render_session(texts_, locale_, "session.replay.subject.module_order", "module order"), expected_module.path, actual_module.path);
                         return true;
                     }
                     const auto difference = first_difference(expected_module.state, actual_module.state,
                                                              expected_module.path, texts_, locale_);
                     if (!difference.empty()) {
-                        mismatch(trace.label, expected.boundary, difference,
+                        mismatch(trace.label, expected.frame, difference,
                                  config_display(expected_module.state), config_display(actual_module.state));
                         return true;
                     }
@@ -1288,7 +1288,7 @@ ReplayReport Session::replay() {
                                                return adapter && adapter->equal(item.second, actual_value->second);
                                            }();
                         if (!equal) {
-                            mismatch(trace.label, expected.boundary, render_session(texts_, locale_, "session.replay.subject.observation", "observation") + " " + item.first,
+                            mismatch(trace.label, expected.frame, render_session(texts_, locale_, "session.replay.subject.observation", "observation") + " " + item.first,
                                      argument_display(item.second, *adapters_, texts_, locale_),
                                      actual_value == actual.observations.end()
                                          ? render_session(texts_, locale_, "session.observation.missing", "(missing)")
@@ -1296,12 +1296,12 @@ ReplayReport Session::replay() {
                             return true;
                         }
                     }
-                    mismatch(trace.label, expected.boundary, render_session(texts_, locale_, "session.replay.subject.observation", "observation"),
+                    mismatch(trace.label, expected.frame, render_session(texts_, locale_, "session.replay.subject.observation", "observation"),
                              render_session(texts_, locale_, "session.replay.recorded", "(recorded)"),
                              render_session(texts_, locale_, "session.replay.count_mismatch", "(count mismatch)"));
                     return true;
                 }
-                ++report.verified_boundaries;
+                ++report.verified_frames;
                 return false;
             };
             if (trace.samples.empty()) {
@@ -1311,39 +1311,39 @@ ReplayReport Session::replay() {
                 continue;
             }
             if (verify()) return report;
-            // 按记录采样逐边界推进：共同输入附着在驱动前边界上（可选）；
+            // 按记录采样逐逻辑帧推进：共同输入附着在驱动前逻辑帧上（可选）；
             // 本分支实际驱动的输入必须都在共同记录中，否则该步骤不可复现。
             std::size_t input_index = 0;
             while (index < trace.samples.size()) {
-                const std::int64_t step_boundary = trace.samples[index].boundary - 1;
+                const std::int64_t step_frame = trace.samples[index].frame - 1;
                 const bool divergent = std::any_of(
                     trace.driven.begin(), trace.driven.end(), [&](const DrivenInput& driven) {
-                        if (driven.boundary != step_boundary) return false;
+                        if (driven.frame != step_frame) return false;
                         return std::none_of(record_.inputs.begin(), record_.inputs.end(),
                                             [&](const DrivenInput& item) {
-                                                return item.boundary == driven.boundary &&
+                                                return item.frame == driven.frame &&
                                                        item.name == driven.name;
                                             });
                     });
                 if (divergent) {
                     report.notes.push_back(render_session(
                         texts_, locale_, "session.replay.note.divergent_step",
-                        "Branch {branch} drove inputs at boundary {boundary} that are not in the common record; comparison ends early",
-                        {{"branch", trace.label}, {"boundary", std::to_string(step_boundary)}}));
+                        "Branch {branch} drove inputs at frame {frame} that are not in the common record; comparison ends early",
+                        {{"branch", trace.label}, {"frame", std::to_string(step_frame)}}));
                     break;
                 }
                 while (input_index < record_.inputs.size() &&
-                       record_.inputs[input_index].boundary == step_boundary) {
+                       record_.inputs[input_index].frame == step_frame) {
                     const auto& input = record_.inputs[input_index];
                     run.drive(input.name, input.arguments);
                     ++input_index;
                 }
                 if (input_index < record_.inputs.size() &&
-                    record_.inputs[input_index].boundary < step_boundary) {
+                    record_.inputs[input_index].frame < step_frame) {
                     report.notes.push_back(render_session(
-                        texts_, locale_, "session.replay.note.boundary_end",
-                        "Branch {branch} has no shared input records after boundary {boundary}; comparison ends early",
-                        {{"branch", trace.label}, {"boundary", std::to_string(step_boundary)}}));
+                        texts_, locale_, "session.replay.note.frame_end",
+                        "Branch {branch} has no shared input records after frame {frame}; comparison ends early",
+                        {{"branch", trace.label}, {"frame", std::to_string(step_frame)}}));
                     break;
                 }
                 run.step();
@@ -1357,9 +1357,9 @@ ReplayReport Session::replay() {
             } else if (input_index < record_.inputs.size()) {
                 report.notes.push_back(render_session(
                     texts_, locale_, "session.replay.note.samples_end",
-                    "Recorded samples for branch {branch} end at boundary {boundary}; later inputs are not compared",
+                    "Recorded samples for branch {branch} end at frame {frame}; later inputs are not compared",
                     {{"branch", trace.label},
-                     {"boundary", std::to_string(trace.samples.back().boundary)}}));
+                     {"frame", std::to_string(trace.samples.back().frame)}}));
             }
         }
     } catch (const EngineError& error) {

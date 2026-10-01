@@ -140,8 +140,8 @@ void SessionController::requestComparison() { emit comparisonReady(session_.comp
 
 void SessionController::requestRecord() { emit recordChanged(session_.record()); }
 
-void SessionController::requestSampleDetail(int series, std::int64_t boundary) {
-    emit sampleDetailReady(series, boundary, session_.sample_detail(static_cast<std::size_t>(series), boundary));
+void SessionController::requestSampleDetail(int series, std::int64_t frame) {
+    emit sampleDetailReady(series, frame, session_.sample_detail(static_cast<std::size_t>(series), frame));
 }
 
 void SessionController::prepareShutdown() {}

@@ -187,7 +187,7 @@ void TestWorkbench::stepAndVariableSwitch() {
     // 外部输入可选：未设置时按世界自身配置值（示例 a = 1）推进。
     window->findChild<QPushButton*>("stepButton")->click();
     QVERIFY(wait_idle(window));
-    QCOMPARE(window->currentStatus().tracks.front().boundary, 1);
+    QCOMPARE(window->currentStatus().tracks.front().frame, 1);
     QCOMPARE(window->resultRowCount(), 2);
     QCOMPARE(table->item(1, 1)->text(), QStringLiteral("1"));
     QCOMPARE(table->item(1, 2)->text(), QStringLiteral("0"));
@@ -200,7 +200,7 @@ void TestWorkbench::stepAndVariableSwitch() {
     signal_group->child(1)->setCheckState(0, Qt::Unchecked);
     signal_group->child(1)->setCheckState(0, Qt::Checked);
     QTest::qWait(30);
-    QCOMPARE(window->currentStatus().tracks.front().boundary, 1);
+    QCOMPARE(window->currentStatus().tracks.front().frame, 1);
     QCOMPARE(window->resultRowCount(), 2);
     QCOMPARE(table->item(1, 1)->text(), QStringLiteral("1"));
     QCOMPARE(table->item(0, 1)->text(), QStringLiteral("0"));
@@ -217,26 +217,26 @@ void TestWorkbench::stopDuringRun() {
     // 运行中切换标签页只请求只读快照，不应禁用停止按钮。
     window->findChild<QTabWidget*>("resultsTabs")->setCurrentIndex(2);
     QVERIFY(window->findChild<QPushButton*>("stopButton")->isEnabled());
-    // 请求在完整的步骤边界生效，实际完成数小于请求步数。
+    // 请求在完整的逻辑帧边界生效，实际完成数小于请求步数。
     QElapsedTimer stop_timer;
     stop_timer.start();
     window->findChild<QPushButton*>("stopButton")->click();
     QVERIFY(wait_idle(window, 20000));
     qInfo() << "stop response elapsed" << stop_timer.elapsed() << "ms";
     QCOMPARE(window->currentStatus().phase, ascend::session::Phase::stopped);
-    const auto boundary = window->currentStatus().tracks.front().boundary;
-    QVERIFY(boundary >= 0 && boundary < 10000);
+    const auto frame = window->currentStatus().tracks.front().frame;
+    QVERIFY(frame >= 0 && frame < 10000);
     QVERIFY(!window->findChild<QPushButton*>("stopButton")->isEnabled());
     QVERIFY(window->findChild<QPushButton*>("stepButton")->isEnabled());
 
     // 停止后可以继续运行。
     window->findChild<QPushButton*>("stepButton")->click();
     QVERIFY(wait_idle(window));
-    QCOMPARE(window->currentStatus().tracks.front().boundary, boundary + 1);
+    QCOMPARE(window->currentStatus().tracks.front().frame, frame + 1);
 }
 
 void TestWorkbench::runNThroughput() {
-    // 界面侧上限路径：一次运行到 10000 边界并记录耗时与常驻内存（测量条件见测试文档）。
+    // 界面侧上限路径：一次运行到 10000 逻辑帧并记录耗时与常驻内存（测量条件见测试文档）。
     auto workbench = start_workbench();
     MainWindow* window = workbench->window();
     QVERIFY(wait_idle(window));
@@ -246,7 +246,7 @@ void TestWorkbench::runNThroughput() {
     window->findChild<QPushButton*>("runButton")->click();
     QVERIFY(wait_idle(window, 120000));
     const auto elapsed = timer.elapsed();
-    QCOMPARE(window->currentStatus().tracks.front().boundary, 10000);
+    QCOMPARE(window->currentStatus().tracks.front().frame, 10000);
     QCOMPARE(window->resultRowCount(), 10001);
     qInfo() << "ui runN 10000 elapsed" << elapsed << "ms";
     // 时间轴全量视图绘制耗时（可见区间渲染 + 按像素列降采样）。
@@ -282,12 +282,12 @@ void TestWorkbench::branchComparisonAndReplay() {
     window->findChild<QSpinBox*>("stepsSpin")->setValue(2);
     window->findChild<QPushButton*>("runButton")->click();
     QVERIFY(wait_idle(window));
-    QCOMPARE(window->currentStatus().tracks.front().boundary, 2);
+    QCOMPARE(window->currentStatus().tracks.front().frame, 2);
 
     window->findChild<QPushButton*>("checkpointButton")->click();
     QVERIFY(wait_idle(window));
     QVERIFY(window->currentStatus().has_checkpoint);
-    QCOMPARE(window->currentStatus().checkpoint_boundary, 2);
+    QCOMPARE(window->currentStatus().checkpoint_frame, 2);
 
     bool dialog_seen = false;
     QTimer dialog_timer;
@@ -336,8 +336,8 @@ void TestWorkbench::branchComparisonAndReplay() {
     QVERIFY(wait_idle(window));
     const auto status = window->currentStatus();
     QCOMPARE(status.tracks.size(), static_cast<std::size_t>(2));
-    QCOMPARE(status.tracks[0].boundary, 5);
-    QCOMPARE(status.tracks[1].boundary, 5);
+    QCOMPARE(status.tracks[0].frame, 5);
+    QCOMPARE(status.tracks[1].frame, 5);
 
     // 结果表格：对照 (5,4,6)、干预 (13,12,22)。
     auto* table = window->findChild<QTableWidget*>("resultTable");
@@ -354,7 +354,7 @@ void TestWorkbench::branchComparisonAndReplay() {
     QCOMPARE(table->item(row, 8)->text(), QStringLiteral("12"));
     QCOMPARE(table->item(row, 9)->text(), QStringLiteral("22"));
 
-    // 共同边界差值：8、8、16。
+    // 共同逻辑帧差值：8、8、16。
     window->findChild<QTabWidget*>("resultsTabs")->setCurrentIndex(2);
     QVERIFY(wait_until([window] { return !window->busy(); }));
     QTest::qWait(30);
@@ -383,7 +383,7 @@ void TestWorkbench::branchComparisonAndReplay() {
     // 从检查点重建分支：轨迹回到共同起点，可继续运行。
     window->findChild<QPushButton*>("resetBranchesButton")->click();
     QVERIFY(wait_idle(window));
-    QCOMPARE(window->currentStatus().tracks[0].boundary, 2);
+    QCOMPARE(window->currentStatus().tracks[0].frame, 2);
     QCOMPARE(window->currentStatus().tracks[0].samples, static_cast<std::size_t>(1));
     QCOMPARE(window->resultRowCount(), 3);
     QVERIFY(window->findChild<QPushButton*>("stepButton")->isEnabled());

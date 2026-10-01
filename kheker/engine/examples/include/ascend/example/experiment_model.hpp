@@ -51,7 +51,7 @@ inline constexpr const char* reference_intervention_module = "plant/state";
 inline constexpr const char* reference_intervention_field = "x";
 inline constexpr Integer reference_intervention_value = 10;
 
-// 手工核对参考：a = 1 恒定，干预在边界 2 施加 x := 10。
+// 手工核对参考：a = 1 恒定，干预在逻辑帧 2 施加 x := 10。
 inline constexpr std::array<Values, 6> reference_control = {
     Values{0, 0, 0}, Values{1, 0, 0}, Values{2, 1, 0},
     Values{3, 2, 1}, Values{4, 3, 3}, Values{5, 4, 6}};

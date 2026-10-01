@@ -223,17 +223,17 @@ QString MainWindow::statusLine() const {
         text += ui_text(*texts_, "workbench.status.run_suffix", " · run #%1 · source revision %2").arg(*status_.run_id).arg(status_.run_revision);
     }
     if (!status_.tracks.empty()) {
-        text += ui_text(*texts_, "workbench.status.boundary_suffix", " · boundary");
+        text += ui_text(*texts_, "workbench.status.frame_suffix", " · frame");
         if (status_.tracks.size() == 1) {
-            text += QStringLiteral(" %1").arg(status_.tracks.front().boundary);
+            text += QStringLiteral(" %1").arg(status_.tracks.front().frame);
         } else {
             for (const auto& track : status_.tracks) {
-                text += QStringLiteral(" %1 %2").arg(from_utf8(track.label)).arg(track.boundary);
+                text += QStringLiteral(" %1 %2").arg(from_utf8(track.label)).arg(track.frame);
             }
         }
     }
     if (status_.has_checkpoint) {
-        text += ui_text(*texts_, "workbench.status.checkpoint_suffix", " · checkpoint %1").arg(status_.checkpoint_boundary);
+        text += ui_text(*texts_, "workbench.status.checkpoint_suffix", " · checkpoint %1").arg(status_.checkpoint_frame);
     }
     return text;
 }
@@ -291,7 +291,7 @@ void MainWindow::buildTopBar(QVBoxLayout* root) {
     apply_button_->setToolTip(ui_text(*texts_, "workbench.tooltip.apply", "Apply the current initial configuration and rebuild the run (traces and checkpoint reset)"));
     checkpoint_button_ = new QPushButton(ui_text(*texts_, "workbench.action.checkpoint", "Checkpoint"), bar);
     checkpoint_button_->setObjectName("checkpointButton");
-    checkpoint_button_->setToolTip(ui_text(*texts_, "workbench.tooltip.checkpoint", "Create the shared checkpoint at the current boundary"));
+    checkpoint_button_->setToolTip(ui_text(*texts_, "workbench.tooltip.checkpoint", "Create the shared checkpoint at the current frame"));
     branch_button_ = new QPushButton(ui_text(*texts_, "workbench.action.branch", "Branches…"), bar);
     branch_button_->setObjectName("branchButton");
     branch_button_->setToolTip(ui_text(*texts_, "workbench.tooltip.branch", "Build control and treated branches from the shared checkpoint"));
@@ -355,10 +355,10 @@ void MainWindow::buildTopBar(QVBoxLayout* root) {
     connect(branch_button_, &QPushButton::clicked, this, [this] {
         if (model_.state_fields.empty()) {
             QMessageBox::information(this, ui_text(*texts_, "workbench.branch.title_short", "Build branches"),
-                                     ui_text(*texts_, "workbench.branch.need_checkpoint", "Run to a non-initial boundary and create a checkpoint first."));
+                                     ui_text(*texts_, "workbench.branch.need_checkpoint", "Run to a non-initial frame and create a checkpoint first."));
             return;
         }
-        BranchDialog dialog(status_.checkpoint_boundary, model_.state_fields, *int_adapter_, *texts_, this);
+        BranchDialog dialog(status_.checkpoint_frame, model_.state_fields, *int_adapter_, *texts_, this);
         if (dialog.exec() != QDialog::Accepted) return;
         std::vector<session::BranchRequest> branches;
         // 标签留空，由会话按其文本域给出“对照／干预”。
@@ -519,12 +519,12 @@ void MainWindow::buildResultsPane() {
     diff_table_->setObjectName("diffTable");
     diff_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     diff_layout->addWidget(diff_table_, 1);
-    results_tabs_->addTab(diff_page, ui_text(*texts_, "workbench.pane.differences", "Shared-boundary differences"));
+    results_tabs_->addTab(diff_page, ui_text(*texts_, "workbench.pane.differences", "Shared-frame differences"));
 
     connect(signal_tree_, &QTreeWidget::itemChanged, this, [this] { rebuildWaveform(); });
     connect(waveform_, &WaveformWidget::cursorsChanged, this, &MainWindow::updateCursorTable);
-    connect(waveform_, &WaveformWidget::boundarySelected, this, [this](std::int64_t boundary) {
-        const auto row = row_index_.find(boundary);
+    connect(waveform_, &WaveformWidget::frameSelected, this, [this](std::int64_t frame) {
+        const auto row = row_index_.find(frame);
         if (row == row_index_.end()) return;
         result_table_->selectRow(row->second);
     });
@@ -570,7 +570,7 @@ void MainWindow::buildRightPane() {
     sample_series_combo_->setObjectName("sampleSeriesCombo");
     sample_bar->addWidget(sample_series_combo_);
     sample_layout->addLayout(sample_bar);
-    sample_label_ = new QLabel(ui_text(*texts_, "workbench.sample.select_hint", "Select a boundary in the result table."), sample_page);
+    sample_label_ = new QLabel(ui_text(*texts_, "workbench.sample.select_hint", "Select a frame in the result table."), sample_page);
     sample_layout->addWidget(sample_label_);
     sample_tree_ = new QTreeWidget(sample_page);
     sample_tree_->setObjectName("sampleTree");
@@ -630,7 +630,7 @@ void MainWindow::buildDiagnosticsDock() {
     record_table_ = new QTableWidget(record_page);
     record_table_->setObjectName("recordTable");
     record_table_->setColumnCount(3);
-    record_table_->setHorizontalHeaderLabels({ui_text(*texts_, "workbench.table.driven_boundary", "Boundary before drive"), ui_text(*texts_, "workbench.table.input", "Input"),
+    record_table_->setHorizontalHeaderLabels({ui_text(*texts_, "workbench.table.driven_frame", "Boundary before drive"), ui_text(*texts_, "workbench.table.input", "Input"),
                                               ui_text(*texts_, "workbench.table.value", "Value")});
     record_table_->horizontalHeader()->setStretchLastSection(true);
     record_table_->verticalHeader()->setVisible(false);
@@ -864,14 +864,14 @@ void MainWindow::onSamplesAppended(int series, const std::vector<session::Sample
         rebuildResultTable();
     } else {
         for (const auto& sample : samples) {
-            auto row = row_index_.find(sample.boundary);
+            auto row = row_index_.find(sample.frame);
             if (row == row_index_.end()) {
                 const int position = result_table_->rowCount();
                 result_table_->insertRow(position);
                 result_table_->setItem(position, 0,
-                                       new QTableWidgetItem(QString::number(sample.boundary)));
-                row_index_.emplace(sample.boundary, position);
-                row = row_index_.find(sample.boundary);
+                                       new QTableWidgetItem(QString::number(sample.frame)));
+                row_index_.emplace(sample.frame, position);
+                row = row_index_.find(sample.frame);
             }
             int column = 1;
             for (int index = 0; index < series; ++index) {
@@ -917,21 +917,21 @@ void MainWindow::onReplayFinished(const session::ReplayReport& report) {
     if (report.ok) {
         text = report.complete
                    ? ui_text(*texts_, "workbench.replay.success",
-                             "Replay succeeded: verified truth and observations for %1 samples boundary by boundary.")
-                         .arg(report.verified_boundaries)
+                             "Replay succeeded: verified truth and observations for %1 samples frame by frame.")
+                         .arg(report.verified_frames)
                    : ui_text(*texts_, "workbench.replay.success_partial",
                              "Replay succeeded (some ranges not compared): verified truth and observations for %1 "
-                             "samples boundary by boundary.")
-                         .arg(report.verified_boundaries);
+                             "samples frame by frame.")
+                         .arg(report.verified_frames);
         if (!report.notes.empty()) {
             text += ui_text(*texts_, "workbench.replay.uncompared_header", "\n\nRanges not compared:");
             for (const auto& note : report.notes) text += "\n· " + from_utf8(note);
         }
     } else if (report.first_mismatch.has_value()) {
         const auto& mismatch = *report.first_mismatch;
-        text = ui_text(*texts_, "workbench.replay.mismatch", "First mismatch: branch %1 · boundary %2 · %3\nexpected %4, received %5")
+        text = ui_text(*texts_, "workbench.replay.mismatch", "First mismatch: branch %1 · frame %2 · %3\nexpected %4, received %5")
                    .arg(from_utf8(mismatch.branch))
-                   .arg(mismatch.boundary)
+                   .arg(mismatch.frame)
                    .arg(from_utf8(mismatch.field))
                    .arg(from_utf8(mismatch.expected))
                    .arg(from_utf8(mismatch.received));
@@ -957,7 +957,7 @@ void MainWindow::onRecordChanged(const session::RecordView& record) {
     for (const auto& input : record.input_list) {
         const int row = record_table_->rowCount();
         record_table_->insertRow(row);
-        record_table_->setItem(row, 0, new QTableWidgetItem(QString::number(input.boundary)));
+        record_table_->setItem(row, 0, new QTableWidgetItem(QString::number(input.frame)));
         record_table_->setItem(row, 1, new QTableWidgetItem(from_utf8(input.name)));
         record_table_->setItem(row, 2, new QTableWidgetItem(from_utf8(input.value)));
     }
@@ -980,15 +980,15 @@ void MainWindow::onDiagnostics(const std::vector<session::DiagnosticView>& diagn
     }
 }
 
-void MainWindow::onSampleDetailReady(int series, std::int64_t boundary, const session::SampleDetailView& detail) {
-    if (series != selected_series_ || boundary != selected_boundary_) return;
+void MainWindow::onSampleDetailReady(int series, std::int64_t frame, const session::SampleDetailView& detail) {
+    if (series != selected_series_ || frame != selected_frame_) return;
     sample_tree_->clear();
     if (!detail.found) {
-        sample_label_->setText(ui_text(*texts_, "workbench.sample.none", "No sample to display at this boundary."));
+        sample_label_->setText(ui_text(*texts_, "workbench.sample.none", "No sample to display at this frame."));
         return;
     }
-    sample_label_->setText(ui_text(*texts_, "workbench.sample.caption", "Research truth and declared observations at boundary %1 (shown separately)")
-                               .arg(detail.boundary));
+    sample_label_->setText(ui_text(*texts_, "workbench.sample.caption", "Research truth and declared observations at frame %1 (shown separately)")
+                               .arg(detail.frame));
     auto* truth = new QTreeWidgetItem(sample_tree_);
     truth->setText(0, ui_text(*texts_, "workbench.sample.truth", "Research truth (complete state)"));
     for (const auto& module : detail.truth) {
@@ -1103,13 +1103,13 @@ void MainWindow::requestCurrentSample() {
                               : result_table_->selectionModel()->selectedRows();
     if (selected.isEmpty()) return;
     const int row = selected.front().row();
-    auto* boundary_item = result_table_->item(row, 0);
-    if (boundary_item == nullptr) return;
-    selected_boundary_ = boundary_item->text().toLongLong();
+    auto* frame_item = result_table_->item(row, 0);
+    if (frame_item == nullptr) return;
+    selected_frame_ = frame_item->text().toLongLong();
     selected_series_ = std::clamp(sample_series_combo_->currentIndex(), 0,
                                   static_cast<int>(series_.size()) - 1);
     QMetaObject::invokeMethod(controller_, "requestSampleDetail", Qt::QueuedConnection,
-                              Q_ARG(int, selected_series_), Q_ARG(std::int64_t, selected_boundary_));
+                              Q_ARG(int, selected_series_), Q_ARG(std::int64_t, selected_frame_));
 }
 
 void MainWindow::rebuildConfigForms() {
@@ -1297,7 +1297,7 @@ void MainWindow::rebuildResultTable() {
     result_table_->clear();
     result_table_->setRowCount(0);
     row_index_.clear();
-    QStringList headers{ui_text(*texts_, "workbench.table.boundary", "Boundary")};
+    QStringList headers{ui_text(*texts_, "workbench.table.frame", "Boundary")};
     const bool grouped = series_.size() > 1;
     for (const auto& series_data : series_) {
         for (const auto& name : model_.observations) {
@@ -1307,22 +1307,22 @@ void MainWindow::rebuildResultTable() {
     result_table_->setColumnCount(headers.size());
     result_table_->setHorizontalHeaderLabels(headers);
 
-    std::vector<std::int64_t> boundaries;
+    std::vector<std::int64_t> frames;
     for (const auto& series_data : series_) {
-        for (const auto& sample : series_data.samples) boundaries.push_back(sample.boundary);
+        for (const auto& sample : series_data.samples) frames.push_back(sample.frame);
     }
-    std::sort(boundaries.begin(), boundaries.end());
-    boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
-    for (const auto boundary : boundaries) {
+    std::sort(frames.begin(), frames.end());
+    frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+    for (const auto frame : frames) {
         const int row = result_table_->rowCount();
         result_table_->insertRow(row);
-        result_table_->setItem(row, 0, new QTableWidgetItem(QString::number(boundary)));
-        row_index_.emplace(boundary, row);
+        result_table_->setItem(row, 0, new QTableWidgetItem(QString::number(frame)));
+        row_index_.emplace(frame, row);
         int column = 1;
         for (const auto& series_data : series_) {
             const auto sample = std::find_if(series_data.samples.begin(), series_data.samples.end(),
                                              [&](const session::SampleView& item) {
-                                                 return item.boundary == boundary;
+                                                 return item.frame == frame;
                                              });
             if (sample == series_data.samples.end()) {
                 column += static_cast<int>(model_.observations.size());
@@ -1333,7 +1333,7 @@ void MainWindow::rebuildResultTable() {
             }
         }
     }
-    if (!boundaries.empty()) result_table_->selectRow(result_table_->rowCount() - 1);
+    if (!frames.empty()) result_table_->selectRow(result_table_->rowCount() - 1);
     result_table_->resizeColumnsToContents();
 }
 
@@ -1389,7 +1389,7 @@ void MainWindow::rebuildWaveform() {
                 if (static_cast<std::size_t>(signal_index) >= sample.observations.size()) continue;
                 const auto& cell = sample.observations[static_cast<std::size_t>(signal_index)];
                 line.points.append(
-                    WaveformWidget::Point{sample.boundary, cell.numeric, cell.value, cell.exact});
+                    WaveformWidget::Point{sample.frame, cell.numeric, cell.value, cell.exact});
             }
             signal.series.push_back(line);
         }
@@ -1435,12 +1435,12 @@ void MainWindow::rebuildWaveform() {
                 case session::StepEvent::Kind::completed:
                     continue;
             }
-            events.append(WaveformWidget::Event{step_event.boundary, text, color});
+            events.append(WaveformWidget::Event{step_event.frame, text, color});
         }
     }
     if (status_.has_checkpoint) {
         events.append(WaveformWidget::Event{
-            status_.checkpoint_boundary,
+            status_.checkpoint_frame,
             ui_text(*texts_, "workbench.waveform.event.checkpoint", "Checkpoint"),
             QColor(0x17, 0xa2, 0xb8)});
     }
@@ -1467,10 +1467,10 @@ void MainWindow::updateCursorTable() {
     cursor_table_->setRowCount(0);
     const std::int64_t a = waveform_->cursorA();
     const std::int64_t b = waveform_->cursorB();
-    const auto cell_at = [](const SeriesData& series_data, std::int64_t boundary, std::size_t signal_index)
+    const auto cell_at = [](const SeriesData& series_data, std::int64_t frame, std::size_t signal_index)
         -> const session::CellView* {
         for (const auto& sample : series_data.samples) {
-            if (sample.boundary != boundary) continue;
+            if (sample.frame != frame) continue;
             if (signal_index >= sample.observations.size()) return nullptr;
             return &sample.observations[signal_index];
         }
@@ -1519,13 +1519,13 @@ void MainWindow::rebuildDiff() {
     diff_table_->clear();
     diff_table_->setRowCount(0);
     diff_table_->setColumnCount(static_cast<int>(comparison.variables.size()) + 1);
-    QStringList headers{ui_text(*texts_, "workbench.table.boundary", "Boundary")};
+    QStringList headers{ui_text(*texts_, "workbench.table.frame", "Boundary")};
     for (const auto& name : comparison.variables) headers << from_utf8(name);
     diff_table_->setHorizontalHeaderLabels(headers);
     for (const auto& row : comparison.rows) {
         const int position = diff_table_->rowCount();
         diff_table_->insertRow(position);
-        diff_table_->setItem(position, 0, new QTableWidgetItem(QString::number(row.boundary)));
+        diff_table_->setItem(position, 0, new QTableWidgetItem(QString::number(row.frame)));
         for (std::size_t index = 0; index < row.cells.size(); ++index) {
             const auto& cell = row.cells[index];
             auto* item = new QTableWidgetItem(from_utf8(cell.difference));
@@ -1535,11 +1535,11 @@ void MainWindow::rebuildDiff() {
             diff_table_->setItem(position, static_cast<int>(index) + 1, item);
         }
     }
-    QString note = ui_text(*texts_, "workbench.diff.note", "Differences are treated − control using exact integer arithmetic; only shared boundaries with samples on both branches are compared.");
+    QString note = ui_text(*texts_, "workbench.diff.note", "Differences are treated − control using exact integer arithmetic; only shared frames with samples on both branches are compared.");
     if (!comparison.unpaired.empty()) {
-        QStringList boundaries;
-        for (const auto boundary : comparison.unpaired) boundaries << QString::number(boundary);
-        note += ui_text(*texts_, "workbench.diff.unpaired", " Boundaries with samples on one side only: %1 (unpaired; not used for differences).").arg(boundaries.join(", "));
+        QStringList frames;
+        for (const auto frame : comparison.unpaired) frames << QString::number(frame);
+        note += ui_text(*texts_, "workbench.diff.unpaired", " Boundaries with samples on one side only: %1 (unpaired; not used for differences).").arg(frames.join(", "));
     }
     diff_note_->setText(note);
 }
@@ -1547,8 +1547,8 @@ void MainWindow::rebuildDiff() {
 void MainWindow::rebuildStateFields() {
     state_table_->setRowCount(0);
     if (status_.has_checkpoint) {
-        QString text = ui_text(*texts_, "workbench.state.checkpoint_hint", "Checkpoint boundary %1; interventions target stateful modules at the checkpoint (the first version supports integer fields).")
-                           .arg(status_.checkpoint_boundary);
+        QString text = ui_text(*texts_, "workbench.state.checkpoint_hint", "Checkpoint frame %1; interventions target stateful modules at the checkpoint (the first version supports integer fields).")
+                           .arg(status_.checkpoint_frame);
         for (const auto& track : status_.tracks) {
             for (const auto& intervention : track.interventions) {
                 text += ui_text(*texts_, "workbench.intervention.line", "\nBranch \"%1\" intervention: %2#%3 changed from %4 to %5")
