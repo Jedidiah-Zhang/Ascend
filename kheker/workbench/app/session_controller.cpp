@@ -1,5 +1,8 @@
 #include "session_controller.hpp"
 
+#include <QFile>
+#include <QSaveFile>
+
 #include <utility>
 
 namespace ascend::workbench {
@@ -28,7 +31,8 @@ ModelSnapshot SessionController::snapshot() const {
     return model;
 }
 
-void SessionController::publish(const session::OperationResult& result, bool model, TraceUpdate traces) {
+void SessionController::publish(const session::OperationResult& result, bool model, TraceUpdate traces,
+                                bool comparison) {
     if (!result.diagnostics.empty()) emit diagnosticsReported(result.diagnostics);
     emit statusChanged(result.status);
     if (model) {
@@ -40,6 +44,7 @@ void SessionController::publish(const session::OperationResult& result, bool mod
     } else if (traces == TraceUpdate::deltas) {
         publishSampleDeltas();
     }
+    if (comparison) emit comparisonReady(session_.comparison());
     emit operationFinished(result);
     emit busyChanged(false);
 }
@@ -97,14 +102,12 @@ void SessionController::apply() { publish(session_.apply(), true, TraceUpdate::r
 
 void SessionController::step() {
     const auto result = session_.step();
-    publish(result, false, TraceUpdate::deltas);
-    if (result.status.branches == session::max_branches) emit comparisonReady(session_.comparison());
+    publish(result, false, TraceUpdate::deltas, result.status.branches == session::max_branches);
 }
 
 void SessionController::runN(int steps) {
     const auto result = session_.run(steps, [this] { return stop_requested_.load(); });
-    publish(result, false, TraceUpdate::deltas);
-    if (result.status.branches == session::max_branches) emit comparisonReady(session_.comparison());
+    publish(result, false, TraceUpdate::deltas, result.status.branches == session::max_branches);
 }
 
 void SessionController::setInstanceConfig(const QString& scope, const QString& name, const ascend::Config& config) {
@@ -121,14 +124,12 @@ void SessionController::createCheckpoint() {
 
 void SessionController::createBranches(const std::vector<session::BranchRequest>& branches) {
     const auto result = session_.create_branches(branches);
-    publish(result, true, TraceUpdate::reset);
-    if (result.status.branches == session::max_branches) emit comparisonReady(session_.comparison());
+    publish(result, true, TraceUpdate::reset, result.status.branches == session::max_branches);
 }
 
 void SessionController::resetBranches() {
     const auto result = session_.reset_branches();
-    publish(result, true, TraceUpdate::reset);
-    if (result.status.branches == session::max_branches) emit comparisonReady(session_.comparison());
+    publish(result, true, TraceUpdate::reset, result.status.branches == session::max_branches);
 }
 
 void SessionController::replay() {
@@ -137,6 +138,44 @@ void SessionController::replay() {
 }
 
 void SessionController::requestComparison() { emit comparisonReady(session_.comparison()); }
+
+void SessionController::saveExperiment(const QString& path) {
+    emit busyChanged(true);
+    const auto encoded = session_.encode_experiment();
+    bool ok = encoded.ok;
+    if (ok) {
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
+            ok = false;
+        } else {
+            const auto size = static_cast<qint64>(encoded.bytes.size());
+            if (file.write(encoded.bytes.data(), size) != size) {
+                ok = false;
+                file.cancelWriting();
+            } else {
+                ok = file.commit();
+            }
+        }
+    }
+    if (encoded.diagnostic.has_value()) emit diagnosticsReported({*encoded.diagnostic});
+    emit experimentSaved(path, ok);
+    emit busyChanged(false);
+}
+
+void SessionController::openExperiment(const QString& path) {
+    emit busyChanged(true);
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        emit experimentOpened(path, false);
+        emit busyChanged(false);
+        return;
+    }
+    const QByteArray data = file.readAll();
+    const auto result = session_.open_experiment(
+        std::string(data.constData(), static_cast<std::size_t>(data.size())));
+    emit experimentOpened(path, result.ok);
+    publish(result, true, TraceUpdate::reset, result.status.branches == session::max_branches);
+}
 
 void SessionController::requestRecord() { emit recordChanged(session_.record()); }
 

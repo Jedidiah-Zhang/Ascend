@@ -570,6 +570,8 @@ void checkpoint_branches() {
         const auto& want = expected.at(row.frame);
         for (std::size_t index = 0; index < row.cells.size(); ++index) {
             CHECK(row.cells[index].comparable);
+            CHECK(row.cells[index].integer.has_value());
+            CHECK(*row.cells[index].integer == want[index]);
             CHECK(row.cells[index].difference == std::to_string(want[index]));
         }
     }
@@ -992,6 +994,115 @@ void exception_boundaries() {
     CHECK(branches_session->create_branches({{"", {}}, {"", {}}}).ok);
 }
 
+
+void save_open_round_trip() {
+    // 场景 A 保存后在新会话打开：接管为活动运行并可继续推进。
+    auto session = example_session();
+    CHECK(session->load().ok);
+    CHECK(advance(*session, 1, 2).ok);
+    CHECK(session->create_checkpoint().ok);
+    CHECK(session->create_branches(
+              {{"对照", {}},
+               {"干预", {{example::reference_intervention_module, example::reference_intervention_field,
+                          Config::integer(example::reference_intervention_value)}}}})
+              .ok);
+    CHECK(advance(*session, 1, 3).ok);
+    const auto saved = session->experiment_file();
+    CHECK(saved.traces.size() == 3);
+    CHECK(saved.traces.front().exploration);
+    CHECK(saved.inputs.size() == 3);
+    CHECK(saved.checkpoint.has_value() && saved.checkpoint->frame == 2);
+
+    auto opened = example_session();
+    const auto result = opened->open_experiment(saved);
+    CHECK(result.ok);
+    CHECK(opened->status().phase == Phase::runnable);
+    CHECK(opened->status().tracks.size() == 2);
+    CHECK(opened->status().tracks[0].frame == 5);
+    CHECK(opened->status().tracks[1].frame == 5);
+    const auto comparison = opened->comparison();
+    CHECK(comparison.rows.size() == 4);
+    CHECK(comparison.rows.back().frame == 5);
+    CHECK(comparison.rows.back().cells[0].comparable);
+    CHECK(comparison.rows.back().cells[0].difference == "8");
+    const auto report = opened->replay();
+    CHECK(report.ok && report.complete);
+    // 继续推进：两分支到逻辑帧 6，并可再次保存。
+    CHECK(opened->run(1).ok);
+    CHECK(opened->status().tracks[0].frame == 6);
+    CHECK(opened->status().tracks[1].frame == 6);
+    const auto again = opened->experiment_file();
+    CHECK(again.traces.size() == 3);
+    CHECK(again.traces[0].trace.label == saved.traces[0].trace.label);
+}
+
+void open_record_state() {
+    // 含失败记录的文件只读打开：禁止推进，重放可用，应用重建退出记录态。
+    auto session = example_session();
+    CHECK(session->load().ok);
+    const auto maximum = std::numeric_limits<Integer>::max();
+    CHECK(session->set_instance_config("", "plant",
+              Config::object({{"x", Config::integer(maximum)}, {"y", Config::integer(0)},
+                              {"z", Config::integer(0)}}))
+              .ok);
+    CHECK(session->apply().ok);
+    CHECK(set_input(*session, "a", 1).ok);
+    CHECK(!session->step().ok);
+    CHECK(session->status().phase == Phase::failed);
+    const auto saved = session->experiment_file();
+    CHECK(saved.traces.size() == 1);
+    CHECK(!saved.traces.front().events.empty());
+
+    auto opened = example_session();
+    const auto result = opened->open_experiment(saved);
+    CHECK(result.ok);
+    CHECK(result.status.phase == Phase::record);
+    CHECK(opened->status().tracks.size() == 1);
+    CHECK(opened->status().tracks[0].failed);
+    CHECK(!opened->step().ok);
+    CHECK(!opened->run(1).ok);
+    CHECK(!opened->create_checkpoint().ok);
+    const auto report = opened->replay();
+    CHECK(report.ok);
+    CHECK(opened->trace(0).samples.size() == 1);
+    CHECK(!opened->trace(0).events.empty());
+    CHECK(opened->trace(0).events.back().diagnostic.has_value());
+    CHECK(opened->apply().ok);
+    CHECK(opened->status().phase == Phase::runnable);
+}
+
+void open_rejects_and_falls_back() {
+    // 实现标识不匹配与采样不一致都只进入只读记录态；空轨迹文件拒绝且会话不变。
+    auto session = example_session();
+    CHECK(session->load().ok);
+    CHECK(advance(*session, 1, 2).ok);
+    const auto saved = session->experiment_file();
+
+    auto mismatched = saved;
+    mismatched.implementations[example::plant_definition] = "wrong.implementation";
+    auto opened = example_session();
+    const auto first = opened->open_experiment(mismatched);
+    CHECK(first.ok);
+    CHECK(first.status.phase == Phase::record);
+    CHECK(!first.diagnostics.empty());
+    CHECK(!opened->step().ok);
+
+    auto corrupted = saved;
+    corrupted.traces.front().trace.samples.back().observations["x"] = Integer(99);
+    auto second_session = example_session();
+    const auto second = second_session->open_experiment(corrupted);
+    CHECK(second.ok);
+    CHECK(second.status.phase == Phase::record);
+
+    auto empty = saved;
+    empty.traces.clear();
+    const auto before = opened->status();
+    const auto rejected = opened->open_experiment(empty);
+    CHECK(!rejected.ok);
+    CHECK(opened->status().phase == before.phase);
+    CHECK(opened->status().tracks.size() == before.tracks.size());
+}
+
 void comparison_limits() {
     // 同一逻辑帧差值溢出与不可比较的明确标注。
     auto session = example_session();
@@ -1011,8 +1122,11 @@ void comparison_limits() {
     CHECK(cells.size() == 3);
     CHECK(!cells[0].comparable);
     CHECK(cells[0].difference == "差值超出 64 位");
+    CHECK(!cells[0].integer.has_value());
     CHECK(cells[1].comparable);
     CHECK(cells[1].difference == "0");
+    CHECK(cells[1].integer.has_value());
+    CHECK(*cells[1].integer == 0);
 }
 
 }  // namespace
@@ -1038,6 +1152,9 @@ int main(int argc, char** argv) {
         {"autonomous_replay", autonomous_replay},
         {"partial_input_records", partial_input_records},
         {"exception_boundaries", exception_boundaries},
+        {"save_open_round_trip", save_open_round_trip},
+        {"open_record_state", open_record_state},
+        {"open_rejects_and_falls_back", open_rejects_and_falls_back},
     };
     if (argc != 2 || tests.count(argv[1]) == 0) {
         std::cerr << "Specify a known test case\n";

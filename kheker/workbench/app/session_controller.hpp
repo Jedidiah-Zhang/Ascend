@@ -54,6 +54,9 @@ public slots:
     void resetBranches();
     void replay();
     void requestComparison();
+    // 保存当前实验到文件；打开实验文件（读取、解码、核对与接管/记录态）。
+    void saveExperiment(const QString& path);
+    void openExperiment(const QString& path);
     void requestRecord();
     void requestSampleDetail(int series, std::int64_t frame);
     // 空操作：关闭窗口时用阻塞调用等待当前命令结束。
@@ -73,12 +76,15 @@ signals:
     void recordChanged(const ascend::session::RecordView& record);
     void sampleDetailReady(int series, std::int64_t frame, const ascend::session::SampleDetailView& detail);
     void diagnosticsReported(const std::vector<ascend::session::DiagnosticView>& diagnostics);
+    void experimentSaved(const QString& path, bool ok);
+    void experimentOpened(const QString& path, bool ok);
 
 private:
     enum class TraceUpdate { none, reset, deltas };
 
     ModelSnapshot snapshot() const;
-    void publish(const session::OperationResult& result, bool model, TraceUpdate traces);
+    void publish(const session::OperationResult& result, bool model, TraceUpdate traces,
+                 bool comparison = false);
     void publishModel();
     void publishTracesReset();
     void publishSampleDeltas();

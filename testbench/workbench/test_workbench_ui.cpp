@@ -1,5 +1,6 @@
 #include "config_editor.hpp"
 #include "main_window.hpp"
+#include "waveform_widget.hpp"
 #include "workbench.hpp"
 
 #include <QAction>
@@ -8,6 +9,8 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDialog>
+#include <QDir>
+#include <QFileDialog>
 #include <QDockWidget>
 #include <QElapsedTimer>
 #include <QFile>
@@ -74,6 +77,7 @@ private slots:
     void resourceResolution();
     void menuBarStructure();
     void captureScreenshot();
+    void fileSaveOpen();
 };
 
 void TestWorkbench::windowLoadsExample() {
@@ -153,7 +157,13 @@ void TestWorkbench::windowLoadsExample() {
     QVERIFY(cursor_table != nullptr && cursor_table->rowCount() >= 3);
     auto* series_combo = window->findChild<QComboBox*>("sampleSeriesCombo");
     QVERIFY(series_combo != nullptr && series_combo->count() == 1);
-    QCOMPARE(window->resultRowCount(), 1);
+    QCOMPARE(window->currentStatus().tracks.front().samples, static_cast<std::size_t>(1));
+    QCOMPARE(cursor_table->item(0, 2)->text(), QStringLiteral("0"));
+    QCOMPARE(cursor_table->item(0, 3)->text(), QStringLiteral("0"));
+    auto* waveform = window->findChild<WaveformWidget*>("waveform");
+    QVERIFY(waveform != nullptr);
+    QVERIFY(!waveform->checkpoint().has_value());
+    QVERIFY(!waveform->branchZone());
 
     window->findChild<QPushButton*>("checkButton")->click();
     QVERIFY(wait_idle(window));
@@ -181,16 +191,18 @@ void TestWorkbench::stepAndVariableSwitch() {
     MainWindow* window = workbench->window();
     QVERIFY(wait_idle(window));
 
-    auto* table = window->findChild<QTableWidget*>("resultTable");
-    QCOMPARE(table->item(0, 1)->text(), QStringLiteral("0"));
+    auto* cursor_table = window->findChild<QTableWidget*>("cursorTable");
+    QVERIFY(cursor_table != nullptr);
+    QCOMPARE(cursor_table->item(0, 2)->text(), QStringLiteral("0"));
+    QCOMPARE(cursor_table->item(0, 3)->text(), QStringLiteral("0"));
 
     // 外部输入可选：未设置时按世界自身配置值（示例 a = 1）推进。
     window->findChild<QPushButton*>("stepButton")->click();
     QVERIFY(wait_idle(window));
     QCOMPARE(window->currentStatus().tracks.front().frame, 1);
-    QCOMPARE(window->resultRowCount(), 2);
-    QCOMPARE(table->item(1, 1)->text(), QStringLiteral("1"));
-    QCOMPARE(table->item(1, 2)->text(), QStringLiteral("0"));
+    QCOMPARE(window->currentStatus().tracks.front().samples, static_cast<std::size_t>(2));
+    QCOMPARE(cursor_table->item(0, 3)->text(), QStringLiteral("1"));
+    QCOMPARE(cursor_table->item(1, 3)->text(), QStringLiteral("0"));
 
     // 切换显示信号不改变演化结果。
     auto* signal_tree = window->findChild<QTreeWidget*>("signalTree");
@@ -201,9 +213,8 @@ void TestWorkbench::stepAndVariableSwitch() {
     signal_group->child(1)->setCheckState(0, Qt::Checked);
     QTest::qWait(30);
     QCOMPARE(window->currentStatus().tracks.front().frame, 1);
-    QCOMPARE(window->resultRowCount(), 2);
-    QCOMPARE(table->item(1, 1)->text(), QStringLiteral("1"));
-    QCOMPARE(table->item(0, 1)->text(), QStringLiteral("0"));
+    QCOMPARE(window->currentStatus().tracks.front().samples, static_cast<std::size_t>(2));
+    QCOMPARE(cursor_table->item(0, 3)->text(), QStringLiteral("1"));
 }
 
 void TestWorkbench::stopDuringRun() {
@@ -215,7 +226,7 @@ void TestWorkbench::stopDuringRun() {
     window->findChild<QPushButton*>("runButton")->click();
     QVERIFY(window->busy());
     // 运行中切换标签页只请求只读快照，不应禁用停止按钮。
-    window->findChild<QTabWidget*>("resultsTabs")->setCurrentIndex(2);
+    window->findChild<QTabWidget*>("resultsTabs")->setCurrentIndex(1);
     QVERIFY(window->findChild<QPushButton*>("stopButton")->isEnabled());
     // 请求在完整的逻辑帧边界生效，实际完成数小于请求步数。
     QElapsedTimer stop_timer;
@@ -247,10 +258,10 @@ void TestWorkbench::runNThroughput() {
     QVERIFY(wait_idle(window, 120000));
     const auto elapsed = timer.elapsed();
     QCOMPARE(window->currentStatus().tracks.front().frame, 10000);
-    QCOMPARE(window->resultRowCount(), 10001);
+    QCOMPARE(window->currentStatus().tracks.front().samples, static_cast<std::size_t>(10001));
     qInfo() << "ui runN 10000 elapsed" << elapsed << "ms";
     // 时间轴全量视图绘制耗时（可见区间渲染 + 按像素列降采样）。
-    if (auto* tabs = window->findChild<QTabWidget*>("resultsTabs")) tabs->setCurrentIndex(1);
+    if (auto* tabs = window->findChild<QTabWidget*>("resultsTabs")) tabs->setCurrentIndex(0);
     QTest::qWait(30);
     if (auto* waveform = window->findChild<QWidget*>("waveform")) {
         QElapsedTimer paint_timer;
@@ -339,23 +350,48 @@ void TestWorkbench::branchComparisonAndReplay() {
     QCOMPARE(status.tracks[0].frame, 5);
     QCOMPARE(status.tracks[1].frame, 5);
 
-    // 结果表格：对照 (5,4,6)、干预 (13,12,22)。
-    auto* table = window->findChild<QTableWidget*>("resultTable");
-    QCOMPARE(table->columnCount(), 10);
-    int row = -1;
-    for (int index = 0; index < table->rowCount(); ++index) {
-        if (table->item(index, 0)->text() == QStringLiteral("5")) row = index;
-    }
-    QVERIFY(row >= 0);
-    QCOMPARE(table->item(row, 4)->text(), QStringLiteral("5"));
-    QCOMPARE(table->item(row, 5)->text(), QStringLiteral("4"));
-    QCOMPARE(table->item(row, 6)->text(), QStringLiteral("6"));
-    QCOMPARE(table->item(row, 7)->text(), QStringLiteral("13"));
-    QCOMPARE(table->item(row, 8)->text(), QStringLiteral("12"));
-    QCOMPARE(table->item(row, 9)->text(), QStringLiteral("22"));
+    // 差值信号组：两分支存在时出现，三个观测各一条。
+    auto* signal_tree = window->findChild<QTreeWidget*>("signalTree");
+    QVERIFY(signal_tree != nullptr && signal_tree->topLevelItemCount() == 2);
+    QCOMPARE(signal_tree->topLevelItem(1)->text(0), QStringLiteral("差值（干预 − 对照）"));
+    QCOMPARE(signal_tree->topLevelItem(1)->childCount(), 3);
+
+    // 时间轴游标读数：运行／对照／干预三条序列，对照 (5,4,6)、干预 (13,12,22)。
+    auto* cursor_table = window->findChild<QTableWidget*>("cursorTable");
+    QVERIFY(cursor_table != nullptr && cursor_table->rowCount() == 12);
+    QCOMPARE(cursor_table->item(0, 0)->text(), QStringLiteral("x"));
+    QCOMPARE(cursor_table->item(0, 1)->text(), QStringLiteral("运行"));
+    QCOMPARE(cursor_table->item(0, 3)->text(), QStringLiteral("—"));
+    QCOMPARE(cursor_table->item(1, 1)->text(), QStringLiteral("对照"));
+    QCOMPARE(cursor_table->item(1, 3)->text(), QStringLiteral("5"));
+    QCOMPARE(cursor_table->item(2, 3)->text(), QStringLiteral("13"));
+    QCOMPARE(cursor_table->item(4, 3)->text(), QStringLiteral("4"));
+    QCOMPARE(cursor_table->item(5, 3)->text(), QStringLiteral("12"));
+    QCOMPARE(cursor_table->item(7, 3)->text(), QStringLiteral("6"));
+    QCOMPARE(cursor_table->item(8, 3)->text(), QStringLiteral("22"));
+    // 差值曲线读数：游标 A 停在加载时的逻辑帧 0（非共同帧，读数为空），
+    // 游标 B 跟随数据末端逻辑帧 5，给出精确差值。
+    QCOMPARE(cursor_table->item(9, 0)->text(), QStringLiteral("x（差值）"));
+    QCOMPARE(cursor_table->item(9, 1)->text(), QStringLiteral("干预 − 对照"));
+    QCOMPARE(cursor_table->item(9, 2)->text(), QStringLiteral("—"));
+    QCOMPARE(cursor_table->item(9, 3)->text(), QStringLiteral("8"));
+    QCOMPARE(cursor_table->item(9, 4)->text(), QStringLiteral("—"));
+    QCOMPARE(cursor_table->item(10, 3)->text(), QStringLiteral("8"));
+    QCOMPARE(cursor_table->item(11, 3)->text(), QStringLiteral("16"));
+
+    // 检查点可视化：参考线与分支区间状态，点击参考线把游标 A 定位到检查点。
+    auto* waveform = window->findChild<WaveformWidget*>("waveform");
+    QVERIFY(waveform != nullptr);
+    QVERIFY(waveform->checkpoint().has_value() && *waveform->checkpoint() == 2);
+    QVERIFY(waveform->branchZone());
+    QTest::mouseClick(waveform, Qt::LeftButton, Qt::NoModifier, waveform->framePosition(2));
+    QCOMPARE(waveform->cursorA(), static_cast<std::int64_t>(2));
+    QCOMPARE(cursor_table->item(1, 2)->text(), QStringLiteral("2"));
+    QCOMPARE(cursor_table->item(9, 2)->text(), QStringLiteral("8"));
+    QCOMPARE(cursor_table->item(9, 4)->text(), QStringLiteral("0"));
 
     // 共同逻辑帧差值：8、8、16。
-    window->findChild<QTabWidget*>("resultsTabs")->setCurrentIndex(2);
+    window->findChild<QTabWidget*>("resultsTabs")->setCurrentIndex(1);
     QVERIFY(wait_until([window] { return !window->busy(); }));
     QTest::qWait(30);
     auto* diff = window->findChild<QTableWidget*>("diffTable");
@@ -385,7 +421,7 @@ void TestWorkbench::branchComparisonAndReplay() {
     QVERIFY(wait_idle(window));
     QCOMPARE(window->currentStatus().tracks[0].frame, 2);
     QCOMPARE(window->currentStatus().tracks[0].samples, static_cast<std::size_t>(1));
-    QCOMPARE(window->resultRowCount(), 3);
+    QCOMPARE(window->currentStatus().tracks[1].samples, static_cast<std::size_t>(1));
     QVERIFY(window->findChild<QPushButton*>("stepButton")->isEnabled());
 }
 
@@ -527,17 +563,29 @@ void TestWorkbench::menuBarStructure() {
     QAction* step = find_action(run_menu, QStringLiteral("单步"));
     QVERIFY(step != nullptr);
     QVERIFY(step->isEnabled());
-    const int rows = window->resultRowCount();
+    const auto samples = window->currentStatus().tracks.front().samples;
     step->trigger();
     QVERIFY(wait_idle(window));
-    QCOMPARE(window->resultRowCount(), rows + 1);
+    QCOMPARE(window->currentStatus().tracks.front().samples, samples + 1);
+
+    // 文件菜单：实验文件入口已实装。
+    QMenu* file_menu = menu_bar->actions().at(0)->menu();
+    QAction* open_experiment = find_action(file_menu, QStringLiteral("打开实验…"));
+    QVERIFY(open_experiment != nullptr);
+    QVERIFY(open_experiment->isEnabled());
+    QAction* save = find_action(file_menu, QStringLiteral("保存"));
+    QVERIFY(save != nullptr);
+    QVERIFY(save->isEnabled());
+    QAction* save_as = find_action(file_menu, QStringLiteral("另存为…"));
+    QVERIFY(save_as != nullptr);
+    QVERIFY(save_as->isEnabled());
 
     // 未实装项占位且禁用，并带后续阶段提示。
-    QMenu* file_menu = menu_bar->actions().at(0)->menu();
-    QAction* save = find_action(file_menu, QStringLiteral("保存实验…"));
-    QVERIFY(save != nullptr);
-    QVERIFY(!save->isEnabled());
-    QVERIFY(!save->toolTip().isEmpty());
+    QMenu* edit_menu = menu_bar->actions().at(1)->menu();
+    QAction* placeholder_action = find_action(edit_menu, QStringLiteral("撤销"));
+    QVERIFY(placeholder_action != nullptr);
+    QVERIFY(!placeholder_action->isEnabled());
+    QVERIFY(!placeholder_action->toolTip().isEmpty());
 
     // 查看菜单：停靠面板开关为勾选项，选择后菜单保持展开。
     QMenu* view_menu = menu_bar->actions().at(2)->menu();
@@ -596,6 +644,87 @@ void TestWorkbench::menuBarStructure() {
     QCOMPARE(dock->isHidden(), hidden);
 }
 
+
+void TestWorkbench::fileSaveOpen() {
+    auto workbench = start_workbench();
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    // 场景 A：推进 2 步、检查点、干预分支、再推进 3 步。
+    window->findChild<QSpinBox*>("stepsSpin")->setValue(2);
+    window->findChild<QPushButton*>("runButton")->click();
+    QVERIFY(wait_idle(window));
+    window->findChild<QPushButton*>("checkpointButton")->click();
+    QVERIFY(wait_idle(window));
+    QTimer dialog_timer;
+    connect(&dialog_timer, &QTimer::timeout, [&dialog_timer] {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) return;
+        if (auto* table = dialog->findChild<QTableWidget*>("branchFieldTable")) {
+            for (int row = 0; row < table->rowCount(); ++row) {
+                if (table->item(row, 0)->text() == QStringLiteral("plant/state") &&
+                    table->item(row, 1)->text() == QStringLiteral("x")) {
+                    table->setCurrentCell(row, 0);
+                    table->selectRow(row);
+                }
+            }
+        }
+        if (auto* edit = dialog->findChild<QLineEdit*>("branchValueEdit")) {
+            edit->setText(QStringLiteral("10"));
+        }
+        dialog_timer.stop();
+        dialog->accept();
+    });
+    dialog_timer.start(10);
+    window->findChild<QPushButton*>("branchButton")->click();
+    QVERIFY(wait_idle(window));
+    window->findChild<QSpinBox*>("stepsSpin")->setValue(3);
+    window->findChild<QPushButton*>("runButton")->click();
+    QVERIFY(wait_idle(window));
+    QCOMPARE(window->currentStatus().tracks[0].frame, 5);
+
+    // 另存为实验文件。
+    const QString path = QDir::tempPath() + QStringLiteral("/ascend-workbench-ui.aexp");
+    QFile::remove(path);
+    QTimer save_timer;
+    connect(&save_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) return;
+        save_timer.stop();
+        dialog->selectFile(path);
+        QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+    });
+    save_timer.start(10);
+    window->findChild<QAction*>("saveAsAction")->trigger();
+    QVERIFY(wait_until([&] { return QFile::exists(path) && window->currentFile() == path; }, 8000));
+    QVERIFY(wait_idle(window));
+
+    // 继续推进制造差异，然后打开文件：接管回保存时的状态并可继续推进。
+    window->findChild<QPushButton*>("stepButton")->click();
+    QVERIFY(wait_idle(window));
+    QCOMPARE(window->currentStatus().tracks[0].frame, 6);
+    QTimer open_timer;
+    connect(&open_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) return;
+        open_timer.stop();
+        dialog->selectFile(path);
+        QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+    });
+    open_timer.start(10);
+    window->findChild<QAction*>("openExperimentAction")->trigger();
+    QVERIFY(wait_until([&] {
+        return window->currentStatus().tracks.size() == 2 && window->currentStatus().tracks[0].frame == 5;
+    }, 8000));
+    QCOMPARE(window->currentStatus().phase, ascend::session::Phase::runnable);
+    QCOMPARE(window->currentFile(), path);
+    QVERIFY(window->findChild<QPushButton*>("stepButton")->isEnabled());
+    window->findChild<QPushButton*>("stepButton")->click();
+    QVERIFY(wait_idle(window));
+    QCOMPARE(window->currentStatus().tracks[0].frame, 6);
+    QFile::remove(path);
+}
+
 void TestWorkbench::captureScreenshot() {
     auto workbench = start_workbench();
     MainWindow* window = workbench->window();
@@ -636,17 +765,17 @@ void TestWorkbench::captureScreenshot() {
         if (scroll->verticalScrollBar() != nullptr) scroll->verticalScrollBar()->setValue(0);
     }
     auto* tabs = window->findChild<QTabWidget*>("resultsTabs");
-    tabs->setCurrentIndex(1);
+    tabs->setCurrentIndex(0);
     QTest::qWait(80);
     const QString path =
         qEnvironmentVariable("ASCEND_WORKBENCH_SCREENSHOT", QStringLiteral("workbench-ui.png"));
     QVERIFY2(window->grab().save(path), qPrintable(QStringLiteral("cannot save %1").arg(path)));
-    tabs->setCurrentIndex(0);
+    tabs->setCurrentIndex(1);
     QTest::qWait(50);
-    const QString table_path = path.chopped(4) + QStringLiteral("-table.png");
-    QVERIFY2(window->grab().save(table_path),
-             qPrintable(QStringLiteral("cannot save %1").arg(table_path)));
-    qInfo() << "screenshots saved to" << path << "and" << table_path;
+    const QString diff_path = path.chopped(4) + QStringLiteral("-diff.png");
+    QVERIFY2(window->grab().save(diff_path),
+             qPrintable(QStringLiteral("cannot save %1").arg(diff_path)));
+    qInfo() << "screenshots saved to" << path << "and" << diff_path;
 }
 
 QTEST_MAIN(TestWorkbench)

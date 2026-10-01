@@ -63,6 +63,18 @@ void WaveformWidget::setEvents(QVector<Event> markers) {
     update();
 }
 
+void WaveformWidget::setCheckpoint(std::optional<std::int64_t> frame, bool branch_zone) {
+    checkpoint_ = frame;
+    branch_zone_ = branch_zone;
+    update();
+}
+
+QPoint WaveformWidget::framePosition(std::int64_t frame) const {
+    const QRect wave = wave_rect();
+    const double x = x_for_frame(static_cast<double>(frame), wave);
+    return QPoint(static_cast<int>(std::lround(x)), wave.center().y());
+}
+
 QRect WaveformWidget::wave_rect() const {
     return QRect(kNameWidth, kEventHeight, std::max(1, width() - kNameWidth),
                  std::max(1, height() - kEventHeight - kAxisHeight));
@@ -147,6 +159,15 @@ void WaveformWidget::paintEvent(QPaintEvent*) {
     const QRect wave = wave_rect();
     painter.fillRect(rect(), palette().window());
     painter.fillRect(wave, QColor(0xfb, 0xfb, 0xfb));
+    if (branch_zone_ && checkpoint_.has_value()) {
+        const auto bounds = data_bounds();
+        if (bounds.valid) {
+            const double left = x_for_frame(static_cast<double>(*checkpoint_), wave);
+            const double right = x_for_frame(static_cast<double>(bounds.max), wave);
+            const QRectF zone(left, wave.top(), std::max(0.0, right - left), wave.height());
+            painter.fillRect(zone.intersected(QRectF(wave)), QColor(0x17, 0xa2, 0xb8, 14));
+        }
+    }
 
     if (signals_.isEmpty()) {
         painter.setPen(QColor(0x88, 0x88, 0x88));
@@ -293,14 +314,61 @@ void WaveformWidget::paintEvent(QPaintEvent*) {
     for (const auto& event : events_) {
         const double x = x_for_frame(static_cast<double>(event.frame), wave);
         if (x < wave.left() - 2 || x > wave.right() + 2) continue;
-        QPolygonF marker;
-        marker << QPointF(x - 4.0, kEventHeight - 3.0) << QPointF(x + 4.0, kEventHeight - 3.0)
-               << QPointF(x, 3.0);
-        painter.setPen(Qt::NoPen);
         painter.setBrush(event.color);
-        painter.drawPolygon(marker);
+        painter.setPen(Qt::NoPen);
+        switch (event.kind) {
+            case EventKind::checkpoint: {
+                // 旗杆 + 旗面
+                painter.setPen(QPen(event.color, 1.2));
+                painter.drawLine(QPointF(x, 3.0), QPointF(x, kEventHeight - 3.0));
+                QPolygonF flag;
+                flag << QPointF(x, 3.0) << QPointF(x + 8.0, 5.5) << QPointF(x, 8.0);
+                painter.setPen(Qt::NoPen);
+                painter.drawPolygon(flag);
+                break;
+            }
+            case EventKind::branch:
+                painter.drawEllipse(QPointF(x, 9.0), 3.5, 3.5);
+                break;
+            case EventKind::intervention: {
+                QPolygonF diamond;
+                diamond << QPointF(x, 4.5) << QPointF(x + 4.5, 9.0) << QPointF(x, 13.5)
+                        << QPointF(x - 4.5, 9.0);
+                painter.drawPolygon(diamond);
+                break;
+            }
+            case EventKind::failure:
+                painter.setPen(QPen(event.color, 1.6));
+                painter.drawLine(QPointF(x - 3.5, 5.5), QPointF(x + 3.5, 12.5));
+                painter.drawLine(QPointF(x - 3.5, 12.5), QPointF(x + 3.5, 5.5));
+                break;
+            case EventKind::stop:
+                painter.drawRect(QRectF(x - 3.5, 5.5, 7.0, 7.0));
+                break;
+            case EventKind::other:
+            default: {
+                QPolygonF marker;
+                marker << QPointF(x - 4.0, kEventHeight - 3.0) << QPointF(x + 4.0, kEventHeight - 3.0)
+                       << QPointF(x, 3.0);
+                painter.drawPolygon(marker);
+                break;
+            }
+        }
     }
     painter.setBrush(Qt::NoBrush);
+
+    // 检查点参考线（游标之下）
+    if (checkpoint_.has_value()) {
+        const double x = x_for_frame(static_cast<double>(*checkpoint_), wave);
+        if (x >= wave.left() - 1 && x <= wave.right() + 1) {
+            QPen pen(QColor(0x17, 0xa2, 0xb8), 1.2);
+            pen.setStyle(Qt::DashLine);
+            painter.setPen(pen);
+            painter.drawLine(QPointF(x, wave.top()), QPointF(x, wave.bottom()));
+            painter.drawText(QRectF(x - 30, wave.top() + 1, 60, 16), Qt::AlignCenter,
+                             ui_text(*texts_, "workbench.waveform.event.checkpoint", "Checkpoint"));
+        }
+    }
 
     // 游标
     const auto draw_cursor = [&](std::int64_t frame, bool valid, const QColor& color, bool dashed,
@@ -348,7 +416,24 @@ void WaveformWidget::mouseMoveEvent(QMouseEvent* event) {
 void WaveformWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton || !pressed_) return;
     pressed_ = false;
-    if (!dragged_) place_cursor(event->pos(), event->modifiers().testFlag(Qt::ShiftModifier));
+    if (!dragged_) {
+        const bool secondary = event->modifiers().testFlag(Qt::ShiftModifier);
+        // 点击检查点参考线：把游标 A 定位到检查点。
+        if (!secondary && checkpoint_.has_value()) {
+            const QRect wave = wave_rect();
+            const double x = x_for_frame(static_cast<double>(*checkpoint_), wave);
+            if (std::abs(x - event->pos().x()) <= 5.0) {
+                cursor_a_ = *checkpoint_;
+                cursor_a_valid_ = true;
+                update();
+                emit cursorsChanged();
+                emit frameSelected(cursor_a_);
+                dragged_ = false;
+                return;
+            }
+        }
+        place_cursor(event->pos(), secondary);
+    }
     dragged_ = false;
 }
 
@@ -393,13 +478,23 @@ void WaveformWidget::update_tooltip(const QPoint& pos) {
         QToolTip::hideText();
         return;
     }
+    QStringList lines;
+    std::int64_t frame = 0;
+    bool found = false;
     for (const auto& event : events_) {
         const double x = x_for_frame(static_cast<double>(event.frame), wave);
         if (std::abs(x - pos.x()) > 6) continue;
+        if (!found) {
+            frame = event.frame;
+            found = true;
+        }
+        lines << event.text;
+    }
+    if (found) {
         QToolTip::showText(mapToGlobal(pos),
                            ui_text(*texts_, "workbench.waveform.event_tooltip", "Boundary %1: %2")
-                               .arg(event.frame)
-                               .arg(event.text),
+                               .arg(frame)
+                               .arg(lines.join(QStringLiteral("\n"))),
                            this);
         return;
     }

@@ -4,18 +4,22 @@
 #include "config_editor.hpp"
 #include "waveform_widget.hpp"
 
+#include <optional>
 #include <QAction>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QColor>
 #include <QComboBox>
 #include <QDockWidget>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -78,6 +82,7 @@ QString phase_text(const UiTexts& texts, session::Phase phase) {
         case session::Phase::runnable: return ui_text(texts, "workbench.status.runnable", "Runnable");
         case session::Phase::stopped: return ui_text(texts, "workbench.status.stopped", "Stopped");
         case session::Phase::failed: return ui_text(texts, "workbench.status.failed", "Failed");
+        case session::Phase::record: return ui_text(texts, "workbench.status.record", "Record (read-only)");
     }
     return {};
 }
@@ -206,6 +211,8 @@ MainWindow::MainWindow(SessionController* controller, std::shared_ptr<const sess
     connect(controller_, &SessionController::recordChanged, this, &MainWindow::onRecordChanged);
     connect(controller_, &SessionController::sampleDetailReady, this, &MainWindow::onSampleDetailReady);
     connect(controller_, &SessionController::diagnosticsReported, this, &MainWindow::onDiagnostics);
+    connect(controller_, &SessionController::experimentSaved, this, &MainWindow::onExperimentSaved);
+    connect(controller_, &SessionController::experimentOpened, this, &MainWindow::onExperimentOpened);
 
     for (const auto& error : texts_->load_errors) {
         auto* item = new QTreeWidgetItem(diagnostics_tree_);
@@ -237,8 +244,6 @@ QString MainWindow::statusLine() const {
     }
     return text;
 }
-
-int MainWindow::resultRowCount() const { return result_table_ == nullptr ? 0 : result_table_->rowCount(); }
 
 void MainWindow::buildLayout() {
     // 中央为主工作区：命令栏 + 结果页签；其余面板做成停靠窗口，可浮动、嵌套与合并。
@@ -458,12 +463,6 @@ void MainWindow::buildConfigPane() {
 void MainWindow::buildResultsPane() {
     results_tabs_ = new QTabWidget;
     results_tabs_->setObjectName("resultsTabs");
-    result_table_ = new QTableWidget(results_tabs_);
-    result_table_->setObjectName("resultTable");
-    result_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    result_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    result_table_->setSelectionMode(QAbstractItemView::SingleSelection);
-    results_tabs_->addTab(result_table_, ui_text(*texts_, "workbench.pane.results", "Result table"));
 
     auto* timeline_page = new QWidget(results_tabs_);
     auto* timeline_layout = new QVBoxLayout(timeline_page);
@@ -524,13 +523,10 @@ void MainWindow::buildResultsPane() {
     connect(signal_tree_, &QTreeWidget::itemChanged, this, [this] { rebuildWaveform(); });
     connect(waveform_, &WaveformWidget::cursorsChanged, this, &MainWindow::updateCursorTable);
     connect(waveform_, &WaveformWidget::frameSelected, this, [this](std::int64_t frame) {
-        const auto row = row_index_.find(frame);
-        if (row == row_index_.end()) return;
-        result_table_->selectRow(row->second);
+        requestSampleDetail(frame);
     });
-    connect(result_table_, &QTableWidget::itemSelectionChanged, this, [this] { requestCurrentSample(); });
     connect(results_tabs_, &QTabWidget::currentChanged, this, [this](int index) {
-        if (index == 2) dispatchReadonly("requestComparison");
+        if (index == 1) dispatchReadonly("requestComparison");
     });
 }
 
@@ -580,7 +576,10 @@ void MainWindow::buildRightPane() {
     sample_layout->addWidget(sample_tree_, 1);
     tabs->addTab(sample_page, ui_text(*texts_, "workbench.pane.truth", "Truth and observations"));
 
-    connect(sample_series_combo_, &QComboBox::currentIndexChanged, this, [this] { requestCurrentSample(); });
+    connect(sample_series_combo_, &QComboBox::currentIndexChanged, this, [this] {
+        if (selected_frame_ >= 0) requestSampleDetail(selected_frame_);
+        else requestLatestSample();
+    });
 }
 
 void MainWindow::buildDiagnosticsDock() {
@@ -681,6 +680,11 @@ void MainWindow::updateControls() {
     for (auto& item : config_editors_) item.second->setEnabled(editable);
     for (const auto& [action, button] : action_buttons_) action->setEnabled(button->isEnabled());
     if (open_action_ != nullptr) open_action_->setEnabled(!busy_ && !closing_);
+    const bool saveable = !busy_ && !closing_ && status_.phase != session::Phase::empty &&
+                          status_.phase != session::Phase::editing;
+    if (open_experiment_action_ != nullptr) open_experiment_action_->setEnabled(!busy_ && !closing_);
+    if (save_action_ != nullptr) save_action_->setEnabled(saveable);
+    if (save_as_action_ != nullptr) save_as_action_->setEnabled(saveable);
 }
 
 void MainWindow::buildMenuBar() {
@@ -705,8 +709,18 @@ void MainWindow::buildMenuBar() {
     open_action_ = file->addAction(ui_text(*texts_, "workbench.action.open_example", "Open example"));
     connect(open_action_, &QAction::triggered, this, [this] { dispatch("load"); });
     file->addSeparator();
-    placeholder(file, "workbench.action.save_experiment", "Save experiment…");
-    placeholder(file, "workbench.action.load_experiment", "Load experiment…");
+    open_experiment_action_ = file->addAction(ui_text(*texts_, "workbench.action.open_experiment", "Open experiment…"));
+    open_experiment_action_->setObjectName("openExperimentAction");
+    open_experiment_action_->setShortcut(QKeySequence::Open);
+    connect(open_experiment_action_, &QAction::triggered, this, &MainWindow::chooseOpenExperiment);
+    save_action_ = file->addAction(ui_text(*texts_, "workbench.action.save_experiment", "Save"));
+    save_action_->setObjectName("saveAction");
+    save_action_->setShortcut(QKeySequence::Save);
+    connect(save_action_, &QAction::triggered, this, &MainWindow::saveExperiment);
+    save_as_action_ = file->addAction(ui_text(*texts_, "workbench.action.save_experiment_as", "Save as…"));
+    save_as_action_->setObjectName("saveAsAction");
+    save_as_action_->setShortcut(QKeySequence::SaveAs);
+    connect(save_as_action_, &QAction::triggered, this, &MainWindow::chooseSaveExperiment);
     file->addSeparator();
     QAction* quit = file->addAction(ui_text(*texts_, "workbench.action.quit", "Quit"));
     connect(quit, &QAction::triggered, this, &QWidget::close);
@@ -757,11 +771,7 @@ void MainWindow::buildMenuBar() {
 }
 
 void MainWindow::updateStatusLabels() {
-    if (!status_.model_name.empty()) {
-        setWindowTitle(ui_text(*texts_, "workbench.app.window_title",
-                               "Ascend Causal Modeling Workbench: %1")
-                           .arg(from_utf8(status_.model_name)));
-    }
+    if (!status_.model_name.empty()) updateWindowTitle();
     status_label_->setText(statusLine());
     QString revision = ui_text(*texts_, "workbench.status.draft_revision", "Draft revision %1").arg(status_.draft_revision);
     if (status_.dirty) {
@@ -786,6 +796,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 void MainWindow::dispatch(const char* method) {
     if (closing_ || controller_ == nullptr) return;
     busy_ = true;
+    file_dirty_ = true;
     pending_ = QString::fromLatin1(method);
     updateControls();
     QMetaObject::invokeMethod(controller_, method, Qt::QueuedConnection);
@@ -845,13 +856,12 @@ void MainWindow::onTracesReset(const std::vector<session::TrackTraceView>& trace
         for (const auto& event : trace.events) series_data.events.push_back(event);
         series_.push_back(std::move(series_data));
     }
-    rebuildResultTable();
     rebuildWaveform();
     rebuildSampleSelectors();
     diff_table_->clearContents();
     diff_table_->setRowCount(0);
     diff_note_->clear();
-    requestCurrentSample();
+    requestLatestSample();
 }
 
 void MainWindow::onSamplesAppended(int series, const std::vector<session::SampleView>& samples,
@@ -860,39 +870,14 @@ void MainWindow::onSamplesAppended(int series, const std::vector<session::Sample
     auto& series_data = series_[static_cast<std::size_t>(series)];
     for (const auto& sample : samples) series_data.samples.push_back(sample);
     for (const auto& event : events) series_data.events.push_back(event);
-    if (result_table_->columnCount() == 0) {
-        rebuildResultTable();
-    } else {
-        for (const auto& sample : samples) {
-            auto row = row_index_.find(sample.frame);
-            if (row == row_index_.end()) {
-                const int position = result_table_->rowCount();
-                result_table_->insertRow(position);
-                result_table_->setItem(position, 0,
-                                       new QTableWidgetItem(QString::number(sample.frame)));
-                row_index_.emplace(sample.frame, position);
-                row = row_index_.find(sample.frame);
-            }
-            int column = 1;
-            for (int index = 0; index < series; ++index) {
-                column += static_cast<int>(model_.observations.size());
-            }
-            for (const auto& cell : sample.observations) {
-                auto* item = new QTableWidgetItem(from_utf8(cell.display));
-                if (!cell.exact && cell.numeric) {
-                    item->setToolTip(ui_text(*texts_, "workbench.cell.exact_tooltip", "Shown exactly; curve coordinates are approximate."));
-                }
-                result_table_->setItem(row->second, column++, item);
-            }
-        }
-    }
     rebuildWaveform();
-    requestCurrentSample();
+    requestLatestSample();
 }
 
 void MainWindow::onComparisonReady(const session::ComparisonView& comparison) {
     current_comparison_ = comparison;
     rebuildDiff();
+    rebuildWaveform();
 }
 
 void MainWindow::onCheckFinished(const session::CheckReport& report) {
@@ -948,11 +933,99 @@ void MainWindow::onReplayFinished(const session::ReplayReport& report) {
     box.exec();
 }
 
+void MainWindow::chooseOpenExperiment() {
+    if (busy_ || closing_) return;
+    const QString path = QFileDialog::getOpenFileName(
+        this, ui_text(*texts_, "workbench.action.open_experiment", "Open experiment…"), QString(),
+        ui_text(*texts_, "workbench.filter.experiment", "Ascend experiment (*.aexp);;All files (*)"),
+        nullptr, QFileDialog::DontUseNativeDialog);
+    if (path.isEmpty()) return;
+    pending_ = QStringLiteral("openExperiment");
+    updateControls();
+    QMetaObject::invokeMethod(controller_, "openExperiment", Qt::QueuedConnection, Q_ARG(QString, path));
+}
+
+void MainWindow::saveExperiment() {
+    if (busy_ || closing_) return;
+    if (current_file_.isEmpty()) {
+        chooseSaveExperiment();
+        return;
+    }
+    pending_ = QStringLiteral("saveExperiment");
+    updateControls();
+    QMetaObject::invokeMethod(controller_, "saveExperiment", Qt::QueuedConnection, Q_ARG(QString, current_file_));
+}
+
+void MainWindow::chooseSaveExperiment() {
+    if (busy_ || closing_) return;
+    QString path = QFileDialog::getSaveFileName(
+        this, ui_text(*texts_, "workbench.action.save_experiment_as", "Save experiment as…"),
+        current_file_.isEmpty() ? QStringLiteral("experiment.aexp") : current_file_,
+        ui_text(*texts_, "workbench.filter.experiment", "Ascend experiment (*.aexp);;All files (*)"),
+        nullptr, QFileDialog::DontUseNativeDialog);
+    if (path.isEmpty()) return;
+    if (!path.endsWith(QStringLiteral(".aexp"))) path += QStringLiteral(".aexp");
+    pending_ = QStringLiteral("saveExperiment");
+    updateControls();
+    QMetaObject::invokeMethod(controller_, "saveExperiment", Qt::QueuedConnection, Q_ARG(QString, path));
+}
+
+void MainWindow::onExperimentSaved(const QString& path, bool ok) {
+    if (!ok) {
+        QString detail;
+        if (!diagnostics_.empty()) detail = from_utf8(diagnostics_.front().message);
+        QString text = ui_text(*texts_, "workbench.save.failed", "Could not save the experiment file: %1").arg(path);
+        if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
+        QMessageBox::warning(this, ui_text(*texts_, "workbench.save.title", "Save experiment"), text);
+        return;
+    }
+    current_file_ = path;
+    file_dirty_ = false;
+    updateWindowTitle();
+    updateRecordSummary();
+}
+
+void MainWindow::onExperimentOpened(const QString& path, bool ok) {
+    if (!ok) {
+        QString detail;
+        if (!diagnostics_.empty()) detail = from_utf8(diagnostics_.front().message);
+        QString text = ui_text(*texts_, "workbench.open.failed", "Could not open the experiment file: %1").arg(path);
+        if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
+        QMessageBox::warning(this, ui_text(*texts_, "workbench.open.title", "Open experiment"), text);
+        return;
+    }
+    current_file_ = path;
+    file_dirty_ = false;
+    updateWindowTitle();
+    updateRecordSummary();
+}
+
+void MainWindow::updateWindowTitle() {
+    QString title = ui_text(*texts_, "workbench.app.window_title", "Ascend Causal Modeling Workbench: %1")
+                        .arg(from_utf8(status_.model_name));
+    if (!current_file_.isEmpty()) {
+        title += ui_text(*texts_, "workbench.app.file_suffix", " — %1")
+                     .arg(QFileInfo(current_file_).fileName());
+        if (file_dirty_) title += QStringLiteral("*");
+    }
+    setWindowTitle(title);
+}
+
+void MainWindow::updateRecordSummary() {
+    const QString file = current_file_.isEmpty()
+                             ? ui_text(*texts_, "workbench.record.in_memory", "in-process only")
+                             : QFileInfo(current_file_).fileName();
+    record_label_->setText(ui_text(*texts_, "workbench.record.summary",
+                                   "Branches: %1 · actual driven inputs: %2 · advance failures: %3 · file: %4")
+                               .arg(record_view_.branches)
+                               .arg(record_view_.inputs)
+                               .arg(record_view_.failures)
+                               .arg(file));
+}
+
 void MainWindow::onRecordChanged(const session::RecordView& record) {
-    record_label_->setText(ui_text(*texts_, "workbench.record.summary", "Branches: %1 · actual driven inputs: %2 · advance failures: %3 (records are kept in-process only)")
-                               .arg(record.branches)
-                               .arg(record.inputs)
-                               .arg(record.failures));
+    record_view_ = record;
+    updateRecordSummary();
     record_table_->setRowCount(0);
     for (const auto& input : record.input_list) {
         const int row = record_table_->rowCount();
@@ -1096,20 +1169,22 @@ void MainWindow::showRequirementAt(int index) {
     }
 }
 
-void MainWindow::requestCurrentSample() {
-    if (closing_ || controller_ == nullptr || result_table_ == nullptr || series_.empty()) return;
-    const auto selected = result_table_->selectionModel() == nullptr
-                              ? QModelIndexList{}
-                              : result_table_->selectionModel()->selectedRows();
-    if (selected.isEmpty()) return;
-    const int row = selected.front().row();
-    auto* frame_item = result_table_->item(row, 0);
-    if (frame_item == nullptr) return;
-    selected_frame_ = frame_item->text().toLongLong();
+void MainWindow::requestSampleDetail(std::int64_t frame) {
+    if (closing_ || controller_ == nullptr || sample_series_combo_ == nullptr || series_.empty()) return;
+    selected_frame_ = frame;
     selected_series_ = std::clamp(sample_series_combo_->currentIndex(), 0,
                                   static_cast<int>(series_.size()) - 1);
     QMetaObject::invokeMethod(controller_, "requestSampleDetail", Qt::QueuedConnection,
                               Q_ARG(int, selected_series_), Q_ARG(std::int64_t, selected_frame_));
+}
+
+void MainWindow::requestLatestSample() {
+    if (series_.empty() || sample_series_combo_ == nullptr) return;
+    const int series_index = std::clamp(sample_series_combo_->currentIndex(), 0,
+                                        static_cast<int>(series_.size()) - 1);
+    const auto& samples = series_[static_cast<std::size_t>(series_index)].samples;
+    if (samples.empty()) return;
+    requestSampleDetail(samples.back().frame);
 }
 
 void MainWindow::rebuildConfigForms() {
@@ -1135,6 +1210,7 @@ void MainWindow::rebuildConfigForms() {
         connect(editor, &ConfigEditor::configEdited, this, [this, scope, name](const ascend::Config& config) {
             if (busy_ || closing_ || controller_ == nullptr) return;
             busy_ = true;
+            file_dirty_ = true;
             pending_ = QStringLiteral("config");
             updateControls();
             QMetaObject::invokeMethod(controller_, "setInstanceConfig", Qt::QueuedConnection,
@@ -1293,50 +1369,6 @@ void MainWindow::rebuildConnections() {
     connections_tree_->expandAll();
 }
 
-void MainWindow::rebuildResultTable() {
-    result_table_->clear();
-    result_table_->setRowCount(0);
-    row_index_.clear();
-    QStringList headers{ui_text(*texts_, "workbench.table.frame", "Boundary")};
-    const bool grouped = series_.size() > 1;
-    for (const auto& series_data : series_) {
-        for (const auto& name : model_.observations) {
-            headers << (grouped ? series_data.label + " " + from_utf8(name) : from_utf8(name));
-        }
-    }
-    result_table_->setColumnCount(headers.size());
-    result_table_->setHorizontalHeaderLabels(headers);
-
-    std::vector<std::int64_t> frames;
-    for (const auto& series_data : series_) {
-        for (const auto& sample : series_data.samples) frames.push_back(sample.frame);
-    }
-    std::sort(frames.begin(), frames.end());
-    frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
-    for (const auto frame : frames) {
-        const int row = result_table_->rowCount();
-        result_table_->insertRow(row);
-        result_table_->setItem(row, 0, new QTableWidgetItem(QString::number(frame)));
-        row_index_.emplace(frame, row);
-        int column = 1;
-        for (const auto& series_data : series_) {
-            const auto sample = std::find_if(series_data.samples.begin(), series_data.samples.end(),
-                                             [&](const session::SampleView& item) {
-                                                 return item.frame == frame;
-                                             });
-            if (sample == series_data.samples.end()) {
-                column += static_cast<int>(model_.observations.size());
-                continue;
-            }
-            for (const auto& cell : sample->observations) {
-                result_table_->setItem(row, column++, new QTableWidgetItem(from_utf8(cell.display)));
-            }
-        }
-    }
-    if (!frames.empty()) result_table_->selectRow(result_table_->rowCount() - 1);
-    result_table_->resizeColumnsToContents();
-}
-
 void MainWindow::rebuildWaveform() {
     if (waveform_rebuilding_) return;
     waveform_rebuilding_ = true;
@@ -1359,35 +1391,79 @@ void MainWindow::rebuildWaveform() {
         }
     }
 
-    // 信号树：首版以规格观测为信号源，勾选加入波形。
-    if (signal_tree_->topLevelItemCount() == 0 && !model_.observations.empty()) {
+    // 信号树：观测组（规格观测）与差值组（两分支存在时）。
+    if (observation_group_ == nullptr && !model_.observations.empty()) {
         const QSignalBlocker blocker(signal_tree_);
-        auto* group = new QTreeWidgetItem(signal_tree_);
-        group->setText(0, ui_text(*texts_, "workbench.waveform.observations", "Observations"));
-        group->setFlags(Qt::ItemIsEnabled);
-        group->setExpanded(true);
+        observation_group_ = new QTreeWidgetItem(signal_tree_);
+        observation_group_->setText(0, ui_text(*texts_, "workbench.waveform.observations", "Observations"));
+        observation_group_->setFlags(Qt::ItemIsEnabled);
+        observation_group_->setExpanded(true);
         for (std::size_t index = 0; index < model_.observations.size(); ++index) {
-            auto* item = new QTreeWidgetItem(group);
+            auto* item = new QTreeWidgetItem(observation_group_);
             item->setText(0, from_utf8(model_.observations[index]));
             item->setData(0, Qt::UserRole, static_cast<int>(index));
+            item->setData(0, Qt::UserRole + 1, 0);
             item->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
             item->setCheckState(0, Qt::Checked);
         }
         signal_tree_->expandAll();
     }
+    if (series_.size() > 2 && !model_.observations.empty()) {
+        if (diff_group_ == nullptr) {
+            const QSignalBlocker blocker(signal_tree_);
+            diff_group_ = new QTreeWidgetItem(signal_tree_);
+            diff_group_->setText(0, ui_text(*texts_, "workbench.waveform.diff_group", "Difference (treated − control)"));
+            diff_group_->setFlags(Qt::ItemIsEnabled);
+            diff_group_->setExpanded(true);
+            for (std::size_t index = 0; index < model_.observations.size(); ++index) {
+                auto* item = new QTreeWidgetItem(diff_group_);
+                item->setText(0, from_utf8(model_.observations[index]));
+                item->setData(0, Qt::UserRole, static_cast<int>(index));
+                item->setData(0, Qt::UserRole + 1, 1);
+                item->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+                item->setCheckState(0, Qt::Checked);
+            }
+            signal_tree_->expandAll();
+        }
+    } else if (diff_group_ != nullptr) {
+        const QSignalBlocker blocker(signal_tree_);
+        delete diff_group_;
+        diff_group_ = nullptr;
+    }
 
     QVector<WaveformWidget::Signal> rows;
-    for (const auto& [signal_index, name] : checked_signals()) {
+    for (const auto& selection : checked_signals()) {
         WaveformWidget::Signal signal;
-        signal.name = name;
+        if (selection.difference) {
+            signal.name = ui_text(*texts_, "workbench.waveform.diff_name", "%1 (difference)")
+                              .arg(selection.name);
+            WaveformWidget::Series line;
+            line.label = ui_text(*texts_, "workbench.waveform.diff_series", "Treated − control");
+            line.color = QColor(0x8e, 0x44, 0xad);
+            for (const auto& row : current_comparison_.rows) {
+                if (selection.index < 0 ||
+                    static_cast<std::size_t>(selection.index) >= row.cells.size()) {
+                    continue;
+                }
+                const auto& cell = row.cells[static_cast<std::size_t>(selection.index)];
+                if (!cell.integer.has_value()) continue;
+                line.points.append(WaveformWidget::Point{
+                    row.frame, true, static_cast<double>(*cell.integer), true});
+            }
+            signal.series.push_back(line);
+            rows.push_back(signal);
+            continue;
+        }
+        signal.name = selection.name;
+        const auto signal_index = static_cast<std::size_t>(selection.index);
         for (std::size_t index = 0; index < series_.size(); ++index) {
             if (index >= series_checks_.size() || !series_checks_[index]->isChecked()) continue;
             WaveformWidget::Series line;
             line.label = series_[index].label;
             line.color = series_color(static_cast<int>(index));
             for (const auto& sample : series_[index].samples) {
-                if (static_cast<std::size_t>(signal_index) >= sample.observations.size()) continue;
-                const auto& cell = sample.observations[static_cast<std::size_t>(signal_index)];
+                if (signal_index >= sample.observations.size()) continue;
+                const auto& cell = sample.observations[signal_index];
                 line.points.append(
                     WaveformWidget::Point{sample.frame, cell.numeric, cell.value, cell.exact});
             }
@@ -1405,7 +1481,7 @@ void MainWindow::rebuildWaveform() {
             events.append(WaveformWidget::Event{
                 series_data.origin,
                 ui_text(*texts_, "workbench.waveform.event.branch", "Branch start") + " " + series_data.label,
-                QColor(0x8e, 0x44, 0xad)});
+                QColor(0x8e, 0x44, 0xad), WaveformWidget::EventKind::branch});
         }
         for (const auto& intervention : series_data.interventions) {
             QString text = ui_text(*texts_, "workbench.waveform.event.intervention", "Intervention");
@@ -1413,15 +1489,18 @@ void MainWindow::rebuildWaveform() {
             if (!intervention.field.empty()) text += "/" + from_utf8(intervention.field);
             text += QStringLiteral(": %1 → %2")
                         .arg(from_utf8(intervention.previous), from_utf8(intervention.replacement));
-            events.append(WaveformWidget::Event{series_data.origin, text, QColor(0xe6, 0x7e, 0x22)});
+            events.append(WaveformWidget::Event{series_data.origin, text, QColor(0xe6, 0x7e, 0x22),
+                                                WaveformWidget::EventKind::intervention});
         }
         for (const auto& step_event : series_data.events) {
             QString text;
             QColor color(0xc0, 0x39, 0x2b);
+            auto kind = WaveformWidget::EventKind::failure;
             switch (step_event.kind) {
                 case session::StepEvent::Kind::stopped:
                     text = ui_text(*texts_, "workbench.waveform.event.stopped", "Stopped");
                     color = QColor(0x77, 0x77, 0x77);
+                    kind = WaveformWidget::EventKind::stop;
                     break;
                 case session::StepEvent::Kind::input_failed:
                     text = ui_text(*texts_, "workbench.waveform.event.input_failed", "Input failed");
@@ -1435,29 +1514,34 @@ void MainWindow::rebuildWaveform() {
                 case session::StepEvent::Kind::completed:
                     continue;
             }
-            events.append(WaveformWidget::Event{step_event.frame, text, color});
+            events.append(WaveformWidget::Event{step_event.frame, text, color, kind});
         }
     }
     if (status_.has_checkpoint) {
         events.append(WaveformWidget::Event{
             status_.checkpoint_frame,
             ui_text(*texts_, "workbench.waveform.event.checkpoint", "Checkpoint"),
-            QColor(0x17, 0xa2, 0xb8)});
+            QColor(0x17, 0xa2, 0xb8), WaveformWidget::EventKind::checkpoint});
     }
     waveform_->setEvents(events);
+    waveform_->setCheckpoint(
+        status_.has_checkpoint ? std::optional<std::int64_t>(status_.checkpoint_frame) : std::nullopt,
+        series_.size() > 2);
 
     waveform_rebuilding_ = false;
     updateCursorTable();
 }
 
-std::vector<std::pair<int, QString>> MainWindow::checked_signals() const {
-    std::vector<std::pair<int, QString>> result;
+std::vector<MainWindow::SignalSelection> MainWindow::checked_signals() const {
+    std::vector<SignalSelection> result;
     for (int group_index = 0; group_index < signal_tree_->topLevelItemCount(); ++group_index) {
         auto* group = signal_tree_->topLevelItem(group_index);
         for (int child = 0; child < group->childCount(); ++child) {
             auto* item = group->child(child);
             if (item->checkState(0) != Qt::Checked) continue;
-            result.emplace_back(item->data(0, Qt::UserRole).toInt(), item->text(0));
+            result.push_back(SignalSelection{item->data(0, Qt::UserRole).toInt(),
+                                            item->data(0, Qt::UserRole + 1).toInt() == 1,
+                                            item->text(0)});
         }
     }
     return result;
@@ -1476,14 +1560,56 @@ void MainWindow::updateCursorTable() {
         }
         return nullptr;
     };
-    for (const auto& [signal_index, name] : checked_signals()) {
+    const auto subtract_checked = [](std::int64_t value_a, std::int64_t value_b,
+                                     std::int64_t& difference) {
+        if (value_a > 0 && value_b < std::numeric_limits<std::int64_t>::min() + value_a) return false;
+        if (value_a < 0 && value_b > std::numeric_limits<std::int64_t>::max() + value_a) return false;
+        difference = value_b - value_a;
+        return true;
+    };
+    const auto diff_cell_at = [this](std::int64_t frame, int signal_index) -> const session::DiffCellView* {
+        for (const auto& row : current_comparison_.rows) {
+            if (row.frame != frame) continue;
+            if (signal_index < 0 || static_cast<std::size_t>(signal_index) >= row.cells.size()) return nullptr;
+            return &row.cells[static_cast<std::size_t>(signal_index)];
+        }
+        return nullptr;
+    };
+    const auto delta_text = [&](std::optional<std::int64_t> value_a, std::optional<std::int64_t> value_b) {
+        if (!value_a.has_value() || !value_b.has_value()) return QStringLiteral("—");
+        std::int64_t difference = 0;
+        return subtract_checked(*value_a, *value_b, difference)
+                   ? QString::number(difference)
+                   : ui_text(*texts_, "workbench.waveform.overflow", "overflow");
+    };
+    for (const auto& selection : checked_signals()) {
+        if (selection.difference) {
+            const int row = cursor_table_->rowCount();
+            cursor_table_->insertRow(row);
+            cursor_table_->setItem(row, 0, new QTableWidgetItem(
+                ui_text(*texts_, "workbench.waveform.diff_name", "%1 (difference)").arg(selection.name)));
+            cursor_table_->setItem(row, 1, new QTableWidgetItem(
+                ui_text(*texts_, "workbench.waveform.diff_series", "Treated − control")));
+            const auto* cell_a = diff_cell_at(a, selection.index);
+            const auto* cell_b = diff_cell_at(b, selection.index);
+            cursor_table_->setItem(row, 2,
+                                   new QTableWidgetItem(cell_a != nullptr ? from_utf8(cell_a->difference)
+                                                                          : QStringLiteral("—")));
+            cursor_table_->setItem(row, 3,
+                                   new QTableWidgetItem(cell_b != nullptr ? from_utf8(cell_b->difference)
+                                                                          : QStringLiteral("—")));
+            cursor_table_->setItem(row, 4, new QTableWidgetItem(delta_text(
+                cell_a != nullptr ? cell_a->integer : std::nullopt,
+                cell_b != nullptr ? cell_b->integer : std::nullopt)));
+            continue;
+        }
         for (std::size_t index = 0; index < series_.size(); ++index) {
             if (index >= series_checks_.size() || !series_checks_[index]->isChecked()) continue;
             const int row = cursor_table_->rowCount();
             cursor_table_->insertRow(row);
-            cursor_table_->setItem(row, 0, new QTableWidgetItem(name));
+            cursor_table_->setItem(row, 0, new QTableWidgetItem(selection.name));
             cursor_table_->setItem(row, 1, new QTableWidgetItem(series_[index].label));
-            const auto signal = static_cast<std::size_t>(signal_index);
+            const auto signal = static_cast<std::size_t>(selection.index);
             const session::CellView* cell_a = cell_at(series_[index], a, signal);
             const session::CellView* cell_b = cell_at(series_[index], b, signal);
             cursor_table_->setItem(row, 2,
@@ -1492,24 +1618,9 @@ void MainWindow::updateCursorTable() {
             cursor_table_->setItem(row, 3,
                                    new QTableWidgetItem(cell_b != nullptr ? from_utf8(cell_b->display)
                                                                           : QStringLiteral("—")));
-            QString delta = QStringLiteral("—");
-            if (cell_a != nullptr && cell_b != nullptr && cell_a->integer.has_value() &&
-                cell_b->integer.has_value()) {
-                const std::int64_t value_a = *cell_a->integer;
-                const std::int64_t value_b = *cell_b->integer;
-                bool ok = true;
-                std::int64_t difference = 0;
-                if (value_a > 0 && value_b < std::numeric_limits<std::int64_t>::min() + value_a) {
-                    ok = false;
-                } else if (value_a < 0 && value_b > std::numeric_limits<std::int64_t>::max() + value_a) {
-                    ok = false;
-                } else {
-                    difference = value_b - value_a;
-                }
-                delta = ok ? QString::number(difference)
-                           : ui_text(*texts_, "workbench.waveform.overflow", "overflow");
-            }
-            cursor_table_->setItem(row, 4, new QTableWidgetItem(delta));
+            cursor_table_->setItem(row, 4, new QTableWidgetItem(delta_text(
+                cell_a != nullptr ? cell_a->integer : std::nullopt,
+                cell_b != nullptr ? cell_b->integer : std::nullopt)));
         }
     }
 }

@@ -317,6 +317,59 @@ std::string reference_text(const Reference& reference) {
     return reference.module + "/" + reference.symbol;
 }
 
+// 会话逐步事件与文件事件互转；完成的步骤不进文件。
+std::vector<ExperimentEvent> to_file_events(const std::vector<StepEvent>& events) {
+    std::vector<ExperimentEvent> result;
+    for (const auto& event : events) {
+        ExperimentEvent converted;
+        switch (event.kind) {
+            case StepEvent::Kind::input_failed:
+                converted.kind = ExperimentEvent::Kind::input_failed;
+                break;
+            case StepEvent::Kind::advance_failed:
+                converted.kind = ExperimentEvent::Kind::advance_failed;
+                break;
+            case StepEvent::Kind::sample_failed:
+                converted.kind = ExperimentEvent::Kind::sample_failed;
+                break;
+            case StepEvent::Kind::stopped:
+                converted.kind = ExperimentEvent::Kind::stopped;
+                break;
+            case StepEvent::Kind::completed:
+                continue;
+        }
+        converted.frame = event.frame;
+        if (event.diagnostic.has_value()) converted.diagnostic = *event.diagnostic;
+        result.push_back(std::move(converted));
+    }
+    return result;
+}
+
+std::vector<StepEvent> from_file_events(const std::vector<ExperimentEvent>& events) {
+    std::vector<StepEvent> result;
+    for (const auto& event : events) {
+        StepEvent converted;
+        switch (event.kind) {
+            case ExperimentEvent::Kind::input_failed:
+                converted.kind = StepEvent::Kind::input_failed;
+                break;
+            case ExperimentEvent::Kind::advance_failed:
+                converted.kind = StepEvent::Kind::advance_failed;
+                break;
+            case ExperimentEvent::Kind::sample_failed:
+                converted.kind = StepEvent::Kind::sample_failed;
+                break;
+            case ExperimentEvent::Kind::stopped:
+                converted.kind = StepEvent::Kind::stopped;
+                break;
+        }
+        converted.frame = event.frame;
+        converted.diagnostic = event.diagnostic;
+        result.push_back(std::move(converted));
+    }
+    return result;
+}
+
 }  // namespace
 
 // 一条活动的轨迹：运行对象、记录下标与逐步事件。
@@ -369,22 +422,51 @@ Status Session::make_status() const {
     status.recorded_inputs = record_.inputs.size();
     status.branches = record_.branches.size();
     status.last_failure = last_failure_;
-    for (const auto& track : tracks_) {
-        const auto& trace = record_.branches[track->index];
-        TrackStatus view;
-        view.label = trace.label;
-        view.frame = track->run ? track->run->frame() : trace.origin.frame;
-        view.origin = trace.origin.frame;
-        view.samples = trace.samples.size();
-        view.input_failures = track->input_failures;
-        view.advance_failures = track->advance_failures;
-        view.sample_failures = track->sample_failures;
-        view.failed = track->failed;
-        view.interventions = intervention_views(trace.origin, trace.interventions, texts_, locale_);
-        if (track->failed && !track->events.empty()) {
-            view.last_failure = track->events.back().diagnostic;
+    if (phase_ == Phase::record) {
+        for (std::size_t index = 0; index < record_.branches.size(); ++index) {
+            const auto& trace = record_.branches[index];
+            TrackStatus view;
+            view.label = trace.label;
+            view.frame = index < record_frames_.size() ? record_frames_[index] : trace.origin.frame;
+            view.origin = trace.origin.frame;
+            view.samples = trace.samples.size();
+            view.interventions = intervention_views(trace.origin, trace.interventions, texts_, locale_);
+            if (index < record_events_.size()) {
+                for (const auto& event : record_events_[index]) {
+                    if (event.kind == StepEvent::Kind::input_failed) ++view.input_failures;
+                    if (event.kind == StepEvent::Kind::advance_failed) ++view.advance_failures;
+                    if (event.kind == StepEvent::Kind::sample_failed) ++view.sample_failures;
+                    if (event.kind == StepEvent::Kind::input_failed ||
+                        event.kind == StepEvent::Kind::advance_failed ||
+                        event.kind == StepEvent::Kind::sample_failed) {
+                        view.failed = true;
+                        if (event.diagnostic.has_value()) {
+                            view.last_failure = view_of(*event.diagnostic, texts_, locale_);
+                        }
+                    }
+                }
+            }
+            status.tracks.push_back(std::move(view));
         }
-        status.tracks.push_back(std::move(view));
+    } else {
+        for (const auto& track : tracks_) {
+            const auto& trace = record_.branches[track->index];
+            TrackStatus view;
+            view.label = trace.label;
+            view.frame = track->run ? track->run->frame() : trace.origin.frame;
+            view.origin = trace.origin.frame;
+            view.samples = trace.samples.size();
+            view.input_failures = track->input_failures;
+            view.advance_failures = track->advance_failures;
+            view.sample_failures = track->sample_failures;
+            view.failed = track->failed;
+            view.interventions = intervention_views(trace.origin, trace.interventions, texts_, locale_);
+            if (track->failed && !track->events.empty() &&
+                track->events.back().diagnostic.has_value()) {
+                view.last_failure = view_of(*track->events.back().diagnostic, texts_, locale_);
+            }
+            status.tracks.push_back(std::move(view));
+        }
     }
     return status;
 }
@@ -473,10 +555,10 @@ std::vector<Session::SeriesInfo> Session::series_info() const {
         result.push_back(SeriesInfo{exploration_trace_.label, exploration_trace_.origin.frame,
                                     exploration_trace_.samples.size(), exploration_events_.size()});
     }
-    for (const auto& track : tracks_) {
-        const auto& trace = record_.branches[track->index];
+    for (std::size_t index = 0; index < record_.branches.size(); ++index) {
+        const auto& trace = record_.branches[index];
         result.push_back(SeriesInfo{trace.label, trace.origin.frame, trace.samples.size(),
-                                    track->events.size()});
+                                    trace_events(index)->size()});
     }
     return result;
 }
@@ -493,7 +575,7 @@ TrackTraceView Session::trace_delta(std::size_t series, std::size_t sample_begin
         const std::size_t index = series - (has_exploration_ ? 1 : 0);
         if (index >= record_.branches.size()) return view;
         found = &record_.branches[index];
-        events = &tracks_[index]->events;
+        events = trace_events(index);
     }
     view.label = found->label;
     view.origin = found->origin.frame;
@@ -549,9 +631,9 @@ SampleDetailView Session::sample_detail(std::size_t series, std::int64_t frame) 
 ComparisonView Session::comparison() const {
     ComparisonView view;
     view.variables = observation_names();
-    if (tracks_.size() != 2) return view;
-    const auto& control = record_.branches[tracks_[0]->index];
-    const auto& treated = record_.branches[tracks_[1]->index];
+    if (record_.branches.size() != 2) return view;
+    const auto& control = record_.branches[0];
+    const auto& treated = record_.branches[1];
     std::vector<std::int64_t> control_frames;
     for (const auto& sample : control.samples) control_frames.push_back(sample.frame);
     std::vector<std::int64_t> treated_frames;
@@ -591,6 +673,7 @@ ComparisonView Session::comparison() const {
             if (left != nullptr && right != nullptr) {
                 if (const auto difference = checked_subtract(*left, *right)) {
                     cell.difference = std::to_string(*difference);
+                    cell.integer = *difference;
                     cell.comparable = true;
                 } else {
                     cell.difference = render_session(texts_, locale_, "session.comparison.overflow", "Difference exceeds 64 bits");
@@ -846,6 +929,8 @@ void Session::build_source_run() {
     tracks_.push_back(std::move(track));
     exploration_trace_ = {};
     exploration_events_.clear();
+    record_events_.clear();
+    record_frames_.clear();
     has_exploration_ = false;
     checkpoint_.reset();
     last_failure_.reset();
@@ -862,6 +947,8 @@ OperationResult Session::load() {
     tracks_.clear();
     exploration_trace_ = {};
     exploration_events_.clear();
+    record_events_.clear();
+    record_frames_.clear();
     has_exploration_ = false;
     checkpoint_.reset();
     run_id_ = 0;
@@ -1024,7 +1111,8 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
                     ++track->input_failures;
                     failed_cycle = true;
                     auto view = view_of(error.diagnostic(), texts_, locale_);
-                    track->events.push_back(StepEvent{StepEvent::Kind::input_failed, frame, view});
+                    track->events.push_back(StepEvent{StepEvent::Kind::input_failed, frame,
+                                                       error.diagnostic()});
                     diagnostics.push_back(std::move(view));
                 }
             }
@@ -1039,7 +1127,8 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
                 failed_cycle = true;
                 record_.branches[track->index].failures.push_back(StepFailure{frame, error.diagnostic()});
                 auto view = view_of(error.diagnostic(), texts_, locale_);
-                track->events.push_back(StepEvent{StepEvent::Kind::advance_failed, frame, view});
+                track->events.push_back(StepEvent{StepEvent::Kind::advance_failed, frame,
+                                                   error.diagnostic()});
                 diagnostics.push_back(std::move(view));
                 continue;
             }
@@ -1051,7 +1140,7 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
                 failed_cycle = true;
                 auto view = view_of(error.diagnostic(), texts_, locale_);
                 track->events.push_back(
-                    StepEvent{StepEvent::Kind::sample_failed, track->run->frame(), view});
+                    StepEvent{StepEvent::Kind::sample_failed, track->run->frame(), error.diagnostic()});
                 diagnostics.push_back(std::move(view));
                 continue;
             }
@@ -1152,6 +1241,8 @@ OperationResult Session::replace_with_branches(const std::vector<BranchRequest>&
         tracks.push_back(std::move(track));
     }
     tracks_ = std::move(tracks);
+    record_events_.clear();
+    record_frames_.clear();
     last_failure_.reset();
     return finish(true);
 }
@@ -1202,15 +1293,77 @@ OperationResult Session::reset_branches() {
     return finish(true);
 }
 
-ReplayReport Session::replay() {
+ReplayReport Session::replay() { return rebuild_record(record_, nullptr); }
+
+std::optional<ReplayMismatchView> Session::sample_mismatch(const std::string& label,
+                                                           const Sample& expected,
+                                                           const Sample& actual) const {
+    const auto make = [&](std::int64_t frame, std::string field, std::string expected_text,
+                          std::string received_text) {
+        return ReplayMismatchView{label, frame, std::move(field), std::move(expected_text),
+                                  std::move(received_text)};
+    };
+    if (actual.frame != expected.frame) {
+        return make(expected.frame,
+                    render_session(texts_, locale_, "session.replay.subject.frame", "frame"),
+                    std::to_string(expected.frame), std::to_string(actual.frame));
+    }
+    if (actual.truth.modules.size() != expected.truth.modules.size()) {
+        return make(expected.frame,
+                    render_session(texts_, locale_, "session.replay.subject.module_count", "module count"),
+                    std::to_string(expected.truth.modules.size()),
+                    std::to_string(actual.truth.modules.size()));
+    }
+    for (std::size_t module = 0; module < expected.truth.modules.size(); ++module) {
+        const auto& expected_module = expected.truth.modules[module];
+        const auto& actual_module = actual.truth.modules[module];
+        if (expected_module.path != actual_module.path) {
+            return make(expected.frame,
+                        render_session(texts_, locale_, "session.replay.subject.module_order", "module order"),
+                        expected_module.path, actual_module.path);
+        }
+        const auto difference = first_difference(expected_module.state, actual_module.state,
+                                                 expected_module.path, texts_, locale_);
+        if (!difference.empty()) {
+            return make(expected.frame, difference, config_display(expected_module.state),
+                        config_display(actual_module.state));
+        }
+    }
+    if (!observations_equal(expected.observations, actual.observations, *adapters_)) {
+        for (const auto& item : expected.observations) {
+            const auto actual_value = actual.observations.find(item.first);
+            const bool equal = actual_value != actual.observations.end() &&
+                               [&] {
+                                   const ValueAdapter* adapter = adapters_->find(item.second.type());
+                                   return adapter && adapter->equal(item.second, actual_value->second);
+                               }();
+            if (!equal) {
+                return make(expected.frame,
+                            render_session(texts_, locale_, "session.replay.subject.observation", "observation") + " " + item.first,
+                            argument_display(item.second, *adapters_, texts_, locale_),
+                            actual_value == actual.observations.end()
+                                ? render_session(texts_, locale_, "session.observation.missing", "(missing)")
+                                : argument_display(actual_value->second, *adapters_, texts_, locale_));
+            }
+        }
+        return make(expected.frame,
+                    render_session(texts_, locale_, "session.replay.subject.observation", "observation"),
+                    render_session(texts_, locale_, "session.replay.recorded", "(recorded)"),
+                    render_session(texts_, locale_, "session.replay.count_mismatch", "(count mismatch)"));
+    }
+    return std::nullopt;
+}
+
+ReplayReport Session::rebuild_record(const ExperimentRecord& record,
+                                     std::vector<std::unique_ptr<ExperimentRun>>* runs) const {
     ReplayReport report;
-    if (record_.branches.empty()) {
+    if (record.branches.empty()) {
         report.diagnostic = view_of(make_diagnostic(ErrorCode::invalid_declaration, {}, "session.replay.empty",
                                                     "The session record has no trace to replay"),
                                     texts_, locale_);
         return report;
     }
-    for (const auto& item : record_.implementations) {
+    for (const auto& item : record.implementations) {
         const auto found = model_.implementations.find(item.first);
         if (found == model_.implementations.end() || found->second != item.second) {
             report.diagnostic = view_of(
@@ -1221,9 +1374,9 @@ ReplayReport Session::replay() {
             return report;
         }
     }
-    for (const auto& scope : record_.assembly.scopes()) {
-        for (const auto& instance : record_.assembly.instances(scope)) {
-            if (record_.implementations.count(instance.definition) == 0) {
+    for (const auto& scope : record.assembly.scopes()) {
+        for (const auto& instance : record.assembly.instances(scope)) {
+            if (record.implementations.count(instance.definition) == 0) {
                 report.diagnostic = view_of(
                     make_diagnostic(ErrorCode::invalid_config, {instance.definition, {}},
                                     "session.implementation.missing",
@@ -1234,71 +1387,31 @@ ReplayReport Session::replay() {
             }
         }
     }
-
-    const auto mismatch = [&](const std::string& branch, std::int64_t frame, std::string field,
-                              std::string expected, std::string received) {
-        report.ok = false;
-        report.first_mismatch =
-            ReplayMismatchView{std::move(branch), frame, std::move(field), std::move(expected), std::move(received)};
-    };
+    if (runs != nullptr) runs->clear();
 
     try {
-        const auto loaded = AssemblyDefinition::parse(record_.assembly.to_json());
-        for (const auto& trace : record_.branches) {
-            ExperimentRun run(loaded, model_.factories, record_.spec, trace.label);
-            run.restore(apply_interventions(trace.origin, trace.interventions));
+        const auto loaded = AssemblyDefinition::parse(record.assembly.to_json());
+        for (const auto& trace : record.branches) {
+            std::unique_ptr<ExperimentRun> owned;
+            ExperimentRun* run = nullptr;
+            if (runs != nullptr) {
+                runs->push_back(
+                    std::make_unique<ExperimentRun>(loaded, model_.factories, record.spec, trace.label));
+                run = runs->back().get();
+            } else {
+                owned = std::make_unique<ExperimentRun>(loaded, model_.factories, record.spec, trace.label);
+                run = owned.get();
+            }
+            run->restore(apply_interventions(trace.origin, trace.interventions));
             std::size_t index = 0;
             const auto verify = [&]() -> bool {
                 if (index >= trace.samples.size()) return false;
                 const auto& expected = trace.samples[index];
-                const auto actual = run.sample();
+                const auto actual = run->sample();
                 ++index;
-                if (actual.frame != expected.frame) {
-                    mismatch(trace.label, expected.frame, render_session(texts_, locale_, "session.replay.subject.frame", "frame"),
-                             std::to_string(expected.frame), std::to_string(actual.frame));
-                    return true;
-                }
-                if (actual.truth.modules.size() != expected.truth.modules.size()) {
-                    mismatch(trace.label, expected.frame, render_session(texts_, locale_, "session.replay.subject.module_count", "module count"),
-                             std::to_string(expected.truth.modules.size()),
-                             std::to_string(actual.truth.modules.size()));
-                    return true;
-                }
-                for (std::size_t module = 0; module < expected.truth.modules.size(); ++module) {
-                    const auto& expected_module = expected.truth.modules[module];
-                    const auto& actual_module = actual.truth.modules[module];
-                    if (expected_module.path != actual_module.path) {
-                        mismatch(trace.label, expected.frame, render_session(texts_, locale_, "session.replay.subject.module_order", "module order"), expected_module.path, actual_module.path);
-                        return true;
-                    }
-                    const auto difference = first_difference(expected_module.state, actual_module.state,
-                                                             expected_module.path, texts_, locale_);
-                    if (!difference.empty()) {
-                        mismatch(trace.label, expected.frame, difference,
-                                 config_display(expected_module.state), config_display(actual_module.state));
-                        return true;
-                    }
-                }
-                if (!observations_equal(expected.observations, actual.observations, *adapters_)) {
-                    for (const auto& item : expected.observations) {
-                        const auto actual_value = actual.observations.find(item.first);
-                        const bool equal = actual_value != actual.observations.end() &&
-                                           [&] {
-                                               const ValueAdapter* adapter = adapters_->find(item.second.type());
-                                               return adapter && adapter->equal(item.second, actual_value->second);
-                                           }();
-                        if (!equal) {
-                            mismatch(trace.label, expected.frame, render_session(texts_, locale_, "session.replay.subject.observation", "observation") + " " + item.first,
-                                     argument_display(item.second, *adapters_, texts_, locale_),
-                                     actual_value == actual.observations.end()
-                                         ? render_session(texts_, locale_, "session.observation.missing", "(missing)")
-                                         : argument_display(actual_value->second, *adapters_, texts_, locale_));
-                            return true;
-                        }
-                    }
-                    mismatch(trace.label, expected.frame, render_session(texts_, locale_, "session.replay.subject.observation", "observation"),
-                             render_session(texts_, locale_, "session.replay.recorded", "(recorded)"),
-                             render_session(texts_, locale_, "session.replay.count_mismatch", "(count mismatch)"));
+                if (auto mismatch = sample_mismatch(trace.label, expected, actual)) {
+                    report.ok = false;
+                    report.first_mismatch = std::move(mismatch);
                     return true;
                 }
                 ++report.verified_frames;
@@ -1319,7 +1432,7 @@ ReplayReport Session::replay() {
                 const bool divergent = std::any_of(
                     trace.driven.begin(), trace.driven.end(), [&](const DrivenInput& driven) {
                         if (driven.frame != step_frame) return false;
-                        return std::none_of(record_.inputs.begin(), record_.inputs.end(),
+                        return std::none_of(record.inputs.begin(), record.inputs.end(),
                                             [&](const DrivenInput& item) {
                                                 return item.frame == driven.frame &&
                                                        item.name == driven.name;
@@ -1332,21 +1445,21 @@ ReplayReport Session::replay() {
                         {{"branch", trace.label}, {"frame", std::to_string(step_frame)}}));
                     break;
                 }
-                while (input_index < record_.inputs.size() &&
-                       record_.inputs[input_index].frame == step_frame) {
-                    const auto& input = record_.inputs[input_index];
-                    run.drive(input.name, input.arguments);
+                while (input_index < record.inputs.size() &&
+                       record.inputs[input_index].frame == step_frame) {
+                    const auto& input = record.inputs[input_index];
+                    run->drive(input.name, input.arguments);
                     ++input_index;
                 }
-                if (input_index < record_.inputs.size() &&
-                    record_.inputs[input_index].frame < step_frame) {
+                if (input_index < record.inputs.size() &&
+                    record.inputs[input_index].frame < step_frame) {
                     report.notes.push_back(render_session(
                         texts_, locale_, "session.replay.note.frame_end",
                         "Branch {branch} has no shared input records after frame {frame}; comparison ends early",
                         {{"branch", trace.label}, {"frame", std::to_string(step_frame)}}));
                     break;
                 }
-                run.step();
+                run->step();
                 if (verify()) return report;
             }
             if (index < trace.samples.size()) {
@@ -1354,7 +1467,7 @@ ReplayReport Session::replay() {
                     texts_, locale_, "session.replay.note.uncompared",
                     "Branch {branch} has {count} recorded samples not compared",
                     {{"branch", trace.label}, {"count", std::to_string(trace.samples.size() - index)}}));
-            } else if (input_index < record_.inputs.size()) {
+            } else if (input_index < record.inputs.size()) {
                 report.notes.push_back(render_session(
                     texts_, locale_, "session.replay.note.samples_end",
                     "Recorded samples for branch {branch} end at frame {frame}; later inputs are not compared",
@@ -1370,6 +1483,239 @@ ReplayReport Session::replay() {
     report.ok = true;
     report.complete = report.notes.empty();
     return report;
+}
+
+ReplayReport Session::verify_standalone(const AssemblyDefinition& assembly, const ExperimentSpec& spec,
+                                        const RunTrace& trace,
+                                        const std::vector<DrivenInput>& driven) const {
+    ReplayReport report;
+    try {
+        const auto loaded = AssemblyDefinition::parse(assembly.to_json());
+        ExperimentRun run(loaded, model_.factories, spec, trace.label);
+        run.restore(trace.origin);
+        std::size_t index = 0;
+        const auto verify = [&]() -> bool {
+            if (index >= trace.samples.size()) return false;
+            const auto& expected = trace.samples[index];
+            const auto actual = run.sample();
+            ++index;
+            if (auto mismatch = sample_mismatch(trace.label, expected, actual)) {
+                report.ok = false;
+                report.first_mismatch = std::move(mismatch);
+                return true;
+            }
+            ++report.verified_frames;
+            return false;
+        };
+        if (trace.samples.empty()) {
+            report.notes.push_back(render_session(texts_, locale_, "session.replay.note.no_samples",
+                                                  "Branch {branch} has no recorded samples; comparison skipped",
+                                                  {{"branch", trace.label}}));
+            report.ok = true;
+            report.complete = false;
+            return report;
+        }
+        if (verify()) return report;
+        std::size_t input_index = 0;
+        while (index < trace.samples.size()) {
+            const std::int64_t step_frame = trace.samples[index].frame - 1;
+            while (input_index < driven.size() && driven[input_index].frame == step_frame) {
+                run.drive(driven[input_index].name, driven[input_index].arguments);
+                ++input_index;
+            }
+            if (input_index < driven.size() && driven[input_index].frame < step_frame) {
+                report.notes.push_back(render_session(
+                    texts_, locale_, "session.replay.note.frame_end",
+                    "Branch {branch} has no shared input records after frame {frame}; comparison ends early",
+                    {{"branch", trace.label}, {"frame", std::to_string(step_frame)}}));
+                break;
+            }
+            run.step();
+            if (verify()) return report;
+        }
+        if (index < trace.samples.size()) {
+            report.notes.push_back(render_session(
+                texts_, locale_, "session.replay.note.uncompared",
+                "Branch {branch} has {count} recorded samples not compared",
+                {{"branch", trace.label}, {"count", std::to_string(trace.samples.size() - index)}}));
+        } else if (input_index < driven.size()) {
+            report.notes.push_back(render_session(
+                texts_, locale_, "session.replay.note.samples_end",
+                "Recorded samples for branch {branch} end at frame {frame}; later inputs are not compared",
+                {{"branch", trace.label}, {"frame", std::to_string(trace.samples.back().frame)}}));
+        }
+    } catch (const EngineError& error) {
+        report.diagnostic = view_of(error.diagnostic(), texts_, locale_);
+        report.ok = false;
+        return report;
+    }
+    report.ok = true;
+    report.complete = report.notes.empty();
+    return report;
+}
+
+const std::vector<StepEvent>* Session::trace_events(std::size_t branch_index) const {
+    static const std::vector<StepEvent> empty;
+    if (phase_ == Phase::record) {
+        return branch_index < record_events_.size() ? &record_events_[branch_index] : &empty;
+    }
+    return branch_index < tracks_.size() ? &tracks_[branch_index]->events : &empty;
+}
+
+ExperimentFile Session::experiment_file() const {
+    ExperimentFile file;
+    file.model = model_.name;
+    file.assembly = record_.assembly;
+    file.spec = record_.spec;
+    file.implementations = record_.implementations;
+    if (phase_ != Phase::empty && phase_ != Phase::editing && run_id_ != 0) file.run_id = run_id_;
+    file.run_revision = run_revision_;
+    file.draft = std::make_pair(draft_revision_, draft_);
+    if (checkpoint_) file.checkpoint = *checkpoint_;
+    file.input_settings = inputs_;
+    file.inputs = record_.inputs;
+    if (has_exploration_) {
+        ExperimentTrace trace;
+        trace.exploration = true;
+        trace.trace = exploration_trace_;
+        trace.events = to_file_events(exploration_events_);
+        trace.current_frame = exploration_trace_.samples.empty()
+                                  ? exploration_trace_.origin.frame
+                                  : exploration_trace_.samples.back().frame;
+        file.traces.push_back(std::move(trace));
+    }
+    for (std::size_t index = 0; index < record_.branches.size(); ++index) {
+        ExperimentTrace trace;
+        trace.exploration = false;
+        trace.trace = record_.branches[index];
+        trace.events = to_file_events(*trace_events(index));
+        if (phase_ == Phase::record && index < record_frames_.size()) {
+            trace.current_frame = record_frames_[index];
+        } else if (index < tracks_.size() && tracks_[index]->run) {
+            trace.current_frame = tracks_[index]->run->frame();
+        } else {
+            trace.current_frame = record_.branches[index].samples.empty()
+                                      ? record_.branches[index].origin.frame
+                                      : record_.branches[index].samples.back().frame;
+        }
+        file.traces.push_back(std::move(trace));
+    }
+    return file;
+}
+
+Session::EncodeResult Session::encode_experiment() const {
+    EncodeResult result;
+    try {
+        result.bytes = encode_experiment_file(experiment_file());
+        result.ok = true;
+    } catch (const EngineError& error) {
+        result.diagnostic = view_of(error.diagnostic(), texts_, locale_);
+    }
+    return result;
+}
+
+OperationResult Session::open_experiment(const std::string& bytes) {
+    try {
+        return open_experiment(decode_experiment_file(bytes));
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+}
+
+OperationResult Session::open_experiment(const ExperimentFile& file) {
+    if (file.traces.empty()) {
+        return reject(session_text("session.open.empty", "The experiment file has no traces"));
+    }
+    const bool has_exploration = file.traces.front().exploration;
+    const std::size_t first_branch = has_exploration ? 1 : 0;
+    const std::size_t branch_count = file.traces.size() - first_branch;
+    if (branch_count == 0) {
+        return reject(session_text("session.open.empty", "The experiment file has no traces"));
+    }
+
+    // 重建与核对在局部对象上进行；任一失败只影响接管资格，不改变当前会话。
+    ExperimentRecord loaded{file.assembly, file.spec, file.implementations, file.inputs, {}};
+    loaded.branches.reserve(branch_count);
+    for (std::size_t index = 0; index < branch_count; ++index) {
+        loaded.branches.push_back(file.traces[first_branch + index].trace);
+    }
+    std::vector<std::unique_ptr<ExperimentRun>> runs;
+    const auto rebuilt = rebuild_record(loaded, &runs);
+    bool exploration_ok = true;
+    if (has_exploration) {
+        const auto& trace = file.traces.front();
+        const auto report = verify_standalone(file.assembly, file.spec, trace.trace, trace.trace.driven);
+        exploration_ok = report.ok && report.complete &&
+                         trace.current_frame == (trace.trace.samples.empty()
+                                                     ? trace.trace.origin.frame
+                                                     : trace.trace.samples.back().frame);
+    }
+    bool clean = exploration_ok && rebuilt.ok && rebuilt.complete && runs.size() == branch_count;
+    for (const auto& trace : file.traces) {
+        if (!trace.trace.failures.empty()) clean = false;
+        for (const auto& event : trace.events) {
+            if (event.kind != ExperimentEvent::Kind::stopped) clean = false;
+        }
+    }
+    if (clean) {
+        for (std::size_t index = 0; index < branch_count; ++index) {
+            if (!runs[index] ||
+                runs[index]->frame() != file.traces[first_branch + index].current_frame) {
+                clean = false;
+            }
+        }
+    }
+    const bool adopt = clean && ((branch_count == 2) || (branch_count == 1 && !has_exploration));
+
+    // 提交打开结果：接管为活动运行，或进入只读记录态。
+    record_ = std::move(loaded);
+    tracks_.clear();
+    record_events_.clear();
+    record_frames_.clear();
+    if (adopt) {
+        for (std::size_t index = 0; index < runs.size(); ++index) {
+            auto track = std::make_unique<Track>();
+            track->index = index;
+            track->run = std::move(runs[index]);
+            tracks_.push_back(std::move(track));
+        }
+    } else {
+        record_events_.resize(branch_count);
+        record_frames_.resize(branch_count);
+        for (std::size_t index = 0; index < branch_count; ++index) {
+            record_events_[index] = from_file_events(file.traces[first_branch + index].events);
+            record_frames_[index] = file.traces[first_branch + index].current_frame;
+        }
+    }
+    if (has_exploration) {
+        exploration_trace_ = file.traces.front().trace;
+        exploration_events_ = from_file_events(file.traces.front().events);
+    } else {
+        exploration_trace_ = {};
+        exploration_events_.clear();
+    }
+    has_exploration_ = has_exploration;
+    checkpoint_ = file.checkpoint ? std::make_unique<Checkpoint>(*file.checkpoint) : nullptr;
+    inputs_ = file.input_settings;
+    if (file.draft.has_value()) {
+        draft_ = file.draft->second;
+        draft_revision_ = file.draft->first;
+    } else {
+        draft_ = file.assembly;
+        draft_revision_ = file.run_revision;
+    }
+    run_revision_ = file.run_revision;
+    run_id_ = file.run_id.has_value() ? *file.run_id : run_id_ + 1;
+    last_failure_.reset();
+    phase_ = adopt ? Phase::runnable : Phase::record;
+    std::vector<DiagnosticView> notes;
+    if (!adopt) {
+        notes.push_back(view_of(
+            make_diagnostic(ErrorCode::invalid_state, {}, "session.open.record_state",
+                            "Opened as a read-only record: implementation check, replay verification or failure records prevent resuming"),
+            texts_, locale_));
+    }
+    return finish(true, std::move(notes));
 }
 
 }  // namespace ascend::session

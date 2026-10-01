@@ -2,6 +2,7 @@
 
 #include <ascend/assembly.hpp>
 #include <ascend/experiment.hpp>
+#include <ascend/experiment_file.hpp>
 #include <ascend/i18n.hpp>
 
 #include <ascend/session/adapter.hpp>
@@ -131,7 +132,7 @@ struct StepEvent {
     enum class Kind { completed, input_failed, advance_failed, sample_failed, stopped };
     Kind kind = Kind::completed;
     std::int64_t frame = 0;
-    std::optional<DiagnosticView> diagnostic;
+    std::optional<Diagnostic> diagnostic;  // 结构化诊断；展示时按语言渲染
 };
 
 struct TrackStatus {
@@ -148,7 +149,7 @@ struct TrackStatus {
 };
 
 // 会话状态：空、可编辑、可运行、已停止与失败；运行中由控制层标识。
-enum class Phase { empty, editing, runnable, stopped, failed };
+enum class Phase { empty, editing, runnable, stopped, failed, record };
 
 struct Status {
     Phase phase = Phase::empty;
@@ -218,6 +219,7 @@ struct DiffCellView {
     std::string control;
     std::string treated;
     std::string difference;  // 干预 − 对照；不可比较时说明原因
+    std::optional<std::int64_t> integer;  // 可比较时的精确差值，供时间轴曲线与游标读数使用
     bool comparable = false;
 };
 
@@ -346,6 +348,19 @@ public:
     OperationResult reset_branches();
     // 依据会话记录重建并逐逻辑帧核对；不修改当前运行与轨迹。
     ReplayReport replay();
+    // 当前会话的实验文件内容（保存用）。
+    ExperimentFile experiment_file() const;
+    // 打开实验文件内容：核对实现标识并重建；成功接管为活动运行或进入记录态。
+    OperationResult open_experiment(const ExperimentFile& file);
+    // 编码当前会话的实验文件内容；编码失败返回诊断（不改变会话）。
+    struct EncodeResult {
+        bool ok = false;
+        std::string bytes;
+        std::optional<DiagnosticView> diagnostic;
+    };
+    EncodeResult encode_experiment() const;
+    // 解码并打开实验文件字节；解析失败返回诊断且不改变会话。
+    OperationResult open_experiment(const std::string& bytes);
 
 private:
     struct Track;
@@ -360,6 +375,17 @@ private:
     CheckReport run_checks();
     // 用草稿配置建立源运行（初态、逻辑帧 0 与首条采样），重置记录与检查点。
     void build_source_run();
+    // 重建并核对给定记录的轨迹；runs 非空时保留重建的运行（接管用）。
+    ReplayReport rebuild_record(const ExperimentRecord& record,
+                                std::vector<std::unique_ptr<ExperimentRun>>* runs) const;
+    // 核对一条独立轨迹；输入取自轨迹自身记录。
+    ReplayReport verify_standalone(const AssemblyDefinition& assembly, const ExperimentSpec& spec,
+                                   const RunTrace& trace, const std::vector<DrivenInput>& driven) const;
+    // 单次采样比较；不同时返回首个不一致。
+    std::optional<ReplayMismatchView> sample_mismatch(const std::string& label, const Sample& expected,
+                                                      const Sample& actual) const;
+    // 分支逐步事件的存取（活动运行或记录态）。
+    const std::vector<StepEvent>* trace_events(std::size_t branch_index) const;
     // 从检查点建立分支并用新轨迹替换当前跟踪；失败时不改变会话。
     OperationResult replace_with_branches(const std::vector<BranchRequest>& branches);
 
@@ -378,6 +404,8 @@ private:
     std::vector<std::unique_ptr<Track>> tracks_;  // 与 record_.branches 平行
     RunTrace exploration_trace_;                  // 建立分支前的探索轨迹（展示用）
     std::vector<StepEvent> exploration_events_;
+    std::vector<std::vector<StepEvent>> record_events_;  // 记录态：与 record_.branches 平行
+    std::vector<std::int64_t> record_frames_;            // 记录态：各分支实际到达的逻辑帧
     bool has_exploration_ = false;
     std::unique_ptr<Checkpoint> checkpoint_;
     std::uint64_t run_id_ = 0;

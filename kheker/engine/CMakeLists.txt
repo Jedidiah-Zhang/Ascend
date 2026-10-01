@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(ascend_engine STATIC src/engine.cpp src/config.cpp src/json.cpp src/assembly.cpp
-                                   src/experiment.cpp src/text.cpp src/i18n.cpp)
+                                   src/experiment.cpp src/experiment_file.cpp src/container.cpp src/module_package.cpp src/text.cpp src/i18n.cpp)
 add_library(ascend::engine ALIAS ascend_engine)
 target_compile_features(ascend_engine PUBLIC cxx_std_17)
 target_include_directories(ascend_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")

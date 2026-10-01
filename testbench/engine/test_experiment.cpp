@@ -1,4 +1,6 @@
 #include <ascend/experiment.hpp>
+#include <ascend/experiment_file.hpp>
+#include <ascend/module_package.hpp>
 #include <ascend/example/experiment_model.hpp>
 #include <ascend/i18n.hpp>
 
@@ -1188,6 +1190,227 @@ void example_model() {
 
 }  // namespace
 
+
+void experiment_file_round_trip() {
+    // 构造一次完整实验：探索轨迹 + 干预分支，含干预、驱动输入、失败与逐步事件。
+    const auto directory = example::factories();
+    ExperimentRun source(example::environment(), directory, example::specification(), "运行");
+    const auto origin = source.checkpoint();
+    const auto first = source.sample();
+    source.drive("a", {std::int64_t(1)});
+    source.step();
+    source.step();
+    const auto third = source.sample();
+
+    ExperimentFile file;
+    file.model = "示例";
+    file.assembly = example::environment();
+    file.spec = example::specification();
+    file.implementations = {{example::plant_definition, example::plant_implementation},
+                            {example::stimulus_definition, example::stimulus_implementation}};
+    file.run_id = 7;
+    file.run_revision = 3;
+    file.draft = std::make_pair(5, example::environment({2, 1, 0}, 2));
+    file.input_settings = {{"a", std::int64_t(1)}};
+    file.inputs.push_back(DrivenInput{0, "a", {std::int64_t(1)}});
+    file.checkpoint = origin;
+
+    ExperimentTrace exploration;
+    exploration.exploration = true;
+    exploration.trace.label = "运行";
+    exploration.trace.origin = origin;
+    exploration.trace.samples = {first, third};
+    exploration.trace.driven.push_back(DrivenInput{0, "a", {std::int64_t(1)}});
+    exploration.current_frame = 2;
+    file.traces.push_back(exploration);
+
+    ExperimentRun treated(example::environment(), directory, example::specification(), "干预");
+    treated.restore(apply_interventions(origin, {{example::reference_intervention_module,
+                                                  example::reference_intervention_field,
+                                                  Config::integer(example::reference_intervention_value)}}));
+    const auto treated_origin = treated.checkpoint();
+    const auto treated_first = treated.sample();
+    const Diagnostic failure_diagnostic{ErrorCode::execution_failed, {"plant", "advance"},
+                                        TextRef("测试失败")};
+
+    ExperimentTrace branch;
+    branch.trace.label = "干预";
+    branch.trace.origin = treated_origin;
+    branch.trace.interventions.push_back(Intervention{example::reference_intervention_module,
+                                                      example::reference_intervention_field,
+                                                      Config::integer(example::reference_intervention_value)});
+    branch.trace.samples = {treated_first};
+    branch.trace.failures.push_back(StepFailure{1, failure_diagnostic});
+    branch.events.push_back(ExperimentEvent{ExperimentEvent::Kind::advance_failed, 1, failure_diagnostic});
+    branch.events.push_back(ExperimentEvent{ExperimentEvent::Kind::stopped, 1, failure_diagnostic});
+    branch.current_frame = 2;
+    file.traces.push_back(branch);
+
+    const auto bytes = encode_experiment_file(file);
+    const auto decoded = decode_experiment_file(bytes);
+    CHECK(decoded.model == file.model);
+    CHECK(decoded.assembly.to_json() == file.assembly.to_json());
+    CHECK(decoded.spec.advance == file.spec.advance);
+    CHECK(decoded.spec.inputs == file.spec.inputs);
+    CHECK(decoded.spec.observations == file.spec.observations);
+    CHECK(decoded.implementations == file.implementations);
+    CHECK(decoded.run_id.has_value() && *decoded.run_id == 7);
+    CHECK(decoded.run_revision == 3);
+    CHECK(decoded.draft.has_value() && decoded.draft->first == 5);
+    CHECK(decoded.draft->second.to_json() == file.draft->second.to_json());
+    CHECK(decoded.checkpoint.has_value() && decoded.checkpoint->frame == origin.frame);
+    CHECK(decoded.input_settings.size() == 1);
+    CHECK(std::any_cast<std::int64_t>(decoded.input_settings.at("a")) == 1);
+    CHECK(decoded.inputs.size() == 1);
+    CHECK(decoded.inputs[0].frame == 0 && decoded.inputs[0].name == "a");
+    CHECK(std::any_cast<std::int64_t>(decoded.inputs[0].arguments.at(0)) == 1);
+    CHECK(decoded.traces.size() == 2);
+    CHECK(decoded.traces[0].exploration);
+    CHECK(decoded.traces[0].current_frame == 2);
+    CHECK(decoded.traces[1].current_frame == 2);
+    CHECK(decoded.traces[0].trace.label == "运行");
+    CHECK(decoded.traces[0].trace.samples.size() == 2);
+    CHECK(decoded.traces[0].trace.samples[1].frame == 2);
+    CHECK(std::any_cast<std::int64_t>(decoded.traces[0].trace.samples[1].observations.at("x")) == 2);
+    CHECK(decoded.traces[0].trace.driven.size() == 1);
+    CHECK(decoded.traces[0].trace.driven[0].frame == 0 && decoded.traces[0].trace.driven[0].name == "a");
+    CHECK(std::any_cast<std::int64_t>(decoded.traces[0].trace.driven[0].arguments.at(0)) == 1);
+    // 真值快照按模块逐项往返。
+    CHECK(decoded.traces[0].trace.samples[1].truth.modules.size() == third.truth.modules.size());
+    for (std::size_t index = 0; index < third.truth.modules.size(); ++index) {
+        const auto& before = third.truth.modules[index];
+        const auto& after = decoded.traces[0].trace.samples[1].truth.modules[index];
+        CHECK(after.path == before.path);
+        CHECK(after.contract == before.contract);
+        CHECK(after.stateless == before.stateless);
+        CHECK(after.state == before.state);
+    }
+    CHECK(!decoded.traces[1].exploration);
+    CHECK(decoded.traces[1].trace.interventions.size() == 1);
+    CHECK(decoded.traces[1].trace.interventions[0].module == example::reference_intervention_module);
+    CHECK(decoded.traces[1].trace.interventions[0].value.integer() == 10);
+    CHECK(decoded.traces[1].trace.failures.size() == 1);
+    CHECK(decoded.traces[1].trace.failures[0].frame == 1);
+    CHECK(decoded.traces[1].trace.failures[0].diagnostic.code == ErrorCode::execution_failed);
+    CHECK(decoded.traces[1].events.size() == 2);
+    CHECK(decoded.traces[1].events[0].kind == ExperimentEvent::Kind::advance_failed);
+    CHECK(decoded.traces[1].events[1].kind == ExperimentEvent::Kind::stopped);
+    CHECK(decoded.traces[1].events[0].diagnostic.target == Reference{"plant", "advance"});
+    CHECK(decoded.traces[1].events[0].diagnostic.text.literal() == "测试失败");
+
+    // 损坏与不支持：魔数、容器版本、截断、非整数输入。
+    {
+        auto broken = bytes;
+        broken[0] = 'X';
+        failure(ErrorCode::invalid_json, {}, [&] { decode_experiment_file(broken); });
+    }
+    {
+        auto broken = bytes;
+        broken[6] = 9;
+        failure(ErrorCode::unsupported_format_version, {}, [&] { decode_experiment_file(broken); });
+    }
+    {
+        auto broken = bytes.substr(0, bytes.size() / 2);
+        failure(ErrorCode::invalid_json, {}, [&] { decode_experiment_file(broken); });
+    }
+    {
+        auto unsupported = file;
+        unsupported.traces[0].trace.samples[0].observations["x"] = 1.5;
+        failure(ErrorCode::type_mismatch, Reference{"", "x"},
+                [&] { encode_experiment_file(unsupported); });
+    }
+}
+
+
+void module_package_round_trip() {
+    // 带状态、公开量、方法与需求的模块：导出清单、打包、解码并核对。
+    auto value = std::make_shared<Integer>(0);
+    Module provider("provider");
+    provider.add_value<Integer>("value", [] { return Integer{1}; }, {}, "test.scalar.v1");
+    provider.declare_stateless();
+    Module module("m");
+    module.require_value<Integer>("trigger", "test.scalar.v1");
+    module.add_value<Integer>("out", [value] { return *value; }, {}, "test.scalar.v1");
+    MethodOptions drive_options;
+    drive_options.contract = "test.drive.v1";
+    drive_options.description = TextRef(TextKey{"test.domain", "drive.desc"}, "Drive the module");
+    module.add_method<void, Integer>("drive", {"next"},
+                                     [value](Integer next) { *value = next; }, drive_options);
+    module.add_state("test.state.v1", [value] { return Config::integer(*value); },
+                     [value](const Config& state) { *value = state.integer(); });
+    Engine engine;
+    engine.add(std::move(provider));
+    engine.add(std::move(module));
+    engine.connect({"m", "trigger"}, {"provider", "value"});
+    engine.seal();
+
+    auto manifest = export_module_manifest(engine, "", "m");
+    manifest.definition = "test.m";
+    manifest.version = "1.2";
+    manifest.implementation = "test.m.v1";
+    CHECK(manifest.declarations.size() == 2);
+    CHECK(manifest.declarations[0].symbol == "drive");
+    CHECK(manifest.declarations[0].kind == SymbolKind::method);
+    CHECK(manifest.declarations[0].result_type == "void");
+    CHECK(manifest.declarations[0].parameters.size() == 1);
+    CHECK(manifest.declarations[0].parameters[0].name == "next");
+    CHECK(manifest.declarations[0].parameters[0].type == "int64");
+    CHECK(manifest.declarations[0].contract == "test.drive.v1");
+    CHECK(manifest.declarations[0].description.key().domain == "test.domain");
+    CHECK(manifest.declarations[0].description.key().key == "drive.desc");
+    CHECK(manifest.declarations[1].symbol == "out");
+    CHECK(manifest.declarations[1].result_type == "int64");
+    CHECK(manifest.requirements.size() == 1);
+    CHECK(manifest.requirements[0].module.empty());
+    CHECK(manifest.requirements[0].symbol == "trigger");
+    CHECK(manifest.requirements[0].contract == "test.scalar.v1");
+    CHECK(!manifest.stateless);
+    CHECK(manifest.state_contract == "test.state.v1");
+
+    ModulePackage package;
+    package.manifest = manifest;
+    package.resources.push_back(ModuleResource{"test.domain", "zh-CN", "{\"format\":\"ascend.i18n\"}"});
+    const auto bytes = encode_module_package(package);
+    const auto decoded = decode_module_package(bytes);
+    CHECK(decoded.manifest.definition == "test.m");
+    CHECK(decoded.manifest.version == "1.2");
+    CHECK(decoded.manifest.implementation == "test.m.v1");
+    CHECK(decoded.manifest.stateless == manifest.stateless);
+    CHECK(decoded.manifest.state_contract == manifest.state_contract);
+    CHECK(decoded.manifest.declarations.size() == 2);
+    CHECK(decoded.manifest.declarations[0].description.key().domain == "test.domain");
+    CHECK(decoded.manifest.declarations[0].description.key().key == "drive.desc");
+    CHECK(decoded.manifest.declarations[0].description.fallback().has_value());
+    CHECK(*decoded.manifest.declarations[0].description.fallback() == "Drive the module");
+    CHECK(decoded.manifest.declarations[1].result_type == "int64");
+    CHECK(decoded.manifest.requirements.size() == 1);
+    CHECK(decoded.manifest.requirements[0].symbol == "trigger");
+    CHECK(decoded.resources.size() == 1);
+    CHECK(decoded.resources[0].domain == "test.domain");
+    CHECK(decoded.resources[0].locale == "zh-CN");
+    CHECK(decoded.resources[0].text == "{\"format\":\"ascend.i18n\"}");
+
+    // 核对通过；篡改声明结果类型后被拒绝。
+    check_module_manifest(manifest, engine, "", "m");
+    auto tampered = manifest;
+    tampered.declarations[0].result_type = "string";
+    failure(ErrorCode::state_mismatch, Reference{"m", "declarations"},
+            [&] { check_module_manifest(tampered, engine, "", "m"); });
+
+    // 不支持的类型在导出前拒绝。
+    struct Custom {
+        int value = 0;
+    };
+    Module custom("c");
+    custom.add_value<Custom>("out", [] { return Custom{}; });
+    custom.declare_stateless();
+    Engine custom_engine;
+    custom_engine.add(std::move(custom));
+    custom_engine.seal();
+    failure(ErrorCode::type_mismatch, Reference{"c", "out"},
+            [&] { export_module_manifest(custom_engine, "", "c"); });
+}
+
 int main(int argc, char** argv) {
     const std::map<std::string, std::function<void()>> tests = {
         {"state_declarations", state_declarations},
@@ -1210,6 +1433,8 @@ int main(int argc, char** argv) {
         {"trace_replay", trace_replay},
         {"run_directory", run_directory},
         {"example_model", example_model},
+        {"experiment_file_round_trip", experiment_file_round_trip},
+        {"module_package_round_trip", module_package_round_trip},
     };
     if (argc != 2 || tests.count(argv[1]) == 0) return 2;
     try {

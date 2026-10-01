@@ -8,6 +8,7 @@
 #include <QWidget>
 
 #include <cstdint>
+#include <optional>
 
 namespace ascend::workbench {
 
@@ -32,20 +33,28 @@ public:
         QString name;
         QVector<Series> series;
     };
+    enum class EventKind { other, checkpoint, branch, intervention, failure, stop };
     struct Event {
         std::int64_t frame = 0;
         QString text;
         QColor color;
+        EventKind kind = EventKind::other;
     };
 
     explicit WaveformWidget(const UiTexts* texts, QWidget* parent = nullptr);
 
     void setSignals(QVector<Signal> rows);
     void setEvents(QVector<Event> markers);
+    // 检查点参考线：frame 有效时画竖向虚线；branch_zone 为真时给检查点之后的区间加淡色底。
+    void setCheckpoint(std::optional<std::int64_t> frame, bool branch_zone);
     void clear();
 
     std::int64_t cursorA() const noexcept { return cursor_a_; }
     std::int64_t cursorB() const noexcept { return cursor_b_; }
+    std::optional<std::int64_t> checkpoint() const noexcept { return checkpoint_; }
+    bool branchZone() const noexcept { return branch_zone_; }
+    // 逻辑帧在控件内的像素位置（波形区中线），供定位与测试使用。
+    QPoint framePosition(std::int64_t frame) const;
 
 signals:
     void cursorsChanged();
@@ -87,6 +96,8 @@ private:
     bool cursor_a_valid_ = false;
     bool cursor_b_valid_ = false;
     bool cursor_b_auto_ = true;  // B 未手动放置前跟随数据末端
+    std::optional<std::int64_t> checkpoint_;
+    bool branch_zone_ = false;
     bool pressed_ = false;
     bool dragged_ = false;
     QPoint press_pos_;

@@ -51,11 +51,11 @@ public:
                std::shared_ptr<const UiTexts> texts, QWidget* parent = nullptr);
     void setCloseHandler(std::function<void()> handler) { close_handler_ = std::move(handler); }
 
-    // 测试访问：当前会话状态、状态行文本、结果表格行数与命令执行标记。
+    // 测试访问：当前会话状态、状态行文本与命令执行标记。
     const session::Status& currentStatus() const noexcept { return status_; }
     QString statusLine() const;
-    int resultRowCount() const;
     bool busy() const noexcept { return busy_; }
+    QString currentFile() const { return current_file_; }
     // 启动时由工作台提交：标记忙状态并排队打开示例。
     void beginInitialLoad();
 
@@ -101,10 +101,14 @@ private:
     void rebuildSpec();
     void rebuildRequirements();
     void rebuildConnections();
-    void rebuildResultTable();
     void rebuildWaveform();
     void updateCursorTable();
-    std::vector<std::pair<int, QString>> checked_signals() const;
+    struct SignalSelection {
+        int index = 0;
+        bool difference = false;
+        QString name;
+    };
+    std::vector<SignalSelection> checked_signals() const;
     void rebuildDiff();
     void rebuildStateFields();
     void rebuildSampleSelectors();
@@ -114,7 +118,15 @@ private:
     void showRequirementAt(int index);
     QTreeWidgetItem* module_node_for(QTreeWidget* tree, std::map<std::string, QTreeWidgetItem*>& nodes,
                                      const std::string& path);
-    void requestCurrentSample();
+    void requestSampleDetail(std::int64_t frame);
+    void requestLatestSample();
+    void chooseOpenExperiment();
+    void chooseSaveExperiment();
+    void saveExperiment();
+    void onExperimentSaved(const QString& path, bool ok);
+    void onExperimentOpened(const QString& path, bool ok);
+    void updateWindowTitle();
+    void updateRecordSummary();
     void dispatch(const char* method);
     void dispatchReadonly(const char* method);
 
@@ -128,10 +140,11 @@ private:
     session::ComparisonView current_comparison_;
     std::vector<session::DiagnosticView> diagnostics_;
     std::vector<SeriesData> series_;
+    QTreeWidgetItem* observation_group_ = nullptr;
+    QTreeWidgetItem* diff_group_ = nullptr;
     bool busy_ = false;
     bool closing_ = false;
     QString pending_;
-    std::map<std::int64_t, int> row_index_;
     std::int64_t selected_frame_ = -1;
     int selected_series_ = 0;
     bool waveform_rebuilding_ = false;
@@ -159,7 +172,6 @@ private:
     QWidget* config_container_ = nullptr;
     QVBoxLayout* config_layout_ = nullptr;
     std::map<std::string, ConfigEditor*> config_editors_;
-    QTableWidget* result_table_ = nullptr;
     QTabWidget* results_tabs_ = nullptr;
     QTreeWidget* signal_tree_ = nullptr;
     WaveformWidget* waveform_ = nullptr;
@@ -198,6 +210,12 @@ private:
 
     // 菜单栏：已实装命令与按钮同源，占位项禁用。
     QAction* open_action_ = nullptr;
+    QAction* open_experiment_action_ = nullptr;
+    QAction* save_action_ = nullptr;
+    QAction* save_as_action_ = nullptr;
+    QString current_file_;
+    bool file_dirty_ = false;
+    session::RecordView record_view_;
     std::vector<std::pair<QAction*, QPushButton*>> action_buttons_;
     QDockWidget* diagnostics_dock_ = nullptr;
 

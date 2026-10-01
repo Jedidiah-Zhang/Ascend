@@ -24,6 +24,9 @@ foreach(case IN ITEMS
     autonomous_replay
     partial_input_records
     exception_boundaries
+    save_open_round_trip
+    open_record_state
+    open_rejects_and_falls_back
 )
     add_test(NAME session.${case} COMMAND ascend_session_tests ${case})
 endforeach()
@@ -47,6 +50,7 @@ if(TARGET ascend_workbench_ui)
         resourceResolution
         menuBarStructure
         captureScreenshot
+        fileSaveOpen
     )
         add_test(NAME workbench.${case} COMMAND ascend_workbench_tests ${case})
     endforeach()
