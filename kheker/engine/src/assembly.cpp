@@ -178,6 +178,30 @@ void AssemblyDefinition::export_symbol(std::string name, Reference child_symbol,
     require_scope(scope).exports.push_back({std::move(name), std::move(child_symbol)});
 }
 
+std::vector<std::string> AssemblyDefinition::scopes() const {
+    std::vector<std::string> result;
+    result.reserve(scopes_.size());
+    for (const auto& item : scopes_) result.push_back(item.first);
+    return result;
+}
+
+std::vector<AssemblyInstance> AssemblyDefinition::instances(const std::string& scope) const {
+    return require_scope(scope).instances;
+}
+
+void AssemblyDefinition::set_instance_config(const std::string& name, Config config, const std::string& scope) {
+    Scope& target = require_scope(scope);
+    const auto found = std::find_if(target.instances.begin(), target.instances.end(),
+                                    [&](const AssemblyInstance& instance) { return instance.name == name; });
+    if (found == target.instances.end()) {
+        fail_assembly(ErrorCode::invalid_assembly, {scope_join(scope, name), {}},
+                      {{engine_text_domain, "assembly.instance.missing"},
+                       "Instance not found in scope: {name}", {{"name", name}}},
+                      source_, {});
+    }
+    found->config = std::move(config);
+}
+
 std::string AssemblyDefinition::to_json() const {
     return detail::write_json(scope_config(require_scope(""), true), source_);
 }

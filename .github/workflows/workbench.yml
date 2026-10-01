@@ -1,0 +1,45 @@
+name: Workbench CI
+
+on:
+  push:
+    paths: &paths
+      - "kheker/workbench/**"
+      - "testbench/workbench/**"
+      - "kheker/engine/**"
+      - "testbench/engine/**"
+      - ".github/workflows/workbench.yml"
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      # macOS 暂未纳入：当前未做兼容，先保证 Linux 与 Windows 通过。
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v5
+      - name: 安装 Qt 6（Widgets 与 Test）
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          cache: true
+      - name: 安装无界面平台依赖（Linux）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libegl1
+      - name: 配置工作台
+        run: cmake -S kheker/workbench -B build/workbench -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: 编译会话库、界面与测试
+        run: cmake --build build/workbench --config Release --parallel 4
+      - name: 运行会话与界面测试
+        run: ctest --test-dir build/workbench --build-config Release --output-on-failure

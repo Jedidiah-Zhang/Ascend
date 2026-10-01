@@ -22,6 +22,7 @@ foreach(case IN ITEMS
     binding_result_failures
     binding_lifetime
     stateful_callbacks
+    scopes
 )
     add_test(NAME engine.${case} COMMAND ascend_engine_tests ${case})
 endforeach()
@@ -53,6 +54,7 @@ target_link_libraries(ascend_assembly_record_tests PRIVATE ascend::engine)
 foreach(case IN ITEMS
     factories
     definition
+    definition_access
     roundtrip
     config_change
     wiring
@@ -76,7 +78,9 @@ foreach(case IN ITEMS
 endforeach()
 
 add_executable(ascend_experiment_tests test_experiment.cpp)
-target_link_libraries(ascend_experiment_tests PRIVATE ascend::engine)
+target_link_libraries(ascend_experiment_tests PRIVATE ascend::engine ascend::experiment_model)
+target_compile_definitions(ascend_experiment_tests PRIVATE
+    ASCEND_EXAMPLE_MODEL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../kheker/engine/examples/experiment")
 foreach(case IN ITEMS
     state_declarations
     capture_restore
@@ -96,6 +100,8 @@ foreach(case IN ITEMS
     boundary_limit
     observation_memory
     trace_replay
+    run_directory
+    example_model
 )
     add_test(NAME experiment.${case} COMMAND ascend_experiment_tests ${case})
 endforeach()

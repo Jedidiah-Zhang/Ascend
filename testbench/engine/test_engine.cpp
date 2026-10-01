@@ -521,6 +521,25 @@ void stateful_callbacks() {
     CHECK(std::any_cast<Integer>(engine.call({"m", "next"}, {})) == 3);
 }
 
+void scope_enumeration() {
+    Engine engine;
+    Module group("group");
+    Module nested("nested");
+    Module state("state");
+    state.add_value<Integer>("value", [] { return Integer{1}; });
+    nested.add(std::move(state));
+    group.add(std::move(nested));
+    engine.add(std::move(group));
+    engine.add(Module("empty"));
+    const auto expected = std::vector<std::string>{"", "empty", "group", "group/nested",
+                                                   "group/nested/state"};
+    CHECK(engine.scopes() == expected);
+    engine.seal();
+    // 封闭后仍可只读枚举作用域。
+    CHECK(engine.scopes() == expected);
+    CHECK(engine.catalog("group/nested").size() == 1);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -545,6 +564,7 @@ int main(int argc, char** argv) {
         {"binding_result_failures", binding_result_failures},
         {"binding_lifetime", binding_lifetime},
         {"stateful_callbacks", stateful_callbacks},
+        {"scopes", scope_enumeration},
     };
     if (argc != 2 || tests.find(argv[1]) == tests.end()) {
         std::cerr << "Specify a known test case\n";

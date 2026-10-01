@@ -809,6 +809,17 @@ std::vector<Connection> Engine::connections(const std::string& scope) const {
     return result;
 }
 
+std::vector<std::string> Engine::scopes() const {
+    std::vector<std::string> result;
+    const auto collect = [&result](const auto& self, const Module& node, const std::string& path) -> void {
+        result.push_back(path);
+        for (const auto& child : node.children_) self(self, child, path_join(path, child.name_));
+    };
+    collect(collect, root_, {});
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
 std::vector<Declaration> Engine::candidates(const Reference& reference, const std::string& scope) const {
     local_reference(reference);
     const Reference target{path_join(scope, reference.module), reference.symbol};

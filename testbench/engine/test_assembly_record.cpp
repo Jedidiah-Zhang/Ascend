@@ -229,6 +229,45 @@ void definition() {
     CHECK(equals(drive(engine), {{4, 6}, {6, 10}, {8, 12}}));
 }
 
+void definition_access() {
+    AssemblyDefinition definition = assembly_definition(2, 0);
+    CHECK((definition.scopes() == std::vector<std::string>{"", "alternate", "baseline"}));
+    const auto root_instances = definition.instances();
+    CHECK(root_instances.size() == 2);
+    CHECK(root_instances[0].name == "input_baseline");
+    CHECK(root_instances[1].name == "input_alternate");
+    CHECK(definition.instances("baseline").size() == 1);
+    CHECK(definition.instances("baseline")[0].definition == kAccumulator);
+    CHECK(definition.instances("baseline")[0].name == "model");
+    CHECK(definition.instances("baseline")[0].config.find("initial")->integer() == 2);
+    failure(ErrorCode::invalid_assembly, {"absent", {}}, [&] { definition.instances("absent"); });
+    failure(ErrorCode::invalid_assembly, {"baseline/typo", {}}, [&] {
+        definition.set_instance_config("typo", Config::object({{"initial", Config::integer(1)}}), "baseline");
+    });
+
+    // 实例快照是只读副本；替换配置不改变实例集合与连接。
+    auto copy = definition.instances("baseline");
+    copy[0].config = Config{};
+    CHECK(definition.instances("baseline")[0].config.find("initial")->integer() == 2);
+    definition.set_instance_config("model", Config::object({{"initial", Config::integer(7)}}), "baseline");
+    CHECK(definition.instances().size() == 2);
+
+    // 同一份定义驱动保存与实例化：替换后的配置随记录往返并在重建实例后生效。
+    const auto loaded = AssemblyDefinition::parse(definition.to_json());
+    CHECK(loaded.scopes() == definition.scopes());
+    CHECK(loaded.instances("baseline")[0].config.find("initial")->integer() == 7);
+    Engine engine = loaded.instantiate(default_factories());
+    CHECK(engine.check().empty());
+    engine.seal();
+    const auto drive_input = engine.bind_method<void, Integer>({"input_baseline", "drive"});
+    const auto step = engine.bind_method<void>({"baseline", "advance"});
+    const auto output = engine.bind_value<Integer>({"baseline", "output"});
+    CHECK(output.read() == 7);
+    drive_input(2);
+    step();
+    CHECK(output.read() == 11);
+}
+
 void roundtrip() {
     ModuleFactoryDirectory directory = default_factories();
     AssemblyDefinition definition = assembly_definition();
@@ -1041,7 +1080,8 @@ void pointer_paths() {
 
 int main(int argc, char** argv) {
     const std::map<std::string, std::function<void()>> tests = {
-        {"factories", factories},       {"definition", definition},     {"roundtrip", roundtrip},
+        {"factories", factories},       {"definition", definition},     {"definition_access", definition_access},
+        {"roundtrip", roundtrip},
         {"config_change", config_change}, {"wiring", wiring},           {"independence", independence},
         {"config_values", config_values}, {"record_errors", record_errors},
         {"factory_errors", factory_errors}, {"assembly_errors", assembly_errors},

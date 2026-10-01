@@ -93,6 +93,7 @@
     "assembly.factory.non_standard_exception": "工厂抛出了非标准异常",
     "assembly.factory.name_mismatch": "工厂为实例“{instance}”返回了模块“{returned}”",
     "assembly.scope.missing": "找不到装配作用域",
+    "assembly.instance.missing": "找不到实例“{name}”",
     "assembly.scope.invalid_name": "作用域名必须非空且不含“/”",
     "assembly.scope.duplicate": "作用域名重复：“{name}”",
     "assembly.root.forward": "根作用域不能转接需求",

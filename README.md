@@ -42,7 +42,7 @@
 
 ## 构建与测试 C++ 原型
 
-以下步骤供开发者使用：它们会构建并运行 C++ 核心与世界库空间切片的自动化测试，不会启动游戏或图形界面。需要 CMake 3.20 及支持 C++17 的编译器；请在仓库根目录运行：
+以下步骤供开发者使用：它们会构建并运行 C++ 核心、世界库空间切片与工作台的自动化测试。需要 CMake 3.20 及支持 C++17 的编译器；界面部分还需要 Qt 6.4 及以上。测试在无界面平台下运行，不打开窗口；手动启动界面程序才需要显示环境。请在仓库根目录运行：
 
 ```bash
 cmake -S kheker/engine -B build/engine -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
@@ -58,7 +58,15 @@ cmake --build build/olam --config Debug --parallel 4
 ctest --test-dir build/olam --build-config Debug --output-on-failure
 ```
 
-构建产物分别位于 `build/engine/` 与 `build/olam/`。当前测试覆盖范围及限制见[核心测试说明](docs/研究平台/实验环境与声明接入/测试.md)与[空间测试说明](docs/世界/世界框架/空间系统/测试.md)。
+研究工作台（无界面会话库与 Qt 最小界面，需要 Qt 6.4 及以上的 Widgets 与 Test 模块）独立构建：
+
+```bash
+cmake -S kheker/workbench -B build/workbench -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/workbench --config Debug --parallel 4
+ctest --test-dir build/workbench --build-config Debug --output-on-failure
+```
+
+构建产物分别位于 `build/engine/`、`build/olam/` 与 `build/workbench/`；加 `-DASCEND_WORKBENCH_BUILD_GUI=OFF` 可只构建无界面会话库与测试。启动工作台运行 `build/workbench/ascend_workbench`（开发构建从源码目录加载内置示例）。当前测试覆盖范围及限制见[核心测试说明](docs/研究平台/实验环境与声明接入/测试.md)、[空间测试说明](docs/世界/世界框架/空间系统/测试.md)与[工作台测试说明](docs/研究平台/因果建模工作台/测试.md)。
 
 ## 参与贡献
 

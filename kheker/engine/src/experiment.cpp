@@ -201,4 +201,20 @@ void ExperimentRun::restore(const Checkpoint& checkpoint) {
     boundary_ = checkpoint.boundary;
 }
 
+std::vector<std::string> ExperimentRun::scopes() const {
+    return engine_.scopes();
+}
+
+std::vector<Declaration> ExperimentRun::catalog(const std::string& scope) const {
+    return engine_.catalog(scope);
+}
+
+std::vector<Requirement> ExperimentRun::requirements(const std::string& scope) const {
+    return engine_.requirements(scope);
+}
+
+std::vector<Connection> ExperimentRun::connections(const std::string& scope) const {
+    return engine_.connections(scope);
+}
+
 }  // namespace ascend

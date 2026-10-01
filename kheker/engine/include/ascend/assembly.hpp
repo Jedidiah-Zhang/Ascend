@@ -85,6 +85,13 @@ public:
                            const std::string& scope = {});
     void export_symbol(std::string name, Reference child_symbol, const std::string& scope = {});
 
+    // 读取入口：作用域路径（含根，空字符串）按路径排序；实例快照按加入顺序返回。
+    std::vector<std::string> scopes() const;
+    std::vector<AssemblyInstance> instances(const std::string& scope = {}) const;
+    // 替换已有实例的构造配置（同名实例取首个）；实例不存在报 invalid_assembly。
+    // 替换不改变实例集合、子作用域、连接、转接与导出。
+    void set_instance_config(const std::string& name, Config config, const std::string& scope = {});
+
     // 记录来源标识，用于诊断定位。
     const std::string& source() const noexcept { return source_; }
     // 输出为文本记录；save 写入文件，打开或写入失败报告 io_failure。

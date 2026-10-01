@@ -467,6 +467,8 @@ public:
     std::vector<Declaration> catalog(const std::string& scope = {}) const;
     std::vector<Requirement> requirements(const std::string& scope = {}) const;
     std::vector<Connection> connections(const std::string& scope = {}) const;
+    // 列出全部作用域路径（含根作用域，空字符串），按路径排序；只读取模块树。
+    std::vector<std::string> scopes() const;
     // 在该作用域内查找与指定需求兼容的公开提供项（种类、精确签名与契约标识均需匹配）；不建立连接。
     std::vector<Declaration> candidates(const Reference& requirement, const std::string& scope = {}) const;
     // 返回全部装配诊断，不抛出；封闭发布运行装配，存在诊断时抛出第一项并保持可注册状态。

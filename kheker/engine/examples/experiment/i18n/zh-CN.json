@@ -1,0 +1,21 @@
+{
+  "format": "ascend.i18n",
+  "version": 1,
+  "domain": "example.experiment",
+  "locale": "zh-CN",
+  "entries": {
+    "input": "由输入模块提供的本步外部输入 a",
+    "state.x": "状态变量 x；下一步取 x + a",
+    "state.y": "状态变量 y；下一步取 x",
+    "state.z": "状态变量 z；下一步取 y + z",
+    "state.write": "把三个状态变量整体写回为给定值。",
+    "update.input": "本次推进使用的输入 a",
+    "update.x": "推进前的状态变量 x",
+    "update.y": "推进前的状态变量 y",
+    "update.z": "推进前的状态变量 z",
+    "update.write": "写回下一步状态的操作",
+    "update.advance": "按 x' = x + a、y' = x、z' = y + z 推进一步；右侧读取步开始值。",
+    "value": "由宿主驱动的共同输入值",
+    "drive": "更新共同输入值。"
+  }
+}

@@ -1,5 +1,8 @@
 #include <ascend/experiment.hpp>
+#include <ascend/example/experiment_model.hpp>
+#include <ascend/i18n.hpp>
 
+#include <algorithm>
 #include <any>
 #include <array>
 #include <cstdint>
@@ -806,7 +809,7 @@ void step_failure() {
     run.restore(armed);
 
     // 失败时边界不前进，先写入的值保留，不从检查点自动回滚；失败进入轨迹记录。
-    RunTrace trace{"failing", origin, {{"counter", "", Config::integer(99)}}, {}, {}};
+    RunTrace trace{"failing", origin, {{"counter", "", Config::integer(99)}}, {}, {}, {}};
     const auto diagnostic = failure(ErrorCode::execution_failed, {"counter", "advance"}, [&] { run.step(); });
     trace.failures.push_back({run.boundary(), diagnostic});
     CHECK(run.boundary() == 2);
@@ -852,9 +855,9 @@ void trace_record() {
     advance(original, 1);
     advance(original, 1);
 
-    RunTrace control_trace{"control", original.checkpoint(), {}, {}, {}};
+    RunTrace control_trace{"control", original.checkpoint(), {}, {}, {}, {}};
     RunTrace treated_trace{"treated", original.checkpoint(),
-                           {{"plant/state", "x", Config::integer(10)}}, {}, {}};
+                           {{"plant/state", "x", Config::integer(10)}}, {}, {}, {}};
     ExperimentRun control(environment, directory, spec(), control_trace.label);
     control.restore(control_trace.origin);
     ExperimentRun treated(environment, directory, spec(), treated_trace.label);
@@ -1067,8 +1070,8 @@ void trace_replay() {
         advance(source, 1);
         advance(source, 1);
         const auto origin = source.checkpoint();
-        result.branches.push_back({"control", origin, {}, {}, {}});
-        result.branches.push_back({"treated", origin, {{"plant/state", "x", Config::integer(10)}}, {}, {}});
+        result.branches.push_back({"control", origin, {}, {}, {}, {}});
+        result.branches.push_back({"treated", origin, {{"plant/state", "x", Config::integer(10)}}, {}, {}, {}});
         result.inputs = {{2, "a", {Integer{2}}}, {3, "a", {Integer{-1}}}, {4, "a", {Integer{3}}}};
         for (auto& trace : result.branches) {
             ExperimentRun run(result.assembly, directory, result.spec, trace.label);
@@ -1110,6 +1113,79 @@ void trace_replay() {
     }
 }
 
+void run_directory() {
+    const auto directory = factories();
+    ExperimentRun run(definition(), directory, spec(), "view");
+    CHECK((run.scopes() == std::vector<std::string>{"", "input", "plant", "plant/state", "plant/update"}));
+    CHECK(run.catalog().size() == 6);          // plant 的 4 项导出与 input 的 2 项。
+    CHECK(run.catalog("plant").size() == 5);   // state.x/y/z/write 与 update.advance。
+    CHECK(run.requirements().size() == 1);
+    CHECK(run.requirements("plant").size() == 5);  // update 的 input、x、y、z、write。
+    CHECK(run.connections().size() == 1);
+    CHECK(run.connections("plant").size() == 5);  // x、y、z、write 与 input 转接。
+    const auto catalog = run.catalog();
+    const auto advance_entry = std::find_if(catalog.begin(), catalog.end(), [](const Declaration& item) {
+        return item.reference == Reference{"plant", "advance"};
+    });
+    CHECK(advance_entry != catalog.end());
+    CHECK(advance_entry->kind == SymbolKind::method);
+    CHECK(advance_entry->result_type == typeid(void));
+    CHECK(run.spec().inputs.size() == 1);
+    CHECK(run.spec().inputs.front().first == "a");
+    CHECK((run.spec().observations.front().second == Reference{"plant", "x"}));
+    failure(ErrorCode::missing_module, {"absent", {}}, [&] { run.catalog("absent"); });
+    // 只读目录查询不改变边界与后续结果。
+    CHECK(run.boundary() == 0);
+    CHECK(observed(run.sample()) == kControl[0]);
+    advance(run, 1);
+    CHECK(observed(run.sample()) == kControl[1]);
+}
+
+Tuple tuple(const example::Values& values) { return {values.x, values.y, values.z}; }
+
+void example_model() {
+    // 可复用示例组件的装配、规格与参考序列手工核对一致。
+    const auto directory = example::factories();
+    ExperimentRun source(example::environment(), directory, example::specification());
+    for (int boundary = 1; boundary <= 2; ++boundary) {
+        advance(source, 1);
+        CHECK(observed(source.sample()) == tuple(example::reference_control[boundary]));
+    }
+    const auto origin = source.checkpoint();
+    ExperimentRun treated(example::environment(), directory, example::specification());
+    treated.restore(apply_interventions(
+        origin, {{example::reference_intervention_module, example::reference_intervention_field,
+                  Config::integer(example::reference_intervention_value)}}));
+    CHECK(observed(treated.sample()) == tuple(example::reference_treated[2]));
+    for (Integer boundary = 2; boundary < 5; ++boundary) {
+        advance(treated, 1);
+        CHECK(observed(treated.sample()) == tuple(example::reference_treated[boundary + 1]));
+    }
+
+    // 共享语言资源按登记路径加载，说明解析为中文并能回退默认模板。
+    TextCatalog catalog;
+    for (const auto& resource : example::i18n_resources(ASCEND_EXAMPLE_MODEL_DIR)) catalog.load(resource);
+    const auto catalog_items = treated.catalog("plant");
+    const auto declared = std::find_if(catalog_items.begin(), catalog_items.end(), [](const Declaration& item) {
+        return item.reference == Reference{"plant/state", "x"};
+    });
+    CHECK(declared != catalog_items.end());
+    CHECK(catalog.resolve("zh-CN", declared->description) == "状态变量 x；下一步取 x + a");
+    CHECK(catalog.resolve("en", declared->description) == "State variable x; next value is x + a");
+
+    // int64 边界输入：x + a 与 y + z 溢出分别报错，边界不前进且不产生有符号溢出。
+    const auto maximum = std::numeric_limits<Integer>::max();
+    ExperimentRun overflow_x(example::environment({maximum, 0, 0}, 1), directory, example::specification());
+    const auto diagnostic =
+        failure(ErrorCode::execution_failed, {"plant/update", "advance"}, [&] { overflow_x.step(); });
+    CHECK(render_diagnostic(diagnostic).find("x + a") != std::string::npos);
+    CHECK(overflow_x.boundary() == 0);
+    ExperimentRun overflow_z(example::environment({0, maximum, 1}, 1), directory, example::specification());
+    failure(ErrorCode::execution_failed, {"plant/update", "advance"}, [&] { overflow_z.step(); });
+    CHECK(overflow_z.boundary() == 0);
+    CHECK(observed(overflow_z.sample()) == Tuple{0, maximum, 1});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1132,6 +1208,8 @@ int main(int argc, char** argv) {
         {"boundary_limit", boundary_limit},
         {"observation_memory", observation_memory},
         {"trace_replay", trace_replay},
+        {"run_directory", run_directory},
+        {"example_model", example_model},
     };
     if (argc != 2 || tests.count(argv[1]) == 0) return 2;
     try {

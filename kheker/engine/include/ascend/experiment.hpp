@@ -61,21 +61,23 @@ struct StepFailure {
     Diagnostic diagnostic;
 };
 
-// 一条运行轨迹的记录：分支标签、共同起点、本分支干预、逐步采样与推进失败。
+// 输入记录：boundary 是驱动前的边界；同边界的多项输入按列表顺序驱动。
+// 原生参数按值保存；含共享资源的参数由宿主保证记录稳定。
+struct DrivenInput {
+    std::int64_t boundary = 0;
+    std::string name;
+    std::vector<std::any> arguments;
+};
+
+// 一条运行轨迹的记录：分支标签、共同起点、本分支干预、本分支实际成功驱动的
+// 输入（含未完成步骤的部分成功）、逐步采样与推进失败。
 struct RunTrace {
     std::string label;
     Checkpoint origin;
     std::vector<Intervention> interventions;
     std::vector<Sample> samples;
     std::vector<StepFailure> failures;
-};
-
-// 共同后续输入：boundary 是驱动前的边界；同边界的多项输入按列表顺序驱动。
-// 原生参数按值保存；含共享资源的参数由宿主保证记录稳定。
-struct DrivenInput {
-    std::int64_t boundary = 0;
-    std::string name;
-    std::vector<std::any> arguments;
+    std::vector<DrivenInput> driven;
 };
 
 // 宿主维护的进程内实验记录：运行条件与各分支轨迹在同一个对象中关联。
@@ -114,6 +116,15 @@ public:
     Checkpoint checkpoint() const;
     // 从检查点恢复；成功后边界为检查点边界，失败时边界不变。
     void restore(const Checkpoint& checkpoint);
+
+    // 封闭后的只读运行目录视图：作用域路径（含根，空字符串）按路径排序；
+    // 声明、需求与连接来自实际运行装配，不执行 getter 或方法，不暴露可变引擎。
+    std::vector<std::string> scopes() const;
+    std::vector<Declaration> catalog(const std::string& scope = {}) const;
+    std::vector<Requirement> requirements(const std::string& scope = {}) const;
+    std::vector<Connection> connections(const std::string& scope = {}) const;
+    // 实验规格按构造时校验后的结果保存。
+    const ExperimentSpec& spec() const noexcept { return spec_; }
 
 private:
     class Operation;
