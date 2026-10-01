@@ -837,13 +837,13 @@ void MainWindow::onModelChanged(const ModelSnapshot& model) {
 void MainWindow::onTracesReset(const std::vector<session::TrackTraceView>& traces) {
     series_.clear();
     for (const auto& trace : traces) {
-        SeriesData data;
-        data.label = from_utf8(trace.label);
-        data.origin = trace.origin;
-        for (const auto& sample : trace.samples) data.samples.push_back(sample);
-        for (const auto& intervention : trace.interventions) data.interventions.push_back(intervention);
-        for (const auto& event : trace.events) data.events.push_back(event);
-        series_.push_back(std::move(data));
+        SeriesData series_data;
+        series_data.label = from_utf8(trace.label);
+        series_data.origin = trace.origin;
+        for (const auto& sample : trace.samples) series_data.samples.push_back(sample);
+        for (const auto& intervention : trace.interventions) series_data.interventions.push_back(intervention);
+        for (const auto& event : trace.events) series_data.events.push_back(event);
+        series_.push_back(std::move(series_data));
     }
     rebuildResultTable();
     rebuildWaveform();
@@ -857,9 +857,9 @@ void MainWindow::onTracesReset(const std::vector<session::TrackTraceView>& trace
 void MainWindow::onSamplesAppended(int series, const std::vector<session::SampleView>& samples,
                                    const std::vector<session::StepEvent>& events) {
     if (series < 0 || static_cast<std::size_t>(series) >= series_.size()) return;
-    auto& data = series_[static_cast<std::size_t>(series)];
-    for (const auto& sample : samples) data.samples.push_back(sample);
-    for (const auto& event : events) data.events.push_back(event);
+    auto& series_data = series_[static_cast<std::size_t>(series)];
+    for (const auto& sample : samples) series_data.samples.push_back(sample);
+    for (const auto& event : events) series_data.events.push_back(event);
     if (result_table_->columnCount() == 0) {
         rebuildResultTable();
     } else {
@@ -936,7 +936,7 @@ void MainWindow::onReplayFinished(const session::ReplayReport& report) {
                    .arg(from_utf8(mismatch.expected))
                    .arg(from_utf8(mismatch.received));
     } else if (report.diagnostic.has_value()) {
-        text = ui_text(*texts_, "workbench.replay.failed", "Replay could not complete: %1").arg(report.diagnostic->message);
+        text = ui_text(*texts_, "workbench.replay.failed", "Replay could not complete: %1").arg(from_utf8(report.diagnostic->message));
     } else {
         text = ui_text(*texts_, "workbench.replay.not_passed", "Replay did not pass.");
     }
@@ -1299,17 +1299,17 @@ void MainWindow::rebuildResultTable() {
     row_index_.clear();
     QStringList headers{ui_text(*texts_, "workbench.table.boundary", "Boundary")};
     const bool grouped = series_.size() > 1;
-    for (const auto& data : series_) {
+    for (const auto& series_data : series_) {
         for (const auto& name : model_.observations) {
-            headers << (grouped ? data.label + " " + from_utf8(name) : from_utf8(name));
+            headers << (grouped ? series_data.label + " " + from_utf8(name) : from_utf8(name));
         }
     }
     result_table_->setColumnCount(headers.size());
     result_table_->setHorizontalHeaderLabels(headers);
 
     std::vector<std::int64_t> boundaries;
-    for (const auto& data : series_) {
-        for (const auto& sample : data.samples) boundaries.push_back(sample.boundary);
+    for (const auto& series_data : series_) {
+        for (const auto& sample : series_data.samples) boundaries.push_back(sample.boundary);
     }
     std::sort(boundaries.begin(), boundaries.end());
     boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
@@ -1319,12 +1319,12 @@ void MainWindow::rebuildResultTable() {
         result_table_->setItem(row, 0, new QTableWidgetItem(QString::number(boundary)));
         row_index_.emplace(boundary, row);
         int column = 1;
-        for (const auto& data : series_) {
-            const auto sample = std::find_if(data.samples.begin(), data.samples.end(),
+        for (const auto& series_data : series_) {
+            const auto sample = std::find_if(series_data.samples.begin(), series_data.samples.end(),
                                              [&](const session::SampleView& item) {
                                                  return item.boundary == boundary;
                                              });
-            if (sample == data.samples.end()) {
+            if (sample == series_data.samples.end()) {
                 column += static_cast<int>(model_.observations.size());
                 continue;
             }
@@ -1400,22 +1400,22 @@ void MainWindow::rebuildWaveform() {
     // 事件轨：分支起点、干预、检查点、失败与停止。
     QVector<WaveformWidget::Event> events;
     for (std::size_t index = 0; index < series_.size(); ++index) {
-        const auto& data = series_[index];
+        const auto& series_data = series_[index];
         if (index > 0) {
             events.append(WaveformWidget::Event{
-                data.origin,
-                ui_text(*texts_, "workbench.waveform.event.branch", "Branch start") + " " + data.label,
+                series_data.origin,
+                ui_text(*texts_, "workbench.waveform.event.branch", "Branch start") + " " + series_data.label,
                 QColor(0x8e, 0x44, 0xad)});
         }
-        for (const auto& intervention : data.interventions) {
+        for (const auto& intervention : series_data.interventions) {
             QString text = ui_text(*texts_, "workbench.waveform.event.intervention", "Intervention");
             text += QStringLiteral(" ") + from_utf8(intervention.module);
             if (!intervention.field.empty()) text += "/" + from_utf8(intervention.field);
             text += QStringLiteral(": %1 → %2")
                         .arg(from_utf8(intervention.previous), from_utf8(intervention.replacement));
-            events.append(WaveformWidget::Event{data.origin, text, QColor(0xe6, 0x7e, 0x22)});
+            events.append(WaveformWidget::Event{series_data.origin, text, QColor(0xe6, 0x7e, 0x22)});
         }
-        for (const auto& step_event : data.events) {
+        for (const auto& step_event : series_data.events) {
             QString text;
             QColor color(0xc0, 0x39, 0x2b);
             switch (step_event.kind) {
@@ -1467,9 +1467,9 @@ void MainWindow::updateCursorTable() {
     cursor_table_->setRowCount(0);
     const std::int64_t a = waveform_->cursorA();
     const std::int64_t b = waveform_->cursorB();
-    const auto cell_at = [](const SeriesData& data, std::int64_t boundary, std::size_t signal_index)
+    const auto cell_at = [](const SeriesData& series_data, std::int64_t boundary, std::size_t signal_index)
         -> const session::CellView* {
-        for (const auto& sample : data.samples) {
+        for (const auto& sample : series_data.samples) {
             if (sample.boundary != boundary) continue;
             if (signal_index >= sample.observations.size()) return nullptr;
             return &sample.observations[signal_index];
