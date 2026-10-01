@@ -1103,6 +1103,54 @@ void open_rejects_and_falls_back() {
     CHECK(opened->status().tracks.size() == before.tracks.size());
 }
 
+void open_exploration_only() {
+    // 仅探索轨迹的文件按无分支单运行接管；不一致或单分支都只进入只读记录态。
+    auto session = example_session();
+    CHECK(session->load().ok);
+    CHECK(advance(*session, 1, 2).ok);
+    CHECK(session->create_checkpoint().ok);
+    CHECK(session->create_branches(
+              {{"对照", {}},
+               {"干预", {{example::reference_intervention_module, example::reference_intervention_field,
+                          Config::integer(example::reference_intervention_value)}}}})
+              .ok);
+    CHECK(advance(*session, 1, 3).ok);
+    const auto full = session->experiment_file();
+    CHECK(full.traces.size() == 3);
+
+    auto exploration_only = full;
+    exploration_only.traces.resize(1);
+    exploration_only.inputs = exploration_only.traces.front().trace.driven;  // 单运行的共同输入
+    CHECK(exploration_only.traces.front().exploration);
+    auto opened = example_session();
+    const auto first = opened->open_experiment(exploration_only);
+    CHECK(first.ok);
+    CHECK(first.status.phase == Phase::runnable);
+    CHECK(opened->status().tracks.size() == 1);
+    CHECK(opened->status().tracks[0].frame == 2);
+    const auto report = opened->replay();
+    CHECK(report.ok && report.complete);
+    CHECK(opened->run(1).ok);
+    CHECK(opened->status().tracks[0].frame == 3);
+
+    auto corrupted = exploration_only;
+    corrupted.traces.front().trace.samples.back().observations["x"] = Integer(99);
+    auto record = example_session();
+    const auto second = record->open_experiment(corrupted);
+    CHECK(second.ok);
+    CHECK(second.status.phase == Phase::record);
+    CHECK(!record->step().ok);
+    CHECK(!record->replay().ok);  // 重放探索轨迹报采样不一致
+
+    auto single_branch = full;
+    single_branch.traces.resize(2);
+    auto half = example_session();
+    const auto third = half->open_experiment(single_branch);
+    CHECK(third.ok);
+    CHECK(third.status.phase == Phase::record);
+    CHECK(!half->step().ok);
+}
+
 void comparison_limits() {
     // 同一逻辑帧差值溢出与不可比较的明确标注。
     auto session = example_session();
@@ -1155,6 +1203,7 @@ int main(int argc, char** argv) {
         {"save_open_round_trip", save_open_round_trip},
         {"open_record_state", open_record_state},
         {"open_rejects_and_falls_back", open_rejects_and_falls_back},
+        {"open_exploration_only", open_exploration_only},
     };
     if (argc != 2 || tests.count(argv[1]) == 0) {
         std::cerr << "Specify a known test case\n";

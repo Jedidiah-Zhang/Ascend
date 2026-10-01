@@ -59,6 +59,26 @@ std::unique_ptr<Workbench> start_workbench() {
     return workbench;
 }
 
+// 驱动文件对话框：等选择生效后接受；顺带关掉确认框，避免用例挂起。
+void drive_file_dialog(const QString& path) {
+    QWidget* modal = QApplication::activeModalWidget();
+    if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+        if (auto* yes = box->button(QMessageBox::Yes)) {
+            yes->click();
+        } else {
+            box->accept();
+        }
+        return;
+    }
+    auto* dialog = qobject_cast<QFileDialog*>(modal);
+    if (dialog == nullptr) return;
+    dialog->setDirectory(QFileInfo(path).absolutePath());
+    dialog->setFocus();  // 让文件名输入框失焦：Qt 在输入框有焦点时不接受 selectFile 的写入
+    dialog->selectFile(path);
+    if (dialog->selectedFiles().value(0) != path) return;  // 模型未就绪，下个周期重试
+    QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+}
+
 }  // namespace
 
 class TestWorkbench : public QObject {
@@ -78,6 +98,7 @@ private slots:
     void menuBarStructure();
     void captureScreenshot();
     void fileSaveOpen();
+    void fileOpenFailure();
 };
 
 void TestWorkbench::windowLoadsExample() {
@@ -687,16 +708,11 @@ void TestWorkbench::fileSaveOpen() {
     const QString path = QDir::tempPath() + QStringLiteral("/ascend-workbench-ui.aexp");
     QFile::remove(path);
     QTimer save_timer;
-    connect(&save_timer, &QTimer::timeout, [&] {
-        auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
-        if (dialog == nullptr) return;
-        save_timer.stop();
-        dialog->selectFile(path);
-        QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
-    });
+    connect(&save_timer, &QTimer::timeout, [&] { drive_file_dialog(path); });
     save_timer.start(10);
     window->findChild<QAction*>("saveAsAction")->trigger();
     QVERIFY(wait_until([&] { return QFile::exists(path) && window->currentFile() == path; }, 8000));
+    save_timer.stop();
     QVERIFY(wait_idle(window));
 
     // 继续推进制造差异，然后打开文件：接管回保存时的状态并可继续推进。
@@ -704,24 +720,62 @@ void TestWorkbench::fileSaveOpen() {
     QVERIFY(wait_idle(window));
     QCOMPARE(window->currentStatus().tracks[0].frame, 6);
     QTimer open_timer;
-    connect(&open_timer, &QTimer::timeout, [&] {
-        auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
-        if (dialog == nullptr) return;
-        open_timer.stop();
-        dialog->selectFile(path);
-        QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
-    });
+    connect(&open_timer, &QTimer::timeout, [&] { drive_file_dialog(path); });
     open_timer.start(10);
     window->findChild<QAction*>("openExperimentAction")->trigger();
     QVERIFY(wait_until([&] {
         return window->currentStatus().tracks.size() == 2 && window->currentStatus().tracks[0].frame == 5;
     }, 8000));
+    open_timer.stop();
     QCOMPARE(window->currentStatus().phase, ascend::session::Phase::runnable);
     QCOMPARE(window->currentFile(), path);
     QVERIFY(window->findChild<QPushButton*>("stepButton")->isEnabled());
     window->findChild<QPushButton*>("stepButton")->click();
     QVERIFY(wait_idle(window));
     QCOMPARE(window->currentStatus().tracks[0].frame, 6);
+    QFile::remove(path);
+}
+
+void TestWorkbench::fileOpenFailure() {
+    auto workbench = start_workbench();
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    // 打开结构损坏的文件：弹出针对本次操作的失败原因，会话不变，诊断入面板。
+    const QString path = QDir::tempPath() + QStringLiteral("/ascend-workbench-ui-bad.aexp");
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("not an ascend experiment file");
+    }
+    QString box_text;
+    QTimer timer;
+    connect(&timer, &QTimer::timeout, [&] {
+        QWidget* modal = QApplication::activeModalWidget();
+        if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+            box_text = box->text();
+            box->accept();
+            return;
+        }
+        auto* dialog = qobject_cast<QFileDialog*>(modal);
+        if (dialog == nullptr) return;
+        dialog->setDirectory(QFileInfo(path).absolutePath());
+        dialog->setFocus();
+        dialog->selectFile(path);
+        if (dialog->selectedFiles().value(0) != path) return;
+        QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+    });
+    timer.start(10);
+    window->findChild<QAction*>("openExperimentAction")->trigger();
+    QVERIFY(wait_until([&] { return !box_text.isEmpty(); }, 8000));
+    timer.stop();
+    // 失败原因随本次操作给出（路径 + 具体原因），而不是旧诊断或空。
+    QVERIFY(box_text.contains(QStringLiteral("ascend-workbench-ui-bad.aexp")));
+    QVERIFY(box_text.contains(QStringLiteral("\n")));
+    QVERIFY(window->currentFile().isEmpty());
+    auto* tree = window->findChild<QTreeWidget*>("diagnosticsTree");
+    QVERIFY(tree != nullptr);
+    QVERIFY(wait_until([&] { return tree->topLevelItemCount() >= 1; }, 4000));
     QFile::remove(path);
 }
 

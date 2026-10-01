@@ -123,8 +123,8 @@ private:
     void chooseOpenExperiment();
     void chooseSaveExperiment();
     void saveExperiment();
-    void onExperimentSaved(const QString& path, bool ok);
-    void onExperimentOpened(const QString& path, bool ok);
+    void onExperimentSaved(const QString& path, bool ok, const QString& detail);
+    void onExperimentOpened(const QString& path, bool ok, const QString& detail);
     void updateWindowTitle();
     void updateRecordSummary();
     void dispatch(const char* method);

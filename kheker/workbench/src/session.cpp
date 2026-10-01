@@ -1284,16 +1284,23 @@ OperationResult Session::reset_branches() {
     for (const auto& trace : record_.branches) definitions.push_back(BranchRequest{trace.label, trace.interventions});
     const auto result = replace_with_branches(definitions);
     if (!result.ok) {
-        phase_ = Phase::failed;
-        last_failure_ = result.diagnostics.empty() ? std::optional<DiagnosticView>{} : result.diagnostics.front();
-        status_ = make_status();
-        return OperationResult{false, result.completed_steps, result.stopped, status_, result.diagnostics};
+        // 记录态保持只读记录；本次重建失败只给诊断，不改变会话状态（WB-16）。
+        return OperationResult{false, result.completed_steps, result.stopped, make_status(),
+                               result.diagnostics};
     }
     phase_ = Phase::runnable;
     return finish(true);
 }
 
-ReplayReport Session::replay() { return rebuild_record(record_, nullptr); }
+ReplayReport Session::replay() {
+    if (record_.branches.empty() && has_exploration_) {
+        // 记录只含探索轨迹（record_.branches 只存放分支）：重放探索轨迹本身。
+        ExperimentRecord exploration = record_;
+        exploration.branches.push_back(exploration_trace_);
+        return rebuild_record(exploration, nullptr);
+    }
+    return rebuild_record(record_, nullptr);
+}
 
 std::optional<ReplayMismatchView> Session::sample_mismatch(const std::string& label,
                                                            const Sample& expected,
@@ -1486,18 +1493,18 @@ ReplayReport Session::rebuild_record(const ExperimentRecord& record,
 }
 
 ReplayReport Session::verify_standalone(const AssemblyDefinition& assembly, const ExperimentSpec& spec,
-                                        const RunTrace& trace,
-                                        const std::vector<DrivenInput>& driven) const {
+                                        const RunTrace& trace, const std::vector<DrivenInput>& driven,
+                                        std::unique_ptr<ExperimentRun>* out_run) const {
     ReplayReport report;
     try {
         const auto loaded = AssemblyDefinition::parse(assembly.to_json());
-        ExperimentRun run(loaded, model_.factories, spec, trace.label);
-        run.restore(trace.origin);
+        auto run = std::make_unique<ExperimentRun>(loaded, model_.factories, spec, trace.label);
+        run->restore(trace.origin);
         std::size_t index = 0;
         const auto verify = [&]() -> bool {
             if (index >= trace.samples.size()) return false;
             const auto& expected = trace.samples[index];
-            const auto actual = run.sample();
+            const auto actual = run->sample();
             ++index;
             if (auto mismatch = sample_mismatch(trace.label, expected, actual)) {
                 report.ok = false;
@@ -1520,7 +1527,7 @@ ReplayReport Session::verify_standalone(const AssemblyDefinition& assembly, cons
         while (index < trace.samples.size()) {
             const std::int64_t step_frame = trace.samples[index].frame - 1;
             while (input_index < driven.size() && driven[input_index].frame == step_frame) {
-                run.drive(driven[input_index].name, driven[input_index].arguments);
+                run->drive(driven[input_index].name, driven[input_index].arguments);
                 ++input_index;
             }
             if (input_index < driven.size() && driven[input_index].frame < step_frame) {
@@ -1530,7 +1537,7 @@ ReplayReport Session::verify_standalone(const AssemblyDefinition& assembly, cons
                     {{"branch", trace.label}, {"frame", std::to_string(step_frame)}}));
                 break;
             }
-            run.step();
+            run->step();
             if (verify()) return report;
         }
         if (index < trace.samples.size()) {
@@ -1544,6 +1551,7 @@ ReplayReport Session::verify_standalone(const AssemblyDefinition& assembly, cons
                 "Recorded samples for branch {branch} end at frame {frame}; later inputs are not compared",
                 {{"branch", trace.label}, {"frame", std::to_string(trace.samples.back().frame)}}));
         }
+        if (out_run != nullptr) *out_run = std::move(run);
     } catch (const EngineError& error) {
         report.diagnostic = view_of(error.diagnostic(), texts_, locale_);
         report.ok = false;
@@ -1629,9 +1637,9 @@ OperationResult Session::open_experiment(const ExperimentFile& file) {
     const bool has_exploration = file.traces.front().exploration;
     const std::size_t first_branch = has_exploration ? 1 : 0;
     const std::size_t branch_count = file.traces.size() - first_branch;
-    if (branch_count == 0) {
-        return reject(session_text("session.open.empty", "The experiment file has no traces"));
-    }
+    // 仅探索轨迹的文件按无分支单运行处理；其余分支数超出首版可恢复的运行态。
+    const bool exploration_only = has_exploration && branch_count == 0;
+    const bool single_run = (branch_count == 1 && !has_exploration) || exploration_only;
 
     // 重建与核对在局部对象上进行；任一失败只影响接管资格，不改变当前会话。
     ExperimentRecord loaded{file.assembly, file.spec, file.implementations, file.inputs, {}};
@@ -1640,11 +1648,21 @@ OperationResult Session::open_experiment(const ExperimentFile& file) {
         loaded.branches.push_back(file.traces[first_branch + index].trace);
     }
     std::vector<std::unique_ptr<ExperimentRun>> runs;
-    const auto rebuilt = rebuild_record(loaded, &runs);
+    ReplayReport rebuilt;
+    if (branch_count > 0) {
+        rebuilt = rebuild_record(loaded, &runs);
+    } else {
+        // 仅探索轨迹的文件没有分支可重建；探索轨迹由 verify_standalone 核对。
+        rebuilt.ok = true;
+        rebuilt.complete = true;
+    }
     bool exploration_ok = true;
+    std::unique_ptr<ExperimentRun> exploration_run;
     if (has_exploration) {
         const auto& trace = file.traces.front();
-        const auto report = verify_standalone(file.assembly, file.spec, trace.trace, trace.trace.driven);
+        const auto report =
+            verify_standalone(file.assembly, file.spec, trace.trace, trace.trace.driven,
+                              exploration_only ? &exploration_run : nullptr);
         exploration_ok = report.ok && report.complete &&
                          trace.current_frame == (trace.trace.samples.empty()
                                                      ? trace.trace.origin.frame
@@ -1665,14 +1683,23 @@ OperationResult Session::open_experiment(const ExperimentFile& file) {
             }
         }
     }
-    const bool adopt = clean && ((branch_count == 2) || (branch_count == 1 && !has_exploration));
+    // 接管要求可恢复的运行态：无分支单运行，或探索＋两个分支（WB-16）。
+    bool adopt = clean && (single_run || branch_count == 2);
+    if (adopt && exploration_only && exploration_run == nullptr) adopt = false;
 
     // 提交打开结果：接管为活动运行，或进入只读记录态。
     record_ = std::move(loaded);
     tracks_.clear();
     record_events_.clear();
     record_frames_.clear();
-    if (adopt) {
+    if (adopt && exploration_only) {
+        // 探索轨迹即单运行：恢复为无分支运行态。
+        record_.branches.push_back(file.traces.front().trace);
+        auto track = std::make_unique<Track>();
+        track->index = 0;
+        track->run = std::move(exploration_run);
+        tracks_.push_back(std::move(track));
+    } else if (adopt) {
         for (std::size_t index = 0; index < runs.size(); ++index) {
             auto track = std::make_unique<Track>();
             track->index = index;
@@ -1687,14 +1714,15 @@ OperationResult Session::open_experiment(const ExperimentFile& file) {
             record_frames_[index] = file.traces[first_branch + index].current_frame;
         }
     }
-    if (has_exploration) {
+    const bool keep_exploration = has_exploration && !(adopt && exploration_only);
+    if (keep_exploration) {
         exploration_trace_ = file.traces.front().trace;
         exploration_events_ = from_file_events(file.traces.front().events);
     } else {
         exploration_trace_ = {};
         exploration_events_.clear();
     }
-    has_exploration_ = has_exploration;
+    has_exploration_ = keep_exploration;
     checkpoint_ = file.checkpoint ? std::make_unique<Checkpoint>(*file.checkpoint) : nullptr;
     inputs_ = file.input_settings;
     if (file.draft.has_value()) {

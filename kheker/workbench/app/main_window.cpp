@@ -629,7 +629,7 @@ void MainWindow::buildDiagnosticsDock() {
     record_table_ = new QTableWidget(record_page);
     record_table_->setObjectName("recordTable");
     record_table_->setColumnCount(3);
-    record_table_->setHorizontalHeaderLabels({ui_text(*texts_, "workbench.table.driven_frame", "Boundary before drive"), ui_text(*texts_, "workbench.table.input", "Input"),
+    record_table_->setHorizontalHeaderLabels({ui_text(*texts_, "workbench.table.driven_frame", "Frame before drive"), ui_text(*texts_, "workbench.table.input", "Input"),
                                               ui_text(*texts_, "workbench.table.value", "Value")});
     record_table_->horizontalHeader()->setStretchLastSection(true);
     record_table_->verticalHeader()->setVisible(false);
@@ -970,10 +970,8 @@ void MainWindow::chooseSaveExperiment() {
     QMetaObject::invokeMethod(controller_, "saveExperiment", Qt::QueuedConnection, Q_ARG(QString, path));
 }
 
-void MainWindow::onExperimentSaved(const QString& path, bool ok) {
+void MainWindow::onExperimentSaved(const QString& path, bool ok, const QString& detail) {
     if (!ok) {
-        QString detail;
-        if (!diagnostics_.empty()) detail = from_utf8(diagnostics_.front().message);
         QString text = ui_text(*texts_, "workbench.save.failed", "Could not save the experiment file: %1").arg(path);
         if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
         QMessageBox::warning(this, ui_text(*texts_, "workbench.save.title", "Save experiment"), text);
@@ -985,10 +983,8 @@ void MainWindow::onExperimentSaved(const QString& path, bool ok) {
     updateRecordSummary();
 }
 
-void MainWindow::onExperimentOpened(const QString& path, bool ok) {
+void MainWindow::onExperimentOpened(const QString& path, bool ok, const QString& detail) {
     if (!ok) {
-        QString detail;
-        if (!diagnostics_.empty()) detail = from_utf8(diagnostics_.front().message);
         QString text = ui_text(*texts_, "workbench.open.failed", "Could not open the experiment file: %1").arg(path);
         if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
         QMessageBox::warning(this, ui_text(*texts_, "workbench.open.title", "Open experiment"), text);
@@ -1037,6 +1033,7 @@ void MainWindow::onRecordChanged(const session::RecordView& record) {
 }
 
 void MainWindow::onDiagnostics(const std::vector<session::DiagnosticView>& diagnostics) {
+    constexpr std::size_t kMaxDiagnostics = 200;
     for (const auto& diagnostic : diagnostics) {
         diagnostics_.push_back(diagnostic);
         const int index = static_cast<int>(diagnostics_.size()) - 1;
@@ -1046,6 +1043,14 @@ void MainWindow::onDiagnostics(const std::vector<session::DiagnosticView>& diagn
         item->setText(2, from_utf8(diagnostic.source));
         item->setText(3, from_utf8(diagnostic.message));
         item->setData(0, Qt::UserRole, index);
+    }
+    // 长会话只保留最近条目，避免诊断列表与界面项无限增长。
+    while (diagnostics_.size() > kMaxDiagnostics) {
+        diagnostics_.erase(diagnostics_.begin());
+        delete diagnostics_tree_->takeTopLevelItem(0);
+    }
+    for (int index = 0; index < diagnostics_tree_->topLevelItemCount(); ++index) {
+        diagnostics_tree_->topLevelItem(index)->setData(0, Qt::UserRole, index);
     }
     if (!diagnostics.empty()) {
         diagnostics_tree_->setCurrentItem(diagnostics_tree_->topLevelItem(diagnostics_tree_->topLevelItemCount() - 1));
@@ -1630,7 +1635,7 @@ void MainWindow::rebuildDiff() {
     diff_table_->clear();
     diff_table_->setRowCount(0);
     diff_table_->setColumnCount(static_cast<int>(comparison.variables.size()) + 1);
-    QStringList headers{ui_text(*texts_, "workbench.table.frame", "Boundary")};
+    QStringList headers{ui_text(*texts_, "workbench.table.frame", "Frame")};
     for (const auto& name : comparison.variables) headers << from_utf8(name);
     diff_table_->setHorizontalHeaderLabels(headers);
     for (const auto& row : comparison.rows) {

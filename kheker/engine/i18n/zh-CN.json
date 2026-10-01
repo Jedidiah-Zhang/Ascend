@@ -130,6 +130,7 @@
     "experiment.observation.names": "观测名必须非空且互不重复",
     "experiment.operation.reentry": "实验操作尚未完成，不能重入 {operation}",
     "experiment_file.corrupt": "实验文件结构损坏",
+    "experiment_file.depth": "实验文件嵌套深度超出上限",
     "experiment_file.kind": "实验文件种类不受支持",
     "experiment_file.magic": "文件不是实验文件（魔数不匹配）",
     "experiment_file.meta": "实验文件元数据非法",

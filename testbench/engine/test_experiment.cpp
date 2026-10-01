@@ -1191,6 +1191,96 @@ void example_model() {
 }  // namespace
 
 
+std::string test_varint(std::uint64_t value) {
+    std::string out;
+    while (value >= 0x80) {
+        out.push_back(static_cast<char>((value & 0x7f) | 0x80));
+        value >>= 7;
+    }
+    out.push_back(static_cast<char>(value));
+    return out;
+}
+
+std::string test_zigzag(std::int64_t value) {
+    return test_varint(static_cast<std::uint64_t>((value << 1) ^ (value >> 63)));
+}
+
+std::string test_section(std::uint64_t id, std::uint8_t flags, const std::string& data) {
+    return test_varint(id) + std::string(1, static_cast<char>(flags)) + test_varint(data.size()) +
+           data;
+}
+
+// 手工构造最小实验文件：一条失败记录，诊断原因链深度可控（用于解码上限回归）。
+std::string deep_diagnostic_file(std::size_t depth) {
+    const std::vector<std::string> strings = {"L", "invalid_json", "m", "advance", "", "msg"};
+    std::string table = test_varint(strings.size());
+    for (const auto& item : strings) table += test_varint(item.size()) + item;
+    std::string body;
+    body += test_varint(0);  // label "L"
+    body += test_zigzag(0);  // origin frame
+    body += test_varint(0);  // snapshot modules
+    body += test_varint(0);  // interventions
+    body += test_varint(0);  // driven
+    body += test_varint(0);  // samples
+    body += test_varint(1);  // failures
+    body += test_zigzag(0);  // failure frame
+    for (std::size_t index = 0; index < depth; ++index) {
+        body += test_varint(1);     // code invalid_json
+        body += test_varint(2);     // target.module "m"
+        body += test_varint(3);     // target.symbol "advance"
+        body += test_varint(4);     // source ""
+        body += test_varint(4);     // path ""
+        body += std::string(1, 1);  // text literal flag
+        body += test_varint(5);     // literal "msg"
+        body += std::string(1, 0);  // fallback flag
+        body += test_varint(0);     // arguments
+        body += std::string(1, index + 1 < depth ? 1 : 0);  // cause flag
+    }
+    body += std::string(1, 0);  // exploration flag
+    body += test_zigzag(0);     // current frame
+    body += test_varint(0);     // events
+    const std::string traces = table + test_varint(0) + test_varint(0) + std::string(1, 0) +
+                               test_varint(1) + body;
+    const std::string meta =
+        R"({"format":"ascend.experiment","version":1,)"
+        R"("assembly":{"format":"ascend.assembly","version":1,"instances":[],"scopes":[],)"
+        R"("connections":[],"forwards":[],"exports":[]},)"
+        R"("spec":{"advance":{"module":"m","symbol":"advance"},"inputs":[],"observations":[]},)"
+        R"("implementations":{},"series":[{"label":"L","role":"branch"}]})";
+    return std::string("ASCEND") + std::string(1, 1) + std::string(1, 1) + test_varint(2) +
+           test_section(1, 1, meta) + test_section(2, 1, traces);
+}
+
+void experiment_file_depth_limits() {
+    // 深原因链：手工构造的文件在解码时按上限拒绝，而不是递归溢出。
+    failure(ErrorCode::invalid_json, {},
+            [&] { decode_experiment_file(deep_diagnostic_file(200)); });
+    const auto shallow = decode_experiment_file(deep_diagnostic_file(100));
+    CHECK(shallow.traces.size() == 1);
+    CHECK(shallow.traces[0].trace.failures.size() == 1);
+
+    // 写入侧：深原因链与深结构化值都拒绝，不能产出自身无法读取的文件。
+    std::shared_ptr<const Diagnostic> chain;
+    for (std::size_t index = 0; index < 200; ++index) {
+        auto node = std::make_shared<Diagnostic>();
+        node->code = ErrorCode::invalid_config;
+        node->cause = chain;
+        chain = node;
+    }
+    ExperimentFile file;
+    ExperimentTrace trace;
+    trace.trace.label = "L";
+    trace.trace.failures.push_back(StepFailure{0, *chain});
+    file.traces.push_back(std::move(trace));
+    failure(ErrorCode::invalid_config, {}, [&] { encode_experiment_file(file); });
+
+    Config value = Config::integer(1);
+    for (std::size_t index = 0; index < 200; ++index) value = Config::array({value});
+    ExperimentFile config_file;
+    config_file.checkpoint = Checkpoint{0, StateSnapshot{{{"m", "c", false, value}}}};
+    failure(ErrorCode::invalid_config, {}, [&] { encode_experiment_file(config_file); });
+}
+
 void experiment_file_round_trip() {
     // 构造一次完整实验：探索轨迹 + 干预分支，含干预、驱动输入、失败与逐步事件。
     const auto directory = example::factories();
@@ -1390,8 +1480,12 @@ void module_package_round_trip() {
     CHECK(decoded.resources[0].locale == "zh-CN");
     CHECK(decoded.resources[0].text == "{\"format\":\"ascend.i18n\"}");
 
-    // 核对通过；篡改声明结果类型后被拒绝。
+    // 核对通过；清单顺序不影响核对（ENV-17）；篡改声明结果类型后被拒绝。
     check_module_manifest(manifest, engine, "", "m");
+    auto reordered = decoded.manifest;
+    std::reverse(reordered.declarations.begin(), reordered.declarations.end());
+    std::reverse(reordered.requirements.begin(), reordered.requirements.end());
+    check_module_manifest(reordered, engine, "", "m");
     auto tampered = manifest;
     tampered.declarations[0].result_type = "string";
     failure(ErrorCode::state_mismatch, Reference{"m", "declarations"},
@@ -1434,6 +1528,7 @@ int main(int argc, char** argv) {
         {"run_directory", run_directory},
         {"example_model", example_model},
         {"experiment_file_round_trip", experiment_file_round_trip},
+        {"experiment_file_depth_limits", experiment_file_depth_limits},
         {"module_package_round_trip", module_package_round_trip},
     };
     if (argc != 2 || tests.count(argv[1]) == 0) return 2;

@@ -488,11 +488,13 @@ void WaveformWidget::update_tooltip(const QPoint& pos) {
             frame = event.frame;
             found = true;
         }
+        // 只列同一逻辑帧的事件；相邻帧不合并提示（WB-15）。
+        if (event.frame != frame) continue;
         lines << event.text;
     }
     if (found) {
         QToolTip::showText(mapToGlobal(pos),
-                           ui_text(*texts_, "workbench.waveform.event_tooltip", "Boundary %1: %2")
+                           ui_text(*texts_, "workbench.waveform.event_tooltip", "Frame %1: %2")
                                .arg(frame)
                                .arg(lines.join(QStringLiteral("\n"))),
                            this);

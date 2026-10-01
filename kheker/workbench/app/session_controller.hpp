@@ -76,8 +76,8 @@ signals:
     void recordChanged(const ascend::session::RecordView& record);
     void sampleDetailReady(int series, std::int64_t frame, const ascend::session::SampleDetailView& detail);
     void diagnosticsReported(const std::vector<ascend::session::DiagnosticView>& diagnostics);
-    void experimentSaved(const QString& path, bool ok);
-    void experimentOpened(const QString& path, bool ok);
+    void experimentSaved(const QString& path, bool ok, const QString& detail);
+    void experimentOpened(const QString& path, bool ok, const QString& detail);
 
 private:
     enum class TraceUpdate { none, reset, deltas };

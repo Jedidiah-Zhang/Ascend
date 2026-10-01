@@ -378,9 +378,10 @@ private:
     // 重建并核对给定记录的轨迹；runs 非空时保留重建的运行（接管用）。
     ReplayReport rebuild_record(const ExperimentRecord& record,
                                 std::vector<std::unique_ptr<ExperimentRun>>* runs) const;
-    // 核对一条独立轨迹；输入取自轨迹自身记录。
+    // 核对一条独立轨迹；输入取自轨迹自身记录；out_run 非空且核对走完时保留重建的运行（单运行接管用）。
     ReplayReport verify_standalone(const AssemblyDefinition& assembly, const ExperimentSpec& spec,
-                                   const RunTrace& trace, const std::vector<DrivenInput>& driven) const;
+                                   const RunTrace& trace, const std::vector<DrivenInput>& driven,
+                                   std::unique_ptr<ExperimentRun>* out_run = nullptr) const;
     // 单次采样比较；不同时返回首个不一致。
     std::optional<ReplayMismatchView> sample_mismatch(const std::string& label, const Sample& expected,
                                                       const Sample& actual) const;

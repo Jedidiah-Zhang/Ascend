@@ -4,6 +4,7 @@
 #include "json.hpp"
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <typeindex>
@@ -420,6 +421,43 @@ ModuleManifest export_module_manifest(const Engine& engine, const std::string& s
     return manifest;
 }
 
+namespace {
+
+// 清单匹配键为（相对模块路径、符号）；ENV-17 不要求清单顺序。
+std::string manifest_key(const std::string& module, const std::string& symbol) {
+    return module + '\x1f' + symbol;
+}
+
+template <typename Mismatch>
+void compare_declaration(const ManifestDeclaration& expected, const ManifestDeclaration& actual,
+                         const Mismatch& mismatch) {
+    if (expected.kind != actual.kind || expected.result_type != actual.result_type ||
+        expected.contract != actual.contract) {
+        mismatch("declarations");
+    }
+    if (expected.parameters.size() != actual.parameters.size()) mismatch("parameters");
+    for (std::size_t parameter = 0; parameter < expected.parameters.size(); ++parameter) {
+        if (expected.parameters[parameter].name != actual.parameters[parameter].name ||
+            expected.parameters[parameter].type != actual.parameters[parameter].type) {
+            mismatch("parameters");
+        }
+    }
+    if (expected.reads != actual.reads || expected.writes != actual.writes) mismatch("references");
+    if (!same_text(expected.description, actual.description)) mismatch("description");
+}
+
+template <typename Mismatch>
+void compare_requirement(const ManifestRequirement& expected, const ManifestRequirement& actual,
+                         const Mismatch& mismatch) {
+    if (expected.kind != actual.kind || expected.result_type != actual.result_type ||
+        expected.contract != actual.contract || expected.parameters != actual.parameters) {
+        mismatch("requirements");
+    }
+    if (!same_text(expected.description, actual.description)) mismatch("description");
+}
+
+}  // namespace
+
 void check_module_manifest(const ModuleManifest& manifest, const Engine& engine,
                            const std::string& scope, const std::string& instance) {
     const auto runtime = export_module_manifest(engine, scope, instance);
@@ -432,44 +470,25 @@ void check_module_manifest(const ModuleManifest& manifest, const Engine& engine,
         manifest.state_contract != runtime.state_contract) {
         mismatch("state");
     }
-    if (manifest.declarations.size() != runtime.declarations.size()) mismatch("declarations");
-    for (std::size_t index = 0; index < manifest.declarations.size(); ++index) {
-        const auto& expected = manifest.declarations[index];
-        const auto& actual = runtime.declarations[index];
-        if (expected.module != actual.module || expected.symbol != actual.symbol ||
-            expected.kind != actual.kind || expected.result_type != actual.result_type ||
-            expected.contract != actual.contract) {
-            mismatch("declarations");
-        }
-        if (expected.parameters.size() != actual.parameters.size()) mismatch("parameters");
-        for (std::size_t parameter = 0; parameter < expected.parameters.size(); ++parameter) {
-            if (expected.parameters[parameter].name != actual.parameters[parameter].name ||
-                expected.parameters[parameter].type != actual.parameters[parameter].type) {
-                mismatch("parameters");
-            }
-        }
-        if (expected.reads.size() != actual.reads.size() ||
-            expected.writes.size() != actual.writes.size()) {
-            mismatch("references");
-        }
-        for (std::size_t index_read = 0; index_read < expected.reads.size(); ++index_read) {
-            if (!(expected.reads[index_read] == actual.reads[index_read])) mismatch("references");
-        }
-        for (std::size_t index_write = 0; index_write < expected.writes.size(); ++index_write) {
-            if (!(expected.writes[index_write] == actual.writes[index_write])) mismatch("references");
-        }
-        if (!same_text(expected.description, actual.description)) mismatch("description");
+    std::map<std::string, const ManifestDeclaration*> declarations;
+    for (const auto& item : runtime.declarations) {
+        declarations.emplace(manifest_key(item.module, item.symbol), &item);
     }
-    if (manifest.requirements.size() != runtime.requirements.size()) mismatch("requirements");
-    for (std::size_t index = 0; index < manifest.requirements.size(); ++index) {
-        const auto& expected = manifest.requirements[index];
-        const auto& actual = runtime.requirements[index];
-        if (expected.module != actual.module || expected.symbol != actual.symbol ||
-            expected.kind != actual.kind || expected.result_type != actual.result_type ||
-            expected.contract != actual.contract || expected.parameters != actual.parameters) {
-            mismatch("requirements");
-        }
-        if (!same_text(expected.description, actual.description)) mismatch("description");
+    if (manifest.declarations.size() != declarations.size()) mismatch("declarations");
+    for (const auto& expected : manifest.declarations) {
+        const auto found = declarations.find(manifest_key(expected.module, expected.symbol));
+        if (found == declarations.end()) mismatch("declarations");
+        compare_declaration(expected, *found->second, mismatch);
+    }
+    std::map<std::string, const ManifestRequirement*> requirements;
+    for (const auto& item : runtime.requirements) {
+        requirements.emplace(manifest_key(item.module, item.symbol), &item);
+    }
+    if (manifest.requirements.size() != requirements.size()) mismatch("requirements");
+    for (const auto& expected : manifest.requirements) {
+        const auto found = requirements.find(manifest_key(expected.module, expected.symbol));
+        if (found == requirements.end()) mismatch("requirements");
+        compare_requirement(expected, *found->second, mismatch);
     }
 }
 

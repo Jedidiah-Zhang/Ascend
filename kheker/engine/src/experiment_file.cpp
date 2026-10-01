@@ -223,7 +223,11 @@ struct StringTable {
     }
 };
 
-void write_config(Encoder& out, StringTable& table, const Config& value) {
+void write_config(Encoder& out, StringTable& table, const Config& value, std::size_t depth = 0) {
+    if (depth > kMaxDepth) {
+        fail(ErrorCode::invalid_config, "experiment_file.depth",
+             "Experiment file structured value nesting depth exceeds the limit");
+    }
     switch (value.kind()) {
         case Config::Kind::null_value:
             out.u8(kTagNull);
@@ -246,14 +250,14 @@ void write_config(Encoder& out, StringTable& table, const Config& value) {
         case Config::Kind::array:
             out.u8(kTagArray);
             out.varint(value.elements().size());
-            for (const auto& element : value.elements()) write_config(out, table, element);
+            for (const auto& element : value.elements()) write_config(out, table, element, depth + 1);
             return;
         case Config::Kind::object:
             out.u8(kTagObject);
             out.varint(value.members().size());
             for (const auto& [name, member] : value.members()) {
                 out.varint(table.intern(name));
-                write_config(out, table, member);
+                write_config(out, table, member, depth + 1);
             }
             return;
     }
@@ -337,7 +341,11 @@ std::any read_any(Reader& in) {
     return in.zigzag();
 }
 
-void write_text(Encoder& out, StringTable& table, const TextRef& text) {
+void write_text(Encoder& out, StringTable& table, const TextRef& text, std::size_t depth = 0) {
+    if (depth > text_max_depth) {
+        fail(ErrorCode::invalid_config, "experiment_file.depth",
+             "Experiment file text nesting depth exceeds the limit");
+    }
     out.u8(text.is_literal() ? 1 : 0);
     if (!text.is_literal()) {
         out.varint(table.intern(text.key().domain));
@@ -349,7 +357,7 @@ void write_text(Encoder& out, StringTable& table, const TextRef& text) {
     out.varint(text.arguments().size());
     for (const auto& [name, value] : text.arguments()) {
         out.varint(table.intern(name));
-        write_text(out, table, value);
+        write_text(out, table, value, depth + 1);
     }
 }
 
@@ -405,7 +413,12 @@ TextRef read_text(Reader& in, const std::vector<std::string>& strings, std::size
     }
 }
 
-void write_diagnostic(Encoder& out, StringTable& table, const Diagnostic& diagnostic) {
+void write_diagnostic(Encoder& out, StringTable& table, const Diagnostic& diagnostic,
+                      std::size_t depth = 0) {
+    if (depth > kMaxDepth) {
+        fail(ErrorCode::invalid_config, "experiment_file.depth",
+             "Experiment file diagnostic cause depth exceeds the limit");
+    }
     out.varint(table.intern(error_code_name(diagnostic.code)));
     out.varint(table.intern(diagnostic.target.module));
     out.varint(table.intern(diagnostic.target.symbol));
@@ -413,10 +426,17 @@ void write_diagnostic(Encoder& out, StringTable& table, const Diagnostic& diagno
     out.varint(table.intern(diagnostic.path));
     write_text(out, table, diagnostic.text);
     out.u8(diagnostic.cause != nullptr ? 1 : 0);
-    if (diagnostic.cause != nullptr) write_diagnostic(out, table, *diagnostic.cause);
+    if (diagnostic.cause != nullptr) {
+        write_diagnostic(out, table, *diagnostic.cause, depth + 1);
+    }
 }
 
-Diagnostic read_diagnostic(Reader& in, const std::vector<std::string>& strings) {
+Diagnostic read_diagnostic(Reader& in, const std::vector<std::string>& strings,
+                           std::size_t depth = 0) {
+    if (depth > kMaxDepth) {
+        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
+             "Experiment file diagnostic cause depth exceeds the limit");
+    }
     Diagnostic diagnostic;
     diagnostic.code = error_code_from_name(read_ref(in, strings));
     diagnostic.target.module = read_ref(in, strings);
@@ -429,7 +449,10 @@ Diagnostic read_diagnostic(Reader& in, const std::vector<std::string>& strings) 
         fail(ErrorCode::invalid_json, "experiment_file.corrupt",
              "Experiment file diagnostic flag is not recognized");
     }
-    if (cause_flag == 1) diagnostic.cause = std::make_shared<const Diagnostic>(read_diagnostic(in, strings));
+    if (cause_flag == 1) {
+        diagnostic.cause =
+            std::make_shared<const Diagnostic>(read_diagnostic(in, strings, depth + 1));
+    }
     return diagnostic;
 }
 

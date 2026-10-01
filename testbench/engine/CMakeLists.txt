@@ -103,6 +103,7 @@ foreach(case IN ITEMS
     run_directory
     example_model
     experiment_file_round_trip
+    experiment_file_depth_limits
     module_package_round_trip
 )
     add_test(NAME experiment.${case} COMMAND ascend_experiment_tests ${case})

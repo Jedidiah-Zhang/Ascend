@@ -27,6 +27,7 @@ foreach(case IN ITEMS
     save_open_round_trip
     open_record_state
     open_rejects_and_falls_back
+    open_exploration_only
 )
     add_test(NAME session.${case} COMMAND ascend_session_tests ${case})
 endforeach()
@@ -51,6 +52,7 @@ if(TARGET ascend_workbench_ui)
         menuBarStructure
         captureScreenshot
         fileSaveOpen
+        fileOpenFailure
     )
         add_test(NAME workbench.${case} COMMAND ascend_workbench_tests ${case})
     endforeach()
@@ -67,6 +69,8 @@ if(TARGET ascend_workbench_ui)
         workbench.resourceResolution
         workbench.menuBarStructure
         workbench.captureScreenshot
+        workbench.fileSaveOpen
+        workbench.fileOpenFailure
         PROPERTIES ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;ASCEND_WORKBENCH_SCREENSHOT=${CMAKE_CURRENT_BINARY_DIR}/workbench-ui.png")
 endif()

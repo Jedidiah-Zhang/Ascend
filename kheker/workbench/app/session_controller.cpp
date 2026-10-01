@@ -6,6 +6,17 @@
 #include <utility>
 
 namespace ascend::workbench {
+namespace {
+
+// 文件 I/O 失败也进入诊断面板，便于定位（WB-16）。
+session::DiagnosticView io_failure(const QString& message) {
+    session::DiagnosticView view;
+    view.code = ErrorCode::io_failure;
+    view.message = message.toUtf8().toStdString();
+    return view;
+}
+
+}  // namespace
 
 SessionController::SessionController(session::ModelTemplate model,
                                      std::shared_ptr<const session::AdapterRegistry> adapters,
@@ -143,22 +154,28 @@ void SessionController::saveExperiment(const QString& path) {
     emit busyChanged(true);
     const auto encoded = session_.encode_experiment();
     bool ok = encoded.ok;
+    QString detail;
+    if (encoded.diagnostic.has_value()) detail = QString::fromUtf8(encoded.diagnostic->message);
     if (ok) {
         QSaveFile file(path);
         if (!file.open(QIODevice::WriteOnly)) {
             ok = false;
+            detail = file.errorString();
         } else {
             const auto size = static_cast<qint64>(encoded.bytes.size());
             if (file.write(encoded.bytes.data(), size) != size) {
                 ok = false;
+                detail = file.errorString();
                 file.cancelWriting();
-            } else {
-                ok = file.commit();
+            } else if (!file.commit()) {
+                ok = false;
+                detail = file.errorString();
             }
         }
+        if (!ok) emit diagnosticsReported({io_failure(detail)});
     }
     if (encoded.diagnostic.has_value()) emit diagnosticsReported({*encoded.diagnostic});
-    emit experimentSaved(path, ok);
+    emit experimentSaved(path, ok, detail);
     emit busyChanged(false);
 }
 
@@ -166,14 +183,20 @@ void SessionController::openExperiment(const QString& path) {
     emit busyChanged(true);
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        emit experimentOpened(path, false);
+        const QString detail = file.errorString();
+        emit diagnosticsReported({io_failure(detail)});
+        emit experimentOpened(path, false, detail);
         emit busyChanged(false);
         return;
     }
     const QByteArray data = file.readAll();
     const auto result = session_.open_experiment(
         std::string(data.constData(), static_cast<std::size_t>(data.size())));
-    emit experimentOpened(path, result.ok);
+    QString detail;
+    if (!result.diagnostics.empty()) {
+        detail = QString::fromUtf8(result.diagnostics.front().message);
+    }
+    emit experimentOpened(path, result.ok, detail);
     publish(result, true, TraceUpdate::reset, result.status.branches == session::max_branches);
 }
 
