@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QMetaType>
 #include <QString>
+#include <QStringList>
 
 #include <atomic>
 #include <cstdint>
@@ -24,6 +25,7 @@ struct ModelSnapshot {
     std::vector<session::StateFieldView> state_fields;
     std::vector<std::string> observations;
     std::vector<std::string> series_labels;
+    std::vector<std::string> available_modules;  // 可用模块定义（宿主内置与模块库）
     session::RecordView record;
 };
 
@@ -57,6 +59,24 @@ public slots:
     // 保存当前实验到文件；打开实验文件（读取、解码、核对与接管/记录态）。
     void saveExperiment(const QString& path);
     void openExperiment(const QString& path);
+    // 模块包（ENV-18）：批量载入文件（逐个独立处理）、卸载定义标识、请求已载入概要。
+    void loadModulePackages(const QStringList& paths);
+    void unloadModulePackage(const QString& definition);
+    void requestModulePackages();
+    void requestModel();
+    // 因果系统装配（切片 A）：新建、加/删模块、接线与规格，结果随模型快照发布。
+    void newSystem(const QString& name);
+    void addModule(const QString& definition, const QString& instance);
+    void removeModule(const QString& instance);
+    void connectRequirement(const QString& requirement_module, const QString& requirement_symbol,
+                            const QString& provider_module, const QString& provider_symbol);
+    void disconnectRequirement(const QString& requirement_module, const QString& requirement_symbol);
+    void setSpecAdvance(const QString& module, const QString& symbol);
+    // 观测项形如「模块/符号」；名称同文本。
+    void setSpecObservations(const QStringList& references);
+    // 因果系统文件（`.aasm`）：打开（可带系统名）与保存；控制器负责文件读写。
+    void openSystem(const QString& path, const QString& name);
+    void saveSystem(const QString& path);
     void requestRecord();
     void requestSampleDetail(int series, std::int64_t frame);
     // 空操作：关闭窗口时用阻塞调用等待当前命令结束。
@@ -78,6 +98,13 @@ signals:
     void diagnosticsReported(const std::vector<ascend::session::DiagnosticView>& diagnostics);
     void experimentSaved(const QString& path, bool ok, const QString& detail);
     void experimentOpened(const QString& path, bool ok, const QString& detail);
+    void modulePackagesChanged(const std::vector<ascend::session::ModulePackageView>& packages);
+    // 批量载入结果：成功数、失败数与失败明细（每行“路径：原因”，全部成功时为空）。
+    void modulePackagesLoaded(int loaded, int failed, const QString& detail);
+    void modulePackageUnloaded(const QString& definition, bool ok, const QString& detail);
+    // 因果系统文件结果：路径与失败原因（成功时为空）。
+    void systemOpened(const QString& path, bool ok, const QString& detail);
+    void systemSaved(const QString& path, bool ok, const QString& detail);
 
 private:
     enum class TraceUpdate { none, reset, deltas };

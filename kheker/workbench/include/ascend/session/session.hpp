@@ -3,6 +3,7 @@
 #include <ascend/assembly.hpp>
 #include <ascend/experiment.hpp>
 #include <ascend/experiment_file.hpp>
+#include <ascend/module_library.hpp>
 #include <ascend/i18n.hpp>
 
 #include <ascend/session/adapter.hpp>
@@ -269,7 +270,19 @@ struct ReplayReport {
     std::optional<DiagnosticView> diagnostic;
 };
 
-// 会话模板：模型装配、实验规格、工厂目录、已核对实现标识与语言资源。
+// 已载入模块包的概要（ENV-18）；模块库不属于实验文件与运行状态。
+struct ModulePackageView {
+    std::string definition;
+    std::string version;
+    std::string implementation;
+    bool stateless = false;
+    std::string state_contract;
+    std::size_t declarations = 0;
+    std::size_t requirements = 0;
+    std::size_t resources = 0;
+};
+
+// 会话模板：模型装配、实验规格、工厂目录、已核对实现标识、语言资源与模块库。
 struct ModelTemplate {
     std::string name;
     AssemblyDefinition assembly;
@@ -278,6 +291,8 @@ struct ModelTemplate {
     std::map<std::string, std::string> implementations;
     std::vector<I18nResource> resources;  // 宿主提供的语言资源（核心包与模块包）
     std::string locale = "zh-CN";
+    // 模块库（可选）：宿主登记内置实现；空表示不提供模块包载入与卸载。
+    std::shared_ptr<ModuleLibrary> modules;
 };
 
 // 无界面实验会话：持有配置草稿、当前运行、检查点、分支轨迹与实验记录。
@@ -362,6 +377,38 @@ public:
     // 解码并打开实验文件字节；解析失败返回诊断且不改变会话。
     OperationResult open_experiment(const std::string& bytes);
 
+    // ---- 模块包（ENV-18；不进入实验文件与运行状态）----
+    // 已载入模块包的概要；模板未提供模块库时为空。
+    std::vector<ModulePackageView> module_packages() const;
+    // 载入模块包：解码、解析实现、核对清单与资源；失败给诊断且已载入列表不变。
+    OperationResult load_module_package(const std::string& bytes);
+    // 卸载已载入模块包；未载入或模板没有模块库时报诊断。
+    OperationResult unload_module_package(const std::string& definition);
+
+    // ---- 因果系统装配（切片 A：根作用域；嵌套组合与装配文件保存后续）----
+    // 新建空因果系统：清空装配草稿与规格，放弃当前运行与记录，进入编辑态。
+    OperationResult new_system(std::string name);
+    // 可用模块定义（宿主内置与模块库工厂合并后按名称排序）。
+    std::vector<std::string> available_modules() const;
+    // 当前系统名；为空时显示模板名。
+    const std::string& system_name() const noexcept { return system_name_; }
+    // 增加模块实例：定义须可用，实例名非空、不含 '/' 且在根作用域唯一。
+    OperationResult add_module(std::string definition, std::string instance, Config config = {});
+    // 移除模块实例；引用它的连接一并移除。
+    OperationResult remove_module(const std::string& instance);
+    // 连接需求到提供方：同一需求已有连接时替换；两端须是草稿中的根作用域实例。
+    OperationResult connect_requirement(const Reference& requirement, const Reference& provider);
+    // 断开需求连接；无该连接时为无操作成功。
+    OperationResult disconnect_requirement(const Reference& requirement);
+    // 设置推进入口；观测由调用方选择；输入映射按公开单参数方法自动推导。
+    OperationResult set_spec_advance(const Reference& advance);
+    OperationResult set_spec_observations(std::vector<std::pair<std::string, Reference>> observations);
+    // 打开因果系统（`.aasm` 字节）：解析为装配草稿，清空实验规格与运行/记录，进入编辑态；
+    // name 非空时作为系统名，source 用于诊断定位。失败不改变会话。
+    OperationResult open_system(const std::string& bytes, std::string name = {}, std::string source = {});
+    // 编码当前因果系统（装配草稿）为 `.aasm` 文本；失败给诊断（不改变会话）。
+    EncodeResult encode_system() const;
+
 private:
     struct Track;
 
@@ -390,12 +437,30 @@ private:
     // 从检查点建立分支并用新轨迹替换当前跟踪；失败时不改变会话。
     OperationResult replace_with_branches(const std::vector<BranchRequest>& branches);
 
+    // 合并宿主内置与模块库工厂；模块包载入/卸载后刷新。
+    void rebuild_factories();
+    // 尝试实例化当前草稿并刷新目录；失败返回诊断且保留旧目录。
+    std::vector<DiagnosticView> refresh_catalog();
+    // 按目录中的公开单参数方法推导输入映射；沿用引用未变的既有名称。返回是否变化。
+    bool derive_spec_inputs();
+    // 空会话尚未确立系统身份：编辑命令返回诊断且不改变状态。
+    OperationResult reject_without_system() const;
+    // 根作用域是否存在该实例。
+    bool has_instance(const std::string& name) const;
+    // 宿主已核对实现标识：模板登记优先，其次是已载入模块库清单中的实现；没有返回空。
+    std::string implementation_of(const std::string& definition) const;
+    // 草稿使用到的定义到实现标识的映射（用于实验记录）。
+    std::map<std::string, std::string> used_implementations() const;
+
     ModelTemplate model_;
     std::shared_ptr<const AdapterRegistry> adapters_;
     TextCatalog texts_;
     std::vector<DiagnosticView> resource_diagnostics_;
     std::string locale_;
 
+    ModuleFactoryDirectory factories_;  // 宿主内置与模块库合并后的实例化目录
+    ExperimentSpec spec_;               // 当前规格草稿
+    std::string system_name_;           // 当前系统名（空则显示模板名）
     AssemblyDefinition draft_;  // 当前配置草稿
     std::uint64_t draft_revision_ = 0;
     CatalogView catalog_;

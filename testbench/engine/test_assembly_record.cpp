@@ -325,6 +325,87 @@ void wiring() {
     CHECK(other.bind_value<Integer>({"dut", "output"}).read() == 4);
 }
 
+void editing_instance() {
+    ModuleFactoryDirectory directory = default_factories();
+    AssemblyDefinition definition;
+    definition.add_instance(kAccumulator, "dut", Config::object({{"initial", Config::integer(0)}}));
+    definition.add_instance(kStimulus, "input_two", Config::object({{"value", Config::integer(2)}}));
+    definition.add_instance(kStimulus, "input_three", Config::object({{"value", Config::integer(3)}}));
+    definition.connect({"dut", "input"}, {"input_two", "value"});
+
+    // 断开后重新接到另一个提供方：选择随连接改变；重复断开返回 false。
+    CHECK(definition.disconnect({"dut", "input"}));
+    CHECK(!definition.disconnect({"dut", "input"}));
+    definition.connect({"dut", "input"}, {"input_three", "value"});
+    Engine engine = definition.instantiate(directory);
+    engine.seal();
+    engine.bind_method<void>({"dut", "advance"})();
+    CHECK(engine.bind_value<Integer>({"dut", "output"}).read() == 6);
+
+    // 移除实例：实例消失、其余实例不变；移除不存在的实例报告 invalid_assembly。
+    definition.remove_instance("input_two");
+    CHECK(definition.instances().size() == 2);
+    const std::string text = definition.to_json();
+    CHECK(text.find("input_two") == std::string::npos);
+    CHECK(text.find("input_three") != std::string::npos);
+    Engine after = AssemblyDefinition::parse(text).instantiate(directory);
+    after.seal();
+    after.bind_method<void>({"dut", "advance"})();
+    CHECK(after.bind_value<Integer>({"dut", "output"}).read() == 6);
+    failure(ErrorCode::invalid_assembly, {"input_two", {}}, [&] { definition.remove_instance("input_two"); });
+
+    // 移除仍被连接引用的实例：同一作用域内引用它的连接一并移除，需求变为未连接。
+    AssemblyDefinition target;
+    target.add_instance(kAccumulator, "dut", Config::object({{"initial", Config::integer(0)}}));
+    target.add_instance(kStimulus, "input_two", Config::object({{"value", Config::integer(2)}}));
+    target.connect({"dut", "input"}, {"input_two", "value"});
+    target.remove_instance("input_two");
+    CHECK(target.instances().size() == 1);
+    Engine unconnected = target.instantiate(directory);
+    CHECK(!unconnected.check().empty());
+
+    // 非根作用域：移除实例同时移除引用它的转接与导出。
+    AssemblyDefinition composed;
+    composed.add_scope("group");
+    composed.add_instance(kAccumulator, "dut", Config::object({{"initial", Config::integer(0)}}), "group");
+    composed.add_instance(kStimulus, "input", Config::object({{"value", Config::integer(2)}}), "group");
+    composed.connect({"dut", "input"}, {"input", "value"}, "group");
+    composed.forward_inherited("input", {"dut", "input"}, "group");
+    composed.export_symbol("output", {"dut", "output"}, "group");
+    composed.remove_instance("dut", "group");
+    CHECK(composed.instances("group").size() == 1);
+    const std::string composed_text = composed.to_json();
+    CHECK(composed_text.find("dut") == std::string::npos);  // 实例、连接、转接与导出均不再引用
+    CHECK((AssemblyDefinition::parse(composed_text).scopes() == std::vector<std::string>{"", "group"}));
+}
+
+void factory_merge() {
+    ModuleFactoryDirectory first;
+    first.add_definition("shared", [](const std::string& instance, const Config&) {
+        Module module(instance);
+        module.add_value<Integer>("value", [] { return Integer{1}; }, {}, "example.scalar.v1");
+        return module;
+    });
+    ModuleFactoryDirectory second = default_factories();
+    second.add_definition("shared", [](const std::string& instance, const Config&) {
+        Module module(instance);
+        module.add_value<Integer>("value", [] { return Integer{2}; }, {}, "example.scalar.v1");
+        return module;
+    });
+    first.merge_from(second);
+    CHECK(first.contains(kAccumulator));
+    CHECK(first.contains(kStimulus));
+    CHECK(first.contains("shared"));
+    CHECK((first.definitions() == std::vector<std::string>{kAccumulator, kStimulus, "shared"}));
+    // 已存在的定义保持不变（先到者优先）；重复合并不报冲突。
+    Engine engine;
+    engine.add(first.create("shared", "probe", {}));
+    engine.seal();
+    CHECK(engine.bind_value<Integer>({"probe", "value"}).read() == 1);
+    first.merge_from(second);
+    CHECK(first.contains(kAccumulator));
+}
+
 void independence() {
     ModuleFactoryDirectory directory = default_factories();
     AssemblyDefinition definition = assembly_definition();
@@ -1083,6 +1164,7 @@ int main(int argc, char** argv) {
         {"factories", factories},       {"definition", definition},     {"definition_access", definition_access},
         {"roundtrip", roundtrip},
         {"config_change", config_change}, {"wiring", wiring},           {"independence", independence},
+        {"editing_instance", editing_instance}, {"factory_merge", factory_merge},
         {"config_values", config_values}, {"record_errors", record_errors},
         {"factory_errors", factory_errors}, {"assembly_errors", assembly_errors},
         {"factory_target", factory_target}, {"factory_causes", factory_causes},

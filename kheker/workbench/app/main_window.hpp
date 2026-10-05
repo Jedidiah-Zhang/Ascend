@@ -7,6 +7,7 @@
 
 #include <QMainWindow>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include <cstdint>
@@ -23,6 +24,7 @@ class QDockWidget;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
+class QListWidget;
 class QMenu;
 class QPushButton;
 class QScrollArea;
@@ -56,9 +58,14 @@ public:
     QString statusLine() const;
     bool busy() const noexcept { return busy_; }
     QString currentFile() const { return current_file_; }
-    // 启动时由工作台提交：标记忙状态并排队打开示例。
-    void beginInitialLoad();
-
+    // 新窗口显示后关闭模块库页签（其默认态为不打开；载入模块包时自动打开并切到该页签）。
+    void hidePackageLibrary();
+    // 打开系统编辑器页签（编辑菜单与查看菜单共用）。
+    void showSystemEditor();
+    // 打开开始页签（默认打开；启动时置前）。
+    void showStartPage();
+    // 关闭开始页签（进入新建/打开流程时调用）。
+    void hideStartPage();
 protected:
     void closeEvent(QCloseEvent* event) override;
 
@@ -92,7 +99,38 @@ private:
     void buildResultsPane();
     void buildRightPane();
     void buildDiagnosticsDock();
+    void buildPackagePage();
+    void buildSystemEditor();
+    void buildStartPage();
     void buildMenuBar();
+    // 中央工作区页签开关：打开时加入并在必要时切到该页，关闭时移除（视图对象保留）。
+    void setCentralViewVisible(QWidget* page, const QString& title, bool visible);
+    // 系统编辑器：按模型快照重建控件；选择变化时刷新提供方候选与按钮状态。
+    void rebuildSystemEditor();
+    void onSystemSelectionChanged();
+    void updateSystemEditorControls();
+    void chooseNewSystem();
+    void onSystemDefinitionChanged();
+    void addSystemModule();
+    void removeSystemModule();
+    void connectSystemRequirement();
+    void disconnectSystemRequirement();
+    void onSpecAdvanceChanged();
+    void onSpecObservationsChanged();
+    // 带参数编辑命令的公共簿记：置忙碌标记并排队调用控制层；编辑命令标记研究文件与系统草稿未保存。
+    void beginSystemCommand(const char* method, bool edits_draft = true);
+    // 研究入口与因果系统文件：新建研究对话框、打开/保存系统与结果处理。
+    void chooseNewResearch();
+    void chooseOpenSystem();
+    void saveSystem();
+    void chooseSaveSystemAs();
+    void onSystemOpened(const QString& path, bool ok, const QString& detail);
+    void onSystemSaved(const QString& path, bool ok, const QString& detail);
+    void updateSystemFileLabel();
+    // 开始页动作：关闭开始页并进入相应流程。
+    void startNewResearch();
+    void startOpenResearch();
+    void startOpenExample();
 
     void updateControls();
     void updateStatusLabels();
@@ -125,6 +163,17 @@ private:
     void saveExperiment();
     void onExperimentSaved(const QString& path, bool ok, const QString& detail);
     void onExperimentOpened(const QString& path, bool ok, const QString& detail);
+    // 模块包：多选文件或整个文件夹的载入/卸载命令与结果、已载入概要（ENV-18）。
+    void chooseLoadModulePackage();
+    void chooseLoadModulePackageFolder();
+    void loadModulePackages(const QStringList& paths);
+    void chooseUnloadModulePackage();
+    void unloadModulePackage(const QString& definition);
+    void onModulePackages(const std::vector<ascend::session::ModulePackageView>& packages);
+    void onModulePackagesLoaded(int loaded, int failed, const QString& detail);
+    void onModulePackageUnloaded(const QString& definition, bool ok, const QString& detail);
+    // 载入成功后显示模块库面板（未显示时以主窗口中央浮窗打开；已显示时保持位置并置前）。
+    void showPackageLibrary();
     void updateWindowTitle();
     void updateRecordSummary();
     void dispatch(const char* method);
@@ -166,6 +215,56 @@ private:
     QTreeWidget* spec_tree_ = nullptr;
     QTreeWidget* requirements_tree_ = nullptr;
     QTreeWidget* connections_tree_ = nullptr;
+
+    // 模块库（中央工作区页签，默认不打开，载入模块包时自动打开）
+    QWidget* package_page_ = nullptr;
+    QTableWidget* package_table_ = nullptr;
+    QPushButton* package_load_button_ = nullptr;
+    QPushButton* package_load_folder_button_ = nullptr;
+    QPushButton* package_unload_button_ = nullptr;
+    QAction* package_tab_action_ = nullptr;
+    QAction* load_module_action_ = nullptr;
+    QAction* load_module_folder_action_ = nullptr;
+    QAction* unload_module_action_ = nullptr;
+    QAction* new_research_action_ = nullptr;
+    std::vector<session::ModulePackageView> packages_;
+
+    // 中央工作区页签（浏览器式：可拖动重排、可关闭、从查看菜单重开）
+    QWidget* timeline_page_ = nullptr;
+    QWidget* diff_page_ = nullptr;
+    QAction* timeline_action_ = nullptr;
+    QAction* diff_action_ = nullptr;
+
+    // 系统编辑器（中央工作区页签）
+    QWidget* editor_page_ = nullptr;
+    QAction* editor_action_ = nullptr;
+    QLabel* system_name_label_ = nullptr;
+    QPushButton* new_system_button_ = nullptr;
+    QPushButton* open_system_button_ = nullptr;
+    QPushButton* save_system_button_ = nullptr;
+    QString system_file_;  // 当前因果系统文件（`.aasm`）；空表示尚未保存
+    QComboBox* definition_combo_ = nullptr;
+    QLineEdit* instance_edit_ = nullptr;
+    QPushButton* add_module_button_ = nullptr;
+    QTreeWidget* system_tree_ = nullptr;
+    QComboBox* provider_combo_ = nullptr;
+    QPushButton* connect_button_ = nullptr;
+    QPushButton* disconnect_button_ = nullptr;
+    QPushButton* remove_module_button_ = nullptr;
+    QPushButton* editor_check_button_ = nullptr;
+    QPushButton* editor_apply_button_ = nullptr;
+    QComboBox* advance_combo_ = nullptr;
+    QListWidget* observation_list_ = nullptr;
+    QLabel* input_label_ = nullptr;
+    bool editor_updating_ = false;
+    bool system_dirty_ = false;  // 因果系统草稿相对系统文件的未保存状态
+
+    // 开始页（中央工作区页签，默认打开）
+    QWidget* start_page_ = nullptr;
+    QAction* start_action_ = nullptr;
+    QPushButton* start_new_button_ = nullptr;
+    QPushButton* start_open_button_ = nullptr;
+    QPushButton* start_example_button_ = nullptr;
 
     // 中部
     QScrollArea* config_area_ = nullptr;

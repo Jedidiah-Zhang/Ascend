@@ -59,6 +59,12 @@ bool ModuleFactoryDirectory::contains(const std::string& definition) const {
     return factories_.count(definition) != 0;
 }
 
+void ModuleFactoryDirectory::merge_from(const ModuleFactoryDirectory& other) {
+    for (const auto& item : other.factories_) {
+        factories_.emplace(item.first, item.second);  // 已存在的定义保持不变
+    }
+}
+
 const std::vector<I18nResource>& ModuleFactoryDirectory::i18n_resources(const std::string& definition) const {
     const auto found = factories_.find(definition);
     if (found == factories_.end()) detail::fail_text(ErrorCode::unknown_definition, {definition, {}},
@@ -155,8 +161,51 @@ void AssemblyDefinition::add_instance(std::string definition, std::string name, 
     require_scope(scope).instances.push_back({std::move(definition), std::move(name), std::move(config)});
 }
 
+void AssemblyDefinition::remove_instance(const std::string& name, const std::string& scope) {
+    Scope& target = require_scope(scope);
+    const auto found = std::find_if(target.instances.begin(), target.instances.end(),
+                                    [&](const AssemblyInstance& instance) { return instance.name == name; });
+    if (found == target.instances.end()) {
+        fail_assembly(ErrorCode::invalid_assembly, {scope_join(scope, name), {}},
+                      {{engine_text_domain, "assembly.instance.missing"},
+                       "Instance not found in scope: {name}", {{"name", name}}},
+                      source_, {});
+    }
+    target.instances.erase(found);
+    // 同一作用域内引用该实例的连接、转接与导出随实例一并移除；子作用域与其余实例不变。
+    const auto references_instance = [&](const Reference& reference) { return reference.module == name; };
+    target.connections.erase(
+        std::remove_if(target.connections.begin(), target.connections.end(),
+                       [&](const AssemblyConnection& connection) {
+                           return references_instance(connection.requirement) ||
+                                  references_instance(connection.provider);
+                       }),
+        target.connections.end());
+    target.forwards.erase(std::remove_if(target.forwards.begin(), target.forwards.end(),
+                                         [&](const AssemblyForward& forward) {
+                                             return references_instance(forward.target);
+                                         }),
+                          target.forwards.end());
+    target.exports.erase(std::remove_if(target.exports.begin(), target.exports.end(),
+                                        [&](const AssemblyExport& symbol) {
+                                            return references_instance(symbol.target);
+                                        }),
+                         target.exports.end());
+}
+
 void AssemblyDefinition::connect(Reference requirement, Reference provider, const std::string& scope) {
     require_scope(scope).connections.push_back({std::move(requirement), std::move(provider)});
+}
+
+bool AssemblyDefinition::disconnect(const Reference& requirement, const std::string& scope) {
+    Scope& target = require_scope(scope);
+    const auto found = std::find_if(target.connections.begin(), target.connections.end(),
+                                    [&](const AssemblyConnection& connection) {
+                                        return connection.requirement == requirement;
+                                    });
+    if (found == target.connections.end()) return false;
+    target.connections.erase(found);
+    return true;
 }
 
 void AssemblyDefinition::forward_inherited(std::string requirement, Reference child_requirement,

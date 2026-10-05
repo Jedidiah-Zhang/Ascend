@@ -2,6 +2,7 @@
 
 #include <ascend/assembly.hpp>
 #include <ascend/experiment.hpp>
+#include <ascend/module_library.hpp>
 
 #include <array>
 #include <cstdint>
@@ -58,5 +59,21 @@ inline constexpr std::array<Values, 6> reference_control = {
 inline constexpr std::array<Values, 6> reference_treated = {
     Values{0, 0, 0}, Values{1, 0, 0}, Values{10, 1, 0},
     Values{11, 10, 1}, Values{12, 11, 11}, Values{13, 12, 22}};
+
+// ---- 模块库示例模块（ENV-18）----
+// 三个可打包为 `.amod` 的模块：无状态值、带状态方法、带需求转接。
+// 工作台、命令行示例与测试共用。
+inline constexpr const char* library_source_definition = "library.source";
+inline constexpr const char* library_source_implementation = "library.source.int.v1";
+inline constexpr const char* library_accumulator_definition = "library.accumulator";
+inline constexpr const char* library_accumulator_implementation = "library.accumulator.int.v1";
+inline constexpr const char* library_relay_definition = "library.relay";
+inline constexpr const char* library_relay_implementation = "library.relay.int.v1";
+
+Module module_library_source(const std::string& instance, const Config& config);
+Module module_library_accumulator(const std::string& instance, const Config& config);
+Module module_library_relay(const std::string& instance, const Config& config);
+// 把三个模块库示例实现登记进模块库（定义标识、实现标识与工厂）。
+void register_module_library(ModuleLibrary& library);
 
 }  // namespace ascend::example

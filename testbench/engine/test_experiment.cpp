@@ -1413,36 +1413,7 @@ void experiment_file_round_trip() {
 }
 
 
-// ---- 模块库测试模块（ENV-18）----
-
-Module make_library_source(const std::string& instance, const Config&) {
-    Module module(instance);
-    module.declare_stateless();
-    module.add_value<Integer>("value", [] { return Integer{7}; }, {}, "library.scalar.v1");
-    return module;
-}
-
-Module make_library_accumulator(const std::string& instance, const Config&) {
-    Module module(instance);
-    auto total = std::make_shared<Integer>(0);
-    module.add_value<Integer>("total", [total] { return *total; }, {}, "library.scalar.v1");
-    MethodOptions add_options;
-    add_options.contract = "library.accumulator.add.v1";
-    module.add_method<void, Integer>("add", {"amount"},
-                                     [total](Integer amount) { *total += amount; }, add_options);
-    module.add_state("library.accumulator.state.v1", [total] { return Config::integer(*total); },
-                     [total](const Config& state) { *total = state.integer(); });
-    return module;
-}
-
-Module make_library_relay(const std::string& instance, const Config&) {
-    Module module(instance);
-    auto input = module.require_value<Integer>("in", "library.scalar.v1");
-    module.declare_stateless();
-    module.add_value<Integer>("out", [input](const Context& context) { return input.read(context); },
-                              {}, "library.scalar.v1");
-    return module;
-}
+// ---- 模块库测试（ENV-18）----
 
 // 把模块（可含提供方）装配成探测引擎，导出清单并打包成模块包。
 template <typename Assemble>
@@ -1464,16 +1435,13 @@ ModulePackage pack_library_module(Assemble&& assemble, const std::string& instan
 void module_library_load_unload() {
     // 宿主登记三个内置实现：无状态值、带状态方法、带需求与资源。
     ModuleLibrary library;
-    library.register_implementation("library.source", "library.source.int.v1", make_library_source);
-    library.register_implementation("library.accumulator", "library.accumulator.int.v1",
-                                    make_library_accumulator);
-    library.register_implementation("library.relay", "library.relay.int.v1", make_library_relay);
+    example::register_module_library(library);
 
     const auto source_bytes = encode_module_package(pack_library_module(
-        [](Engine& engine) { engine.add(make_library_source("probe", {})); }, "probe",
+        [](Engine& engine) { engine.add(example::module_library_source("probe", {})); }, "probe",
         "library.source", "library.source.int.v1"));
     const auto accumulator_bytes = encode_module_package(pack_library_module(
-        [](Engine& engine) { engine.add(make_library_accumulator("probe", {})); }, "probe",
+        [](Engine& engine) { engine.add(example::module_library_accumulator("probe", {})); }, "probe",
         "library.accumulator", "library.accumulator.int.v1"));
     const auto relay_bytes = encode_module_package(pack_library_module(
         [](Engine& engine) {
@@ -1481,14 +1449,14 @@ void module_library_load_unload() {
             provider.declare_stateless();
             provider.add_value<Integer>("value", [] { return Integer{1}; }, {}, "library.scalar.v1");
             engine.add(std::move(provider));
-            engine.add(make_library_relay("probe", {}));
+            engine.add(example::module_library_relay("probe", {}));
             engine.connect({"probe", "in"}, {"provider", "value"});
         },
         "probe", "library.relay", "library.relay.int.v1",
         {{"library.relay", "zh-CN",
           R"({"format":"ascend.i18n","version":1,"domain":"library.relay","locale":"zh-CN","entries":{"out":"\u4e2d\u7ee7\u8f93\u51fa"}})"}}));
 
-    // 装入、列表与概要。
+    // 载入、列表与概要。
     CHECK(!library.contains("library.source"));
     CHECK(library.load(source_bytes) == "library.source");
     CHECK(library.load(accumulator_bytes) == "library.accumulator");
@@ -1509,7 +1477,7 @@ void module_library_load_unload() {
     CHECK(entries[2].declarations == 1);
     CHECK(library.manifest("library.source").stateless);
 
-    // 重复装入拒绝；卸载后可再次装入。
+    // 重复载入拒绝；卸载后可再次载入。
     failure(ErrorCode::duplicate_definition, Reference{"library.source", {}},
             [&] { library.load(source_bytes); });
     CHECK(library.unload("library.source"));
@@ -1523,7 +1491,7 @@ void module_library_load_unload() {
     CHECK(catalog.contains("zh-CN", TextKey{"library.relay", "out"}));
     CHECK(catalog.resolve("zh-CN", TextRef(TextKey{"library.relay", "out"})) == "\u4e2d\u7ee7\u8f93\u51fa");
 
-    // 装入的实现可用于装配实例化。
+    // 载入的实现可用于装配实例化。
     Engine engine;
     engine.add(library.factories().create("library.source", "source", {}));
     engine.add(library.factories().create("library.accumulator", "acc", {}));
@@ -1535,19 +1503,19 @@ void module_library_load_unload() {
     // 失败路径：未登记定义、实现标识不符、清单篡改与资源非法都拒绝且不登记。
     CHECK(library.unload("library.source"));
     const auto unknown_bytes = encode_module_package(pack_library_module(
-        [](Engine& engine) { engine.add(make_library_source("probe", {})); }, "probe",
+        [](Engine& engine) { engine.add(example::module_library_source("probe", {})); }, "probe",
         "library.unknown", "library.unknown.int.v1"));
     failure(ErrorCode::invalid_declaration, Reference{"library.unknown", {}},
             [&] { library.load(unknown_bytes); });
 
     const auto mismatched_bytes = encode_module_package(pack_library_module(
-        [](Engine& engine) { engine.add(make_library_source("probe", {})); }, "probe",
+        [](Engine& engine) { engine.add(example::module_library_source("probe", {})); }, "probe",
         "library.source", "library.source.int.v2"));
     failure(ErrorCode::invalid_config, Reference{"library.source", {}},
             [&] { library.load(mismatched_bytes); });
 
     auto tampered = pack_library_module(
-        [](Engine& engine) { engine.add(make_library_source("probe", {})); }, "probe",
+        [](Engine& engine) { engine.add(example::module_library_source("probe", {})); }, "probe",
         "library.source", "library.source.int.v1");
     tampered.manifest.declarations[0].result_type = "string";
     failure(ErrorCode::state_mismatch, Reference{"probe", "declarations"},
@@ -1555,13 +1523,13 @@ void module_library_load_unload() {
     CHECK(!library.contains("library.source"));
 
     auto broken = pack_library_module(
-        [](Engine& engine) { engine.add(make_library_source("probe", {})); }, "probe",
+        [](Engine& engine) { engine.add(example::module_library_source("probe", {})); }, "probe",
         "library.source", "library.source.int.v1",
         {{"library.source", "zh-CN", "not json"}});
     failure(ErrorCode::invalid_json, {}, [&] { library.load(encode_module_package(broken)); });
     CHECK(!library.contains("library.source"));
 
-    // 未装入时查询报诊断。
+    // 未载入时查询报诊断。
     failure(ErrorCode::invalid_config, Reference{"library.source", {}},
             [&] { library.manifest("library.source"); });
 }

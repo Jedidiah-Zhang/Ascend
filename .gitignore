@@ -28,3 +28,7 @@ miskhak/client/assets/
 
 # Local build output
 build/
+
+# 手工运行工作台测试时默认输出的截图（正式截图由 CTest 输出到构建目录）
+/workbench-ui.png
+/workbench-ui-diff.png

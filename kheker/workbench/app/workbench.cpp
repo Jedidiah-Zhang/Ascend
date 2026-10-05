@@ -47,6 +47,7 @@ void register_metatypes() {
         qRegisterMetaType<std::vector<session::StepEvent>>("std::vector<ascend::session::StepEvent>");
         qRegisterMetaType<std::vector<session::BranchRequest>>("std::vector<ascend::session::BranchRequest>");
         qRegisterMetaType<std::vector<session::DiagnosticView>>("std::vector<ascend::session::DiagnosticView>");
+        qRegisterMetaType<std::vector<session::ModulePackageView>>("std::vector<ascend::session::ModulePackageView>");
         qRegisterMetaType<std::vector<session::BranchRequest>>();
         qRegisterMetaType<std::any>("std::any");
         return true;
@@ -90,6 +91,8 @@ session::ModelTemplate example_template(const ResourcePaths& paths) {
     const auto module_resources = example::i18n_resources(paths.example_root);
     model.resources.insert(model.resources.end(), module_resources.begin(), module_resources.end());
     model.locale = "zh-CN";
+    model.modules = std::make_shared<ModuleLibrary>();
+    example::register_module_library(*model.modules);
     return model;
 }
 
@@ -110,9 +113,12 @@ Workbench::~Workbench() { shutdown(); }
 
 void Workbench::start() {
     if (stopped_) return;
+    // 新窗口以空白会话打开：默认显示开始页，引导新建研究或打开研究/示例。
     window_->show();
+    window_->showStartPage();
+    // 模块库页签默认关闭；窗口显示后再收敛一次，载入模块包时以页签打开。
+    window_->hidePackageLibrary();
     thread_->start();
-    window_->beginInitialLoad();
 }
 
 void Workbench::shutdown() {

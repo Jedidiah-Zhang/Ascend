@@ -26,6 +26,9 @@ public:
 
     // 登记构造入口；定义标识为空或重复时分别报告 invalid_declaration／duplicate_definition。
     void add_definition(std::string definition, Factory factory, std::vector<I18nResource> resources = {});
+    // 合并另一个目录：已存在的定义保持不变，其余连同语言资源一并复制（用于宿主内置与
+    // 模块库工厂合并成实例化目录）。不报告重复，合并可重复执行。
+    void merge_from(const ModuleFactoryDirectory& other);
     // 查询定义登记的语言资源，不构造实例、不读取文件。多个实例共用定义资源。
     const std::vector<I18nResource>& i18n_resources(const std::string& definition) const;
     // 定义标识是否存在；definitions() 按名称排序返回全部标识。
@@ -79,8 +82,13 @@ public:
     // 在指定作用域加入实例；定义标识与实例名在实例化时由工厂核对。
     void add_instance(std::string definition, std::string name, Config config = {},
                       const std::string& scope = {});
+    // 移除实例（按名称，取首个）；同名实例不存在报告 invalid_assembly。同一作用域内引用
+    // 该实例的连接、转接与导出一并移除，作用域本身不变。
+    void remove_instance(const std::string& name, const std::string& scope = {});
     // 在指定作用域声明显式连接、需求转接与接口导出；目标作用域必须已存在。
     void connect(Reference requirement, Reference provider, const std::string& scope = {});
+    // 断开一条需求连接（按需求引用，取首个）；返回是否移除，无该连接时为 false。
+    bool disconnect(const Reference& requirement, const std::string& scope = {});
     void forward_inherited(std::string requirement, Reference child_requirement,
                            const std::string& scope = {});
     void export_symbol(std::string name, Reference child_symbol, const std::string& scope = {});

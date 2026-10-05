@@ -16,6 +16,33 @@ session::DiagnosticView io_failure(const QString& message) {
     return view;
 }
 
+// 单个模块包的载入结果：失败原因与本次诊断；成功时诊断为空。
+struct PackageOutcome {
+    bool ok = false;
+    QString detail;
+    std::vector<session::DiagnosticView> diagnostics;
+};
+
+// 读取一个模块包文件并交给会话载入；读取失败与引擎拒绝都以诊断返回，不抛出。
+PackageOutcome load_package_file(session::Session& session, const QString& path) {
+    PackageOutcome outcome;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        outcome.detail = file.errorString();
+        outcome.diagnostics.push_back(io_failure(outcome.detail));
+        return outcome;
+    }
+    const QByteArray data = file.readAll();
+    const auto result = session.load_module_package(
+        std::string(data.constData(), static_cast<std::size_t>(data.size())));
+    outcome.ok = result.ok;
+    if (!result.diagnostics.empty()) {
+        outcome.detail = QString::fromUtf8(result.diagnostics.front().message);
+        outcome.diagnostics = result.diagnostics;
+    }
+    return outcome;
+}
+
 }  // namespace
 
 SessionController::SessionController(session::ModelTemplate model,
@@ -35,6 +62,7 @@ ModelSnapshot SessionController::snapshot() const {
     model.instances = session_.instances();
     model.state_fields = session_.state_fields();
     model.observations = session_.observation_names();
+    model.available_modules = session_.available_modules();
     const auto series = session_.series_info();
     model.series_labels.reserve(series.size());
     for (const auto& info : series) model.series_labels.push_back(info.label);
@@ -198,6 +226,147 @@ void SessionController::openExperiment(const QString& path) {
     }
     emit experimentOpened(path, result.ok, detail);
     publish(result, true, TraceUpdate::reset, result.status.branches == session::max_branches);
+}
+
+void SessionController::loadModulePackages(const QStringList& paths) {
+    emit busyChanged(true);
+    int loaded = 0;
+    QStringList failures;
+    std::vector<session::DiagnosticView> diagnostics;
+    for (const QString& path : paths) {
+        const PackageOutcome outcome = load_package_file(session_, path);
+        if (outcome.ok) {
+            ++loaded;
+        } else if (outcome.detail.isEmpty()) {
+            failures << path;
+        } else {
+            failures << QStringLiteral("%1：%2").arg(path, outcome.detail);
+        }
+        diagnostics.insert(diagnostics.end(), outcome.diagnostics.begin(), outcome.diagnostics.end());
+    }
+    if (!diagnostics.empty()) emit diagnosticsReported(diagnostics);
+    emit modulePackagesLoaded(loaded, static_cast<int>(paths.size()) - loaded,
+                              failures.join(QStringLiteral("\n")));
+    emit modulePackagesChanged(session_.module_packages());
+    emit busyChanged(false);
+}
+
+void SessionController::unloadModulePackage(const QString& definition) {
+    emit busyChanged(true);
+    const auto result = session_.unload_module_package(definition.toStdString());
+    QString detail;
+    if (!result.diagnostics.empty()) {
+        detail = QString::fromUtf8(result.diagnostics.front().message);
+        emit diagnosticsReported(result.diagnostics);
+    }
+    emit modulePackageUnloaded(definition, result.ok, detail);
+    emit modulePackagesChanged(session_.module_packages());
+    emit busyChanged(false);
+}
+
+void SessionController::requestModulePackages() {
+    emit modulePackagesChanged(session_.module_packages());
+}
+
+void SessionController::requestModel() {
+    publishModel();
+    emit statusChanged(session_.status());
+}
+
+void SessionController::newSystem(const QString& name) {
+    publish(session_.new_system(name.toStdString()), true, TraceUpdate::reset);
+}
+
+void SessionController::addModule(const QString& definition, const QString& instance) {
+    publish(session_.add_module(definition.toStdString(), instance.toStdString()), true, TraceUpdate::none);
+}
+
+void SessionController::removeModule(const QString& instance) {
+    publish(session_.remove_module(instance.toStdString()), true, TraceUpdate::none);
+}
+
+void SessionController::connectRequirement(const QString& requirement_module, const QString& requirement_symbol,
+                                           const QString& provider_module, const QString& provider_symbol) {
+    const ascend::Reference requirement{requirement_module.toStdString(), requirement_symbol.toStdString()};
+    const ascend::Reference provider{provider_module.toStdString(), provider_symbol.toStdString()};
+    publish(session_.connect_requirement(requirement, provider), true, TraceUpdate::none);
+}
+
+void SessionController::disconnectRequirement(const QString& requirement_module, const QString& requirement_symbol) {
+    const ascend::Reference requirement{requirement_module.toStdString(), requirement_symbol.toStdString()};
+    publish(session_.disconnect_requirement(requirement), true, TraceUpdate::none);
+}
+
+void SessionController::setSpecAdvance(const QString& module, const QString& symbol) {
+    publish(session_.set_spec_advance(ascend::Reference{module.toStdString(), symbol.toStdString()}), true,
+            TraceUpdate::none);
+}
+
+void SessionController::setSpecObservations(const QStringList& references) {
+    std::vector<std::pair<std::string, ascend::Reference>> observations;
+    observations.reserve(static_cast<std::size_t>(references.size()));
+    for (const QString& item : references) {
+        const int slash = item.lastIndexOf(QLatin1Char('/'));
+        if (slash <= 0 || slash + 1 >= item.size()) continue;
+        observations.emplace_back(item.toStdString(), ascend::Reference{item.left(slash).toStdString(),
+                                                                        item.mid(slash + 1).toStdString()});
+    }
+    publish(session_.set_spec_observations(std::move(observations)), true, TraceUpdate::none);
+}
+
+void SessionController::openSystem(const QString& path, const QString& name) {
+    emit busyChanged(true);
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        const QString detail = file.errorString();
+        emit diagnosticsReported({io_failure(detail)});
+        emit systemOpened(path, false, detail);
+        emit busyChanged(false);
+        return;
+    }
+    const QByteArray data = file.readAll();
+    const auto result = session_.open_system(std::string(data.constData(), static_cast<std::size_t>(data.size())),
+                                             name.toStdString(), path.toStdString());
+    QString detail;
+    if (!result.diagnostics.empty()) detail = QString::fromUtf8(result.diagnostics.front().message);
+    emit systemOpened(path, result.ok, detail);
+    publish(result, true, TraceUpdate::reset);
+}
+
+void SessionController::saveSystem(const QString& path) {
+    emit busyChanged(true);
+    const auto encoded = session_.encode_system();
+    QString detail;
+    if (!encoded.ok) {
+        if (encoded.diagnostic.has_value()) {
+            detail = QString::fromUtf8(encoded.diagnostic->message);
+            emit diagnosticsReported({*encoded.diagnostic});
+        }
+        emit systemSaved(path, false, detail);
+        emit busyChanged(false);
+        return;
+    }
+    QSaveFile file(path);
+    bool ok = file.open(QIODevice::WriteOnly);
+    if (ok) {
+        const auto size = static_cast<qint64>(encoded.bytes.size());
+        if (file.write(encoded.bytes.data(), size) != size) {
+            ok = false;
+            detail = file.errorString();
+            file.cancelWriting();
+        } else if (!file.commit()) {
+            ok = false;
+            detail = file.errorString();
+        }
+    } else {
+        detail = file.errorString();
+    }
+    if (!ok) {
+        detail = detail.isEmpty() ? file.errorString() : detail;
+        emit diagnosticsReported({io_failure(detail)});
+    }
+    emit systemSaved(path, ok, detail);
+    emit busyChanged(false);
 }
 
 void SessionController::requestRecord() { emit recordChanged(session_.record()); }

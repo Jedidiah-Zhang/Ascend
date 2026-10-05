@@ -1,8 +1,11 @@
 #include <ascend/example/experiment_model.hpp>
+#include <ascend/module_package.hpp>
+#include <ascend/engine.hpp>
 #include <ascend/i18n.hpp>
 #include <ascend/session/session.hpp>
 
 #include <any>
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -45,6 +48,8 @@ ModelTemplate example_template() {
     const auto module_resources = example::i18n_resources(WORKBENCH_EXAMPLE_ROOT);
     model.resources.insert(model.resources.end(), module_resources.begin(), module_resources.end());
     model.locale = "zh-CN";
+    model.modules = std::make_shared<ModuleLibrary>();
+    example::register_module_library(*model.modules);
     return model;
 }
 
@@ -1151,6 +1156,218 @@ void open_exploration_only() {
     CHECK(!half->step().ok);
 }
 
+void module_packages() {
+    // 模块库（ENV-18）：载入、概要、重复拒绝、卸载与无模块库拒绝。
+    auto session = example_session();
+    CHECK(session->load().ok);
+    CHECK(session->module_packages().empty());
+
+    Engine engine;
+    engine.add(example::module_library_source("probe", {}));
+    ModulePackage package;
+    package.manifest = export_module_manifest(engine, "", "probe");
+    package.manifest.definition = example::library_source_definition;
+    package.manifest.version = "1.0";
+    package.manifest.implementation = example::library_source_implementation;
+    const auto bytes = encode_module_package(package);
+
+    const auto loaded = session->load_module_package(bytes);
+    CHECK(loaded.ok);
+    CHECK(session->module_packages().size() == 1);
+    const auto view = session->module_packages().front();
+    CHECK(view.definition == example::library_source_definition);
+    CHECK(view.version == "1.0");
+    CHECK(view.implementation == example::library_source_implementation);
+    CHECK(view.stateless);
+    CHECK(view.declarations == 1);
+    CHECK(view.requirements == 0);
+    CHECK(view.resources == 0);
+
+    const auto duplicate = session->load_module_package(bytes);
+    CHECK(!duplicate.ok);
+    CHECK(!duplicate.diagnostics.empty());
+    CHECK(session->module_packages().size() == 1);
+
+    const auto unloaded = session->unload_module_package(example::library_source_definition);
+    CHECK(unloaded.ok);
+    CHECK(session->module_packages().empty());
+    const auto again = session->unload_module_package(example::library_source_definition);
+    CHECK(!again.ok);
+    CHECK(!again.diagnostics.empty());
+
+    // 未提供模块库的模板拒绝命令，且不影响会话。
+    auto plain_template = example_template();
+    plain_template.modules.reset();
+    auto plain = make_session(std::move(plain_template));
+    CHECK(plain->load().ok);
+    const auto rejected = plain->load_module_package(bytes);
+    CHECK(!rejected.ok);
+    CHECK(!rejected.diagnostics.empty());
+    CHECK(plain->module_packages().empty());
+    CHECK(!plain->unload_module_package(example::library_source_definition).ok);
+}
+
+void system_assembly() {
+    // 因果系统装配（切片 A）：新建、加模块、接线、规格、检查与应用。
+    auto session = example_session();
+    CHECK(session->status().phase == Phase::empty);
+    const auto modules = session->available_modules();
+    CHECK(std::find(modules.begin(), modules.end(), example::plant_definition) != modules.end());
+    CHECK(std::find(modules.begin(), modules.end(), example::library_source_definition) != modules.end());
+
+    // 空会话尚未确立系统身份：编辑命令返回诊断且状态不变（含本地化文案）。
+    const auto before = session->status();
+    const auto empty_edit = session->add_module(example::plant_definition, "plant");
+    CHECK(!empty_edit.ok);
+    CHECK(!empty_edit.diagnostics.empty());
+    CHECK(empty_edit.status.phase == Phase::empty);
+    CHECK(empty_edit.status.draft_revision == before.draft_revision);
+    CHECK(!empty_edit.status.dirty);
+    CHECK(empty_edit.status.model_name.empty());
+    CHECK(empty_edit.diagnostics.front().message.find("因果系统") != std::string::npos);
+    CHECK(!session->remove_module("absent").ok);
+    CHECK(!session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(!session->set_spec_advance({"plant", "advance"}).ok);
+    CHECK(session->status().phase == Phase::empty);
+    CHECK(session->status().draft_revision == before.draft_revision);
+
+    // 新建系统：清空草稿与规格，进入编辑态；名称进入状态。
+    const auto created = session->new_system("接线测试");
+    CHECK(created.ok);
+    CHECK(created.status.phase == Phase::editing);
+    CHECK(session->status().model_name == "接线测试");
+    CHECK(session->spec().advance == Reference{});
+
+    // 增加模块实例：未知定义、非法名与重名被拒绝。
+    CHECK(!session->add_module("no.such", "x").ok);
+    CHECK(!session->add_module(example::plant_definition, "a/b").ok);
+    CHECK(session->add_module(example::plant_definition, "plant").ok);
+    CHECK(session->add_module(example::stimulus_definition, "input", Config::integer(1)).ok);
+    CHECK(!session->add_module(example::plant_definition, "plant").ok);
+    CHECK(session->instances().size() == 2);
+
+    // 接线：需求 → 提供方；重复连接替换；断开后重复断开为无操作成功。
+    CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(session->disconnect_requirement({"plant", "input"}).ok);
+    CHECK(session->disconnect_requirement({"plant", "input"}).ok);
+
+    // 未接线时检查失败；提供方实例不存在时连接被拒绝；接上后通过。
+    CHECK(!session->check().passed);
+    CHECK(!session->connect_requirement({"ghost", "input"}, {"input", "value"}).ok);
+    CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+
+    // 规格：推进入口与观测显式选择；输入按公开单参数方法推导。
+    CHECK(session->set_spec_advance({"plant", "advance"}).ok);
+    CHECK(session->set_spec_observations({{"x", {"plant", "x"}}, {"y", {"plant", "y"}}, {"z", {"plant", "z"}}}).ok);
+    CHECK(session->spec().inputs.size() == 1);
+    CHECK(session->spec().inputs[0].first == "input.drive");
+    CHECK((session->spec().inputs[0].second == Reference{"input", "drive"}));
+
+    const auto report = session->check();
+    CHECK(report.passed);
+
+    // 应用重建运行：推进两步后观测与示例参考一致（a = 1 恒定）。
+    CHECK(session->apply().ok);
+    CHECK(session->status().phase == Phase::runnable);
+    CHECK(session->run(2).ok);
+    const auto trace = session->trace(0);
+    CHECK(trace.samples.size() == 3);
+    CHECK(trace.samples.back().frame == 2);
+    const auto x_index = std::find(trace.variables.begin(), trace.variables.end(), "x");
+    CHECK(x_index != trace.variables.end());
+    const auto& x_cell = trace.samples.back().observations[static_cast<std::size_t>(x_index - trace.variables.begin())];
+    CHECK(x_cell.integer.has_value() && *x_cell.integer == 2);
+
+    // 结构编辑使草稿修订递增并进入未应用状态；移除实例一并移除其连接。
+    const auto revision = session->status().draft_revision;
+    CHECK(session->remove_module("input").ok);
+    CHECK(session->status().draft_revision > revision);
+    CHECK(session->status().dirty);
+    CHECK(!session->check().passed);
+    CHECK(!session->remove_module("input").ok);  // 已移除
+
+    // 模块库定义可直接实例化；实现标识由宿主核对：未载入包时检查拒绝，载入包后由清单提供。
+    CHECK(session->add_module(example::library_source_definition, "source").ok);
+    CHECK(session->add_module(example::library_accumulator_definition, "counter").ok);
+    CHECK(!session->check().passed);
+    const auto package = [](const auto& factory, const std::string& definition, const std::string& implementation) {
+        Engine engine;
+        engine.add(factory("probe", {}));
+        ModulePackage encoded;
+        encoded.manifest = export_module_manifest(engine, "", "probe");
+        encoded.manifest.definition = definition;
+        encoded.manifest.version = "1.0";
+        encoded.manifest.implementation = implementation;
+        return encode_module_package(encoded);
+    };
+    CHECK(session->load_module_package(package(example::module_library_source, example::library_source_definition,
+                                               example::library_source_implementation)).ok);
+    CHECK(session->load_module_package(package(example::module_library_accumulator,
+                                               example::library_accumulator_definition,
+                                               example::library_accumulator_implementation)).ok);
+    CHECK(session->add_module(example::stimulus_definition, "input", Config::integer(1)).ok);
+    CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(session->check().passed);
+    CHECK(session->apply().ok);
+
+    // 再次新建系统：放弃运行与记录，回到编辑态。
+    const auto reset = session->new_system("第二个系统");
+    CHECK(reset.ok);
+    CHECK(reset.status.phase == Phase::editing);
+    CHECK(session->status().tracks.empty());
+    CHECK(session->instances().empty());
+    CHECK(session->status().model_name == "第二个系统");
+
+    // 未应用的草稿变化不改变当前运行：运行沿用已应用规格，草稿新增输入不被驱动。
+    auto probe = example_session();
+    CHECK(probe->load().ok);
+    CHECK(probe->add_module(example::library_accumulator_definition, "counter").ok);
+    CHECK(probe->set_input("counter.add", std::any(Integer(5))).ok);
+    CHECK(probe->run(1).ok);
+    CHECK(probe->status().phase == Phase::runnable);
+    CHECK(probe->status().tracks.front().frame == 1);
+    CHECK(probe->observation_names().size() == 3);  // 轨迹与信号树仍用已应用规格
+}
+
+void system_file() {
+    // 因果系统文件（`.aasm`）：编码、重新打开与失败路径；规格属于研究，不随系统保存。
+    auto session = example_session();
+    CHECK(session->new_system("保存测试").ok);
+    CHECK(session->add_module(example::plant_definition, "plant").ok);
+    CHECK(session->add_module(example::stimulus_definition, "input", Config::integer(1)).ok);
+    CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(session->set_spec_advance({"plant", "advance"}).ok);
+    const auto encoded = session->encode_system();
+    CHECK(encoded.ok);
+    CHECK(!encoded.bytes.empty());
+
+    auto reopened = example_session();
+    const auto opened = reopened->open_system(encoded.bytes, "重新打开", "memory.aasm");
+    CHECK(opened.ok);
+    CHECK(opened.status.phase == Phase::editing);
+    CHECK(reopened->status().model_name == "重新打开");
+    CHECK(reopened->instances().size() == 2);
+    CHECK(reopened->spec().advance == Reference{});  // 规格不属于因果系统
+    CHECK(reopened->spec().inputs.size() == 1);      // 输入按系统公开方法推导
+    CHECK(reopened->set_spec_advance({"plant", "advance"}).ok);
+    CHECK(reopened->set_spec_observations({{"x", {"plant", "x"}}}).ok);
+    CHECK(reopened->check().passed);
+    CHECK(reopened->apply().ok);
+    CHECK(reopened->run(1).ok);
+
+    // 解析失败不改变当前会话；未给名称时沿用现有系统名。
+    auto fresh = example_session();
+    CHECK(fresh->new_system("原系统").ok);
+    const auto bad = fresh->open_system("not a system", "坏文件");
+    CHECK(!bad.ok);
+    CHECK(!bad.diagnostics.empty());
+    CHECK(fresh->status().model_name == "原系统");
+    CHECK(fresh->instances().empty());
+    CHECK(fresh->open_system(encoded.bytes, "", "memory.aasm").ok);
+    CHECK(fresh->status().model_name == "原系统");
+    CHECK(fresh->instances().size() == 2);
+}
+
 void comparison_limits() {
     // 同一逻辑帧差值溢出与不可比较的明确标注。
     auto session = example_session();
@@ -1204,6 +1421,9 @@ int main(int argc, char** argv) {
         {"open_record_state", open_record_state},
         {"open_rejects_and_falls_back", open_rejects_and_falls_back},
         {"open_exploration_only", open_exploration_only},
+        {"module_packages", module_packages},
+        {"system_assembly", system_assembly},
+        {"system_file", system_file},
     };
     if (argc != 2 || tests.count(argv[1]) == 0) {
         std::cerr << "Specify a known test case\n";

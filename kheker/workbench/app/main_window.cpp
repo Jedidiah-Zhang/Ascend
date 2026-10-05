@@ -10,28 +10,36 @@
 #include <QCloseEvent>
 #include <QColor>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDir>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFont>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTextBrowser>
@@ -72,6 +80,34 @@ QString local_reference_text(const ascend::Reference& reference, const std::stri
         return reference_text(local);
     }
     return reference_text(reference);
+}
+
+// 文件夹内的模块包（`*.amod` 直接子文件，按名称排序；不含子文件夹）。
+QStringList module_package_files_in(const QString& directory) {
+    const QFileInfoList entries = QDir(directory).entryInfoList(QDir::Files | QDir::Readable, QDir::Name);
+    QStringList paths;
+    for (const QFileInfo& entry : entries) {
+        if (entry.suffix().compare(QStringLiteral("amod"), Qt::CaseInsensitive) == 0) {
+            paths << entry.absoluteFilePath();
+        }
+    }
+    return paths;
+}
+
+// 由定义标识建议实例名：取最后一段，与现有实例重名时追加序号。
+QString suggest_instance_name(const QString& definition, const std::vector<session::InstanceView>& instances) {
+    QString base = definition.section(QLatin1Char('.'), -1);
+    if (base.isEmpty()) base = definition;
+    const auto taken = [&](const QString& name) {
+        for (const auto& instance : instances) {
+            if (from_utf8(instance.name) == name) return true;
+        }
+        return false;
+    };
+    QString candidate = base;
+    int suffix = 2;
+    while (taken(candidate)) candidate = QStringLiteral("%1_%2").arg(base).arg(suffix++);
+    return candidate;
 }
 
 QString phase_text(const UiTexts& texts, session::Phase phase) {
@@ -198,6 +234,7 @@ MainWindow::MainWindow(SessionController* controller, std::shared_ptr<const sess
     resize(1280, 820);
     buildLayout();
     buildDiagnosticsDock();
+    buildPackagePage();
     buildMenuBar();
 
     connect(controller_, &SessionController::busyChanged, this, &MainWindow::onBusyChanged);
@@ -213,6 +250,13 @@ MainWindow::MainWindow(SessionController* controller, std::shared_ptr<const sess
     connect(controller_, &SessionController::diagnosticsReported, this, &MainWindow::onDiagnostics);
     connect(controller_, &SessionController::experimentSaved, this, &MainWindow::onExperimentSaved);
     connect(controller_, &SessionController::experimentOpened, this, &MainWindow::onExperimentOpened);
+    connect(controller_, &SessionController::modulePackagesChanged, this, &MainWindow::onModulePackages);
+    connect(controller_, &SessionController::modulePackagesLoaded, this, &MainWindow::onModulePackagesLoaded);
+    connect(controller_, &SessionController::modulePackageUnloaded, this, &MainWindow::onModulePackageUnloaded);
+    connect(controller_, &SessionController::systemOpened, this, &MainWindow::onSystemOpened);
+    connect(controller_, &SessionController::systemSaved, this, &MainWindow::onSystemSaved);
+    QMetaObject::invokeMethod(controller_, "requestModulePackages", Qt::QueuedConnection);
+    QMetaObject::invokeMethod(controller_, "requestModel", Qt::QueuedConnection);
 
     for (const auto& error : texts_->load_errors) {
         auto* item = new QTreeWidgetItem(diagnostics_tree_);
@@ -246,13 +290,16 @@ QString MainWindow::statusLine() const {
 }
 
 void MainWindow::buildLayout() {
-    // 中央为主工作区：命令栏 + 结果页签；其余面板做成停靠窗口，可浮动、嵌套与合并。
+    // 中央为主工作区：命令栏 + 浏览器式结果页签（可拖动重排、可关闭、从查看菜单重开）；
+    // 其余面板做成停靠窗口，可浮动、嵌套与合并。
     auto* central = new QWidget(this);
     auto* root = new QVBoxLayout(central);
     root->setContentsMargins(6, 6, 6, 6);
     root->setSpacing(6);
     buildTopBar(root);
     buildResultsPane();
+    buildSystemEditor();
+    buildStartPage();
     root->addWidget(results_tabs_, 1);
     setCentralWidget(central);
 
@@ -272,6 +319,10 @@ void MainWindow::buildLayout() {
     state_dock_ = make_dock("stateDock", "workbench.view.right_panel", "State", right_pane_);
 
     setDockNestingEnabled(true);
+    // 停靠面板可浮动、嵌套并排、标签化合并与浮动分组，能力保持完整。
+    // 已知 Qt 回归：6.10.2～6.11.2 的停靠区标签栏释放后仍被布局裸指针引用
+    // （QTBUG-143776 "tabifyDockWidget() crashes"，6.11.3 已修复），极端拖拽/
+    // 标签化操作下可能崩溃；升级 Qt 后无需改码即消除。
     setDockOptions(dockOptions() | QMainWindow::GroupedDragging);
     addDockWidget(Qt::LeftDockWidgetArea, modules_dock_);
     addDockWidget(Qt::LeftDockWidgetArea, config_dock_);
@@ -422,6 +473,7 @@ void MainWindow::buildLeftPane() {
     connections_tree_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     tabs->addTab(connections_tree_, ui_text(*texts_, "workbench.pane.connections", "Connections"));
 
+
     connect(module_tree_, &QTreeWidget::itemSelectionChanged, this, [this] {
         const auto selected = module_tree_->selectedItems();
         if (selected.isEmpty()) return;
@@ -463,8 +515,16 @@ void MainWindow::buildConfigPane() {
 void MainWindow::buildResultsPane() {
     results_tabs_ = new QTabWidget;
     results_tabs_->setObjectName("resultsTabs");
+    // 浏览器式页签：可拖动重排、带关闭按钮、扁平外观；至少保留一个页签。
+    results_tabs_->setMovable(true);
+    results_tabs_->setTabsClosable(true);
+    results_tabs_->setDocumentMode(true);
+    results_tabs_->setElideMode(Qt::ElideRight);
+    results_tabs_->tabBar()->setExpanding(false);
 
-    auto* timeline_page = new QWidget(results_tabs_);
+    timeline_page_ = new QWidget(results_tabs_);
+    timeline_page_->setObjectName("timelinePage");
+    auto* timeline_page = timeline_page_;
     auto* timeline_layout = new QVBoxLayout(timeline_page);
     auto* timeline_bar = new QHBoxLayout;
     series_checks_host_ = new QWidget(timeline_page);
@@ -509,7 +569,9 @@ void MainWindow::buildResultsPane() {
     timeline_layout->addWidget(cursor_table_);
     results_tabs_->addTab(timeline_page, ui_text(*texts_, "workbench.pane.timeline", "Timeline"));
 
-    auto* diff_page = new QWidget(results_tabs_);
+    diff_page_ = new QWidget(results_tabs_);
+    diff_page_->setObjectName("differencesPage");
+    auto* diff_page = diff_page_;
     auto* diff_layout = new QVBoxLayout(diff_page);
     diff_note_ = new QLabel(diff_page);
     diff_note_->setWordWrap(true);
@@ -526,7 +588,20 @@ void MainWindow::buildResultsPane() {
         requestSampleDetail(frame);
     });
     connect(results_tabs_, &QTabWidget::currentChanged, this, [this](int index) {
-        if (index == 1) dispatchReadonly("requestComparison");
+        if (results_tabs_->widget(index) == diff_page_) dispatchReadonly("requestComparison");
+    });
+    connect(results_tabs_, &QTabWidget::tabCloseRequested, this, [this](int index) {
+        if (results_tabs_->count() <= 1) return;  // 浏览器式：保留最后一个视图
+        QWidget* page = results_tabs_->widget(index);
+        results_tabs_->removeTab(index);
+        QAction* action = page == timeline_page_ ? timeline_action_
+                          : page == diff_page_ ? diff_action_
+                          : page == package_page_ ? package_tab_action_
+                          : page == editor_page_ ? editor_action_ : nullptr;
+        if (action != nullptr) {
+            QSignalBlocker blocker(action);
+            action->setChecked(false);
+        }
     });
 }
 
@@ -580,6 +655,675 @@ void MainWindow::buildRightPane() {
         if (selected_frame_ >= 0) requestSampleDetail(selected_frame_);
         else requestLatestSample();
     });
+}
+
+void MainWindow::buildPackagePage() {
+    auto* page = new QWidget(results_tabs_);
+    page->setObjectName("packagesPage");
+    auto* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(4);
+    auto* actions = new QHBoxLayout();
+    package_load_button_ = new QPushButton(ui_text(*texts_, "workbench.action.module_load", "Load…"), page);
+    package_load_button_->setObjectName("moduleLoadButton");
+    connect(package_load_button_, &QPushButton::clicked, this, &MainWindow::chooseLoadModulePackage);
+    actions->addWidget(package_load_button_);
+    package_load_folder_button_ = new QPushButton(ui_text(*texts_, "workbench.action.module_load_folder", "Load folder…"), page);
+    package_load_folder_button_->setObjectName("moduleLoadFolderButton");
+    connect(package_load_folder_button_, &QPushButton::clicked, this, &MainWindow::chooseLoadModulePackageFolder);
+    actions->addWidget(package_load_folder_button_);
+    package_unload_button_ = new QPushButton(ui_text(*texts_, "workbench.action.module_unload", "Unload"), page);
+    package_unload_button_->setObjectName("moduleUnloadButton");
+    connect(package_unload_button_, &QPushButton::clicked, this, [this] {
+        const auto selected = package_table_->selectedItems();
+        if (selected.isEmpty()) {
+            QMessageBox::information(this, ui_text(*texts_, "workbench.module.unload_title", "Unload module package"),
+                                     ui_text(*texts_, "workbench.module.select_first", "Select a loaded module package first."));
+            return;
+        }
+        unloadModulePackage(package_table_->item(selected.front()->row(), 0)->text());
+    });
+    actions->addWidget(package_unload_button_);
+    actions->addStretch(1);
+    layout->addLayout(actions);
+    package_table_ = new QTableWidget(page);
+    package_table_->setObjectName("modulePackageTable");
+    package_table_->setColumnCount(7);
+    package_table_->setHorizontalHeaderLabels(
+        {ui_text(*texts_, "workbench.table.package_definition", "Definition"),
+         ui_text(*texts_, "workbench.table.package_version", "Version"),
+         ui_text(*texts_, "workbench.table.package_implementation", "Implementation"),
+         ui_text(*texts_, "workbench.table.package_state", "State"),
+         ui_text(*texts_, "workbench.table.package_declarations", "Declarations"),
+         ui_text(*texts_, "workbench.table.package_requirements", "Requirements"),
+         ui_text(*texts_, "workbench.table.package_resources", "Resources")});
+    package_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    package_table_->setSelectionMode(QAbstractItemView::SingleSelection);
+    package_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    package_table_->verticalHeader()->setVisible(false);
+    package_table_->horizontalHeader()->setStretchLastSection(true);
+    package_table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    layout->addWidget(package_table_, 1);
+
+    // 模块库默认不打开：载入成功后由查看菜单动作加入中央页签并切换过去。
+    package_page_ = page;
+    package_page_->hide();  // 未加入页签前保持隐藏（主窗显示不会自动带出）
+}
+
+void MainWindow::buildSystemEditor() {
+    auto* page = new QWidget(results_tabs_);
+    page->setObjectName("systemEditorPage");
+    editor_page_ = page;
+    auto* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setSpacing(6);
+
+    // 顶部：新建、系统名、检查与应用
+    auto* top = new QHBoxLayout();
+    new_system_button_ = new QPushButton(ui_text(*texts_, "workbench.editor.new_system", "New system…"), page);
+    new_system_button_->setObjectName("systemNewButton");
+    connect(new_system_button_, &QPushButton::clicked, this, &MainWindow::chooseNewSystem);
+    top->addWidget(new_system_button_);
+    open_system_button_ = new QPushButton(ui_text(*texts_, "workbench.editor.open_system", "Open system…"), page);
+    open_system_button_->setObjectName("systemOpenButton");
+    connect(open_system_button_, &QPushButton::clicked, this, &MainWindow::chooseOpenSystem);
+    top->addWidget(open_system_button_);
+    save_system_button_ = new QPushButton(ui_text(*texts_, "workbench.editor.save_system", "Save system…"), page);
+    save_system_button_->setObjectName("systemSaveButton");
+    connect(save_system_button_, &QPushButton::clicked, this, &MainWindow::saveSystem);
+    top->addWidget(save_system_button_);
+    system_name_label_ = new QLabel(page);
+    system_name_label_->setObjectName("systemNameLabel");
+    top->addWidget(system_name_label_);
+    top->addStretch(1);
+    editor_check_button_ = new QPushButton(ui_text(*texts_, "workbench.action.check", "Check"), page);
+    editor_check_button_->setObjectName("systemCheckButton");
+    connect(editor_check_button_, &QPushButton::clicked, this, [this] { dispatch("check"); });
+    top->addWidget(editor_check_button_);
+    editor_apply_button_ = new QPushButton(ui_text(*texts_, "workbench.editor.apply", "Apply (rebuild run)"), page);
+    editor_apply_button_->setObjectName("systemApplyButton");
+    connect(editor_apply_button_, &QPushButton::clicked, this, [this] { dispatch("apply"); });
+    top->addWidget(editor_apply_button_);
+    layout->addLayout(top);
+
+    // 可用模块与实例名
+    auto* add_row = new QHBoxLayout();
+    add_row->addWidget(new QLabel(ui_text(*texts_, "workbench.editor.available", "Available modules"), page));
+    definition_combo_ = new QComboBox(page);
+    definition_combo_->setObjectName("systemDefinitionCombo");
+    definition_combo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    connect(definition_combo_, &QComboBox::currentIndexChanged, this, [this] { onSystemDefinitionChanged(); });
+    add_row->addWidget(definition_combo_, 1);
+    instance_edit_ = new QLineEdit(page);
+    instance_edit_->setObjectName("systemInstanceEdit");
+    instance_edit_->setPlaceholderText(ui_text(*texts_, "workbench.editor.instance", "Instance name"));
+    add_row->addWidget(instance_edit_);
+    add_module_button_ = new QPushButton(ui_text(*texts_, "workbench.editor.add", "Add module"), page);
+    add_module_button_->setObjectName("systemAddButton");
+    connect(add_module_button_, &QPushButton::clicked, this, &MainWindow::addSystemModule);
+    add_row->addWidget(add_module_button_);
+    layout->addLayout(add_row);
+
+    // 系统结构：实例（定义）与需求（提供方）
+    system_tree_ = new QTreeWidget(page);
+    system_tree_->setObjectName("systemTree");
+    system_tree_->setColumnCount(3);
+    system_tree_->setHeaderLabels({ui_text(*texts_, "workbench.editor.column_object", "Object"),
+                                   ui_text(*texts_, "workbench.editor.column_kind", "Kind / type"),
+                                   ui_text(*texts_, "workbench.editor.column_provider", "Provider")});
+    system_tree_->header()->setStretchLastSection(true);
+    system_tree_->setSelectionMode(QAbstractItemView::SingleSelection);
+    connect(system_tree_, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onSystemSelectionChanged);
+    layout->addWidget(system_tree_, 1);
+
+    // 连接与移除
+    auto* wire_row = new QHBoxLayout();
+    wire_row->addWidget(new QLabel(ui_text(*texts_, "workbench.editor.connect", "Connect to"), page));
+    provider_combo_ = new QComboBox(page);
+    provider_combo_->setObjectName("systemProviderCombo");
+    provider_combo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    connect(provider_combo_, &QComboBox::currentIndexChanged, this, [this] { updateSystemEditorControls(); });
+    wire_row->addWidget(provider_combo_, 1);
+    connect_button_ = new QPushButton(ui_text(*texts_, "workbench.editor.connect_action", "Connect"), page);
+    connect_button_->setObjectName("systemConnectButton");
+    connect(connect_button_, &QPushButton::clicked, this, &MainWindow::connectSystemRequirement);
+    wire_row->addWidget(connect_button_);
+    disconnect_button_ = new QPushButton(ui_text(*texts_, "workbench.editor.disconnect", "Disconnect"), page);
+    disconnect_button_->setObjectName("systemDisconnectButton");
+    connect(disconnect_button_, &QPushButton::clicked, this, &MainWindow::disconnectSystemRequirement);
+    wire_row->addWidget(disconnect_button_);
+    remove_module_button_ = new QPushButton(ui_text(*texts_, "workbench.editor.remove", "Remove instance"), page);
+    remove_module_button_->setObjectName("systemRemoveButton");
+    connect(remove_module_button_, &QPushButton::clicked, this, &MainWindow::removeSystemModule);
+    wire_row->addWidget(remove_module_button_);
+    layout->addLayout(wire_row);
+
+    // 规格：推进入口、观测与自动推导的输入
+    auto* spec_box = new QGroupBox(ui_text(*texts_, "workbench.editor.spec", "Experiment specification"), page);
+    auto* spec_layout = new QVBoxLayout(spec_box);
+    auto* advance_row = new QHBoxLayout();
+    advance_row->addWidget(new QLabel(ui_text(*texts_, "workbench.editor.advance", "Advance entry"), spec_box));
+    advance_combo_ = new QComboBox(spec_box);
+    advance_combo_->setObjectName("systemAdvanceCombo");
+    connect(advance_combo_, &QComboBox::currentIndexChanged, this, [this] { onSpecAdvanceChanged(); });
+    advance_row->addWidget(advance_combo_, 1);
+    spec_layout->addLayout(advance_row);
+    spec_layout->addWidget(new QLabel(ui_text(*texts_, "workbench.editor.observations", "Observations"), spec_box));
+    observation_list_ = new QListWidget(spec_box);
+    observation_list_->setObjectName("systemObservationList");
+    observation_list_->setSelectionMode(QAbstractItemView::NoSelection);
+    connect(observation_list_, &QListWidget::itemChanged, this, [this] { onSpecObservationsChanged(); });
+    spec_layout->addWidget(observation_list_, 1);
+    input_label_ = new QLabel(spec_box);
+    input_label_->setObjectName("systemInputLabel");
+    input_label_->setWordWrap(true);
+    spec_layout->addWidget(input_label_);
+    layout->addWidget(spec_box);
+
+    page->hide();  // 与其他中央页签一致：默认不打开
+}
+
+void MainWindow::showSystemEditor() {
+    if (editor_page_ == nullptr || editor_action_ == nullptr) return;
+    rebuildSystemEditor();
+    if (!editor_action_->isChecked()) {
+        editor_action_->setChecked(true);  // 触发 toggled：加入页签并切换
+        return;
+    }
+    setCentralViewVisible(editor_page_, editor_action_->text(), true);
+}
+
+void MainWindow::rebuildSystemEditor() {
+    if (editor_page_ == nullptr) return;
+    editor_updating_ = true;
+    const QString system_name = from_utf8(status_.model_name);
+    const QString unsaved = system_dirty_ ? QStringLiteral(" *") : QString();
+    system_name_label_->setText(
+        system_file_.isEmpty()
+            ? ui_text(*texts_, "workbench.editor.system_name", "System: %1").arg(system_name) + unsaved
+            : ui_text(*texts_, "workbench.editor.system_name_file", "System: %1 · File: %2")
+                      .arg(system_name, QFileInfo(system_file_).fileName()) +
+                  unsaved);
+
+    // 可用模块：保留当前选择，空编辑框自动填建议实例名。
+    const QString current_definition = definition_combo_->currentText();
+    definition_combo_->clear();
+    for (const auto& definition : model_.available_modules) definition_combo_->addItem(from_utf8(definition));
+    if (!current_definition.isEmpty()) {
+        const int index = definition_combo_->findText(current_definition);
+        if (index >= 0) definition_combo_->setCurrentIndex(index);
+    }
+    if (instance_edit_->text().isEmpty() && definition_combo_->count() > 0) {
+        instance_edit_->setText(suggest_instance_name(definition_combo_->currentText(), model_.instances));
+    }
+
+    // 结构树：根作用域目录含各实例的需求与连接。
+    const session::ModuleNodeView* root = nullptr;
+    for (const auto& node : model_.catalog.modules) {
+        if (node.path.empty()) {
+            root = &node;
+            break;
+        }
+    }
+    std::map<std::string, std::vector<const session::RequirementView*>> requirements;
+    std::map<ascend::Reference, ascend::Reference> providers;
+    if (root != nullptr) {
+        for (const auto& requirement : root->requirements) requirements[requirement.reference.module].push_back(&requirement);
+        for (const auto& connection : root->connections) providers[connection.requirement] = connection.provider;
+    }
+    const auto kind_text = [this](ascend::SymbolKind kind) {
+        return kind == ascend::SymbolKind::method ? ui_text(*texts_, "workbench.kind.method", "Method")
+                                                  : ui_text(*texts_, "workbench.kind.value", "Value");
+    };
+    system_tree_->clear();
+    for (const auto& instance : model_.instances) {
+        if (!instance.scope.empty()) continue;  // 切片 A：根作用域
+        auto* item = new QTreeWidgetItem(system_tree_);
+        item->setText(0, from_utf8(instance.name));
+        item->setText(1, from_utf8(instance.definition));
+        item->setData(0, Qt::UserRole, QStringLiteral("instance"));
+        item->setData(0, Qt::UserRole + 1, from_utf8(instance.name));
+        item->setExpanded(true);
+        const auto found = requirements.find(instance.name);
+        if (found == requirements.end()) continue;
+        for (const auto* requirement : found->second) {
+            auto* child = new QTreeWidgetItem(item);
+            child->setText(0, from_utf8(requirement->reference.symbol));
+            child->setText(1, QStringLiteral("%1 · %2").arg(kind_text(requirement->kind),
+                                                            from_utf8(requirement->result_type)));
+            const auto provider = providers.find(requirement->reference);
+            const bool connected = provider != providers.end();
+            child->setText(2, connected ? reference_text(provider->second)
+                                        : ui_text(*texts_, "workbench.editor.unconnected", "not connected"));
+            child->setData(0, Qt::UserRole, QStringLiteral("requirement"));
+            child->setData(0, Qt::UserRole + 1, from_utf8(requirement->reference.module));
+            child->setData(0, Qt::UserRole + 2, from_utf8(requirement->reference.symbol));
+            child->setData(0, Qt::UserRole + 3, connected ? 1 : 0);
+        }
+    }
+
+    // 规格：推进入口（公开无参方法）与观测（公开量）。
+    const auto reference_equal = [](const ascend::Reference& left, const ascend::Reference& right) {
+        return left.module == right.module && left.symbol == right.symbol;
+    };
+    advance_combo_->clear();
+    advance_combo_->addItem(ui_text(*texts_, "workbench.editor.no_advance", "(none)"), QString());
+    int advance_index = 0;
+    observation_list_->clear();
+    if (root != nullptr) {
+        for (const auto& declaration : root->declarations) {
+            if (declaration.kind == ascend::SymbolKind::method && declaration.parameters.empty()) {
+                const QString text = reference_text(declaration.reference);
+                advance_combo_->addItem(text, text);
+                if (reference_equal(declaration.reference, model_.spec.advance)) {
+                    advance_index = advance_combo_->count() - 1;
+                }
+            } else if (declaration.kind == ascend::SymbolKind::value) {
+                auto* item = new QListWidgetItem(reference_text(declaration.reference), observation_list_);
+                item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+                bool checked = false;
+                for (const auto& observation : model_.spec.observations) {
+                    if (reference_equal(observation.second, declaration.reference)) {
+                        checked = true;
+                        break;
+                    }
+                }
+                item->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
+            }
+        }
+    }
+    advance_combo_->setCurrentIndex(advance_index);
+    QStringList inputs;
+    for (const auto& input : model_.spec.inputs) {
+        inputs << QStringLiteral("%1 → %2").arg(from_utf8(input.first), reference_text(input.second));
+    }
+    input_label_->setText(ui_text(*texts_, "workbench.editor.inputs", "Inputs (derived): %1")
+                              .arg(inputs.join(QStringLiteral("，"))));
+    editor_updating_ = false;
+    onSystemSelectionChanged();
+}
+
+void MainWindow::onSystemSelectionChanged() {
+    if (editor_updating_ || provider_combo_ == nullptr) return;
+    editor_updating_ = true;
+    provider_combo_->clear();
+    QTreeWidgetItem* item = system_tree_->currentItem();
+    if (item != nullptr && item->data(0, Qt::UserRole).toString() == QStringLiteral("requirement")) {
+        const std::string module = item->data(0, Qt::UserRole + 1).toString().toStdString();
+        const std::string symbol = item->data(0, Qt::UserRole + 2).toString().toStdString();
+        const session::ModuleNodeView* root = nullptr;
+        for (const auto& node : model_.catalog.modules) {
+            if (node.path.empty()) {
+                root = &node;
+                break;
+            }
+        }
+        const session::RequirementView* requirement = nullptr;
+        if (root != nullptr) {
+            for (const auto& candidate : root->requirements) {
+                if (candidate.reference.module == module && candidate.reference.symbol == symbol) {
+                    requirement = &candidate;
+                    break;
+                }
+            }
+        }
+        if (requirement != nullptr && root != nullptr) {
+            // 候选提供方：公开声明中种类、结果类型与参数签名一致的其他实例符号。
+            for (const auto& declaration : root->declarations) {
+                if (declaration.reference.module == module) continue;  // 不连接自身
+                if (declaration.kind != requirement->kind) continue;
+                if (declaration.result_type != requirement->result_type) continue;
+                if (declaration.parameters.size() != requirement->parameters.size()) continue;
+                bool same_signature = true;
+                for (std::size_t index = 0; index < declaration.parameters.size(); ++index) {
+                    if (declaration.parameters[index].type != requirement->parameters[index].type) {
+                        same_signature = false;
+                        break;
+                    }
+                }
+                if (!same_signature) continue;
+                const QString text = reference_text(declaration.reference);
+                provider_combo_->addItem(text, text);
+            }
+        }
+    }
+    editor_updating_ = false;
+    updateSystemEditorControls();
+}
+
+void MainWindow::updateSystemEditorControls() {
+    if (editor_page_ == nullptr) return;
+    // 空会话尚未确立系统身份：只可新建或打开系统，装配编辑与检查/应用禁用。
+    const bool available = !busy_ && !closing_;
+    const bool editable = available && status_.phase != ascend::session::Phase::empty;
+    new_system_button_->setEnabled(available);
+    open_system_button_->setEnabled(available);
+    save_system_button_->setEnabled(editable);
+    editor_check_button_->setEnabled(editable);
+    editor_apply_button_->setEnabled(editable);
+    definition_combo_->setEnabled(editable);
+    instance_edit_->setEnabled(editable);
+    add_module_button_->setEnabled(editable && definition_combo_->count() > 0);
+    advance_combo_->setEnabled(editable);
+    observation_list_->setEnabled(editable);
+    QTreeWidgetItem* item = system_tree_->currentItem();
+    const QString kind = item != nullptr ? item->data(0, Qt::UserRole).toString() : QString();
+    const bool requirement = kind == QStringLiteral("requirement");
+    const bool instance = kind == QStringLiteral("instance");
+    remove_module_button_->setEnabled(editable && (requirement || instance));
+    provider_combo_->setEnabled(editable && requirement);
+    connect_button_->setEnabled(editable && requirement && provider_combo_->count() > 0);
+    disconnect_button_->setEnabled(editable && requirement && item->data(0, Qt::UserRole + 3).toInt() == 1);
+}
+
+void MainWindow::beginSystemCommand(const char* method, bool edits_draft) {
+    busy_ = true;
+    if (edits_draft) {
+        // 编辑改变会话（研究文件与因果系统草稿都可能未保存）；打开/保存不在此列。
+        file_dirty_ = true;
+        system_dirty_ = true;
+    }
+    pending_ = QString::fromLatin1(method);
+    updateControls();
+}
+
+void MainWindow::chooseNewSystem() {
+    if (busy_ || closing_) return;
+    bool accepted = false;
+    const QString name = QInputDialog::getText(this, ui_text(*texts_, "workbench.editor.new_system", "New system…"),
+                                               ui_text(*texts_, "workbench.editor.new_system_prompt", "System name:"),
+                                               QLineEdit::Normal, QString(), &accepted);
+    if (!accepted || name.trimmed().isEmpty()) return;
+    system_file_.clear();
+    beginSystemCommand("newSystem");
+    QMetaObject::invokeMethod(controller_, "newSystem", Qt::QueuedConnection, Q_ARG(QString, name.trimmed()));
+}
+
+void MainWindow::onSystemDefinitionChanged() {
+    if (editor_updating_) return;
+    if (definition_combo_->count() == 0) return;
+    instance_edit_->setText(suggest_instance_name(definition_combo_->currentText(), model_.instances));
+    updateSystemEditorControls();
+}
+
+void MainWindow::addSystemModule() {
+    if (busy_ || closing_ || definition_combo_->count() == 0) return;
+    const QString definition = definition_combo_->currentText();
+    QString instance = instance_edit_->text().trimmed();
+    if (instance.isEmpty()) instance = suggest_instance_name(definition, model_.instances);
+    beginSystemCommand("addModule");
+    QMetaObject::invokeMethod(controller_, "addModule", Qt::QueuedConnection, Q_ARG(QString, definition),
+                              Q_ARG(QString, instance));
+}
+
+void MainWindow::removeSystemModule() {
+    if (busy_ || closing_) return;
+    QTreeWidgetItem* item = system_tree_->currentItem();
+    if (item == nullptr) return;
+    const QString name = item->data(0, Qt::UserRole + 1).toString();
+    if (name.isEmpty()) return;
+    const auto answer = QMessageBox::question(
+        this, ui_text(*texts_, "workbench.editor.remove", "Remove instance"),
+        ui_text(*texts_, "workbench.editor.remove_confirm",
+                "Remove instance \"%1\"? Connections referencing it are removed as well.").arg(name));
+    if (answer != QMessageBox::Yes) return;
+    beginSystemCommand("removeModule");
+    QMetaObject::invokeMethod(controller_, "removeModule", Qt::QueuedConnection, Q_ARG(QString, name));
+}
+
+void MainWindow::connectSystemRequirement() {
+    if (busy_ || closing_) return;
+    QTreeWidgetItem* item = system_tree_->currentItem();
+    if (item == nullptr || item->data(0, Qt::UserRole).toString() != QStringLiteral("requirement")) return;
+    const QString provider = provider_combo_->currentData().toString();
+    if (provider.isEmpty()) return;
+    const int slash = provider.lastIndexOf(QLatin1Char('/'));
+    if (slash <= 0) return;
+    beginSystemCommand("connectRequirement");
+    QMetaObject::invokeMethod(controller_, "connectRequirement", Qt::QueuedConnection,
+                              Q_ARG(QString, item->data(0, Qt::UserRole + 1).toString()),
+                              Q_ARG(QString, item->data(0, Qt::UserRole + 2).toString()),
+                              Q_ARG(QString, provider.left(slash)),
+                              Q_ARG(QString, provider.mid(slash + 1)));
+}
+
+void MainWindow::disconnectSystemRequirement() {
+    if (busy_ || closing_) return;
+    QTreeWidgetItem* item = system_tree_->currentItem();
+    if (item == nullptr || item->data(0, Qt::UserRole).toString() != QStringLiteral("requirement")) return;
+    beginSystemCommand("disconnectRequirement");
+    QMetaObject::invokeMethod(controller_, "disconnectRequirement", Qt::QueuedConnection,
+                              Q_ARG(QString, item->data(0, Qt::UserRole + 1).toString()),
+                              Q_ARG(QString, item->data(0, Qt::UserRole + 2).toString()));
+}
+
+void MainWindow::onSpecAdvanceChanged() {
+    if (editor_updating_) return;
+    const QString value = advance_combo_->currentData().toString();
+    QString module;
+    QString symbol;
+    if (!value.isEmpty()) {
+        const int slash = value.lastIndexOf(QLatin1Char('/'));
+        if (slash > 0) {
+            module = value.left(slash);
+            symbol = value.mid(slash + 1);
+        }
+    }
+    beginSystemCommand("setSpecAdvance");
+    QMetaObject::invokeMethod(controller_, "setSpecAdvance", Qt::QueuedConnection, Q_ARG(QString, module),
+                              Q_ARG(QString, symbol));
+}
+
+void MainWindow::onSpecObservationsChanged() {
+    if (editor_updating_) return;
+    QStringList checked;
+    for (int row = 0; row < observation_list_->count(); ++row) {
+        auto* item = observation_list_->item(row);
+        if (item->checkState() == Qt::Checked) checked << item->text();
+    }
+    beginSystemCommand("setSpecObservations");
+    QMetaObject::invokeMethod(controller_, "setSpecObservations", Qt::QueuedConnection, Q_ARG(QStringList, checked));
+}
+
+void MainWindow::buildStartPage() {
+    auto* page = new QWidget(results_tabs_);
+    page->setObjectName("startPage");
+    start_page_ = page;
+    auto* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(28, 28, 28, 28);
+    layout->setSpacing(10);
+    layout->addStretch(1);
+
+    auto* title = new QLabel(ui_text(*texts_, "workbench.app.display_name", "Ascend Causal Modeling Workbench"), page);
+    QFont title_font = title->font();
+    title_font.setPointSize(title_font.pointSize() + 6);
+    title_font.setBold(true);
+    title->setFont(title_font);
+    layout->addWidget(title);
+    auto* subtitle = new QLabel(ui_text(*texts_, "workbench.start.subtitle", "Start"), page);
+    subtitle->setStyleSheet(QStringLiteral("color: #666;"));
+    layout->addWidget(subtitle);
+
+    auto* buttons = new QHBoxLayout();
+    start_new_button_ = new QPushButton(ui_text(*texts_, "workbench.start.new_research", "New research…"), page);
+    start_new_button_->setObjectName("startNewResearchButton");
+    connect(start_new_button_, &QPushButton::clicked, this, &MainWindow::startNewResearch);
+    buttons->addWidget(start_new_button_);
+    start_open_button_ = new QPushButton(ui_text(*texts_, "workbench.start.open_research", "Open research…"), page);
+    start_open_button_->setObjectName("startOpenResearchButton");
+    connect(start_open_button_, &QPushButton::clicked, this, &MainWindow::startOpenResearch);
+    buttons->addWidget(start_open_button_);
+    start_example_button_ =
+        new QPushButton(ui_text(*texts_, "workbench.start.open_example", "Open built-in example"), page);
+    start_example_button_->setObjectName("startOpenExampleButton");
+    connect(start_example_button_, &QPushButton::clicked, this, &MainWindow::startOpenExample);
+    buttons->addWidget(start_example_button_);
+    buttons->addStretch(1);
+    layout->addLayout(buttons);
+
+    auto* guide = new QLabel(
+        ui_text(*texts_, "workbench.start.guide",
+                "Module packages (.amod) are loaded into the module library.\n"
+                "A causal system (.aasm) picks modules and wires them; the system editor edits it.\n"
+                "A research (.aexp) adds the experiment specification and run records on top of a system.\n"
+                "Creating a research asks you to create a new causal system or open an existing one."),
+        page);
+    guide->setWordWrap(true);
+    guide->setStyleSheet(QStringLiteral("color: #444;"));
+    layout->addWidget(guide);
+    layout->addStretch(2);
+
+    // 开始页默认打开并置前。
+    results_tabs_->addTab(page, ui_text(*texts_, "workbench.pane.start", "Start"));
+    results_tabs_->setCurrentWidget(page);
+}
+
+void MainWindow::showStartPage() {
+    if (start_page_ == nullptr || start_action_ == nullptr) return;
+    if (!start_action_->isChecked()) {
+        start_action_->setChecked(true);  // 触发 toggled：加入页签并切换
+        return;
+    }
+    setCentralViewVisible(start_page_, start_action_->text(), true);
+}
+
+void MainWindow::hideStartPage() {
+    setCentralViewVisible(start_page_, QString(), false);
+    if (start_action_ != nullptr) {
+        QSignalBlocker blocker(start_action_);
+        start_action_->setChecked(false);
+    }
+}
+
+void MainWindow::startNewResearch() {
+    if (busy_ || closing_) return;
+    // 新建研究：研究名称 + 创建或打开因果系统。
+    QDialog dialog(this);
+    dialog.setObjectName("newResearchDialog");
+    dialog.setWindowTitle(ui_text(*texts_, "workbench.research.title", "New research"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* form = new QFormLayout();
+    auto* name_edit = new QLineEdit(ui_text(*texts_, "workbench.research.default_name", "Untitled research"), &dialog);
+    name_edit->setObjectName("researchNameEdit");
+    form->addRow(ui_text(*texts_, "workbench.research.name", "Research name:"), name_edit);
+    layout->addLayout(form);
+    auto* create_radio =
+        new QRadioButton(ui_text(*texts_, "workbench.research.create_system", "Create a new causal system"), &dialog);
+    create_radio->setObjectName("researchCreateSystemRadio");
+    create_radio->setChecked(true);
+    layout->addWidget(create_radio);
+    auto* open_radio = new QRadioButton(
+        ui_text(*texts_, "workbench.research.open_system", "Open an existing causal system (.aasm)"), &dialog);
+    open_radio->setObjectName("researchOpenSystemRadio");
+    layout->addWidget(open_radio);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->setObjectName("researchDialogButtons");
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    QString name = name_edit->text().trimmed();
+    if (name.isEmpty()) name = ui_text(*texts_, "workbench.research.default_name", "Untitled research");
+    if (open_radio->isChecked()) {
+        const QString path = QFileDialog::getOpenFileName(
+            this, ui_text(*texts_, "workbench.system.open_title", "Open causal system"), QDir::homePath(),
+            ui_text(*texts_, "workbench.system.filter", "Ascend causal system (*.aasm);;All files (*)"), nullptr,
+            QFileDialog::DontUseNativeDialog);
+        if (path.isEmpty()) return;  // 取消选择：留在开始页
+        hideStartPage();
+        file_dirty_ = true;
+        beginSystemCommand("openSystem", false);
+        QMetaObject::invokeMethod(controller_, "openSystem", Qt::QueuedConnection, Q_ARG(QString, path),
+                                  Q_ARG(QString, name));
+        return;
+    }
+    hideStartPage();
+    system_file_.clear();
+    beginSystemCommand("newSystem");
+    QMetaObject::invokeMethod(controller_, "newSystem", Qt::QueuedConnection, Q_ARG(QString, name));
+    showSystemEditor();
+}
+
+void MainWindow::startOpenResearch() {
+    if (busy_ || closing_) return;
+    hideStartPage();
+    chooseOpenExperiment();
+}
+
+void MainWindow::startOpenExample() {
+    if (busy_ || closing_) return;
+    hideStartPage();
+    system_file_.clear();
+    dispatch("load");
+}
+
+void MainWindow::chooseOpenSystem() {
+    if (busy_ || closing_) return;
+    const QString path = QFileDialog::getOpenFileName(
+        this, ui_text(*texts_, "workbench.system.open_title", "Open causal system"),
+        system_file_.isEmpty() ? QDir::homePath() : QFileInfo(system_file_).absolutePath(),
+        ui_text(*texts_, "workbench.system.filter", "Ascend causal system (*.aasm);;All files (*)"), nullptr,
+        QFileDialog::DontUseNativeDialog);
+    if (path.isEmpty()) return;
+    file_dirty_ = true;
+    beginSystemCommand("openSystem", false);
+    QMetaObject::invokeMethod(controller_, "openSystem", Qt::QueuedConnection, Q_ARG(QString, path),
+                              Q_ARG(QString, QFileInfo(path).completeBaseName()));
+}
+
+void MainWindow::saveSystem() {
+    if (busy_ || closing_) return;
+    if (system_file_.isEmpty()) {
+        chooseSaveSystemAs();
+        return;
+    }
+    beginSystemCommand("saveSystem", false);
+    QMetaObject::invokeMethod(controller_, "saveSystem", Qt::QueuedConnection, Q_ARG(QString, system_file_));
+}
+
+void MainWindow::chooseSaveSystemAs() {
+    if (busy_ || closing_) return;
+    QString suggested = system_file_.isEmpty() ? from_utf8(status_.model_name) + QStringLiteral(".aasm")
+                                               : system_file_;
+    if (suggested.isEmpty() || suggested == QStringLiteral(".aasm")) suggested = QStringLiteral("system.aasm");
+    const QString path = QFileDialog::getSaveFileName(
+        this, ui_text(*texts_, "workbench.system.save_title", "Save causal system"),
+        QDir::homePath() + QLatin1Char('/') + suggested,
+        ui_text(*texts_, "workbench.system.filter", "Ascend causal system (*.aasm);;All files (*)"), nullptr,
+        QFileDialog::DontUseNativeDialog);
+    if (path.isEmpty()) return;
+    const QString target = path.endsWith(QStringLiteral(".aasm")) ? path : path + QStringLiteral(".aasm");
+    beginSystemCommand("saveSystem", false);
+    QMetaObject::invokeMethod(controller_, "saveSystem", Qt::QueuedConnection, Q_ARG(QString, target));
+}
+
+void MainWindow::onSystemOpened(const QString& path, bool ok, const QString& detail) {
+    if (!ok) {
+        QString text = ui_text(*texts_, "workbench.system.open_failed", "Could not open the causal system: %1").arg(path);
+        if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
+        QMessageBox::warning(this, ui_text(*texts_, "workbench.system.open_title", "Open causal system"), text);
+        return;
+    }
+    system_file_ = path;
+    system_dirty_ = false;
+    showSystemEditor();
+}
+
+void MainWindow::onSystemSaved(const QString& path, bool ok, const QString& detail) {
+    if (!ok) {
+        QString text = ui_text(*texts_, "workbench.system.save_failed", "Could not save the causal system: %1").arg(path);
+        if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
+        QMessageBox::warning(this, ui_text(*texts_, "workbench.system.save_title", "Save causal system"), text);
+        return;
+    }
+    system_file_ = path;
+    system_dirty_ = false;
+    updateSystemFileLabel();
+}
+
+void MainWindow::updateSystemFileLabel() {
+    if (editor_page_ != nullptr && results_tabs_->indexOf(editor_page_) >= 0) rebuildSystemEditor();
 }
 
 void MainWindow::buildDiagnosticsDock() {
@@ -685,6 +1429,18 @@ void MainWindow::updateControls() {
     if (open_experiment_action_ != nullptr) open_experiment_action_->setEnabled(!busy_ && !closing_);
     if (save_action_ != nullptr) save_action_->setEnabled(saveable);
     if (save_as_action_ != nullptr) save_as_action_->setEnabled(saveable);
+    const bool package_action = !busy_ && !closing_;
+    if (load_module_action_ != nullptr) load_module_action_->setEnabled(package_action);
+    if (load_module_folder_action_ != nullptr) load_module_folder_action_->setEnabled(package_action);
+    if (unload_module_action_ != nullptr) unload_module_action_->setEnabled(package_action && !packages_.empty());
+    if (package_load_button_ != nullptr) package_load_button_->setEnabled(package_action);
+    if (package_load_folder_button_ != nullptr) package_load_folder_button_->setEnabled(package_action);
+    if (package_unload_button_ != nullptr) package_unload_button_->setEnabled(package_action && !packages_.empty());
+    if (new_research_action_ != nullptr) new_research_action_->setEnabled(!busy_ && !closing_);
+    if (start_new_button_ != nullptr) start_new_button_->setEnabled(!busy_ && !closing_);
+    if (start_open_button_ != nullptr) start_open_button_->setEnabled(!busy_ && !closing_);
+    if (start_example_button_ != nullptr) start_example_button_->setEnabled(!busy_ && !closing_);
+    updateSystemEditorControls();
 }
 
 void MainWindow::buildMenuBar() {
@@ -706,8 +1462,16 @@ void MainWindow::buildMenuBar() {
 
     QMenu* file = bar->addMenu(ui_text(*texts_, "workbench.menu.file", "File"));
     file->setToolTipsVisible(true);
+    new_research_action_ = file->addAction(ui_text(*texts_, "workbench.action.new_research", "New research…"));
+    new_research_action_->setObjectName("newResearchAction");
+    connect(new_research_action_, &QAction::triggered, this, &MainWindow::startNewResearch);
+    file->addSeparator();
     open_action_ = file->addAction(ui_text(*texts_, "workbench.action.open_example", "Open example"));
-    connect(open_action_, &QAction::triggered, this, [this] { dispatch("load"); });
+    open_action_->setObjectName("openExampleAction");
+    connect(open_action_, &QAction::triggered, this, [this] {
+        system_file_.clear();
+        dispatch("load");
+    });
     file->addSeparator();
     open_experiment_action_ = file->addAction(ui_text(*texts_, "workbench.action.open_experiment", "Open experiment…"));
     open_experiment_action_->setObjectName("openExperimentAction");
@@ -722,6 +1486,17 @@ void MainWindow::buildMenuBar() {
     save_as_action_->setShortcut(QKeySequence::SaveAs);
     connect(save_as_action_, &QAction::triggered, this, &MainWindow::chooseSaveExperiment);
     file->addSeparator();
+    load_module_action_ = file->addAction(ui_text(*texts_, "workbench.action.load_module_package", "Load module package…"));
+    load_module_action_->setObjectName("loadModulePackageAction");
+    connect(load_module_action_, &QAction::triggered, this, &MainWindow::chooseLoadModulePackage);
+    load_module_folder_action_ = file->addAction(
+        ui_text(*texts_, "workbench.action.load_module_package_folder", "Load module package folder…"));
+    load_module_folder_action_->setObjectName("loadModulePackageFolderAction");
+    connect(load_module_folder_action_, &QAction::triggered, this, &MainWindow::chooseLoadModulePackageFolder);
+    unload_module_action_ = file->addAction(ui_text(*texts_, "workbench.action.unload_module_package", "Unload module package…"));
+    unload_module_action_->setObjectName("unloadModulePackageAction");
+    connect(unload_module_action_, &QAction::triggered, this, &MainWindow::chooseUnloadModulePackage);
+    file->addSeparator();
     QAction* quit = file->addAction(ui_text(*texts_, "workbench.action.quit", "Quit"));
     connect(quit, &QAction::triggered, this, &QWidget::close);
 
@@ -730,16 +1505,21 @@ void MainWindow::buildMenuBar() {
     placeholder(edit, "workbench.action.undo", "Undo");
     placeholder(edit, "workbench.action.redo", "Redo");
     edit->addSeparator();
-    placeholder(edit, "workbench.action.declaration_editor", "Declarations and bindings…");
+    QAction* editor_action = edit->addAction(ui_text(*texts_, "workbench.action.system_editor", "System editor…"));
+    editor_action->setObjectName("systemEditorAction");
+    connect(editor_action, &QAction::triggered, this, &MainWindow::showSystemEditor);
 
     auto* view = new StayOpenMenu(ui_text(*texts_, "workbench.menu.view", "View"), this);
     view->setToolTipsVisible(true);
     bar->addMenu(view);
-    const auto panel_action = [this](QMenu* menu, QWidget* panel, const char* key, const char* fallback) {
+    // 中央工作区页签动作：勾选打开对应页签并切换，取消即关闭（视图对象保留，可重开）。
+    const auto central_action = [this](QMenu* menu, QWidget* page, const char* key, const char* fallback) {
         QAction* action = menu->addAction(ui_text(*texts_, key, fallback));
         action->setCheckable(true);
-        action->setChecked(!panel->isHidden());
-        connect(action, &QAction::toggled, panel, &QWidget::setVisible);
+        action->setChecked(results_tabs_->indexOf(page) >= 0);
+        connect(action, &QAction::toggled, this, [this, page, action](bool visible) {
+            setCentralViewVisible(page, action->text(), visible);
+        });
         return action;
     };
     const auto dock_action = [this](QMenu* menu, QDockWidget* dock, const char* key, const char* fallback) {
@@ -748,9 +1528,18 @@ void MainWindow::buildMenuBar() {
         menu->addAction(action);
         return action;
     };
+    start_action_ = central_action(view, start_page_, "workbench.pane.start", "Start");
+    start_action_->setObjectName("startViewAction");
     dock_action(view, modules_dock_, "workbench.view.left_panel", "Module manager");
+    package_tab_action_ = central_action(view, package_page_, "workbench.view.package_library", "Module library");
+    package_tab_action_->setObjectName("packageLibraryAction");
+    editor_action_ = central_action(view, editor_page_, "workbench.pane.system_editor", "System editor");
+    editor_action_->setObjectName("systemEditorViewAction");
     dock_action(view, config_dock_, "workbench.view.config", "Configuration");
-    panel_action(view, results_tabs_, "workbench.view.results", "Results");
+    timeline_action_ = central_action(view, timeline_page_, "workbench.pane.timeline", "Timeline");
+    timeline_action_->setObjectName("timelineViewAction");
+    diff_action_ = central_action(view, diff_page_, "workbench.pane.differences", "Shared-frame differences");
+    diff_action_->setObjectName("differencesViewAction");
     dock_action(view, state_dock_, "workbench.view.right_panel", "State");
     dock_action(view, diagnostics_dock_, "workbench.view.diagnostics", "Bottom panel (diagnostics and records)");
     view->addSeparator();
@@ -808,13 +1597,6 @@ void MainWindow::dispatchReadonly(const char* method) {
     QMetaObject::invokeMethod(controller_, method, Qt::QueuedConnection);
 }
 
-void MainWindow::beginInitialLoad() {
-    busy_ = true;
-    pending_ = QStringLiteral("load");
-    updateControls();
-    QMetaObject::invokeMethod(controller_, "load", Qt::QueuedConnection);
-}
-
 void MainWindow::onBusyChanged(bool busy) {
     busy_ = busy;
     if (!busy) pending_.clear();
@@ -841,6 +1623,7 @@ void MainWindow::onModelChanged(const ModelSnapshot& model) {
     rebuildConnections();
     rebuildStateFields();
     rebuildSampleSelectors();
+    if (editor_page_ != nullptr && results_tabs_->indexOf(editor_page_) >= 0) rebuildSystemEditor();
     updateControls();
     updateStatusLabels();
 }
@@ -983,6 +1766,135 @@ void MainWindow::onExperimentSaved(const QString& path, bool ok, const QString& 
     updateRecordSummary();
 }
 
+void MainWindow::chooseLoadModulePackage() {
+    if (busy_ || closing_) return;
+    // 多选：一次选择多个模块包；每个包独立载入，结果汇总提示。
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, ui_text(*texts_, "workbench.module.load_title", "Load module package"),
+        current_file_.isEmpty() ? QString() : QFileInfo(current_file_).absolutePath(),
+        ui_text(*texts_, "workbench.module.filter", "Ascend module package (*.amod);;All files (*)"),
+        nullptr, QFileDialog::DontUseNativeDialog);
+    if (paths.isEmpty()) return;
+    loadModulePackages(paths);
+}
+
+void MainWindow::chooseLoadModulePackageFolder() {
+    if (busy_ || closing_) return;
+    // 选择文件夹：载入其中的全部模块包（`*.amod` 直接子文件；不含子文件夹）。
+    const QString directory = QFileDialog::getExistingDirectory(
+        this, ui_text(*texts_, "workbench.module.folder_title", "Load module package folder"),
+        current_file_.isEmpty() ? QString() : QFileInfo(current_file_).absolutePath(),
+        QFileDialog::DontUseNativeDialog);
+    if (directory.isEmpty()) return;
+    const QStringList paths = module_package_files_in(directory);
+    if (paths.isEmpty()) {
+        QMessageBox::information(this, ui_text(*texts_, "workbench.module.folder_title", "Load module package folder"),
+                                 ui_text(*texts_, "workbench.module.folder_empty",
+                                         "The selected folder contains no module packages (*.amod)."));
+        return;
+    }
+    loadModulePackages(paths);
+}
+
+void MainWindow::loadModulePackages(const QStringList& paths) {
+    if (paths.isEmpty()) return;
+    pending_ = QStringLiteral("loadModulePackages");
+    updateControls();
+    QMetaObject::invokeMethod(controller_, "loadModulePackages", Qt::QueuedConnection, Q_ARG(QStringList, paths));
+}
+
+void MainWindow::chooseUnloadModulePackage() {
+    if (busy_ || closing_) return;
+    if (packages_.empty()) {
+        QMessageBox::information(this, ui_text(*texts_, "workbench.module.unload_title", "Unload module package"),
+                                 ui_text(*texts_, "workbench.module.none", "No module package is loaded."));
+        return;
+    }
+    QStringList items;
+    items.reserve(static_cast<int>(packages_.size()));
+    for (const auto& package : packages_) items << from_utf8(package.definition);
+    bool accepted = false;
+    const QString definition = QInputDialog::getItem(
+        this, ui_text(*texts_, "workbench.module.unload_title", "Unload module package"),
+        ui_text(*texts_, "workbench.module.unload_pick", "Select a module package to unload"),
+        items, 0, false, &accepted);
+    if (!accepted || definition.isEmpty()) return;
+    unloadModulePackage(definition);
+}
+
+void MainWindow::unloadModulePackage(const QString& definition) {
+    pending_ = QStringLiteral("unloadModulePackage");
+    updateControls();
+    QMetaObject::invokeMethod(controller_, "unloadModulePackage", Qt::QueuedConnection, Q_ARG(QString, definition));
+}
+
+void MainWindow::onModulePackages(const std::vector<session::ModulePackageView>& packages) {
+    packages_ = packages;
+    package_table_->setRowCount(0);
+    for (const auto& package : packages) {
+        const int row = package_table_->rowCount();
+        package_table_->insertRow(row);
+        package_table_->setItem(row, 0, new QTableWidgetItem(from_utf8(package.definition)));
+        package_table_->setItem(row, 1, new QTableWidgetItem(from_utf8(package.version)));
+        package_table_->setItem(row, 2, new QTableWidgetItem(from_utf8(package.implementation)));
+        const QString state = package.stateless
+                                  ? ui_text(*texts_, "workbench.module.stateless", "Stateless")
+                                  : from_utf8(package.state_contract);
+        package_table_->setItem(row, 3, new QTableWidgetItem(state));
+        package_table_->setItem(row, 4, new QTableWidgetItem(QString::number(package.declarations)));
+        package_table_->setItem(row, 5, new QTableWidgetItem(QString::number(package.requirements)));
+        package_table_->setItem(row, 6, new QTableWidgetItem(QString::number(package.resources)));
+    }
+    updateControls();
+}
+
+void MainWindow::hidePackageLibrary() {
+    setCentralViewVisible(package_page_, QString(), false);
+    if (package_tab_action_ != nullptr) {
+        QSignalBlocker blocker(package_tab_action_);
+        package_tab_action_->setChecked(false);
+    }
+}
+
+void MainWindow::setCentralViewVisible(QWidget* page, const QString& title, bool visible) {
+    if (page == nullptr || results_tabs_ == nullptr) return;
+    const int index = results_tabs_->indexOf(page);
+    if (visible) {
+        if (index < 0) results_tabs_->addTab(page, title);
+        results_tabs_->setCurrentWidget(page);
+    } else if (index >= 0) {
+        results_tabs_->removeTab(index);
+    }
+}
+
+void MainWindow::showPackageLibrary() {
+    if (package_page_ == nullptr) return;
+    // 载入成功：打开模块库页签并切换过去；已打开时只切换（浏览器式页签可手动关闭）。
+    if (package_tab_action_ != nullptr && !package_tab_action_->isChecked()) {
+        package_tab_action_->setChecked(true);  // 触发 toggled：加入页签并切换
+        return;
+    }
+    setCentralViewVisible(package_page_, package_tab_action_ != nullptr ? package_tab_action_->text() : QString(),
+                          true);
+}
+
+void MainWindow::onModulePackagesLoaded(int loaded, int failed, const QString& detail) {
+    if (loaded > 0) showPackageLibrary();
+    if (failed <= 0) return;
+    QString text = ui_text(*texts_, "workbench.module.load_failed_many",
+                           "Could not load the following module packages:");
+    if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
+    QMessageBox::warning(this, ui_text(*texts_, "workbench.module.load_title", "Load module package"), text);
+}
+
+void MainWindow::onModulePackageUnloaded(const QString& definition, bool ok, const QString& detail) {
+    if (!ok) {
+        QString text = ui_text(*texts_, "workbench.module.unload_failed", "Could not unload the module package: %1").arg(definition);
+        if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
+        QMessageBox::warning(this, ui_text(*texts_, "workbench.module.unload_title", "Unload module package"), text);
+    }
+}
+
 void MainWindow::onExperimentOpened(const QString& path, bool ok, const QString& detail) {
     if (!ok) {
         QString text = ui_text(*texts_, "workbench.open.failed", "Could not open the experiment file: %1").arg(path);
@@ -992,13 +1904,17 @@ void MainWindow::onExperimentOpened(const QString& path, bool ok, const QString&
     }
     current_file_ = path;
     file_dirty_ = false;
+    system_file_.clear();
     updateWindowTitle();
     updateRecordSummary();
 }
 
 void MainWindow::updateWindowTitle() {
-    QString title = ui_text(*texts_, "workbench.app.window_title", "Ascend Causal Modeling Workbench: %1")
-                        .arg(from_utf8(status_.model_name));
+    QString title = ui_text(*texts_, "workbench.app.display_name", "Ascend Causal Modeling Workbench");
+    if (!status_.model_name.empty()) {
+        title = ui_text(*texts_, "workbench.app.window_title", "Ascend Causal Modeling Workbench: %1")
+                    .arg(from_utf8(status_.model_name));
+    }
     if (!current_file_.isEmpty()) {
         title += ui_text(*texts_, "workbench.app.file_suffix", " — %1")
                      .arg(QFileInfo(current_file_).fileName());

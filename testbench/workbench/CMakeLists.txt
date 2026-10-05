@@ -28,6 +28,9 @@ foreach(case IN ITEMS
     open_record_state
     open_rejects_and_falls_back
     open_exploration_only
+    module_packages
+    system_assembly
+    system_file
 )
     add_test(NAME session.${case} COMMAND ascend_session_tests ${case})
 endforeach()
@@ -53,6 +56,13 @@ if(TARGET ascend_workbench_ui)
         captureScreenshot
         fileSaveOpen
         fileOpenFailure
+        modulePackageLoadUnload
+        modulePackageMultiLoad
+        modulePackageFolderLoad
+        systemEditorAssembly
+        startPageResearch
+        dockTitleDoubleClick
+        dockFloatDockStress
     )
         add_test(NAME workbench.${case} COMMAND ascend_workbench_tests ${case})
     endforeach()
@@ -71,6 +81,13 @@ if(TARGET ascend_workbench_ui)
         workbench.captureScreenshot
         workbench.fileSaveOpen
         workbench.fileOpenFailure
+        workbench.modulePackageLoadUnload
+        workbench.modulePackageMultiLoad
+        workbench.modulePackageFolderLoad
+        workbench.systemEditorAssembly
+        workbench.startPageResearch
+        workbench.dockTitleDoubleClick
+        workbench.dockFloatDockStress
         PROPERTIES ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;ASCEND_WORKBENCH_SCREENSHOT=${CMAKE_CURRENT_BINARY_DIR}/workbench-ui.png")
 endif()

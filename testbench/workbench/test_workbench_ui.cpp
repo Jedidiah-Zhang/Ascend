@@ -1,4 +1,6 @@
 #include "config_editor.hpp"
+#include <ascend/example/experiment_model.hpp>
+#include <ascend/module_package.hpp>
 #include "main_window.hpp"
 #include "waveform_widget.hpp"
 #include "workbench.hpp"
@@ -15,16 +17,24 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileSystemModel>
 #include <QGroupBox>
+#include <QInputDialog>
+#include <QItemSelectionModel>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListView>
+#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QSpinBox>
+#include <QSet>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTest>
@@ -52,14 +62,48 @@ bool wait_idle(MainWindow* window, int timeout_ms = 8000) {
     return wait_until([window] { return !window->busy(); }, timeout_ms);
 }
 
-std::unique_ptr<Workbench> start_workbench() {
+// 经「文件 → 打开示例」加载内置示例并等待会话离开空状态。
+bool open_example(MainWindow* window) {
+    auto* action = window->findChild<QAction*>("openExampleAction");
+    if (action == nullptr) return false;
+    action->trigger();
+    return wait_until([window] {
+        return window->currentStatus().phase != ascend::session::Phase::empty;
+    });
+}
+
+// 启动工作台；默认经文件菜单打开内置示例，测试空白状态时传 false。
+std::unique_ptr<Workbench> start_workbench(bool with_example = true) {
     auto workbench =
         std::make_unique<Workbench>(example_template(default_resource_paths()));
     workbench->start();
+    if (with_example) open_example(workbench->window());
     return workbench;
 }
 
-// 驱动文件对话框：等选择生效后接受；顺带关掉确认框，避免用例挂起。
+// 生成一个示例模块包文件（默认无状态值模块 library.source），返回路径。
+QString write_example_package(const QString& path,
+                              const std::string& definition = ascend::example::library_source_definition) {
+    ascend::Engine engine;
+    ascend::ModulePackage package;
+    if (definition == ascend::example::library_accumulator_definition) {
+        engine.add(ascend::example::module_library_accumulator("probe", {}));
+        package.manifest = ascend::export_module_manifest(engine, "", "probe");
+        package.manifest.implementation = ascend::example::library_accumulator_implementation;
+    } else {
+        engine.add(ascend::example::module_library_source("probe", {}));
+        package.manifest = ascend::export_module_manifest(engine, "", "probe");
+        package.manifest.implementation = ascend::example::library_source_implementation;
+    }
+    package.manifest.definition = definition;
+    package.manifest.version = "1.0";
+    const auto bytes = ascend::encode_module_package(package);
+    QFile file(path);
+    file.open(QIODevice::WriteOnly);
+    file.write(bytes.data(), static_cast<qint64>(bytes.size()));
+    return path;
+}
+
 void drive_file_dialog(const QString& path) {
     QWidget* modal = QApplication::activeModalWidget();
     if (auto* box = qobject_cast<QMessageBox*>(modal)) {
@@ -76,6 +120,47 @@ void drive_file_dialog(const QString& path) {
     dialog->setFocus();  // 让文件名输入框失焦：Qt 在输入框有焦点时不接受 selectFile 的写入
     dialog->selectFile(path);
     if (dialog->selectedFiles().value(0) != path) return;  // 模型未就绪，下个周期重试
+    QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+}
+
+// 驱动多选文件或文件夹对话框：文件在列表视图中选中、文件夹直接定位；条件满足后接受。
+// 顺带关掉确认框，避免用例挂起。
+void drive_choose_paths_dialog(const QStringList& paths) {
+    QWidget* modal = QApplication::activeModalWidget();
+    if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+        if (auto* yes = box->button(QMessageBox::Yes)) {
+            yes->click();
+        } else {
+            box->accept();
+        }
+        return;
+    }
+    auto* dialog = qobject_cast<QFileDialog*>(modal);
+    if (dialog == nullptr || paths.isEmpty()) return;
+    const QString first = QFileInfo(paths.front()).absoluteFilePath();
+    if (QFileInfo(first).isDir()) {
+        dialog->setDirectory(first);
+        if (dialog->selectedFiles().value(0) != first) return;  // 模型未就绪，下个周期重试
+        QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+        return;
+    }
+    dialog->setDirectory(QFileInfo(first).absolutePath());
+    dialog->setFocus();
+    auto* view = dialog->findChild<QListView*>("listView");
+    if (view == nullptr || view->model() == nullptr || view->selectionModel() == nullptr) return;
+    QSet<QString> wanted;
+    for (const QString& path : paths) wanted.insert(QFileInfo(path).absoluteFilePath());
+    view->selectionModel()->clearSelection();
+    int matched = 0;
+    const QModelIndex root = view->rootIndex();  // 文件视图的当前目录；行是它的子项
+    for (int row = 0; row < view->model()->rowCount(root); ++row) {
+        const QModelIndex index = view->model()->index(row, 0, root);
+        if (wanted.contains(index.data(QFileSystemModel::FilePathRole).toString())) {
+            view->selectionModel()->select(index, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+            ++matched;
+        }
+    }
+    if (matched != wanted.size()) return;  // 列表尚未加载出全部目标，下个周期重试
     QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
 }
 
@@ -99,11 +184,28 @@ private slots:
     void captureScreenshot();
     void fileSaveOpen();
     void fileOpenFailure();
+    void modulePackageLoadUnload();
+    void modulePackageMultiLoad();
+    void modulePackageFolderLoad();
+    void systemEditorAssembly();
+    void startPageResearch();
+    void dockTitleDoubleClick();
+    void dockFloatDockStress();
 };
 
 void TestWorkbench::windowLoadsExample() {
-    auto workbench = start_workbench();
+    // 新窗口从空白打开：空会话、模块树为空、推进不可用。
+    auto workbench = start_workbench(false);
     MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+    QCOMPARE(window->currentStatus().phase, ascend::session::Phase::empty);
+    QVERIFY(!window->findChild<QPushButton*>("stepButton")->isEnabled());
+    auto* blank_tree = window->findChild<QTreeWidget*>("moduleTree");
+    QVERIFY(blank_tree != nullptr);
+    QCOMPARE(blank_tree->topLevelItemCount(), 0);
+
+    // 文件 → 打开示例：加载内置确定性三变量示例。
+    QVERIFY(open_example(window));
     QVERIFY(wait_idle(window));
     QCOMPARE(window->currentStatus().phase, ascend::session::Phase::runnable);
     QVERIFY(window->statusLine().contains(QStringLiteral("可运行")));
@@ -247,7 +349,7 @@ void TestWorkbench::stopDuringRun() {
     window->findChild<QPushButton*>("runButton")->click();
     QVERIFY(window->busy());
     // 运行中切换标签页只请求只读快照，不应禁用停止按钮。
-    window->findChild<QTabWidget*>("resultsTabs")->setCurrentIndex(1);
+    window->findChild<QTabWidget*>("resultsTabs")->setCurrentWidget(window->findChild<QWidget*>("differencesPage"));
     QVERIFY(window->findChild<QPushButton*>("stopButton")->isEnabled());
     // 请求在完整的逻辑帧边界生效，实际完成数小于请求步数。
     QElapsedTimer stop_timer;
@@ -282,7 +384,9 @@ void TestWorkbench::runNThroughput() {
     QCOMPARE(window->currentStatus().tracks.front().samples, static_cast<std::size_t>(10001));
     qInfo() << "ui runN 10000 elapsed" << elapsed << "ms";
     // 时间轴全量视图绘制耗时（可见区间渲染 + 按像素列降采样）。
-    if (auto* tabs = window->findChild<QTabWidget*>("resultsTabs")) tabs->setCurrentIndex(0);
+    if (auto* tabs = window->findChild<QTabWidget*>("resultsTabs")) {
+        tabs->setCurrentWidget(window->findChild<QWidget*>("timelinePage"));
+    }
     QTest::qWait(30);
     if (auto* waveform = window->findChild<QWidget*>("waveform")) {
         QElapsedTimer paint_timer;
@@ -412,7 +516,7 @@ void TestWorkbench::branchComparisonAndReplay() {
     QCOMPARE(cursor_table->item(9, 4)->text(), QStringLiteral("0"));
 
     // 共同逻辑帧差值：8、8、16。
-    window->findChild<QTabWidget*>("resultsTabs")->setCurrentIndex(1);
+    window->findChild<QTabWidget*>("resultsTabs")->setCurrentWidget(window->findChild<QWidget*>("differencesPage"));
     QVERIFY(wait_until([window] { return !window->busy(); }));
     QTest::qWait(30);
     auto* diff = window->findChild<QTableWidget*>("diffTable");
@@ -589,9 +693,12 @@ void TestWorkbench::menuBarStructure() {
     QVERIFY(wait_idle(window));
     QCOMPARE(window->currentStatus().tracks.front().samples, samples + 1);
 
-    // 文件菜单：实验文件入口已实装。
+    // 文件菜单：新建研究与研究文件入口已实装。
     QMenu* file_menu = menu_bar->actions().at(0)->menu();
-    QAction* open_experiment = find_action(file_menu, QStringLiteral("打开实验…"));
+    QAction* new_research = find_action(file_menu, QStringLiteral("新建研究…"));
+    QVERIFY(new_research != nullptr);
+    QVERIFY(new_research->isEnabled());
+    QAction* open_experiment = find_action(file_menu, QStringLiteral("打开研究…"));
     QVERIFY(open_experiment != nullptr);
     QVERIFY(open_experiment->isEnabled());
     QAction* save = find_action(file_menu, QStringLiteral("保存"));
@@ -631,27 +738,62 @@ void TestWorkbench::menuBarStructure() {
     QVERIFY(view_menu->isVisible());
     view_menu->close();
 
-    // 停靠面板可拆分浮动并恢复停靠；配置为停靠面板，结果为主工作区。
+    // 停靠面板可拆分浮动并恢复停靠；中央工作区为浏览器式页签（可关闭、从查看菜单重开）。
     state_dock->setFloating(true);
     QVERIFY(state_dock->isFloating());
     state_dock->setFloating(false);
     QVERIFY(!state_dock->isFloating());
     QAction* config_toggle = find_action(view_menu, QStringLiteral("配置"));
-    QAction* results_toggle = find_action(view_menu, QStringLiteral("结果"));
-    QVERIFY(config_toggle != nullptr && results_toggle != nullptr);
+    QVERIFY(config_toggle != nullptr);
     auto* config_dock = window->findChild<QDockWidget*>("configDock");
-    auto* results_tabs = window->findChild<QTabWidget*>("resultsTabs");
-    QVERIFY(config_dock != nullptr && results_tabs != nullptr);
+    QVERIFY(config_dock != nullptr);
     config_toggle->trigger();
     QVERIFY(config_dock->isHidden());
-    QVERIFY(!results_tabs->isHidden());
     config_toggle->trigger();
     QVERIFY(!config_dock->isHidden());
-    results_toggle->trigger();
-    QVERIFY(results_tabs->isHidden());
-    QVERIFY(!config_dock->isHidden());
-    results_toggle->trigger();
-    QVERIFY(!results_tabs->isHidden());
+
+    // 时间轴/共同逻辑帧差值页签：默认打开，可从查看菜单关闭与重开。
+    QAction* timeline_toggle = find_action(view_menu, QStringLiteral("时间轴"));
+    QAction* diffs_toggle = find_action(view_menu, QStringLiteral("共同逻辑帧差值"));
+    QVERIFY(timeline_toggle != nullptr && diffs_toggle != nullptr);
+    QVERIFY(timeline_toggle->isChecked());
+    QVERIFY(diffs_toggle->isChecked());
+    auto* results_tabs = window->findChild<QTabWidget*>("resultsTabs");
+    auto* timeline_page = window->findChild<QWidget*>("timelinePage");
+    auto* differences_page = window->findChild<QWidget*>("differencesPage");
+    QVERIFY(results_tabs != nullptr && timeline_page != nullptr && differences_page != nullptr);
+    // 开始页默认打开：先关闭，聚焦其余页签语义检查。
+    auto* start_toggle = window->findChild<QAction*>("startViewAction");
+    auto* start_page = window->findChild<QWidget*>("startPage");
+    QVERIFY(start_toggle != nullptr && start_page != nullptr);
+    QVERIFY(start_toggle->isChecked());
+    QVERIFY(results_tabs->indexOf(start_page) >= 0);
+    start_toggle->trigger();
+    QCOMPARE(results_tabs->indexOf(start_page), -1);
+    QVERIFY(!start_toggle->isChecked());
+    QVERIFY(results_tabs->indexOf(timeline_page) >= 0);
+    QVERIFY(results_tabs->indexOf(differences_page) >= 0);
+    diffs_toggle->trigger();
+    QCOMPARE(results_tabs->indexOf(differences_page), -1);
+    QVERIFY(!diffs_toggle->isChecked());
+    diffs_toggle->trigger();
+    QVERIFY(results_tabs->indexOf(differences_page) >= 0);
+    QVERIFY(diffs_toggle->isChecked());
+
+    // 浏览器式关闭按钮：最后一个页签的关闭请求被忽略（至少保留一个视图）。
+    timeline_toggle->trigger();
+    QCOMPARE(results_tabs->indexOf(timeline_page), -1);
+    QVERIFY(!timeline_toggle->isChecked());
+    QCOMPARE(results_tabs->count(), 1);
+    const int last_index = results_tabs->indexOf(differences_page);
+    QWidget* close_button = results_tabs->tabBar()->tabButton(last_index, QTabBar::RightSide);
+    QVERIFY(close_button != nullptr);
+    QTest::mouseClick(close_button, Qt::LeftButton);
+    QCOMPARE(results_tabs->count(), 1);
+    QVERIFY(diffs_toggle->isChecked());
+    timeline_toggle->trigger();
+    QVERIFY(results_tabs->indexOf(timeline_page) >= 0);
+    QVERIFY(timeline_toggle->isChecked());
 
     // 底部面板同样可在查看菜单中开关。
     auto* dock = window->findChild<QDockWidget*>("diagnosticsDock");
@@ -737,7 +879,7 @@ void TestWorkbench::fileSaveOpen() {
 }
 
 void TestWorkbench::fileOpenFailure() {
-    auto workbench = start_workbench();
+    auto workbench = start_workbench(false);
     MainWindow* window = workbench->window();
     QVERIFY(wait_idle(window));
 
@@ -777,6 +919,505 @@ void TestWorkbench::fileOpenFailure() {
     QVERIFY(tree != nullptr);
     QVERIFY(wait_until([&] { return tree->topLevelItemCount() >= 1; }, 4000));
     QFile::remove(path);
+}
+
+void TestWorkbench::modulePackageLoadUnload() {
+    auto workbench = start_workbench(false);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    // 生成示例模块包文件（无状态值模块）。
+    const QString path = write_example_package(
+        QDir::tempPath() + QStringLiteral("/ascend-workbench-module.amod"));
+
+    auto* table = window->findChild<QTableWidget*>("modulePackageTable");
+    QVERIFY(table != nullptr);
+    QCOMPARE(table->rowCount(), 0);
+    // 模块库是中央工作区页签：默认不打开；载入成功时自动打开并切换过去。
+    auto* results = window->findChild<QTabWidget*>("resultsTabs");
+    QVERIFY(results != nullptr);
+    auto* page = window->findChild<QWidget*>("packagesPage");
+    QVERIFY(page != nullptr);
+    QCOMPARE(results->indexOf(page), -1);
+    QVERIFY(!page->isVisible());
+    auto* library_action = window->findChild<QAction*>("packageLibraryAction");
+    QVERIFY(library_action != nullptr);
+    QVERIFY(library_action->isCheckable());
+    QVERIFY(!library_action->isChecked());
+
+    // 文件 → 载入模块包…：驱动文件对话框；成功后模块库页签打开并出现概要。
+    QTimer load_timer;
+    connect(&load_timer, &QTimer::timeout, [&] { drive_choose_paths_dialog({path}); });
+    load_timer.start(10);
+    window->findChild<QAction*>("loadModulePackageAction")->trigger();
+    QVERIFY(wait_until([&] { return table->rowCount() == 1; }, 8000));
+    load_timer.stop();
+    QVERIFY(wait_until([&] { return results->indexOf(page) >= 0; }, 4000));
+    QCOMPARE(results->currentWidget(), page);
+    QVERIFY(library_action->isChecked());
+    QCOMPARE(table->item(0, 0)->text(), QStringLiteral("library.source"));
+    QCOMPARE(table->item(0, 1)->text(), QStringLiteral("1.0"));
+    QCOMPARE(table->item(0, 3)->text(), QStringLiteral("无状态"));
+    QCOMPARE(table->item(0, 4)->text(), QStringLiteral("1"));
+
+    // 文件 → 卸载模块包…：选择对话框确认后表格清空（页签保留）。
+    QTimer unload_timer;
+    connect(&unload_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) return;
+        unload_timer.stop();
+        dialog->accept();
+    });
+    unload_timer.start(10);
+    window->findChild<QAction*>("unloadModulePackageAction")->trigger();
+    QVERIFY(wait_until([&] { return table->rowCount() == 0; }, 8000));
+    unload_timer.stop();
+    QVERIFY(results->indexOf(page) >= 0);
+
+    // 浏览器式页签：关闭按钮移除页签并从查看菜单重开。
+    const int tab_index = results->indexOf(page);
+    QWidget* close_button = results->tabBar()->tabButton(tab_index, QTabBar::RightSide);
+    QVERIFY(close_button != nullptr);
+    QTest::mouseClick(close_button, Qt::LeftButton);
+    QCOMPARE(results->indexOf(page), -1);
+    QVERIFY(!library_action->isChecked());
+    library_action->trigger();
+    QVERIFY(results->indexOf(page) >= 0);
+    QCOMPARE(results->currentWidget(), page);
+
+    // 损坏文件：提示本次操作的原因，已关闭的模块库页签不打开且列表不变。
+    library_action->trigger();  // 关闭页签
+    QCOMPARE(results->indexOf(page), -1);
+    const QString broken = QDir::tempPath() + QStringLiteral("/ascend-workbench-module-bad.amod");
+    {
+        QFile file(broken);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("not a module package");
+    }
+    QString box_text;
+    QTimer broken_timer;
+    connect(&broken_timer, &QTimer::timeout, [&] {
+        QWidget* modal = QApplication::activeModalWidget();
+        if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+            box_text = box->text();
+            box->accept();
+            return;
+        }
+        drive_choose_paths_dialog({broken});
+    });
+    broken_timer.start(10);
+    window->findChild<QAction*>("loadModulePackageAction")->trigger();
+    QVERIFY(wait_until([&] { return !box_text.isEmpty(); }, 8000));
+    broken_timer.stop();
+    QVERIFY(box_text.contains(QStringLiteral("ascend-workbench-module-bad.amod")));
+    QVERIFY(box_text.contains(QStringLiteral("\n")));
+    QCOMPARE(table->rowCount(), 0);
+    QCOMPARE(results->indexOf(page), -1);
+
+    QFile::remove(path);
+    QFile::remove(broken);
+}
+
+void TestWorkbench::modulePackageMultiLoad() {
+    auto workbench = start_workbench(false);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    const QString first = write_example_package(
+        QDir::tempPath() + QStringLiteral("/ascend-workbench-multi-source.amod"));
+    const QString second = write_example_package(
+        QDir::tempPath() + QStringLiteral("/ascend-workbench-multi-accumulator.amod"),
+        ascend::example::library_accumulator_definition);
+    auto* table = window->findChild<QTableWidget*>("modulePackageTable");
+    QVERIFY(table != nullptr);
+    QCOMPARE(table->rowCount(), 0);
+
+    // 一次多选两个包：两行都出现，模块库页签自动打开并切换过去。
+    QTimer load_timer;
+    connect(&load_timer, &QTimer::timeout, [&] { drive_choose_paths_dialog({first, second}); });
+    load_timer.start(10);
+    window->findChild<QAction*>("loadModulePackageAction")->trigger();
+    QVERIFY(wait_until([&] { return table->rowCount() == 2; }, 8000));
+    load_timer.stop();
+    auto* results = window->findChild<QTabWidget*>("resultsTabs");
+    auto* page = window->findChild<QWidget*>("packagesPage");
+    QVERIFY(results != nullptr && page != nullptr);
+    QVERIFY(wait_until([&] { return results->indexOf(page) >= 0; }, 4000));
+    QCOMPARE(results->currentWidget(), page);
+    QStringList definitions;
+    for (int row = 0; row < table->rowCount(); ++row) definitions << table->item(row, 0)->text();
+    QVERIFY(definitions.contains(QStringLiteral("library.source")));
+    QVERIFY(definitions.contains(QStringLiteral("library.accumulator")));
+
+    // 同批中失败项（重复载入与损坏文件）汇总一次列出：列表不变。
+    const QString broken = QDir::tempPath() + QStringLiteral("/ascend-workbench-multi-bad.amod");
+    {
+        QFile file(broken);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("not a module package");
+    }
+    QString box_text;
+    QTimer broken_timer;
+    connect(&broken_timer, &QTimer::timeout, [&] {
+        QWidget* modal = QApplication::activeModalWidget();
+        if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+            box_text = box->text();
+            box->accept();
+            return;
+        }
+        drive_choose_paths_dialog({first, broken});
+    });
+    broken_timer.start(10);
+    window->findChild<QAction*>("loadModulePackageAction")->trigger();
+    QVERIFY(wait_until([&] { return !box_text.isEmpty(); }, 8000));
+    broken_timer.stop();
+    QVERIFY(box_text.contains(QStringLiteral("ascend-workbench-multi-source.amod")));
+    QVERIFY(box_text.contains(QStringLiteral("ascend-workbench-multi-bad.amod")));
+    QVERIFY(box_text.contains(QStringLiteral("\n")));
+    QCOMPARE(table->rowCount(), 2);
+
+    QFile::remove(first);
+    QFile::remove(second);
+    QFile::remove(broken);
+}
+
+void TestWorkbench::modulePackageFolderLoad() {
+    auto workbench = start_workbench(false);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    const QString root = QDir::tempPath() + QStringLiteral("/ascend-workbench-folder");
+    QDir().mkpath(root + QStringLiteral("/empty"));
+    const QString first = write_example_package(root + QStringLiteral("/library.source.amod"));
+    const QString second = write_example_package(root + QStringLiteral("/library.accumulator.amod"),
+                                                 ascend::example::library_accumulator_definition);
+    const QString broken = root + QStringLiteral("/library.bad.amod");
+    {
+        QFile file(broken);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("not a module package");
+    }
+    {
+        QFile note(root + QStringLiteral("/notes.txt"));
+        QVERIFY(note.open(QIODevice::WriteOnly));
+        note.write("not a module package");
+    }
+
+    // 选择文件夹：载入其中全部模块包（忽略无关文件），失败项一次列出。
+    QStringList seen;
+    QString target = root;
+    QTimer timer;
+    connect(&timer, &QTimer::timeout, [&] {
+        QWidget* modal = QApplication::activeModalWidget();
+        if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+            seen << box->text();
+            box->accept();
+            return;
+        }
+        drive_choose_paths_dialog({target});
+    });
+    timer.start(10);
+    auto* action = window->findChild<QAction*>("loadModulePackageFolderAction");
+    QVERIFY(action != nullptr);
+    action->trigger();
+    QVERIFY(wait_until([&] { return seen.size() == 1; }, 8000));
+    QVERIFY(seen.first().contains(QStringLiteral("ascend-workbench-folder/library.bad.amod")));
+    QVERIFY(!seen.first().contains(QStringLiteral("notes.txt")));
+    auto* table = window->findChild<QTableWidget*>("modulePackageTable");
+    QVERIFY(table != nullptr);
+    QVERIFY(wait_until([&] { return table->rowCount() == 2; }, 4000));
+
+    // 空文件夹：提示没有模块包，列表不变。
+    QVERIFY(wait_until([&] { return action->isEnabled(); }, 4000));
+    target = root + QStringLiteral("/empty");
+    action->trigger();
+    QVERIFY(wait_until([&] { return seen.size() == 2; }, 8000));
+    QVERIFY(seen.last().contains(QStringLiteral("没有模块包")));
+    QCOMPARE(table->rowCount(), 2);
+    timer.stop();
+
+    QFile::remove(first);
+    QFile::remove(second);
+    QFile::remove(broken);
+    QFile::remove(root + QStringLiteral("/notes.txt"));
+    QDir(root).removeRecursively();
+}
+
+void TestWorkbench::systemEditorAssembly() {
+    auto workbench = start_workbench(false);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    // 编辑 → 系统编辑器…：打开中央页签。
+    window->findChild<QAction*>("systemEditorAction")->trigger();
+    auto* results = window->findChild<QTabWidget*>("resultsTabs");
+    auto* editor = window->findChild<QWidget*>("systemEditorPage");
+    QVERIFY(results != nullptr && editor != nullptr);
+    QVERIFY(wait_until([&] { return results->indexOf(editor) >= 0; }, 4000));
+    QCOMPARE(results->currentWidget(), editor);
+
+    // 可用模块：示例内置与模块库内置注册都可选。
+    auto* definition_combo = window->findChild<QComboBox*>("systemDefinitionCombo");
+    QVERIFY(definition_combo != nullptr);
+    QVERIFY(wait_until([&] { return definition_combo->findText(QStringLiteral("example.plant")) >= 0; }, 4000));
+    QVERIFY(definition_combo->findText(QStringLiteral("library.source")) >= 0);
+
+    // 新建系统：命名对话框。
+    QTimer name_timer;
+    connect(&name_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) return;
+        name_timer.stop();
+        dialog->setTextValue(QStringLiteral("编辑器系统"));
+        dialog->accept();
+    });
+    name_timer.start(10);
+    window->findChild<QPushButton*>("systemNewButton")->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return window->currentStatus().model_name == "编辑器系统"; }, 4000));
+    QVERIFY(window->windowTitle().contains(QStringLiteral("编辑器系统")));
+
+    // 添加模块：实例名按定义自动建议。
+    auto* instance_edit = window->findChild<QLineEdit*>("systemInstanceEdit");
+    auto* add_button = window->findChild<QPushButton*>("systemAddButton");
+    QVERIFY(instance_edit != nullptr && add_button != nullptr);
+    definition_combo->setCurrentText(QStringLiteral("example.plant"));
+    QCOMPARE(instance_edit->text(), QStringLiteral("plant"));
+    add_button->click();
+    QVERIFY(wait_idle(window));
+    definition_combo->setCurrentText(QStringLiteral("example.stimulus"));
+    QCOMPARE(instance_edit->text(), QStringLiteral("stimulus"));  // 默认取定义末段，可改
+    instance_edit->setText(QStringLiteral("input"));
+    add_button->click();
+    QVERIFY(wait_idle(window));
+
+    auto* tree = window->findChild<QTreeWidget*>("systemTree");
+    QVERIFY(tree != nullptr);
+    QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 2; }, 4000));
+    const auto find_requirement = [&](const QString& instance, const QString& symbol) -> QTreeWidgetItem* {
+        for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* top = tree->topLevelItem(i);
+            if (top->text(0) != instance) continue;
+            for (int j = 0; j < top->childCount(); ++j) {
+                if (top->child(j)->text(0) == symbol) return top->child(j);
+            }
+        }
+        return nullptr;
+    };
+    QTreeWidgetItem* requirement = find_requirement(QStringLiteral("plant"), QStringLiteral("input"));
+    QVERIFY(requirement != nullptr);
+    QVERIFY(requirement->text(2) != QStringLiteral("input/value"));  // 未连接
+
+    // 连接需求到 input/value。
+    tree->setCurrentItem(requirement);
+    auto* provider_combo = window->findChild<QComboBox*>("systemProviderCombo");
+    QVERIFY(provider_combo != nullptr);
+    QVERIFY(wait_until([&] { return provider_combo->findText(QStringLiteral("input/value")) >= 0; }, 4000));
+    provider_combo->setCurrentText(QStringLiteral("input/value"));
+    window->findChild<QPushButton*>("systemConnectButton")->click();
+    QVERIFY(wait_idle(window));
+    requirement = find_requirement(QStringLiteral("plant"), QStringLiteral("input"));
+    QVERIFY(requirement != nullptr);
+    QCOMPARE(requirement->text(2), QStringLiteral("input/value"));
+
+    // 规格：推进入口与观测显式选择；输入自动推导。
+    auto* advance_combo = window->findChild<QComboBox*>("systemAdvanceCombo");
+    QVERIFY(advance_combo != nullptr);
+    QVERIFY(advance_combo->findText(QStringLiteral("plant/advance")) >= 0);
+    advance_combo->setCurrentText(QStringLiteral("plant/advance"));
+    QVERIFY(wait_idle(window));
+    auto* observation_list = window->findChild<QListWidget*>("systemObservationList");
+    QVERIFY(observation_list != nullptr);
+    QVERIFY(observation_list->count() >= 3);
+    for (int i = 0; i < observation_list->count(); ++i) {
+        auto* item = observation_list->item(i);
+        if (item->text() == QStringLiteral("plant/x") || item->text() == QStringLiteral("plant/y") ||
+            item->text() == QStringLiteral("plant/z")) {
+            item->setCheckState(Qt::Checked);
+        }
+    }
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] {
+        int checked = 0;
+        for (int i = 0; i < observation_list->count(); ++i) {
+            if (observation_list->item(i)->checkState() == Qt::Checked) ++checked;
+        }
+        return checked == 3;
+    }, 4000));
+    auto* input_label = window->findChild<QLabel*>("systemInputLabel");
+    QVERIFY(input_label != nullptr);
+    QVERIFY(input_label->text().contains(QStringLiteral("input.drive")));
+
+    // 应用并推进：新系统成为可运行模型。
+    window->findChild<QPushButton*>("systemApplyButton")->click();
+    QVERIFY(wait_until([&] { return window->currentStatus().phase == ascend::session::Phase::runnable; }, 8000));
+    window->findChild<QPushButton*>("stepButton")->click();
+    QVERIFY(wait_idle(window));
+    QCOMPARE(window->currentStatus().tracks.size(), std::size_t{1});
+    QCOMPARE(window->currentStatus().tracks.front().frame, std::int64_t{1});
+
+    // 移除实例（确认对话框）：plant 移除后只剩 input。
+    tree->setCurrentItem(find_requirement(QStringLiteral("plant"), QStringLiteral("input")));
+    QTimer remove_timer;
+    connect(&remove_timer, &QTimer::timeout, [&] {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (box == nullptr) return;
+        remove_timer.stop();
+        box->button(QMessageBox::Yes)->click();
+    });
+    remove_timer.start(10);
+    window->findChild<QPushButton*>("systemRemoveButton")->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 1; }, 4000));
+    QCOMPARE(tree->topLevelItem(0)->text(0), QStringLiteral("input"));
+}
+
+void TestWorkbench::startPageResearch() {
+    auto workbench = start_workbench(false);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    // 默认打开开始页；未打开系统时标题不含模型名。
+    auto* results = window->findChild<QTabWidget*>("resultsTabs");
+    auto* start = window->findChild<QWidget*>("startPage");
+    QVERIFY(results != nullptr && start != nullptr);
+    QCOMPARE(results->currentWidget(), start);
+    QCOMPARE(window->windowTitle(), QStringLiteral("Ascend 因果建模工作台"));
+
+    // 开始页 → 打开内置示例。
+    window->findChild<QPushButton*>("startOpenExampleButton")->click();
+    QVERIFY(wait_until([&] { return window->currentStatus().phase == ascend::session::Phase::runnable; }, 8000));
+    QCOMPARE(results->indexOf(start), -1);
+    QVERIFY(window->windowTitle().contains(QStringLiteral("确定性三变量")));
+
+    // 查看菜单重新打开开始页；新建研究（创建新的因果系统）。
+    window->findChild<QAction*>("startViewAction")->trigger();
+    QVERIFY(wait_until([&] { return results->indexOf(start) >= 0; }, 4000));
+    QTimer research_timer;
+    connect(&research_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr || dialog->objectName() != QStringLiteral("newResearchDialog")) return;
+        research_timer.stop();
+        dialog->findChild<QLineEdit*>("researchNameEdit")->setText(QStringLiteral("起始研究"));
+        dialog->accept();
+    });
+    research_timer.start(10);
+    window->findChild<QPushButton*>("startNewResearchButton")->click();
+    QVERIFY(wait_idle(window));
+    auto* editor = window->findChild<QWidget*>("systemEditorPage");
+    QVERIFY(editor != nullptr);
+    QVERIFY(wait_until([&] { return results->indexOf(editor) >= 0 && results->currentWidget() == editor; }, 4000));
+    QVERIFY(wait_until([&] { return window->currentStatus().model_name == "起始研究"; }, 4000));
+    QCOMPARE(window->currentStatus().phase, ascend::session::Phase::editing);
+    QCOMPARE(results->indexOf(start), -1);
+    QVERIFY(window->windowTitle().contains(QStringLiteral("起始研究")));
+
+    // 添加模块并保存因果系统文件（.aasm）。
+    auto* definition_combo = window->findChild<QComboBox*>("systemDefinitionCombo");
+    auto* add_button = window->findChild<QPushButton*>("systemAddButton");
+    QVERIFY(definition_combo != nullptr && add_button != nullptr);
+    definition_combo->setCurrentText(QStringLiteral("example.plant"));
+    add_button->click();
+    QVERIFY(wait_idle(window));
+    auto* tree = window->findChild<QTreeWidget*>("systemTree");
+    QVERIFY(tree != nullptr);
+    QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 1; }, 4000));
+
+    const QString path = QDir::tempPath() + QStringLiteral("/ascend-workbench-system.aasm");
+    QFile::remove(path);
+    QTimer save_timer;
+    connect(&save_timer, &QTimer::timeout, [&] { drive_file_dialog(path); });
+    save_timer.start(10);
+    window->findChild<QPushButton*>("systemSaveButton")->click();
+    QVERIFY(wait_until([&] { return QFile::exists(path); }, 8000));
+    save_timer.stop();
+    QVERIFY(wait_until([&] {
+        auto* label = window->findChild<QLabel*>("systemNameLabel");
+        return label != nullptr && label->text().contains(QStringLiteral("ascend-workbench-system.aasm"));
+    }, 4000));
+
+    // 再次从开始页新建研究：选择打开已有因果系统文件。
+    window->findChild<QAction*>("startViewAction")->trigger();
+    QVERIFY(wait_until([&] { return results->indexOf(start) >= 0; }, 4000));
+    bool research_done = false;
+    QTimer open_timer;
+    connect(&open_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog != nullptr && dialog->objectName() == QStringLiteral("newResearchDialog")) {
+            if (research_done) return;
+            research_done = true;
+            dialog->findChild<QLineEdit*>("researchNameEdit")->setText(QStringLiteral("打开系统研究"));
+            dialog->findChild<QRadioButton*>("researchOpenSystemRadio")->setChecked(true);
+            dialog->accept();
+            return;
+        }
+        drive_file_dialog(path);
+    });
+    open_timer.start(10);
+    window->findChild<QPushButton*>("startNewResearchButton")->click();
+    QVERIFY(wait_idle(window));
+    open_timer.stop();
+    QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 1; }, 4000));
+    QVERIFY(wait_until([&] { return window->currentStatus().model_name == "打开系统研究"; }, 4000));
+    QCOMPARE(results->currentWidget(), editor);
+    QVERIFY(results->indexOf(start) == -1);
+    QVERIFY(window->windowTitle().contains(QStringLiteral("打开系统研究")));
+
+    QFile::remove(path);
+}
+
+void TestWorkbench::dockTitleDoubleClick() {
+    // 双击各停靠面板标题栏切换浮动/停靠（中央工作区页签不属于停靠面板）。
+    auto workbench = start_workbench(true);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    const QStringList names = {QStringLiteral("modulesDock"), QStringLiteral("configDock"),
+                               QStringLiteral("stateDock"), QStringLiteral("diagnosticsDock")};
+    for (const auto& name : names) {
+        auto* dock = window->findChild<QDockWidget*>(name);
+        QVERIFY2(dock != nullptr, qPrintable(name));
+        if (!dock->isVisible()) dock->show();
+        QTest::qWait(30);
+        const int y = dock->style()->pixelMetric(QStyle::PM_TitleBarHeight) / 2;
+        QTest::mouseDClick(dock, Qt::LeftButton, Qt::NoModifier, QPoint(dock->width() / 2, y));
+        QTest::qWait(50);
+        if (dock->isFloating()) {
+            dock->setFloating(false);
+            QTest::qWait(50);
+        }
+    }
+}
+
+void TestWorkbench::dockFloatDockStress() {
+    // 停靠面板反复浮动/回停与显隐：覆盖停靠状态反复切换的稳定性。
+    auto workbench = start_workbench(true);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+    const QStringList names = {QStringLiteral("modulesDock"), QStringLiteral("configDock"),
+                               QStringLiteral("stateDock"), QStringLiteral("diagnosticsDock")};
+    for (const auto& name : names) {
+        auto* dock = window->findChild<QDockWidget*>(name);
+        QVERIFY2(dock != nullptr, qPrintable(name));
+        for (int round = 0; round < 2; ++round) {
+            dock->setFloating(true);
+            QTest::qWait(30);
+            dock->setFloating(false);
+            QTest::qWait(30);
+            dock->hide();
+            QTest::qWait(20);
+            dock->show();
+            QTest::qWait(30);
+        }
+    }
+    const int y = window->findChild<QDockWidget*>("configDock")->style()->pixelMetric(QStyle::PM_TitleBarHeight) / 2;
+    auto* config = window->findChild<QDockWidget*>("configDock");
+    QTest::mouseDClick(config, Qt::LeftButton, Qt::NoModifier, QPoint(config->width() / 2, y));
+    QTest::qWait(60);
+    if (config->isFloating()) {
+        config->setFloating(false);
+        QTest::qWait(60);
+    }
 }
 
 void TestWorkbench::captureScreenshot() {
@@ -819,12 +1460,12 @@ void TestWorkbench::captureScreenshot() {
         if (scroll->verticalScrollBar() != nullptr) scroll->verticalScrollBar()->setValue(0);
     }
     auto* tabs = window->findChild<QTabWidget*>("resultsTabs");
-    tabs->setCurrentIndex(0);
+    tabs->setCurrentWidget(window->findChild<QWidget*>("timelinePage"));
     QTest::qWait(80);
     const QString path =
         qEnvironmentVariable("ASCEND_WORKBENCH_SCREENSHOT", QStringLiteral("workbench-ui.png"));
     QVERIFY2(window->grab().save(path), qPrintable(QStringLiteral("cannot save %1").arg(path)));
-    tabs->setCurrentIndex(1);
+    tabs->setCurrentWidget(window->findChild<QWidget*>("differencesPage"));
     QTest::qWait(50);
     const QString diff_path = path.chopped(4) + QStringLiteral("-diff.png");
     QVERIFY2(window->grab().save(diff_path),

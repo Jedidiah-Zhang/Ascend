@@ -58,6 +58,8 @@ foreach(case IN ITEMS
     roundtrip
     config_change
     wiring
+    editing_instance
+    factory_merge
     independence
     config_values
     record_errors

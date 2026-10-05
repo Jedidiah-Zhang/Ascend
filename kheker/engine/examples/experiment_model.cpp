@@ -164,6 +164,44 @@ AssemblyDefinition environment(const Values& initial, Integer input) {
     return result;
 }
 
+Module module_library_source(const std::string& instance, const Config&) {
+    Module module(instance);
+    module.declare_stateless();
+    module.add_value<Integer>("value", [] { return Integer{7}; }, {}, "library.scalar.v1");
+    return module;
+}
+
+Module module_library_accumulator(const std::string& instance, const Config&) {
+    Module module(instance);
+    auto total = std::make_shared<Integer>(0);
+    module.add_value<Integer>("total", [total] { return *total; }, {}, "library.scalar.v1");
+    MethodOptions add_options;
+    add_options.contract = "library.accumulator.add.v1";
+    module.add_method<void, Integer>("add", {"amount"},
+                                     [total](Integer amount) { *total += amount; }, add_options);
+    module.add_state("library.accumulator.state.v1", [total] { return Config::integer(*total); },
+                     [total](const Config& state) { *total = state.integer(); });
+    return module;
+}
+
+Module module_library_relay(const std::string& instance, const Config&) {
+    Module module(instance);
+    auto input = module.require_value<Integer>("in", "library.scalar.v1");
+    module.declare_stateless();
+    module.add_value<Integer>("out", [input](const Context& context) { return input.read(context); },
+                              {}, "library.scalar.v1");
+    return module;
+}
+
+void register_module_library(ModuleLibrary& library) {
+    library.register_implementation(library_source_definition, library_source_implementation,
+                                    module_library_source);
+    library.register_implementation(library_accumulator_definition, library_accumulator_implementation,
+                                    module_library_accumulator);
+    library.register_implementation(library_relay_definition, library_relay_implementation,
+                                    module_library_relay);
+}
+
 ExperimentSpec specification() {
     return ExperimentSpec{{"plant", "advance"},
                           {{"a", {"input", "drive"}}},

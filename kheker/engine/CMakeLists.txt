@@ -53,7 +53,7 @@ if(ASCEND_ENGINE_BUILD_EXAMPLES)
     target_link_libraries(ascend_text_catalog PRIVATE ascend::engine)
 
     add_executable(ascend_module_library examples/module_library.cpp)
-    target_link_libraries(ascend_module_library PRIVATE ascend::engine)
+    target_link_libraries(ascend_module_library PRIVATE ascend::engine ascend::experiment_model)
 endif()
 
 include(CTest)

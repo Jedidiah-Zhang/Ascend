@@ -387,6 +387,9 @@ Session::Session(ModelTemplate model, std::shared_ptr<const AdapterRegistry> ada
     : model_(std::move(model)), adapters_(std::move(adapters)) {
     if (!adapters_) throw std::invalid_argument("session requires an adapter registry");
     locale_ = model_.locale.empty() ? "zh-CN" : model_.locale;
+    spec_ = model_.spec;
+    system_name_ = model_.name;
+    rebuild_factories();
     texts_.set_default_locale(locale_);
     std::vector<I18nResource> loaded;
     for (const auto& resource : model_.resources) {
@@ -412,7 +415,8 @@ Session::~Session() = default;
 Status Session::make_status() const {
     Status status;
     status.phase = phase_;
-    status.model_name = model_.name;
+    status.model_name = phase_ == Phase::empty ? std::string{}
+                                                : (system_name_.empty() ? model_.name : system_name_);
     status.draft_revision = draft_revision_;
     status.run_revision = run_revision_;
     if (run_id_ != 0) status.run_id = run_id_;
@@ -475,9 +479,9 @@ CatalogView Session::catalog() const { return catalog_; }
 
 SpecView Session::spec() const {
     SpecView view;
-    view.advance = model_.spec.advance;
-    view.inputs = model_.spec.inputs;
-    view.observations = model_.spec.observations;
+    view.advance = spec_.advance;
+    view.inputs = spec_.inputs;
+    view.observations = spec_.observations;
     return view;
 }
 
@@ -494,13 +498,17 @@ std::vector<InstanceView> Session::instances() const {
 
 std::vector<std::string> Session::input_names() const {
     std::vector<std::string> result;
-    for (const auto& entry : model_.spec.inputs) result.push_back(entry.first);
+    for (const auto& entry : spec_.inputs) result.push_back(entry.first);
     return result;
 }
 
 std::vector<std::string> Session::observation_names() const {
+    // 轨迹与信号树使用已应用运行的规格；尚无运行时显示草稿规格（编辑态）。
+    const auto& observations =
+        (has_exploration_ || !record_.branches.empty()) ? record_.spec.observations : spec_.observations;
     std::vector<std::string> result;
-    for (const auto& entry : model_.spec.observations) result.push_back(entry.first);
+    result.reserve(observations.size());
+    for (const auto& entry : observations) result.push_back(entry.first);
     return result;
 }
 
@@ -728,11 +736,82 @@ OperationResult Session::finish(bool ok, std::vector<DiagnosticView> diagnostics
     return result;
 }
 
+void Session::rebuild_factories() {
+    factories_ = model_.factories;
+    if (model_.modules) factories_.merge_from(model_.modules->factories());
+}
+
+std::vector<DiagnosticView> Session::refresh_catalog() {
+    try {
+        Engine engine = draft_.instantiate(factories_);
+        catalog_ = collect_catalog(engine, *adapters_, texts_, locale_, draft_revision_);
+        return {};
+    } catch (const EngineError& error) {
+        // 保留旧目录：编辑器继续显示上一次可实例化的结构，诊断提示当前草稿的问题。
+        return {view_of(error.diagnostic(), texts_, locale_)};
+    }
+}
+
+bool Session::derive_spec_inputs() {
+    // 输入映射按公开单参数方法推导；引用未变的既有输入沿用原名（如示例的 "a"）。
+    // 根作用域目录含各实例的公开声明（引用为「实例/符号」）；切片 A 只看根作用域实例。
+    std::map<Reference, std::string> existing;
+    for (const auto& item : spec_.inputs) existing.emplace(item.second, item.first);
+    std::vector<std::pair<std::string, Reference>> derived;
+    for (const auto& node : catalog_.modules) {
+        if (!node.path.empty()) continue;
+        for (const auto& declaration : node.declarations) {
+            if (declaration.kind != SymbolKind::method || declaration.parameters.size() != 1) continue;
+            const Reference& reference = declaration.reference;
+            if (reference.module.empty() || reference.module.find('/') != std::string::npos) continue;
+            const auto found = existing.find(reference);
+            derived.emplace_back(found != existing.end() ? found->second
+                                                         : reference.module + "." + reference.symbol,
+                                 reference);
+        }
+    }
+    if (derived == spec_.inputs) return false;
+    spec_.inputs = std::move(derived);
+    return true;
+}
+
+OperationResult Session::reject_without_system() const {
+    // 空会话尚未确立系统身份：编辑命令返回诊断且不改变会话状态（设计状态表）。
+    return reject(session_text("session.system.empty", "Create or open a causal system first"));
+}
+
+bool Session::has_instance(const std::string& name) const {
+    for (const auto& instance : draft_.instances()) {
+        if (instance.name == name) return true;
+    }
+    return false;
+}
+
+std::string Session::implementation_of(const std::string& definition) const {
+    const auto found = model_.implementations.find(definition);
+    if (found != model_.implementations.end()) return found->second;
+    if (model_.modules && model_.modules->contains(definition)) {
+        return model_.modules->manifest(definition).implementation;
+    }
+    return {};
+}
+
+std::map<std::string, std::string> Session::used_implementations() const {
+    std::map<std::string, std::string> result;
+    for (const auto& scope : draft_.scopes()) {
+        for (const auto& instance : draft_.instances(scope)) {
+            const auto implementation = implementation_of(instance.definition);
+            if (!implementation.empty()) result.emplace(instance.definition, implementation);
+        }
+    }
+    return result;
+}
+
 CheckReport Session::run_checks() {
     CheckReport report;
     Engine engine;
     try {
-        engine = draft_.instantiate(model_.factories);
+        engine = draft_.instantiate(factories_);
     } catch (const EngineError& error) {
         const auto view = view_of(error.diagnostic(), texts_, locale_);
         report.items.push_back(CheckItemView{
@@ -765,10 +844,10 @@ CheckReport Session::run_checks() {
     bool passed = true;
 
     // 推进入口：顶层公开方法、无参数、无返回值。
-    const auto* advance = root_declaration(catalog_, model_.spec.advance);
+    const auto* advance = root_declaration(catalog_, spec_.advance);
     const auto advance_subject = render_session(
         texts_, locale_, "session.check.subject.advance", "Advance entry {reference}",
-        {{"reference", reference_text(model_.spec.advance)}});
+        {{"reference", reference_text(spec_.advance)}});
     const auto spec_area = render_session(texts_, locale_, "session.check.area.spec", "Experiment specification");
     if (!advance) {
         passed = false;
@@ -776,9 +855,9 @@ CheckReport Session::run_checks() {
                                              render_session(texts_, locale_, "session.check.note.entry_missing",
                                                             "No top-level declaration found")});
         report.diagnostics.push_back(view_of(
-            make_diagnostic(ErrorCode::missing_symbol, model_.spec.advance, "session.entry.missing",
+            make_diagnostic(ErrorCode::missing_symbol, spec_.advance, "session.entry.missing",
                             "Experiment specification entry not found: {reference}",
-                            {{"reference", reference_text(model_.spec.advance)}}),
+                            {{"reference", reference_text(spec_.advance)}}),
             texts_, locale_));
     } else if (advance->kind != SymbolKind::method || advance->result_type != "void" ||
                !advance->parameters.empty()) {
@@ -873,8 +952,8 @@ CheckReport Session::run_checks() {
                            {{"type", declaration->result_type}})});
     };
 
-    for (const auto& input : model_.spec.inputs) check_entry(true, input.first, input.second);
-    for (const auto& observation : model_.spec.observations) check_entry(false, observation.first, observation.second);
+    for (const auto& input : spec_.inputs) check_entry(true, input.first, input.second);
+    for (const auto& observation : spec_.observations) check_entry(false, observation.first, observation.second);
 
     // 实现标识：宿主必须为草稿使用的每个模块定义提供已核对的实现标识。
     std::vector<std::string> definitions;
@@ -886,8 +965,8 @@ CheckReport Session::run_checks() {
         }
     }
     for (const auto& definition : definitions) {
-        const auto found = model_.implementations.find(definition);
-        if (found == model_.implementations.end()) {
+        const auto implementation = implementation_of(definition);
+        if (implementation.empty()) {
             passed = false;
             report.items.push_back(CheckItemView{
                 render_session(texts_, locale_, "session.check.area.implementations", "Implementation identifiers"),
@@ -902,7 +981,7 @@ CheckReport Session::run_checks() {
         } else {
             report.items.push_back(CheckItemView{
                 render_session(texts_, locale_, "session.check.area.implementations", "Implementation identifiers"),
-                definition, true, found->second});
+                definition, true, implementation});
         }
     }
 
@@ -918,10 +997,10 @@ CheckReport Session::run_checks() {
 
 void Session::build_source_run() {
     const auto source_label = render_session(texts_, locale_, "session.branch.source", "Run");
-    auto run = std::make_unique<ExperimentRun>(draft_, model_.factories, model_.spec, source_label);
+    auto run = std::make_unique<ExperimentRun>(draft_, factories_, spec_, source_label);
     auto origin = run->checkpoint();
     RunTrace trace{source_label, origin, {}, {run->sample()}, {}, {}};
-    record_ = ExperimentRecord{draft_, model_.spec, model_.implementations, {}, {std::move(trace)}};
+    record_ = ExperimentRecord{draft_, spec_, used_implementations(), {}, {std::move(trace)}};
     auto track = std::make_unique<Track>();
     track->index = 0;
     track->run = std::move(run);
@@ -940,6 +1019,8 @@ void Session::build_source_run() {
 
 OperationResult Session::load() {
     draft_ = model_.assembly;
+    spec_ = model_.spec;
+    system_name_ = model_.name;
     draft_revision_ = 1;
     catalog_ = {};
     inputs_.clear();
@@ -1021,13 +1102,181 @@ OperationResult Session::set_instance_config(const std::string& scope, const std
     }
 }
 
+OperationResult Session::new_system(std::string name) {
+    // 新建系统在空会话中确立身份，直接进入编辑态。
+    draft_ = AssemblyDefinition{};
+    spec_ = {};
+    system_name_ = std::move(name);
+    ++draft_revision_;
+    catalog_ = {};
+    inputs_.clear();
+    record_ = {};
+    tracks_.clear();
+    exploration_trace_ = {};
+    exploration_events_.clear();
+    record_events_.clear();
+    record_frames_.clear();
+    has_exploration_ = false;
+    checkpoint_.reset();
+    run_id_ = 0;
+    run_revision_ = 0;
+    last_failure_.reset();
+    phase_ = Phase::editing;
+    return finish(true);
+}
+
+std::vector<std::string> Session::available_modules() const { return factories_.definitions(); }
+
+OperationResult Session::add_module(std::string definition, std::string instance, Config config) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    if (!factories_.contains(definition)) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::unknown_definition, {instance, {}},
+                                                      "session.system.unknown_definition",
+                                                      "No available module definition '{definition}'",
+                                                      {{"definition", definition}}),
+                                           texts_, locale_)});
+    }
+    if (instance.empty() || instance.find('/') != std::string::npos) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, {instance, {}},
+                                                      "session.system.invalid_instance",
+                                                      "Instance name must be non-empty and must not contain '/'"),
+                                           texts_, locale_)});
+    }
+    if (has_instance(instance)) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, {instance, {}},
+                                                      "session.system.duplicate_instance",
+                                                      "Instance '{instance}' already exists",
+                                                      {{"instance", instance}}),
+                                           texts_, locale_)});
+    }
+    try {
+        draft_.add_instance(std::move(definition), std::move(instance), std::move(config));
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    ++draft_revision_;
+    auto diagnostics = refresh_catalog();
+    if (derive_spec_inputs()) ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    return finish(true, std::move(diagnostics));
+}
+
+OperationResult Session::remove_module(const std::string& instance) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    try {
+        draft_.remove_instance(instance);
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    ++draft_revision_;
+    auto diagnostics = refresh_catalog();
+    if (derive_spec_inputs()) ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    return finish(true, std::move(diagnostics));
+}
+
+OperationResult Session::connect_requirement(const Reference& requirement, const Reference& provider) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    if (!has_instance(requirement.module)) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, requirement,
+                                                      "session.system.missing_instance",
+                                                      "No instance '{instance}' in the draft assembly",
+                                                      {{"instance", requirement.module}}),
+                                           texts_, locale_)});
+    }
+    if (!provider.module.empty() && !has_instance(provider.module)) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, provider,
+                                                      "session.system.missing_instance",
+                                                      "No instance '{instance}' in the draft assembly",
+                                                      {{"instance", provider.module}}),
+                                           texts_, locale_)});
+    }
+    draft_.disconnect(requirement);  // 同一需求已有连接时替换
+    draft_.connect(requirement, provider);
+    ++draft_revision_;
+    auto diagnostics = refresh_catalog();
+    if (derive_spec_inputs()) ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    return finish(true, std::move(diagnostics));
+}
+
+OperationResult Session::disconnect_requirement(const Reference& requirement) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    if (!draft_.disconnect(requirement)) return finish(true);  // 无该连接：无操作成功
+    ++draft_revision_;
+    auto diagnostics = refresh_catalog();
+    if (derive_spec_inputs()) ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    return finish(true, std::move(diagnostics));
+}
+
+OperationResult Session::set_spec_advance(const Reference& advance) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    if (spec_.advance == advance) return finish(true);
+    spec_.advance = advance;
+    ++draft_revision_;
+    catalog_.revision = draft_revision_;  // 规格不改变装配目录内容，仅对齐修订
+    return finish(true);
+}
+
+OperationResult Session::set_spec_observations(std::vector<std::pair<std::string, Reference>> observations) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    if (spec_.observations == observations) return finish(true);
+    spec_.observations = std::move(observations);
+    ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    return finish(true);
+}
+
+OperationResult Session::open_system(const std::string& bytes, std::string name, std::string source) {
+    AssemblyDefinition parsed;
+    try {
+        parsed = AssemblyDefinition::parse(bytes, std::move(source));
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    draft_ = std::move(parsed);
+    spec_ = {};
+    if (!name.empty()) system_name_ = std::move(name);
+    ++draft_revision_;
+    catalog_ = {};
+    inputs_.clear();
+    record_ = {};
+    tracks_.clear();
+    exploration_trace_ = {};
+    exploration_events_.clear();
+    record_events_.clear();
+    record_frames_.clear();
+    has_exploration_ = false;
+    checkpoint_.reset();
+    run_id_ = 0;
+    run_revision_ = 0;
+    last_failure_.reset();
+    phase_ = Phase::editing;
+    auto diagnostics = refresh_catalog();
+    if (derive_spec_inputs()) ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    return finish(true, std::move(diagnostics));
+}
+
+Session::EncodeResult Session::encode_system() const {
+    EncodeResult result;
+    try {
+        result.bytes = draft_.to_json();
+        result.ok = true;
+    } catch (const EngineError& error) {
+        result.diagnostic = view_of(error.diagnostic(), texts_, locale_);
+    }
+    return result;
+}
+
 OperationResult Session::set_input(const std::string& name, std::any value) {
     if (phase_ == Phase::empty) {
         return reject(session_text("session.empty", "Open the example before this operation"));
     }
-    const auto found = std::find_if(model_.spec.inputs.begin(), model_.spec.inputs.end(),
+    const auto found = std::find_if(spec_.inputs.begin(), spec_.inputs.end(),
                                     [&](const auto& item) { return item.first == name; });
-    if (found == model_.spec.inputs.end()) {
+    if (found == spec_.inputs.end()) {
         return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_declaration, {},
                                                       "session.input.unknown", "No input named '{name}'",
                                                       {{"name", name}}),
@@ -1086,14 +1335,14 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
         }
         const auto frame = tracks_.front()->run->frame();
         // 驱动阶段：逐输入记录本分支实际成功执行的输入；共同输入随后由各分支结果整理。
-        std::vector<char> common(model_.spec.inputs.size(), 1);
+        std::vector<char> common(record_.spec.inputs.size(), 1);
         bool any_driving = false;
         for (const auto& track : tracks_) {
             if (track->failed) continue;
             any_driving = true;
             bool branch_failed = false;
-            for (std::size_t index = 0; index < model_.spec.inputs.size(); ++index) {
-                const auto& input = model_.spec.inputs[index];
+            for (std::size_t index = 0; index < record_.spec.inputs.size(); ++index) {
+                const auto& input = record_.spec.inputs[index];
                 const auto found = inputs_.find(input.first);
                 if (found == inputs_.end()) continue;  // 未驱动：使用模块自身配置值
                 if (branch_failed) {
@@ -1149,12 +1398,12 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
         if (!failed_cycle) ++completed_cycles;
         // 共同输入：所有参与分支都成功驱动的输入（按规格顺序）；部分成功的输入保留在分支轨迹中。
         if (any_driving) {
-            for (std::size_t index = 0; index < model_.spec.inputs.size(); ++index) {
+            for (std::size_t index = 0; index < record_.spec.inputs.size(); ++index) {
                 if (common[index] == 0) continue;
-                const auto found = inputs_.find(model_.spec.inputs[index].first);
+                const auto found = inputs_.find(record_.spec.inputs[index].first);
                 if (found == inputs_.end()) continue;
                 record_.inputs.push_back(
-                    DrivenInput{frame, model_.spec.inputs[index].first, {found->second}});
+                    DrivenInput{frame, record_.spec.inputs[index].first, {found->second}});
             }
         }
         if (failed_cycle) break;
@@ -1212,7 +1461,7 @@ OperationResult Session::replace_with_branches(const std::vector<BranchRequest>&
         }
         std::unique_ptr<ExperimentRun> run;
         try {
-            run = std::make_unique<ExperimentRun>(record_.assembly, model_.factories, model_.spec, branch.label);
+            run = std::make_unique<ExperimentRun>(record_.assembly, factories_, spec_, branch.label);
             run->restore(start);
         } catch (const EngineError& error) {
             return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
@@ -1371,8 +1620,8 @@ ReplayReport Session::rebuild_record(const ExperimentRecord& record,
         return report;
     }
     for (const auto& item : record.implementations) {
-        const auto found = model_.implementations.find(item.first);
-        if (found == model_.implementations.end() || found->second != item.second) {
+        const auto implementation = implementation_of(item.first);
+        if (implementation.empty() || implementation != item.second) {
             report.diagnostic = view_of(
                 make_diagnostic(ErrorCode::invalid_config, {}, "session.replay.implementation",
                                 "Implementation identifier for '{definition}' does not match the host-checked one",
@@ -1403,10 +1652,10 @@ ReplayReport Session::rebuild_record(const ExperimentRecord& record,
             ExperimentRun* run = nullptr;
             if (runs != nullptr) {
                 runs->push_back(
-                    std::make_unique<ExperimentRun>(loaded, model_.factories, record.spec, trace.label));
+                    std::make_unique<ExperimentRun>(loaded, factories_, record.spec, trace.label));
                 run = runs->back().get();
             } else {
-                owned = std::make_unique<ExperimentRun>(loaded, model_.factories, record.spec, trace.label);
+                owned = std::make_unique<ExperimentRun>(loaded, factories_, record.spec, trace.label);
                 run = owned.get();
             }
             run->restore(apply_interventions(trace.origin, trace.interventions));
@@ -1498,7 +1747,7 @@ ReplayReport Session::verify_standalone(const AssemblyDefinition& assembly, cons
     ReplayReport report;
     try {
         const auto loaded = AssemblyDefinition::parse(assembly.to_json());
-        auto run = std::make_unique<ExperimentRun>(loaded, model_.factories, spec, trace.label);
+        auto run = std::make_unique<ExperimentRun>(loaded, factories_, spec, trace.label);
         run->restore(trace.origin);
         std::size_t index = 0;
         const auto verify = [&]() -> bool {
@@ -1572,7 +1821,7 @@ const std::vector<StepEvent>* Session::trace_events(std::size_t branch_index) co
 
 ExperimentFile Session::experiment_file() const {
     ExperimentFile file;
-    file.model = model_.name;
+    file.model = system_name_;
     file.assembly = record_.assembly;
     file.spec = record_.spec;
     file.implementations = record_.implementations;
@@ -1734,6 +1983,8 @@ OperationResult Session::open_experiment(const ExperimentFile& file) {
     }
     run_revision_ = file.run_revision;
     run_id_ = file.run_id.has_value() ? *file.run_id : run_id_ + 1;
+    spec_ = file.spec;
+    system_name_ = file.model;
     last_failure_.reset();
     phase_ = adopt ? Phase::runnable : Phase::record;
     std::vector<DiagnosticView> notes;
@@ -1744,6 +1995,58 @@ OperationResult Session::open_experiment(const ExperimentFile& file) {
             texts_, locale_));
     }
     return finish(true, std::move(notes));
+}
+
+std::vector<ModulePackageView> Session::module_packages() const {
+    std::vector<ModulePackageView> result;
+    if (!model_.modules) return result;
+    for (const auto& entry : model_.modules->entries()) {
+        ModulePackageView view;
+        view.definition = entry.definition;
+        view.version = entry.version;
+        view.implementation = entry.implementation;
+        view.stateless = entry.stateless;
+        view.state_contract = entry.state_contract;
+        view.declarations = entry.declarations;
+        view.requirements = entry.requirements;
+        view.resources = entry.resources;
+        result.push_back(std::move(view));
+    }
+    return result;
+}
+
+OperationResult Session::load_module_package(const std::string& bytes) {
+    if (!model_.modules) {
+        return reject(session_text("session.package.no_library",
+                                   "This session does not provide a module library"));
+    }
+    try {
+        model_.modules->load(bytes);
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    rebuild_factories();  // 新定义加入实例化目录
+    auto diagnostics = refresh_catalog();
+    if (derive_spec_inputs()) ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    return finish(true, std::move(diagnostics));
+}
+
+OperationResult Session::unload_module_package(const std::string& definition) {
+    if (!model_.modules) {
+        return reject(session_text("session.package.no_library",
+                                   "This session does not provide a module library"));
+    }
+    if (!model_.modules->unload(definition)) {
+        return reject(session_text("session.package.not_loaded",
+                                   "The module package is not loaded: {definition}",
+                                   {{"definition", definition}}));
+    }
+    rebuild_factories();
+    auto diagnostics = refresh_catalog();
+    if (derive_spec_inputs()) ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    return finish(true, std::move(diagnostics));
 }
 
 }  // namespace ascend::session
