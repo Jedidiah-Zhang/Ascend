@@ -61,14 +61,14 @@ This section is the maintenance entry for engineering documentation conventions.
 | `docs/整体架构.md` | Cross-partition responsibilities, library/platform boundaries, dependencies, and assembly principles; link to module details |
 | Parent `综述.md` | Responsibilities, child navigation, dependencies, and design progress; do not duplicate complete leaf rules |
 | Leaf `设计.md` | Goals, concepts, behavior, interface semantics, configuration, tradeoffs, acceptance, and open questions |
-| Leaf `实现.md` | Current engineering approach, code structure, delivery, limitations, and build entry points; links to verification evidence |
-| Leaf `测试.md` | Test purposes, related goals, verification environments, results, and coverage limits; create when actual verification content exists |
+| Leaf `实现.md` | Current engineering approach, code structure, delivery, limitations, performance measurements, and build entry points; links to the test document |
+| Leaf `测试.md` | Test inventory and design purposes, related goals, run commands, environments, and coverage limits; no per-run results; create when automated test cases exist |
 | Research Overview | Highest research authority; subsequent constraints, formalization, and protocols must be discussed on this basis, without precedence for the old contract |
 
 - Each rule has one owning document. Other documents summarize and link to it. Ownership follows responsibility, not whichever file is higher-level, newer, or more strongly worded.
 - World documents define general capabilities and mechanisms; gameplay and save-continuation policies belong to the game platform, experiment locking and research validation to the research platform, and cognition implementation to agents.
 - Record differences between the Research Overview and engineering scope, and unresolved mappings, in the research platform. Do not rewrite the overview to hide a conflict.
-- Keep the module hierarchy: parent overviews, paired leaf design/implementation files, and test documents when verification content exists. Unstarted topics can remain in the parent inventory; do not mass-create empty directories or test documents.
+- Keep the module hierarchy: parent overviews, paired leaf design/implementation files, and test documents when automated test cases exist. Unstarted topics can remain in the parent inventory; do not mass-create empty directories or test documents.
 
 ### Separate Status Dimensions
 
@@ -92,9 +92,9 @@ Order `设计.md` as follows; combine short sections where useful. Keep unstarte
 7. **Tradeoffs and candidates**: reasons, costs, alternatives, and undecided parts.
 8. **Open questions**: impact, whether implementation is blocked, and the responsible module or phase.
 
-Order `实现.md` as: **Design basis → Code structure and engineering approach → Current scope and limitations → Build/run entry points**, with links to test documents. Unimplemented modules may use only design basis and current status; keep candidates in design documents and never invent code paths or commands.
+Order `实现.md` as: **Design basis → Code structure and engineering approach → Current scope and limitations → Build/run entry points**, with links to test documents; record performance conclusions and measurement conditions here. Unimplemented modules may use only design basis and current status; keep candidates in design documents and never invent code paths or commands.
 
-Order `测试.md` as: **Purpose and scope → Commands and verification environments → Grouped cases and results**. Explain conditions, operations, expectations, and related goals; shared environments and pass status may be stated once. Verification records identify the date, toolchain, build configuration, and actual test count; historical results do not automatically cover new cases. Performance conclusions require measurement conditions and results.
+Order `测试.md` as: **Purpose and scope → Commands and verification environments → Grouped cases**. Explain conditions, operations, expectations, and related goals; maintain only the case inventory and design purposes, not per-run results or pass status—pass status is determined by actual runs and CI. Shared commands and environments may be stated once.
 
 ### Quality and Maintenance Workflow
 
@@ -102,12 +102,12 @@ Order `测试.md` as: **Purpose and scope → Commands and verification environm
 - Use prose for purpose and tradeoffs, and tables or lists for parallel cases and behaviors. Simplification must preserve interface preconditions and failure semantics. Keep rule headings unique and link goal summaries to rules so duplicate headings do not redirect anchors to the wrong section.
 - Replace vague goals such as "deterministic" or "fast" with scoped behavior or measurement targets. Ordinary engineering acceptance does not automatically require research proofs.
 - Record candidates during discussion; update the owning rule when confirmed; consolidate duplicates, obsolete candidates, and conversational corrections at milestones, retaining relevant rationale. Git preserves ordinary history; use separate decision records only when justified.
-- Implementation changes update delivery and evidence; design changes review consumers. Moves repair relative links and update parent navigation and relevant bilingual entry points.
+- Implementation changes update delivery and test documents; design changes review consumers. Moves repair relative links and update parent navigation and relevant bilingual entry points.
 - Documentation-only changes check whitespace diffs, local links and anchors, navigation, and status consistency. Formatting checks do not establish semantic correctness; avoid unrelated code tests for documentation changes.
 
 ## Testing
 
-The current automated suite covers two parts: the headless C++17 declaration engine in `kheker/engine/` and the world library's space slice in `olam/`. Both use CMake 3.20 and CTest without Qt. After changes, run from the repository root:
+The current automated suite covers three parts: the headless C++17 declaration engine in `kheker/engine/`, the world library's space slice in `olam/`, and the workbench in `kheker/workbench/` (the headless session library needs no Qt; the Qt GUI requires Qt 6.4 or newer). All use CMake 3.20 and CTest. After changes, run from the repository root:
 
 ```bash
 cmake -S kheker/engine -B build/engine -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
@@ -121,7 +121,13 @@ cmake --build build/olam --config Debug --parallel 4
 ctest --test-dir build/olam --build-config Debug --output-on-failure
 ```
 
-Tests live in `testbench/engine/` and `testbench/olam/`; build outputs go under the ignored `build/` directory. [Engine CI](.github/workflows/engine.yml) and [Olam World CI](.github/workflows/olam_world.yml) build the corresponding suites on Linux and Windows; macOS is not included yet. Local verification results are recorded in the [core test document](docs/研究平台/实验环境与声明接入/测试.md) and the [space test document](docs/世界/世界框架/空间系统/测试.md).
+```bash
+cmake -S kheker/workbench -B build/workbench -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/workbench --config Debug --parallel 4
+ctest --test-dir build/workbench --build-config Debug --output-on-failure
+```
+
+Add `-DASCEND_WORKBENCH_BUILD_GUI=OFF` to the workbench configure command to build only the headless parts. Tests live in `testbench/engine/`, `testbench/olam/`, and `testbench/workbench/`; build outputs go under the ignored `build/` directory. [Engine CI](.github/workflows/engine.yml), [Olam World CI](.github/workflows/olam_world.yml), and [Workbench CI](.github/workflows/workbench.yml) build the corresponding suites on Linux and Windows; macOS is not included yet. Test cases and coverage limits are recorded in the [core test document](docs/研究平台/实验环境与声明接入/测试.md), the [space test document](docs/世界/世界框架/空间系统/测试.md), and the [workbench test document](docs/研究平台/因果建模工作台/测试.md).
 
 ## Commit Conventions
 
