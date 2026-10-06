@@ -27,9 +27,9 @@
 
 ## 项目现状
 
-项目目前处于早期重构阶段。现阶段已实现的核心内容是一个面向开发者的 C++ 无界面原型，支持连接并运行由代码定义的计算组件、读取运行结果。该原型主要用于验证基础程序组件的协作方式，并不代表项目已具备完整的模拟世界或研究实验能力。
+项目目前处于早期重构阶段。C++ 声明引擎与 Qt 研究工作台已支持小模型装配、运行、检查点干预对照，以及实验保存与重放；世界库已实现空间基础切片。当前可体验范围与限制见[研究平台](docs/研究平台/综述.md)及[世界模拟](docs/世界/综述.md)。
 
-完整的世界模拟、AI 智能体、研究实验管理与结果评价工具，以及可玩的游戏客户端仍未实现。Godot 客户端目前仅包含基础启动场景，尚无实际游戏内容。
+完整的世界模拟、AI 智能体、批量实验管理与研究评价体系，以及可玩的游戏客户端仍未实现。Godot 客户端目前仅包含基础启动场景，尚无实际游戏内容。
 
 ## 相关文档
 
@@ -66,7 +66,7 @@ cmake --build build/workbench --config Debug --parallel 4
 ctest --test-dir build/workbench --build-config Debug --output-on-failure
 ```
 
-构建产物分别位于 `build/engine/`、`build/olam/` 与 `build/workbench/`；加 `-DASCEND_WORKBENCH_BUILD_GUI=OFF` 可只构建无界面会话库与测试。启动工作台运行 `build/workbench/ascend_workbench`（开发构建从源码目录加载内置示例）。当前测试覆盖范围及限制见[核心测试说明](docs/研究平台/实验环境与声明接入/测试.md)、[空间测试说明](docs/世界/世界框架/空间系统/测试.md)与[工作台测试说明](docs/研究平台/因果建模工作台/测试.md)。
+构建产物分别位于 `build/engine/`、`build/olam/` 与 `build/workbench/`；加 `-DASCEND_WORKBENCH_BUILD_GUI=OFF` 可只构建无界面会话库与测试。启动工作台运行 `build/workbench/ascend_workbench`，选择「打开内置示例」体验实验流程；运行资源与操作说明见[工作台实现](docs/研究平台/因果建模工作台/实现.md)。当前测试覆盖范围及限制见[核心测试说明](docs/研究平台/实验环境与声明接入/测试.md)、[空间测试说明](docs/世界/世界框架/空间系统/测试.md)与[工作台测试说明](docs/研究平台/因果建模工作台/测试.md)。
 
 ## 参与贡献
 

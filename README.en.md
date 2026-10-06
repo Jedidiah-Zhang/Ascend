@@ -27,9 +27,9 @@ These are parallel tracks, not consecutive project phases. Sharing the world cor
 
 ## Project status
 
-Ascend is in the early stages of a rewrite. The core currently includes a developer-facing C++ prototype with no graphical interface. It can connect and run code-defined components and return their results. This prototype validates basic component interaction; it is not a complete simulation or an end-to-end research system.
+Ascend is in the early stages of a rewrite. The C++ declaration engine and Qt research workbench support small-model assembly, execution, checkpoint-based intervention comparisons, and experiment saving and replay. The world library implements a basic space slice. See the [research platform](docs/研究平台/综述.md) and [world overview](docs/世界/综述.md) for current scope and limitations.
 
-The full world simulation, AI agents, research experiment management and evaluation tools, and a playable game client have not yet been implemented. The Godot client currently contains only a basic startup scene; gameplay is not yet available.
+The full world simulation, AI agents, batch experiment management and research evaluation framework, and a playable game client have not yet been implemented. The Godot client currently contains only a basic startup scene; gameplay is not yet available.
 
 ## Documentation
 
@@ -68,7 +68,7 @@ cmake --build build/workbench --config Debug --parallel 4
 ctest --test-dir build/workbench --build-config Debug --output-on-failure
 ```
 
-Build outputs go under `build/engine/`, `build/olam/` and `build/workbench/`; pass `-DASCEND_WORKBENCH_BUILD_GUI=OFF` to build only the headless session library and its tests. Launch the workbench with `build/workbench/ascend_workbench` (development builds load the built-in example from the source tree). See the [core test notes](docs/研究平台/实验环境与声明接入/测试.md), the [space test notes](docs/世界/世界框架/空间系统/测试.md) and the [workbench test notes](docs/研究平台/因果建模工作台/测试.md) for current coverage and limitations.
+Build outputs go under `build/engine/`, `build/olam/` and `build/workbench/`; pass `-DASCEND_WORKBENCH_BUILD_GUI=OFF` to build only the headless session library and its tests. Launch `build/workbench/ascend_workbench` and choose “打开内置示例” (Open built-in example) to try the experiment workflow. See the [workbench implementation](docs/研究平台/因果建模工作台/实现.md) for runtime resources and usage, and the [core test notes](docs/研究平台/实验环境与声明接入/测试.md), [space test notes](docs/世界/世界框架/空间系统/测试.md), and [workbench test notes](docs/研究平台/因果建模工作台/测试.md) for coverage and limitations.
 
 ## Contributing
 
