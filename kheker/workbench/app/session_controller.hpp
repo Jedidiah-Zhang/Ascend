@@ -1,5 +1,7 @@
 #pragma once
 
+#include "model_snapshot.hpp"
+
 #include <ascend/session/session.hpp>
 
 #include <QObject>
@@ -15,19 +17,6 @@
 #include <vector>
 
 namespace ascend::workbench {
-
-// 一次命令后随界面发布的值模型：目录、草稿实例、输入、状态字段、序列元数据与记录。
-struct ModelSnapshot {
-    session::CatalogView catalog;
-    session::SpecView spec;
-    bool catalog_stale = false;
-    std::vector<session::InstanceView> instances;
-    std::vector<session::StateFieldView> state_fields;
-    std::vector<std::string> observations;
-    std::vector<std::string> series_labels;
-    std::vector<std::string> available_modules;  // 可用模块定义（宿主内置与模块库）
-    session::RecordView record;
-};
 
 // 专属执行线程中的会话控制层：界面线程按队列提交命令，结果以值快照发布。
 // 所有会话命令在持有对象所属线程串行执行；停止请求由任意线程原子设置。

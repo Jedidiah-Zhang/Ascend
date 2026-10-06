@@ -36,6 +36,7 @@
 #include <QSet>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTableView>
 #include <QTableWidget>
 #include <QTest>
 #include <QTimer>
@@ -99,7 +100,10 @@ QString write_example_package(const QString& path,
     package.manifest.version = "1.0";
     const auto bytes = ascend::encode_module_package(package);
     QFile file(path);
-    file.open(QIODevice::WriteOnly);
+    if (!file.open(QIODevice::WriteOnly)) {
+        QTest::qFail("cannot create example module package", __FILE__, __LINE__);
+        return {};
+    }
     file.write(bytes.data(), static_cast<qint64>(bytes.size()));
     return path;
 }
@@ -189,6 +193,7 @@ private slots:
     void modulePackageFolderLoad();
     void systemEditorAssembly();
     void startPageResearch();
+    void recordTabKeepsSampleDetail();
     void dockTitleDoubleClick();
     void dockFloatDockStress();
 };
@@ -310,8 +315,8 @@ void TestWorkbench::windowLoadsExample() {
 
     window->findChild<QPushButton*>("checkButton")->click();
     QVERIFY(wait_idle(window));
-    auto* check_table = window->findChild<QTableWidget*>("checkTable");
-    QVERIFY(check_table != nullptr && check_table->rowCount() >= 4);
+    auto* check_table = window->findChild<QTableView*>("checkTable");
+    QVERIFY(check_table != nullptr && check_table->model()->rowCount() >= 4);
 
     // 草稿变化后目录标注为陈旧（WB-08 边界）。
     auto* left_tabs = window->findChild<QTabWidget*>("leftPane");
@@ -597,8 +602,8 @@ void TestWorkbench::failedStateControls() {
     QVERIFY(!window->findChild<QPushButton*>("branchButton")->isEnabled());
     QVERIFY(window->findChild<QPushButton*>("applyButton")->isEnabled());
     QVERIFY(window->findChild<QPushButton*>("replayButton")->isEnabled());
-    auto* diagnostics = window->findChild<QTreeWidget*>("diagnosticsTree");
-    QVERIFY(diagnostics != nullptr && diagnostics->topLevelItemCount() >= 1);
+    auto* diagnostics = window->findChild<QTableView*>("diagnosticsTree");
+    QVERIFY(diagnostics != nullptr && diagnostics->model()->rowCount() >= 1);
 
     // 修正配置并重建后恢复可运行。
     x_edit = window->findChild<QLineEdit*>("configLeaf_x");
@@ -935,9 +940,9 @@ void TestWorkbench::fileOpenFailure() {
     QVERIFY(box_text.contains(QStringLiteral("ascend-workbench-ui-bad.aexp")));
     QVERIFY(box_text.contains(QStringLiteral("\n")));
     QVERIFY(window->currentFile().isEmpty());
-    auto* tree = window->findChild<QTreeWidget*>("diagnosticsTree");
+    auto* tree = window->findChild<QTableView*>("diagnosticsTree");
     QVERIFY(tree != nullptr);
-    QVERIFY(wait_until([&] { return tree->topLevelItemCount() >= 1; }, 4000));
+    QVERIFY(wait_until([&] { return tree->model()->rowCount() >= 1; }, 4000));
     QFile::remove(path);
 }
 
@@ -1004,6 +1009,32 @@ void TestWorkbench::modulePackageLoadUnload() {
     library_action->trigger();
     QVERIFY(results->indexOf(page) >= 0);
     QCOMPARE(results->currentWidget(), page);
+
+    // 页面「卸载」按钮：未选中先提示选择，选中后直接卸载（不经文件菜单）。
+    QTimer reload_timer;
+    connect(&reload_timer, &QTimer::timeout, [&] { drive_choose_paths_dialog({path}); });
+    reload_timer.start(10);
+    window->findChild<QPushButton*>("moduleLoadButton")->click();
+    QVERIFY(wait_until([&] { return table->rowCount() == 1; }, 8000));
+    reload_timer.stop();
+
+    QString select_box_text;
+    QTimer select_timer;
+    connect(&select_timer, &QTimer::timeout, [&] {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (box == nullptr) return;
+        select_timer.stop();
+        select_box_text = box->text();
+        box->accept();
+    });
+    select_timer.start(10);
+    window->findChild<QPushButton*>("moduleUnloadButton")->click();
+    QVERIFY(wait_until([&] { return !select_box_text.isEmpty(); }, 4000));
+    QVERIFY(select_box_text.contains(QStringLiteral("请先选择已载入的模块包")));
+
+    table->selectRow(0);
+    window->findChild<QPushButton*>("moduleUnloadButton")->click();
+    QVERIFY(wait_until([&] { return table->rowCount() == 0; }, 8000));
 
     // 损坏文件：提示本次操作的原因，已关闭的模块库页签不打开且列表不变。
     library_action->trigger();  // 关闭页签
@@ -1309,6 +1340,25 @@ void TestWorkbench::systemEditorAssembly() {
     QVERIFY(x_row >= 0);
     QCOMPARE(cursor_table->item(x_row, 2)->text(), QStringLiteral("4"));  // x = 4（a = 2 恒定）
 
+    // 观测可显式取消：取消 plant/z 后应用，时间轴观测组同步减少。
+    for (int i = 0; i < observation_list->count(); ++i) {
+        if (observation_list->item(i)->text() == QStringLiteral("plant/z")) {
+            observation_list->item(i)->setCheckState(Qt::Unchecked);
+        }
+    }
+    QVERIFY(wait_idle(window));
+    window->findChild<QPushButton*>("systemApplyButton")->click();
+    QVERIFY(wait_until([&] { return window->currentStatus().phase == ascend::session::Phase::runnable; }, 8000));
+    auto* obs_tree = window->findChild<QTreeWidget*>("signalTree");
+    QVERIFY(obs_tree != nullptr);
+    QVERIFY(wait_until([&] {
+        auto* group = obs_tree->topLevelItem(0);
+        if (group == nullptr) return false;
+        QStringList names;
+        for (int i = 0; i < group->childCount(); ++i) names << group->child(i)->text(0);
+        return names.contains(QStringLiteral("plant/x")) && !names.contains(QStringLiteral("plant/z"));
+    }, 4000));
+
     // 移除实例（确认对话框）：plant 移除后只剩 input。
     tree->setCurrentItem(find_requirement(QStringLiteral("plant"), QStringLiteral("input")));
     QTimer remove_timer;
@@ -1365,11 +1415,16 @@ void TestWorkbench::startPageResearch() {
     auto* signal_tree = window->findChild<QTreeWidget*>("signalTree");
     QVERIFY(signal_tree != nullptr);
     QVERIFY(wait_until([&] { return signal_tree->topLevelItemCount() >= 1; }, 4000));  // 观测组
-    auto* check_table = window->findChild<QTableWidget*>("checkTable");
+    auto* check_table = window->findChild<QTableView*>("checkTable");
     QVERIFY(check_table != nullptr);
     window->findChild<QPushButton*>("checkButton")->click();
     QVERIFY(wait_idle(window));
-    QVERIFY(wait_until([&] { return check_table->rowCount() > 0; }, 4000));
+    QVERIFY(wait_until([&] { return check_table->model()->rowCount() > 0; }, 4000));
+    auto* waveform = window->findChild<WaveformWidget*>("waveform");
+    auto* sample_tree = window->findChild<QTreeWidget*>("sampleTree");
+    QVERIFY(waveform != nullptr && sample_tree != nullptr);
+    QTest::mouseClick(waveform, Qt::LeftButton, Qt::NoModifier, waveform->framePosition(0));
+    QVERIFY(wait_until([&] { return sample_tree->topLevelItemCount() > 0; }, 4000));
 
     // 查看菜单重新打开开始页；新建研究（创建新的因果系统）。
     window->findChild<QAction*>("startViewAction")->trigger();
@@ -1393,7 +1448,8 @@ void TestWorkbench::startPageResearch() {
     QCOMPARE(results->indexOf(start), -1);
     QCOMPARE(results->indexOf(timeline), -1);   // 新系统尚无运行：结果页签关闭
     QCOMPARE(results->indexOf(differences), -1);
-    QCOMPARE(check_table->rowCount(), 0);       // 身份切换后检查报告清空
+    QCOMPARE(check_table->model()->rowCount(), 0);  // 身份切换后检查报告清空
+    QCOMPARE(sample_tree->topLevelItemCount(), 0);  // 身份切换后采样详情清空
     QCOMPARE(signal_tree->topLevelItemCount(), 0);  // 观测组随模型清空
     QVERIFY(window->windowTitle().contains(QStringLiteral("起始研究")));
 
@@ -1556,6 +1612,28 @@ void TestWorkbench::captureScreenshot() {
     QVERIFY2(window->grab().save(diff_path),
              qPrintable(QStringLiteral("cannot save %1").arg(diff_path)));
     qInfo() << "screenshots saved to" << path << "and" << diff_path;
+}
+
+void TestWorkbench::recordTabKeepsSampleDetail() {
+    // 审查回归：只读记录请求不得触发目录级重建，也不得清空右侧采样详情。
+    auto workbench = start_workbench(true);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+    auto* waveform = window->findChild<WaveformWidget*>("waveform");
+    auto* sample_tree = window->findChild<QTreeWidget*>("sampleTree");
+    QVERIFY(waveform != nullptr && sample_tree != nullptr);
+    QTest::mouseClick(waveform, Qt::LeftButton, Qt::NoModifier, waveform->framePosition(0));
+    QVERIFY(wait_until([&] { return sample_tree->topLevelItemCount() > 0; }, 4000));
+    const int before = sample_tree->topLevelItemCount();
+
+    auto* dock = window->findChild<QDockWidget*>("diagnosticsDock");
+    QVERIFY(dock != nullptr);
+    auto* tabs = dock->findChild<QTabWidget*>();
+    QVERIFY(tabs != nullptr);
+    tabs->setCurrentIndex(2);  // 切到「实际输入记录」页 → requestRecord
+    QVERIFY(wait_idle(window));
+    QTest::qWait(150);  // 只读快照请求不占忙碌标记
+    QCOMPARE(sample_tree->topLevelItemCount(), before);  // 采样详情仍保留
 }
 
 QTEST_MAIN(TestWorkbench)

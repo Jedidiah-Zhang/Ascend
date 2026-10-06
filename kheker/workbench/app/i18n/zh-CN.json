@@ -248,6 +248,7 @@
     "workbench.view.config": "配置",
     "workbench.view.diagnostics": "诊断",
     "workbench.view.left_panel": "模块管理器",
+    "workbench.view.package_library": "模块库",
     "workbench.view.right_panel": "状态",
     "workbench.waveform.cursor_a": "A",
     "workbench.waveform.cursor_b": "B",

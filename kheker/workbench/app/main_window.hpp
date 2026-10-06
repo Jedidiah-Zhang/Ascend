@@ -1,47 +1,44 @@
 #pragma once
 
+#include "panels/panel_context.hpp"
 #include "session_controller.hpp"
 #include "ui_text.hpp"
+#include "workspace/panel_registry.hpp"
+#include "workspace/workspace_view.hpp"
 
 #include <ascend/session/adapter.hpp>
 
 #include <QMainWindow>
 #include <QString>
 #include <QStringList>
-#include <QVector>
 
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <utility>
 #include <vector>
 
 class QAction;
-class QCheckBox;
-class QComboBox;
 class QDockWidget;
-class QGroupBox;
 class QLabel;
-class QLineEdit;
-class QListWidget;
-class QMenu;
 class QPushButton;
-class QScrollArea;
 class QSpinBox;
-class QSplitter;
 class QTabWidget;
-class QTableWidget;
-class QTextBrowser;
-class QTreeWidget;
-class QTreeWidgetItem;
 class QVBoxLayout;
 class QWidget;
 
 namespace ascend::workbench {
 
-class ConfigEditor;
-class WaveformWidget;
+class ConfigPanel;
+class DiagnosticsPanel;
+class DiffPanel;
+class ModulesPanel;
+class PackageLibraryPanel;
+class StartPagePanel;
+class StatePanel;
+class SystemEditorPanel;
+class TimelinePanel;
+class WorkspaceModel;
 
 // 最小研究工作台主窗口：目录浏览、配置与输入编辑、运行控制、分支比较与诊断呈现。
 // 窗口只提交命令并呈现控制层发布的值快照，不直接访问会话与运行对象。
@@ -54,10 +51,10 @@ public:
     void setCloseHandler(std::function<void()> handler) { close_handler_ = std::move(handler); }
 
     // 测试访问：当前会话状态、状态行文本与命令执行标记。
-    const session::Status& currentStatus() const noexcept { return status_; }
+    const session::Status& currentStatus() const noexcept { return state().status; }
     QString statusLine() const;
-    bool busy() const noexcept { return busy_; }
-    QString currentFile() const { return current_file_; }
+    bool busy() const noexcept { return state().busy; }
+    QString currentFile() const { return QString::fromStdString(state().research_file); }
     // 新窗口显示后关闭模块库页签（其默认态为不打开；载入模块包时自动打开并切到该页签）。
     void hidePackageLibrary();
     // 打开系统编辑器页签（编辑菜单与查看菜单共用）。
@@ -82,46 +79,35 @@ private Q_SLOTS:
     void onSampleDetailReady(int series, std::int64_t frame, const ascend::session::SampleDetailView& detail);
     void onDiagnostics(const std::vector<ascend::session::DiagnosticView>& diagnostics);
     void onRecordChanged(const ascend::session::RecordView& record);
+    // 状态层变更：按信息域驱动各视图渲染（唯一渲染入口）。
+    void onWorkspaceChanged(WorkspaceChange changed);
 
 private:
-    struct SeriesData {
-        QString label;
-        std::int64_t origin = 0;
-        QVector<session::SampleView> samples;
-        QVector<session::InterventionView> interventions;
-        QVector<session::StepEvent> events;
-    };
+    // 状态层只读状态：成员渲染统一从这里取值。
+    const WorkspaceState& state() const noexcept;
 
     void buildLayout();
     void buildTopBar(QVBoxLayout* root);
-    void buildLeftPane();
-    void buildConfigPane();
     void buildResultsPane();
-    void buildRightPane();
     void buildDiagnosticsDock();
-    void buildPackagePage();
-    void buildSystemEditor();
-    void buildStartPage();
     void buildMenuBar();
-    // 中央工作区页签开关：打开时加入并在必要时切到该页，关闭时移除（视图对象保留）。
-    void setCentralViewVisible(QWidget* page, const QString& title, bool visible);
-    // 结果页签（时间轴与逻辑帧差异）：有运行/记录时自动打开；无运行（空会话/编辑态）时关闭。
-    void ensureResultsVisible();
-    void hideResultsTabs();
-    // 系统编辑器：按模型快照重建控件；选择变化时刷新提供方候选与按钮状态。
-    void rebuildSystemEditor();
-    void onSystemSelectionChanged();
-    void updateSystemEditorControls();
+    // 状态层 → 页签与动作：应用 central_open/central_focus（唯一套用点）。
+    void applyPanelState();
+    void showPanel(const char* id);
+    void hidePanel(const char* id);
+    // 系统编辑器命令：参数由 SystemEditorPanel 从控件读出，此处只做忙碌簿记与队列提交。
     void chooseNewSystem();
-    void onSystemDefinitionChanged();
-    void addSystemModule();
-    void removeSystemModule();
-    void connectSystemRequirement();
-    void disconnectSystemRequirement();
-    void onSpecAdvanceChanged();
-    void onSpecObservationsChanged();
+    void addSystemModule(const QString& definition, const QString& instance);
+    void removeSystemModule(const QString& instance);
+    void connectSystemRequirement(const QString& module, const QString& symbol, const QString& provider_module,
+                                  const QString& provider_symbol);
+    void disconnectSystemRequirement(const QString& module, const QString& symbol);
+    void onSpecAdvanceChanged(const QString& module, const QString& symbol);
+    void onSpecObservationsChanged(const QStringList& references);
     // 带参数编辑命令的公共簿记：置忙碌标记并排队调用控制层；编辑命令标记研究文件与系统草稿未保存。
     void beginSystemCommand(const char* method, bool edits_draft = true);
+    // 实例配置编辑：由 ConfigPanel 通过上下文提交，此处做忙碌守卫与队列提交（保持原表单行为）。
+    void setInstanceConfig(const QString& scope, const QString& name, const ascend::Config& config);
     // 研究入口与因果系统文件：新建研究对话框、打开/保存系统与结果处理。
     void chooseNewResearch();
     void chooseOpenSystem();
@@ -129,9 +115,8 @@ private:
     void chooseSaveSystemAs();
     void onSystemOpened(const QString& path, bool ok, const QString& detail);
     void onSystemSaved(const QString& path, bool ok, const QString& detail);
-    void updateSystemFileLabel();
-    // 研究/系统身份切换：清掉与上一身份绑定的瞬时视图（检查报告、采样详情与波形状态）。
-    void clearTransientViews();
+    // 身份切换清理：由状态层的 identity 通知触发，清掉与上一身份绑定的瞬时视图。
+    void clearIdentityViews();
     // 开始页动作：关闭开始页并进入相应流程。
     void startNewResearch();
     void startOpenResearch();
@@ -139,28 +124,6 @@ private:
 
     void updateControls();
     void updateStatusLabels();
-    void rebuildConfigForms();
-    void rebuildModuleTree();
-    void rebuildSpec();
-    void rebuildRequirements();
-    void rebuildConnections();
-    void rebuildWaveform();
-    void updateCursorTable();
-    struct SignalSelection {
-        int index = 0;
-        bool difference = false;
-        QString name;
-    };
-    std::vector<SignalSelection> checked_signals() const;
-    void rebuildDiff();
-    void rebuildStateFields();
-    void rebuildSampleSelectors();
-    void showDeclarationDetails(const session::DeclarationView& declaration);
-    void showRequirementDetails(const session::RequirementView& requirement);
-    void showDeclarationAt(int index);
-    void showRequirementAt(int index);
-    QTreeWidgetItem* module_node_for(QTreeWidget* tree, std::map<std::string, QTreeWidgetItem*>& nodes,
-                                     const std::string& path);
     void requestSampleDetail(std::int64_t frame);
     void requestLatestSample();
     void chooseOpenExperiment();
@@ -189,19 +152,20 @@ private:
     std::shared_ptr<const UiTexts> texts_;
     const session::ValueAdapter* int_adapter_ = nullptr;
 
-    session::Status status_;
-    ModelSnapshot model_;
-    session::ComparisonView current_comparison_;
-    std::vector<session::DiagnosticView> diagnostics_;
-    std::vector<SeriesData> series_;
-    QTreeWidgetItem* observation_group_ = nullptr;
-    QTreeWidgetItem* diff_group_ = nullptr;
-    bool busy_ = false;
+    WorkspaceModel* workspace_ = nullptr;
+    // 面板上下文：面板只读状态与文案，命令与对话框回调在此初始化。
+    PanelContext context_;
+    StartPagePanel* start_panel_ = nullptr;
+    PackageLibraryPanel* package_panel_ = nullptr;
+    SystemEditorPanel* system_panel_ = nullptr;
+    TimelinePanel* timeline_panel_ = nullptr;
+    DiffPanel* diff_panel_ = nullptr;
+    PanelRegistry panels_;
+    bool applying_panels_ = false;
     bool closing_ = false;
     QString pending_;
     std::int64_t selected_frame_ = -1;
     int selected_series_ = 0;
-    bool waveform_rebuilding_ = false;
 
     // 顶部
     QPushButton* check_button_ = nullptr;
@@ -215,99 +179,31 @@ private:
     QPushButton* reset_branches_button_ = nullptr;
     QPushButton* replay_button_ = nullptr;
 
-    // 左侧
-    QTreeWidget* module_tree_ = nullptr;
-    QTreeWidget* spec_tree_ = nullptr;
-    QTreeWidget* requirements_tree_ = nullptr;
-    QTreeWidget* connections_tree_ = nullptr;
+    // 左侧停靠面板：模块管理器（四树与选中项详情由 ModulesPanel 自持）
+    ModulesPanel* modules_panel_ = nullptr;
 
-    // 模块库（中央工作区页签，默认不打开，载入模块包时自动打开）
-    QWidget* package_page_ = nullptr;
-    QTableWidget* package_table_ = nullptr;
-    QPushButton* package_load_button_ = nullptr;
-    QPushButton* package_load_folder_button_ = nullptr;
-    QPushButton* package_unload_button_ = nullptr;
-    QAction* package_tab_action_ = nullptr;
+    // 模块库（中央工作区页签，默认不打开，载入模块包时自动打开；由 PackageLibraryPanel 持有控件）
     QAction* load_module_action_ = nullptr;
     QAction* load_module_folder_action_ = nullptr;
     QAction* unload_module_action_ = nullptr;
     QAction* new_research_action_ = nullptr;
-    std::vector<session::ModulePackageView> packages_;
 
-    // 中央工作区页签（浏览器式：可拖动重排、可关闭、从查看菜单重开）
-    QWidget* timeline_page_ = nullptr;
-    QWidget* diff_page_ = nullptr;
-    QAction* timeline_action_ = nullptr;
-    QAction* diff_action_ = nullptr;
+    // 系统编辑器（中央工作区页签；控件与系统文件渲染由 SystemEditorPanel 自持，文件字段在状态层）
 
-    // 系统编辑器（中央工作区页签）
-    QWidget* editor_page_ = nullptr;
-    QAction* editor_action_ = nullptr;
-    QLabel* system_name_label_ = nullptr;
-    QPushButton* new_system_button_ = nullptr;
-    QPushButton* open_system_button_ = nullptr;
-    QPushButton* save_system_button_ = nullptr;
-    QString system_file_;  // 当前因果系统文件（`.aasm`）；空表示尚未保存
-    QComboBox* definition_combo_ = nullptr;
-    QLineEdit* instance_edit_ = nullptr;
-    QPushButton* add_module_button_ = nullptr;
-    QTreeWidget* system_tree_ = nullptr;
-    QComboBox* provider_combo_ = nullptr;
-    QPushButton* connect_button_ = nullptr;
-    QPushButton* disconnect_button_ = nullptr;
-    QPushButton* remove_module_button_ = nullptr;
-    QPushButton* editor_check_button_ = nullptr;
-    QPushButton* editor_apply_button_ = nullptr;
-    QComboBox* advance_combo_ = nullptr;
-    QListWidget* observation_list_ = nullptr;
-    QLabel* input_label_ = nullptr;
-    bool editor_updating_ = false;
-    bool system_dirty_ = false;  // 因果系统草稿相对系统文件的未保存状态
-
-    // 开始页（中央工作区页签，默认打开）
-    QWidget* start_page_ = nullptr;
-    QAction* start_action_ = nullptr;
-    QPushButton* start_new_button_ = nullptr;
-    QPushButton* start_open_button_ = nullptr;
-    QPushButton* start_example_button_ = nullptr;
-
-    // 中部
-    QScrollArea* config_area_ = nullptr;
-    QWidget* config_container_ = nullptr;
-    QVBoxLayout* config_layout_ = nullptr;
-    std::map<std::string, ConfigEditor*> config_editors_;
+    // 配置停靠面板：实例配置表单由 ConfigPanel 自持；中部结果页签留在外壳
+    ConfigPanel* config_panel_ = nullptr;
     QTabWidget* results_tabs_ = nullptr;
-    QTreeWidget* signal_tree_ = nullptr;
-    WaveformWidget* waveform_ = nullptr;
-    QTableWidget* cursor_table_ = nullptr;
-    QWidget* series_checks_host_ = nullptr;
-    std::vector<QCheckBox*> series_checks_;
-    QTableWidget* diff_table_ = nullptr;
-    QLabel* diff_note_ = nullptr;
 
-    // 右侧
-    QTextBrowser* details_view_ = nullptr;
-    QLabel* checkpoint_label_ = nullptr;
-    QTableWidget* state_table_ = nullptr;
-    QComboBox* sample_series_combo_ = nullptr;
-    QLabel* sample_label_ = nullptr;
-    QTreeWidget* sample_tree_ = nullptr;
+    // 右侧状态停靠面板：详情、状态字段与采样详情由 StatePanel 自持
+    StatePanel* state_panel_ = nullptr;
 
-    // 底部
-    QTabWidget* bottom_tabs_ = nullptr;
-    QTreeWidget* diagnostics_tree_ = nullptr;
-    QTextBrowser* causes_view_ = nullptr;
-    QTableWidget* check_table_ = nullptr;
-    QLabel* check_note_ = nullptr;
-    QLabel* record_label_ = nullptr;
-    QTableWidget* record_table_ = nullptr;
+    // 底部面板：诊断与原因链、检查、实际输入记录（独立面板只读状态渲染）
+    DiagnosticsPanel* bottom_panel_ = nullptr;
 
     QLabel* status_label_ = nullptr;
     QLabel* revision_label_ = nullptr;
 
     // 可停靠/浮动的面板：模块管理器、配置与状态为停靠窗口，结果为主工作区。
-    QTabWidget* left_pane_ = nullptr;
-    QWidget* right_pane_ = nullptr;
     QDockWidget* modules_dock_ = nullptr;
     QDockWidget* config_dock_ = nullptr;
     QDockWidget* state_dock_ = nullptr;
@@ -317,9 +213,6 @@ private:
     QAction* open_experiment_action_ = nullptr;
     QAction* save_action_ = nullptr;
     QAction* save_as_action_ = nullptr;
-    QString current_file_;
-    bool file_dirty_ = false;
-    session::RecordView record_view_;
     std::vector<std::pair<QAction*, QPushButton*>> action_buttons_;
     QDockWidget* diagnostics_dock_ = nullptr;
 

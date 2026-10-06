@@ -33,16 +33,44 @@ if(ASCEND_WORKBENCH_BUILD_GUI)
     find_package(Qt6 6.4 COMPONENTS Widgets Test REQUIRED)
     set(CMAKE_AUTOMOC ON)
 
+    # 工作区状态层：只依赖 QtCore 与会话库，界面与无控件单测共用（WB-19）。
+    add_library(ascend_workbench_workspace STATIC
+        app/model_snapshot.hpp
+        app/workspace/workspace_view.hpp app/workspace/workspace_model.cpp app/workspace/workspace_model.hpp)
+    add_library(ascend::workbench_workspace ALIAS ascend_workbench_workspace)
+    target_compile_features(ascend_workbench_workspace PUBLIC cxx_std_17)
+    target_link_libraries(ascend_workbench_workspace PUBLIC ascend::session Qt6::Core)
+    target_include_directories(ascend_workbench_workspace PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/app")
+    if(MSVC)
+        target_compile_options(ascend_workbench_workspace PRIVATE /W4 /permissive-)
+        target_compile_options(ascend_workbench_workspace PUBLIC /utf-8)
+    else()
+        target_compile_options(ascend_workbench_workspace PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
     add_library(ascend_workbench_ui STATIC
         app/branch_dialog.cpp app/branch_dialog.hpp
         app/config_editor.cpp app/config_editor.hpp
         app/waveform_widget.cpp app/waveform_widget.hpp
         app/main_window.cpp app/main_window.hpp
+        app/panels/config_panel.cpp app/panels/config_panel.hpp
+        app/panels/diagnostics_panel.cpp app/panels/diagnostics_panel.hpp
+        app/panels/diff_panel.cpp app/panels/diff_panel.hpp
+        app/panels/modules_panel.cpp app/panels/modules_panel.hpp
+        app/panels/package_library_panel.cpp app/panels/package_library_panel.hpp
+        app/panels/panel_context.hpp
+        app/panels/start_page_panel.cpp app/panels/start_page_panel.hpp
+        app/panels/state_panel.cpp app/panels/state_panel.hpp
+        app/panels/system_editor_panel.cpp app/panels/system_editor_panel.hpp
+        app/panels/table_models.cpp app/panels/table_models.hpp
+        app/panels/timeline_panel.cpp app/panels/timeline_panel.hpp
         app/session_controller.cpp app/session_controller.hpp
+        app/workspace/panel_registry.cpp app/workspace/panel_registry.hpp
         app/ui_text.cpp app/ui_text.hpp
+        app/ui_format.cpp app/ui_format.hpp
         app/workbench.cpp app/workbench.hpp)
     target_compile_features(ascend_workbench_ui PUBLIC cxx_std_17)
-    target_link_libraries(ascend_workbench_ui PUBLIC ascend::session ascend::experiment_model Qt6::Widgets)
+    target_link_libraries(ascend_workbench_ui PUBLIC ascend::session ascend::experiment_model ascend::workbench_workspace Qt6::Widgets)
     target_include_directories(ascend_workbench_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/app")
     target_compile_definitions(ascend_workbench_ui PUBLIC
         ASCEND_WORKBENCH_ENGINE_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../engine/i18n/zh-CN.json"

@@ -36,6 +36,26 @@ foreach(case IN ITEMS
 endforeach()
 
 if(TARGET ascend_workbench_ui)
+    # 工作区状态层单测：无控件（QCoreApplication），链接仅 QtCore 的状态层目标。
+    add_executable(ascend_workspace_tests test_workspace_model.cpp)
+    target_link_libraries(ascend_workspace_tests PRIVATE ascend::workbench_workspace Qt6::Test)
+    foreach(case IN ITEMS
+        identity_notice
+        busy_controls
+        results_availability
+        results_panels
+        samples_append
+        observations_changed
+        comparison_stored
+        check_store
+        diagnostics_log
+        record_store
+        controls_matrix
+        packages_controls
+    )
+        add_test(NAME workspace.${case} COMMAND ascend_workspace_tests ${case})
+    endforeach()
+
     add_executable(ascend_workbench_tests test_workbench_ui.cpp)
     target_link_libraries(ascend_workbench_tests PRIVATE ascend_workbench_ui Qt6::Test)
     # 界面测试同样使用随构建复制的运行目录资源，验证运行时解析路径。
@@ -61,6 +81,7 @@ if(TARGET ascend_workbench_ui)
         modulePackageFolderLoad
         systemEditorAssembly
         startPageResearch
+        recordTabKeepsSampleDetail
         dockTitleDoubleClick
         dockFloatDockStress
     )
@@ -86,6 +107,7 @@ if(TARGET ascend_workbench_ui)
         workbench.modulePackageFolderLoad
         workbench.systemEditorAssembly
         workbench.startPageResearch
+        workbench.recordTabKeepsSampleDetail
         workbench.dockTitleDoubleClick
         workbench.dockFloatDockStress
         PROPERTIES ENVIRONMENT

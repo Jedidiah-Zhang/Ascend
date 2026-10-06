@@ -66,7 +66,6 @@ ModelSnapshot SessionController::snapshot() const {
     const auto series = session_.series_info();
     model.series_labels.reserve(series.size());
     for (const auto& info : series) model.series_labels.push_back(info.label);
-    model.record = session_.record();
     return model;
 }
 
