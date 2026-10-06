@@ -206,11 +206,17 @@ Outputs drive(Engine& engine) {
 void factories() {
     ModuleFactoryDirectory directory;
     directory.add_definition("b", stimulus);
-    directory.add_definition("a", accumulator);
+    directory.add_definition("a", accumulator, {},
+                             Config::object({{"initial", Config::integer(7)}}));
     CHECK(directory.contains("a"));
     CHECK(!directory.contains("c"));
     CHECK(directory.definitions() == std::vector<std::string>({"a", "b"}));
     CHECK(!directory.contains(""));
+
+    // 默认构造配置：登记时可提供，未提供为空；未登记定义报 unknown_definition。
+    CHECK(directory.default_config("a").find("initial")->integer() == 7);
+    CHECK(directory.default_config("b").is_null());
+    failure(ErrorCode::unknown_definition, {"c", {}}, [&] { directory.default_config("c"); });
 
     // 每次构造返回独立实例，名称来自调用方。
     Engine engine;
@@ -379,6 +385,25 @@ void editing_instance() {
     CHECK((AssemblyDefinition::parse(composed_text).scopes() == std::vector<std::string>{"", "group"}));
 }
 
+void config_text() {
+    // 公开的 JSON 文本 → 配置解析：与装配/实验文件同一解析器与诊断。
+    CHECK((Config::parse("1").kind() == Config::Kind::integer));
+    CHECK(Config::parse("1").integer() == 1);
+    CHECK(Config::parse("-2").integer() == -2);
+    CHECK(Config::parse("true").boolean());
+    CHECK(Config::parse("null").is_null());
+    CHECK(Config::parse("\"text\"").string() == "text");
+    const auto object = Config::parse(R"({"x": 0, "y": -2, "z": 3})", "memory.json");
+    CHECK((object.kind() == Config::Kind::object));
+    CHECK(object.find("x")->integer() == 0);
+    CHECK(object.find("y")->integer() == -2);
+    const Diagnostic bad_parse = failure(ErrorCode::invalid_json, {},
+                                         [] { (void)Config::parse("not json", "memory.json"); });
+    CHECK(bad_parse.source == "memory.json");
+    failure(ErrorCode::invalid_json, {}, [] { (void)Config::parse("1 2"); });
+    failure(ErrorCode::invalid_json, {}, [] { (void)Config::parse(R"({"x": 9223372036854775808})"); });
+}
+
 void factory_merge() {
     ModuleFactoryDirectory first;
     first.add_definition("shared", [](const std::string& instance, const Config&) {
@@ -404,6 +429,15 @@ void factory_merge() {
     CHECK(engine.bind_value<Integer>({"probe", "value"}).read() == 1);
     first.merge_from(second);
     CHECK(first.contains(kAccumulator));
+
+    // 合并保留定义的默认构造配置（preset 随目录项复制）。
+    second.add_definition("with_preset", [](const std::string& instance, const Config&) {
+        Module module(instance);
+        module.add_value<Integer>("value", [] { return Integer{0}; }, {}, "example.scalar.v1");
+        return module;
+    }, {}, Config::object({{"start", Config::integer(9)}}));
+    first.merge_from(second);
+    CHECK(first.default_config("with_preset").find("start")->integer() == 9);
 }
 
 void independence() {
@@ -1165,6 +1199,7 @@ int main(int argc, char** argv) {
         {"roundtrip", roundtrip},
         {"config_change", config_change}, {"wiring", wiring},           {"independence", independence},
         {"editing_instance", editing_instance}, {"factory_merge", factory_merge},
+        {"config_text", config_text},
         {"config_values", config_values}, {"record_errors", record_errors},
         {"factory_errors", factory_errors}, {"assembly_errors", assembly_errors},
         {"factory_target", factory_target}, {"factory_causes", factory_causes},

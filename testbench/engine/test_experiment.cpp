@@ -1532,6 +1532,17 @@ void module_library_load_unload() {
     // 未载入时查询报诊断。
     failure(ErrorCode::invalid_config, Reference{"library.source", {}},
             [&] { library.manifest("library.source"); });
+
+    // register_implementation 可登记默认构造配置（供系统编辑器预填）。
+    library.register_implementation(
+        "library.preset", "library.preset.int.v1",
+        [](const std::string& instance, const Config&) {
+            Module module(instance);
+            module.add_value<Integer>("value", [] { return Integer{4}; }, {}, "library.scalar.v1");
+            return module;
+        },
+        Config::object({{"start", Config::integer(6)}}));
+    CHECK(library.factories().default_config("library.preset").find("start")->integer() == 6);
 }
 
 void module_package_round_trip() {

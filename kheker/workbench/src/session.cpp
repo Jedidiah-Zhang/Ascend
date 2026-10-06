@@ -387,8 +387,7 @@ Session::Session(ModelTemplate model, std::shared_ptr<const AdapterRegistry> ada
     : model_(std::move(model)), adapters_(std::move(adapters)) {
     if (!adapters_) throw std::invalid_argument("session requires an adapter registry");
     locale_ = model_.locale.empty() ? "zh-CN" : model_.locale;
-    spec_ = model_.spec;
-    system_name_ = model_.name;
+    // 空会话不预置模板规格与名称：打开示例/实验或新建/打开因果系统时才确立身份。
     rebuild_factories();
     texts_.set_default_locale(locale_);
     std::vector<I18nResource> loaded;
@@ -415,8 +414,7 @@ Session::~Session() = default;
 Status Session::make_status() const {
     Status status;
     status.phase = phase_;
-    status.model_name = phase_ == Phase::empty ? std::string{}
-                                                : (system_name_.empty() ? model_.name : system_name_);
+    status.model_name = phase_ == Phase::empty ? std::string{} : system_name_;
     status.draft_revision = draft_revision_;
     status.run_revision = run_revision_;
     if (run_id_ != 0) status.run_id = run_id_;
@@ -775,6 +773,24 @@ bool Session::derive_spec_inputs() {
     return true;
 }
 
+bool Session::derive_spec_observations() {
+    // 未显式选择观测时：默认记录根作用域的全部公开量（名称取「实例/符号」）。
+    if (observations_explicit_) return false;
+    std::vector<std::pair<std::string, Reference>> derived;
+    for (const auto& node : catalog_.modules) {
+        if (!node.path.empty()) continue;
+        for (const auto& declaration : node.declarations) {
+            if (declaration.kind != SymbolKind::value) continue;
+            const Reference& reference = declaration.reference;
+            if (reference.module.empty() || reference.module.find('/') != std::string::npos) continue;
+            derived.emplace_back(reference.module + "/" + reference.symbol, reference);
+        }
+    }
+    if (derived == spec_.observations) return false;
+    spec_.observations = std::move(derived);
+    return true;
+}
+
 OperationResult Session::reject_without_system() const {
     // 空会话尚未确立系统身份：编辑命令返回诊断且不改变会话状态（设计状态表）。
     return reject(session_text("session.system.empty", "Create or open a causal system first"));
@@ -1020,6 +1036,7 @@ void Session::build_source_run() {
 OperationResult Session::load() {
     draft_ = model_.assembly;
     spec_ = model_.spec;
+    observations_explicit_ = true;
     system_name_ = model_.name;
     draft_revision_ = 1;
     catalog_ = {};
@@ -1054,10 +1071,10 @@ CheckReport Session::check() {
         report.items.push_back(CheckItemView{
             render_session(texts_, locale_, "session.check.area.session", "Session state"),
             render_session(texts_, locale_, "session.check.subject.empty", "Empty session"), false,
-            render_session(texts_, locale_, "session.check.note.empty", "Open the example before running checks")});
+            render_session(texts_, locale_, "session.check.note.empty", "Create or open a research or causal system before running checks")});
         report.diagnostics.push_back(view_of(
             make_diagnostic(ErrorCode::invalid_declaration, {}, "session.empty",
-                            "Open the example before this operation"),
+                            "Create or open a research or causal system first"),
             texts_, locale_));
         return report;
     }
@@ -1066,7 +1083,7 @@ CheckReport Session::check() {
 
 OperationResult Session::apply() {
     if (phase_ == Phase::empty) {
-        return reject(session_text("session.empty", "Open the example before this operation"));
+        return reject(session_text("session.empty", "Create or open a research or causal system first"));
     }
     const auto report = run_checks();
     if (!report.passed) return finish(false, report.diagnostics);
@@ -1081,7 +1098,7 @@ OperationResult Session::apply() {
 
 OperationResult Session::set_instance_config(const std::string& scope, const std::string& name, Config config) {
     if (phase_ == Phase::empty) {
-        return reject(session_text("session.empty", "Open the example before this operation"));
+        return reject(session_text("session.empty", "Create or open a research or causal system first"));
     }
     try {
         for (const auto& instance : draft_.instances(scope)) {
@@ -1106,7 +1123,9 @@ OperationResult Session::new_system(std::string name) {
     // 新建系统在空会话中确立身份，直接进入编辑态。
     draft_ = AssemblyDefinition{};
     spec_ = {};
-    system_name_ = std::move(name);
+    observations_explicit_ = false;
+    system_name_ = name.empty() ? render_session(texts_, locale_, "session.system.unnamed", "Untitled system")
+                                : std::move(name);
     ++draft_revision_;
     catalog_ = {};
     inputs_.clear();
@@ -1122,7 +1141,12 @@ OperationResult Session::new_system(std::string name) {
     run_revision_ = 0;
     last_failure_.reset();
     phase_ = Phase::editing;
-    return finish(true);
+    // 空系统也刷新目录（空装配可实例化）：修订对齐，模块树不误标“目录陈旧”。
+    auto diagnostics = refresh_catalog();
+    if (derive_spec_inputs()) ++draft_revision_;
+    if (derive_spec_observations()) ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    return finish(true, std::move(diagnostics));
 }
 
 std::vector<std::string> Session::available_modules() const { return factories_.definitions(); }
@@ -1149,6 +1173,7 @@ OperationResult Session::add_module(std::string definition, std::string instance
                                                       {{"instance", instance}}),
                                            texts_, locale_)});
     }
+    if (config.is_null()) config = factories_.default_config(definition);  // 定义登记的默认构造配置
     try {
         draft_.add_instance(std::move(definition), std::move(instance), std::move(config));
     } catch (const EngineError& error) {
@@ -1157,6 +1182,7 @@ OperationResult Session::add_module(std::string definition, std::string instance
     ++draft_revision_;
     auto diagnostics = refresh_catalog();
     if (derive_spec_inputs()) ++draft_revision_;
+    if (derive_spec_observations()) ++draft_revision_;
     catalog_.revision = draft_revision_;
     return finish(true, std::move(diagnostics));
 }
@@ -1171,6 +1197,7 @@ OperationResult Session::remove_module(const std::string& instance) {
     ++draft_revision_;
     auto diagnostics = refresh_catalog();
     if (derive_spec_inputs()) ++draft_revision_;
+    if (derive_spec_observations()) ++draft_revision_;
     catalog_.revision = draft_revision_;
     return finish(true, std::move(diagnostics));
 }
@@ -1196,6 +1223,7 @@ OperationResult Session::connect_requirement(const Reference& requirement, const
     ++draft_revision_;
     auto diagnostics = refresh_catalog();
     if (derive_spec_inputs()) ++draft_revision_;
+    if (derive_spec_observations()) ++draft_revision_;
     catalog_.revision = draft_revision_;
     return finish(true, std::move(diagnostics));
 }
@@ -1206,6 +1234,7 @@ OperationResult Session::disconnect_requirement(const Reference& requirement) {
     ++draft_revision_;
     auto diagnostics = refresh_catalog();
     if (derive_spec_inputs()) ++draft_revision_;
+    if (derive_spec_observations()) ++draft_revision_;
     catalog_.revision = draft_revision_;
     return finish(true, std::move(diagnostics));
 }
@@ -1221,6 +1250,7 @@ OperationResult Session::set_spec_advance(const Reference& advance) {
 
 OperationResult Session::set_spec_observations(std::vector<std::pair<std::string, Reference>> observations) {
     if (phase_ == Phase::empty) return reject_without_system();
+    observations_explicit_ = true;  // 调用方显式覆盖：不再按公开量推导
     if (spec_.observations == observations) return finish(true);
     spec_.observations = std::move(observations);
     ++draft_revision_;
@@ -1237,7 +1267,12 @@ OperationResult Session::open_system(const std::string& bytes, std::string name,
     }
     draft_ = std::move(parsed);
     spec_ = {};
-    if (!name.empty()) system_name_ = std::move(name);
+    observations_explicit_ = false;
+    if (!name.empty()) {
+        system_name_ = std::move(name);
+    } else if (system_name_.empty()) {
+        system_name_ = render_session(texts_, locale_, "session.system.unnamed", "Untitled system");
+    }
     ++draft_revision_;
     catalog_ = {};
     inputs_.clear();
@@ -1255,6 +1290,7 @@ OperationResult Session::open_system(const std::string& bytes, std::string name,
     phase_ = Phase::editing;
     auto diagnostics = refresh_catalog();
     if (derive_spec_inputs()) ++draft_revision_;
+    if (derive_spec_observations()) ++draft_revision_;
     catalog_.revision = draft_revision_;
     return finish(true, std::move(diagnostics));
 }
@@ -1272,7 +1308,7 @@ Session::EncodeResult Session::encode_system() const {
 
 OperationResult Session::set_input(const std::string& name, std::any value) {
     if (phase_ == Phase::empty) {
-        return reject(session_text("session.empty", "Open the example before this operation"));
+        return reject(session_text("session.empty", "Create or open a research or causal system first"));
     }
     const auto found = std::find_if(spec_.inputs.begin(), spec_.inputs.end(),
                                     [&](const auto& item) { return item.first == name; });
@@ -1984,9 +2020,14 @@ OperationResult Session::open_experiment(const ExperimentFile& file) {
     run_revision_ = file.run_revision;
     run_id_ = file.run_id.has_value() ? *file.run_id : run_id_ + 1;
     spec_ = file.spec;
-    system_name_ = file.model;
+    observations_explicit_ = true;
+    system_name_ = file.model.empty() ? render_session(texts_, locale_, "session.system.unnamed", "Untitled system")
+                                      : file.model;
     last_failure_.reset();
     phase_ = adopt ? Phase::runnable : Phase::record;
+    // 目录按打开的模型重建（不残留上一会话目录）；实例化失败时目录留空并给出诊断。
+    catalog_ = {};
+    const auto catalog_diagnostics = refresh_catalog();
     std::vector<DiagnosticView> notes;
     if (!adopt) {
         notes.push_back(view_of(
@@ -1994,6 +2035,7 @@ OperationResult Session::open_experiment(const ExperimentFile& file) {
                             "Opened as a read-only record: implementation check, replay verification or failure records prevent resuming"),
             texts_, locale_));
     }
+    notes.insert(notes.end(), catalog_diagnostics.begin(), catalog_diagnostics.end());
     return finish(true, std::move(notes));
 }
 

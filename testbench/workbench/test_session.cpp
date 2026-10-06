@@ -1062,6 +1062,15 @@ void open_record_state() {
     const auto result = opened->open_experiment(saved);
     CHECK(result.ok);
     CHECK(result.status.phase == Phase::record);
+    // 目录按打开的模型重建：不残留上一会话目录，且与打开后的草稿修订一致。
+    const auto opened_catalog = opened->catalog();
+    CHECK(!opened_catalog.modules.empty());
+    CHECK(opened_catalog.revision == opened->status().draft_revision);
+    bool has_plant = false;
+    for (const auto& node : opened_catalog.modules) {
+        if (node.path == "plant") has_plant = true;
+    }
+    CHECK(has_plant);
     CHECK(opened->status().tracks.size() == 1);
     CHECK(opened->status().tracks[0].failed);
     CHECK(!opened->step().ok);
@@ -1215,6 +1224,14 @@ void system_assembly() {
     CHECK(std::find(modules.begin(), modules.end(), example::plant_definition) != modules.end());
     CHECK(std::find(modules.begin(), modules.end(), example::library_source_definition) != modules.end());
 
+    // 空会话不预置模板规格：规格、输入与观测均为空（无示例残留）。
+    const auto fresh_spec = session->spec();
+    CHECK(fresh_spec.advance == Reference{});
+    CHECK(fresh_spec.inputs.empty());
+    CHECK(fresh_spec.observations.empty());
+    CHECK(session->input_names().empty());
+    CHECK(session->observation_names().empty());
+
     // 空会话尚未确立系统身份：编辑命令返回诊断且状态不变（含本地化文案）。
     const auto before = session->status();
     const auto empty_edit = session->add_module(example::plant_definition, "plant");
@@ -1228,6 +1245,9 @@ void system_assembly() {
     CHECK(!session->remove_module("absent").ok);
     CHECK(!session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
     CHECK(!session->set_spec_advance({"plant", "advance"}).ok);
+    const auto empty_apply = session->apply();
+    CHECK(!empty_apply.ok);
+    CHECK(empty_apply.diagnostics.front().message.find("研究") != std::string::npos);
     CHECK(session->status().phase == Phase::empty);
     CHECK(session->status().draft_revision == before.draft_revision);
 
@@ -1237,14 +1257,24 @@ void system_assembly() {
     CHECK(created.status.phase == Phase::editing);
     CHECK(session->status().model_name == "接线测试");
     CHECK(session->spec().advance == Reference{});
+    CHECK(session->catalog().revision == session->status().draft_revision);  // 空系统目录修订对齐
 
     // 增加模块实例：未知定义、非法名与重名被拒绝。
     CHECK(!session->add_module("no.such", "x").ok);
     CHECK(!session->add_module(example::plant_definition, "a/b").ok);
     CHECK(session->add_module(example::plant_definition, "plant").ok);
-    CHECK(session->add_module(example::stimulus_definition, "input", Config::integer(1)).ok);
+    CHECK(session->add_module(example::stimulus_definition, "input").ok);  // 未给配置：用定义登记的默认值
     CHECK(!session->add_module(example::plant_definition, "plant").ok);
     CHECK(session->instances().size() == 2);
+    // 默认构造配置预填（plant 0,0,0；stimulus 1）。
+    const auto preconfigured = session->instances();
+    CHECK(preconfigured[0].name == "plant");
+    CHECK(preconfigured[0].config.find("x")->integer() == 0);
+    CHECK(preconfigured[0].config.find("z")->integer() == 0);
+    CHECK(preconfigured[1].config.integer() == 1);
+    // 观测未显式选择时默认记录根作用域全部公开量：plant/x,y,z 与 input/value。
+    const auto derived_observations = session->spec().observations;
+    CHECK(derived_observations.size() == 4);
 
     // 接线：需求 → 提供方；重复连接替换；断开后重复断开为无操作成功。
     CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
@@ -1288,6 +1318,7 @@ void system_assembly() {
 
     // 模块库定义可直接实例化；实现标识由宿主核对：未载入包时检查拒绝，载入包后由清单提供。
     CHECK(session->add_module(example::library_source_definition, "source").ok);
+    CHECK(session->spec().observations.size() == 3);  // 显式选择后不被推导覆盖
     CHECK(session->add_module(example::library_accumulator_definition, "counter").ok);
     CHECK(!session->check().passed);
     const auto package = [](const auto& factory, const std::string& definition, const std::string& implementation) {
@@ -1349,6 +1380,7 @@ void system_file() {
     CHECK(reopened->instances().size() == 2);
     CHECK(reopened->spec().advance == Reference{});  // 规格不属于因果系统
     CHECK(reopened->spec().inputs.size() == 1);      // 输入按系统公开方法推导
+    CHECK(reopened->spec().observations.size() == 4);  // 观测默认记录公开量
     CHECK(reopened->set_spec_advance({"plant", "advance"}).ok);
     CHECK(reopened->set_spec_observations({{"x", {"plant", "x"}}}).ok);
     CHECK(reopened->check().passed);

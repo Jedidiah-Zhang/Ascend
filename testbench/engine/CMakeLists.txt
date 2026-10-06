@@ -60,6 +60,7 @@ foreach(case IN ITEMS
     wiring
     editing_instance
     factory_merge
+    config_text
     independence
     config_values
     record_errors

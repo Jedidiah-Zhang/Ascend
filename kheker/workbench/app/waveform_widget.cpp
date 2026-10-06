@@ -72,7 +72,9 @@ void WaveformWidget::setCheckpoint(std::optional<std::int64_t> frame, bool branc
 QPoint WaveformWidget::framePosition(std::int64_t frame) const {
     const QRect wave = wave_rect();
     const double x = x_for_frame(static_cast<double>(frame), wave);
-    return QPoint(static_cast<int>(std::lround(x)), wave.center().y());
+    // 视口最大帧映射到右边界之外：定位与测试点击钳制到波形区内。
+    const int clamped = std::clamp(static_cast<int>(std::lround(x)), wave.left(), wave.right());
+    return QPoint(clamped, wave.center().y());
 }
 
 QRect WaveformWidget::wave_rect() const {

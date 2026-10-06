@@ -203,6 +203,26 @@ void TestWorkbench::windowLoadsExample() {
     auto* blank_tree = window->findChild<QTreeWidget*>("moduleTree");
     QVERIFY(blank_tree != nullptr);
     QCOMPARE(blank_tree->topLevelItemCount(), 0);
+    // 空会话不显示模板残留：信号树为空、规格面板无观测项、时间轴与逻辑帧差异页签不打开。
+    auto* blank_signals = window->findChild<QTreeWidget*>("signalTree");
+    QVERIFY(blank_signals != nullptr);
+    QCOMPARE(blank_signals->topLevelItemCount(), 0);
+    auto* blank_spec = window->findChild<QTreeWidget*>("specTree");
+    QVERIFY(blank_spec != nullptr);
+    QVERIFY(wait_until([&] { return blank_spec->topLevelItemCount() > 0; }, 4000));  // 等待首次模型快照
+    const auto blank_spec_group = [&](const QString& name) -> QTreeWidgetItem* {
+        for (int index = 0; index < blank_spec->topLevelItemCount(); ++index) {
+            if (blank_spec->topLevelItem(index)->text(0) == name) return blank_spec->topLevelItem(index);
+        }
+        return nullptr;
+    };
+    auto* blank_observations = blank_spec_group(QStringLiteral("观测"));
+    QVERIFY(blank_observations != nullptr);
+    QCOMPARE(blank_observations->childCount(), 0);
+    auto* blank_results = window->findChild<QTabWidget*>("resultsTabs");
+    QVERIFY(blank_results != nullptr);
+    QCOMPARE(blank_results->indexOf(window->findChild<QWidget*>("timelinePage")), -1);
+    QCOMPARE(blank_results->indexOf(window->findChild<QWidget*>("differencesPage")), -1);
 
     // 文件 → 打开示例：加载内置确定性三变量示例。
     QVERIFY(open_example(window));
@@ -515,7 +535,7 @@ void TestWorkbench::branchComparisonAndReplay() {
     QCOMPARE(cursor_table->item(9, 2)->text(), QStringLiteral("8"));
     QCOMPARE(cursor_table->item(9, 4)->text(), QStringLiteral("0"));
 
-    // 共同逻辑帧差值：8、8、16。
+    // 逻辑帧差异：8、8、16。
     window->findChild<QTabWidget*>("resultsTabs")->setCurrentWidget(window->findChild<QWidget*>("differencesPage"));
     QVERIFY(wait_until([window] { return !window->busy(); }));
     QTest::qWait(30);
@@ -752,9 +772,9 @@ void TestWorkbench::menuBarStructure() {
     config_toggle->trigger();
     QVERIFY(!config_dock->isHidden());
 
-    // 时间轴/共同逻辑帧差值页签：默认打开，可从查看菜单关闭与重开。
+    // 时间轴/逻辑帧差异页签：有运行即已打开，可从查看菜单关闭与重开。
     QAction* timeline_toggle = find_action(view_menu, QStringLiteral("时间轴"));
-    QAction* diffs_toggle = find_action(view_menu, QStringLiteral("共同逻辑帧差值"));
+    QAction* diffs_toggle = find_action(view_menu, QStringLiteral("逻辑帧差异"));
     QVERIFY(timeline_toggle != nullptr && diffs_toggle != nullptr);
     QVERIFY(timeline_toggle->isChecked());
     QVERIFY(diffs_toggle->isChecked());
@@ -1208,6 +1228,25 @@ void TestWorkbench::systemEditorAssembly() {
     QVERIFY(requirement != nullptr);
     QVERIFY(requirement->text(2) != QStringLiteral("input/value"));  // 未连接
 
+    // 实例配置自动识别：plant 展开 x/y/z 字段；stimulus 的值字段预填定义默认（1）。
+    auto* plant_editor = window->findChild<QWidget*>("configEditor_plant");
+    QVERIFY(plant_editor != nullptr);
+    QVERIFY(plant_editor->findChild<QLineEdit*>("configLeaf_x") != nullptr);
+    QVERIFY(plant_editor->findChild<QLineEdit*>("configLeaf_y") != nullptr);
+    QVERIFY(plant_editor->findChild<QLineEdit*>("configLeaf_z") != nullptr);
+    auto* input_editor = window->findChild<QWidget*>("configEditor_input");
+    QVERIFY(input_editor != nullptr);
+    auto* value_edit = input_editor->findChild<QLineEdit*>("configLeaf_value");
+    QVERIFY(value_edit != nullptr);
+    QCOMPARE(value_edit->text(), QStringLiteral("1"));  // 定义默认构造配置预填
+    value_edit->setFocus();
+    value_edit->selectAll();
+    QTest::keyClicks(value_edit, QStringLiteral("2"));
+    QTest::keyClick(value_edit, Qt::Key_Return);
+    QVERIFY(wait_idle(window));
+    requirement = find_requirement(QStringLiteral("plant"), QStringLiteral("input"));  // 重建后重新定位
+    QVERIFY(requirement != nullptr);
+
     // 连接需求到 input/value。
     tree->setCurrentItem(requirement);
     auto* provider_combo = window->findChild<QComboBox*>("systemProviderCombo");
@@ -1228,33 +1267,47 @@ void TestWorkbench::systemEditorAssembly() {
     QVERIFY(wait_idle(window));
     auto* observation_list = window->findChild<QListWidget*>("systemObservationList");
     QVERIFY(observation_list != nullptr);
-    QVERIFY(observation_list->count() >= 3);
-    for (int i = 0; i < observation_list->count(); ++i) {
-        auto* item = observation_list->item(i);
-        if (item->text() == QStringLiteral("plant/x") || item->text() == QStringLiteral("plant/y") ||
-            item->text() == QStringLiteral("plant/z")) {
-            item->setCheckState(Qt::Checked);
-        }
-    }
-    QVERIFY(wait_idle(window));
-    QVERIFY(wait_until([&] {
-        int checked = 0;
+    // 观测默认记录根作用域全部公开量（可取消）：plant 的 x/y/z 与 input 的值自动勾选。
+    QVERIFY(observation_list->count() >= 4);
+    const auto has_checked_observation = [&](const QString& name) {
         for (int i = 0; i < observation_list->count(); ++i) {
-            if (observation_list->item(i)->checkState() == Qt::Checked) ++checked;
+            const auto* item = observation_list->item(i);
+            if (item->text() == name && item->checkState() == Qt::Checked) return true;
         }
-        return checked == 3;
+        return false;
+    };
+    QVERIFY(wait_until([&] {
+        return has_checked_observation(QStringLiteral("plant/x")) &&
+               has_checked_observation(QStringLiteral("plant/y")) &&
+               has_checked_observation(QStringLiteral("plant/z")) &&
+               has_checked_observation(QStringLiteral("input/value"));
     }, 4000));
     auto* input_label = window->findChild<QLabel*>("systemInputLabel");
     QVERIFY(input_label != nullptr);
     QVERIFY(input_label->text().contains(QStringLiteral("input.drive")));
 
-    // 应用并推进：新系统成为可运行模型。
+    // 应用并推进两步：a = 1 恒定时 x 在第 2 逻辑帧为 2（复现参考序列）。
     window->findChild<QPushButton*>("systemApplyButton")->click();
     QVERIFY(wait_until([&] { return window->currentStatus().phase == ascend::session::Phase::runnable; }, 8000));
-    window->findChild<QPushButton*>("stepButton")->click();
-    QVERIFY(wait_idle(window));
+    for (int step = 0; step < 2; ++step) {
+        window->findChild<QPushButton*>("stepButton")->click();
+        QVERIFY(wait_idle(window));
+    }
     QCOMPARE(window->currentStatus().tracks.size(), std::size_t{1});
-    QCOMPARE(window->currentStatus().tracks.front().frame, std::int64_t{1});
+    QCOMPARE(window->currentStatus().tracks.front().frame, std::int64_t{2});
+    auto* waveform = window->findChild<WaveformWidget*>("waveform");
+    QVERIFY(waveform != nullptr);
+    QTest::mouseClick(waveform, Qt::LeftButton, Qt::NoModifier, waveform->framePosition(2));
+    auto* cursor_table = window->findChild<QTableWidget*>("cursorTable");
+    QVERIFY(cursor_table != nullptr);
+    int x_row = -1;
+    for (int row = 0; row < cursor_table->rowCount(); ++row) {
+        if (cursor_table->item(row, 0) != nullptr && cursor_table->item(row, 0)->text() == QStringLiteral("plant/x")) {
+            x_row = row;
+        }
+    }
+    QVERIFY(x_row >= 0);
+    QCOMPARE(cursor_table->item(x_row, 2)->text(), QStringLiteral("4"));  // x = 4（a = 2 恒定）
 
     // 移除实例（确认对话框）：plant 移除后只剩 input。
     tree->setCurrentItem(find_requirement(QStringLiteral("plant"), QStringLiteral("input")));
@@ -1270,6 +1323,19 @@ void TestWorkbench::systemEditorAssembly() {
     QVERIFY(wait_idle(window));
     QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 1; }, 4000));
     QCOMPARE(tree->topLevelItem(0)->text(0), QStringLiteral("input"));
+
+    // 未登记默认配置的定义（模块库模块）：配置面板退回 JSON 值输入。
+    definition_combo->setCurrentText(QStringLiteral("library.source"));
+    instance_edit->setText(QStringLiteral("source"));
+    add_button->click();
+    QVERIFY(wait_idle(window));
+    auto* source_editor = window->findChild<QWidget*>("configEditor_source");
+    QVERIFY(source_editor != nullptr);
+    auto* source_value = source_editor->findChild<QLineEdit*>("configValueEdit");
+    QVERIFY(source_value != nullptr);
+    source_value->setText(QStringLiteral("{\"value\": 3}"));
+    QTest::keyClick(source_value, Qt::Key_Return);
+    QVERIFY(wait_idle(window));
 }
 
 void TestWorkbench::startPageResearch() {
@@ -1283,12 +1349,27 @@ void TestWorkbench::startPageResearch() {
     QVERIFY(results != nullptr && start != nullptr);
     QCOMPARE(results->currentWidget(), start);
     QCOMPARE(window->windowTitle(), QStringLiteral("Ascend 因果建模工作台"));
+    auto* timeline = window->findChild<QWidget*>("timelinePage");
+    auto* differences = window->findChild<QWidget*>("differencesPage");
+    QVERIFY(timeline != nullptr && differences != nullptr);
+    QCOMPARE(results->indexOf(timeline), -1);   // 无研究：结果页签不打开
+    QCOMPARE(results->indexOf(differences), -1);
 
     // 开始页 → 打开内置示例。
     window->findChild<QPushButton*>("startOpenExampleButton")->click();
     QVERIFY(wait_until([&] { return window->currentStatus().phase == ascend::session::Phase::runnable; }, 8000));
     QCOMPARE(results->indexOf(start), -1);
     QVERIFY(window->windowTitle().contains(QStringLiteral("确定性三变量")));
+    QVERIFY(results->indexOf(timeline) >= 0);   // 有运行：时间轴与逻辑帧差异自动打开
+    QVERIFY(results->indexOf(differences) >= 0);
+    auto* signal_tree = window->findChild<QTreeWidget*>("signalTree");
+    QVERIFY(signal_tree != nullptr);
+    QVERIFY(wait_until([&] { return signal_tree->topLevelItemCount() >= 1; }, 4000));  // 观测组
+    auto* check_table = window->findChild<QTableWidget*>("checkTable");
+    QVERIFY(check_table != nullptr);
+    window->findChild<QPushButton*>("checkButton")->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return check_table->rowCount() > 0; }, 4000));
 
     // 查看菜单重新打开开始页；新建研究（创建新的因果系统）。
     window->findChild<QAction*>("startViewAction")->trigger();
@@ -1310,6 +1391,10 @@ void TestWorkbench::startPageResearch() {
     QVERIFY(wait_until([&] { return window->currentStatus().model_name == "起始研究"; }, 4000));
     QCOMPARE(window->currentStatus().phase, ascend::session::Phase::editing);
     QCOMPARE(results->indexOf(start), -1);
+    QCOMPARE(results->indexOf(timeline), -1);   // 新系统尚无运行：结果页签关闭
+    QCOMPARE(results->indexOf(differences), -1);
+    QCOMPARE(check_table->rowCount(), 0);       // 身份切换后检查报告清空
+    QCOMPARE(signal_tree->topLevelItemCount(), 0);  // 观测组随模型清空
     QVERIFY(window->windowTitle().contains(QStringLiteral("起始研究")));
 
     // 添加模块并保存因果系统文件（.aasm）。

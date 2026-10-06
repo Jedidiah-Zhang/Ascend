@@ -30,9 +30,11 @@ class ModuleLibrary {
 public:
     using Factory = ModuleFactoryDirectory::Factory;
 
-    // 登记内置实现；定义标识为空、重复或实现标识为空分别报告
+    // 登记内置实现；preset 为默认构造配置（供系统编辑器预填，可为空）。
+    // 定义标识为空、重复或实现标识为空分别报告
     // invalid_declaration／duplicate_definition／invalid_declaration。
-    void register_implementation(std::string definition, std::string implementation, Factory factory);
+    void register_implementation(std::string definition, std::string implementation, Factory factory,
+                                 Config preset = {});
     // 载入模块包：解码、解析实现、核对清单与运行时声明、预校验语言资源；
     // 全部通过后一次登记并返回定义标识。失败不登记任何内容。
     std::string load(const std::string& bytes);

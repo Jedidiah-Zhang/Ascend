@@ -325,10 +325,9 @@ void MainWindow::buildLayout() {
     // 标签化操作下可能崩溃；升级 Qt 后无需改码即消除。
     setDockOptions(dockOptions() | QMainWindow::GroupedDragging);
     addDockWidget(Qt::LeftDockWidgetArea, modules_dock_);
-    addDockWidget(Qt::LeftDockWidgetArea, config_dock_);
-    splitDockWidget(modules_dock_, config_dock_, Qt::Vertical);
     addDockWidget(Qt::RightDockWidgetArea, state_dock_);
-    resizeDocks({modules_dock_, config_dock_}, {320, 320}, Qt::Vertical);
+    addDockWidget(Qt::RightDockWidgetArea, config_dock_);
+    tabifyDockWidget(state_dock_, config_dock_);  // 右侧：状态与配置同区标签化
     resizeDocks({modules_dock_, state_dock_}, {330, 360}, Qt::Horizontal);
 }
 
@@ -567,7 +566,8 @@ void MainWindow::buildResultsPane() {
     cursor_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     cursor_table_->setMaximumHeight(150);
     timeline_layout->addWidget(cursor_table_);
-    results_tabs_->addTab(timeline_page, ui_text(*texts_, "workbench.pane.timeline", "Timeline"));
+    // 时间轴与逻辑帧差异默认不打开：出现运行/记录时由 ensureResultsVisible 加入。
+    timeline_page_->hide();
 
     diff_page_ = new QWidget(results_tabs_);
     diff_page_->setObjectName("differencesPage");
@@ -580,7 +580,7 @@ void MainWindow::buildResultsPane() {
     diff_table_->setObjectName("diffTable");
     diff_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     diff_layout->addWidget(diff_table_, 1);
-    results_tabs_->addTab(diff_page, ui_text(*texts_, "workbench.pane.differences", "Shared-frame differences"));
+    diff_page_->hide();
 
     connect(signal_tree_, &QTreeWidget::itemChanged, this, [this] { rebuildWaveform(); });
     connect(waveform_, &WaveformWidget::cursorsChanged, this, &MainWindow::updateCursorTable);
@@ -1035,6 +1035,8 @@ void MainWindow::chooseNewSystem() {
                                                QLineEdit::Normal, QString(), &accepted);
     if (!accepted || name.trimmed().isEmpty()) return;
     system_file_.clear();
+    current_file_.clear();
+    clearTransientViews();
     beginSystemCommand("newSystem");
     QMetaObject::invokeMethod(controller_, "newSystem", Qt::QueuedConnection, Q_ARG(QString, name.trimmed()));
 }
@@ -1240,6 +1242,8 @@ void MainWindow::startNewResearch() {
     }
     hideStartPage();
     system_file_.clear();
+    current_file_.clear();
+    clearTransientViews();
     beginSystemCommand("newSystem");
     QMetaObject::invokeMethod(controller_, "newSystem", Qt::QueuedConnection, Q_ARG(QString, name));
     showSystemEditor();
@@ -1255,6 +1259,8 @@ void MainWindow::startOpenExample() {
     if (busy_ || closing_) return;
     hideStartPage();
     system_file_.clear();
+    current_file_.clear();
+    clearTransientViews();
     dispatch("load");
 }
 
@@ -1307,6 +1313,8 @@ void MainWindow::onSystemOpened(const QString& path, bool ok, const QString& det
     }
     system_file_ = path;
     system_dirty_ = false;
+    current_file_.clear();
+    clearTransientViews();
     showSystemEditor();
 }
 
@@ -1324,6 +1332,21 @@ void MainWindow::onSystemSaved(const QString& path, bool ok, const QString& deta
 
 void MainWindow::updateSystemFileLabel() {
     if (editor_page_ != nullptr && results_tabs_->indexOf(editor_page_) >= 0) rebuildSystemEditor();
+}
+
+void MainWindow::clearTransientViews() {
+    // 研究/系统身份切换：清掉与上一身份绑定的瞬时视图（检查报告、采样详情与波形状态）。
+    check_table_->setRowCount(0);
+    check_note_->setText(ui_text(*texts_, "workbench.check.not_yet", "Not checked yet."));
+    sample_tree_->clear();
+    sample_label_->setText(ui_text(*texts_, "workbench.sample.select_hint", "Select a logical frame in the timeline."));
+    selected_frame_ = -1;
+    waveform_->clear();
+    diff_table_->clearContents();
+    diff_table_->setRowCount(0);
+    diff_note_->clear();
+    details_view_->setHtml(ui_text(*texts_, "workbench.detail.placeholder",
+                                   "<p style='color:#666'>Select a module, public item or connection on the left to see details.</p>"));
 }
 
 void MainWindow::buildDiagnosticsDock() {
@@ -1470,6 +1493,8 @@ void MainWindow::buildMenuBar() {
     open_action_->setObjectName("openExampleAction");
     connect(open_action_, &QAction::triggered, this, [this] {
         system_file_.clear();
+        current_file_.clear();
+        clearTransientViews();
         dispatch("load");
     });
     file->addSeparator();
@@ -1538,7 +1563,7 @@ void MainWindow::buildMenuBar() {
     dock_action(view, config_dock_, "workbench.view.config", "Configuration");
     timeline_action_ = central_action(view, timeline_page_, "workbench.pane.timeline", "Timeline");
     timeline_action_->setObjectName("timelineViewAction");
-    diff_action_ = central_action(view, diff_page_, "workbench.pane.differences", "Shared-frame differences");
+    diff_action_ = central_action(view, diff_page_, "workbench.pane.differences", "Frame differences");
     diff_action_->setObjectName("differencesViewAction");
     dock_action(view, state_dock_, "workbench.view.right_panel", "State");
     dock_action(view, diagnostics_dock_, "workbench.view.diagnostics", "Bottom panel (diagnostics and records)");
@@ -1560,8 +1585,12 @@ void MainWindow::buildMenuBar() {
 }
 
 void MainWindow::updateStatusLabels() {
-    if (!status_.model_name.empty()) updateWindowTitle();
+    updateWindowTitle();
     status_label_->setText(statusLine());
+    if (status_.phase == session::Phase::empty) {
+        revision_label_->clear();  // 空会话没有草稿修订可言
+        return;
+    }
     QString revision = ui_text(*texts_, "workbench.status.draft_revision", "Draft revision %1").arg(status_.draft_revision);
     if (status_.dirty) {
         revision += ui_text(*texts_, "workbench.status.dirty", "(not applied; the run comes from revision %1)").arg(status_.run_revision);
@@ -1645,6 +1674,19 @@ void MainWindow::onTracesReset(const std::vector<session::TrackTraceView>& trace
     diff_table_->setRowCount(0);
     diff_note_->clear();
     requestLatestSample();
+    if (traces.empty()) {
+        // 身份重置：清掉与上一运行绑定的瞬时视图（波形游标与采样详情）。
+        waveform_->clear();
+        selected_frame_ = -1;
+        sample_label_->setText(
+            ui_text(*texts_, "workbench.sample.select_hint", "Select a logical frame in the timeline."));
+    }
+    // 有运行/记录时自动打开结果页签；空会话或编辑态（尚无运行）不保留。
+    if (!traces.empty()) {
+        ensureResultsVisible();
+    } else if (status_.phase == session::Phase::empty || status_.phase == session::Phase::editing) {
+        hideResultsTabs();
+    }
 }
 
 void MainWindow::onSamplesAppended(int series, const std::vector<session::SampleView>& samples,
@@ -1867,6 +1909,38 @@ void MainWindow::setCentralViewVisible(QWidget* page, const QString& title, bool
     }
 }
 
+void MainWindow::ensureResultsVisible() {
+    if (timeline_page_ == nullptr || results_tabs_ == nullptr) return;
+    // 首次出现结果时切到时间轴；已打开过时不改变当前页（避免打断系统编辑器里的迭代）。
+    const bool opening = results_tabs_->indexOf(timeline_page_) < 0;
+    const auto ensure = [this](QWidget* page, QAction* action) {
+        if (results_tabs_->indexOf(page) < 0) {
+            results_tabs_->addTab(page, action != nullptr ? action->text() : QString());
+        }
+        if (action != nullptr) {
+            QSignalBlocker blocker(action);
+            action->setChecked(true);
+        }
+    };
+    ensure(timeline_page_, timeline_action_);
+    ensure(diff_page_, diff_action_);
+    if (opening) results_tabs_->setCurrentWidget(timeline_page_);
+}
+
+void MainWindow::hideResultsTabs() {
+    if (results_tabs_ == nullptr) return;
+    const auto hide = [this](QWidget* page, QAction* action) {
+        const int index = results_tabs_->indexOf(page);
+        if (index >= 0) results_tabs_->removeTab(index);
+        if (action != nullptr) {
+            QSignalBlocker blocker(action);
+            action->setChecked(false);
+        }
+    };
+    hide(timeline_page_, timeline_action_);
+    hide(diff_page_, diff_action_);
+}
+
 void MainWindow::showPackageLibrary() {
     if (package_page_ == nullptr) return;
     // 载入成功：打开模块库页签并切换过去；已打开时只切换（浏览器式页签可手动关闭）。
@@ -1905,6 +1979,7 @@ void MainWindow::onExperimentOpened(const QString& path, bool ok, const QString&
     current_file_ = path;
     file_dirty_ = false;
     system_file_.clear();
+    clearTransientViews();
     updateWindowTitle();
     updateRecordSummary();
 }
@@ -2238,7 +2313,11 @@ void MainWindow::rebuildSpec() {
         item->setData(0, Qt::UserRole + 1, 1);
     };
     auto* advance_group = add_group("workbench.spec.advance", "Advance entry");
-    add_entry(advance_group, reference_text(model_.spec.advance));
+    const auto& advance = model_.spec.advance;
+    add_entry(advance_group,
+              advance.module.empty() && advance.symbol.empty()
+                  ? ui_text(*texts_, "workbench.spec.no_advance", "Not selected")
+                  : reference_text(advance));
     auto* inputs_group =
         add_group("workbench.spec.inputs", "Inputs (driven in spec order before each advance)");
     for (const auto& entry : model_.spec.inputs) {
@@ -2294,8 +2373,17 @@ void MainWindow::rebuildWaveform() {
     if (waveform_rebuilding_) return;
     waveform_rebuilding_ = true;
 
-    if (series_checks_.size() != series_.size() ||
-        series_checks_host_->findChildren<QCheckBox*>().size() != static_cast<int>(series_.size())) {
+    bool rebuild_checks = series_checks_.size() != series_.size() ||
+                          series_checks_host_->findChildren<QCheckBox*>().size() != static_cast<int>(series_.size());
+    if (!rebuild_checks) {
+        for (std::size_t index = 0; index < series_.size(); ++index) {
+            if (series_checks_[index]->text() != series_[index].label) {
+                rebuild_checks = true;
+                break;
+            }
+        }
+    }
+    if (rebuild_checks) {
         auto* layout = series_checks_host_->layout();
         while (auto* item = layout->takeAt(0)) {
             delete item->widget();
@@ -2312,44 +2400,55 @@ void MainWindow::rebuildWaveform() {
         }
     }
 
-    // 信号树：观测组（规格观测）与差值组（两分支存在时）。
+    // 信号树：观测组与差值组按当前规格观测重建（名称或数量变化时），无观测时不保留。
+    const auto items_match = [this](const QTreeWidgetItem* group) {
+        if (group == nullptr) return false;
+        if (static_cast<std::size_t>(group->childCount()) != model_.observations.size()) return false;
+        for (int index = 0; index < group->childCount(); ++index) {
+            if (group->child(index)->text(0) != from_utf8(model_.observations[static_cast<std::size_t>(index)])) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto fill_group = [this](QTreeWidgetItem* group, int difference) {
+        for (std::size_t index = 0; index < model_.observations.size(); ++index) {
+            auto* item = new QTreeWidgetItem(group);
+            item->setText(0, from_utf8(model_.observations[index]));
+            item->setData(0, Qt::UserRole, static_cast<int>(index));
+            item->setData(0, Qt::UserRole + 1, difference);
+            item->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            item->setCheckState(0, Qt::Checked);
+        }
+    };
+    if (observation_group_ != nullptr && !items_match(observation_group_)) {
+        const QSignalBlocker blocker(signal_tree_);
+        delete observation_group_;
+        observation_group_ = nullptr;
+    }
     if (observation_group_ == nullptr && !model_.observations.empty()) {
         const QSignalBlocker blocker(signal_tree_);
         observation_group_ = new QTreeWidgetItem(signal_tree_);
         observation_group_->setText(0, ui_text(*texts_, "workbench.waveform.observations", "Observations"));
         observation_group_->setFlags(Qt::ItemIsEnabled);
         observation_group_->setExpanded(true);
-        for (std::size_t index = 0; index < model_.observations.size(); ++index) {
-            auto* item = new QTreeWidgetItem(observation_group_);
-            item->setText(0, from_utf8(model_.observations[index]));
-            item->setData(0, Qt::UserRole, static_cast<int>(index));
-            item->setData(0, Qt::UserRole + 1, 0);
-            item->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-            item->setCheckState(0, Qt::Checked);
-        }
+        fill_group(observation_group_, 0);
         signal_tree_->expandAll();
     }
-    if (series_.size() > 2 && !model_.observations.empty()) {
-        if (diff_group_ == nullptr) {
-            const QSignalBlocker blocker(signal_tree_);
-            diff_group_ = new QTreeWidgetItem(signal_tree_);
-            diff_group_->setText(0, ui_text(*texts_, "workbench.waveform.diff_group", "Difference (treated − control)"));
-            diff_group_->setFlags(Qt::ItemIsEnabled);
-            diff_group_->setExpanded(true);
-            for (std::size_t index = 0; index < model_.observations.size(); ++index) {
-                auto* item = new QTreeWidgetItem(diff_group_);
-                item->setText(0, from_utf8(model_.observations[index]));
-                item->setData(0, Qt::UserRole, static_cast<int>(index));
-                item->setData(0, Qt::UserRole + 1, 1);
-                item->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-                item->setCheckState(0, Qt::Checked);
-            }
-            signal_tree_->expandAll();
-        }
-    } else if (diff_group_ != nullptr) {
+    const bool want_diff = series_.size() > 2 && !model_.observations.empty();
+    if (diff_group_ != nullptr && (!want_diff || !items_match(diff_group_))) {
         const QSignalBlocker blocker(signal_tree_);
         delete diff_group_;
         diff_group_ = nullptr;
+    }
+    if (want_diff && diff_group_ == nullptr) {
+        const QSignalBlocker blocker(signal_tree_);
+        diff_group_ = new QTreeWidgetItem(signal_tree_);
+        diff_group_->setText(0, ui_text(*texts_, "workbench.waveform.diff_group", "Difference (treated − control)"));
+        diff_group_->setFlags(Qt::ItemIsEnabled);
+        diff_group_->setExpanded(true);
+        fill_group(diff_group_, 1);
+        signal_tree_->expandAll();
     }
 
     QVector<WaveformWidget::Signal> rows;

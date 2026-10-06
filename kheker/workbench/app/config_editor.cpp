@@ -1,5 +1,7 @@
 #include "config_editor.hpp"
 
+#include <ascend/engine.hpp>
+
 #include <QLabel>
 #include <QLineEdit>
 #include <QFormLayout>
@@ -77,9 +79,22 @@ void ConfigEditor::rebuild() {
         delete row.fieldItem;
     }
     leaves_.clear();
-    addValue({}, config_);
-    if (form_->rowCount() == 0 && config_.is_null()) {
-        form_->addRow(new QLabel(ui_text(texts_, "workbench.config.empty", "(empty configuration; no editable fields)")));
+    const bool json_editable =
+        config_.is_null() || (config_.kind() == ascend::Config::Kind::object && config_.members().empty());
+    if (json_editable) {
+        // 空配置没有字段可展开：直接编辑整份配置的 JSON 值（如 1 或 {"x": 0}）。
+        auto leaf = std::make_unique<Leaf>();
+        leaf->json = true;
+        leaf->edit = new QLineEdit(config_.is_null() ? QString() : QStringLiteral("{}"), this);
+        leaf->edit->setObjectName("configValueEdit");
+        leaf->edit->setPlaceholderText(
+            ui_text(texts_, "workbench.config.value_hint", "JSON value, e.g. 1 or {\"x\": 0}"));
+        Leaf* stored = leaf.get();
+        QObject::connect(leaf->edit, &QLineEdit::editingFinished, this, [this, stored] { commit(*stored); });
+        form_->addRow(ui_text(texts_, "workbench.config.scalar_label", "Value"), leaf->edit);
+        leaves_.push_back(std::move(leaf));
+    } else {
+        addValue({}, config_);
     }
     built_ = true;
 }
@@ -109,6 +124,29 @@ void ConfigEditor::addValue(const QString& prefix, const ascend::Config& value) 
 }
 
 void ConfigEditor::commit(Leaf& leaf) {
+    if (leaf.json) {
+        // 整份配置的 JSON 值：空文本表示恢复为空配置。
+        const QString text = leaf.edit->text().trimmed();
+        if (text.isEmpty()) {
+            clearError(leaf.edit);
+            if (!config_.is_null()) {
+                config_ = ascend::Config{};
+                emit configEdited(config_);
+            }
+            return;
+        }
+        try {
+            ascend::Config parsed = ascend::Config::parse(text.toStdString());
+            clearError(leaf.edit);
+            if (parsed == config_) return;
+            config_ = std::move(parsed);
+            emit configEdited(config_);
+        } catch (const ascend::EngineError& error) {
+            markError(leaf.edit, QString::fromStdString(
+                                     render_diagnostic(error.diagnostic(), &texts_.catalog, texts_.locale)));
+        }
+        return;
+    }
     TextRef error;
     const auto parsed = adapter_.parse(leaf.edit->text().toStdString(), error);
     if (!parsed.has_value()) {

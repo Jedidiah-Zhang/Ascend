@@ -18,6 +18,7 @@ namespace ascend::workbench {
 
 // 实例构造配置编辑器：对象和嵌套对象展开为字段行，数组整体只读；
 // 只有整数叶可编辑，解析按适配器进行并保持 64 位精度。
+// 空配置（null 或空对象）没有可推导字段，提供一个 JSON 值输入（与装配文件同一解析器）。
 class ConfigEditor : public QWidget {
     Q_OBJECT
 
@@ -35,6 +36,7 @@ private:
         QStringList path;
         QLineEdit* edit = nullptr;
         QString committed;
+        bool json = false;  // 空配置：整份配置的 JSON 值输入
     };
 
     void rebuild();

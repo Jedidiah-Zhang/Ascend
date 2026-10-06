@@ -31,7 +31,7 @@ bool valid_scope_name(const std::string& name) {
 }  // namespace
 
 void ModuleFactoryDirectory::add_definition(std::string definition, Factory factory,
-                                           std::vector<I18nResource> resources) {
+                                           std::vector<I18nResource> resources, Config preset) {
     const Reference target{definition, {}};
     if (definition.empty()) {
         detail::fail_text(ErrorCode::invalid_declaration, target,
@@ -48,7 +48,10 @@ void ModuleFactoryDirectory::add_definition(std::string definition, Factory fact
                 {{engine_text_domain, "i18n.resource.invalid"}, "Resource domain and path must be non-empty"});
         }
     }
-    if (!factories_.emplace(std::move(definition), Definition{std::move(factory), std::move(resources)}).second) {
+    if (!factories_
+             .emplace(std::move(definition),
+                      Definition{std::move(factory), std::move(resources), std::move(preset)})
+             .second) {
         detail::fail_text(ErrorCode::duplicate_definition, target,
                          {{engine_text_domain, "assembly.factory.duplicate_definition"},
                           "Definition is already registered"});
@@ -57,6 +60,17 @@ void ModuleFactoryDirectory::add_definition(std::string definition, Factory fact
 
 bool ModuleFactoryDirectory::contains(const std::string& definition) const {
     return factories_.count(definition) != 0;
+}
+
+Config ModuleFactoryDirectory::default_config(const std::string& definition) const {
+    const auto found = factories_.find(definition);
+    if (found == factories_.end()) {
+        detail::fail_text(ErrorCode::unknown_definition, {definition, {}},
+                          {{engine_text_domain, "assembly.factory.unknown_definition"},
+                           "Module definition '{definition}' is not registered",
+                           {{"definition", definition}}});
+    }
+    return found->second.preset;
 }
 
 void ModuleFactoryDirectory::merge_from(const ModuleFactoryDirectory& other) {

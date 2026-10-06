@@ -17,13 +17,13 @@ namespace {
 }  // namespace
 
 void ModuleLibrary::register_implementation(std::string definition, std::string implementation,
-                                            Factory factory) {
+                                            Factory factory, Config preset) {
     if (implementation.empty()) {
         fail(ErrorCode::invalid_declaration, "module_library.implementation.empty",
              "A built-in implementation identifier must not be empty");
     }
     // 空定义标识与重复定义由工厂目录报告，失败时不记录实现标识。
-    factories_.add_definition(definition, std::move(factory));
+    factories_.add_definition(definition, std::move(factory), {}, std::move(preset));
     implementations_.emplace(std::move(definition), std::move(implementation));
 }
 

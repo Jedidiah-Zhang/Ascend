@@ -24,8 +24,12 @@ class ModuleFactoryDirectory {
 public:
     using Factory = std::function<Module(const std::string& instance, const Config& config)>;
 
-    // 登记构造入口；定义标识为空或重复时分别报告 invalid_declaration／duplicate_definition。
-    void add_definition(std::string definition, Factory factory, std::vector<I18nResource> resources = {});
+    // 登记构造入口；preset 为默认构造配置（新建实例预填与编辑展示用，可为空）。
+    // 定义标识为空或重复时分别报告 invalid_declaration／duplicate_definition。
+    void add_definition(std::string definition, Factory factory, std::vector<I18nResource> resources = {},
+                        Config preset = {});
+    // 定义登记的默认构造配置；未登记报告 unknown_definition。
+    Config default_config(const std::string& definition) const;
     // 合并另一个目录：已存在的定义保持不变，其余连同语言资源一并复制（用于宿主内置与
     // 模块库工厂合并成实例化目录）。不报告重复，合并可重复执行。
     void merge_from(const ModuleFactoryDirectory& other);
@@ -42,6 +46,7 @@ private:
     struct Definition {
         Factory factory;
         std::vector<I18nResource> resources;
+        Config preset;
     };
     std::map<std::string, Definition> factories_;
 };

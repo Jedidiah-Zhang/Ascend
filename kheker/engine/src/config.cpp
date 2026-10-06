@@ -1,9 +1,15 @@
 #include <ascend/config.hpp>
 
+#include "json.hpp"
+
 #include <cmath>
 #include <stdexcept>
 
 namespace ascend {
+
+Config Config::parse(const std::string& text, std::string source) {
+    return detail::parse_json(text, source);
+}
 
 Config Config::boolean(bool value) {
     Config config;

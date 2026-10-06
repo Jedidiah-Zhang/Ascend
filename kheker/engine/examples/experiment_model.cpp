@@ -151,8 +151,12 @@ std::vector<I18nResource> i18n_resources(const std::string& resource_root) {
 ModuleFactoryDirectory factories(const std::string& resource_root) {
     ModuleFactoryDirectory result;
     const auto resources = i18n_resources(resource_root);
-    result.add_definition(plant_definition, plant, resources);
-    result.add_definition(stimulus_definition, stimulus, resources);
+    // 默认构造配置：plant 初值 0,0,0；stimulus 值 1（与内置示例一致），供新建实例预填与编辑。
+    result.add_definition(plant_definition, plant, resources,
+                          Config::object({{"x", Config::integer(0)},
+                                          {"y", Config::integer(0)},
+                                          {"z", Config::integer(0)}}));
+    result.add_definition(stimulus_definition, stimulus, resources, Config::integer(1));
     return result;
 }
 

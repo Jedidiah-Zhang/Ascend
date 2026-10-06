@@ -443,6 +443,8 @@ private:
     std::vector<DiagnosticView> refresh_catalog();
     // 按目录中的公开单参数方法推导输入映射；沿用引用未变的既有名称。返回是否变化。
     bool derive_spec_inputs();
+    // 观测未显式选择时，默认取根作用域全部公开量（可经 set_spec_observations 覆盖与取消）。
+    bool derive_spec_observations();
     // 空会话尚未确立系统身份：编辑命令返回诊断且不改变状态。
     OperationResult reject_without_system() const;
     // 根作用域是否存在该实例。
@@ -460,6 +462,7 @@ private:
 
     ModuleFactoryDirectory factories_;  // 宿主内置与模块库合并后的实例化目录
     ExperimentSpec spec_;               // 当前规格草稿
+    bool observations_explicit_ = false;  // 观测是否由调用方显式设置（否则按公开量推导）
     std::string system_name_;           // 当前系统名（空则显示模板名）
     AssemblyDefinition draft_;  // 当前配置草稿
     std::uint64_t draft_revision_ = 0;

@@ -105,6 +105,9 @@ private:
     void buildMenuBar();
     // 中央工作区页签开关：打开时加入并在必要时切到该页，关闭时移除（视图对象保留）。
     void setCentralViewVisible(QWidget* page, const QString& title, bool visible);
+    // 结果页签（时间轴与逻辑帧差异）：有运行/记录时自动打开；无运行（空会话/编辑态）时关闭。
+    void ensureResultsVisible();
+    void hideResultsTabs();
     // 系统编辑器：按模型快照重建控件；选择变化时刷新提供方候选与按钮状态。
     void rebuildSystemEditor();
     void onSystemSelectionChanged();
@@ -127,6 +130,8 @@ private:
     void onSystemOpened(const QString& path, bool ok, const QString& detail);
     void onSystemSaved(const QString& path, bool ok, const QString& detail);
     void updateSystemFileLabel();
+    // 研究/系统身份切换：清掉与上一身份绑定的瞬时视图（检查报告、采样详情与波形状态）。
+    void clearTransientViews();
     // 开始页动作：关闭开始页并进入相应流程。
     void startNewResearch();
     void startOpenResearch();
