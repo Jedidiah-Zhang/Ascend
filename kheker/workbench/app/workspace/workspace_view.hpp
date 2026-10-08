@@ -46,10 +46,11 @@ constexpr bool has(WorkspaceChange set, WorkspaceChange part) noexcept {
 
 // 身份切换意图：界面在进入相应流程时声明，状态层据此发出清理通知。
 enum class IdentityIntent {
-    new_research,     // 新建研究（新建因果系统）
+    new_research,     // 新建研究（创建项目目录）
     open_example,     // 打开内置示例
     open_system,      // 打开因果系统文件成功
-    open_experiment,  // 打开研究（实验文件）成功
+    open_project,     // 打开项目成功（研究文件与装配文件）
+    open_record,      // 打开运行记录成功
 };
 
 // 控件启用条件：由相位、忙碌与运行状态派生；窗口只套用，不再各处理解规则。
@@ -60,8 +61,8 @@ struct ControlsView {
     bool can_branch = false;           // 建立分支
     bool can_reset_branches = false;   // 重置分支
     bool can_replay = false;           // 重放核对
-    bool can_save_experiment = false;  // 保存实验
-    bool can_open_file = false;        // 打开实验／打开示例／新建研究（忙碌时禁用）
+    bool can_save_project = false;     // 保存项目（装配文件、研究文件与当前记录）
+    bool can_open_file = false;        // 打开项目／打开记录／打开示例／新建研究（忙碌时禁用）
     bool can_manage_packages = false;  // 载入模块包（忙碌时禁用）
     bool can_unload_package = false;   // 卸载模块包（额外要求已载入非空）
 };
@@ -92,10 +93,11 @@ inline bool panel_open(const PanelState& panels, const char* id) {
 struct WorkspaceState {
     // 身份文件关联与未保存标记：由外壳的文件流程更新（beginIdentity／note_*_saved／set_*_dirty），
     // 渲染由外壳在保存/打开等路径显式触发。
-    std::string system_file;      // 当前因果系统文件（`.aasm`）；空表示尚未保存
-    std::string research_file;    // 当前研究（实验）文件（`.aexp`）；空表示尚未保存
-    bool system_dirty = false;    // 因果系统草稿相对系统文件的未保存状态
-    bool research_dirty = false;  // 研究草稿相对研究文件的未保存状态
+    std::string system_file;      // 当前装配文件（`.aasm`）；空表示尚未保存或未关联
+    std::string research_file;    // 当前研究文件（`.aexp`）；空表示尚未保存或未关联
+    std::string record_file;      // 当前运行记录（`.arec`）；空表示无当前记录
+    bool system_dirty = false;    // 装配草稿相对装配文件的未保存状态
+    bool research_dirty = false;  // 研究规格相对研究文件的未保存状态
     bool busy = false;
     session::Status status;
     ModelSnapshot model;

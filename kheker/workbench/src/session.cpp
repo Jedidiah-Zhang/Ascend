@@ -1,6 +1,9 @@
 #include <ascend/session/session.hpp>
 
+#include <ascend/session/project.hpp>
+
 #include <algorithm>
+#include <filesystem>
 #include <iomanip>
 #include <limits>
 #include <locale>
@@ -418,7 +421,16 @@ Status Session::make_status() const {
     status.draft_revision = draft_revision_;
     status.run_revision = run_revision_;
     if (run_id_ != 0) status.run_id = run_id_;
-    status.dirty = draft_revision_ != run_revision_;
+    const bool has_run = phase_ == Phase::runnable || phase_ == Phase::stopped ||
+                         phase_ == Phase::failed || phase_ == Phase::record;
+    // 运行是否对应当前草稿：来自记录快照的运行不按修订号数值比较（跨会话计数可能碰撞）。
+    status.dirty = has_run && (!run_from_draft_ || draft_revision_ != run_revision_);
+    status.study_saved = !project_ || draft_revision_ == project_->saved_draft_revision;
+    status.record_saved = !project_ || record_written_ || phase_ == Phase::empty || phase_ == Phase::editing;
+    if (project_) {
+        status.project_directory = project_->directory;
+        status.record_name = project_->current_record_name;
+    }
     status.has_checkpoint = checkpoint_ != nullptr;
     status.checkpoint_frame = checkpoint_ ? checkpoint_->frame : -1;
     status.recorded_inputs = record_.inputs.size();
@@ -495,19 +507,33 @@ std::vector<InstanceView> Session::instances() const {
 }
 
 std::vector<std::string> Session::input_names() const {
+    // 运行规格的输入（会被当前运行驱动）在前，研究规格的输入（待应用）在后。
     std::vector<std::string> result;
-    for (const auto& entry : spec_.inputs) result.push_back(entry.first);
+    const auto append = [&result](const std::vector<std::pair<std::string, Reference>>& inputs) {
+        for (const auto& entry : inputs) {
+            if (std::find(result.begin(), result.end(), entry.first) == result.end()) {
+                result.push_back(entry.first);
+            }
+        }
+    };
+    append(active_spec().inputs);
+    append(spec_.inputs);
     return result;
 }
 
 std::vector<std::string> Session::observation_names() const {
-    // 轨迹与信号树使用已应用运行的规格；尚无运行时显示草稿规格（编辑态）。
-    const auto& observations =
-        (has_exploration_ || !record_.branches.empty()) ? record_.spec.observations : spec_.observations;
+    // 轨迹与信号树使用运行规格（记录快照）；尚无运行时显示草稿规格（编辑态）。
+    const auto& observations = active_spec().observations;
     std::vector<std::string> result;
     result.reserve(observations.size());
     for (const auto& entry : observations) result.push_back(entry.first);
     return result;
+}
+
+const ExperimentSpec& Session::active_spec() const {
+    // 运行/记录存在时以运行规格为准（记录快照）；编辑态使用研究规格。
+    if (has_exploration_ || !record_.branches.empty()) return record_.spec;
+    return spec_;
 }
 
 
@@ -812,15 +838,19 @@ std::string Session::implementation_of(const std::string& definition) const {
     return {};
 }
 
-std::map<std::string, std::string> Session::used_implementations() const {
+std::map<std::string, std::string> Session::implementations_for(const AssemblyDefinition& assembly) const {
     std::map<std::string, std::string> result;
-    for (const auto& scope : draft_.scopes()) {
-        for (const auto& instance : draft_.instances(scope)) {
+    for (const auto& scope : assembly.scopes()) {
+        for (const auto& instance : assembly.instances(scope)) {
             const auto implementation = implementation_of(instance.definition);
             if (!implementation.empty()) result.emplace(instance.definition, implementation);
         }
     }
     return result;
+}
+
+std::map<std::string, std::string> Session::used_implementations() const {
+    return implementations_for(draft_);
 }
 
 CheckReport Session::run_checks() {
@@ -1031,6 +1061,13 @@ void Session::build_source_run() {
     last_failure_.reset();
     ++run_id_;
     run_revision_ = draft_revision_;
+    run_from_draft_ = true;
+    // 新运行会话与旧记录脱钩：下一次保存生成新的记录文件（历史记录不被覆盖）。
+    if (project_) {
+        project_->current_record.reset();
+        project_->current_record_name.reset();
+    }
+    record_written_ = false;
 }
 
 OperationResult Session::load() {
@@ -1053,6 +1090,8 @@ OperationResult Session::load() {
     run_revision_ = 0;
     last_failure_.reset();
     phase_ = Phase::editing;
+    project_.reset();
+    record_written_ = true;
 
     const auto report = run_checks();
     if (!report.passed) return finish(false, report.diagnostics);
@@ -1141,6 +1180,12 @@ OperationResult Session::new_system(std::string name) {
     run_revision_ = 0;
     last_failure_.reset();
     phase_ = Phase::editing;
+    // 新建系统在项目内保留项目关联；当前记录不再对应当前会话。
+    if (project_) {
+        project_->current_record.reset();
+        project_->current_record_name.reset();
+    }
+    record_written_ = true;
     // 空系统也刷新目录（空装配可实例化）：修订对齐，模块树不误标“目录陈旧”。
     auto diagnostics = refresh_catalog();
     if (derive_spec_inputs()) ++draft_revision_;
@@ -1288,6 +1333,8 @@ OperationResult Session::open_system(const std::string& bytes, std::string name,
     run_revision_ = 0;
     last_failure_.reset();
     phase_ = Phase::editing;
+    project_.reset();
+    record_written_ = true;
     auto diagnostics = refresh_catalog();
     if (derive_spec_inputs()) ++draft_revision_;
     if (derive_spec_observations()) ++draft_revision_;
@@ -1310,23 +1357,37 @@ OperationResult Session::set_input(const std::string& name, std::any value) {
     if (phase_ == Phase::empty) {
         return reject(session_text("session.empty", "Create or open a research or causal system first"));
     }
-    const auto found = std::find_if(spec_.inputs.begin(), spec_.inputs.end(),
-                                    [&](const auto& item) { return item.first == name; });
-    if (found == spec_.inputs.end()) {
+    // 输入名可来自运行规格（会被当前运行驱动）或研究规格（保存待应用）；两者都没有时拒绝。
+    const Reference* reference = nullptr;
+    for (const auto& item : active_spec().inputs) {
+        if (item.first == name) {
+            reference = &item.second;
+            break;
+        }
+    }
+    if (reference == nullptr) {
+        for (const auto& item : spec_.inputs) {
+            if (item.first == name) {
+                reference = &item.second;
+                break;
+            }
+        }
+    }
+    if (reference == nullptr) {
         return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_declaration, {},
                                                       "session.input.unknown", "No input named '{name}'",
                                                       {{"name", name}}),
                                        texts_, locale_)});
     }
     if (!value.has_value()) {
-        return finish(false, {view_of(make_diagnostic(ErrorCode::type_mismatch, found->second, "session.input.empty",
+        return finish(false, {view_of(make_diagnostic(ErrorCode::type_mismatch, *reference, "session.input.empty",
                                                       "Input '{name}' needs a value", {{"name", name}}),
                                        texts_, locale_)});
     }
-    if (const auto* declaration = root_declaration(catalog_, found->second)) {
+    if (const auto* declaration = root_declaration(catalog_, *reference)) {
         if (!declaration->parameters.empty() && declaration->parameters.front().supported &&
             declaration->parameters.front().type != type_display(value.type(), *adapters_, texts_, locale_)) {
-            return finish(false, {view_of(make_diagnostic(ErrorCode::type_mismatch, found->second,
+            return finish(false, {view_of(make_diagnostic(ErrorCode::type_mismatch, *reference,
                                                           "session.input.type",
                                                           "Input '{name}' expects type {type}",
                                                           {{"name", name},
@@ -1335,6 +1396,7 @@ OperationResult Session::set_input(const std::string& name, std::any value) {
         }
     }
     inputs_[name] = std::move(value);
+    record_written_ = false;
     return finish(true);
 }
 
@@ -1357,6 +1419,7 @@ OperationResult Session::run(std::int64_t steps, const std::function<bool()>& sh
                                    {{"limit", std::to_string(max_trace_frames)}}));
     }
 
+    record_written_ = false;
     std::vector<DiagnosticView> diagnostics;
     bool failed_cycle = false;
     bool stopped = false;
@@ -1469,6 +1532,7 @@ OperationResult Session::create_checkpoint() {
     } catch (const EngineError& error) {
         return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
     }
+    record_written_ = false;
     return finish(true);
 }
 
@@ -1497,7 +1561,7 @@ OperationResult Session::replace_with_branches(const std::vector<BranchRequest>&
         }
         std::unique_ptr<ExperimentRun> run;
         try {
-            run = std::make_unique<ExperimentRun>(record_.assembly, factories_, spec_, branch.label);
+            run = std::make_unique<ExperimentRun>(record_.assembly, factories_, record_.spec, branch.label);
             run->restore(start);
         } catch (const EngineError& error) {
             return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
@@ -1518,6 +1582,8 @@ OperationResult Session::replace_with_branches(const std::vector<BranchRequest>&
     }
     record_.inputs.clear();
     record_.branches = std::move(traces);
+    // 新运行由当前工厂建立：按实际使用的装配登记实现标识，不沿用历史记录中的旧标识。
+    record_.implementations = implementations_for(record_.assembly);
     std::vector<std::unique_ptr<Track>> tracks;
     for (std::size_t index = 0; index < runs.size(); ++index) {
         auto track = std::make_unique<Track>();
@@ -1529,6 +1595,7 @@ OperationResult Session::replace_with_branches(const std::vector<BranchRequest>&
     record_events_.clear();
     record_frames_.clear();
     last_failure_.reset();
+    record_written_ = false;
     return finish(true);
 }
 
@@ -1567,12 +1634,42 @@ OperationResult Session::reset_branches() {
     }
     std::vector<BranchRequest> definitions;
     for (const auto& trace : record_.branches) definitions.push_back(BranchRequest{trace.label, trace.interventions});
+    // 记录血缘：新运行使用当前工厂；旧探索轨迹必须能在当前实现下复现，否则不提交
+    // 重建（保持只读记录，避免产出无法重放的新记录）。
+    if (!run_from_draft_ && has_exploration_) {
+        const auto report = verify_standalone(record_.assembly, record_.spec, exploration_trace_,
+                                              exploration_trace_.driven, nullptr);
+        if (!report.ok || !report.complete) {
+            std::vector<DiagnosticView> diagnostics;
+            if (report.diagnostic.has_value()) diagnostics.push_back(*report.diagnostic);
+            if (report.first_mismatch.has_value()) {
+                diagnostics.push_back(view_of(
+                    make_diagnostic(ErrorCode::invalid_state, {}, "session.reset.exploration_mismatch",
+                                    "The recorded exploration trace diverges at frame {frame} ({field})",
+                                    {{"frame", std::to_string(report.first_mismatch->frame)},
+                                     {"field", report.first_mismatch->field}}),
+                    texts_, locale_));
+            }
+            diagnostics.push_back(view_of(
+                make_diagnostic(ErrorCode::invalid_state, {}, "session.reset.exploration_stale",
+                                "The recorded exploration trace cannot be reproduced with the current implementations; apply the research draft to start a new run"),
+                texts_, locale_));
+            return OperationResult{false, 0, false, make_status(), std::move(diagnostics)};
+        }
+    }
     const auto result = replace_with_branches(definitions);
     if (!result.ok) {
         // 记录态保持只读记录；本次重建失败只给诊断，不改变会话状态（WB-16）。
         return OperationResult{false, result.completed_steps, result.stopped, make_status(),
                                result.diagnostics};
     }
+    // 从记录重建分支是新运行会话：分配新运行编号并解除原记录关联，保存生成新记录。
+    ++run_id_;
+    if (project_) {
+        project_->current_record.reset();
+        project_->current_record_name.reset();
+    }
+    record_written_ = false;
     phase_ = Phase::runnable;
     return finish(true);
 }
@@ -1855,15 +1952,14 @@ const std::vector<StepEvent>* Session::trace_events(std::size_t branch_index) co
     return branch_index < tracks_.size() ? &tracks_[branch_index]->events : &empty;
 }
 
-ExperimentFile Session::experiment_file() const {
-    ExperimentFile file;
+RecordFile Session::record_file() const {
+    RecordFile file;
     file.model = system_name_;
     file.assembly = record_.assembly;
     file.spec = record_.spec;
     file.implementations = record_.implementations;
     if (phase_ != Phase::empty && phase_ != Phase::editing && run_id_ != 0) file.run_id = run_id_;
     file.run_revision = run_revision_;
-    file.draft = std::make_pair(draft_revision_, draft_);
     if (checkpoint_) file.checkpoint = *checkpoint_;
     file.input_settings = inputs_;
     file.inputs = record_.inputs;
@@ -1896,10 +1992,10 @@ ExperimentFile Session::experiment_file() const {
     return file;
 }
 
-Session::EncodeResult Session::encode_experiment() const {
+Session::EncodeResult Session::encode_record() const {
     EncodeResult result;
     try {
-        result.bytes = encode_experiment_file(experiment_file());
+        result.bytes = encode_record_file(record_file());
         result.ok = true;
     } catch (const EngineError& error) {
         result.diagnostic = view_of(error.diagnostic(), texts_, locale_);
@@ -1907,15 +2003,15 @@ Session::EncodeResult Session::encode_experiment() const {
     return result;
 }
 
-OperationResult Session::open_experiment(const std::string& bytes) {
+OperationResult Session::open_record(const std::string& bytes) {
     try {
-        return open_experiment(decode_experiment_file(bytes));
+        return open_record(decode_record_file(bytes));
     } catch (const EngineError& error) {
         return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
     }
 }
 
-OperationResult Session::open_experiment(const ExperimentFile& file) {
+OperationResult Session::open_record(const RecordFile& file) {
     if (file.traces.empty()) {
         return reject(session_text("session.open.empty", "The experiment file has no traces"));
     }
@@ -2010,22 +2106,23 @@ OperationResult Session::open_experiment(const ExperimentFile& file) {
     has_exploration_ = keep_exploration;
     checkpoint_ = file.checkpoint ? std::make_unique<Checkpoint>(*file.checkpoint) : nullptr;
     inputs_ = file.input_settings;
-    if (file.draft.has_value()) {
-        draft_ = file.draft->second;
-        draft_revision_ = file.draft->first;
-    } else {
+    // 装配快照成为运行身份；项目模式下编辑源保持项目装配与规格不变（ENV-16），
+    // 独立会话没有编辑源文件，快照同时作为编辑基。
+    if (!project_) {
         draft_ = file.assembly;
         draft_revision_ = file.run_revision;
+        spec_ = file.spec;
+        observations_explicit_ = true;
+        system_name_ = file.model.empty()
+                           ? render_session(texts_, locale_, "session.system.unnamed", "Untitled system")
+                           : file.model;
     }
     run_revision_ = file.run_revision;
     run_id_ = file.run_id.has_value() ? *file.run_id : run_id_ + 1;
-    spec_ = file.spec;
-    observations_explicit_ = true;
-    system_name_ = file.model.empty() ? render_session(texts_, locale_, "session.system.unnamed", "Untitled system")
-                                      : file.model;
+    run_from_draft_ = false;  // 运行来自记录快照，不按修订号数值判断是否已应用
     last_failure_.reset();
     phase_ = adopt ? Phase::runnable : Phase::record;
-    // 目录按打开的模型重建（不残留上一会话目录）；实例化失败时目录留空并给出诊断。
+    // 目录按编辑源重建（不残留上一会话目录）；实例化失败时目录留空并给出诊断。
     catalog_ = {};
     const auto catalog_diagnostics = refresh_catalog();
     std::vector<DiagnosticView> notes;
@@ -2036,7 +2133,197 @@ OperationResult Session::open_experiment(const ExperimentFile& file) {
             texts_, locale_));
     }
     notes.insert(notes.end(), catalog_diagnostics.begin(), catalog_diagnostics.end());
+    record_written_ = true;
     return finish(true, std::move(notes));
+}
+
+void Session::clear_run_state() {
+    inputs_.clear();
+    record_ = {};
+    tracks_.clear();
+    exploration_trace_ = {};
+    exploration_events_.clear();
+    record_events_.clear();
+    record_frames_.clear();
+    has_exploration_ = false;
+    checkpoint_.reset();
+    run_id_ = 0;
+    run_revision_ = 0;
+    run_from_draft_ = false;
+    last_failure_.reset();
+    record_written_ = true;
+}
+
+std::optional<ProjectView> Session::project() const {
+    if (!project_) return std::nullopt;
+    ProjectView view;
+    view.directory = project_->directory;
+    view.study_file = project_->study_path;
+    view.assembly_file = project_->assembly_path;
+    view.current_record = project_->current_record;
+    return view;
+}
+
+OperationResult Session::new_project(const std::string& directory, std::string name) {
+    const std::string display =
+        name.empty() ? render_session(texts_, locale_, "session.system.unnamed", "Untitled system") : name;
+    StudyFile study;
+    study.model = display;
+    study.assembly = project_default_assembly;
+    study.spec = {};
+    AssemblyDefinition empty;
+    std::string study_path;
+    try {
+        study_path = create_project(directory, name, study, empty.to_json());
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    draft_ = std::move(empty);
+    spec_ = {};
+    observations_explicit_ = false;
+    system_name_ = display;
+    ++draft_revision_;
+    catalog_ = {};
+    clear_run_state();
+    phase_ = Phase::editing;
+    project_ = ProjectState{directory,
+                            study_path,
+                            project_default_assembly,
+                            (std::filesystem::path(directory) / project_default_assembly).string(),
+                            std::nullopt,
+                            std::nullopt,
+                            0};
+    auto diagnostics = refresh_catalog();
+    if (derive_spec_inputs()) ++draft_revision_;
+    if (derive_spec_observations()) ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    project_->saved_draft_revision = draft_revision_;
+    return finish(true, std::move(diagnostics));
+}
+
+OperationResult Session::open_project(const std::string& directory) {
+    ProjectContents contents;
+    try {
+        contents = load_project(directory);
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    AssemblyDefinition parsed;
+    try {
+        parsed = AssemblyDefinition::parse(contents.assembly_bytes, contents.assembly_path);
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    // 先在临时状态完成实例化校验；失败时不改变当前会话、运行与项目关联。
+    CatalogView probe_catalog;
+    try {
+        Engine engine = parsed.instantiate(factories_);
+        probe_catalog = collect_catalog(engine, *adapters_, texts_, locale_, 0);
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    draft_ = std::move(parsed);
+    spec_ = contents.study.spec;
+    observations_explicit_ = true;  // 研究文件中的规格为准，不重新推导观测
+    system_name_ = contents.study.model.empty()
+                       ? render_session(texts_, locale_, "session.system.unnamed", "Untitled system")
+                       : contents.study.model;
+    ++draft_revision_;
+    clear_run_state();
+    phase_ = Phase::editing;
+    project_ = ProjectState{contents.directory, contents.study_path, contents.study.assembly,
+                            contents.assembly_path, std::nullopt, std::nullopt, 0};
+    catalog_ = std::move(probe_catalog);
+    if (derive_spec_inputs()) ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    project_->saved_draft_revision = draft_revision_;
+    return finish(true);
+}
+
+OperationResult Session::save_project() {
+    if (!project_) {
+        return reject(session_text("session.project.none", "Open or create a research project first"));
+    }
+    try {
+        // 装配文件是世界的编辑源；保存写入当前草稿。
+        write_text_file(project_->assembly_path, draft_.to_json());
+        StudyFile study;
+        study.model = system_name_;
+        study.assembly = project_->assembly_rel;
+        study.spec = spec_;
+        write_study_file(project_->study_path, study);
+        if (!record_written_ &&
+            (phase_ == Phase::runnable || phase_ == Phase::stopped || phase_ == Phase::failed)) {
+            const auto path = write_record_file(project_->directory,
+                                                project_->current_record.value_or(std::string{}),
+                                                record_file());
+            project_->current_record = path;
+            project_->current_record_name = std::filesystem::path(path).filename().string();
+            record_written_ = true;
+        }
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    project_->saved_draft_revision = draft_revision_;
+    return finish(true);
+}
+
+std::vector<RecordEntryView> Session::records() const {
+    std::vector<RecordEntryView> views;
+    if (!project_) return views;
+    try {
+        for (const auto& entry : list_records(project_->directory)) {
+            RecordEntryView view;
+            view.path = entry.path;
+            view.name = entry.name;
+            view.readable = entry.readable;
+            view.model = entry.summary.model;
+            view.series = entry.summary.series;
+            if (entry.problem.has_value()) view.problem = view_of(*entry.problem, texts_, locale_);
+            views.push_back(std::move(view));
+        }
+    } catch (const EngineError&) {
+        // 目录不可读时按空列表处理；打开项目时已核对目录。
+    }
+    return views;
+}
+
+OperationResult Session::open_record_file(const std::string& path) {
+    if (!project_) {
+        return reject(session_text("session.project.none", "Open or create a research project first"));
+    }
+    std::error_code error;
+    const auto canonical = std::filesystem::weakly_canonical(std::filesystem::path(path), error);
+    const auto root = std::filesystem::weakly_canonical(std::filesystem::path(project_->directory), error);
+    const std::string canonical_text = canonical.string();
+    const std::string root_text = root.string();
+    const bool inside = !error &&
+                        (canonical_text == root_text ||
+                         (canonical_text.size() > root_text.size() &&
+                          canonical_text.compare(0, root_text.size(), root_text) == 0 &&
+                          (canonical_text[root_text.size()] == '/' ||
+                           canonical_text[root_text.size()] == '\\')));
+    if (!inside) {
+        return finish(false, {view_of(
+            make_diagnostic(ErrorCode::io_failure, {}, "session.project.record_outside",
+                            "The record file is not inside the current project"),
+            texts_, locale_)});
+    }
+    std::string bytes;
+    try {
+        bytes = read_text_file(path);
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    auto result = open_record(bytes);
+    if (result.ok) {
+        project_->current_record = path;
+        project_->current_record_name = std::filesystem::path(path).filename().string();
+        record_written_ = true;
+        status_ = make_status();
+        result.status = status_;
+    }
+    return result;
 }
 
 std::vector<ModulePackageView> Session::module_packages() const {

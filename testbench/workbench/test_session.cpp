@@ -3,10 +3,12 @@
 #include <ascend/engine.hpp>
 #include <ascend/i18n.hpp>
 #include <ascend/session/session.hpp>
+#include <ascend/session/project.hpp>
 
 #include <any>
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <limits>
@@ -1012,14 +1014,14 @@ void save_open_round_trip() {
                           Config::integer(example::reference_intervention_value)}}}})
               .ok);
     CHECK(advance(*session, 1, 3).ok);
-    const auto saved = session->experiment_file();
+    const auto saved = session->record_file();
     CHECK(saved.traces.size() == 3);
     CHECK(saved.traces.front().exploration);
     CHECK(saved.inputs.size() == 3);
     CHECK(saved.checkpoint.has_value() && saved.checkpoint->frame == 2);
 
     auto opened = example_session();
-    const auto result = opened->open_experiment(saved);
+    const auto result = opened->open_record(saved);
     CHECK(result.ok);
     CHECK(opened->status().phase == Phase::runnable);
     CHECK(opened->status().tracks.size() == 2);
@@ -1036,7 +1038,7 @@ void save_open_round_trip() {
     CHECK(opened->run(1).ok);
     CHECK(opened->status().tracks[0].frame == 6);
     CHECK(opened->status().tracks[1].frame == 6);
-    const auto again = opened->experiment_file();
+    const auto again = opened->record_file();
     CHECK(again.traces.size() == 3);
     CHECK(again.traces[0].trace.label == saved.traces[0].trace.label);
 }
@@ -1054,12 +1056,12 @@ void open_record_state() {
     CHECK(set_input(*session, "a", 1).ok);
     CHECK(!session->step().ok);
     CHECK(session->status().phase == Phase::failed);
-    const auto saved = session->experiment_file();
+    const auto saved = session->record_file();
     CHECK(saved.traces.size() == 1);
     CHECK(!saved.traces.front().events.empty());
 
     auto opened = example_session();
-    const auto result = opened->open_experiment(saved);
+    const auto result = opened->open_record(saved);
     CHECK(result.ok);
     CHECK(result.status.phase == Phase::record);
     // 目录按打开的模型重建：不残留上一会话目录，且与打开后的草稿修订一致。
@@ -1090,12 +1092,12 @@ void open_rejects_and_falls_back() {
     auto session = example_session();
     CHECK(session->load().ok);
     CHECK(advance(*session, 1, 2).ok);
-    const auto saved = session->experiment_file();
+    const auto saved = session->record_file();
 
     auto mismatched = saved;
     mismatched.implementations[example::plant_definition] = "wrong.implementation";
     auto opened = example_session();
-    const auto first = opened->open_experiment(mismatched);
+    const auto first = opened->open_record(mismatched);
     CHECK(first.ok);
     CHECK(first.status.phase == Phase::record);
     CHECK(!first.diagnostics.empty());
@@ -1104,14 +1106,14 @@ void open_rejects_and_falls_back() {
     auto corrupted = saved;
     corrupted.traces.front().trace.samples.back().observations["x"] = Integer(99);
     auto second_session = example_session();
-    const auto second = second_session->open_experiment(corrupted);
+    const auto second = second_session->open_record(corrupted);
     CHECK(second.ok);
     CHECK(second.status.phase == Phase::record);
 
     auto empty = saved;
     empty.traces.clear();
     const auto before = opened->status();
-    const auto rejected = opened->open_experiment(empty);
+    const auto rejected = opened->open_record(empty);
     CHECK(!rejected.ok);
     CHECK(opened->status().phase == before.phase);
     CHECK(opened->status().tracks.size() == before.tracks.size());
@@ -1129,7 +1131,7 @@ void open_exploration_only() {
                           Config::integer(example::reference_intervention_value)}}}})
               .ok);
     CHECK(advance(*session, 1, 3).ok);
-    const auto full = session->experiment_file();
+    const auto full = session->record_file();
     CHECK(full.traces.size() == 3);
 
     auto exploration_only = full;
@@ -1137,7 +1139,7 @@ void open_exploration_only() {
     exploration_only.inputs = exploration_only.traces.front().trace.driven;  // 单运行的共同输入
     CHECK(exploration_only.traces.front().exploration);
     auto opened = example_session();
-    const auto first = opened->open_experiment(exploration_only);
+    const auto first = opened->open_record(exploration_only);
     CHECK(first.ok);
     CHECK(first.status.phase == Phase::runnable);
     CHECK(opened->status().tracks.size() == 1);
@@ -1150,7 +1152,7 @@ void open_exploration_only() {
     auto corrupted = exploration_only;
     corrupted.traces.front().trace.samples.back().observations["x"] = Integer(99);
     auto record = example_session();
-    const auto second = record->open_experiment(corrupted);
+    const auto second = record->open_record(corrupted);
     CHECK(second.ok);
     CHECK(second.status.phase == Phase::record);
     CHECK(!record->step().ok);
@@ -1159,7 +1161,7 @@ void open_exploration_only() {
     auto single_branch = full;
     single_branch.traces.resize(2);
     auto half = example_session();
-    const auto third = half->open_experiment(single_branch);
+    const auto third = half->open_record(single_branch);
     CHECK(third.ok);
     CHECK(third.status.phase == Phase::record);
     CHECK(!half->step().ok);
@@ -1428,6 +1430,349 @@ void comparison_limits() {
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// 研究项目（ENV-16）
+
+std::string temp_project_dir(const std::string& name) {
+    const auto dir = std::filesystem::temp_directory_path() / ("ascend-project-" + name);
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
+    return dir.string();
+}
+
+struct TempDirCleanup {
+    std::string dir;
+    ~TempDirCleanup() {
+        std::error_code error;
+        std::filesystem::remove_all(dir, error);
+    }
+};
+
+void project_workflow() {
+    namespace fs = std::filesystem;
+    const std::string dir = temp_project_dir("workflow");
+    TempDirCleanup cleanup{dir};
+
+    // 新建研究：目录、研究文件、装配文件与 records/ 一并生成。
+    auto session = example_session();
+    const auto created = session->new_project(dir, "项目甲");
+    CHECK(created.ok);
+    CHECK(session->project().has_value());
+    const fs::path study(session->project()->study_file);
+    CHECK(fs::exists(study));
+    CHECK(study.extension() == ".aexp");
+    CHECK(fs::exists(session->project()->assembly_file));
+    CHECK(fs::is_directory(fs::path(dir) / project_records_directory));
+    CHECK(session->status().project_directory == dir);
+    CHECK(session->status().study_saved);
+    CHECK(session->status().record_saved);
+    CHECK(session->system_name() == "项目甲");
+
+    // 打开项目：研究名与装配恢复，进入编辑态。
+    auto opened = example_session();
+    const auto result = opened->open_project(dir);
+    CHECK(result.ok);
+    CHECK(opened->status().phase == Phase::editing);
+    CHECK(opened->project().has_value());
+    CHECK(opened->system_name() == "项目甲");
+    CHECK(opened->status().study_saved);
+    CHECK(opened->project()->assembly_file == session->project()->assembly_file);
+
+    // 在项目草稿中装配示例世界并运行：保存项目写入研究文件与运行记录。
+    CHECK(opened->add_module(example::plant_definition, "plant").ok);
+    CHECK(opened->add_module(example::stimulus_definition, "input").ok);
+    CHECK(opened->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(opened->set_spec_advance({"plant", "advance"}).ok);
+    CHECK(opened->apply().ok);
+    CHECK(!opened->status().record_saved);
+    CHECK(opened->save_project().ok);
+    CHECK(opened->status().record_saved);
+    const auto entries = opened->records();
+    CHECK(entries.size() == 1);
+    CHECK(entries[0].readable);
+    CHECK(entries[0].model == "项目甲");
+    CHECK(entries[0].series >= 1);
+    CHECK(opened->status().record_name.has_value());
+
+    // 再次保存：写回同一记录文件，不新增记录。
+    CHECK(opened->step().ok);
+    CHECK(opened->save_project().ok);
+    CHECK(opened->records().size() == 1);
+
+    // 打开记录：接管为活动运行并关联当前记录。
+    auto record_session = example_session();
+    CHECK(record_session->open_project(dir).ok);
+    const auto listed = record_session->records();
+    CHECK(listed.size() == 1);
+    const auto opened_record = record_session->open_record_file(listed[0].path);
+    CHECK(opened_record.ok);
+    CHECK(record_session->status().phase == Phase::runnable);
+    CHECK(record_session->status().record_name.has_value());
+    CHECK(record_session->project()->current_record.has_value());
+
+    // 失败路径：空目录没有研究文件；非空目录拒绝新建。
+    const std::string empty_dir = temp_project_dir("empty");
+    TempDirCleanup empty_cleanup{empty_dir};
+    fs::create_directories(empty_dir);
+    auto empty_session = example_session();
+    CHECK(!empty_session->open_project(empty_dir).ok);
+    write_text_file((fs::path(empty_dir) / "keep.txt").string(), "x");
+    auto nonempty_session = example_session();
+    CHECK(!nonempty_session->new_project(empty_dir, "重复").ok);
+}
+
+void project_record_history() {
+    namespace fs = std::filesystem;
+    const std::string dir = temp_project_dir("history");
+    TempDirCleanup cleanup{dir};
+
+    auto session = example_session();
+    CHECK(session->new_project(dir, "历史").ok);
+    CHECK(session->add_module(example::plant_definition, "plant").ok);
+    CHECK(session->add_module(example::stimulus_definition, "input").ok);
+    CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(session->set_spec_advance({"plant", "advance"}).ok);
+    const auto plant_config = [](std::int64_t x) {
+        return Config::object({{"x", Config::integer(x)},
+                               {"y", Config::integer(0)},
+                               {"z", Config::integer(0)}});
+    };
+    CHECK(session->set_instance_config("", "plant", plant_config(99)).ok);
+    CHECK(session->apply().ok);
+    CHECK(session->save_project().ok);
+    const auto first_records = session->records();
+    CHECK(first_records.size() == 1);
+    const std::string first_record = first_records[0].path;
+
+    // 重建运行后再次保存：分配新的记录文件，历史记录保留。
+    CHECK(session->set_instance_config("", "plant", plant_config(100)).ok);
+    CHECK(session->apply().ok);
+    CHECK(session->save_project().ok);
+    CHECK(session->records().size() == 2);
+
+    // 打开历史记录：只接管运行快照，项目草稿仍是 x=100。
+    const auto opened = session->open_record_file(first_record);
+    CHECK(opened.ok);
+    CHECK(session->status().phase == Phase::runnable);
+    const auto instances = session->instances();
+    const auto plant = std::find_if(instances.begin(), instances.end(),
+                                    [](const InstanceView& view) { return view.name == "plant"; });
+    CHECK(plant != instances.end());
+    CHECK(plant->config.find("x") != nullptr && plant->config.find("x")->integer() == 100);
+
+    // 保存不会把旧快照写回项目装配文件；历史记录自身仍是 x=99。
+    CHECK(session->save_project().ok);
+    const auto saved = AssemblyDefinition::parse(read_text_file(session->project()->assembly_file), "assembly");
+    bool saved_ok = false;
+    for (const auto& instance : saved.instances("")) {
+        if (instance.name == "plant" && instance.config.find("x") != nullptr &&
+            instance.config.find("x")->integer() == 100) {
+            saved_ok = true;
+        }
+    }
+    CHECK(saved_ok);
+    const auto reopened = decode_record_file(read_text_file(first_record));
+    bool snapshot_ok = false;
+    for (const auto& instance : reopened.assembly.instances("")) {
+        if (instance.name == "plant" && instance.config.find("x") != nullptr &&
+            instance.config.find("x")->integer() == 99) {
+            snapshot_ok = true;
+        }
+    }
+    CHECK(snapshot_ok);
+}
+
+void project_record_lineage() {
+    namespace fs = std::filesystem;
+    const std::string dir = temp_project_dir("lineage");
+    TempDirCleanup cleanup{dir};
+
+    auto session = example_session();
+    CHECK(session->new_project(dir, "血缘").ok);
+    CHECK(session->add_module(example::plant_definition, "plant").ok);
+    CHECK(session->add_module(example::stimulus_definition, "input").ok);
+    CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(session->set_spec_advance({"plant", "advance"}).ok);
+    CHECK(session->apply().ok);
+    CHECK(session->run(1).ok);
+    CHECK(session->create_checkpoint().ok);
+    CHECK(session->save_project().ok);
+    const auto first = session->records();
+    CHECK(first.size() == 1);
+    const std::string single_record = first[0].path;
+    CHECK(session->record_file().spec.observations.size() == 4);  // 示例根作用域公开量
+
+    // 项目取消观测后保存：草稿规格与历史记录规格不同。
+    CHECK(session->set_spec_observations({}).ok);
+    CHECK(session->apply().ok);
+    CHECK(session->save_project().ok);
+    CHECK(session->records().size() == 2);
+
+    // 打开历史记录：草稿仍是项目规格；从记录建立分支使用记录规格，重放可核对。
+    const auto opened = session->open_record_file(single_record);
+    CHECK(opened.ok);
+    CHECK(session->status().phase == Phase::runnable);
+    CHECK(session->spec().observations.empty());
+    const std::vector<BranchRequest> branches = {{"对照", {}}, {"干预", {}}};
+    CHECK(session->create_branches(branches).ok);
+    const auto replay = session->replay();
+    CHECK(replay.ok);
+    CHECK(replay.complete);
+    CHECK(session->save_project().ok);  // 接管会话保存回同一记录（分支追加）
+    CHECK(session->records().size() == 2);
+
+    // 只读记录重建分支：建立新运行身份，保存生成新记录而不覆盖历史。
+    const auto branch_record = session->project()->current_record.value();
+    auto damaged = decode_record_file(read_text_file(branch_record));
+    for (auto& [definition, implementation] : damaged.implementations) {
+        implementation = "damaged." + implementation;
+    }
+    const std::string damaged_path =
+        (fs::path(dir) / project_records_directory / "damaged.arec").string();
+    write_text_file(damaged_path, encode_record_file(damaged));
+    CHECK(session->records().size() == 3);
+    const auto read_only = session->open_record_file(damaged_path);
+    CHECK(read_only.ok);
+    CHECK(session->status().phase == Phase::record);
+    const auto run_id_read_only = session->status().run_id;
+    CHECK(session->reset_branches().ok);
+    CHECK(session->status().phase == Phase::runnable);
+    CHECK(session->status().run_id.has_value() && session->status().run_id != run_id_read_only);
+    // 新运行按当前工厂登记实现标识：重建后可立即重放。
+    const auto rebuilt_replay = session->replay();
+    CHECK(rebuilt_replay.ok);
+    CHECK(rebuilt_replay.complete);
+    CHECK(session->save_project().ok);
+    CHECK(session->records().size() == 4);
+    const auto preserved = decode_record_file(read_text_file(damaged_path));
+    bool damaged_kept = !preserved.implementations.empty();
+    for (const auto& [definition, implementation] : preserved.implementations) {
+        if (implementation.rfind("damaged.", 0) != 0) damaged_kept = false;
+    }
+    CHECK(damaged_kept);
+    CHECK(session->project()->current_record.has_value() &&
+          *session->project()->current_record != damaged_path);
+
+    // 新记录可重新接管：实现标识与当前工厂一致、重放完全通过。
+    const std::string rebuilt_record = *session->project()->current_record;
+    auto verifier = example_session();
+    CHECK(verifier->open_project(dir).ok);
+    const auto reopened_rebuilt = verifier->open_record_file(rebuilt_record);
+    CHECK(reopened_rebuilt.ok);
+    CHECK(verifier->status().phase == Phase::runnable);
+    const auto verifier_replay = verifier->replay();
+    CHECK(verifier_replay.ok);
+    CHECK(verifier_replay.complete);
+
+    // 跨会话修订号碰撞不误报「已应用」：记录修订与项目修订相同但内容不同。
+    auto collision = decode_record_file(read_text_file(*session->project()->current_record));
+    collision.run_revision = session->status().draft_revision;
+    const std::string collision_path =
+        (fs::path(dir) / project_records_directory / "collision.arec").string();
+    write_text_file(collision_path, encode_record_file(collision));
+    const auto collision_open = session->open_record_file(collision_path);
+    CHECK(collision_open.ok);
+    CHECK(session->status().dirty);
+}
+
+void project_errors() {
+    namespace fs = std::filesystem;
+
+    // 已存在的空目录可创建项目；重复创建被拒绝且不留下第二个研究文件。
+    const std::string dir = temp_project_dir("errors");
+    TempDirCleanup cleanup{dir};
+    fs::create_directories(dir);
+    auto session = example_session();
+    CHECK(session->new_project(dir, "空目录项目").ok);
+    auto repeat = example_session();
+    CHECK(!repeat->new_project(dir, "重复项目").ok);
+    std::size_t studies = 0;
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (entry.path().extension() == project_study_extension) ++studies;
+    }
+    CHECK(studies == 1);
+
+    // 多研究文件目录拒绝打开。
+    const std::string multiple_dir = temp_project_dir("multiple");
+    TempDirCleanup multiple_cleanup{multiple_dir};
+    fs::create_directories(multiple_dir);
+    StudyFile other;
+    other.assembly = "world.aasm";
+    write_text_file((fs::path(multiple_dir) / "first.aexp").string(), encode_study_file(other));
+    write_text_file((fs::path(multiple_dir) / "second.aexp").string(), encode_study_file(other));
+    auto multiple = example_session();
+    CHECK(!multiple->open_project(multiple_dir).ok);
+
+    // 记录路径必须在项目内。
+    const std::string outside = dir + ".arec";
+    TempDirCleanup outside_cleanup{outside};
+    write_text_file(outside, "x");
+    auto scoped = example_session();
+    CHECK(scoped->open_project(dir).ok);
+    const auto refused = scoped->open_record_file(outside);
+    CHECK(!refused.ok);
+    CHECK(!refused.diagnostics.empty());
+
+    // 不可读记录保留条目与原因，不影响其他记录。
+    write_text_file((fs::path(dir) / project_records_directory / "bad.arec").string(), "not a record");
+    bool found_bad = false;
+    for (const auto& entry : scoped->records()) {
+        if (entry.name != "bad.arec") continue;
+        found_bad = true;
+        CHECK(!entry.readable);
+        CHECK(entry.problem.has_value());
+    }
+    CHECK(found_bad);
+
+    // 写入失败不覆盖原文件：临时路径被占用时失败且原文件保持，临时目录不被删除。
+    const std::string target_file = (fs::path(dir) / "keep.txt").string();
+    write_text_file(target_file, "OLD");
+    fs::create_directories(target_file + ".tmp");
+    bool write_failed = false;
+    try {
+        write_text_file(target_file, "NEW");
+    } catch (const EngineError& error) {
+        write_failed = error.diagnostic().code == ErrorCode::io_failure;
+    }
+    CHECK(write_failed);
+    CHECK(read_text_file(target_file) == "OLD");
+    CHECK(fs::is_directory(target_file + ".tmp"));
+
+    // 替换失败（目标为目录）时清理临时文件，不留下半成品。
+    const std::string target_dir = temp_project_dir("write-target");
+    TempDirCleanup target_cleanup{target_dir};
+    fs::create_directories(target_dir);
+    bool replace_failed = false;
+    try {
+        write_text_file(target_dir, "NEW");
+    } catch (const EngineError& error) {
+        replace_failed = error.diagnostic().code == ErrorCode::io_failure;
+    }
+    CHECK(replace_failed);
+    CHECK(fs::is_directory(target_dir));
+    CHECK(!fs::exists(target_dir + ".tmp"));
+
+    // 打开缺失模块的项目：先校验后切换，失败时当前会话与运行保持不变。
+    const std::string missing_dir = temp_project_dir("missing-module");
+    TempDirCleanup missing_cleanup{missing_dir};
+    fs::create_directories(missing_dir);
+    AssemblyDefinition ghost;
+    ghost.add_instance("missing.module", "ghost");
+    StudyFile ghost_study;
+    ghost_study.assembly = "world.aasm";
+    write_text_file((fs::path(missing_dir) / "world.aasm").string(), ghost.to_json());
+    write_text_file((fs::path(missing_dir) / "missing.aexp").string(), encode_study_file(ghost_study));
+    auto active = example_session();
+    CHECK(active->load().ok);
+    const auto before = active->status();
+    const auto blocked = active->open_project(missing_dir);
+    CHECK(!blocked.ok);
+    CHECK(!blocked.diagnostics.empty());
+    CHECK(!active->project().has_value());
+    CHECK(active->status().phase == before.phase);
+    CHECK(active->status().run_id == before.run_id);
+}
+
 int main(int argc, char** argv) {
     const std::map<std::string, std::function<void()>> tests = {
         {"adapter_int64", adapter_int64},
@@ -1456,6 +1801,10 @@ int main(int argc, char** argv) {
         {"module_packages", module_packages},
         {"system_assembly", system_assembly},
         {"system_file", system_file},
+        {"project_workflow", project_workflow},
+        {"project_record_history", project_record_history},
+        {"project_record_lineage", project_record_lineage},
+        {"project_errors", project_errors},
     };
     if (argc != 2 || tests.count(argv[1]) == 0) {
         std::cerr << "Specify a known test case\n";

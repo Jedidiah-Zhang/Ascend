@@ -1,6 +1,7 @@
-#include <ascend/experiment_file.hpp>
+#include <ascend/record_file.hpp>
 
 #include "container.hpp"
+#include "experiment_json.hpp"
 #include "json.hpp"
 
 #include <cmath>
@@ -149,8 +150,8 @@ struct Reader {
 
     void need(std::size_t count) const {
         if (pos > data.size() || count > data.size() - pos) {
-            fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-                 "Experiment file is truncated");
+            fail(ErrorCode::invalid_json, "record_file.corrupt",
+                 "Record file is truncated");
         }
     }
 
@@ -164,14 +165,14 @@ struct Reader {
         for (std::size_t index = 0; index < kMaxVarintBytes; ++index) {
             const auto byte = u8();
             if (index == kMaxVarintBytes - 1 && (byte & 0x7e) != 0) {
-                fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-                     "Experiment file varint overflows 64 bits");
+                fail(ErrorCode::invalid_json, "record_file.corrupt",
+                     "Record file varint overflows 64 bits");
             }
             value |= static_cast<std::uint64_t>(byte & 0x7f) << (7 * index);
             if ((byte & 0x80) == 0) return value;
         }
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file varint is too long");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file varint is too long");
     }
 
     std::int64_t zigzag() {
@@ -202,8 +203,8 @@ struct Reader {
         double value = 0.0;
         std::memcpy(&value, &bits, sizeof(value));
         if (!std::isfinite(value)) {
-            fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-                 "Experiment file contains a non-finite number");
+            fail(ErrorCode::invalid_json, "record_file.corrupt",
+                 "Record file contains a non-finite number");
         }
         return value;
     }
@@ -224,9 +225,11 @@ struct StringTable {
 };
 
 void write_config(Encoder& out, StringTable& table, const Config& value, std::size_t depth = 0) {
-    if (depth > kMaxDepth) {
-        fail(ErrorCode::invalid_config, "experiment_file.depth",
-             "Experiment file structured value nesting depth exceeds the limit");
+    // 结构化值含外层容器最多 128 层：深度只约束对象与数组，标量不计层（ENV-14）。
+    if ((value.kind() == Config::Kind::object || value.kind() == Config::Kind::array) &&
+        depth >= kMaxDepth) {
+        fail(ErrorCode::invalid_config, "record_file.depth",
+             "Record file structured value nesting depth exceeds the limit");
     }
     switch (value.kind()) {
         case Config::Kind::null_value:
@@ -264,11 +267,12 @@ void write_config(Encoder& out, StringTable& table, const Config& value, std::si
 }
 
 Config read_config(Reader& in, const std::vector<std::string>& strings, std::size_t depth) {
-    if (depth > kMaxDepth) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file nesting depth exceeds the limit");
-    }
     const auto tag = in.u8();
+    // 与写入侧同一口径：含外层容器最多 128 层，只约束对象与数组。
+    if ((tag == kTagArray || tag == kTagObject) && depth >= kMaxDepth) {
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file nesting depth exceeds the limit");
+    }
     switch (tag) {
         case kTagNull:
             return Config{};
@@ -283,8 +287,8 @@ Config read_config(Reader& in, const std::vector<std::string>& strings, std::siz
         case kTagString: {
             const auto index = in.varint();
             if (index >= strings.size()) {
-                fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-                     "Experiment file string index is out of range");
+                fail(ErrorCode::invalid_json, "record_file.corrupt",
+                     "Record file string index is out of range");
             }
             return Config::string(strings[static_cast<std::size_t>(index)]);
         }
@@ -303,21 +307,21 @@ Config read_config(Reader& in, const std::vector<std::string>& strings, std::siz
             for (std::uint64_t index = 0; index < count; ++index) {
                 const auto name_index = in.varint();
                 if (name_index >= strings.size()) {
-                    fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-                         "Experiment file string index is out of range");
+                    fail(ErrorCode::invalid_json, "record_file.corrupt",
+                         "Record file string index is out of range");
                 }
                 auto name = strings[static_cast<std::size_t>(name_index)];
                 if (!names.insert(name).second) {
-                    fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-                         "Experiment file object repeats a member name");
+                    fail(ErrorCode::invalid_json, "record_file.corrupt",
+                         "Record file object repeats a member name");
                 }
                 members.emplace_back(std::move(name), read_config(in, strings, depth + 1));
             }
             return Config::object(std::move(members));
         }
         default:
-            fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-                 "Experiment file value tag is not recognized");
+            fail(ErrorCode::invalid_json, "record_file.corrupt",
+                 "Record file value tag is not recognized");
     }
 }
 
@@ -327,24 +331,25 @@ void write_any(Encoder& out, const std::any& value, const std::string& name) {
         out.zigzag(*number);
         return;
     }
-    fail(ErrorCode::type_mismatch, "experiment_file.unsupported_type",
-         "Experiment files support only 64-bit integer inputs and observations",
+    fail(ErrorCode::type_mismatch, "record_file.unsupported_type",
+         "Record files support only 64-bit integer inputs and observations",
          Reference{std::string{}, name});
 }
 
 std::any read_any(Reader& in) {
     const auto tag = in.u8();
     if (tag != kTagInt) {
-        fail(ErrorCode::type_mismatch, "experiment_file.unsupported_type",
-             "Experiment files support only 64-bit integer inputs and observations");
+        fail(ErrorCode::type_mismatch, "record_file.unsupported_type",
+             "Record files support only 64-bit integer inputs and observations");
     }
     return in.zigzag();
 }
 
 void write_text(Encoder& out, StringTable& table, const TextRef& text, std::size_t depth = 0) {
+    // 命名参数嵌套最多 128 层（不含字面量文本本身；ENV-14）。
     if (depth > text_max_depth) {
-        fail(ErrorCode::invalid_config, "experiment_file.depth",
-             "Experiment file text nesting depth exceeds the limit");
+        fail(ErrorCode::invalid_config, "record_file.depth",
+             "Record file text nesting depth exceeds the limit");
     }
     out.u8(text.is_literal() ? 1 : 0);
     if (!text.is_literal()) {
@@ -364,21 +369,22 @@ void write_text(Encoder& out, StringTable& table, const TextRef& text, std::size
 const std::string& read_ref(Reader& in, const std::vector<std::string>& strings) {
     const auto index = in.varint();
     if (index >= strings.size()) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file string index is out of range");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file string index is out of range");
     }
     return strings[static_cast<std::size_t>(index)];
 }
 
 TextRef read_text(Reader& in, const std::vector<std::string>& strings, std::size_t depth) {
+    // 与写入侧同一口径：命名参数嵌套最多 128 层。
     if (depth > text_max_depth) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file text nesting depth exceeds the limit");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file text nesting depth exceeds the limit");
     }
     const auto literal_flag = in.u8();
     if (literal_flag > 1) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file text flag is not recognized");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file text flag is not recognized");
     }
     std::string domain;
     std::string key;
@@ -389,8 +395,8 @@ TextRef read_text(Reader& in, const std::vector<std::string>& strings, std::size
     const auto literal = read_ref(in, strings);
     const auto fallback_flag = in.u8();
     if (fallback_flag > 1) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file text flag is not recognized");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file text flag is not recognized");
     }
     std::optional<std::string> fallback;
     if (fallback_flag == 1) fallback = read_ref(in, strings);
@@ -401,23 +407,24 @@ TextRef read_text(Reader& in, const std::vector<std::string>& strings, std::size
         arguments.emplace_back(std::move(name), read_text(in, strings, depth + 1));
     }
     if (literal_flag == 1 && !arguments.empty()) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file literal text has arguments");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file literal text has arguments");
     }
     try {
         if (literal_flag == 1) return TextRef(literal);
         return TextRef(TextKey{domain, key}, fallback, std::move(arguments));
     } catch (const std::invalid_argument&) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file text definition is not valid");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file text definition is not valid");
     }
 }
 
 void write_diagnostic(Encoder& out, StringTable& table, const Diagnostic& diagnostic,
                       std::size_t depth = 0) {
+    // 原因链在顶层诊断之外最多嵌套 128 层（ENV-14）。
     if (depth > kMaxDepth) {
-        fail(ErrorCode::invalid_config, "experiment_file.depth",
-             "Experiment file diagnostic cause depth exceeds the limit");
+        fail(ErrorCode::invalid_config, "record_file.depth",
+             "Record file diagnostic cause depth exceeds the limit");
     }
     out.varint(table.intern(error_code_name(diagnostic.code)));
     out.varint(table.intern(diagnostic.target.module));
@@ -433,9 +440,10 @@ void write_diagnostic(Encoder& out, StringTable& table, const Diagnostic& diagno
 
 Diagnostic read_diagnostic(Reader& in, const std::vector<std::string>& strings,
                            std::size_t depth = 0) {
+    // 与写入侧同一口径：顶层诊断之外最多 128 层原因。
     if (depth > kMaxDepth) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file diagnostic cause depth exceeds the limit");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file diagnostic cause depth exceeds the limit");
     }
     Diagnostic diagnostic;
     diagnostic.code = error_code_from_name(read_ref(in, strings));
@@ -446,8 +454,8 @@ Diagnostic read_diagnostic(Reader& in, const std::vector<std::string>& strings,
     diagnostic.text = read_text(in, strings, 0);
     const auto cause_flag = in.u8();
     if (cause_flag > 1) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file diagnostic flag is not recognized");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file diagnostic flag is not recognized");
     }
     if (cause_flag == 1) {
         diagnostic.cause =
@@ -475,8 +483,8 @@ StateSnapshot read_snapshot(Reader& in, const std::vector<std::string>& strings)
         module.contract = read_ref(in, strings);
         const auto stateless = in.u8();
         if (stateless > 1) {
-            fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-                 "Experiment file state flag is not recognized");
+            fail(ErrorCode::invalid_json, "record_file.corrupt",
+                 "Record file state flag is not recognized");
         }
         module.stateless = stateless == 1;
         module.state = read_config(in, strings, 0);
@@ -603,8 +611,8 @@ ExperimentEvent read_event(Reader& in, const std::vector<std::string>& strings) 
     ExperimentEvent event;
     const auto kind = in.u8();
     if (kind < 1 || kind > 4) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file event kind is not recognized");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file event kind is not recognized");
     }
     event.kind = static_cast<ExperimentEvent::Kind>(kind - 1);
     event.frame = in.zigzag();
@@ -625,8 +633,8 @@ ExperimentTrace read_experiment_trace(Reader& in, const std::vector<std::string>
     trace.trace = read_run_trace(in, strings);
     const auto exploration = in.u8();
     if (exploration > 1) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file trace flag is not recognized");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file trace flag is not recognized");
     }
     trace.exploration = exploration == 1;
     trace.current_frame = in.zigzag();
@@ -637,7 +645,7 @@ ExperimentTrace read_experiment_trace(Reader& in, const std::vector<std::string>
     return trace;
 }
 
-void write_traces(const ExperimentFile& file, Encoder& out, StringTable& table) {
+void write_traces(const RecordFile& file, Encoder& out, StringTable& table) {
     out.varint(file.inputs.size());
     for (const auto& input : file.inputs) write_driven_input(out, table, input);
     out.varint(file.input_settings.size());
@@ -651,38 +659,17 @@ void write_traces(const ExperimentFile& file, Encoder& out, StringTable& table) 
     for (const auto& trace : file.traces) write_experiment_trace(out, table, trace);
 }
 
-Config reference_config(const Reference& reference) {
-    return Config::object({{"module", Config::string(reference.module)},
-                           {"symbol", Config::string(reference.symbol)}});
-}
-
-Config spec_config(const ExperimentSpec& spec) {
-    std::vector<Config> inputs;
-    for (const auto& [name, reference] : spec.inputs) {
-        inputs.push_back(Config::object({{"name", Config::string(name)},
-                                         {"reference", reference_config(reference)}}));
-    }
-    std::vector<Config> observations;
-    for (const auto& [name, reference] : spec.observations) {
-        observations.push_back(Config::object({{"name", Config::string(name)},
-                                               {"reference", reference_config(reference)}}));
-    }
-    return Config::object({{"advance", reference_config(spec.advance)},
-                           {"inputs", Config::array(std::move(inputs))},
-                           {"observations", Config::array(std::move(observations))}});
-}
-
 Config assembly_config(const AssemblyDefinition& assembly) {
     return detail::parse_json(assembly.to_json(), "assembly");
 }
 
-Config build_meta(const ExperimentFile& file) {
+Config build_meta(const RecordFile& file) {
     std::vector<std::pair<std::string, Config>> members;
-    members.emplace_back("format", Config::string("ascend.experiment"));
+    members.emplace_back("format", Config::string("ascend.record"));
     members.emplace_back("version", Config::integer(1));
     if (!file.model.empty()) members.emplace_back("model", Config::string(file.model));
     members.emplace_back("assembly", assembly_config(file.assembly));
-    members.emplace_back("spec", spec_config(file.spec));
+    members.emplace_back("spec", detail::spec_config(file.spec));
     std::vector<std::pair<std::string, Config>> implementations;
     for (const auto& [definition, implementation] : file.implementations) {
         implementations.emplace_back(definition, Config::string(implementation));
@@ -692,11 +679,6 @@ Config build_meta(const ExperimentFile& file) {
         members.emplace_back("run", Config::object({
             {"id", Config::integer(static_cast<std::int64_t>(*file.run_id))},
             {"source_revision", Config::integer(static_cast<std::int64_t>(file.run_revision))}}));
-    }
-    if (file.draft.has_value()) {
-        members.emplace_back("draft", Config::object({
-            {"revision", Config::integer(static_cast<std::int64_t>(file.draft->first))},
-            {"assembly", assembly_config(file.draft->second)}}));
     }
     std::vector<Config> series;
     for (const auto& trace : file.traces) {
@@ -711,8 +693,8 @@ Config build_meta(const ExperimentFile& file) {
 const Config& require_member(const Config& object, const char* name) {
     const auto* member = object.find(name);
     if (member == nullptr) {
-        fail(ErrorCode::invalid_json, "experiment_file.meta",
-             "Experiment file metadata is missing a required field");
+        fail(ErrorCode::invalid_json, "record_file.meta",
+             "Record file metadata is missing a required field");
     }
     return *member;
 }
@@ -720,8 +702,8 @@ const Config& require_member(const Config& object, const char* name) {
 std::string require_string(const Config& object, const char* name) {
     const auto& member = require_member(object, name);
     if (member.kind() != Config::Kind::string) {
-        fail(ErrorCode::invalid_json, "experiment_file.meta",
-             "Experiment file metadata field has the wrong type");
+        fail(ErrorCode::invalid_json, "record_file.meta",
+             "Record file metadata field has the wrong type");
     }
     return member.string();
 }
@@ -729,8 +711,8 @@ std::string require_string(const Config& object, const char* name) {
 std::int64_t require_integer(const Config& object, const char* name) {
     const auto& member = require_member(object, name);
     if (member.kind() != Config::Kind::integer) {
-        fail(ErrorCode::invalid_json, "experiment_file.meta",
-             "Experiment file metadata field has the wrong type");
+        fail(ErrorCode::invalid_json, "record_file.meta",
+             "Record file metadata field has the wrong type");
     }
     return member.integer();
 }
@@ -738,8 +720,8 @@ std::int64_t require_integer(const Config& object, const char* name) {
 const Config& require_object(const Config& object, const char* name) {
     const auto& member = require_member(object, name);
     if (member.kind() != Config::Kind::object) {
-        fail(ErrorCode::invalid_json, "experiment_file.meta",
-             "Experiment file metadata field has the wrong type");
+        fail(ErrorCode::invalid_json, "record_file.meta",
+             "Record file metadata field has the wrong type");
     }
     return member;
 }
@@ -747,8 +729,8 @@ const Config& require_object(const Config& object, const char* name) {
 const Config& require_array(const Config& object, const char* name) {
     const auto& member = require_member(object, name);
     if (member.kind() != Config::Kind::array) {
-        fail(ErrorCode::invalid_json, "experiment_file.meta",
-             "Experiment file metadata field has the wrong type");
+        fail(ErrorCode::invalid_json, "record_file.meta",
+             "Record file metadata field has the wrong type");
     }
     return member;
 }
@@ -756,27 +738,6 @@ const Config& require_array(const Config& object, const char* name) {
 AssemblyDefinition parse_assembly(const Config& value) {
     detail::validate_json(value, "assembly");
     return AssemblyDefinition::parse(detail::write_json(value, "assembly"), "assembly");
-}
-
-Reference parse_reference(const Config& value) {
-    Reference reference;
-    reference.module = require_string(value, "module");
-    reference.symbol = require_string(value, "symbol");
-    return reference;
-}
-
-ExperimentSpec parse_spec(const Config& value) {
-    ExperimentSpec spec;
-    spec.advance = parse_reference(require_object(value, "advance"));
-    for (const auto& entry : require_array(value, "inputs").elements()) {
-        spec.inputs.emplace_back(require_string(entry, "name"),
-                                 parse_reference(require_object(entry, "reference")));
-    }
-    for (const auto& entry : require_array(value, "observations").elements()) {
-        spec.observations.emplace_back(require_string(entry, "name"),
-                                       parse_reference(require_object(entry, "reference")));
-    }
-    return spec;
 }
 
 struct SeriesMeta {
@@ -793,8 +754,8 @@ std::vector<SeriesMeta> parse_series(const Config& value) {
         if (role == "exploration") {
             item.exploration = true;
         } else if (role != "branch") {
-            fail(ErrorCode::invalid_json, "experiment_file.meta",
-                 "Experiment file metadata field has the wrong type");
+            fail(ErrorCode::invalid_json, "record_file.meta",
+                 "Record file metadata field has the wrong type");
         }
         series.push_back(std::move(item));
     }
@@ -803,7 +764,7 @@ std::vector<SeriesMeta> parse_series(const Config& value) {
 
 }  // namespace
 
-std::string encode_experiment_file(const ExperimentFile& file) {
+std::string encode_record_file(const RecordFile& file) {
     const auto meta_text = detail::write_json(build_meta(file), "experiment");
 
     StringTable table;
@@ -815,80 +776,109 @@ std::string encode_experiment_file(const ExperimentFile& file) {
     for (const auto& value : table.strings) traces.text(value);
     traces.raw(data.bytes);
 
-    return detail::write_container(detail::container_kind_experiment,
+    return detail::write_container(detail::container_kind_record,
                                    {{kSectionMeta, detail::container_section_required, meta_text},
                                     {kSectionTraces, detail::container_section_required, traces.bytes}});
 }
 
-ExperimentFile decode_experiment_file(const std::string& bytes) {
-    std::optional<std::string> meta_text;
-    std::optional<std::string> traces_bytes;
-    for (auto& section : detail::read_container(bytes, detail::container_kind_experiment, "experiment_file")) {
+namespace {
+
+struct RecordSections {
+    std::string meta;
+    std::string traces;
+};
+
+struct MetaParts {
+    std::string model;
+    AssemblyDefinition assembly;
+    ExperimentSpec spec;
+    std::map<std::string, std::string> implementations;
+    std::optional<std::uint64_t> run_id;
+    std::uint64_t run_revision = 0;
+    std::vector<SeriesMeta> series;
+};
+
+RecordSections read_record_sections(const std::string& bytes) {
+    RecordSections sections;
+    bool has_meta = false;
+    bool has_traces = false;
+    for (auto& section : detail::read_container(bytes, detail::container_kind_record, "record_file")) {
         if (section.id == kSectionMeta) {
-            meta_text = std::move(section.data);
+            sections.meta = std::move(section.data);
+            has_meta = true;
         } else if (section.id == kSectionTraces) {
-            traces_bytes = std::move(section.data);
+            sections.traces = std::move(section.data);
+            has_traces = true;
         } else if ((section.flags & detail::container_section_required) != 0) {
-            fail(ErrorCode::unsupported_format_version, "experiment_file.section",
-                 "Experiment file has a required section this reader does not know");
+            fail(ErrorCode::unsupported_format_version, "record_file.section",
+                 "Record file has a required section this reader does not know");
         }
     }
-    if (!meta_text.has_value() || !traces_bytes.has_value()) {
-        fail(ErrorCode::invalid_json, "experiment_file.section",
-             "Experiment file is missing a required section");
+    if (!has_meta || !has_traces) {
+        fail(ErrorCode::invalid_json, "record_file.section",
+             "Record file is missing a required section");
     }
+    return sections;
+}
 
-    const auto meta = detail::parse_json(*meta_text, "experiment file");
+MetaParts parse_record_meta(const Config& meta) {
     if (meta.kind() != Config::Kind::object) {
-        fail(ErrorCode::invalid_json, "experiment_file.meta",
-             "Experiment file metadata is not an object");
+        fail(ErrorCode::invalid_json, "record_file.meta",
+             "Record file metadata is not an object");
     }
-    if (require_string(meta, "format") != "ascend.experiment") {
-        fail(ErrorCode::invalid_json, "experiment_file.meta",
-             "Experiment file metadata format is not recognized");
+    if (require_string(meta, "format") != "ascend.record") {
+        fail(ErrorCode::invalid_json, "record_file.meta",
+             "Record file metadata format is not recognized");
     }
     if (require_integer(meta, "version") != 1) {
-        fail(ErrorCode::unsupported_format_version, "experiment_file.version",
-             "Experiment file metadata version is not supported");
+        fail(ErrorCode::unsupported_format_version, "record_file.version",
+             "Record file metadata version is not supported");
     }
-
-    ExperimentFile file;
+    MetaParts parts;
     if (const auto* model = meta.find("model"); model != nullptr) {
         if (model->kind() != Config::Kind::string) {
-            fail(ErrorCode::invalid_json, "experiment_file.meta",
-                 "Experiment file metadata field has the wrong type");
+            fail(ErrorCode::invalid_json, "record_file.meta",
+                 "Record file metadata field has the wrong type");
         }
-        file.model = model->string();
+        parts.model = model->string();
     }
-    file.assembly = parse_assembly(require_object(meta, "assembly"));
-    file.spec = parse_spec(require_object(meta, "spec"));
+    parts.assembly = parse_assembly(require_object(meta, "assembly"));
+    parts.spec = detail::parse_spec(require_object(meta, "spec"), "record_file.meta");
     for (const auto& [definition, implementation] : require_object(meta, "implementations").members()) {
         if (implementation.kind() != Config::Kind::string) {
-            fail(ErrorCode::invalid_json, "experiment_file.meta",
-                 "Experiment file metadata field has the wrong type");
+            fail(ErrorCode::invalid_json, "record_file.meta",
+                 "Record file metadata field has the wrong type");
         }
-        file.implementations.emplace(definition, implementation.string());
+        parts.implementations.emplace(definition, implementation.string());
     }
     if (const auto* run = meta.find("run"); run != nullptr) {
         if (run->kind() != Config::Kind::object) {
-            fail(ErrorCode::invalid_json, "experiment_file.meta",
-                 "Experiment file metadata field has the wrong type");
+            fail(ErrorCode::invalid_json, "record_file.meta",
+                 "Record file metadata field has the wrong type");
         }
-        file.run_id = static_cast<std::uint64_t>(require_integer(*run, "id"));
-        file.run_revision = static_cast<std::uint64_t>(require_integer(*run, "source_revision"));
+        parts.run_id = static_cast<std::uint64_t>(require_integer(*run, "id"));
+        parts.run_revision = static_cast<std::uint64_t>(require_integer(*run, "source_revision"));
     }
-    if (const auto* draft = meta.find("draft"); draft != nullptr) {
-        if (draft->kind() != Config::Kind::object) {
-            fail(ErrorCode::invalid_json, "experiment_file.meta",
-                 "Experiment file metadata field has the wrong type");
-        }
-        file.draft = std::make_pair(
-            static_cast<std::uint64_t>(require_integer(*draft, "revision")),
-            parse_assembly(require_object(*draft, "assembly")));
-    }
-    const auto series_meta = parse_series(meta);
+    parts.series = parse_series(meta);
+    return parts;
+}
 
-    Reader traces{*traces_bytes};
+}  // namespace
+
+RecordFile decode_record_file(const std::string& bytes) {
+    auto sections = read_record_sections(bytes);
+    const auto meta = detail::parse_json(sections.meta, "record file");
+    auto parts = parse_record_meta(meta);
+
+    RecordFile file;
+    file.model = std::move(parts.model);
+    file.assembly = std::move(parts.assembly);
+    file.spec = std::move(parts.spec);
+    file.implementations = std::move(parts.implementations);
+    file.run_id = parts.run_id;
+    file.run_revision = parts.run_revision;
+
+    Reader traces{sections.traces};
     const auto string_count = traces.varint();
     std::vector<std::string> strings;
     for (std::uint64_t index = 0; index < string_count; ++index) {
@@ -906,30 +896,43 @@ ExperimentFile decode_experiment_file(const std::string& bytes) {
     }
     const auto checkpoint_flag = traces.u8();
     if (checkpoint_flag > 1) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file checkpoint flag is not recognized");
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file checkpoint flag is not recognized");
     }
     if (checkpoint_flag == 1) file.checkpoint = read_checkpoint(traces, strings);
 
     const auto trace_count = traces.varint();
-    if (trace_count != series_meta.size()) {
-        fail(ErrorCode::invalid_json, "experiment_file.meta",
-             "Experiment file metadata series do not match the trace section");
+    if (trace_count != parts.series.size()) {
+        fail(ErrorCode::invalid_json, "record_file.meta",
+             "Record file metadata series do not match the trace section");
     }
     for (std::uint64_t index = 0; index < trace_count; ++index) {
         auto trace = read_experiment_trace(traces, strings);
-        const auto& expected = series_meta[static_cast<std::size_t>(index)];
+        const auto& expected = parts.series[static_cast<std::size_t>(index)];
         if (trace.trace.label != expected.label || trace.exploration != expected.exploration) {
-            fail(ErrorCode::invalid_json, "experiment_file.meta",
-                 "Experiment file metadata series do not match the trace section");
+            fail(ErrorCode::invalid_json, "record_file.meta",
+                 "Record file metadata series do not match the trace section");
         }
         file.traces.push_back(std::move(trace));
     }
-    if (traces.pos != traces_bytes->size()) {
-        fail(ErrorCode::invalid_json, "experiment_file.corrupt",
-             "Experiment file trace section has trailing bytes");
+    if (traces.pos != sections.traces.size()) {
+        fail(ErrorCode::invalid_json, "record_file.corrupt",
+             "Record file trace section has trailing bytes");
     }
     return file;
+}
+
+RecordSummary summarize_record_file(const std::string& bytes) {
+    auto sections = read_record_sections(bytes);
+    const auto meta = detail::parse_json(sections.meta, "record file");
+    auto parts = parse_record_meta(meta);
+    RecordSummary summary;
+    summary.model = std::move(parts.model);
+    summary.run_id = parts.run_id;
+    summary.run_revision = parts.run_revision;
+    summary.series = parts.series.size();
+    summary.implementations = parts.implementations.size();
+    return summary;
 }
 
 }  // namespace ascend

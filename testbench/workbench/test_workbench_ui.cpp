@@ -8,6 +8,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
+#include <QColor>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDialog>
@@ -186,8 +187,8 @@ private slots:
     void resourceResolution();
     void menuBarStructure();
     void captureScreenshot();
-    void fileSaveOpen();
-    void fileOpenFailure();
+    void projectRecordRoundTrip();
+    void openProjectFailure();
     void modulePackageLoadUnload();
     void modulePackageMultiLoad();
     void modulePackageFolderLoad();
@@ -718,20 +719,21 @@ void TestWorkbench::menuBarStructure() {
     QVERIFY(wait_idle(window));
     QCOMPARE(window->currentStatus().tracks.front().samples, samples + 1);
 
-    // 文件菜单：新建研究与研究文件入口已实装。
+    // 文件菜单：新建研究、打开项目、打开记录与保存入口已实装。
     QMenu* file_menu = menu_bar->actions().at(0)->menu();
     QAction* new_research = find_action(file_menu, QStringLiteral("新建研究…"));
     QVERIFY(new_research != nullptr);
     QVERIFY(new_research->isEnabled());
-    QAction* open_experiment = find_action(file_menu, QStringLiteral("打开研究…"));
-    QVERIFY(open_experiment != nullptr);
-    QVERIFY(open_experiment->isEnabled());
+    QAction* open_project = find_action(file_menu, QStringLiteral("打开项目…"));
+    QVERIFY(open_project != nullptr);
+    QVERIFY(open_project->isEnabled());
+    QAction* open_record = find_action(file_menu, QStringLiteral("打开记录…"));
+    QVERIFY(open_record != nullptr);
+    QVERIFY(!open_record->isEnabled());  // 未打开项目：打开记录禁用
     QAction* save = find_action(file_menu, QStringLiteral("保存"));
     QVERIFY(save != nullptr);
-    QVERIFY(save->isEnabled());
-    QAction* save_as = find_action(file_menu, QStringLiteral("另存为…"));
-    QVERIFY(save_as != nullptr);
-    QVERIFY(save_as->isEnabled());
+    QVERIFY(!save->isEnabled());  // 未打开项目：保存禁用
+    QVERIFY(find_action(file_menu, QStringLiteral("另存为…")) == nullptr);
 
     // 未实装项占位且禁用，并带后续阶段提示。
     QMenu* edit_menu = menu_bar->actions().at(1)->menu();
@@ -833,12 +835,78 @@ void TestWorkbench::menuBarStructure() {
 }
 
 
-void TestWorkbench::fileSaveOpen() {
-    auto workbench = start_workbench();
+void TestWorkbench::projectRecordRoundTrip() {
+    auto workbench = start_workbench(false);
     MainWindow* window = workbench->window();
     QVERIFY(wait_idle(window));
 
-    // 场景 A：推进 2 步、检查点、干预分支、再推进 3 步。
+    // 新建项目：名称 + 位置（项目文件夹为「位置／名称」）。
+    const QString project_base = QDir::tempPath() + QStringLiteral("/ascend-workbench-record-project");
+    QDir(project_base).removeRecursively();
+    const QString project_dir = QDir(project_base).filePath(QStringLiteral("记录研究"));
+    QTimer research_timer;
+    connect(&research_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr || dialog->objectName() != QStringLiteral("newResearchDialog")) return;
+        research_timer.stop();
+        dialog->findChild<QLineEdit*>("researchNameEdit")->setText(QStringLiteral("记录研究"));
+        dialog->findChild<QLineEdit*>("researchDirectoryEdit")->setText(project_base);
+        dialog->accept();
+    });
+    research_timer.start(10);
+    window->findChild<QPushButton*>("startNewResearchButton")->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return window->currentStatus().model_name == QStringLiteral("记录研究"); }, 4000));
+
+    // 在系统编辑器中装配示例世界：两个模块、连接、推进入口并应用。
+    auto* results = window->findChild<QTabWidget*>("resultsTabs");
+    auto* editor = window->findChild<QWidget*>("systemEditorPage");
+    QVERIFY(results != nullptr && editor != nullptr);
+    QVERIFY(wait_until([&] { return results->indexOf(editor) >= 0; }, 4000));
+    auto* definition_combo = window->findChild<QComboBox*>("systemDefinitionCombo");
+    QVERIFY(definition_combo != nullptr);
+    QVERIFY(wait_until([&] { return definition_combo->findText(QStringLiteral("example.plant")) >= 0; }, 4000));
+    auto* instance_edit = window->findChild<QLineEdit*>("systemInstanceEdit");
+    auto* add_button = window->findChild<QPushButton*>("systemAddButton");
+    QVERIFY(instance_edit != nullptr && add_button != nullptr);
+    definition_combo->setCurrentText(QStringLiteral("example.plant"));
+    add_button->click();
+    QVERIFY(wait_idle(window));
+    definition_combo->setCurrentText(QStringLiteral("example.stimulus"));
+    instance_edit->setText(QStringLiteral("input"));
+    add_button->click();
+    QVERIFY(wait_idle(window));
+    auto* tree = window->findChild<QTreeWidget*>("systemTree");
+    QVERIFY(tree != nullptr);
+    QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 2; }, 4000));
+    const auto find_requirement = [&](const QString& instance, const QString& symbol) -> QTreeWidgetItem* {
+        for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* top = tree->topLevelItem(i);
+            if (top->text(0) != instance) continue;
+            for (int j = 0; j < top->childCount(); ++j) {
+                if (top->child(j)->text(0) == symbol) return top->child(j);
+            }
+        }
+        return nullptr;
+    };
+    QTreeWidgetItem* requirement = find_requirement(QStringLiteral("plant"), QStringLiteral("input"));
+    QVERIFY(requirement != nullptr);
+    tree->setCurrentItem(requirement);
+    auto* provider_combo = window->findChild<QComboBox*>("systemProviderCombo");
+    QVERIFY(provider_combo != nullptr);
+    QVERIFY(wait_until([&] { return provider_combo->findText(QStringLiteral("input/value")) >= 0; }, 4000));
+    provider_combo->setCurrentText(QStringLiteral("input/value"));
+    window->findChild<QPushButton*>("systemConnectButton")->click();
+    QVERIFY(wait_idle(window));
+    auto* advance_combo = window->findChild<QComboBox*>("systemAdvanceCombo");
+    QVERIFY(advance_combo != nullptr);
+    QVERIFY(wait_until([&] { return advance_combo->findText(QStringLiteral("plant/advance")) >= 0; }, 4000));
+    advance_combo->setCurrentText(QStringLiteral("plant/advance"));
+    QVERIFY(wait_idle(window));
+    window->findChild<QPushButton*>("systemApplyButton")->click();
+    QVERIFY(wait_until([&] { return window->currentStatus().phase == ascend::session::Phase::runnable; }, 8000));
+
+    // 推进 2 步、检查点、干预分支、再推进 3 步。
     window->findChild<QSpinBox*>("stepsSpin")->setValue(2);
     window->findChild<QPushButton*>("runButton")->click();
     QVERIFY(wait_idle(window));
@@ -871,49 +939,90 @@ void TestWorkbench::fileSaveOpen() {
     QVERIFY(wait_idle(window));
     QCOMPARE(window->currentStatus().tracks[0].frame, 5);
 
-    // 另存为实验文件。
-    const QString path = QDir::tempPath() + QStringLiteral("/ascend-workbench-ui.aexp");
-    QFile::remove(path);
-    QTimer save_timer;
-    connect(&save_timer, &QTimer::timeout, [&] { drive_file_dialog(path); });
-    save_timer.start(10);
-    window->findChild<QAction*>("saveAsAction")->trigger();
-    QVERIFY(wait_until([&] { return QFile::exists(path) && window->currentFile() == path; }, 8000));
-    save_timer.stop();
+    // 保存项目：写入研究文件与运行记录，清除未保存标记。
+    window->findChild<QAction*>("saveAction")->trigger();
     QVERIFY(wait_idle(window));
+    const QString records_dir = QDir(project_dir).filePath(QStringLiteral("records"));
+    QString record_path;
+    QVERIFY(wait_until([&] {
+        const auto entries = QDir(records_dir).entryList(QStringList{QStringLiteral("*.arec")}, QDir::Files);
+        if (entries.isEmpty()) return false;
+        record_path = QDir(records_dir).filePath(entries.first());
+        return true;
+    }, 8000));
+    QVERIFY(wait_until([&] { return !window->windowTitle().endsWith(QStringLiteral("*")); }, 8000));
 
-    // 继续推进制造差异，然后打开文件：接管回保存时的状态并可继续推进。
+    // 继续推进制造差异，然后打开记录：接管回保存时的状态并可继续推进。
     window->findChild<QPushButton*>("stepButton")->click();
     QVERIFY(wait_idle(window));
     QCOMPARE(window->currentStatus().tracks[0].frame, 6);
     QTimer open_timer;
-    connect(&open_timer, &QTimer::timeout, [&] { drive_file_dialog(path); });
+    connect(&open_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr || dialog->objectName() != QStringLiteral("recordsDialog")) return;
+        open_timer.stop();
+        dialog->accept();
+    });
     open_timer.start(10);
-    window->findChild<QAction*>("openExperimentAction")->trigger();
+    window->findChild<QAction*>("openRecordAction")->trigger();
     QVERIFY(wait_until([&] {
         return window->currentStatus().tracks.size() == 2 && window->currentStatus().tracks[0].frame == 5;
     }, 8000));
     open_timer.stop();
     QCOMPARE(window->currentStatus().phase, ascend::session::Phase::runnable);
-    QCOMPARE(window->currentFile(), path);
+    QVERIFY(window->currentFile().endsWith(QStringLiteral("记录研究.aexp")));
     QVERIFY(window->findChild<QPushButton*>("stepButton")->isEnabled());
     window->findChild<QPushButton*>("stepButton")->click();
     QVERIFY(wait_idle(window));
     QCOMPARE(window->currentStatus().tracks[0].frame, 6);
-    QFile::remove(path);
+
+    // 损坏记录在记录列表中标注不可读并不可打开：选择它不改变当前会话。
+    {
+        QFile bad(QDir(records_dir).filePath(QStringLiteral("bad.arec")));
+        QVERIFY(bad.open(QIODevice::WriteOnly));
+        bad.write("not a record");
+    }
+    bool unreadable_marked = false;
+    QTimer bad_timer;
+    connect(&bad_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr || dialog->objectName() != QStringLiteral("recordsDialog")) return;
+        auto* table = dialog->findChild<QTableWidget*>("recordsTable");
+        if (table == nullptr) return;
+        for (int row = 0; row < table->rowCount(); ++row) {
+            QTableWidgetItem* item = table->item(row, 0);
+            if (item == nullptr || !item->text().contains(QStringLiteral("bad.arec"))) continue;
+            if (item->foreground().color() != QColor(Qt::gray)) return;  // 尚未渲染：下个周期重试
+            unreadable_marked = true;
+            table->setCurrentCell(row, 0);
+            table->selectRow(row);
+        }
+        if (!unreadable_marked) return;
+        bad_timer.stop();
+        dialog->accept();
+    });
+    bad_timer.start(10);
+    window->findChild<QAction*>("openRecordAction")->trigger();
+    QVERIFY(wait_until([&] { return unreadable_marked; }, 8000));
+    QVERIFY(wait_idle(window));
+    QCOMPARE(window->currentStatus().tracks[0].frame, 6);  // 未打开任何记录
+
+    QDir(project_base).removeRecursively();
 }
 
-void TestWorkbench::fileOpenFailure() {
+void TestWorkbench::openProjectFailure() {
     auto workbench = start_workbench(false);
     MainWindow* window = workbench->window();
     QVERIFY(wait_idle(window));
 
-    // 打开结构损坏的文件：弹出针对本次操作的失败原因，会话不变，诊断入面板。
-    const QString path = QDir::tempPath() + QStringLiteral("/ascend-workbench-ui-bad.aexp");
+    // 打开结构损坏的研究文件所在目录：弹出针对本次操作的失败原因，会话不变，诊断入面板。
+    const QString project_dir = QDir::tempPath() + QStringLiteral("/ascend-workbench-bad-project");
+    QDir(project_dir).removeRecursively();
+    QVERIFY(QDir().mkpath(project_dir));
     {
-        QFile file(path);
+        QFile file(QDir(project_dir).filePath(QStringLiteral("bad.aexp")));
         QVERIFY(file.open(QIODevice::WriteOnly));
-        file.write("not an ascend experiment file");
+        file.write("not an ascend study file");
     }
     QString box_text;
     QTimer timer;
@@ -924,26 +1033,20 @@ void TestWorkbench::fileOpenFailure() {
             box->accept();
             return;
         }
-        auto* dialog = qobject_cast<QFileDialog*>(modal);
-        if (dialog == nullptr) return;
-        dialog->setDirectory(QFileInfo(path).absolutePath());
-        dialog->setFocus();
-        dialog->selectFile(path);
-        if (dialog->selectedFiles().value(0) != path) return;
-        QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+        drive_file_dialog(project_dir);
     });
     timer.start(10);
-    window->findChild<QAction*>("openExperimentAction")->trigger();
+    window->findChild<QAction*>("openProjectAction")->trigger();
     QVERIFY(wait_until([&] { return !box_text.isEmpty(); }, 8000));
     timer.stop();
     // 失败原因随本次操作给出（路径 + 具体原因），而不是旧诊断或空。
-    QVERIFY(box_text.contains(QStringLiteral("ascend-workbench-ui-bad.aexp")));
+    QVERIFY(box_text.contains(QStringLiteral("bad-project")));
     QVERIFY(box_text.contains(QStringLiteral("\n")));
     QVERIFY(window->currentFile().isEmpty());
     auto* tree = window->findChild<QTableView*>("diagnosticsTree");
     QVERIFY(tree != nullptr);
     QVERIFY(wait_until([&] { return tree->model()->rowCount() >= 1; }, 4000));
-    QFile::remove(path);
+    QDir(project_dir).removeRecursively();
 }
 
 void TestWorkbench::modulePackageLoadUnload() {
@@ -1426,15 +1529,21 @@ void TestWorkbench::startPageResearch() {
     QTest::mouseClick(waveform, Qt::LeftButton, Qt::NoModifier, waveform->framePosition(0));
     QVERIFY(wait_until([&] { return sample_tree->topLevelItemCount() > 0; }, 4000));
 
-    // 查看菜单重新打开开始页；新建研究（创建新的因果系统）。
+    // 查看菜单重新打开开始页；新建研究：名称 + 位置（项目文件夹为「位置／名称」）。
     window->findChild<QAction*>("startViewAction")->trigger();
     QVERIFY(wait_until([&] { return results->indexOf(start) >= 0; }, 4000));
+    const QString project_base = QDir::tempPath() + QStringLiteral("/ascend-workbench-project");
+    QDir(project_base).removeRecursively();
+    const QString project_dir = QDir(project_base).filePath(QStringLiteral("起始研究"));
     QTimer research_timer;
     connect(&research_timer, &QTimer::timeout, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         if (dialog == nullptr || dialog->objectName() != QStringLiteral("newResearchDialog")) return;
-        research_timer.stop();
         dialog->findChild<QLineEdit*>("researchNameEdit")->setText(QStringLiteral("起始研究"));
+        dialog->findChild<QLineEdit*>("researchDirectoryEdit")->setText(project_base);
+        auto* preview = dialog->findChild<QLabel*>("researchLocationPreview");
+        if (preview == nullptr || !preview->text().contains(QStringLiteral("起始研究"))) return;  // 预览未就绪：重试
+        research_timer.stop();
         dialog->accept();
     });
     research_timer.start(10);
@@ -1446,14 +1555,14 @@ void TestWorkbench::startPageResearch() {
     QVERIFY(wait_until([&] { return window->currentStatus().model_name == "起始研究"; }, 4000));
     QCOMPARE(window->currentStatus().phase, ascend::session::Phase::editing);
     QCOMPARE(results->indexOf(start), -1);
-    QCOMPARE(results->indexOf(timeline), -1);   // 新系统尚无运行：结果页签关闭
+    QCOMPARE(results->indexOf(timeline), -1);   // 新项目尚无运行：结果页签关闭
     QCOMPARE(results->indexOf(differences), -1);
     QCOMPARE(check_table->model()->rowCount(), 0);  // 身份切换后检查报告清空
     QCOMPARE(sample_tree->topLevelItemCount(), 0);  // 身份切换后采样详情清空
     QCOMPARE(signal_tree->topLevelItemCount(), 0);  // 观测组随模型清空
     QVERIFY(window->windowTitle().contains(QStringLiteral("起始研究")));
 
-    // 添加模块并保存因果系统文件（.aasm）。
+    // 添加模块并保存项目：写入研究文件与装配文件，清除未保存标记。
     auto* definition_combo = window->findChild<QComboBox*>("systemDefinitionCombo");
     auto* add_button = window->findChild<QPushButton*>("systemAddButton");
     QVERIFY(definition_combo != nullptr && add_button != nullptr);
@@ -1463,48 +1572,35 @@ void TestWorkbench::startPageResearch() {
     auto* tree = window->findChild<QTreeWidget*>("systemTree");
     QVERIFY(tree != nullptr);
     QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 1; }, 4000));
+    QVERIFY(wait_until([&] { return window->windowTitle().endsWith(QStringLiteral("*")); }, 4000));
 
-    const QString path = QDir::tempPath() + QStringLiteral("/ascend-workbench-system.aasm");
-    QFile::remove(path);
-    QTimer save_timer;
-    connect(&save_timer, &QTimer::timeout, [&] { drive_file_dialog(path); });
-    save_timer.start(10);
-    window->findChild<QPushButton*>("systemSaveButton")->click();
-    QVERIFY(wait_until([&] { return QFile::exists(path); }, 8000));
-    save_timer.stop();
+    window->findChild<QAction*>("saveAction")->trigger();
+    QVERIFY(wait_idle(window));
+    const QString study_path = QDir(project_dir).filePath(QStringLiteral("起始研究.aexp"));
+    QVERIFY(wait_until([&] { return QFile::exists(study_path); }, 8000));
+    QVERIFY(QFile::exists(QDir(project_dir).filePath(QStringLiteral("records"))));
     QVERIFY(wait_until([&] {
-        auto* label = window->findChild<QLabel*>("systemNameLabel");
-        return label != nullptr && label->text().contains(QStringLiteral("ascend-workbench-system.aasm"));
-    }, 4000));
+        QFile assembly(QDir(project_dir).filePath(QStringLiteral("world.aasm")));
+        if (!assembly.open(QIODevice::ReadOnly)) return false;
+        return assembly.readAll().contains("example.plant");
+    }, 8000));
+    QVERIFY(wait_until([&] { return !window->windowTitle().endsWith(QStringLiteral("*")); }, 8000));
 
-    // 再次从开始页新建研究：选择打开已有因果系统文件。
+    // 从开始页再次打开项目：研究名与装配恢复，窗口标题显示研究文件。
     window->findChild<QAction*>("startViewAction")->trigger();
     QVERIFY(wait_until([&] { return results->indexOf(start) >= 0; }, 4000));
-    bool research_done = false;
     QTimer open_timer;
-    connect(&open_timer, &QTimer::timeout, [&] {
-        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        if (dialog != nullptr && dialog->objectName() == QStringLiteral("newResearchDialog")) {
-            if (research_done) return;
-            research_done = true;
-            dialog->findChild<QLineEdit*>("researchNameEdit")->setText(QStringLiteral("打开系统研究"));
-            dialog->findChild<QRadioButton*>("researchOpenSystemRadio")->setChecked(true);
-            dialog->accept();
-            return;
-        }
-        drive_file_dialog(path);
-    });
+    connect(&open_timer, &QTimer::timeout, [&] { drive_file_dialog(project_dir); });
     open_timer.start(10);
-    window->findChild<QPushButton*>("startNewResearchButton")->click();
+    window->findChild<QPushButton*>("startOpenProjectButton")->click();
     QVERIFY(wait_idle(window));
     open_timer.stop();
-    QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 1; }, 4000));
-    QVERIFY(wait_until([&] { return window->currentStatus().model_name == "打开系统研究"; }, 4000));
-    QCOMPARE(results->currentWidget(), editor);
-    QVERIFY(results->indexOf(start) == -1);
-    QVERIFY(window->windowTitle().contains(QStringLiteral("打开系统研究")));
+    QVERIFY(wait_until([&] { return window->currentStatus().model_name == "起始研究"; }, 4000));
+    QCOMPARE(window->currentStatus().phase, ascend::session::Phase::editing);
+    QVERIFY(window->windowTitle().contains(QStringLiteral("起始研究.aexp")));
+    QVERIFY(wait_until([&] { return !window->windowTitle().endsWith(QStringLiteral("*")); }, 4000));
 
-    QFile::remove(path);
+    QDir(project_base).removeRecursively();
 }
 
 void TestWorkbench::dockTitleDoubleClick() {

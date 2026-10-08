@@ -43,8 +43,8 @@ void TestWorkspaceModel::identity_notice() {
     QCOMPARE(count, 1);
     QVERIFY(ascend::workbench::has(last, WorkspaceChange::identity));
 
-    // 身份文件与未保存标记语义：打开系统设置系统文件并清空研究文件，打开实验
-    // 设置研究文件并清空系统文件，打开示例清空两者；保存与脏标记为静默簿记。
+    // 身份文件与未保存标记语义：打开系统设置装配文件并清空研究与记录文件；
+    // 打开项目设置研究文件与装配文件；打开记录设置当前记录；打开示例清空全部。
     model.set_system_dirty(true);
     model.set_research_dirty(true);
     model.beginIdentity(IdentityIntent::open_system, "system.aasm");
@@ -52,25 +52,35 @@ void TestWorkspaceModel::identity_notice() {
     QCOMPARE(QString::fromStdString(model.state().system_file), QStringLiteral("system.aasm"));
     QVERIFY(!model.state().system_dirty);
     QVERIFY(model.state().research_file.empty());
-    QVERIFY(model.state().research_dirty);
+    QVERIFY(model.state().record_file.empty());
+    QVERIFY(model.state().research_dirty);  // 研究标记保持既有语义
 
-    model.beginIdentity(IdentityIntent::open_experiment, "research.aexp");
+    model.beginIdentity(IdentityIntent::open_project, "research.aexp", "assembly.aasm");
     QCOMPARE(QString::fromStdString(model.state().research_file), QStringLiteral("research.aexp"));
+    QCOMPARE(QString::fromStdString(model.state().system_file), QStringLiteral("assembly.aasm"));
     QVERIFY(!model.state().research_dirty);
-    QVERIFY(model.state().system_file.empty());
+    QVERIFY(!model.state().system_dirty);
+    QVERIFY(model.state().record_file.empty());
+
+    model.beginIdentity(IdentityIntent::open_record, "run.arec");
+    QCOMPARE(QString::fromStdString(model.state().record_file), QStringLiteral("run.arec"));
+    QCOMPARE(QString::fromStdString(model.state().research_file), QStringLiteral("research.aexp"));
 
     model.beginIdentity(IdentityIntent::open_example);
     QVERIFY(model.state().system_file.empty());
     QVERIFY(model.state().research_file.empty());
+    QVERIFY(model.state().record_file.empty());
 
     const int before_notes = count;
     model.note_system_saved("saved.aasm");
     model.note_research_saved("saved.aexp");
+    model.note_record_saved("saved.arec");
     model.set_system_dirty(true);
     model.set_research_dirty(true);
     QCOMPARE(count, before_notes);  // 静默簿记不产生通知
     QCOMPARE(QString::fromStdString(model.state().system_file), QStringLiteral("saved.aasm"));
     QCOMPARE(QString::fromStdString(model.state().research_file), QStringLiteral("saved.aexp"));
+    QCOMPARE(QString::fromStdString(model.state().record_file), QStringLiteral("saved.arec"));
     QVERIFY(model.state().system_dirty);
     QVERIFY(model.state().research_dirty);
 }
@@ -266,11 +276,12 @@ void TestWorkspaceModel::controls_matrix() {
     model.applyStatus(status);
     QVERIFY(model.controls().editable);
     QVERIFY(!model.controls().runnable);
-    QVERIFY(!model.controls().can_save_experiment);
+    QVERIFY(!model.controls().can_save_project);  // 未打开项目
 
     status.phase = session::Phase::runnable;
+    status.project_directory = "/tmp/project";
     model.applyStatus(status);
-    QVERIFY(model.controls().can_save_experiment);
+    QVERIFY(model.controls().can_save_project);
     session::TrackTraceView trace;
     model.applyTracesReset({trace});  // 单条序列：可创建检查点
     QVERIFY(model.controls().can_checkpoint);

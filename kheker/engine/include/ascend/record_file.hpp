@@ -28,25 +28,35 @@ struct ExperimentTrace {
     std::int64_t current_frame = 0;  // 实际到达的逻辑帧（采样失败后可大于末条采样）
 };
 
-// 一次实验的文件内容：打开后重建与续跑所需的会话状态（ENV-14～16）。
-struct ExperimentFile {
+// 一次运行会话的记录内容：打开后重建与续跑所需的记录状态（ENV-14～16）。
+// 装配快照与规格随记录保存；装配编辑以项目内装配文件为源，配置草稿不进入记录。
+struct RecordFile {
     std::string model;
     AssemblyDefinition assembly;
     ExperimentSpec spec;
     std::map<std::string, std::string> implementations;
     std::optional<std::uint64_t> run_id;
     std::uint64_t run_revision = 0;
-    std::optional<std::pair<std::uint64_t, AssemblyDefinition>> draft;
     std::optional<Checkpoint> checkpoint;
     std::map<std::string, std::any> input_settings;
     std::vector<DrivenInput> inputs;      // 共同输入记录（驱动前逻辑帧、名称、参数）
     std::vector<ExperimentTrace> traces;  // 探索在前，分支随后
 };
 
-// 编码为实验文件字节；解码失败抛出 EngineError（unsupported_format_version、
+// 编码为运行记录字节；解码失败抛出 EngineError（unsupported_format_version、
 // invalid_json、io_failure、type_mismatch）。首版输入参数与观测值只支持 64 位
 // 整数，其他原生类型在编码前拒绝。
-std::string encode_experiment_file(const ExperimentFile& file);
-ExperimentFile decode_experiment_file(const std::string& bytes);
+std::string encode_record_file(const RecordFile& file);
+RecordFile decode_record_file(const std::string& bytes);
+
+// 运行记录摘要：只读取 meta 段，不解码轨迹，用于记录列表与打开前核对。
+struct RecordSummary {
+    std::string model;
+    std::optional<std::uint64_t> run_id;
+    std::uint64_t run_revision = 0;
+    std::size_t series = 0;            // 探索与分支序列数
+    std::size_t implementations = 0;   // 锁定的模块定义数
+};
+RecordSummary summarize_record_file(const std::string& bytes);
 
 }  // namespace ascend

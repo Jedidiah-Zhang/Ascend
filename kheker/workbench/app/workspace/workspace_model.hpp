@@ -23,17 +23,20 @@ public:
     // 由状态派生控件启用条件；调用方不再自行拼装规则。
     ControlsView controls() const;
 
-    // 命令意图：身份切换（新建研究／打开示例／打开系统／打开实验成功）。
-    // file 为切换后关联的文件路径（打开系统／打开实验时给出），并同步维护身份文件字段：
-    // - new_research／open_example：清空系统与研究文件（不动 dirty 标记）；
-    // - open_system：system_file = file、system_dirty = false，研究文件清空（研究 dirty 不动）；
-    // - open_experiment：research_file = file、research_dirty = false，系统文件清空（系统 dirty 不动）。
-    void beginIdentity(IdentityIntent intent, std::string file = {});
+    // 命令意图：身份切换（新建研究／打开示例／打开系统／打开项目／打开记录成功）。
+    // file 与 secondary 为切换后关联的文件路径：
+    // - new_research／open_example：清空装配、研究与记录文件（不动 dirty 标记）；
+    // - open_system：system_file = file、system_dirty = false，研究文件与记录清空；
+    // - open_project：research_file = file（研究文件）、system_file = secondary（装配文件），
+    //   两者 dirty = false，当前记录清空；
+    // - open_record：record_file = file，项目文件保持不变。
+    void beginIdentity(IdentityIntent intent, std::string file = {}, std::string secondary = {});
 
     // 文件流程簿记（静默，不发出信号）：只更新身份文件字段与未保存标记，不触发渲染；
     // 渲染由外壳在保存/打开等路径显式触发（避免误发 identity 清理瞬时视图）。
     void note_system_saved(std::string path);    // system_file = path; system_dirty = false
     void note_research_saved(std::string path);  // research_file = path; research_dirty = false
+    void note_record_saved(std::string path);    // record_file = path
     void set_system_dirty(bool dirty);
     void set_research_dirty(bool dirty);
 

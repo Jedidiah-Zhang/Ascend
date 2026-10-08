@@ -386,7 +386,7 @@ void editing_instance() {
 }
 
 void config_text() {
-    // 公开的 JSON 文本 → 配置解析：与装配/实验文件同一解析器与诊断。
+    // 公开的 JSON 文本 → 配置解析：与装配/研究文件同一解析器与诊断。
     CHECK((Config::parse("1").kind() == Config::Kind::integer));
     CHECK(Config::parse("1").integer() == 1);
     CHECK(Config::parse("-2").integer() == -2);

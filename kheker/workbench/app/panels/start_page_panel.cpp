@@ -32,8 +32,8 @@ StartPagePanel::StartPagePanel(const PanelContext& context, QWidget* parent)
     new_button_->setObjectName("startNewResearchButton");
     connect(new_button_, &QPushButton::clicked, this, [this] { context_.new_research(); });
     buttons->addWidget(new_button_);
-    open_button_ = new QPushButton(ui_text(texts, "workbench.start.open_research", "Open research…"), this);
-    open_button_->setObjectName("startOpenResearchButton");
+    open_button_ = new QPushButton(ui_text(texts, "workbench.start.open_project", "Open project…"), this);
+    open_button_->setObjectName("startOpenProjectButton");
     connect(open_button_, &QPushButton::clicked, this, [this] { context_.open_research(); });
     buttons->addWidget(open_button_);
     example_button_ = new QPushButton(ui_text(texts, "workbench.start.open_example", "Open built-in example"), this);

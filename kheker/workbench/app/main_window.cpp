@@ -10,10 +10,13 @@
 #include "panels/state_panel.hpp"
 #include "panels/system_editor_panel.hpp"
 #include "panels/timeline_panel.hpp"
+#include "records_dialog.hpp"
 
 #include "ui_format.hpp"
 
 #include "workspace/workspace_model.hpp"
+
+#include <ascend/session/project.hpp>
 
 #include <optional>
 #include <QAction>
@@ -133,7 +136,7 @@ MainWindow::MainWindow(SessionController* controller, std::shared_ptr<const sess
     context_.adapters = adapters_.get();
     context_.int_adapter = int_adapter_;
     context_.new_research = [this] { startNewResearch(); };
-    context_.open_research = [this] { startOpenResearch(); };
+    context_.open_research = [this] { startOpenProject(); };
     context_.open_example = [this] { startOpenExample(); };
     context_.new_system = [this] { chooseNewSystem(); };
     context_.open_system = [this] { chooseOpenSystem(); };
@@ -193,8 +196,10 @@ MainWindow::MainWindow(SessionController* controller, std::shared_ptr<const sess
     connect(controller_, &SessionController::recordChanged, this, &MainWindow::onRecordChanged);
     connect(controller_, &SessionController::sampleDetailReady, this, &MainWindow::onSampleDetailReady);
     connect(controller_, &SessionController::diagnosticsReported, this, &MainWindow::onDiagnostics);
-    connect(controller_, &SessionController::experimentSaved, this, &MainWindow::onExperimentSaved);
-    connect(controller_, &SessionController::experimentOpened, this, &MainWindow::onExperimentOpened);
+    connect(controller_, &SessionController::projectOpened, this, &MainWindow::onProjectOpened);
+    connect(controller_, &SessionController::projectSaved, this, &MainWindow::onProjectSaved);
+    connect(controller_, &SessionController::recordOpened, this, &MainWindow::onRecordOpened);
+    connect(controller_, &SessionController::recordsChanged, this, &MainWindow::onRecordsChanged);
     connect(controller_, &SessionController::modulePackagesChanged, this, &MainWindow::onModulePackages);
     connect(controller_, &SessionController::modulePackagesLoaded, this, &MainWindow::onModulePackagesLoaded);
     connect(controller_, &SessionController::modulePackageUnloaded, this, &MainWindow::onModulePackageUnloaded);
@@ -441,7 +446,7 @@ void MainWindow::chooseNewSystem() {
                                                ui_text(*texts_, "workbench.editor.new_system_prompt", "System name:"),
                                                QLineEdit::Normal, QString(), &accepted);
     if (!accepted || name.trimmed().isEmpty()) return;
-    workspace_->beginIdentity(IdentityIntent::new_research);
+    // 新建系统保留项目关联；装配草稿替换后由保存项目写回项目内的装配文件。
     beginSystemCommand("newSystem");
     QMetaObject::invokeMethod(controller_, "newSystem", Qt::QueuedConnection, Q_ARG(QString, name.trimmed()));
 }
@@ -501,7 +506,7 @@ void MainWindow::hideStartPage() {
 
 void MainWindow::startNewResearch() {
     if (state().busy || closing_) return;
-    // 新建研究：研究名称 + 创建或打开因果系统。
+    // 新建研究：研究名称 + 保存位置；项目目录为「位置／研究名称」，必须不存在或为空。
     QDialog dialog(this);
     dialog.setObjectName("newResearchDialog");
     dialog.setWindowTitle(ui_text(*texts_, "workbench.research.title", "New research"));
@@ -510,49 +515,73 @@ void MainWindow::startNewResearch() {
     auto* name_edit = new QLineEdit(ui_text(*texts_, "workbench.research.default_name", "Untitled research"), &dialog);
     name_edit->setObjectName("researchNameEdit");
     form->addRow(ui_text(*texts_, "workbench.research.name", "Research name:"), name_edit);
+    auto* directory_row = new QHBoxLayout();
+    auto* directory_edit = new QLineEdit(QDir::homePath(), &dialog);
+    directory_edit->setObjectName("researchDirectoryEdit");
+    directory_edit->setPlaceholderText(ui_text(*texts_, "workbench.research.location_hint", "Parent folder"));
+    auto* browse = new QPushButton(ui_text(*texts_, "workbench.research.browse", "Browse…"), &dialog);
+    browse->setObjectName("researchBrowseButton");
+    directory_row->addWidget(directory_edit);
+    directory_row->addWidget(browse);
+    form->addRow(ui_text(*texts_, "workbench.research.location", "Location:"), directory_row);
     layout->addLayout(form);
-    auto* create_radio =
-        new QRadioButton(ui_text(*texts_, "workbench.research.create_system", "Create a new causal system"), &dialog);
-    create_radio->setObjectName("researchCreateSystemRadio");
-    create_radio->setChecked(true);
-    layout->addWidget(create_radio);
-    auto* open_radio = new QRadioButton(
-        ui_text(*texts_, "workbench.research.open_system", "Open an existing causal system (.aasm)"), &dialog);
-    open_radio->setObjectName("researchOpenSystemRadio");
-    layout->addWidget(open_radio);
+    auto* preview = new QLabel(&dialog);
+    preview->setObjectName("researchLocationPreview");
+    preview->setWordWrap(true);
+    const auto refresh_preview = [this, name_edit, directory_edit, preview] {
+        const QString name = name_edit->text().trimmed().isEmpty()
+                                 ? ui_text(*texts_, "workbench.research.default_name", "Untitled research")
+                                 : name_edit->text().trimmed();
+        const QString folder = QString::fromStdString(session::project_folder_name(name.toStdString()));
+        const QString base = directory_edit->text().trimmed().isEmpty() ? QDir::homePath()
+                                                                        : directory_edit->text().trimmed();
+        preview->setText(ui_text(*texts_, "workbench.research.location_preview",
+                                 "The project folder will be: %1")
+                             .arg(QDir(base).filePath(folder)));
+    };
+    connect(name_edit, &QLineEdit::textChanged, &dialog, [refresh_preview] { refresh_preview(); });
+    connect(directory_edit, &QLineEdit::textChanged, &dialog, [refresh_preview] { refresh_preview(); });
+    refresh_preview();
+    layout->addWidget(preview);
+    auto* guide = new QLabel(
+        ui_text(*texts_, "workbench.research.guide",
+                "The project folder is \"location / research name\"; it must not exist or be empty."),
+        &dialog);
+    guide->setWordWrap(true);
+    guide->setStyleSheet(QStringLiteral("color: #666;"));
+    layout->addWidget(guide);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     buttons->setObjectName("researchDialogButtons");
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(browse, &QPushButton::clicked, &dialog, [this, directory_edit] {
+        const QString picked = QFileDialog::getExistingDirectory(
+            this, ui_text(*texts_, "workbench.research.location", "Location"), directory_edit->text(),
+            QFileDialog::DontUseNativeDialog);
+        if (!picked.isEmpty()) directory_edit->setText(picked);
+    });
     layout->addWidget(buttons);
     if (dialog.exec() != QDialog::Accepted) return;
 
     QString name = name_edit->text().trimmed();
     if (name.isEmpty()) name = ui_text(*texts_, "workbench.research.default_name", "Untitled research");
-    if (open_radio->isChecked()) {
-        const QString path = QFileDialog::getOpenFileName(
-            this, ui_text(*texts_, "workbench.system.open_title", "Open causal system"), QDir::homePath(),
-            ui_text(*texts_, "workbench.system.filter", "Ascend causal system (*.aasm);;All files (*)"), nullptr,
-            QFileDialog::DontUseNativeDialog);
-        if (path.isEmpty()) return;  // 取消选择：留在开始页
-        hideStartPage();
-        workspace_->set_research_dirty(true);
-        beginSystemCommand("openSystem", false);
-        QMetaObject::invokeMethod(controller_, "openSystem", Qt::QueuedConnection, Q_ARG(QString, path),
-                                  Q_ARG(QString, name));
-        return;
-    }
+    const QString base = directory_edit->text().trimmed().isEmpty() ? QDir::homePath()
+                                                                    : directory_edit->text().trimmed();
+    const QString folder = QString::fromStdString(session::project_folder_name(name.toStdString()));
+    const QString directory = QDir(base).filePath(folder);
     hideStartPage();
-    workspace_->beginIdentity(IdentityIntent::new_research);
-    beginSystemCommand("newSystem");
-    QMetaObject::invokeMethod(controller_, "newSystem", Qt::QueuedConnection, Q_ARG(QString, name));
-    showSystemEditor();
+    // 身份切换延后到命令成功：失败时保持当前会话与文件关联不变。
+    new_project_pending_ = true;
+    pending_ = QStringLiteral("newProject");
+    updateControls();
+    QMetaObject::invokeMethod(controller_, "newProject", Qt::QueuedConnection, Q_ARG(QString, directory),
+                              Q_ARG(QString, name));
 }
 
-void MainWindow::startOpenResearch() {
+void MainWindow::startOpenProject() {
     if (state().busy || closing_) return;
     hideStartPage();
-    chooseOpenExperiment();
+    chooseOpenProject();
 }
 
 void MainWindow::startOpenExample() {
@@ -669,9 +698,12 @@ void MainWindow::updateControls() {
     if (config_panel_ != nullptr) config_panel_->set_editable(controls.editable);
     for (const auto& [action, button] : action_buttons_) action->setEnabled(button->isEnabled());
     if (open_action_ != nullptr) open_action_->setEnabled(controls.can_open_file && !closing_);
-    if (open_experiment_action_ != nullptr) open_experiment_action_->setEnabled(controls.can_open_file && !closing_);
-    if (save_action_ != nullptr) save_action_->setEnabled(controls.can_save_experiment && !closing_);
-    if (save_as_action_ != nullptr) save_as_action_->setEnabled(controls.can_save_experiment && !closing_);
+    if (open_project_action_ != nullptr) open_project_action_->setEnabled(controls.can_open_file && !closing_);
+    if (open_record_action_ != nullptr) {
+        open_record_action_->setEnabled(controls.can_open_file && !state().status.project_directory.empty() &&
+                                        !closing_);
+    }
+    if (save_action_ != nullptr) save_action_->setEnabled(controls.can_save_project && !closing_);
     if (load_module_action_ != nullptr) load_module_action_->setEnabled(controls.can_manage_packages && !closing_);
     if (load_module_folder_action_ != nullptr) {
         load_module_folder_action_->setEnabled(controls.can_manage_packages && !closing_);
@@ -716,18 +748,17 @@ void MainWindow::buildMenuBar() {
         dispatch("load");
     });
     file->addSeparator();
-    open_experiment_action_ = file->addAction(ui_text(*texts_, "workbench.action.open_experiment", "Open experiment…"));
-    open_experiment_action_->setObjectName("openExperimentAction");
-    open_experiment_action_->setShortcut(QKeySequence::Open);
-    connect(open_experiment_action_, &QAction::triggered, this, &MainWindow::chooseOpenExperiment);
-    save_action_ = file->addAction(ui_text(*texts_, "workbench.action.save_experiment", "Save"));
+    open_project_action_ = file->addAction(ui_text(*texts_, "workbench.action.open_project", "Open project…"));
+    open_project_action_->setObjectName("openProjectAction");
+    open_project_action_->setShortcut(QKeySequence::Open);
+    connect(open_project_action_, &QAction::triggered, this, &MainWindow::chooseOpenProject);
+    open_record_action_ = file->addAction(ui_text(*texts_, "workbench.action.open_record", "Open record…"));
+    open_record_action_->setObjectName("openRecordAction");
+    connect(open_record_action_, &QAction::triggered, this, &MainWindow::chooseOpenRecord);
+    save_action_ = file->addAction(ui_text(*texts_, "workbench.action.save_project", "Save"));
     save_action_->setObjectName("saveAction");
     save_action_->setShortcut(QKeySequence::Save);
-    connect(save_action_, &QAction::triggered, this, &MainWindow::saveExperiment);
-    save_as_action_ = file->addAction(ui_text(*texts_, "workbench.action.save_experiment_as", "Save as…"));
-    save_as_action_->setObjectName("saveAsAction");
-    save_as_action_->setShortcut(QKeySequence::SaveAs);
-    connect(save_as_action_, &QAction::triggered, this, &MainWindow::chooseSaveExperiment);
+    connect(save_action_, &QAction::triggered, this, &MainWindow::saveProject);
     file->addSeparator();
     load_module_action_ = file->addAction(ui_text(*texts_, "workbench.action.load_module_package", "Load module package…"));
     load_module_action_->setObjectName("loadModulePackageAction");
@@ -968,54 +999,106 @@ void MainWindow::onReplayFinished(const session::ReplayReport& report) {
     box.exec();
 }
 
-void MainWindow::chooseOpenExperiment() {
-    if (state().busy || closing_) return;
-    const QString path = QFileDialog::getOpenFileName(
-        this, ui_text(*texts_, "workbench.action.open_experiment", "Open experiment…"), QString(),
-        ui_text(*texts_, "workbench.filter.experiment", "Ascend experiment (*.aexp);;All files (*)"),
-        nullptr, QFileDialog::DontUseNativeDialog);
-    if (path.isEmpty()) return;
-    pending_ = QStringLiteral("openExperiment");
-    updateControls();
-    QMetaObject::invokeMethod(controller_, "openExperiment", Qt::QueuedConnection, Q_ARG(QString, path));
-}
-
-void MainWindow::saveExperiment() {
+void MainWindow::chooseOpenProject() {
     if (state().busy || closing_) return;
     const QString research_file = from_utf8(state().research_file);
-    if (research_file.isEmpty()) {
-        chooseSaveExperiment();
-        return;
-    }
-    pending_ = QStringLiteral("saveExperiment");
+    const QString start = research_file.isEmpty() ? QDir::homePath() : QFileInfo(research_file).absolutePath();
+    const QString directory = QFileDialog::getExistingDirectory(
+        this, ui_text(*texts_, "workbench.action.open_project", "Open project…"), start,
+        QFileDialog::DontUseNativeDialog);
+    if (directory.isEmpty()) return;
+    pending_ = QStringLiteral("openProject");
     updateControls();
-    QMetaObject::invokeMethod(controller_, "saveExperiment", Qt::QueuedConnection, Q_ARG(QString, research_file));
+    QMetaObject::invokeMethod(controller_, "openProject", Qt::QueuedConnection, Q_ARG(QString, directory));
 }
 
-void MainWindow::chooseSaveExperiment() {
+void MainWindow::saveProject() {
     if (state().busy || closing_) return;
-    QString path = QFileDialog::getSaveFileName(
-        this, ui_text(*texts_, "workbench.action.save_experiment_as", "Save experiment as…"),
-        state().research_file.empty() ? QStringLiteral("experiment.aexp") : from_utf8(state().research_file),
-        ui_text(*texts_, "workbench.filter.experiment", "Ascend experiment (*.aexp);;All files (*)"),
-        nullptr, QFileDialog::DontUseNativeDialog);
-    if (path.isEmpty()) return;
-    if (!path.endsWith(QStringLiteral(".aexp"))) path += QStringLiteral(".aexp");
-    pending_ = QStringLiteral("saveExperiment");
-    updateControls();
-    QMetaObject::invokeMethod(controller_, "saveExperiment", Qt::QueuedConnection, Q_ARG(QString, path));
-}
-
-void MainWindow::onExperimentSaved(const QString& path, bool ok, const QString& detail) {
-    if (!ok) {
-        QString text = ui_text(*texts_, "workbench.save.failed", "Could not save the experiment file: %1").arg(path);
-        if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
-        QMessageBox::warning(this, ui_text(*texts_, "workbench.save.title", "Save experiment"), text);
+    if (state().status.project_directory.empty()) {
+        QMessageBox::information(this, ui_text(*texts_, "workbench.action.save_project", "Save"),
+                                 ui_text(*texts_, "workbench.save.no_project",
+                                         "Open or create a research project before saving."));
         return;
     }
-    workspace_->note_research_saved(path.toStdString());
+    pending_ = QStringLiteral("saveProject");
+    updateControls();
+    QMetaObject::invokeMethod(controller_, "saveProject", Qt::QueuedConnection);
+}
+
+void MainWindow::chooseOpenRecord() {
+    if (state().busy || closing_) return;
+    if (state().status.project_directory.empty()) {
+        QMessageBox::information(this, ui_text(*texts_, "workbench.action.open_record", "Open record…"),
+                                 ui_text(*texts_, "workbench.records.no_project",
+                                         "Open or create a research project first."));
+        return;
+    }
+    records_dialog_pending_ = true;
+    QMetaObject::invokeMethod(controller_, "requestRecords", Qt::QueuedConnection);
+}
+
+void MainWindow::onProjectOpened(const QString& directory, const QString& study, const QString& assembly, bool ok,
+                                 const QString& detail) {
+    if (!ok) {
+        new_project_pending_ = false;
+        QString text = ui_text(*texts_, "workbench.project.open_failed", "Could not open the project: %1").arg(directory);
+        if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
+        QMessageBox::warning(this, ui_text(*texts_, "workbench.action.open_project", "Open project…"), text);
+        return;
+    }
+    workspace_->beginIdentity(IdentityIntent::open_project, study.toStdString(), assembly.toStdString());
+    if (new_project_pending_) {
+        new_project_pending_ = false;
+        showSystemEditor();
+    }
     updateWindowTitle();
     updateRecordSummary();
+}
+
+void MainWindow::onProjectSaved(const QString& study, const QString& assembly, const QString& record, bool ok,
+                                const QString& detail) {
+    if (!ok) {
+        QString text = ui_text(*texts_, "workbench.project.save_failed", "Could not save the project: %1").arg(study);
+        if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
+        QMessageBox::warning(this, ui_text(*texts_, "workbench.action.save_project", "Save"), text);
+        return;
+    }
+    if (!study.isEmpty()) workspace_->note_research_saved(study.toStdString());
+    if (!assembly.isEmpty()) workspace_->note_system_saved(assembly.toStdString());
+    if (!record.isEmpty()) workspace_->note_record_saved(record.toStdString());
+    updateWindowTitle();
+    updateRecordSummary();
+}
+
+void MainWindow::onRecordOpened(const QString& path, bool ok, const QString& detail) {
+    if (!ok) {
+        QString text = ui_text(*texts_, "workbench.records.open_failed", "Could not open the record: %1").arg(path);
+        if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
+        QMessageBox::warning(this, ui_text(*texts_, "workbench.action.open_record", "Open record…"), text);
+        return;
+    }
+    workspace_->beginIdentity(IdentityIntent::open_record, path.toStdString());
+    updateWindowTitle();
+    updateRecordSummary();
+}
+
+void MainWindow::onRecordsChanged(const std::vector<ascend::session::RecordEntryView>& records) {
+    records_ = records;
+    if (!records_dialog_pending_) return;
+    records_dialog_pending_ = false;
+    if (records_.empty()) {
+        QMessageBox::information(this, ui_text(*texts_, "workbench.action.open_record", "Open record…"),
+                                 ui_text(*texts_, "workbench.records.empty",
+                                         "This project has no run records yet; save a running session first."));
+        return;
+    }
+    RecordsDialog dialog(*texts_, records_, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const QString path = dialog.selected_path();
+    if (path.isEmpty()) return;
+    pending_ = QStringLiteral("openRecord");
+    updateControls();
+    QMetaObject::invokeMethod(controller_, "openRecord", Qt::QueuedConnection, Q_ARG(QString, path));
 }
 
 void MainWindow::chooseLoadModulePackage() {
@@ -1148,18 +1231,6 @@ void MainWindow::onModulePackageUnloaded(const QString& definition, bool ok, con
     }
 }
 
-void MainWindow::onExperimentOpened(const QString& path, bool ok, const QString& detail) {
-    if (!ok) {
-        QString text = ui_text(*texts_, "workbench.open.failed", "Could not open the experiment file: %1").arg(path);
-        if (!detail.isEmpty()) text += QStringLiteral("\n") + detail;
-        QMessageBox::warning(this, ui_text(*texts_, "workbench.open.title", "Open experiment"), text);
-        return;
-    }
-    workspace_->beginIdentity(IdentityIntent::open_experiment, path.toStdString());
-    updateWindowTitle();
-    updateRecordSummary();
-}
-
 void MainWindow::updateWindowTitle() {
     QString title = ui_text(*texts_, "workbench.app.display_name", "Ascend Causal Modeling Workbench");
     if (!state().status.model_name.empty()) {
@@ -1170,14 +1241,16 @@ void MainWindow::updateWindowTitle() {
     if (!research_file.isEmpty()) {
         title += ui_text(*texts_, "workbench.app.file_suffix", " — %1")
                      .arg(QFileInfo(research_file).fileName());
-        if (state().research_dirty) title += QStringLiteral("*");
+        if (state().research_dirty || !state().status.record_saved) title += QStringLiteral("*");
     }
     setWindowTitle(title);
 }
 
 void MainWindow::updateRecordSummary() {
     if (bottom_panel_ == nullptr) return;
-    bottom_panel_->render_record(state().record, from_utf8(state().research_file));
+    QString label = from_utf8(state().record_file);
+    if (label.isEmpty()) label = from_utf8(state().research_file);
+    bottom_panel_->render_record(state().record, label);
 }
 
 void MainWindow::onRecordChanged(const session::RecordView& record) {

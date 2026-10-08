@@ -35,7 +35,7 @@ public:
     // 对象成员查找；非对象或成员不存在时返回空指针。
     const Config* find(const std::string& name) const;
 
-    // 解析 JSON 文本为配置值（与装配文件、实验文件使用同一解析器）；语法、范围或
+    // 解析 JSON 文本为配置值（与装配文件、研究文件使用同一解析器）；语法、范围或
     // 字符串编码错误抛出 EngineError（invalid_json）。source 用于诊断定位。
     // 编辑与脚本入口：装配文件解析的配置语义由此保持一致。
     [[nodiscard]] static Config parse(const std::string& text, std::string source = {});

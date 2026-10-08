@@ -105,8 +105,10 @@ foreach(case IN ITEMS
     trace_replay
     run_directory
     example_model
-    experiment_file_round_trip
-    experiment_file_depth_limits
+    record_file_round_trip
+    record_file_depth_limits
+    study_file_round_trip
+    study_file_errors
     module_package_round_trip
     module_library_load_unload
 )

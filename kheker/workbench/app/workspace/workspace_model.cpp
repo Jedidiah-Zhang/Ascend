@@ -50,32 +50,39 @@ ControlsView WorkspaceModel::controls() const {
     controls.can_branch = controls.runnable && status.has_checkpoint && state_.series.size() == 1 && !compare;
     controls.can_reset_branches = !state_.busy && compare;
     controls.can_replay = !state_.busy && !state_.series.empty();
-    controls.can_save_experiment = !state_.busy && status.phase != session::Phase::empty &&
-                                   status.phase != session::Phase::editing;
+    controls.can_save_project = !state_.busy && status.phase != session::Phase::empty &&
+                                !status.project_directory.empty();
     controls.can_open_file = !state_.busy;
     controls.can_manage_packages = !state_.busy;
     controls.can_unload_package = !state_.busy && !state_.packages.empty();
     return controls;
 }
 
-void WorkspaceModel::beginIdentity(IdentityIntent intent, std::string file) {
-    // 身份文件字段切换：打开系统／实验关联路径并清除对应的未保存标记；
+void WorkspaceModel::beginIdentity(IdentityIntent intent, std::string file, std::string secondary) {
+    // 身份文件字段切换：打开项目关联研究文件与装配文件；打开记录关联当前记录。
     // 新建与打开示例只解除文件关联，dirty 标记保持既有语义（随后由命令簿记更新）。
     switch (intent) {
         case IdentityIntent::new_research:
         case IdentityIntent::open_example:
             state_.system_file.clear();
             state_.research_file.clear();
+            state_.record_file.clear();
             break;
         case IdentityIntent::open_system:
             state_.system_file = std::move(file);
             state_.system_dirty = false;
             state_.research_file.clear();
+            state_.record_file.clear();
             break;
-        case IdentityIntent::open_experiment:
+        case IdentityIntent::open_project:
             state_.research_file = std::move(file);
+            state_.system_file = std::move(secondary);
             state_.research_dirty = false;
-            state_.system_file.clear();
+            state_.system_dirty = false;
+            state_.record_file.clear();
+            break;
+        case IdentityIntent::open_record:
+            state_.record_file = std::move(file);
             break;
     }
     // 检查报告属于上一身份：清空并通知（诊断日志按设计跨身份保留）。
@@ -92,6 +99,10 @@ void WorkspaceModel::note_system_saved(std::string path) {
 void WorkspaceModel::note_research_saved(std::string path) {
     state_.research_file = std::move(path);
     state_.research_dirty = false;
+}
+
+void WorkspaceModel::note_record_saved(std::string path) {
+    state_.record_file = std::move(path);
 }
 
 void WorkspaceModel::set_system_dirty(bool dirty) {

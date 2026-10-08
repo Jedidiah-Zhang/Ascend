@@ -45,9 +45,12 @@ public slots:
     void resetBranches();
     void replay();
     void requestComparison();
-    // 保存当前实验到文件；打开实验文件（读取、解码、核对与接管/记录态）。
-    void saveExperiment(const QString& path);
-    void openExperiment(const QString& path);
+    // 研究项目（ENV-16）：新建/打开项目、保存项目、打开记录与请求记录清单。
+    void newProject(const QString& directory, const QString& name);
+    void openProject(const QString& directory);
+    void saveProject();
+    void openRecord(const QString& path);
+    void requestRecords();
     // 模块包（ENV-18）：批量载入文件（逐个独立处理）、卸载定义标识、请求已载入概要。
     void loadModulePackages(const QStringList& paths);
     void unloadModulePackage(const QString& definition);
@@ -85,8 +88,14 @@ signals:
     void recordChanged(const ascend::session::RecordView& record);
     void sampleDetailReady(int series, std::int64_t frame, const ascend::session::SampleDetailView& detail);
     void diagnosticsReported(const std::vector<ascend::session::DiagnosticView>& diagnostics);
-    void experimentSaved(const QString& path, bool ok, const QString& detail);
-    void experimentOpened(const QString& path, bool ok, const QString& detail);
+    // 项目结果：目录、研究文件与装配文件路径；失败原因为空时表示成功。
+    void projectOpened(const QString& directory, const QString& study, const QString& assembly, bool ok,
+                       const QString& detail);
+    // 保存结果：研究文件、装配文件与当前记录路径（无记录时为空）。
+    void projectSaved(const QString& study, const QString& assembly, const QString& record, bool ok,
+                      const QString& detail);
+    void recordOpened(const QString& path, bool ok, const QString& detail);
+    void recordsChanged(const std::vector<ascend::session::RecordEntryView>& records);
     void modulePackagesChanged(const std::vector<ascend::session::ModulePackageView>& packages);
     // 批量载入结果：成功数、失败数与失败明细（每行“路径：原因”，全部成功时为空）。
     void modulePackagesLoaded(int loaded, int failed, const QString& detail);
@@ -129,4 +138,5 @@ Q_DECLARE_METATYPE(std::vector<ascend::session::SampleView>)
 Q_DECLARE_METATYPE(std::vector<ascend::session::StepEvent>)
 Q_DECLARE_METATYPE(std::vector<ascend::session::BranchRequest>)
 Q_DECLARE_METATYPE(std::vector<ascend::session::DiagnosticView>)
+Q_DECLARE_METATYPE(std::vector<ascend::session::RecordEntryView>)
 Q_DECLARE_METATYPE(std::any)

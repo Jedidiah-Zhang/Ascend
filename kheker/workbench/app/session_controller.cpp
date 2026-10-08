@@ -177,55 +177,57 @@ void SessionController::replay() {
 
 void SessionController::requestComparison() { emit comparisonReady(session_.comparison()); }
 
-void SessionController::saveExperiment(const QString& path) {
+void SessionController::newProject(const QString& directory, const QString& name) {
     emit busyChanged(true);
-    const auto encoded = session_.encode_experiment();
-    bool ok = encoded.ok;
+    const auto result = session_.new_project(directory.toStdString(), name.toStdString());
     QString detail;
-    if (encoded.diagnostic.has_value()) detail = QString::fromUtf8(encoded.diagnostic->message);
-    if (ok) {
-        QSaveFile file(path);
-        if (!file.open(QIODevice::WriteOnly)) {
-            ok = false;
-            detail = file.errorString();
-        } else {
-            const auto size = static_cast<qint64>(encoded.bytes.size());
-            if (file.write(encoded.bytes.data(), size) != size) {
-                ok = false;
-                detail = file.errorString();
-                file.cancelWriting();
-            } else if (!file.commit()) {
-                ok = false;
-                detail = file.errorString();
-            }
-        }
-        if (!ok) emit diagnosticsReported({io_failure(detail)});
-    }
-    if (encoded.diagnostic.has_value()) emit diagnosticsReported({*encoded.diagnostic});
-    emit experimentSaved(path, ok, detail);
-    emit busyChanged(false);
+    if (!result.diagnostics.empty()) detail = QString::fromUtf8(result.diagnostics.front().message);
+    const auto view = session_.project();
+    emit projectOpened(directory,
+                       view.has_value() ? QString::fromStdString(view->study_file) : QString(),
+                       view.has_value() ? QString::fromStdString(view->assembly_file) : QString(),
+                       result.ok, detail);
+    publish(result, true, TraceUpdate::reset);
 }
 
-void SessionController::openExperiment(const QString& path) {
+void SessionController::openProject(const QString& directory) {
     emit busyChanged(true);
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        const QString detail = file.errorString();
-        emit diagnosticsReported({io_failure(detail)});
-        emit experimentOpened(path, false, detail);
-        emit busyChanged(false);
-        return;
-    }
-    const QByteArray data = file.readAll();
-    const auto result = session_.open_experiment(
-        std::string(data.constData(), static_cast<std::size_t>(data.size())));
+    const auto result = session_.open_project(directory.toStdString());
     QString detail;
-    if (!result.diagnostics.empty()) {
-        detail = QString::fromUtf8(result.diagnostics.front().message);
-    }
-    emit experimentOpened(path, result.ok, detail);
+    if (!result.diagnostics.empty()) detail = QString::fromUtf8(result.diagnostics.front().message);
+    const auto view = session_.project();
+    emit projectOpened(directory,
+                       view.has_value() ? QString::fromStdString(view->study_file) : QString(),
+                       view.has_value() ? QString::fromStdString(view->assembly_file) : QString(),
+                       result.ok, detail);
+    publish(result, true, TraceUpdate::reset);
+}
+
+void SessionController::saveProject() {
+    emit busyChanged(true);
+    const auto result = session_.save_project();
+    QString detail;
+    if (!result.diagnostics.empty()) detail = QString::fromUtf8(result.diagnostics.front().message);
+    const auto view = session_.project();
+    emit projectSaved(view.has_value() ? QString::fromStdString(view->study_file) : QString(),
+                      view.has_value() ? QString::fromStdString(view->assembly_file) : QString(),
+                      view.has_value() && view->current_record.has_value()
+                          ? QString::fromStdString(*view->current_record)
+                          : QString(),
+                      result.ok, detail);
+    publish(result, false, TraceUpdate::none);
+}
+
+void SessionController::openRecord(const QString& path) {
+    emit busyChanged(true);
+    const auto result = session_.open_record_file(path.toStdString());
+    QString detail;
+    if (!result.diagnostics.empty()) detail = QString::fromUtf8(result.diagnostics.front().message);
+    emit recordOpened(path, result.ok, detail);
     publish(result, true, TraceUpdate::reset, result.status.branches == session::max_branches);
 }
+
+void SessionController::requestRecords() { emit recordsChanged(session_.records()); }
 
 void SessionController::loadModulePackages(const QStringList& paths) {
     emit busyChanged(true);

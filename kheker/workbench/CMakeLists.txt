@@ -16,7 +16,7 @@ option(ASCEND_WORKBENCH_BUILD_GUI "Build the Qt workbench application" ON)
 set(ASCEND_WORKBENCH_RESOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # 无界面会话编排：不依赖 Qt，可由 CTest 独立验证。
-add_library(ascend_session STATIC src/adapter.cpp src/session.cpp)
+add_library(ascend_session STATIC src/adapter.cpp src/session.cpp src/project.cpp)
 add_library(ascend::session ALIAS ascend_session)
 target_compile_features(ascend_session PUBLIC cxx_std_17)
 target_link_libraries(ascend_session PUBLIC ascend::engine)
@@ -53,6 +53,7 @@ if(ASCEND_WORKBENCH_BUILD_GUI)
         app/config_editor.cpp app/config_editor.hpp
         app/waveform_widget.cpp app/waveform_widget.hpp
         app/main_window.cpp app/main_window.hpp
+        app/records_dialog.cpp app/records_dialog.hpp
         app/panels/config_panel.cpp app/panels/config_panel.hpp
         app/panels/diagnostics_panel.cpp app/panels/diagnostics_panel.hpp
         app/panels/diff_panel.cpp app/panels/diff_panel.hpp

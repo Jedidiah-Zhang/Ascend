@@ -6,8 +6,8 @@
 
 namespace ascend::detail {
 
-// ENV-14 容器：魔数、容器版本、文件种类、段表。实验文件与模块包共用。
-inline constexpr std::uint8_t container_kind_experiment = 1;
+// ENV-14 容器：魔数、容器版本、文件种类、段表。运行记录与模块包共用。
+inline constexpr std::uint8_t container_kind_record = 1;
 inline constexpr std::uint8_t container_kind_module = 2;
 inline constexpr std::uint8_t container_section_required = 0x01;
 

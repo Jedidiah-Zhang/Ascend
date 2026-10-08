@@ -119,18 +119,23 @@ private:
     void clearIdentityViews();
     // 开始页动作：关闭开始页并进入相应流程。
     void startNewResearch();
-    void startOpenResearch();
+    void startOpenProject();
     void startOpenExample();
 
     void updateControls();
     void updateStatusLabels();
     void requestSampleDetail(std::int64_t frame);
     void requestLatestSample();
-    void chooseOpenExperiment();
-    void chooseSaveExperiment();
-    void saveExperiment();
-    void onExperimentSaved(const QString& path, bool ok, const QString& detail);
-    void onExperimentOpened(const QString& path, bool ok, const QString& detail);
+    // 研究项目与运行记录（ENV-16）：打开/保存项目、打开记录与结果处理。
+    void chooseOpenProject();
+    void saveProject();
+    void chooseOpenRecord();
+    void onProjectOpened(const QString& directory, const QString& study, const QString& assembly, bool ok,
+                         const QString& detail);
+    void onProjectSaved(const QString& study, const QString& assembly, const QString& record, bool ok,
+                        const QString& detail);
+    void onRecordOpened(const QString& path, bool ok, const QString& detail);
+    void onRecordsChanged(const std::vector<ascend::session::RecordEntryView>& records);
     // 模块包：多选文件或整个文件夹的载入/卸载命令与结果、已载入概要（ENV-18）。
     void chooseLoadModulePackage();
     void chooseLoadModulePackageFolder();
@@ -210,11 +215,16 @@ private:
 
     // 菜单栏：已实装命令与按钮同源，占位项禁用。
     QAction* open_action_ = nullptr;
-    QAction* open_experiment_action_ = nullptr;
+    QAction* open_project_action_ = nullptr;
+    QAction* open_record_action_ = nullptr;
     QAction* save_action_ = nullptr;
-    QAction* save_as_action_ = nullptr;
     std::vector<std::pair<QAction*, QPushButton*>> action_buttons_;
     QDockWidget* diagnostics_dock_ = nullptr;
+
+    // 运行记录清单（打开记录对话框的数据）与待显示标记；新建研究待成功后再切换身份。
+    std::vector<session::RecordEntryView> records_;
+    bool records_dialog_pending_ = false;
+    bool new_project_pending_ = false;
 
     std::function<void()> close_handler_;
 };

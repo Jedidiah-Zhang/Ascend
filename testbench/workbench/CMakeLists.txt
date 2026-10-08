@@ -31,6 +31,10 @@ foreach(case IN ITEMS
     module_packages
     system_assembly
     system_file
+    project_workflow
+    project_record_history
+    project_record_lineage
+    project_errors
 )
     add_test(NAME session.${case} COMMAND ascend_session_tests ${case})
 endforeach()
@@ -74,8 +78,8 @@ if(TARGET ascend_workbench_ui)
         resourceResolution
         menuBarStructure
         captureScreenshot
-        fileSaveOpen
-        fileOpenFailure
+        projectRecordRoundTrip
+        openProjectFailure
         modulePackageLoadUnload
         modulePackageMultiLoad
         modulePackageFolderLoad
@@ -100,8 +104,8 @@ if(TARGET ascend_workbench_ui)
         workbench.resourceResolution
         workbench.menuBarStructure
         workbench.captureScreenshot
-        workbench.fileSaveOpen
-        workbench.fileOpenFailure
+        workbench.projectRecordRoundTrip
+        workbench.openProjectFailure
         workbench.modulePackageLoadUnload
         workbench.modulePackageMultiLoad
         workbench.modulePackageFolderLoad

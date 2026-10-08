@@ -2,7 +2,7 @@
 
 #include <ascend/assembly.hpp>
 #include <ascend/experiment.hpp>
-#include <ascend/experiment_file.hpp>
+#include <ascend/record_file.hpp>
 #include <ascend/module_library.hpp>
 #include <ascend/i18n.hpp>
 
@@ -159,6 +159,11 @@ struct Status {
     std::uint64_t run_revision = 0;    // 当前运行来自的草稿修订
     std::optional<std::uint64_t> run_id;
     bool dirty = false;  // draft_revision != run_revision
+    // 项目与记录簿记（ENV-16）：未打开项目时视为已保存。
+    bool study_saved = true;   // 装配文件与研究文件已写入当前草稿与规格
+    bool record_saved = true;  // 当前运行记录已写入（或尚无运行）
+    std::string project_directory;           // 当前项目目录；空表示未关联
+    std::optional<std::string> record_name;  // 当前记录文件名
     bool has_checkpoint = false;
     std::int64_t checkpoint_frame = -1;
     std::size_t recorded_inputs = 0;
@@ -270,7 +275,7 @@ struct ReplayReport {
     std::optional<DiagnosticView> diagnostic;
 };
 
-// 已载入模块包的概要（ENV-18）；模块库不属于实验文件与运行状态。
+// 已载入模块包的概要（ENV-18）；模块库不属于研究文件、运行记录与运行状态。
 struct ModulePackageView {
     std::string definition;
     std::string version;
@@ -280,6 +285,24 @@ struct ModulePackageView {
     std::size_t declarations = 0;
     std::size_t requirements = 0;
     std::size_t resources = 0;
+};
+
+// 一条运行记录的列表项：摘要来自记录 meta 段，不解码轨迹。
+struct RecordEntryView {
+    std::string path;
+    std::string name;
+    bool readable = false;
+    std::string model;
+    std::size_t series = 0;
+    std::optional<DiagnosticView> problem;  // 不可读时的结构化原因
+};
+
+// 当前项目关联；未打开项目时为空。
+struct ProjectView {
+    std::string directory;
+    std::string study_file;
+    std::string assembly_file;
+    std::optional<std::string> current_record;
 };
 
 // 会话模板：模型装配、实验规格、工厂目录、已核对实现标识、语言资源与模块库。
@@ -363,21 +386,38 @@ public:
     OperationResult reset_branches();
     // 依据会话记录重建并逐逻辑帧核对；不修改当前运行与轨迹。
     ReplayReport replay();
-    // 当前会话的实验文件内容（保存用）。
-    ExperimentFile experiment_file() const;
-    // 打开实验文件内容：核对实现标识并重建；成功接管为活动运行或进入记录态。
-    OperationResult open_experiment(const ExperimentFile& file);
-    // 编码当前会话的实验文件内容；编码失败返回诊断（不改变会话）。
+    // 当前运行会话的记录内容（保存用）。
+    RecordFile record_file() const;
+    // 打开运行记录内容：核对实现标识并重建；成功接管为活动运行或进入记录态。
+    OperationResult open_record(const RecordFile& file);
+    // 编码当前运行会话的记录；编码失败返回诊断（不改变会话）。
     struct EncodeResult {
         bool ok = false;
         std::string bytes;
         std::optional<DiagnosticView> diagnostic;
     };
-    EncodeResult encode_experiment() const;
-    // 解码并打开实验文件字节；解析失败返回诊断且不改变会话。
-    OperationResult open_experiment(const std::string& bytes);
+    EncodeResult encode_record() const;
+    // 解码并打开运行记录字节；解析失败返回诊断且不改变会话。
+    OperationResult open_record(const std::string& bytes);
 
-    // ---- 模块包（ENV-18；不进入实验文件与运行状态）----
+    // ---- 研究项目与运行记录文件（ENV-16）----
+    // 项目目录：一个目录对应一个研究，根下唯一 `*.aexp` 研究文件为入口；
+    // 装配文件与模块包位于目录内，运行记录由工具生成与管理。
+
+    std::optional<ProjectView> project() const;
+
+    // 新建研究：创建项目目录（研究文件、空装配文件与 records/），进入编辑态。
+    OperationResult new_project(const std::string& directory, std::string name);
+    // 打开项目：解析研究文件与装配文件，进入编辑态并关联记录目录。
+    OperationResult open_project(const std::string& directory);
+    // 保存：写入装配文件、研究文件与当前运行记录（记录不存在时生成）。
+    OperationResult save_project();
+    // 当前项目的运行记录列表（按文件名排序）；未打开项目时为空。
+    std::vector<RecordEntryView> records() const;
+    // 打开项目内的运行记录文件；路径必须在当前项目目录内。
+    OperationResult open_record_file(const std::string& path);
+
+    // ---- 模块包（ENV-18；不进入研究文件、运行记录与运行状态）----
     // 已载入模块包的概要；模板未提供模块库时为空。
     std::vector<ModulePackageView> module_packages() const;
     // 载入模块包：解码、解析实现、核对清单与资源；失败给诊断且已载入列表不变。
@@ -449,10 +489,16 @@ private:
     OperationResult reject_without_system() const;
     // 根作用域是否存在该实例。
     bool has_instance(const std::string& name) const;
+    // 当前运行规格：运行或记录存在时以记录快照为准，编辑态使用研究规格。
+    const ExperimentSpec& active_spec() const;
     // 宿主已核对实现标识：模板登记优先，其次是已载入模块库清单中的实现；没有返回空。
     std::string implementation_of(const std::string& definition) const;
     // 草稿使用到的定义到实现标识的映射（用于实验记录）。
     std::map<std::string, std::string> used_implementations() const;
+    // 给定装配中实例定义到宿主核对实现标识的映射（记录登记用）。
+    std::map<std::string, std::string> implementations_for(const AssemblyDefinition& assembly) const;
+    // 清空运行、记录与轨迹，回到可编辑态（新建与打开项目共用）。
+    void clear_run_state();
 
     ModelTemplate model_;
     std::shared_ptr<const AdapterRegistry> adapters_;
@@ -481,6 +527,20 @@ private:
     std::uint64_t run_revision_ = 0;
     Phase phase_ = Phase::empty;
     std::optional<DiagnosticView> last_failure_;
+
+    // 当前项目关联（ENV-16）与记录簿记。
+    struct ProjectState {
+        std::string directory;
+        std::string study_path;
+        std::string assembly_rel;   // 研究文件中的相对引用
+        std::string assembly_path;  // 绝对路径
+        std::optional<std::string> current_record;
+        std::optional<std::string> current_record_name;
+        std::uint64_t saved_draft_revision = 0;
+    };
+    std::optional<ProjectState> project_;
+    bool record_written_ = true;  // 当前运行会话是否已写入记录文件
+    bool run_from_draft_ = false;  // 当前运行是否由当前草稿建立（否则来自记录快照）
 
     Status status_;
 };

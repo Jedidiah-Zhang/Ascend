@@ -33,7 +33,7 @@ QString code_text(const UiTexts& texts, ascend::ErrorCode code) {
         case ascend::ErrorCode::invalid_assembly: return ui_text(texts, "workbench.error.invalid_assembly", "Invalid assembly");
         case ascend::ErrorCode::invalid_json: return ui_text(texts, "workbench.error.invalid_json", "Record syntax");
         case ascend::ErrorCode::invalid_i18n: return ui_text(texts, "workbench.error.invalid_i18n", "Text resources");
-        case ascend::ErrorCode::io_failure: return ui_text(texts, "workbench.error.io_failure", "Read failure");
+        case ascend::ErrorCode::io_failure: return ui_text(texts, "workbench.error.io_failure", "File operation failed");
         case ascend::ErrorCode::state_incomplete: return ui_text(texts, "workbench.error.state_incomplete", "Incomplete state");
         case ascend::ErrorCode::state_mismatch: return ui_text(texts, "workbench.error.state_mismatch", "State mismatch");
         case ascend::ErrorCode::invalid_state: return ui_text(texts, "workbench.error.invalid_state", "Invalid state");

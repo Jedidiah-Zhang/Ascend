@@ -1,5 +1,6 @@
 #include <ascend/experiment.hpp>
-#include <ascend/experiment_file.hpp>
+#include <ascend/record_file.hpp>
+#include <ascend/study_file.hpp>
 #include <ascend/module_library.hpp>
 #include <ascend/module_package.hpp>
 #include <ascend/example/experiment_model.hpp>
@@ -1211,7 +1212,7 @@ std::string test_section(std::uint64_t id, std::uint8_t flags, const std::string
            data;
 }
 
-// 手工构造最小实验文件：一条失败记录，诊断原因链深度可控（用于解码上限回归）。
+// 手工构造最小运行记录：一条失败记录，诊断原因链深度可控（用于解码上限回归）。
 std::string deep_diagnostic_file(std::size_t depth) {
     const std::vector<std::string> strings = {"L", "invalid_json", "m", "advance", "", "msg"};
     std::string table = test_varint(strings.size());
@@ -1243,7 +1244,7 @@ std::string deep_diagnostic_file(std::size_t depth) {
     const std::string traces = table + test_varint(0) + test_varint(0) + std::string(1, 0) +
                                test_varint(1) + body;
     const std::string meta =
-        R"({"format":"ascend.experiment","version":1,)"
+        R"({"format":"ascend.record","version":1,)"
         R"("assembly":{"format":"ascend.assembly","version":1,"instances":[],"scopes":[],)"
         R"("connections":[],"forwards":[],"exports":[]},)"
         R"("spec":{"advance":{"module":"m","symbol":"advance"},"inputs":[],"observations":[]},)"
@@ -1252,37 +1253,101 @@ std::string deep_diagnostic_file(std::size_t depth) {
            test_section(1, 1, meta) + test_section(2, 1, traces);
 }
 
-void experiment_file_depth_limits() {
-    // 深原因链：手工构造的文件在解码时按上限拒绝，而不是递归溢出。
+// 手工构造最小运行记录：检查点快照中的一个结构化值，容器嵌套层数可控（解码上限回归）。
+std::string deep_config_file(std::size_t depth) {
+    const std::vector<std::string> strings = {"m", "c"};
+    std::string table = test_varint(strings.size());
+    for (const auto& item : strings) table += test_varint(item.size()) + item;
+    std::string body = table;
+    body += test_varint(0);     // 共同输入
+    body += test_varint(0);     // 输入设置
+    body += std::string(1, 1);  // 检查点存在
+    body += test_zigzag(0);     // 检查点逻辑帧
+    body += test_varint(1);     // 快照模块数
+    body += test_varint(0);     // path "m"
+    body += test_varint(1);     // contract "c"
+    body += std::string(1, 0);  // 无状态标记
+    for (std::size_t index = 0; index < depth; ++index) {
+        body += std::string(1, 6);  // 数组标签
+        body += test_varint(1);     // 一个元素
+    }
+    body += std::string(1, 3);  // 整数标签
+    body += test_zigzag(0);
+    body += test_varint(0);     // 序列数
+    const std::string meta =
+        R"({"format":"ascend.record","version":1,)"
+        R"("assembly":{"format":"ascend.assembly","version":1,"instances":[],"scopes":[],)"
+        R"("connections":[],"forwards":[],"exports":[]},)"
+        R"("spec":{"advance":{"module":"m","symbol":"advance"},"inputs":[],"observations":[]},)"
+        R"("implementations":{},"series":[]})";
+    return std::string("ASCEND") + std::string(1, 1) + std::string(1, 1) + test_varint(2) +
+           test_section(1, 1, meta) + test_section(2, 1, body);
+}
+
+void record_file_depth_limits() {
+    // 原因链：顶层诊断之外最多 128 层原因；129 层拒绝，128 层可读。
     failure(ErrorCode::invalid_json, {},
-            [&] { decode_experiment_file(deep_diagnostic_file(200)); });
-    const auto shallow = decode_experiment_file(deep_diagnostic_file(100));
+            [&] { decode_record_file(deep_diagnostic_file(130)); });
+    const auto shallow = decode_record_file(deep_diagnostic_file(129));
     CHECK(shallow.traces.size() == 1);
     CHECK(shallow.traces[0].trace.failures.size() == 1);
 
-    // 写入侧：深原因链与深结构化值都拒绝，不能产出自身无法读取的文件。
-    std::shared_ptr<const Diagnostic> chain;
-    for (std::size_t index = 0; index < 200; ++index) {
-        auto node = std::make_shared<Diagnostic>();
-        node->code = ErrorCode::invalid_config;
-        node->cause = chain;
-        chain = node;
-    }
-    ExperimentFile file;
-    ExperimentTrace trace;
-    trace.trace.label = "L";
-    trace.trace.failures.push_back(StepFailure{0, *chain});
-    file.traces.push_back(std::move(trace));
-    failure(ErrorCode::invalid_config, {}, [&] { encode_experiment_file(file); });
+    // 结构化值：含外层容器最多 128 层（与 JSON 口径一致）；129 层拒绝，128 层可读。
+    const auto deep_value = decode_record_file(deep_config_file(128));
+    CHECK(deep_value.checkpoint.has_value());
+    failure(ErrorCode::invalid_json, {},
+            [&] { decode_record_file(deep_config_file(129)); });
+
+    // 写入侧：同样的边界，不能产出自身无法读取的文件。
+    const auto chain_of = [](std::size_t nodes) {
+        std::shared_ptr<const Diagnostic> chain;
+        for (std::size_t index = 0; index < nodes; ++index) {
+            auto node = std::make_shared<Diagnostic>();
+            node->code = ErrorCode::invalid_config;
+            node->cause = chain;
+            chain = node;
+        }
+        return chain;
+    };
+    RecordFile deep_chain;
+    ExperimentTrace deep_trace;
+    deep_trace.trace.label = "L";
+    deep_trace.trace.failures.push_back(StepFailure{0, *chain_of(129)});  // 顶层 + 128 层原因
+    deep_chain.traces.push_back(std::move(deep_trace));
+    CHECK(!encode_record_file(deep_chain).empty());
+    RecordFile over_chain;
+    ExperimentTrace over_trace;
+    over_trace.trace.label = "L";
+    over_trace.trace.failures.push_back(StepFailure{0, *chain_of(130)});  // 129 层原因
+    over_chain.traces.push_back(std::move(over_trace));
+    failure(ErrorCode::invalid_config, {}, [&] { encode_record_file(over_chain); });
 
     Config value = Config::integer(1);
-    for (std::size_t index = 0; index < 200; ++index) value = Config::array({value});
-    ExperimentFile config_file;
+    for (std::size_t index = 0; index < 128; ++index) value = Config::array({value});
+    RecordFile config_file;
     config_file.checkpoint = Checkpoint{0, StateSnapshot{{{"m", "c", false, value}}}};
-    failure(ErrorCode::invalid_config, {}, [&] { encode_experiment_file(config_file); });
+    CHECK(!encode_record_file(config_file).empty());
+    Config over = Config::array({value});
+    RecordFile over_config_file;
+    over_config_file.checkpoint = Checkpoint{0, StateSnapshot{{{"m", "c", false, over}}}};
+    failure(ErrorCode::invalid_config, {}, [&] { encode_record_file(over_config_file); });
+
+    // 文本：命名参数最多嵌套 128 层（不含字面量文本）；构造上限由 TextRef 保证，
+    // 这里核对文件编码在边界内可用。
+    TextRef nested("leaf");
+    for (std::size_t index = 0; index < 128; ++index) {
+        nested = TextRef(TextKey{"test", "nested"}, std::string("n{x}"), {{"x", nested}});
+    }
+    RecordFile text_file;
+    ExperimentTrace text_trace;
+    text_trace.trace.label = "L";
+    text_trace.trace.failures.push_back(
+        StepFailure{0, Diagnostic{ErrorCode::invalid_config, {}, nested}});
+    text_file.traces.push_back(std::move(text_trace));
+    CHECK(!encode_record_file(text_file).empty());
 }
 
-void experiment_file_round_trip() {
+void record_file_round_trip() {
     // 构造一次完整实验：探索轨迹 + 干预分支，含干预、驱动输入、失败与逐步事件。
     const auto directory = example::factories();
     ExperimentRun source(example::environment(), directory, example::specification(), "运行");
@@ -1293,7 +1358,7 @@ void experiment_file_round_trip() {
     source.step();
     const auto third = source.sample();
 
-    ExperimentFile file;
+    RecordFile file;
     file.model = "示例";
     file.assembly = example::environment();
     file.spec = example::specification();
@@ -1301,7 +1366,6 @@ void experiment_file_round_trip() {
                             {example::stimulus_definition, example::stimulus_implementation}};
     file.run_id = 7;
     file.run_revision = 3;
-    file.draft = std::make_pair(5, example::environment({2, 1, 0}, 2));
     file.input_settings = {{"a", std::int64_t(1)}};
     file.inputs.push_back(DrivenInput{0, "a", {std::int64_t(1)}});
     file.checkpoint = origin;
@@ -1337,8 +1401,8 @@ void experiment_file_round_trip() {
     branch.current_frame = 2;
     file.traces.push_back(branch);
 
-    const auto bytes = encode_experiment_file(file);
-    const auto decoded = decode_experiment_file(bytes);
+    const auto bytes = encode_record_file(file);
+    const auto decoded = decode_record_file(bytes);
     CHECK(decoded.model == file.model);
     CHECK(decoded.assembly.to_json() == file.assembly.to_json());
     CHECK(decoded.spec.advance == file.spec.advance);
@@ -1347,8 +1411,6 @@ void experiment_file_round_trip() {
     CHECK(decoded.implementations == file.implementations);
     CHECK(decoded.run_id.has_value() && *decoded.run_id == 7);
     CHECK(decoded.run_revision == 3);
-    CHECK(decoded.draft.has_value() && decoded.draft->first == 5);
-    CHECK(decoded.draft->second.to_json() == file.draft->second.to_json());
     CHECK(decoded.checkpoint.has_value() && decoded.checkpoint->frame == origin.frame);
     CHECK(decoded.input_settings.size() == 1);
     CHECK(std::any_cast<std::int64_t>(decoded.input_settings.at("a")) == 1);
@@ -1389,27 +1451,110 @@ void experiment_file_round_trip() {
     CHECK(decoded.traces[1].events[0].diagnostic.target == Reference{"plant", "advance"});
     CHECK(decoded.traces[1].events[0].diagnostic.text.literal() == "测试失败");
 
+    // 摘要只读取 meta 段：模型、运行身份、序列数与锁定实现数。
+    const auto summary = summarize_record_file(bytes);
+    CHECK(summary.model == file.model);
+    CHECK(summary.run_id.has_value() && *summary.run_id == 7);
+    CHECK(summary.run_revision == 3);
+    CHECK(summary.series == 2);
+    CHECK(summary.implementations == 2);
+
     // 损坏与不支持：魔数、容器版本、截断、非整数输入。
     {
         auto broken = bytes;
         broken[0] = 'X';
-        failure(ErrorCode::invalid_json, {}, [&] { decode_experiment_file(broken); });
+        failure(ErrorCode::invalid_json, {}, [&] { decode_record_file(broken); });
     }
     {
         auto broken = bytes;
         broken[6] = 9;
-        failure(ErrorCode::unsupported_format_version, {}, [&] { decode_experiment_file(broken); });
+        failure(ErrorCode::unsupported_format_version, {}, [&] { decode_record_file(broken); });
     }
     {
         auto broken = bytes.substr(0, bytes.size() / 2);
-        failure(ErrorCode::invalid_json, {}, [&] { decode_experiment_file(broken); });
+        failure(ErrorCode::invalid_json, {}, [&] { decode_record_file(broken); });
     }
     {
         auto unsupported = file;
         unsupported.traces[0].trace.samples[0].observations["x"] = 1.5;
         failure(ErrorCode::type_mismatch, Reference{"", "x"},
-                [&] { encode_experiment_file(unsupported); });
+                [&] { encode_record_file(unsupported); });
     }
+}
+
+// ---- 研究文件（ENV-16）----
+
+void study_file_round_trip() {
+    StudyFile file;
+    file.model = "示例";
+    file.assembly = "world.aasm";
+    file.spec = example::specification();
+    const auto decoded = decode_study_file(encode_study_file(file));
+    CHECK(decoded.model == "示例");
+    CHECK(decoded.assembly == "world.aasm");
+    CHECK(decoded.spec.advance == file.spec.advance);
+    CHECK(decoded.spec.inputs == file.spec.inputs);
+    CHECK(decoded.spec.observations == file.spec.observations);
+
+    // 模型名可选；省略时不写入并解码为空。
+    StudyFile bare;
+    bare.assembly = "systems/plant.aasm";
+    bare.spec = example::specification();
+    const auto bare_text = encode_study_file(bare);
+    CHECK(bare_text.find("\"model\"") == std::string::npos);
+    CHECK(decode_study_file(bare_text).model.empty());
+}
+
+void study_file_errors() {
+    StudyFile file;
+    file.assembly = "world.aasm";
+    file.spec = example::specification();
+
+    // 写入前拒绝空、绝对路径、盘符与越出项目的引用。
+    auto empty = file;
+    empty.assembly.clear();
+    failure(ErrorCode::invalid_config, {}, [&] { encode_study_file(empty); });
+    auto absolute = file;
+    absolute.assembly = "/tmp/world.aasm";
+    failure(ErrorCode::invalid_config, {}, [&] { encode_study_file(absolute); });
+    auto traversal = file;
+    traversal.assembly = "sub/../../world.aasm";
+    failure(ErrorCode::invalid_config, {}, [&] { encode_study_file(traversal); });
+    auto drive = file;
+    drive.assembly = "C:/world.aasm";
+    failure(ErrorCode::invalid_config, {}, [&] { encode_study_file(drive); });
+    auto current = file;
+    current.assembly = "./world.aasm";
+    failure(ErrorCode::invalid_config, {}, [&] { encode_study_file(current); });
+    auto doubled = file;
+    doubled.assembly = "sub//world.aasm";
+    failure(ErrorCode::invalid_config, {}, [&] { encode_study_file(doubled); });
+    auto trailing = file;
+    trailing.assembly = "sub/";
+    failure(ErrorCode::invalid_config, {}, [&] { encode_study_file(trailing); });
+
+    // 解码：语法、格式、版本、路径与字段错误分别拒绝。
+    failure(ErrorCode::invalid_json, {}, [&] { decode_study_file("not json"); });
+    failure(ErrorCode::invalid_json, {}, [&] {
+        decode_study_file(R"({"format":"ascend.other","version":1,"assembly":"world.aasm",)"
+                          R"("spec":{"advance":{"module":"m","symbol":"a"},"inputs":[],"observations":[]}})");
+    });
+    failure(ErrorCode::unsupported_format_version, {}, [&] {
+        decode_study_file(R"({"format":"ascend.experiment","version":2,"assembly":"world.aasm",)"
+                          R"("spec":{"advance":{"module":"m","symbol":"a"},"inputs":[],"observations":[]}})");
+    });
+    failure(ErrorCode::invalid_json, {}, [&] {
+        decode_study_file(R"({"format":"ascend.experiment","version":1,"assembly":"/abs.aasm",)"
+                          R"("spec":{"advance":{"module":"m","symbol":"a"},"inputs":[],"observations":[]}})");
+    });
+    failure(ErrorCode::invalid_json, {}, [&] {
+        decode_study_file(R"({"format":"ascend.experiment","version":1,"assembly":"sub//world.aasm",)"
+                          R"("spec":{"advance":{"module":"m","symbol":"a"},"inputs":[],"observations":[]}})");
+    });
+    failure(ErrorCode::invalid_json, {}, [&] {
+        decode_study_file(R"({"format":"ascend.experiment","version":1,"assembly":"world.aasm",)"
+                          R"("spec":{"advance":{"module":"m","symbol":"a"}}})");
+    });
 }
 
 
@@ -1660,8 +1805,10 @@ int main(int argc, char** argv) {
         {"trace_replay", trace_replay},
         {"run_directory", run_directory},
         {"example_model", example_model},
-        {"experiment_file_round_trip", experiment_file_round_trip},
-        {"experiment_file_depth_limits", experiment_file_depth_limits},
+        {"record_file_round_trip", record_file_round_trip},
+        {"record_file_depth_limits", record_file_depth_limits},
+        {"study_file_round_trip", study_file_round_trip},
+        {"study_file_errors", study_file_errors},
         {"module_package_round_trip", module_package_round_trip},
         {"module_library_load_unload", module_library_load_unload},
     };
