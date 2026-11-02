@@ -866,12 +866,12 @@ bool Session::has_instance(const std::string& name) const {
 }
 
 std::string Session::implementation_of(const std::string& definition) const {
-    const auto found = model_.implementations.find(definition);
-    if (found != model_.implementations.end()) return found->second;
+    // 已载入包的清单优先，使动态包覆盖内置定义时记录实际插件实现标识。
     if (model_.modules && model_.modules->contains(definition)) {
         return model_.modules->manifest(definition).implementation;
     }
-    return {};
+    const auto found = model_.implementations.find(definition);
+    return found == model_.implementations.end() ? std::string{} : found->second;
 }
 
 std::map<std::string, std::string> Session::implementations_for(const AssemblyDefinition& assembly) const {

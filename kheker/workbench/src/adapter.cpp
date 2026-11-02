@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
+#include <iomanip>
+#include <locale>
+#include <sstream>
 #include <stdexcept>
 #include <system_error>
 
@@ -85,8 +89,85 @@ std::optional<ValueAdapter::Numeric> Int64Adapter::number(const std::any& value)
     return Numeric{static_cast<double>(integer), integer >= -exact_limit && integer <= exact_limit};
 }
 
+std::string BoolAdapter::format(const std::any& value) const {
+    return std::any_cast<bool>(value) ? "true" : "false";
+}
+
+bool BoolAdapter::equal(const std::any& left, const std::any& right) const {
+    const auto* first = std::any_cast<bool>(&left);
+    const auto* second = std::any_cast<bool>(&right);
+    return first && second && *first == *second;
+}
+
+std::optional<std::any> BoolAdapter::parse(const std::string& text, TextRef& error) const {
+    if (text == "true" || text == "1") return std::any(true);
+    if (text == "false" || text == "0") return std::any(false);
+    error = adapter_text("session.adapter.error.boolean", "Boolean text must be true, false, 1 or 0");
+    return std::nullopt;
+}
+
+std::optional<ValueAdapter::Numeric> BoolAdapter::number(const std::any& value) const {
+    return Numeric{std::any_cast<bool>(value) ? 1.0 : 0.0, true};
+}
+
+std::optional<std::int64_t> BoolAdapter::integer(const std::any& value) const {
+    return std::any_cast<bool>(value) ? 1 : 0;
+}
+
+std::string DoubleAdapter::format(const std::any& value) const {
+    std::ostringstream stream;
+    stream.imbue(std::locale::classic());
+    stream << std::setprecision(17) << std::any_cast<double>(value);
+    return stream.str();
+}
+
+bool DoubleAdapter::equal(const std::any& left, const std::any& right) const {
+    const auto* first = std::any_cast<double>(&left);
+    const auto* second = std::any_cast<double>(&right);
+    return first && second && *first == *second;
+}
+
+std::optional<std::any> DoubleAdapter::parse(const std::string& text, TextRef& error) const {
+    if (text.empty()) {
+        error = adapter_text("session.adapter.error.empty_number",
+                                 "Floating-point text must not be empty");
+        return std::nullopt;
+    }
+    double value = 0.0;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size() ||
+        !std::isfinite(value)) {
+        error = adapter_text("session.adapter.error.double",
+                             "Floating-point text must be a finite decimal number");
+        return std::nullopt;
+    }
+    return std::any(value);
+}
+
+std::optional<ValueAdapter::Numeric> DoubleAdapter::number(const std::any& value) const {
+    return Numeric{std::any_cast<double>(value), false};
+}
+
+std::string StringAdapter::format(const std::any& value) const {
+    return std::any_cast<std::string>(value);
+}
+
+bool StringAdapter::equal(const std::any& left, const std::any& right) const {
+    const auto* first = std::any_cast<std::string>(&left);
+    const auto* second = std::any_cast<std::string>(&right);
+    return first && second && *first == *second;
+}
+
+std::optional<std::any> StringAdapter::parse(const std::string& text, TextRef& error) const {
+    (void)error;
+    return std::any(text);
+}
+
 AdapterRegistry::AdapterRegistry() {
+    add(std::make_shared<BoolAdapter>());
     add(std::make_shared<Int64Adapter>());
+    add(std::make_shared<DoubleAdapter>());
+    add(std::make_shared<StringAdapter>());
 }
 
 void AdapterRegistry::add(std::shared_ptr<const ValueAdapter> adapter) {

@@ -36,11 +36,15 @@ if(ASCEND_OLAM_BUILD_MODULE)
         add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../kheker/engine"
                          "${CMAKE_CURRENT_BINARY_DIR}/engine")
     endif()
+    # 插件目标会链接静态引擎和世界库，因此这些目标必须可按位置无关方式链接。
+    set_target_properties(ascend_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    set_target_properties(ascend_olam PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     add_library(ascend_olam_module STATIC
         module/src/space_module.cpp
         module/src/time_module.cpp)
     add_library(ascend::olam_module ALIAS ascend_olam_module)
+    set_target_properties(ascend_olam_module PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_features(ascend_olam_module PUBLIC cxx_std_17)
     target_link_libraries(ascend_olam_module PUBLIC ascend::engine ascend::olam)
     target_include_directories(ascend_olam_module PUBLIC
@@ -58,6 +62,35 @@ if(ASCEND_OLAM_BUILD_MODULE)
 
     add_executable(ascend_olam_time_package module/tool/time_package.cpp)
     target_link_libraries(ascend_olam_time_package PRIVATE ascend::olam_module)
+
+    # C ABI 插件：C++ 模块实现留在插件内部，DSO 边界只暴露 ascend_plugin_callbacks。
+    add_library(ascend_olam_plugin_support STATIC plugin/src/plugin_support.cpp)
+    add_library(ascend::olam_plugin_support ALIAS ascend_olam_plugin_support)
+    set_target_properties(ascend_olam_plugin_support PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_features(ascend_olam_plugin_support PUBLIC cxx_std_17)
+    target_link_libraries(ascend_olam_plugin_support PUBLIC ascend::engine)
+    target_include_directories(ascend_olam_plugin_support PUBLIC
+                               "${CMAKE_CURRENT_SOURCE_DIR}/plugin/include")
+    if(MSVC)
+        target_compile_options(ascend_olam_plugin_support PRIVATE /W4 /permissive-)
+        target_compile_options(ascend_olam_plugin_support PUBLIC /utf-8)
+    else()
+        target_compile_options(ascend_olam_plugin_support PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    add_library(ascend_olam_space_plugin MODULE plugin/src/space_plugin.cpp)
+    target_link_libraries(ascend_olam_space_plugin PRIVATE
+                          ascend::olam_plugin_support ascend::olam_module)
+    set_target_properties(ascend_olam_space_plugin PROPERTIES
+                          PREFIX "" OUTPUT_NAME "olam.space.plugin"
+                          CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+
+    add_library(ascend_olam_time_plugin MODULE plugin/src/time_plugin.cpp)
+    target_link_libraries(ascend_olam_time_plugin PRIVATE
+                          ascend::olam_plugin_support ascend::olam_module)
+    set_target_properties(ascend_olam_time_plugin PROPERTIES
+                          PREFIX "" OUTPUT_NAME "olam.clock.plugin"
+                          CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 endif()
 
 include(CTest)

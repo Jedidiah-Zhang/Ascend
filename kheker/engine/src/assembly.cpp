@@ -79,6 +79,10 @@ void ModuleFactoryDirectory::merge_from(const ModuleFactoryDirectory& other) {
     }
 }
 
+bool ModuleFactoryDirectory::remove_definition(const std::string& definition) {
+    return factories_.erase(definition) > 0;
+}
+
 const std::vector<I18nResource>& ModuleFactoryDirectory::i18n_resources(const std::string& definition) const {
     const auto found = factories_.find(definition);
     if (found == factories_.end()) detail::fail_text(ErrorCode::unknown_definition, {definition, {}},

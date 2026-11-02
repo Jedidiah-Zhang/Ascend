@@ -325,24 +325,56 @@ Config read_config(Reader& in, const std::vector<std::string>& strings, std::siz
     }
 }
 
-void write_any(Encoder& out, const std::any& value, const std::string& name) {
-    if (const auto* number = std::any_cast<std::int64_t>(&value)) {
+void write_any(Encoder& out, StringTable& table, const std::any& value,
+               const std::string& name) {
+    if (const auto* integer = std::any_cast<std::int64_t>(&value)) {
         out.u8(kTagInt);
-        out.zigzag(*number);
+        out.zigzag(*integer);
+        return;
+    }
+    if (const auto* boolean = std::any_cast<bool>(&value)) {
+        out.u8(*boolean ? kTagTrue : kTagFalse);
+        return;
+    }
+    if (const auto* number = std::any_cast<double>(&value)) {
+        if (!std::isfinite(*number)) {
+            fail(ErrorCode::invalid_config, "record_file.unsupported_type",
+                 "Record files reject non-finite floating-point inputs and observations",
+                 Reference{std::string{}, name});
+        }
+        out.u8(kTagDouble);
+        out.number(*number);
+        return;
+    }
+    if (const auto* text = std::any_cast<std::string>(&value)) {
+        out.u8(kTagString);
+        out.varint(table.intern(*text));
         return;
     }
     fail(ErrorCode::type_mismatch, "record_file.unsupported_type",
-         "Record files support only 64-bit integer inputs and observations",
+         "Record files support bool, 64-bit integer, double and string inputs and observations",
          Reference{std::string{}, name});
 }
 
-std::any read_any(Reader& in) {
+std::any read_any(Reader& in, const std::vector<std::string>& strings) {
     const auto tag = in.u8();
-    if (tag != kTagInt) {
-        fail(ErrorCode::type_mismatch, "record_file.unsupported_type",
-             "Record files support only 64-bit integer inputs and observations");
+    switch (tag) {
+        case kTagFalse: return false;
+        case kTagTrue: return true;
+        case kTagInt: return in.zigzag();
+        case kTagDouble: return in.number();
+        case kTagString: {
+            const auto index = in.varint();
+            if (index >= strings.size()) {
+                fail(ErrorCode::invalid_json, "record_file.corrupt",
+                     "Record file string index is out of range");
+            }
+            return strings[static_cast<std::size_t>(index)];
+        }
+        default:
+            fail(ErrorCode::type_mismatch, "record_file.unsupported_type",
+                 "Record file value tag is not supported for inputs and observations");
     }
-    return in.zigzag();
 }
 
 void write_text(Encoder& out, StringTable& table, const TextRef& text, std::size_t depth = 0) {
@@ -523,7 +555,7 @@ void write_driven_input(Encoder& out, StringTable& table, const DrivenInput& inp
     out.zigzag(input.frame);
     out.varint(table.intern(input.name));
     out.varint(input.arguments.size());
-    for (const auto& argument : input.arguments) write_any(out, argument, input.name);
+    for (const auto& argument : input.arguments) write_any(out, table, argument, input.name);
 }
 
 DrivenInput read_driven_input(Reader& in, const std::vector<std::string>& strings) {
@@ -532,7 +564,7 @@ DrivenInput read_driven_input(Reader& in, const std::vector<std::string>& string
     input.name = read_ref(in, strings);
     const auto count = in.varint();
     for (std::uint64_t index = 0; index < count; ++index) {
-        input.arguments.push_back(read_any(in));
+        input.arguments.push_back(read_any(in, strings));
     }
     return input;
 }
@@ -543,7 +575,7 @@ void write_sample(Encoder& out, StringTable& table, const Sample& sample) {
     out.varint(sample.observations.size());
     for (const auto& [name, value] : sample.observations) {
         out.varint(table.intern(name));
-        write_any(out, value, name);
+        write_any(out, table, value, name);
     }
 }
 
@@ -554,7 +586,7 @@ Sample read_sample(Reader& in, const std::vector<std::string>& strings) {
     const auto count = in.varint();
     for (std::uint64_t index = 0; index < count; ++index) {
         auto name = read_ref(in, strings);
-        sample.observations.emplace(std::move(name), read_any(in));
+        sample.observations.emplace(std::move(name), read_any(in, strings));
     }
     return sample;
 }
@@ -651,7 +683,7 @@ void write_traces(const RecordFile& file, Encoder& out, StringTable& table) {
     out.varint(file.input_settings.size());
     for (const auto& [name, value] : file.input_settings) {
         out.varint(table.intern(name));
-        write_any(out, value, name);
+        write_any(out, table, value, name);
     }
     out.u8(file.checkpoint.has_value() ? 1 : 0);
     if (file.checkpoint.has_value()) write_checkpoint(out, table, *file.checkpoint);
@@ -892,7 +924,7 @@ RecordFile decode_record_file(const std::string& bytes) {
     const auto settings = traces.varint();
     for (std::uint64_t index = 0; index < settings; ++index) {
         auto name = read_ref(traces, strings);
-        file.input_settings.emplace(std::move(name), read_any(traces));
+        file.input_settings.emplace(std::move(name), read_any(traces, strings));
     }
     const auto checkpoint_flag = traces.u8();
     if (checkpoint_flag > 1) {

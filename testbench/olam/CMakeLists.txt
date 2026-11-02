@@ -73,4 +73,52 @@ if(TARGET ascend_olam_module)
                      "${time_package_dir}/olam.clock.amod")
     set_tests_properties(time_module.package_file PROPERTIES
                          DEPENDS time_module.package_tool)
+
+    if(TARGET ascend_olam_space_plugin)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+            set(plugin_arch "arm64")
+        else()
+            set(plugin_arch "x86_64")
+        endif()
+        if(WIN32)
+            set(plugin_platform "windows-${plugin_arch}")
+        elseif(APPLE)
+            set(plugin_platform "macos-${plugin_arch}")
+        else()
+            set(plugin_platform "linux-${plugin_arch}")
+        endif()
+        add_executable(ascend_plugin_tests test_plugin.cpp)
+        target_link_libraries(ascend_plugin_tests PRIVATE ascend::olam_module)
+        target_compile_definitions(ascend_plugin_tests PRIVATE
+            PLUGIN_PLATFORM="${plugin_platform}")
+        add_dependencies(ascend_plugin_tests ascend_olam_space_plugin)
+        add_test(NAME plugin.load
+                 COMMAND ascend_plugin_tests "$<TARGET_FILE:ascend_olam_space_plugin>")
+
+        set(plugin_package_dir "${CMAKE_CURRENT_BINARY_DIR}/plugin-package")
+        add_test(NAME plugin.package_tool
+                 COMMAND ascend_olam_space_package
+                         "${plugin_package_dir}"
+                         "${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/zh-CN.json"
+                         "$<TARGET_FILE:ascend_olam_space_plugin>")
+        add_test(NAME plugin.package_file
+                 COMMAND ascend_plugin_tests package_file
+                         "${plugin_package_dir}/olam.space.amod")
+        set_tests_properties(plugin.package_file PROPERTIES
+                             DEPENDS plugin.package_tool)
+
+        add_library(ascend_test_types_plugin MODULE test_types_plugin.cpp)
+        target_link_libraries(ascend_test_types_plugin PRIVATE
+                              ascend::olam_plugin_support ascend::engine)
+        set_target_properties(ascend_test_types_plugin PROPERTIES
+                              PREFIX "" OUTPUT_NAME "test.types.plugin")
+
+        add_executable(ascend_plugin_types_tests test_plugin_types.cpp)
+        target_link_libraries(ascend_plugin_types_tests PRIVATE ascend::engine)
+        target_compile_definitions(ascend_plugin_types_tests PRIVATE
+            PLUGIN_PLATFORM="${plugin_platform}")
+        add_dependencies(ascend_plugin_types_tests ascend_test_types_plugin)
+        add_test(NAME plugin.types
+                 COMMAND ascend_plugin_types_tests "$<TARGET_FILE:ascend_test_types_plugin>")
+    endif()
 endif()

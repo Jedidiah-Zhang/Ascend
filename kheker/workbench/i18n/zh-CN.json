@@ -113,6 +113,9 @@
     "session.state.rejected": "当前会话状态不允许{operation}；请检查、应用重建或从检查点重建后再继续",
     "session.steps.range": "单次运行的步数必须在 1 到 {limit} 之间",
     "session.value.empty": "空值",
-    "session.value.unsupported": "未登记适配器"
+    "session.value.unsupported": "未登记适配器",
+    "session.adapter.error.boolean": "布尔文本必须为 true、false、1 或 0",
+    "session.adapter.error.double": "浮点文本必须是有限十进制数",
+    "session.adapter.error.empty_number": "浮点文本不能为空"
   }
 }

@@ -2,6 +2,8 @@
 
 #include <ascend/engine.hpp>
 
+#include "plugin_loader.hpp"
+
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,7 +25,15 @@ void ModuleLibrary::register_implementation(std::string definition, std::string 
              "A built-in implementation identifier must not be empty");
     }
     // 空定义标识与重复定义由工厂目录报告，失败时不记录实现标识。
-    factories_.add_definition(definition, std::move(factory), {}, std::move(preset));
+    builtins_.add_definition(definition, factory, {}, preset);
+    if (loaded_.count(definition) == 0) {
+        try {
+            factories_.add_definition(definition, std::move(factory), {}, std::move(preset));
+        } catch (...) {
+            builtins_.remove_definition(definition);
+            throw;
+        }
+    }
     implementations_.emplace(std::move(definition), std::move(implementation));
 }
 
@@ -39,6 +49,55 @@ std::string ModuleLibrary::load(const std::string& bytes) {
              "The module is already loaded; unload it first",
              Reference{manifest.definition, {}});
     }
+
+    // 包内带二进制时走 C ABI 插件；否则沿用宿主内置实现。
+    if (package.binary.has_value()) {
+        auto plugin = detail::load_plugin(*package.binary, manifest);
+        bool replaced_builtin = false;
+        if (factories_.contains(manifest.definition)) {
+            if (!builtins_.contains(manifest.definition)) {
+                fail(ErrorCode::duplicate_definition, "module_library.duplicate",
+                     "The module definition is already registered by another package",
+                     Reference{manifest.definition, {}});
+            }
+            factories_.remove_definition(manifest.definition);
+            replaced_builtin = true;
+        }
+        bool registered = false;
+        try {
+            factories_.add_definition(
+                manifest.definition,
+                [plugin](const std::string& instance, const Config& config) {
+                    return detail::make_plugin_module(plugin, instance, config);
+                },
+                {}, plugin->default_config());
+            registered = true;
+
+            Engine probe_engine;
+            probe_engine.add(factories_.create(manifest.definition, "probe", Config{}));
+            check_module_manifest(manifest, probe_engine, "", "probe");
+
+            TextCatalog probe_catalog;
+            std::vector<I18nText> resources;
+            resources.reserve(package.resources.size());
+            for (const auto& resource : package.resources) {
+                I18nText text{resource.domain, resource.text,
+                              manifest.definition + "/" + resource.locale};
+                probe_catalog.load_text(text);
+                resources.push_back(std::move(text));
+            }
+            const std::string definition = manifest.definition;
+            loaded_.emplace(definition,
+                            Loaded{std::move(package.manifest), std::move(resources), bytes,
+                                   true, std::move(plugin)});
+            return definition;
+        } catch (...) {
+            if (registered) factories_.remove_definition(manifest.definition);
+            if (replaced_builtin) factories_.merge_from(builtins_);
+            throw;
+        }
+    }
+
     const auto implementation = implementations_.find(manifest.definition);
     if (implementation == implementations_.end()) {
         fail(ErrorCode::invalid_declaration, "module_library.unknown_definition",
@@ -66,12 +125,19 @@ std::string ModuleLibrary::load(const std::string& bytes) {
     }
     const std::string definition = manifest.definition;
     loaded_.emplace(definition,
-                    Loaded{std::move(package.manifest), std::move(resources), bytes});
+                    Loaded{std::move(package.manifest), std::move(resources), bytes, false, {}});
     return definition;
 }
 
 bool ModuleLibrary::unload(const std::string& definition) {
-    return loaded_.erase(definition) > 0;
+    const auto found = loaded_.find(definition);
+    if (found == loaded_.end()) return false;
+    if (found->second.dynamic) {
+        factories_.remove_definition(definition);
+        factories_.merge_from(builtins_);
+    }
+    loaded_.erase(found);
+    return true;
 }
 
 bool ModuleLibrary::contains(const std::string& definition) const {

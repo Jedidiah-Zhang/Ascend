@@ -46,7 +46,7 @@ void ConfigPanel::render_instances(const std::vector<session::InstanceView>& ins
                 .arg(from_utf8(instance.name), from_utf8(instance.definition)),
             config_container_);
         auto* layout = new QVBoxLayout(box);
-        auto* editor = new ConfigEditor(*context_.int_adapter, texts, box);
+        auto* editor = new ConfigEditor(*context_.adapters, texts, box);
         editor->setObjectName("configEditor_" + from_utf8(instance.name));
         editor->setConfig(instance.config);
         const std::string scope = instance.scope;

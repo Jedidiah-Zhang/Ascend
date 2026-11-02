@@ -33,6 +33,8 @@ public:
     // 合并另一个目录：已存在的定义保持不变，其余连同语言资源一并复制（用于宿主内置与
     // 模块库工厂合并成实例化目录）。不报告重复，合并可重复执行。
     void merge_from(const ModuleFactoryDirectory& other);
+    // 移除一项定义；用于动态模块卸载。不存在时返回 false。
+    bool remove_definition(const std::string& definition);
     // 查询定义登记的语言资源，不构造实例、不读取文件。多个实例共用定义资源。
     const std::vector<I18nResource>& i18n_resources(const std::string& definition) const;
     // 定义标识是否存在；definitions() 按名称排序返回全部标识。

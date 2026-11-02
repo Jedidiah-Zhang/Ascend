@@ -6,11 +6,16 @@
 
 #include <cstddef>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace ascend {
+
+namespace detail {
+class PluginHandle;
+}
 
 // 已载入模块的概要（ENV-18）。
 struct ModuleEntry {
@@ -24,8 +29,8 @@ struct ModuleEntry {
     std::size_t resources = 0;
 };
 
-// 模块库：宿主以代码登记内置实现，载入模块包（ENV-18）。
-// 库保存元数据、载入时的原始包字节与工厂，不保存模块状态；首版一个定义同时只载入一个包。
+// 模块库：宿主以代码登记内置实现，或载入含 C ABI 插件的模块包（ENV-18、19）。
+// 库保存元数据、载入时的原始包字节与工厂，不保存模块状态；一个定义同时只载入一个包。
 class ModuleLibrary {
 public:
     using Factory = ModuleFactoryDirectory::Factory;
@@ -50,7 +55,7 @@ public:
     const std::string& package_bytes(const std::string& definition) const;
     // 包内语言资源（载入时已预校验）；未载入时报告 invalid_config。
     std::vector<I18nText> resources(const std::string& definition) const;
-    // 内置实现目录，可直接用于装配定义实例化。
+    // 内置与动态实现目录，可直接用于装配定义实例化。
     const ModuleFactoryDirectory& factories() const { return factories_; }
 
 private:
@@ -58,9 +63,12 @@ private:
         ModuleManifest manifest;
         std::vector<I18nText> resources;
         std::string bytes;  // 包原始字节，保存项目时复制到项目内
+        bool dynamic = false;
+        std::shared_ptr<detail::PluginHandle> plugin;
     };
 
     ModuleFactoryDirectory factories_;
+    ModuleFactoryDirectory builtins_;  // 动态包覆盖内置定义时用于卸载恢复
     std::map<std::string, std::string> implementations_;  // 定义标识 → 实现标识
     std::map<std::string, Loaded> loaded_;
 };

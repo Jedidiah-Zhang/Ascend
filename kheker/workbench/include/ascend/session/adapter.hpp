@@ -61,7 +61,44 @@ public:
     std::optional<std::int64_t> integer(const std::any& value) const override;
 };
 
-// 适配器登记表：默认登记内建 int64；未登记类型在目录与检查中标注为不支持。
+// 布尔、双精度浮点与字符串适配器：用于动态 C ABI 模块的常用公开类型。
+class BoolAdapter final : public ValueAdapter {
+public:
+    std::string name() const override { return "bool"; }
+    std::string display_name() const override { return "布尔"; }
+    std::type_index type() const override { return typeid(bool); }
+    std::string format(const std::any& value) const override;
+    bool equal(const std::any& left, const std::any& right) const override;
+    bool editable() const override { return true; }
+    std::optional<std::any> parse(const std::string& text, TextRef& error) const override;
+    std::optional<Numeric> number(const std::any& value) const override;
+    std::optional<std::int64_t> integer(const std::any& value) const override;
+};
+
+class DoubleAdapter final : public ValueAdapter {
+public:
+    std::string name() const override { return "double"; }
+    std::string display_name() const override { return "双精度浮点"; }
+    std::type_index type() const override { return typeid(double); }
+    std::string format(const std::any& value) const override;
+    bool equal(const std::any& left, const std::any& right) const override;
+    bool editable() const override { return true; }
+    std::optional<std::any> parse(const std::string& text, TextRef& error) const override;
+    std::optional<Numeric> number(const std::any& value) const override;
+};
+
+class StringAdapter final : public ValueAdapter {
+public:
+    std::string name() const override { return "string"; }
+    std::string display_name() const override { return "字符串"; }
+    std::type_index type() const override { return typeid(std::string); }
+    std::string format(const std::any& value) const override;
+    bool equal(const std::any& left, const std::any& right) const override;
+    bool editable() const override { return true; }
+    std::optional<std::any> parse(const std::string& text, TextRef& error) const override;
+};
+
+// 适配器登记表：默认登记内建 bool、int64、double 与 string；未登记类型在目录与检查中标注为不支持。
 // 登记表在构造后只读，可被多个线程共享（会话不做线程内修改）。
 class AdapterRegistry {
 public:

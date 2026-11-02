@@ -138,7 +138,7 @@
     "record_file.magic": "文件不是运行记录（魔数不匹配）",
     "record_file.meta": "运行记录元数据非法",
     "record_file.section": "运行记录段结构非法",
-    "record_file.unsupported_type": "运行记录不支持该值类型（首版仅支持 64 位整数输入与观测）",
+    "record_file.unsupported_type": "运行记录输入与观测只支持布尔、64 位整数、双精度浮点与字符串",
     "record_file.version": "运行记录格式版本不受支持",
     "study_file.meta": "研究文件元数据非法",
     "study_file.version": "研究文件格式版本不受支持",
@@ -194,6 +194,19 @@
     "module_package.reference": "模块清单引用越出模块",
     "module_package.section": "模块包段结构非法",
     "module_package.unsupported_type": "模块清单不支持该类型（首版仅支持 void、bool、int64、double、string）",
-    "module_package.version": "模块包格式版本不受支持"
+    "module_package.version": "模块包格式版本不受支持",
+    "module_package.binary": "模块包二进制信息或内容非法",
+    "plugin_loader.format": "模块包二进制格式不受支持",
+    "plugin_loader.platform": "模块包二进制平台与当前宿主不匹配",
+    "plugin_loader.entry": "模块包插件入口不受支持",
+    "plugin_loader.declarations": "模块包插件声明表非法",
+    "plugin_loader.write": "无法写入临时插件文件",
+    "plugin_loader.permissions": "无法设置临时插件文件权限",
+    "plugin_loader.open": "无法加载动态插件",
+    "plugin_loader.abi": "插件 ABI 版本不受支持",
+    "plugin_loader.identity": "插件身份与模块清单不一致",
+    "plugin_loader.callbacks": "插件回调表不完整",
+    "plugin_loader.state": "有状态插件缺少状态捕获或恢复回调",
+    "plugin_loader.default_config": "插件默认构造配置非法"
   }
 }

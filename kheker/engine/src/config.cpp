@@ -11,6 +11,8 @@ Config Config::parse(const std::string& text, std::string source) {
     return detail::parse_json(text, source);
 }
 
+std::string Config::to_json() const { return detail::write_json(*this); }
+
 Config Config::boolean(bool value) {
     Config config;
     config.kind_ = Kind::boolean;

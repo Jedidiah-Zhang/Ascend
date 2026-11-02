@@ -40,6 +40,9 @@ public:
     // 编辑与脚本入口：装配文件解析的配置语义由此保持一致。
     [[nodiscard]] static Config parse(const std::string& text, std::string source = {});
 
+    // 输出为 JSON 文本；用于动态插件边界与状态序列化。
+    [[nodiscard]] std::string to_json() const;
+
     // 对象成员按名称比较，不要求顺序；数组按位置比较。
     bool operator==(const Config& other) const;
     bool operator!=(const Config& other) const { return !(*this == other); }

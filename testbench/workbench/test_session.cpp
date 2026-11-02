@@ -261,9 +261,33 @@ void adapter_int64() {
     CHECK(adapter != nullptr);
     CHECK(adapter->name() == "int64");
     CHECK(adapter->editable());
-    CHECK(registry.find(typeid(double)) == nullptr);
-
     TextRef error;
+    CHECK(registry.find(typeid(bool)) != nullptr);
+    CHECK(registry.find(typeid(double)) != nullptr);
+    CHECK(registry.find(typeid(std::string)) != nullptr);
+
+    const ValueAdapter* boolean = registry.find(typeid(bool));
+    CHECK(boolean != nullptr && boolean->name() == "bool");
+    CHECK(std::any_cast<bool>(*boolean->parse("true", error)) == true);
+    CHECK(std::any_cast<bool>(*boolean->parse("0", error)) == false);
+    CHECK(!boolean->parse("yes", error).has_value());
+    CHECK(boolean->format(std::any(true)) == "true");
+    CHECK(boolean->integer(std::any(false)).value() == 0);
+
+    const ValueAdapter* real = registry.find(typeid(double));
+    CHECK(real != nullptr && real->name() == "double");
+    CHECK(std::any_cast<double>(*real->parse("2.5", error)) == 2.5);
+    CHECK(!real->parse("nan", error).has_value());
+    CHECK(!real->parse("1x", error).has_value());
+    CHECK(real->equal(std::any(2.5), std::any(2.5)));
+    CHECK(!real->equal(std::any(2.5), std::any(2.0)));
+
+    const ValueAdapter* text = registry.find(typeid(std::string));
+    CHECK(text != nullptr && text->name() == "string");
+    CHECK(std::any_cast<std::string>(*text->parse("", error)).empty());
+    CHECK(std::any_cast<std::string>(*text->parse("文本", error)) == "文本");
+    CHECK(text->format(std::any(std::string("x"))) == "x");
+
     CHECK(!adapter->parse("", error).has_value());
     CHECK(error.key().domain == session_text_domain);
     CHECK(!error.key().key.empty());
@@ -1392,6 +1416,34 @@ void time_module() {
     CHECK(replay.complete);
 }
 
+void dynamic_module_package() {
+    // 包内 C ABI 插件覆盖内置实现，完成装配、检查与运行，卸载后恢复内置定义。
+    auto session = example_session();
+    CHECK(session->load().ok);
+    CHECK(session->load_module_package(read_text_file(WORKBENCH_SPACE_PACKAGE)).ok);
+    CHECK(session->module_packages().size() == 1);
+    CHECK(!session->module_packages().front().stateless);
+
+    CHECK(session->new_system("动态空间系统").ok);
+    CHECK(session->add_module(olam::module::space_definition, "yard").ok);
+    CHECK(session->add_module(example::plant_definition, "plant").ok);
+    CHECK(session->add_module(example::stimulus_definition, "input").ok);
+    CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(session->set_spec_advance({"plant", "advance"}).ok);
+    CHECK(session->set_spec_observations({{"width", {"yard", "width"}}}).ok);
+    CHECK(session->check().passed);
+    CHECK(session->apply().ok);
+    CHECK(session->run(1).ok);
+    const auto trace = session->trace(0);
+    CHECK(trace.variables.size() == 1);
+    CHECK(trace.samples.back().observations.front().integer.value() == 1000);
+    CHECK(session->create_checkpoint().ok);
+    CHECK(session->unload_module_package(olam::module::space_definition).ok);
+    const auto restored = session->available_modules();
+    CHECK(std::find(restored.begin(), restored.end(), olam::module::space_definition) !=
+          restored.end());
+}
+
 void system_assembly() {
     // 因果系统装配（切片 A）：新建、加模块、接线、规格、检查与应用。
     auto session = example_session();
@@ -2178,6 +2230,7 @@ int main(int argc, char** argv) {
         {"module_packages", module_packages},
         {"space_module", space_module},
         {"time_module", time_module},
+        {"dynamic_module_package", dynamic_module_package},
         {"system_assembly", system_assembly},
         {"system_file", system_file},
         {"project_workflow", project_workflow},

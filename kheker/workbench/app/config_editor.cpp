@@ -56,8 +56,9 @@ ascend::Config withLeaf(const ascend::Config& base, const QStringList& path, int
 
 }  // namespace
 
-ConfigEditor::ConfigEditor(const session::ValueAdapter& adapter, const UiTexts& texts, QWidget* parent)
-    : QWidget(parent), adapter_(adapter), texts_(texts) {
+ConfigEditor::ConfigEditor(const session::AdapterRegistry& adapters, const UiTexts& texts,
+                           QWidget* parent)
+    : QWidget(parent), adapters_(adapters), texts_(texts) {
     form_ = new QFormLayout(this);
     form_->setContentsMargins(0, 0, 0, 0);
     form_->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
@@ -108,10 +109,21 @@ void ConfigEditor::addValue(const QString& prefix, const ascend::Config& value) 
         return;
     }
     const QString label = prefix.isEmpty() ? ui_text(texts_, "workbench.config.scalar_label", "Value") : prefix;
-    if (value.kind() == ascend::Config::Kind::integer && adapter_.editable()) {
+    std::type_index type = typeid(void);
+    switch (value.kind()) {
+        case ascend::Config::Kind::boolean: type = typeid(bool); break;
+        case ascend::Config::Kind::integer: type = typeid(std::int64_t); break;
+        case ascend::Config::Kind::number: type = typeid(double); break;
+        case ascend::Config::Kind::string: type = typeid(std::string); break;
+        default: break;
+    }
+    const session::ValueAdapter* adapter = adapters_.find(type);
+    if (adapter != nullptr && adapter->editable()) {
         auto leaf = std::make_unique<Leaf>();
         leaf->path = prefix.split('/', Qt::SkipEmptyParts);
-        leaf->edit = new QLineEdit(QString::number(static_cast<qlonglong>(value.integer())), this);
+        leaf->kind = value.kind();
+        leaf->adapter = adapter;
+        leaf->edit = new QLineEdit(display(value), this);
         leaf->edit->setObjectName("configLeaf_" + (prefix.isEmpty() ? QStringLiteral("value") : prefix));
         leaf->committed = leaf->edit->text();
         Leaf* stored = leaf.get();
@@ -148,7 +160,7 @@ void ConfigEditor::commit(Leaf& leaf) {
         return;
     }
     TextRef error;
-    const auto parsed = adapter_.parse(leaf.edit->text().toStdString(), error);
+    const auto parsed = leaf.adapter->parse(leaf.edit->text().toStdString(), error);
     if (!parsed.has_value()) {
         markError(leaf.edit, QString::fromStdString(render_text(error, &texts_.catalog, texts_.locale)));
         return;
@@ -156,7 +168,24 @@ void ConfigEditor::commit(Leaf& leaf) {
     clearError(leaf.edit);
     if (leaf.edit->text() == leaf.committed) return;
     leaf.committed = leaf.edit->text();
-    config_ = withLeaf(config_, leaf.path, 0, ascend::Config::integer(std::any_cast<std::int64_t>(*parsed)));
+    ascend::Config value;
+    switch (leaf.kind) {
+        case ascend::Config::Kind::boolean:
+            value = ascend::Config::boolean(std::any_cast<bool>(*parsed));
+            break;
+        case ascend::Config::Kind::integer:
+            value = ascend::Config::integer(std::any_cast<std::int64_t>(*parsed));
+            break;
+        case ascend::Config::Kind::number:
+            value = ascend::Config::number(std::any_cast<double>(*parsed));
+            break;
+        case ascend::Config::Kind::string:
+            value = ascend::Config::string(std::any_cast<std::string>(*parsed));
+            break;
+        default:
+            return;
+    }
+    config_ = withLeaf(config_, leaf.path, 0, value);
     emit configEdited(config_);
 }
 

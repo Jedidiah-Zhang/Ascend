@@ -1366,8 +1366,12 @@ void record_file_round_trip() {
                             {example::stimulus_definition, example::stimulus_implementation}};
     file.run_id = 7;
     file.run_revision = 3;
-    file.input_settings = {{"a", std::int64_t(1)}};
-    file.inputs.push_back(DrivenInput{0, "a", {std::int64_t(1)}});
+    file.input_settings = {{"a", std::int64_t(1)},
+                           {"b", true},
+                           {"d", 2.5},
+                           {"s", std::string("text")}};
+    file.inputs.push_back(DrivenInput{0, "a", {std::int64_t(1), false, 3.25,
+                                               std::string("arg")}});
     file.checkpoint = origin;
 
     ExperimentTrace exploration;
@@ -1375,7 +1379,11 @@ void record_file_round_trip() {
     exploration.trace.label = "运行";
     exploration.trace.origin = origin;
     exploration.trace.samples = {first, third};
-    exploration.trace.driven.push_back(DrivenInput{0, "a", {std::int64_t(1)}});
+    exploration.trace.samples[0].observations["b"] = true;
+    exploration.trace.samples[0].observations["d"] = 2.5;
+    exploration.trace.samples[0].observations["s"] = std::string("observed");
+    exploration.trace.driven.push_back(DrivenInput{0, "a", {std::int64_t(1), false,
+                                                            3.25, std::string("arg")}});
     exploration.current_frame = 2;
     file.traces.push_back(exploration);
 
@@ -1412,11 +1420,17 @@ void record_file_round_trip() {
     CHECK(decoded.run_id.has_value() && *decoded.run_id == 7);
     CHECK(decoded.run_revision == 3);
     CHECK(decoded.checkpoint.has_value() && decoded.checkpoint->frame == origin.frame);
-    CHECK(decoded.input_settings.size() == 1);
+    CHECK(decoded.input_settings.size() == 4);
     CHECK(std::any_cast<std::int64_t>(decoded.input_settings.at("a")) == 1);
+    CHECK(std::any_cast<bool>(decoded.input_settings.at("b")) == true);
+    CHECK(std::any_cast<double>(decoded.input_settings.at("d")) == 2.5);
+    CHECK(std::any_cast<std::string>(decoded.input_settings.at("s")) == "text");
     CHECK(decoded.inputs.size() == 1);
     CHECK(decoded.inputs[0].frame == 0 && decoded.inputs[0].name == "a");
     CHECK(std::any_cast<std::int64_t>(decoded.inputs[0].arguments.at(0)) == 1);
+    CHECK(std::any_cast<bool>(decoded.inputs[0].arguments.at(1)) == false);
+    CHECK(std::any_cast<double>(decoded.inputs[0].arguments.at(2)) == 3.25);
+    CHECK(std::any_cast<std::string>(decoded.inputs[0].arguments.at(3)) == "arg");
     CHECK(decoded.traces.size() == 2);
     CHECK(decoded.traces[0].exploration);
     CHECK(decoded.traces[0].current_frame == 2);
@@ -1425,9 +1439,16 @@ void record_file_round_trip() {
     CHECK(decoded.traces[0].trace.samples.size() == 2);
     CHECK(decoded.traces[0].trace.samples[1].frame == 2);
     CHECK(std::any_cast<std::int64_t>(decoded.traces[0].trace.samples[1].observations.at("x")) == 2);
+    CHECK(std::any_cast<bool>(decoded.traces[0].trace.samples[0].observations.at("b")) == true);
+    CHECK(std::any_cast<double>(decoded.traces[0].trace.samples[0].observations.at("d")) == 2.5);
+    CHECK(std::any_cast<std::string>(decoded.traces[0].trace.samples[0].observations.at("s")) ==
+          "observed");
     CHECK(decoded.traces[0].trace.driven.size() == 1);
     CHECK(decoded.traces[0].trace.driven[0].frame == 0 && decoded.traces[0].trace.driven[0].name == "a");
     CHECK(std::any_cast<std::int64_t>(decoded.traces[0].trace.driven[0].arguments.at(0)) == 1);
+    CHECK(std::any_cast<bool>(decoded.traces[0].trace.driven[0].arguments.at(1)) == false);
+    CHECK(std::any_cast<double>(decoded.traces[0].trace.driven[0].arguments.at(2)) == 3.25);
+    CHECK(std::any_cast<std::string>(decoded.traces[0].trace.driven[0].arguments.at(3)) == "arg");
     // 真值快照按模块逐项往返。
     CHECK(decoded.traces[0].trace.samples[1].truth.modules.size() == third.truth.modules.size());
     for (std::size_t index = 0; index < third.truth.modules.size(); ++index) {
@@ -1476,7 +1497,7 @@ void record_file_round_trip() {
     }
     {
         auto unsupported = file;
-        unsupported.traces[0].trace.samples[0].observations["x"] = 1.5;
+        unsupported.traces[0].trace.samples[0].observations["x"] = 1.5f;
         failure(ErrorCode::type_mismatch, Reference{"", "x"},
                 [&] { encode_record_file(unsupported); });
     }

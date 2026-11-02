@@ -1,6 +1,8 @@
-// 生成工作台可载入的时钟模块包：ascend_olam_time_package <输出目录> [语言资源文件]
+// 生成工作台可载入的时钟模块包：ascend_olam_time_package <输出目录> [语言资源文件] [插件二进制]
 // 输出目录不存在时创建；包文件名固定为 olam.clock.amod。
 #include <olam/module/time_module.hpp>
+
+#include <ascend/plugin.h>
 
 #include <filesystem>
 #include <fstream>
@@ -18,12 +20,29 @@ bool read_text(const std::filesystem::path& path, std::string& text) {
     return !stream.bad();
 }
 
+std::string plugin_platform() {
+#if defined(_M_ARM64) || defined(__aarch64__)
+    const char* architecture = "arm64";
+#else
+    const char* architecture = "x86_64";
+#endif
+#if defined(_WIN32)
+    return std::string("windows-") + architecture;
+#elif defined(__linux__)
+    return std::string("linux-") + architecture;
+#elif defined(__APPLE__)
+    return std::string("macos-") + architecture;
+#else
+    return "unknown";
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     try {
-        if (argc > 3) {
-            std::cerr << "usage: ascend_olam_time_package <output-directory> [i18n-json]\n";
+        if (argc > 4) {
+            std::cerr << "usage: ascend_olam_time_package <output-directory> [i18n-json] [plugin-binary]\n";
             return 2;
         }
         const std::filesystem::path directory =
@@ -45,11 +64,22 @@ int main(int argc, char** argv) {
             resources.push_back({olam::module::time_text_domain, "zh-CN", std::move(text)});
         }
 
-        const std::string bytes = olam::module::time_package_bytes(std::move(resources));
+        auto package = olam::module::make_time_package(std::move(resources));
+        if (argc > 3) {
+            std::string binary;
+            if (!read_text(std::filesystem::u8path(argv[3]), binary)) {
+                std::cerr << "cannot read plugin binary: " << argv[3] << '\n';
+                return 1;
+            }
+            package.binary = ascend::ModuleBinary{
+                ASCEND_PLUGIN_BINARY_FORMAT, plugin_platform(), ASCEND_PLUGIN_ENTRY_SYMBOL,
+                std::move(binary)};
+        }
+        const std::string bytes = ascend::encode_module_package(package);
 
         // 先按宿主实际载入路径校验清单与资源，避免生成“成功但不可载入”的包。
         ascend::ModuleLibrary library;
-        olam::module::register_time_module(library);
+        if (!package.binary.has_value()) olam::module::register_time_module(library);
         library.load(bytes);
 
         // 先写临时文件，再替换目标；失败时不留下半成品。

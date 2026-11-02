@@ -126,7 +126,8 @@ if(ASCEND_WORKBENCH_BUILD_GUI)
         COMMAND ascend_olam_space_package
                 "$<TARGET_FILE_DIR:ascend_workbench>/modules"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/zh-CN.json"
-        DEPENDS ascend_olam_space_package
+                "$<TARGET_FILE:ascend_olam_space_plugin>"
+        DEPENDS ascend_olam_space_package ascend_olam_space_plugin
         COMMENT "Generating the olam.space module package")
     add_dependencies(ascend_workbench ascend_workbench_space_package)
 
@@ -134,7 +135,8 @@ if(ASCEND_WORKBENCH_BUILD_GUI)
         COMMAND ascend_olam_time_package
                 "$<TARGET_FILE_DIR:ascend_workbench>/modules"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/time.zh-CN.json"
-        DEPENDS ascend_olam_time_package
+                "$<TARGET_FILE:ascend_olam_time_plugin>"
+        DEPENDS ascend_olam_time_package ascend_olam_time_plugin
         COMMENT "Generating the olam.clock module package")
     add_dependencies(ascend_workbench ascend_workbench_time_package)
 endif()

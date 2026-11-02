@@ -397,6 +397,8 @@ void config_text() {
     CHECK((object.kind() == Config::Kind::object));
     CHECK(object.find("x")->integer() == 0);
     CHECK(object.find("y")->integer() == -2);
+    CHECK(Config::parse(object.to_json()) == object);
+    CHECK(Config::parse(Config{}.to_json()).is_null());
     const Diagnostic bad_parse = failure(ErrorCode::invalid_json, {},
                                          [] { (void)Config::parse("not json", "memory.json"); });
     CHECK(bad_parse.source == "memory.json");

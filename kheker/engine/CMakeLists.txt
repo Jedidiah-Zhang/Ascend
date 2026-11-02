@@ -6,10 +6,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(ascend_engine STATIC src/engine.cpp src/config.cpp src/json.cpp src/assembly.cpp
-                                   src/experiment.cpp src/experiment_json.cpp src/study_file.cpp src/record_file.cpp src/container.cpp src/module_package.cpp src/module_library.cpp src/text.cpp src/i18n.cpp)
+                                   src/experiment.cpp src/experiment_json.cpp src/study_file.cpp src/record_file.cpp src/container.cpp src/module_package.cpp src/module_library.cpp src/plugin_loader.cpp src/text.cpp src/i18n.cpp)
 add_library(ascend::engine ALIAS ascend_engine)
 target_compile_features(ascend_engine PUBLIC cxx_std_17)
 target_include_directories(ascend_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+# dlopen/dlsym 在旧 glibc 上位于 libdl；Windows 的 CMAKE_DL_LIBS 为空。
+target_link_libraries(ascend_engine PUBLIC ${CMAKE_DL_LIBS})
 
 if(MSVC)
     target_compile_options(ascend_engine PRIVATE /W4 /permissive-)

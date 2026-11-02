@@ -1,11 +1,32 @@
 add_executable(ascend_session_tests test_session.cpp)
 target_link_libraries(ascend_session_tests PRIVATE ascend::session ascend::experiment_model ascend::olam_module)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+    set(workbench_plugin_arch "arm64")
+else()
+    set(workbench_plugin_arch "x86_64")
+endif()
+if(WIN32)
+    set(workbench_plugin_platform "windows-${workbench_plugin_arch}")
+elseif(APPLE)
+    set(workbench_plugin_platform "macos-${workbench_plugin_arch}")
+else()
+    set(workbench_plugin_platform "linux-${workbench_plugin_arch}")
+endif()
 target_compile_definitions(ascend_session_tests PRIVATE
     WORKBENCH_EXAMPLE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../../kheker/engine/examples/experiment"
     WORKBENCH_ENGINE_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../kheker/engine/i18n/zh-CN.json"
     WORKBENCH_SESSION_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../kheker/workbench/i18n/zh-CN.json"
     WORKBENCH_OLAM_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/zh-CN.json"
-    WORKBENCH_OLAM_TIME_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/time.zh-CN.json")
+    WORKBENCH_OLAM_TIME_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/time.zh-CN.json"
+    WORKBENCH_SPACE_PLUGIN="$<TARGET_FILE:ascend_olam_space_plugin>"
+    WORKBENCH_SPACE_PACKAGE="$<TARGET_FILE_DIR:ascend_workbench>/modules/olam.space.amod"
+    WORKBENCH_PLUGIN_PLATFORM="${workbench_plugin_platform}")
+if(TARGET ascend_olam_space_plugin)
+    add_dependencies(ascend_session_tests ascend_olam_space_plugin)
+endif()
+if(TARGET ascend_workbench_space_package)
+    add_dependencies(ascend_session_tests ascend_workbench_space_package)
+endif()
 foreach(case IN ITEMS
     adapter_int64
     load_and_check
@@ -33,6 +54,7 @@ foreach(case IN ITEMS
     module_packages
     space_module
     time_module
+    dynamic_module_package
     system_assembly
     system_file
     project_workflow

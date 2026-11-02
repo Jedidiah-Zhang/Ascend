@@ -3,6 +3,7 @@
 #include <ascend/engine.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -56,10 +57,19 @@ struct ModuleResource {
     std::string text;
 };
 
-// 模块包：清单与语言资源；首版实现载体为宿主内置注册，包不含实现（ENV-17）。
+// 可选的动态库实现载体；首版按平台各带一个共享库（ENV-17 扩展）。
+struct ModuleBinary {
+    std::string format;    // ASCEND_PLUGIN_BINARY_FORMAT，当前为 shared-library
+    std::string platform;  // 例如 linux-x86_64、windows-x86_64
+    std::string entry;     // 例如 ascend_plugin_callbacks
+    std::string bytes;     // 原始共享库字节
+};
+
+// 模块包：清单、语言资源与可选的动态库载体。
 struct ModulePackage {
     ModuleManifest manifest;
     std::vector<ModuleResource> resources;
+    std::optional<ModuleBinary> binary;
 };
 
 // 从已封闭引擎的实例导出清单（公开声明、需求与状态能力）；类型不可命名或引用越出

@@ -1,5 +1,7 @@
 #include <ascend/module_package.hpp>
 
+#include <ascend/plugin.h>
+
 #include "container.hpp"
 #include "json.hpp"
 
@@ -17,6 +19,7 @@ namespace {
 
 constexpr std::uint64_t kSectionManifest = 1;
 constexpr std::uint64_t kSectionResources = 2;
+constexpr std::uint64_t kSectionBinary = 3;
 
 [[noreturn]] void fail(ErrorCode code, const char* key, const char* fallback,
                        const Reference& target = {}) {
@@ -284,7 +287,8 @@ ManifestRequirement requirement_from(const Config& value) {
     return item;
 }
 
-Config manifest_config(const ModuleManifest& manifest) {
+Config manifest_config(const ModuleManifest& manifest,
+                       const std::optional<ModuleBinary>& binary) {
     std::vector<Config> declarations;
     for (const auto& item : manifest.declarations) declarations.push_back(declaration_config(item));
     std::vector<Config> requirements;
@@ -301,7 +305,31 @@ Config manifest_config(const ModuleManifest& manifest) {
                                                   {"contract", Config::string(manifest.state_contract)}}));
     members.emplace_back("declarations", Config::array(std::move(declarations)));
     members.emplace_back("requirements", Config::array(std::move(requirements)));
+    if (binary.has_value()) {
+        members.emplace_back(
+            "binary", Config::object({{"format", Config::string(binary->format)},
+                                       {"platform", Config::string(binary->platform)},
+                                       {"entry", Config::string(binary->entry)}}));
+    }
     return Config::object(std::move(members));
+}
+
+std::optional<ModuleBinary> binary_metadata_from(const Config& manifest) {
+    const Config* binary = manifest.find("binary");
+    if (binary == nullptr) return std::nullopt;
+    if (binary->kind() != Config::Kind::object) {
+        fail(ErrorCode::invalid_json, "module_package.binary",
+             "Module package binary metadata is not an object");
+    }
+    ModuleBinary result;
+    result.format = require_string(*binary, "format");
+    result.platform = require_string(*binary, "platform");
+    result.entry = require_string(*binary, "entry");
+    if (result.format.empty() || result.platform.empty() || result.entry.empty()) {
+        fail(ErrorCode::invalid_config, "module_package.binary",
+             "Module package binary metadata must not be empty");
+    }
+    return result;
 }
 
 ModuleManifest manifest_from(const Config& value) {
@@ -483,21 +511,34 @@ void check_module_manifest(const ModuleManifest& manifest, const Engine& engine,
 }
 
 std::string encode_module_package(const ModulePackage& package) {
-    const auto manifest_text = detail::write_json(manifest_config(package.manifest), "manifest");
+    if (package.binary.has_value() && package.binary->bytes.empty()) {
+        fail(ErrorCode::invalid_config, "module_package.binary",
+             "Module package binary section is empty");
+    }
+    const auto manifest_text =
+        detail::write_json(manifest_config(package.manifest, package.binary), "manifest");
     const auto resources_text = detail::write_json(resources_config(package.resources), "resources");
-    return detail::write_container(detail::container_kind_module,
-                                   {{kSectionManifest, detail::container_section_required, manifest_text},
-                                    {kSectionResources, detail::container_section_required, resources_text}});
+    std::vector<detail::ContainerSection> sections{
+        {kSectionManifest, detail::container_section_required, manifest_text},
+        {kSectionResources, detail::container_section_required, resources_text}};
+    if (package.binary.has_value()) {
+        sections.push_back(
+            {kSectionBinary, detail::container_section_required, package.binary->bytes});
+    }
+    return detail::write_container(detail::container_kind_module, sections);
 }
 
 ModulePackage decode_module_package(const std::string& bytes) {
     std::optional<std::string> manifest_text;
     std::optional<std::string> resources_text;
+    std::optional<std::string> binary_bytes;
     for (auto& section : detail::read_container(bytes, detail::container_kind_module, "module_package")) {
         if (section.id == kSectionManifest) {
             manifest_text = std::move(section.data);
         } else if (section.id == kSectionResources) {
             resources_text = std::move(section.data);
+        } else if (section.id == kSectionBinary) {
+            binary_bytes = std::move(section.data);
         } else if ((section.flags & detail::container_section_required) != 0) {
             fail(ErrorCode::unsupported_format_version, "module_package.section",
                  "Module package has a required section this reader does not know");
@@ -508,8 +549,21 @@ ModulePackage decode_module_package(const std::string& bytes) {
              "Module package is missing a required section");
     }
     ModulePackage package;
-    package.manifest = manifest_from(detail::parse_json(*manifest_text, "module manifest"));
+    const auto manifest =
+        detail::parse_json(*manifest_text, "module manifest");
+    package.manifest = manifest_from(manifest);
     package.resources = resources_from(detail::parse_json(*resources_text, "module resources"));
+    if (const auto metadata = binary_metadata_from(manifest)) {
+        if (!binary_bytes.has_value() || binary_bytes->empty()) {
+            fail(ErrorCode::invalid_json, "module_package.binary",
+                 "Module package binary metadata has no binary section");
+        }
+        package.binary = *metadata;
+        package.binary->bytes = std::move(*binary_bytes);
+    } else if (binary_bytes.has_value()) {
+        fail(ErrorCode::invalid_json, "module_package.binary",
+             "Module package has a binary section without metadata");
+    }
     return package;
 }
 
