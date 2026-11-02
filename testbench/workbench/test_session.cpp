@@ -1471,9 +1471,10 @@ void project_workflow() {
     const auto created = session->new_project(dir, "项目甲");
     CHECK(created.ok);
     CHECK(session->project().has_value());
-    const fs::path study(session->project()->study_file);
+    const fs::path study = fs::u8path(session->project()->study_file);
     CHECK(fs::exists(study));
     CHECK(study.extension() == ".aexp");
+    CHECK(study.filename().u8string() == "项目甲.aexp");  // 非 ASCII 项目名按 UTF-8 落盘
     CHECK(fs::exists(session->project()->assembly_file));
     CHECK(fs::is_directory(fs::path(dir) / project_records_directory));
     CHECK(session->status().project_directory == dir);
@@ -1557,9 +1558,9 @@ void project_module_packages() {
     CHECK(author->save_project().ok);
     const auto package_files = list_module_packages(dir);
     CHECK(package_files.size() == 1);
-    const fs::path package_path = package_files.front();
+    const fs::path package_path = fs::u8path(package_files.front());
     CHECK(package_path.parent_path() == fs::path(dir) / project_modules_directory);
-    CHECK(read_text_file(package_path.string()) == package);  // 复制原始包字节
+    CHECK(read_text_file(package_path.u8string()) == package);  // 复制原始包字节
     const auto assembly_path = author->project()->assembly_file;
     const auto saved = AssemblyDefinition::parse(read_text_file(assembly_path));
     const auto requirements = saved.module_requirements();
@@ -1589,18 +1590,18 @@ void project_module_packages() {
     CHECK(missing->load_module_package(package).ok);
     fs::remove(package_path);
     open_fails_unchanged(*missing, dir);
-    write_text_file(package_path.string(), package);
+    write_text_file(package_path.u8string(), package);
     CHECK(missing->open_project(dir).ok);  // 项目包齐备后可复用已载入的同版本包
 
     // 版本不符：项目包版本与新装配需求不一致时拒绝，且不改变会话。
     const auto package_v2 = library_package(example::module_library_source,
                                             example::library_source_definition, "2.0",
                                             example::library_source_implementation);
-    write_text_file(package_path.string(), package_v2);
+    write_text_file(package_path.u8string(), package_v2);
     auto mismatch = example_session();
     CHECK(mismatch->load().ok);
     open_fails_unchanged(*mismatch, dir);
-    write_text_file(package_path.string(), package);
+    write_text_file(package_path.u8string(), package);
 
     // 会话已载入不同版本时同样拒绝，不静默换用已载入版本。
     auto loaded_mismatch = example_session();
@@ -1614,7 +1615,7 @@ void project_module_packages() {
     CHECK(empty_requirement.module_requirements().size() == 1);
     empty_requirement.require_module(example::library_source_definition, "");
     write_text_file(assembly_path, empty_requirement.to_json());
-    write_text_file(package_path.string(), package_v2);
+    write_text_file(package_path.u8string(), package_v2);
     auto empty_loaded = example_session();
     CHECK(empty_loaded->load().ok);
     CHECK(empty_loaded->load_module_package(package).ok);
@@ -1629,7 +1630,7 @@ void project_module_packages() {
     CHECK(saved_empty.module_requirements().size() == 1);
     CHECK(saved_empty.module_requirements()[0].version == "2.0");
     write_text_file(assembly_path, original_assembly);
-    write_text_file(package_path.string(), package);
+    write_text_file(package_path.u8string(), package);
 
     // 包已暂存但实例化失败：模块库与项目关联不得提交。
     auto broken_assembly = AssemblyDefinition::parse(original_assembly);
@@ -1653,11 +1654,11 @@ void project_module_packages() {
     CHECK(duplicate->load().ok);
     open_fails_unchanged(*duplicate, dir);
     fs::remove(duplicate_path);
-    write_text_file(package_path.string(), "not a module package");
+    write_text_file(package_path.u8string(), "not a module package");
     auto corrupt = example_session();
     CHECK(corrupt->load().ok);
     open_fails_unchanged(*corrupt, dir);
-    write_text_file(package_path.string(), package);
+    write_text_file(package_path.u8string(), package);
 
     // 正常打开：按装配需求自动载入项目内模块包，无需手动载入。
     auto reader = example_session();
@@ -1673,7 +1674,7 @@ void project_module_packages() {
     CHECK(reader->unload_module_package(example::library_source_definition).ok);
     CHECK(reader->load_module_package(package_v2).ok);
     CHECK(reader->save_project().ok);
-    CHECK(read_text_file(package_path.string()) == package_v2);
+    CHECK(read_text_file(package_path.u8string()) == package_v2);
     auto upgraded = example_session();
     CHECK(upgraded->open_project(dir).ok);
     CHECK(upgraded->module_packages().size() == 1);

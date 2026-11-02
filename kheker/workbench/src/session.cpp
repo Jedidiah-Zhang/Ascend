@@ -42,6 +42,12 @@ Diagnostic make_diagnostic(ErrorCode code, Reference target, const char* key, co
     return Diagnostic{code, std::move(target), session_text(key, fallback, std::move(arguments)), {}, {}, {}};
 }
 
+std::filesystem::path utf8_path(const std::string& text) {
+    return std::filesystem::u8path(text);
+}
+
+std::string path_text(const std::filesystem::path& path) { return path.u8string(); }
+
 // 由模块定义标识派生项目内包文件名；路径分隔符等字符替换为下划线。
 std::string package_file_stem(const std::string& definition) {
     std::string stem;
@@ -909,13 +915,13 @@ bool Session::sync_module_requirements() { return add_module_requirements(draft_
 void Session::copy_project_packages(const AssemblyDefinition& assembly) {
     if (!project_ || !model_.modules) return;
     const std::filesystem::path modules =
-        std::filesystem::path(project_->directory) / project_modules_directory;
+        utf8_path(project_->directory) / project_modules_directory;
     std::error_code error;
     std::filesystem::create_directories(modules, error);
     if (error) {
         auto diagnostic = make_diagnostic(ErrorCode::io_failure, {}, "session.project.io",
                                           "Failed to create the project modules directory");
-        diagnostic.source = modules.string();
+        diagnostic.source = path_text(modules);
         throw EngineError(std::move(diagnostic));
     }
     // 项目内已有的定义（含损坏包）先解析；损坏包不能被保存流程静默跳过。
@@ -966,14 +972,14 @@ void Session::copy_project_packages(const AssemblyDefinition& assembly) {
             continue;
         }
         const std::string stem = package_file_stem(requirement.definition);
-        std::filesystem::path target = modules / (stem + project_module_extension);
+        std::filesystem::path target = modules / utf8_path(stem + project_module_extension);
         for (int index = 1; std::filesystem::exists(target); ++index) {
             target = modules /
-                     (stem + "-" + std::to_string(index) + project_module_extension);
+                     utf8_path(stem + "-" + std::to_string(index) + project_module_extension);
         }
-        write_text_file(target.string(), bytes);
+        write_text_file(path_text(target), bytes);
         existing.emplace(requirement.definition,
-                         ExistingPackage{target.string(), loaded.version, loaded.implementation});
+                         ExistingPackage{path_text(target), loaded.version, loaded.implementation});
     }
 }
 
@@ -2470,7 +2476,7 @@ OperationResult Session::new_project(const std::string& directory, std::string n
     project_ = ProjectState{directory,
                             study_path,
                             project_default_assembly,
-                            (std::filesystem::path(directory) / project_default_assembly).string(),
+                            path_text(utf8_path(directory) / project_default_assembly),
                             std::nullopt,
                             std::nullopt,
                             0};
@@ -2563,7 +2569,7 @@ OperationResult Session::save_project() {
                                                 project_->current_record.value_or(std::string{}),
                                                 record_file());
             project_->current_record = path;
-            project_->current_record_name = std::filesystem::path(path).filename().string();
+            project_->current_record_name = path_text(utf8_path(path).filename());
             record_written_ = true;
         }
         draft_ = std::move(candidate);
@@ -2603,10 +2609,10 @@ OperationResult Session::open_record_file(const std::string& path) {
         return reject(session_text("session.project.none", "Open or create a research project first"));
     }
     std::error_code error;
-    const auto canonical = std::filesystem::weakly_canonical(std::filesystem::path(path), error);
-    const auto root = std::filesystem::weakly_canonical(std::filesystem::path(project_->directory), error);
-    const std::string canonical_text = canonical.string();
-    const std::string root_text = root.string();
+    const auto canonical = std::filesystem::weakly_canonical(utf8_path(path), error);
+    const auto root = std::filesystem::weakly_canonical(utf8_path(project_->directory), error);
+    const std::string canonical_text = path_text(canonical);
+    const std::string root_text = path_text(root);
     const bool inside = !error &&
                         (canonical_text == root_text ||
                          (canonical_text.size() > root_text.size() &&
@@ -2628,7 +2634,7 @@ OperationResult Session::open_record_file(const std::string& path) {
     auto result = open_record(bytes);
     if (result.ok) {
         project_->current_record = path;
-        project_->current_record_name = std::filesystem::path(path).filename().string();
+        project_->current_record_name = path_text(utf8_path(path).filename());
         record_written_ = true;
         status_ = make_status();
         result.status = status_;

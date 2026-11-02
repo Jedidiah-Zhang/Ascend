@@ -27,17 +27,21 @@ namespace fs = std::filesystem;
         Diagnostic{code, {}, TextRef(TextKey{session_text_domain, key}, fallback), source, {}, {}});
 }
 
+// 会话 API 的路径统一为 UTF-8；Windows 上必须经 u8path 访问非 ASCII 路径。
+fs::path utf8_path(const std::string& text) { return fs::u8path(text); }
+std::string path_text(const fs::path& path) { return path.u8string(); }
+
 fs::path records_directory(const std::string& directory) {
-    return fs::path(directory) / project_records_directory;
+    return utf8_path(directory) / project_records_directory;
 }
 
 fs::path modules_directory(const std::string& directory) {
-    return fs::path(directory) / project_modules_directory;
+    return utf8_path(directory) / project_modules_directory;
 }
 
 // 组装项目内路径：引用必须是规范相对路径且落点保持在项目目录内（防御性复核）。
 fs::path resolve_inside(const fs::path& dir, const std::string& relative) {
-    const fs::path path(relative);
+    const fs::path path = utf8_path(relative);
     if (relative.empty() || path.is_absolute() || relative.front() == '/' ||
         relative.find('\\') != std::string::npos || relative.find(':') != std::string::npos) {
         fail(ErrorCode::io_failure, "session.project.io",
@@ -74,7 +78,7 @@ fs::path generate_record_path(const fs::path& records_dir) {
 }  // namespace
 
 std::string read_text_file(const std::string& path) {
-    std::ifstream stream(path, std::ios::binary);
+    std::ifstream stream(utf8_path(path), std::ios::binary);
     if (!stream) {
         fail(ErrorCode::io_failure, "session.project.io", "Failed to read a project file", path);
     }
@@ -87,7 +91,7 @@ std::string read_text_file(const std::string& path) {
 }
 
 void write_text_file(const std::string& path, const std::string& bytes) {
-    const fs::path target(path);
+    const fs::path target = utf8_path(path);
     fs::path temp = target;
     temp += ".tmp";
     const auto remove_temp = [&temp] {
@@ -99,21 +103,21 @@ void write_text_file(const std::string& path, const std::string& bytes) {
         if (!stream) {
             // 打不开时不删除临时路径：它可能不是本次创建的对象。
             fail(ErrorCode::io_failure, "session.project.io", "Failed to write a project file",
-                 target.string());
+                 path_text(target));
         }
         stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
         stream.flush();
         if (!stream) {
             remove_temp();
             fail(ErrorCode::io_failure, "session.project.io", "Failed to write a project file",
-                 target.string());
+                 path_text(target));
         }
         stream.close();
         // 关闭结果必须成功：析构时才暴露的写入错误不能进入替换步骤。
         if (!stream) {
             remove_temp();
             fail(ErrorCode::io_failure, "session.project.io", "Failed to finalize a project file",
-                 target.string());
+                 path_text(target));
         }
     }
     std::error_code error;
@@ -121,7 +125,7 @@ void write_text_file(const std::string& path, const std::string& bytes) {
     if (error) {
         remove_temp();
         fail(ErrorCode::io_failure, "session.project.io", "Failed to replace a project file",
-             target.string());
+             path_text(target));
     }
 }
 
@@ -136,17 +140,20 @@ std::string project_folder_name(const std::string& name) {
 }
 
 std::string find_study_file(const std::string& directory) {
+    const fs::path dir = utf8_path(directory);
     std::error_code error;
-    if (!fs::is_directory(directory, error) || error) {
+    if (!fs::is_directory(dir, error) || error) {
         fail(ErrorCode::io_failure, "session.project.io", "The project directory does not exist",
              directory);
     }
     std::vector<std::string> found;
-    for (const auto& entry : fs::directory_iterator(directory, error)) {
+    for (const auto& entry : fs::directory_iterator(dir, error)) {
         if (error) break;
         std::error_code type_error;
         if (!entry.is_regular_file(type_error) || type_error) continue;
-        if (entry.path().extension() == project_study_extension) found.push_back(entry.path().string());
+        if (entry.path().extension() == project_study_extension) {
+            found.push_back(path_text(entry.path()));
+        }
     }
     if (error) {
         fail(ErrorCode::io_failure, "session.project.io", "Failed to read the project directory",
@@ -166,7 +173,7 @@ std::string find_study_file(const std::string& directory) {
 
 std::string create_project(const std::string& directory, const std::string& study_name,
                            const StudyFile& study, const std::string& assembly_bytes) {
-    const fs::path dir(directory);
+    const fs::path dir = utf8_path(directory);
     std::error_code error;
     bool directory_created = false;
     if (fs::exists(dir, error)) {
@@ -186,7 +193,7 @@ std::string create_project(const std::string& directory, const std::string& stud
         }
         directory_created = true;
     }
-    const auto study_path = dir / (project_folder_name(study_name) + project_study_extension);
+    const auto study_path = dir / utf8_path(project_folder_name(study_name) + project_study_extension);
     const auto assembly_path = resolve_inside(dir, study.assembly);
     const auto records = records_directory(directory);
     const auto modules = modules_directory(directory);
@@ -198,23 +205,23 @@ std::string create_project(const std::string& directory, const std::string& stud
             fs::create_directories(assembly_path.parent_path(), error);
             if (error) {
                 fail(ErrorCode::io_failure, "session.project.io",
-                     "Failed to create the assembly folder", assembly_path.parent_path().string());
+                     "Failed to create the assembly folder", path_text(assembly_path.parent_path()));
             }
         }
         records_created = !fs::exists(records, error);
         fs::create_directories(records, error);
         if (error) {
             fail(ErrorCode::io_failure, "session.project.io", "Failed to create the records directory",
-                 records.string());
+                 path_text(records));
         }
         modules_created = !fs::exists(modules, error);
         fs::create_directories(modules, error);
         if (error) {
             fail(ErrorCode::io_failure, "session.project.io", "Failed to create the modules directory",
-                 modules.string());
+                 path_text(modules));
         }
-        write_text_file(assembly_path.string(), assembly_bytes);
-        write_text_file(study_path.string(), encode_study_file(study));
+        write_text_file(path_text(assembly_path), assembly_bytes);
+        write_text_file(path_text(study_path), encode_study_file(study));
     } catch (...) {
         // 失败清理：删除本次写入的文件与目录，使同一路径可以重试。
         std::error_code ignored;
@@ -225,7 +232,7 @@ std::string create_project(const std::string& directory, const std::string& stud
         if (directory_created) fs::remove_all(dir, ignored);
         throw;
     }
-    return study_path.string();
+    return path_text(study_path);
 }
 
 ProjectContents load_project(const std::string& directory) {
@@ -233,9 +240,10 @@ ProjectContents load_project(const std::string& directory) {
     contents.directory = directory;
     contents.study_path = find_study_file(directory);
     contents.study = decode_study_file(read_text_file(contents.study_path));
-    contents.assembly_path = resolve_inside(fs::path(directory), contents.study.assembly).string();
+    contents.assembly_path =
+        path_text(resolve_inside(utf8_path(directory), contents.study.assembly));
     std::error_code error;
-    if (!fs::exists(contents.assembly_path, error) || error) {
+    if (!fs::exists(utf8_path(contents.assembly_path), error) || error) {
         fail(ErrorCode::invalid_json, "session.project.assembly_missing",
              "The assembly file referenced by the study file does not exist", contents.assembly_path);
     }
@@ -252,40 +260,40 @@ std::vector<std::string> list_module_packages(const std::string& directory) {
     const bool exists = fs::exists(modules, error);
     if (error) {
         fail(ErrorCode::io_failure, "session.project.modules_io",
-             "Failed to inspect the project modules directory", modules.string());
+             "Failed to inspect the project modules directory", path_text(modules));
     }
     if (!exists) return paths;
     if (!fs::is_directory(modules, error) || error) {
         fail(ErrorCode::io_failure, "session.project.modules_io",
-             "The project modules path is not a readable directory", modules.string());
+             "The project modules path is not a readable directory", path_text(modules));
     }
     const fs::directory_iterator end;
     for (fs::directory_iterator entry(modules, error); entry != end; entry.increment(error)) {
         if (error) {
             fail(ErrorCode::io_failure, "session.project.modules_io",
-                 "Failed to read the project modules directory", modules.string());
+                 "Failed to read the project modules directory", path_text(modules));
         }
         std::error_code type_error;
         const bool regular = entry->is_regular_file(type_error);
         if (type_error) {
             fail(ErrorCode::io_failure, "session.project.modules_io",
-                 "Failed to inspect a project module package", entry->path().string());
+                 "Failed to inspect a project module package", path_text(entry->path()));
         }
         if (!regular) continue;
-        std::string extension = entry->path().extension().string();
+        std::string extension = entry->path().extension().u8string();
         std::transform(extension.begin(), extension.end(), extension.begin(),
                        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
         if (extension != project_module_extension) continue;
         auto absolute = fs::absolute(entry->path(), error);
         if (error) {
             fail(ErrorCode::io_failure, "session.project.modules_io",
-                 "Failed to resolve a project module package path", entry->path().string());
+                 "Failed to resolve a project module package path", path_text(entry->path()));
         }
-        paths.push_back(absolute.string());
+        paths.push_back(path_text(absolute));
     }
     if (error) {
         fail(ErrorCode::io_failure, "session.project.modules_io",
-             "Failed to read the project modules directory", modules.string());
+             "Failed to read the project modules directory", path_text(modules));
     }
     std::sort(paths.begin(), paths.end());
     return paths;
@@ -302,11 +310,12 @@ std::string write_record_file(const std::string& directory, const std::string& r
     fs::create_directories(records, error);
     if (error) {
         fail(ErrorCode::io_failure, "session.project.io", "Failed to create the records directory",
-             records.string());
+             path_text(records));
     }
-    const fs::path target = record_path.empty() ? generate_record_path(records) : fs::path(record_path);
-    write_text_file(target.string(), encode_record_file(record));
-    return target.string();
+    const fs::path target =
+        record_path.empty() ? generate_record_path(records) : utf8_path(record_path);
+    write_text_file(path_text(target), encode_record_file(record));
+    return path_text(target);
 }
 
 std::vector<ProjectRecordEntry> list_records(const std::string& directory) {
@@ -320,8 +329,8 @@ std::vector<ProjectRecordEntry> list_records(const std::string& directory) {
         if (!entry.is_regular_file(type_error) || type_error) continue;
         if (entry.path().extension() != project_record_extension) continue;
         ProjectRecordEntry item;
-        item.path = entry.path().string();
-        item.name = entry.path().filename().string();
+        item.path = path_text(entry.path());
+        item.name = path_text(entry.path().filename());
         try {
             item.summary = summarize_record_file(read_text_file(item.path));
             item.readable = true;
