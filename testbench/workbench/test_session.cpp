@@ -5,6 +5,7 @@
 #include <ascend/session/session.hpp>
 #include <ascend/session/project.hpp>
 #include <olam/module/space_module.hpp>
+#include <olam/module/time_module.hpp>
 
 #include <any>
 #include <algorithm>
@@ -47,7 +48,8 @@ ModelTemplate example_template() {
     model.factories = example::factories(WORKBENCH_EXAMPLE_ROOT);
     model.implementations = {{example::plant_definition, example::plant_implementation},
                              {example::stimulus_definition, example::stimulus_implementation},
-                             {olam::module::space_definition, olam::module::space_implementation}};
+                             {olam::module::space_definition, olam::module::space_implementation},
+                             {olam::module::time_definition, olam::module::time_implementation}};
     model.resources = core_resources();
     const auto module_resources = example::i18n_resources(WORKBENCH_EXAMPLE_ROOT);
     model.resources.insert(model.resources.end(), module_resources.begin(), module_resources.end());
@@ -55,8 +57,12 @@ ModelTemplate example_template() {
     model.modules = std::make_shared<ModuleLibrary>();
     example::register_module_library(*model.modules);
     olam::module::register_space_module(*model.modules);
+    olam::module::register_time_module(*model.modules);
 #ifdef WORKBENCH_OLAM_I18N
     model.resources.push_back({olam::module::space_text_domain, WORKBENCH_OLAM_I18N});
+#endif
+#ifdef WORKBENCH_OLAM_TIME_I18N
+    model.resources.push_back({olam::module::time_text_domain, WORKBENCH_OLAM_TIME_I18N});
 #endif
     return model;
 }
@@ -1314,6 +1320,78 @@ void space_module() {
     CHECK(builtin_report.passed);
 }
 
+void time_module() {
+    // 基础时钟模块：包载入、默认配置添加、暂停输入、运行与状态捕获。
+    auto session = example_session();
+    CHECK(session->load().ok);
+    std::vector<ModuleResource> resources;
+#ifdef WORKBENCH_OLAM_TIME_I18N
+    resources.push_back({olam::module::time_text_domain, "zh-CN",
+                         read_text_file(WORKBENCH_OLAM_TIME_I18N)});
+#endif
+    CHECK(session->load_module_package(olam::module::time_package_bytes(std::move(resources))).ok);
+    CHECK(session->module_packages().size() == 1);
+    const auto package = session->module_packages().front();
+    CHECK(package.definition == olam::module::time_definition);
+    CHECK(package.implementation == olam::module::time_implementation);
+    CHECK(!package.stateless);
+    CHECK(package.state_contract == olam::module::time_state_contract);
+    CHECK(package.declarations == 10);
+    const auto modules = session->available_modules();
+    CHECK(std::find(modules.begin(), modules.end(), olam::module::time_definition) != modules.end());
+
+    CHECK(session->new_system("时钟系统").ok);
+    CHECK(session->add_module(olam::module::time_definition, "clock").ok);
+    const auto installed = session->instances();
+    CHECK(installed.size() == 1);
+    CHECK(installed.front().config.find("step_microseconds") == nullptr);
+    CHECK(installed.front().config.find("rate_numerator") != nullptr);
+
+    CHECK(session->set_spec_advance({"clock", "advance"}).ok);
+    CHECK(session->set_spec_observations(
+                    {{"local_microseconds", {"clock", "local_microseconds"}},
+                     {"frame", {"clock", "frame"}},
+                     {"paused", {"clock", "paused"}}})
+              .ok);
+    CHECK(session->check().passed);
+    CHECK(session->apply().ok);
+    CHECK(session->run(2).ok);
+    const auto trace = session->trace(0);
+    CHECK(trace.samples.size() == 3);
+    const auto variable_index = [&](const std::string& name) {
+        const auto found = std::find(trace.variables.begin(), trace.variables.end(), name);
+        CHECK(found != trace.variables.end());
+        return static_cast<std::size_t>(found - trace.variables.begin());
+    };
+    const auto local_time = variable_index("local_microseconds");
+    const auto frame = variable_index("frame");
+    const auto paused = variable_index("paused");
+    CHECK(trace.samples.back().observations[local_time].integer.value() == 2000);
+    CHECK(trace.samples.back().observations[frame].integer.value() == 2);
+    CHECK(trace.samples.back().observations[paused].integer.value() == 0);
+
+    // set_paused 是单参数方法，作为规格输入在每步推进前驱动。
+    CHECK(session->set_input("clock.set_paused", std::any(Integer{1})).ok);
+    CHECK(session->run(1).ok);
+    CHECK(session->trace(0).samples.back().observations[frame].integer.value() == 2);
+    CHECK(session->set_input("clock.set_paused", std::any(Integer{0})).ok);
+    CHECK(session->run(1).ok);
+    CHECK(session->trace(0).samples.back().observations[frame].integer.value() == 3);
+
+    CHECK(session->create_checkpoint().ok);
+    const auto fields = session->state_fields();
+    const bool has_time_state = std::any_of(fields.begin(), fields.end(), [](const StateFieldView& field) {
+        return field.module == "clock" && field.field == "local_time";
+    });
+    CHECK(has_time_state);
+
+    // 从检查点建立分支并重放：时钟状态随检查点捕获与恢复。
+    CHECK(session->create_branches({{"对照", {}}, {"干预", {}}}).ok);
+    const auto replay = session->replay();
+    CHECK(replay.ok);
+    CHECK(replay.complete);
+}
+
 void system_assembly() {
     // 因果系统装配（切片 A）：新建、加模块、接线、规格、检查与应用。
     auto session = example_session();
@@ -2099,6 +2177,7 @@ int main(int argc, char** argv) {
         {"open_exploration_only", open_exploration_only},
         {"module_packages", module_packages},
         {"space_module", space_module},
+        {"time_module", time_module},
         {"system_assembly", system_assembly},
         {"system_file", system_file},
         {"project_workflow", project_workflow},

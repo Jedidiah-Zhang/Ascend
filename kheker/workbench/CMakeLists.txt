@@ -5,12 +5,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# 以子项目方式复用无界面引擎、示例组件与世界库空间模块；工作台只需要库目标。
+# 以子项目方式复用无界面引擎、示例组件与世界库空间／时钟模块；工作台只需要库目标。
 set(ASCEND_ENGINE_BUILD_EXAMPLES OFF)
 set(ASCEND_ENGINE_BUILD_TESTS OFF)
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../engine" "${CMAKE_CURRENT_BINARY_DIR}/engine")
 
-# 空间模块的声明接入作为独立目标引入；核心空间库仍不依赖引擎。
+# 空间与时钟模块的声明接入作为独立目标引入；核心世界库仍不依赖引擎。
 set(ASCEND_OLAM_BUILD_MODULE ON)
 set(ASCEND_OLAM_BUILD_TESTS OFF)
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../olam" "${CMAKE_CURRENT_BINARY_DIR}/olam")
@@ -83,7 +83,8 @@ if(ASCEND_WORKBENCH_BUILD_GUI)
         ASCEND_WORKBENCH_SESSION_I18N="${CMAKE_CURRENT_SOURCE_DIR}/i18n/zh-CN.json"
         ASCEND_WORKBENCH_UI_I18N="${CMAKE_CURRENT_SOURCE_DIR}/app/i18n/zh-CN.json"
         ASCEND_WORKBENCH_EXAMPLE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../engine/examples/experiment"
-        ASCEND_WORKBENCH_OLAM_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/zh-CN.json")
+        ASCEND_WORKBENCH_OLAM_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/zh-CN.json"
+        ASCEND_WORKBENCH_OLAM_TIME_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/time.zh-CN.json")
     if(MSVC)
         target_compile_options(ascend_workbench_ui PRIVATE /W4 /permissive-)
         target_compile_options(ascend_workbench_ui PUBLIC /utf-8)
@@ -120,7 +121,7 @@ if(ASCEND_WORKBENCH_BUILD_GUI)
     ascend_workbench_resources_target(ascend_workbench_resources ascend_workbench)
     add_dependencies(ascend_workbench ascend_workbench_resources)
 
-    # 空间模块包随构建生成到可执行文件同目录 modules/，供「载入模块包…」直接选择。
+    # 世界库模块包随构建生成到可执行文件同目录 modules/，供「载入模块包…」直接选择。
     add_custom_target(ascend_workbench_space_package ALL
         COMMAND ascend_olam_space_package
                 "$<TARGET_FILE_DIR:ascend_workbench>/modules"
@@ -128,6 +129,14 @@ if(ASCEND_WORKBENCH_BUILD_GUI)
         DEPENDS ascend_olam_space_package
         COMMENT "Generating the olam.space module package")
     add_dependencies(ascend_workbench ascend_workbench_space_package)
+
+    add_custom_target(ascend_workbench_time_package ALL
+        COMMAND ascend_olam_time_package
+                "$<TARGET_FILE_DIR:ascend_workbench>/modules"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/time.zh-CN.json"
+        DEPENDS ascend_olam_time_package
+        COMMENT "Generating the olam.clock module package")
+    add_dependencies(ascend_workbench ascend_workbench_time_package)
 endif()
 
 include(CTest)

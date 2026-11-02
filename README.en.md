@@ -44,7 +44,7 @@ Most detailed design documents are currently available in Chinese.
 
 ## Build and test the C++ prototype
 
-For developers: these commands build and run the automated tests of the C++ core, the world library's space slice and the workbench. You need CMake 3.20 and a C++17-compatible compiler; the UI part additionally needs Qt 6.4 or later. The tests run on the offscreen platform and do not open windows; launching a UI build manually needs a display. Run them from the repository root:
+For developers: these commands build and run the automated tests of the C++ core, the world library's space and basic-clock slices, and the workbench. You need CMake 3.20 and a C++17-compatible compiler; the UI part additionally needs Qt 6.4 or later. The tests run on the offscreen platform and do not open windows; launching a UI build manually needs a display. Run them from the repository root:
 
 ```bash
 cmake -S kheker/engine -B build/engine -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
@@ -68,7 +68,7 @@ cmake --build build/workbench --config Debug --parallel 4
 ctest --test-dir build/workbench --build-config Debug --output-on-failure
 ```
 
-Build outputs go under `build/engine/`, `build/olam/` and `build/workbench/`; pass `-DASCEND_WORKBENCH_BUILD_GUI=OFF` to build only the headless session library and its tests. Launch `build/workbench/ascend_workbench` and choose “打开内置示例” (Open built-in example) to try the experiment workflow. See the [workbench implementation](docs/研究平台/因果建模工作台/实现.md) for runtime resources and usage, and the [core test notes](docs/研究平台/实验环境与声明接入/测试.md), [space test notes](docs/世界/世界框架/空间系统/测试.md), and [workbench test notes](docs/研究平台/因果建模工作台/测试.md) for coverage and limitations.
+Build outputs go under `build/engine/`, `build/olam/` and `build/workbench/`; pass `-DASCEND_WORKBENCH_BUILD_GUI=OFF` to build only the headless session library and its tests. Launch `build/workbench/ascend_workbench` and choose “打开内置示例” (Open built-in example) to try the experiment workflow. See the [workbench implementation](docs/研究平台/因果建模工作台/实现.md) for runtime resources and usage, and the [core test notes](docs/研究平台/实验环境与声明接入/测试.md), [space test notes](docs/世界/世界框架/空间系统/测试.md), [time test notes](docs/世界/世界框架/时间系统/测试.md), and [workbench test notes](docs/研究平台/因果建模工作台/测试.md) for coverage and limitations.
 
 ## Contributing
 

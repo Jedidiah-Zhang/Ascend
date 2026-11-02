@@ -698,11 +698,13 @@ void TestWorkbench::resourceResolution() {
     QVERIFY(under_app_dir(runtime.ui_i18n));
     QVERIFY(under_app_dir(runtime.example_root));
     QVERIFY(under_app_dir(runtime.olam_i18n));
+    QVERIFY(under_app_dir(runtime.olam_time_i18n));
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.engine_i18n)));
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.session_i18n)));
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.ui_i18n)));
     QVERIFY(QFileInfo(QString::fromStdString(runtime.example_root)).isDir());
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.olam_i18n)));
+    QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.olam_time_i18n)));
 
     // 运行目录缺失时回退编译期源码路径，开发构建仍可直接运行。
     const ResourcePaths fallback = resource_paths_from("/nonexistent/ascend-workbench");
@@ -712,6 +714,7 @@ void TestWorkbench::resourceResolution() {
     QVERIFY(QFileInfo::exists(QString::fromStdString(fallback.ui_i18n)));
     QVERIFY(QFileInfo(QString::fromStdString(fallback.example_root)).isDir());
     QVERIFY(QFileInfo::exists(QString::fromStdString(fallback.olam_i18n)));
+    QVERIFY(QFileInfo::exists(QString::fromStdString(fallback.olam_time_i18n)));
 
     // 运行目录副本能被会话与界面文案加载（与工作台启动路径一致）。
     const UiTexts texts = load_ui_texts(runtime.ui_i18n, "zh-CN");
@@ -1482,6 +1485,7 @@ void TestWorkbench::systemEditorAssembly() {
     QVERIFY(wait_until([&] { return definition_combo->findText(QStringLiteral("example.plant")) >= 0; }, 4000));
     QVERIFY(definition_combo->findText(QStringLiteral("library.source")) >= 0);
     QVERIFY(definition_combo->findText(QStringLiteral("olam.space")) >= 0);
+    QVERIFY(definition_combo->findText(QStringLiteral("olam.clock")) >= 0);
 
     // 新建系统：命名对话框。
     QTimer name_timer;

@@ -4,7 +4,8 @@ target_compile_definitions(ascend_session_tests PRIVATE
     WORKBENCH_EXAMPLE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../../kheker/engine/examples/experiment"
     WORKBENCH_ENGINE_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../kheker/engine/i18n/zh-CN.json"
     WORKBENCH_SESSION_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../kheker/workbench/i18n/zh-CN.json"
-    WORKBENCH_OLAM_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/zh-CN.json")
+    WORKBENCH_OLAM_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/zh-CN.json"
+    WORKBENCH_OLAM_TIME_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/time.zh-CN.json")
 foreach(case IN ITEMS
     adapter_int64
     load_and_check
@@ -31,6 +32,7 @@ foreach(case IN ITEMS
     open_exploration_only
     module_packages
     space_module
+    time_module
     system_assembly
     system_file
     project_workflow
