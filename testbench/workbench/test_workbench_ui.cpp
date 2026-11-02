@@ -1,6 +1,7 @@
 #include "config_editor.hpp"
 #include <ascend/example/experiment_model.hpp>
 #include <ascend/module_package.hpp>
+#include <olam/module/space_module.hpp>
 #include "main_window.hpp"
 #include "waveform_widget.hpp"
 #include "workbench.hpp"
@@ -48,6 +49,7 @@
 #include <limits>
 #include <memory>
 #include <utility>
+#include <vector>
 
 using namespace ascend::workbench;
 
@@ -103,6 +105,28 @@ QString write_example_package(const QString& path,
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         QTest::qFail("cannot create example module package", __FILE__, __LINE__);
+        return {};
+    }
+    file.write(bytes.data(), static_cast<qint64>(bytes.size()));
+    return path;
+}
+
+// 生成工作台内置空间模块包，返回路径。
+QString write_space_package(const QString& path) {
+    std::vector<ascend::ModuleResource> resources;
+    QFile resource(QString::fromUtf8(ASCEND_WORKBENCH_OLAM_I18N));
+    if (resource.open(QIODevice::ReadOnly)) {
+        const QByteArray text = resource.readAll();
+        resources.push_back({olam::module::space_text_domain, "zh-CN",
+                             std::string(text.constData(), static_cast<std::size_t>(text.size()))});
+    } else {
+        QTest::qFail("cannot read the space module i18n resource", __FILE__, __LINE__);
+        return {};
+    }
+    const auto bytes = olam::module::space_package_bytes(std::move(resources));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        QTest::qFail("cannot create the space module package", __FILE__, __LINE__);
         return {};
     }
     file.write(bytes.data(), static_cast<qint64>(bytes.size()));
@@ -191,6 +215,7 @@ private slots:
     void openProjectFailure();
     void openProjectPackages();
     void modulePackageLoadUnload();
+    void spaceModulePackage();
     void modulePackageMultiLoad();
     void modulePackageFolderLoad();
     void systemEditorAssembly();
@@ -672,10 +697,12 @@ void TestWorkbench::resourceResolution() {
     QVERIFY(under_app_dir(runtime.session_i18n));
     QVERIFY(under_app_dir(runtime.ui_i18n));
     QVERIFY(under_app_dir(runtime.example_root));
+    QVERIFY(under_app_dir(runtime.olam_i18n));
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.engine_i18n)));
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.session_i18n)));
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.ui_i18n)));
     QVERIFY(QFileInfo(QString::fromStdString(runtime.example_root)).isDir());
+    QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.olam_i18n)));
 
     // 运行目录缺失时回退编译期源码路径，开发构建仍可直接运行。
     const ResourcePaths fallback = resource_paths_from("/nonexistent/ascend-workbench");
@@ -684,6 +711,7 @@ void TestWorkbench::resourceResolution() {
     QVERIFY(QFileInfo::exists(QString::fromStdString(fallback.session_i18n)));
     QVERIFY(QFileInfo::exists(QString::fromStdString(fallback.ui_i18n)));
     QVERIFY(QFileInfo(QString::fromStdString(fallback.example_root)).isDir());
+    QVERIFY(QFileInfo::exists(QString::fromStdString(fallback.olam_i18n)));
 
     // 运行目录副本能被会话与界面文案加载（与工作台启动路径一致）。
     const UiTexts texts = load_ui_texts(runtime.ui_i18n, "zh-CN");
@@ -1242,6 +1270,74 @@ void TestWorkbench::modulePackageLoadUnload() {
     QFile::remove(broken);
 }
 
+void TestWorkbench::spaceModulePackage() {
+    auto workbench = start_workbench(false);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    // 经文件菜单载入空间模块包：模块库列出定义、状态契约与资源。
+    const QString path =
+        write_space_package(QDir::tempPath() + QStringLiteral("/ascend-workbench-space.amod"));
+    QVERIFY(!path.isEmpty());
+    auto* table = window->findChild<QTableWidget*>("modulePackageTable");
+    QVERIFY(table != nullptr);
+    QCOMPARE(table->rowCount(), 0);
+    QTimer load_timer;
+    connect(&load_timer, &QTimer::timeout, [&] { drive_choose_paths_dialog({path}); });
+    load_timer.start(10);
+    window->findChild<QAction*>("loadModulePackageAction")->trigger();
+    QVERIFY(wait_until([&] { return table->rowCount() == 1; }, 8000));
+    load_timer.stop();
+    QCOMPARE(table->item(0, 0)->text(), QStringLiteral("olam.space"));
+    QCOMPARE(table->item(0, 1)->text(), QStringLiteral("1.0"));
+    QCOMPARE(table->item(0, 2)->text(), QStringLiteral("olam.space.v1"));
+    QCOMPARE(table->item(0, 3)->text(), QStringLiteral("olam.space.state.v1"));
+    QCOMPARE(table->item(0, 4)->text(), QStringLiteral("13"));
+    QCOMPARE(table->item(0, 6)->text(), QStringLiteral("1"));
+
+    // 系统编辑器可用该定义添加实例，并按默认配置展开空间字段。
+    window->findChild<QAction*>("systemEditorAction")->trigger();
+    auto* results = window->findChild<QTabWidget*>("resultsTabs");
+    QVERIFY(results != nullptr);
+    QVERIFY(wait_until([&] { return results->currentWidget()->objectName() == "systemEditorPage"; }, 4000));
+    auto* definition_combo = window->findChild<QComboBox*>("systemDefinitionCombo");
+    QVERIFY(definition_combo != nullptr);
+    QVERIFY(wait_until([&] { return definition_combo->findText(QStringLiteral("olam.space")) >= 0; }, 4000));
+
+    QTimer name_timer;
+    connect(&name_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) return;
+        name_timer.stop();
+        dialog->setTextValue(QStringLiteral("空间测试"));
+        dialog->accept();
+    });
+    name_timer.start(10);
+    window->findChild<QPushButton*>("systemNewButton")->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return window->currentStatus().model_name == "空间测试"; }, 4000));
+
+    definition_combo->setCurrentText(QStringLiteral("olam.space"));
+    auto* instance_edit = window->findChild<QLineEdit*>("systemInstanceEdit");
+    QVERIFY(instance_edit != nullptr);
+    QCOMPARE(instance_edit->text(), QStringLiteral("space"));
+    window->findChild<QPushButton*>("systemAddButton")->click();
+    QVERIFY(wait_idle(window));
+    auto* tree = window->findChild<QTreeWidget*>("systemTree");
+    QVERIFY(tree != nullptr);
+    QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 1; }, 4000));
+    QCOMPARE(tree->topLevelItem(0)->text(0), QStringLiteral("space"));
+    auto* editor = window->findChild<QWidget*>("configEditor_space");
+    QVERIFY(editor != nullptr);
+    QVERIFY(editor->findChild<QLineEdit*>("configLeaf_origin_x") != nullptr);
+    QVERIFY(editor->findChild<QLineEdit*>("configLeaf_origin_y") != nullptr);
+    QVERIFY(editor->findChild<QLineEdit*>("configLeaf_width") != nullptr);
+    QVERIFY(editor->findChild<QLineEdit*>("configLeaf_height") != nullptr);
+    QVERIFY(editor->findChild<QLineEdit*>("configLeaf_layer") != nullptr);
+
+    QFile::remove(path);
+}
+
 void TestWorkbench::modulePackageMultiLoad() {
     auto workbench = start_workbench(false);
     MainWindow* window = workbench->window();
@@ -1385,6 +1481,7 @@ void TestWorkbench::systemEditorAssembly() {
     QVERIFY(definition_combo != nullptr);
     QVERIFY(wait_until([&] { return definition_combo->findText(QStringLiteral("example.plant")) >= 0; }, 4000));
     QVERIFY(definition_combo->findText(QStringLiteral("library.source")) >= 0);
+    QVERIFY(definition_combo->findText(QStringLiteral("olam.space")) >= 0);
 
     // 新建系统：命名对话框。
     QTimer name_timer;

@@ -4,6 +4,7 @@
 #include <ascend/i18n.hpp>
 #include <ascend/session/session.hpp>
 #include <ascend/session/project.hpp>
+#include <olam/module/space_module.hpp>
 
 #include <any>
 #include <algorithm>
@@ -45,13 +46,18 @@ ModelTemplate example_template() {
     model.spec = example::specification();
     model.factories = example::factories(WORKBENCH_EXAMPLE_ROOT);
     model.implementations = {{example::plant_definition, example::plant_implementation},
-                             {example::stimulus_definition, example::stimulus_implementation}};
+                             {example::stimulus_definition, example::stimulus_implementation},
+                             {olam::module::space_definition, olam::module::space_implementation}};
     model.resources = core_resources();
     const auto module_resources = example::i18n_resources(WORKBENCH_EXAMPLE_ROOT);
     model.resources.insert(model.resources.end(), module_resources.begin(), module_resources.end());
     model.locale = "zh-CN";
     model.modules = std::make_shared<ModuleLibrary>();
     example::register_module_library(*model.modules);
+    olam::module::register_space_module(*model.modules);
+#ifdef WORKBENCH_OLAM_I18N
+    model.resources.push_back({olam::module::space_text_domain, WORKBENCH_OLAM_I18N});
+#endif
     return model;
 }
 
@@ -1218,6 +1224,96 @@ void module_packages() {
     CHECK(!plain->unload_module_package(example::library_source_definition).ok);
 }
 
+void space_module() {
+    // 空间模块（ENV-17、ENV-18）：包载入、默认配置添加、观测运行与状态捕获。
+    auto session = example_session();
+    CHECK(session->load().ok);
+    CHECK(session->module_packages().empty());
+
+    std::vector<ModuleResource> resources;
+#ifdef WORKBENCH_OLAM_I18N
+    resources.push_back({olam::module::space_text_domain, "zh-CN", read_text_file(WORKBENCH_OLAM_I18N)});
+#endif
+    const auto loaded = session->load_module_package(olam::module::space_package_bytes(std::move(resources)));
+    CHECK(loaded.ok);
+    CHECK(session->module_packages().size() == 1);
+    const auto package = session->module_packages().front();
+    CHECK(package.definition == olam::module::space_definition);
+    CHECK(package.version == olam::module::space_version);
+    CHECK(package.implementation == olam::module::space_implementation);
+    CHECK(!package.stateless);
+    CHECK(package.state_contract == olam::module::space_state_contract);
+    CHECK(package.resources == 1);
+    const auto modules = session->available_modules();
+    CHECK(std::find(modules.begin(), modules.end(), olam::module::space_definition) != modules.end());
+
+    CHECK(session->new_system("空间系统").ok);
+    CHECK(session->add_module(olam::module::space_definition, "yard").ok);
+    const auto installed = session->instances();
+    CHECK(installed.size() == 1);
+    CHECK(installed.front().definition == olam::module::space_definition);
+    CHECK(installed.front().config.find("width") != nullptr);
+    CHECK(installed.front().config.find("width")->integer() == 1000);
+
+    // 编辑默认构造配置：空间字段随草稿生效。
+    CHECK(session->set_instance_config(
+                    "", "yard",
+                    Config::object({{"origin_x", Config::integer(100)},
+                                    {"origin_y", Config::integer(200)},
+                                    {"width", Config::integer(2000)},
+                                    {"height", Config::integer(500)},
+                                    {"layer", Config::integer(3)}}))
+              .ok);
+    CHECK(session->add_module(example::plant_definition, "plant").ok);
+    CHECK(session->add_module(example::stimulus_definition, "input").ok);
+    CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(session->set_spec_advance({"plant", "advance"}).ok);
+    CHECK(session->set_spec_observations(
+                    {{"width", {"yard", "width"}},
+                     {"upper_x", {"yard", "upper_x"}},
+                     {"count", {"yard", "space_count"}}})
+              .ok);
+    CHECK(session->check().passed);
+    CHECK(session->apply().ok);
+    CHECK(session->run(2).ok);
+
+    const auto trace = session->trace(0);
+    CHECK(trace.samples.size() == 3);
+    const auto variable_index = [&](const std::string& name) {
+        const auto found = std::find(trace.variables.begin(), trace.variables.end(), name);
+        CHECK(found != trace.variables.end());
+        return static_cast<std::size_t>(found - trace.variables.begin());
+    };
+    const auto width = variable_index("width");
+    const auto upper_x = variable_index("upper_x");
+    const auto count = variable_index("count");
+    const auto& last = trace.samples.back();
+    CHECK(last.observations[width].integer.has_value() && *last.observations[width].integer == 2000);
+    CHECK(last.observations[upper_x].integer.has_value() && *last.observations[upper_x].integer == 2100);
+    CHECK(last.observations[count].integer.has_value() && *last.observations[count].integer == 1);
+
+    // 状态捕获契约进入检查点：空间集合按 spaces 数组保存。
+    CHECK(session->create_checkpoint().ok);
+    const auto fields = session->state_fields();
+    const bool has_space_state = std::any_of(fields.begin(), fields.end(), [](const StateFieldView& field) {
+        return field.module == "yard" && field.field == "spaces";
+    });
+    CHECK(has_space_state);
+
+    // 宿主已登记实现标识：即使尚未载入包，空间实例也可检查与应用。
+    auto builtin = example_session();
+    CHECK(builtin->load().ok);
+    CHECK(builtin->new_system("内置空间").ok);
+    CHECK(builtin->add_module(olam::module::space_definition, "yard").ok);
+    CHECK(builtin->add_module(example::plant_definition, "plant").ok);
+    CHECK(builtin->add_module(example::stimulus_definition, "input").ok);
+    CHECK(builtin->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(builtin->set_spec_advance({"plant", "advance"}).ok);
+    CHECK(builtin->set_spec_observations({{"width", {"yard", "width"}}}).ok);
+    const auto builtin_report = builtin->check();
+    CHECK(builtin_report.passed);
+}
+
 void system_assembly() {
     // 因果系统装配（切片 A）：新建、加模块、接线、规格、检查与应用。
     auto session = example_session();
@@ -2002,6 +2098,7 @@ int main(int argc, char** argv) {
         {"open_rejects_and_falls_back", open_rejects_and_falls_back},
         {"open_exploration_only", open_exploration_only},
         {"module_packages", module_packages},
+        {"space_module", space_module},
         {"system_assembly", system_assembly},
         {"system_file", system_file},
         {"project_workflow", project_workflow},

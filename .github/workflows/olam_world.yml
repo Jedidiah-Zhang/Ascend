@@ -5,6 +5,7 @@ on:
     paths: &paths
       - "olam/**"
       - "testbench/olam/**"
+      - "kheker/engine/**"
       - ".github/workflows/olam_world.yml"
   pull_request:
     paths: *paths

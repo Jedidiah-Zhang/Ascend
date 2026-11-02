@@ -7,6 +7,8 @@ on:
       - "testbench/workbench/**"
       - "kheker/engine/**"
       - "testbench/engine/**"
+      - "olam/**"
+      - "testbench/olam/**"
       - ".github/workflows/workbench.yml"
   pull_request:
     paths: *paths

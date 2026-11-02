@@ -3,6 +3,7 @@
 #include "main_window.hpp"
 
 #include <ascend/example/experiment_model.hpp>
+#include <olam/module/space_module.hpp>
 
 #include <QCoreApplication>
 #include <QDir>
@@ -23,6 +24,9 @@
 #endif
 #ifndef ASCEND_WORKBENCH_EXAMPLE_ROOT
 #error "ASCEND_WORKBENCH_EXAMPLE_ROOT must be defined by the build"
+#endif
+#ifndef ASCEND_WORKBENCH_OLAM_I18N
+#error "ASCEND_WORKBENCH_OLAM_I18N must be defined by the build"
 #endif
 
 namespace ascend::workbench {
@@ -71,6 +75,7 @@ ResourcePaths resource_paths_from(const std::string& base_dir) {
         resolve_runtime_path(base_dir, "resources/workbench/i18n/zh-CN.json", ASCEND_WORKBENCH_SESSION_I18N),
         resolve_runtime_path(base_dir, "resources/workbench/app/i18n/zh-CN.json", ASCEND_WORKBENCH_UI_I18N),
         resolve_runtime_path(base_dir, "resources/engine/examples/experiment", ASCEND_WORKBENCH_EXAMPLE_ROOT),
+        resolve_runtime_path(base_dir, "resources/olam/module/i18n/zh-CN.json", ASCEND_WORKBENCH_OLAM_I18N),
     };
 }
 
@@ -85,14 +90,17 @@ session::ModelTemplate example_template(const ResourcePaths& paths) {
     model.spec = example::specification();
     model.factories = example::factories(paths.example_root);
     model.implementations = {{example::plant_definition, example::plant_implementation},
-                             {example::stimulus_definition, example::stimulus_implementation}};
+                             {example::stimulus_definition, example::stimulus_implementation},
+                             {olam::module::space_definition, olam::module::space_implementation}};
     model.resources = {{engine_text_domain, paths.engine_i18n},
-                       {session::session_text_domain, paths.session_i18n}};
+                       {session::session_text_domain, paths.session_i18n},
+                       {olam::module::space_text_domain, paths.olam_i18n}};
     const auto module_resources = example::i18n_resources(paths.example_root);
     model.resources.insert(model.resources.end(), module_resources.begin(), module_resources.end());
     model.locale = "zh-CN";
     model.modules = std::make_shared<ModuleLibrary>();
     example::register_module_library(*model.modules);
+    olam::module::register_space_module(*model.modules);
     return model;
 }
 

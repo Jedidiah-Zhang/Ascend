@@ -24,6 +24,7 @@ struct ResourcePaths {
     std::string session_i18n;
     std::string ui_i18n;
     std::string example_root;
+    std::string olam_i18n;
 };
 
 // 以可执行文件所在目录为基准解析运行资源。
