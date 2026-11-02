@@ -406,11 +406,13 @@ public:
 
     std::optional<ProjectView> project() const;
 
-    // 新建研究：创建项目目录（研究文件、空装配文件与 records/），进入编辑态。
+    // 新建研究：创建项目目录（研究文件、空装配文件、records/ 与 modules/），进入编辑态。
     OperationResult new_project(const std::string& directory, std::string name);
-    // 打开项目：解析研究文件与装配文件，进入编辑态并关联记录目录。
+    // 打开项目：解析研究文件与装配文件，按模块需求载入项目内模块包，进入编辑态并关联记录目录；
+    // 缺包、版本冲突或项目包不可读时返回诊断且当前会话不变。
     OperationResult open_project(const std::string& directory);
-    // 保存：写入装配文件、研究文件与当前运行记录（记录不存在时生成）。
+    // 保存：同步项目包并写入装配文件、研究文件与当前运行记录（记录不存在时生成）；
+    // 失败不改变草稿、模块需求与保存标记。
     OperationResult save_project();
     // 当前项目的运行记录列表（按文件名排序）；未打开项目时为空。
     std::vector<RecordEntryView> records() const;
@@ -432,9 +434,10 @@ public:
     std::vector<std::string> available_modules() const;
     // 当前系统名；为空时显示模板名。
     const std::string& system_name() const noexcept { return system_name_; }
-    // 增加模块实例：定义须可用，实例名非空、不含 '/' 且在根作用域唯一。
+    // 增加模块实例：定义须可用，实例名非空、不含 '/' 且在根作用域唯一；
+    // 定义来自已载入模块包时登记其版本需求。
     OperationResult add_module(std::string definition, std::string instance, Config config = {});
-    // 移除模块实例；引用它的连接一并移除。
+    // 移除模块实例；引用它的连接一并移除，最后一个使用者移除后清除模块需求。
     OperationResult remove_module(const std::string& instance);
     // 连接需求到提供方：同一需求已有连接时替换；两端须是草稿中的根作用域实例。
     OperationResult connect_requirement(const Reference& requirement, const Reference& provider);
@@ -497,6 +500,17 @@ private:
     std::map<std::string, std::string> used_implementations() const;
     // 给定装配中实例定义到宿主核对实现标识的映射（记录登记用）。
     std::map<std::string, std::string> implementations_for(const AssemblyDefinition& assembly) const;
+    // 打开项目时按装配的模块需求解析项目内模块包并载入 staged 副本；
+    // 失败返回诊断，调用方不得提交 staged 与工厂目录。
+    std::vector<DiagnosticView> prepare_project_modules(const std::vector<std::string>& package_paths,
+                                                        const AssemblyDefinition& assembly,
+                                                        ModuleLibrary* staged) const;
+    // 把草稿中实际使用且已载入的模块写入模块需求（版本取自已载入清单）；返回是否有变化。
+    bool sync_module_requirements();
+    // 同上，作用于给定装配；保存时先在副本上执行，失败不污染草稿。
+    bool add_module_requirements(AssemblyDefinition& assembly) const;
+    // 保存项目前把给定装配使用的包同步到 modules/；失败抛出引擎诊断。
+    void copy_project_packages(const AssemblyDefinition& assembly);
     // 清空运行、记录与轨迹，回到可编辑态（新建与打开项目共用）。
     void clear_run_state();
 

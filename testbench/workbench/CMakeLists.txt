@@ -32,6 +32,7 @@ foreach(case IN ITEMS
     system_assembly
     system_file
     project_workflow
+    project_module_packages
     project_record_history
     project_record_lineage
     project_errors
@@ -80,6 +81,7 @@ if(TARGET ascend_workbench_ui)
         captureScreenshot
         projectRecordRoundTrip
         openProjectFailure
+        openProjectPackages
         modulePackageLoadUnload
         modulePackageMultiLoad
         modulePackageFolderLoad
@@ -106,6 +108,7 @@ if(TARGET ascend_workbench_ui)
         workbench.captureScreenshot
         workbench.projectRecordRoundTrip
         workbench.openProjectFailure
+        workbench.openProjectPackages
         workbench.modulePackageLoadUnload
         workbench.modulePackageMultiLoad
         workbench.modulePackageFolderLoad

@@ -1180,6 +1180,43 @@ void utf8_serialization() {
     CHECK(AssemblyDefinition::load(path).to_json() == valid.to_json());
 }
 
+void module_requirements() {
+    // 模块需求（ENV-15）：定义标识 → 版本，空版本接受任意版本；空需求不写字段。
+    AssemblyDefinition environment;
+    environment.add_instance("test.module", "counter");
+    CHECK(environment.module_requirements().empty());
+    CHECK(environment.to_json().find("\"modules\"") == std::string::npos);
+    CHECK(!environment.remove_module_requirement("test.module"));
+
+    environment.require_module("library.source", "1.0");
+    environment.require_module("library.accumulator", "");
+    environment.require_module("library.source", "1.1");  // 同定义更新版本
+    const auto requirements = environment.module_requirements();
+    CHECK(requirements.size() == 2);
+    CHECK(requirements[0].definition == "library.accumulator");
+    CHECK(requirements[0].version.empty());
+    CHECK(requirements[1].definition == "library.source");
+    CHECK(requirements[1].version == "1.1");
+
+    auto parsed = AssemblyDefinition::parse(environment.to_json());
+    const auto round_trip = parsed.module_requirements();
+    CHECK(round_trip.size() == 2);
+    CHECK(round_trip[0].definition == "library.accumulator" && round_trip[0].version.empty());
+    CHECK(round_trip[1].definition == "library.source" && round_trip[1].version == "1.1");
+    CHECK(parsed.remove_module_requirement("library.source"));
+    CHECK(parsed.module_requirements().size() == 1);
+
+    // 结构错误：modules 不是对象、版本不是字符串、定义标识为空、子作用域携带 modules。
+    const auto reject = [](const std::string& text) {
+        failure(ErrorCode::invalid_assembly, {}, [&] { AssemblyDefinition::parse(text); });
+    };
+    reject(R"({"format":"ascend.assembly","version":1,"modules":[]})");
+    reject(R"({"format":"ascend.assembly","version":1,"modules":{"library.source":1}})");
+    reject(R"({"format":"ascend.assembly","version":1,"modules":{"":"1.0"}})");
+    reject(R"({"format":"ascend.assembly","version":1,"scopes":[{"name":"sub","modules":{}}]})");
+    failure(ErrorCode::invalid_assembly, {}, [] { AssemblyDefinition{}.require_module(""); });
+}
+
 void pointer_paths() {
     const auto error = failure(ErrorCode::invalid_json, {}, [&] {
         AssemblyDefinition::parse(
@@ -1206,6 +1243,7 @@ int main(int argc, char** argv) {
         {"builder_errors", builder_errors}, {"rollback", rollback}, {"file", file},
         {"diagnostic_locations", diagnostic_locations}, {"forward_transaction", forward_transaction},
         {"json_depth", json_depth}, {"utf8_serialization", utf8_serialization}, {"pointer_paths", pointer_paths},
+        {"module_requirements", module_requirements},
     };
     if (argc != 2 || tests.count(argv[1]) == 0) return 2;
     try {

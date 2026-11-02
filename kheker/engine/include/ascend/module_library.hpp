@@ -25,7 +25,7 @@ struct ModuleEntry {
 };
 
 // 模块库：宿主以代码登记内置实现，载入模块包（ENV-18）。
-// 库只保存元数据与工厂，不保存模块状态；首版一个定义同时只载入一个包。
+// 库保存元数据、载入时的原始包字节与工厂，不保存模块状态；首版一个定义同时只载入一个包。
 class ModuleLibrary {
 public:
     using Factory = ModuleFactoryDirectory::Factory;
@@ -46,6 +46,8 @@ public:
     std::vector<ModuleEntry> entries() const;
     // 已载入清单；未载入时报告 invalid_config。
     const ModuleManifest& manifest(const std::string& definition) const;
+    // 载入时的包原始字节（项目保存复制包文件用）；未载入时报告 invalid_config。
+    const std::string& package_bytes(const std::string& definition) const;
     // 包内语言资源（载入时已预校验）；未载入时报告 invalid_config。
     std::vector<I18nText> resources(const std::string& definition) const;
     // 内置实现目录，可直接用于装配定义实例化。
@@ -55,6 +57,7 @@ private:
     struct Loaded {
         ModuleManifest manifest;
         std::vector<I18nText> resources;
+        std::string bytes;  // 包原始字节，保存项目时复制到项目内
     };
 
     ModuleFactoryDirectory factories_;

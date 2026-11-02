@@ -1448,6 +1448,19 @@ struct TempDirCleanup {
     }
 };
 
+std::string library_package(const ModuleFactoryDirectory::Factory& factory,
+                            const std::string& definition, const std::string& version,
+                            const std::string& implementation) {
+    Engine engine;
+    engine.add(factory("probe", {}));
+    ModulePackage package;
+    package.manifest = export_module_manifest(engine, "", "probe");
+    package.manifest.definition = definition;
+    package.manifest.version = version;
+    package.manifest.implementation = implementation;
+    return encode_module_package(package);
+}
+
 void project_workflow() {
     namespace fs = std::filesystem;
     const std::string dir = temp_project_dir("workflow");
@@ -1519,6 +1532,195 @@ void project_workflow() {
     write_text_file((fs::path(empty_dir) / "keep.txt").string(), "x");
     auto nonempty_session = example_session();
     CHECK(!nonempty_session->new_project(empty_dir, "重复").ok);
+}
+
+void project_module_packages() {
+    namespace fs = std::filesystem;
+    const std::string dir = temp_project_dir("modules");
+    TempDirCleanup cleanup{dir};
+    const auto package = library_package(example::module_library_source,
+                                         example::library_source_definition, "1.0",
+                                         example::library_source_implementation);
+    // 作者：项目内没有包文件时，保存把已载入且被装配使用的包复制进 modules/。
+    auto author = example_session();
+    CHECK(author->new_project(dir, "包项目").ok);
+    CHECK(fs::is_directory(fs::path(dir) / project_modules_directory));
+    // 扫描大小写扩展名并返回绝对路径；临时文件随即移除，避免与后续保存重复。
+    const auto upper_package = fs::path(dir) / project_modules_directory / "probe.AMOD";
+    write_text_file(upper_package.string(), package);
+    const auto listed_upper = list_module_packages(dir);
+    CHECK(listed_upper.size() == 1);
+    CHECK(listed_upper[0] == fs::absolute(upper_package).string());
+    fs::remove(upper_package);
+    CHECK(author->load_module_package(package).ok);
+    CHECK(author->add_module(example::library_source_definition, "source").ok);
+    CHECK(author->save_project().ok);
+    const auto package_files = list_module_packages(dir);
+    CHECK(package_files.size() == 1);
+    const fs::path package_path = package_files.front();
+    CHECK(package_path.parent_path() == fs::path(dir) / project_modules_directory);
+    CHECK(read_text_file(package_path.string()) == package);  // 复制原始包字节
+    const auto assembly_path = author->project()->assembly_file;
+    const auto saved = AssemblyDefinition::parse(read_text_file(assembly_path));
+    const auto requirements = saved.module_requirements();
+    CHECK(requirements.size() == 1);
+    CHECK(requirements[0].definition == example::library_source_definition);
+    CHECK(requirements[0].version == "1.0");
+
+    const auto open_fails_unchanged = [](Session& session, const std::string& directory) {
+        const auto phase = session.status().phase;
+        const auto packages = session.module_packages().size();
+        const auto instances = session.instances().size();
+        const auto study_saved = session.status().study_saved;
+        const auto project = session.project().has_value();
+        const auto draft = session.encode_system().bytes;
+        CHECK(!session.open_project(directory).ok);
+        CHECK(session.status().phase == phase);
+        CHECK(session.module_packages().size() == packages);
+        CHECK(session.instances().size() == instances);
+        CHECK(session.status().study_saved == study_saved);
+        CHECK(session.project().has_value() == project);
+        CHECK(session.encode_system().bytes == draft);
+    };
+
+    // 缺失包：即使当前会话已手动载入，项目内缺包仍拒绝打开；失败不改变当前运行。
+    auto missing = example_session();
+    CHECK(missing->load().ok);
+    CHECK(missing->load_module_package(package).ok);
+    fs::remove(package_path);
+    open_fails_unchanged(*missing, dir);
+    write_text_file(package_path.string(), package);
+    CHECK(missing->open_project(dir).ok);  // 项目包齐备后可复用已载入的同版本包
+
+    // 版本不符：项目包版本与新装配需求不一致时拒绝，且不改变会话。
+    const auto package_v2 = library_package(example::module_library_source,
+                                            example::library_source_definition, "2.0",
+                                            example::library_source_implementation);
+    write_text_file(package_path.string(), package_v2);
+    auto mismatch = example_session();
+    CHECK(mismatch->load().ok);
+    open_fails_unchanged(*mismatch, dir);
+    write_text_file(package_path.string(), package);
+
+    // 会话已载入不同版本时同样拒绝，不静默换用已载入版本。
+    auto loaded_mismatch = example_session();
+    CHECK(loaded_mismatch->load().ok);
+    CHECK(loaded_mismatch->load_module_package(package_v2).ok);
+    open_fails_unchanged(*loaded_mismatch, dir);
+
+    // 空版本需求也不允许静默复用不同版本的已载入包。
+    const auto original_assembly = read_text_file(assembly_path);
+    auto empty_requirement = AssemblyDefinition::parse(original_assembly);
+    CHECK(empty_requirement.module_requirements().size() == 1);
+    empty_requirement.require_module(example::library_source_definition, "");
+    write_text_file(assembly_path, empty_requirement.to_json());
+    write_text_file(package_path.string(), package_v2);
+    auto empty_loaded = example_session();
+    CHECK(empty_loaded->load().ok);
+    CHECK(empty_loaded->load_module_package(package).ok);
+    open_fails_unchanged(*empty_loaded, dir);
+    // 无已载入冲突时按项目包版本载入；保存把空需求写成实际版本，不覆盖项目包。
+    auto empty_ok = example_session();
+    CHECK(empty_ok->open_project(dir).ok);
+    CHECK(empty_ok->module_packages().size() == 1);
+    CHECK(empty_ok->module_packages()[0].version == "2.0");
+    CHECK(empty_ok->save_project().ok);
+    const auto saved_empty = AssemblyDefinition::parse(read_text_file(assembly_path));
+    CHECK(saved_empty.module_requirements().size() == 1);
+    CHECK(saved_empty.module_requirements()[0].version == "2.0");
+    write_text_file(assembly_path, original_assembly);
+    write_text_file(package_path.string(), package);
+
+    // 包已暂存但实例化失败：模块库与项目关联不得提交。
+    auto broken_assembly = AssemblyDefinition::parse(original_assembly);
+    broken_assembly.add_instance("no.such", "ghost");
+    write_text_file(assembly_path, broken_assembly.to_json());
+    auto probe_failure = example_session();
+    CHECK(probe_failure->load().ok);
+    open_fails_unchanged(*probe_failure, dir);
+    write_text_file(assembly_path, original_assembly);
+
+    // 无模块库的会话无法解析项目包需求。
+    auto plain_template = example_template();
+    plain_template.modules.reset();
+    auto plain = make_session(std::move(plain_template));
+    open_fails_unchanged(*plain, dir);
+
+    // 重复定义与损坏包：项目包集合必须可唯一解析，失败不改变会话。
+    const auto duplicate_path = fs::path(dir) / project_modules_directory / "source-copy.amod";
+    write_text_file(duplicate_path.string(), package);
+    auto duplicate = example_session();
+    CHECK(duplicate->load().ok);
+    open_fails_unchanged(*duplicate, dir);
+    fs::remove(duplicate_path);
+    write_text_file(package_path.string(), "not a module package");
+    auto corrupt = example_session();
+    CHECK(corrupt->load().ok);
+    open_fails_unchanged(*corrupt, dir);
+    write_text_file(package_path.string(), package);
+
+    // 正常打开：按装配需求自动载入项目内模块包，无需手动载入。
+    auto reader = example_session();
+    CHECK(reader->open_project(dir).ok);
+    CHECK(reader->status().phase == Phase::editing);
+    CHECK(reader->instances().size() == 1);
+    const auto packages = reader->module_packages();
+    CHECK(packages.size() == 1);
+    CHECK(packages[0].definition == example::library_source_definition);
+    CHECK(packages[0].version == "1.0");
+
+    // 项目包跟随当前载入版本更新，装配需求同步为新版本。
+    CHECK(reader->unload_module_package(example::library_source_definition).ok);
+    CHECK(reader->load_module_package(package_v2).ok);
+    CHECK(reader->save_project().ok);
+    CHECK(read_text_file(package_path.string()) == package_v2);
+    auto upgraded = example_session();
+    CHECK(upgraded->open_project(dir).ok);
+    CHECK(upgraded->module_packages().size() == 1);
+    CHECK(upgraded->module_packages()[0].version == "2.0");
+
+    // 保存失败不把临时补登记的需求留在草稿里，也不改变已保存状态。
+    const auto saved_assembly = read_text_file(assembly_path);
+    auto without_requirement = AssemblyDefinition::parse(saved_assembly);
+    CHECK(without_requirement.remove_module_requirement(example::library_source_definition));
+    write_text_file(assembly_path, without_requirement.to_json());
+    auto failed_save = example_session();
+    CHECK(failed_save->load_module_package(package_v2).ok);
+    CHECK(failed_save->open_project(dir).ok);
+    const auto failed_revision = failed_save->status().draft_revision;
+    const bool failed_saved_before = failed_save->status().study_saved;
+    const auto junk_path = fs::path(dir) / project_modules_directory / "junk.amod";
+    write_text_file(junk_path.string(), "not a module package");
+    CHECK(!failed_save->save_project().ok);
+    CHECK(failed_save->status().draft_revision == failed_revision);
+    CHECK(failed_save->status().study_saved == failed_saved_before);
+    const auto failed_draft = AssemblyDefinition::parse(failed_save->encode_system().bytes);
+    CHECK(failed_draft.module_requirements().empty());
+    fs::remove(junk_path);
+    write_text_file(assembly_path, saved_assembly);
+
+    // 移除唯一实例后需求随装配移除；空闲包不再自动载入。
+    CHECK(reader->remove_module("source").ok);
+    CHECK(reader->save_project().ok);
+    const auto without = AssemblyDefinition::parse(read_text_file(reader->project()->assembly_file));
+    CHECK(without.module_requirements().empty());
+
+    // 没有装配需求时，项目包集合仍须可唯一解析。
+    const auto tail_junk_path = fs::path(dir) / project_modules_directory / "junk.amod";
+    write_text_file(tail_junk_path.string(), "not a module package");
+    auto junk_project = example_session();
+    CHECK(!junk_project->open_project(dir).ok);
+    fs::remove(tail_junk_path);
+    const auto extra_package = fs::path(dir) / project_modules_directory / "source-copy.amod";
+    write_text_file(extra_package.string(), package_v2);
+    auto duplicate_project = example_session();
+    CHECK(!duplicate_project->open_project(dir).ok);
+    fs::remove(extra_package);
+
+    fs::remove(package_path);
+    auto reopened = example_session();
+    CHECK(reopened->open_project(dir).ok);
+    CHECK(reopened->module_packages().empty());
 }
 
 void project_record_history() {
@@ -1802,6 +2004,7 @@ int main(int argc, char** argv) {
         {"system_assembly", system_assembly},
         {"system_file", system_file},
         {"project_workflow", project_workflow},
+        {"project_module_packages", project_module_packages},
         {"project_record_history", project_record_history},
         {"project_record_lineage", project_record_lineage},
         {"project_errors", project_errors},

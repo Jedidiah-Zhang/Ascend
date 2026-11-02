@@ -5,6 +5,7 @@
 #include <ascend/text.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -28,6 +29,10 @@ namespace fs = std::filesystem;
 
 fs::path records_directory(const std::string& directory) {
     return fs::path(directory) / project_records_directory;
+}
+
+fs::path modules_directory(const std::string& directory) {
+    return fs::path(directory) / project_modules_directory;
 }
 
 // 组装项目内路径：引用必须是规范相对路径且落点保持在项目目录内（防御性复核）。
@@ -184,7 +189,9 @@ std::string create_project(const std::string& directory, const std::string& stud
     const auto study_path = dir / (project_folder_name(study_name) + project_study_extension);
     const auto assembly_path = resolve_inside(dir, study.assembly);
     const auto records = records_directory(directory);
+    const auto modules = modules_directory(directory);
     bool records_created = false;
+    bool modules_created = false;
     try {
         // 先写装配文件（含所需父目录），最后写研究文件：研究文件出现即代表项目完整。
         if (!assembly_path.parent_path().empty()) {
@@ -200,6 +207,12 @@ std::string create_project(const std::string& directory, const std::string& stud
             fail(ErrorCode::io_failure, "session.project.io", "Failed to create the records directory",
                  records.string());
         }
+        modules_created = !fs::exists(modules, error);
+        fs::create_directories(modules, error);
+        if (error) {
+            fail(ErrorCode::io_failure, "session.project.io", "Failed to create the modules directory",
+                 modules.string());
+        }
         write_text_file(assembly_path.string(), assembly_bytes);
         write_text_file(study_path.string(), encode_study_file(study));
     } catch (...) {
@@ -208,6 +221,7 @@ std::string create_project(const std::string& directory, const std::string& stud
         fs::remove(study_path, ignored);
         fs::remove(assembly_path, ignored);
         if (records_created) fs::remove_all(records, ignored);
+        if (modules_created) fs::remove_all(modules, ignored);
         if (directory_created) fs::remove_all(dir, ignored);
         throw;
     }
@@ -227,7 +241,54 @@ ProjectContents load_project(const std::string& directory) {
     }
     contents.assembly_bytes = read_text_file(contents.assembly_path);
     contents.records = list_records(directory);
+    contents.module_packages = list_module_packages(directory);
     return contents;
+}
+
+std::vector<std::string> list_module_packages(const std::string& directory) {
+    std::vector<std::string> paths;
+    const auto modules = modules_directory(directory);
+    std::error_code error;
+    const bool exists = fs::exists(modules, error);
+    if (error) {
+        fail(ErrorCode::io_failure, "session.project.modules_io",
+             "Failed to inspect the project modules directory", modules.string());
+    }
+    if (!exists) return paths;
+    if (!fs::is_directory(modules, error) || error) {
+        fail(ErrorCode::io_failure, "session.project.modules_io",
+             "The project modules path is not a readable directory", modules.string());
+    }
+    const fs::directory_iterator end;
+    for (fs::directory_iterator entry(modules, error); entry != end; entry.increment(error)) {
+        if (error) {
+            fail(ErrorCode::io_failure, "session.project.modules_io",
+                 "Failed to read the project modules directory", modules.string());
+        }
+        std::error_code type_error;
+        const bool regular = entry->is_regular_file(type_error);
+        if (type_error) {
+            fail(ErrorCode::io_failure, "session.project.modules_io",
+                 "Failed to inspect a project module package", entry->path().string());
+        }
+        if (!regular) continue;
+        std::string extension = entry->path().extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (extension != project_module_extension) continue;
+        auto absolute = fs::absolute(entry->path(), error);
+        if (error) {
+            fail(ErrorCode::io_failure, "session.project.modules_io",
+                 "Failed to resolve a project module package path", entry->path().string());
+        }
+        paths.push_back(absolute.string());
+    }
+    if (error) {
+        fail(ErrorCode::io_failure, "session.project.modules_io",
+             "Failed to read the project modules directory", modules.string());
+    }
+    std::sort(paths.begin(), paths.end());
+    return paths;
 }
 
 void write_study_file(const std::string& path, const StudyFile& study) {

@@ -64,6 +64,14 @@ struct AssemblyConnection {
     Reference provider;
 };
 
+// 一条模块包版本需求：定义标识与所需版本。空版本表示不限定项目包版本；
+// 非空版本首版按字符串精确相等匹配；会话已有同定义不同版本的载入包时由宿主报告冲突。
+// 范围与兼容规则待定（ENV-15）。
+struct AssemblyModuleRequirement {
+    std::string definition;
+    std::string version;
+};
+
 // 需求转接：本作用域的需求名指向直接子模块的需求。
 struct AssemblyForward {
     std::string requirement;
@@ -90,6 +98,13 @@ public:
     // 移除实例（按名称，取首个）；同名实例不存在报告 invalid_assembly。同一作用域内引用
     // 该实例的连接、转接与导出一并移除，作用域本身不变。
     void remove_instance(const std::string& name, const std::string& scope = {});
+    // 声明或更新模块包版本需求；定义标识不能为空（invalid_assembly）。
+    // 空版本不限定项目包版本；同定义已有不同版本的载入包时由宿主报告冲突。
+    void require_module(std::string definition, std::string version = {});
+    // 移除一条模块需求；返回是否存在。
+    bool remove_module_requirement(const std::string& definition);
+    // 按定义标识排序返回模块需求。
+    std::vector<AssemblyModuleRequirement> module_requirements() const;
     // 在指定作用域声明显式连接、需求转接与接口导出；目标作用域必须已存在。
     void connect(Reference requirement, Reference provider, const std::string& scope = {});
     // 断开一条需求连接（按需求引用，取首个）；返回是否移除，无该连接时为 false。
@@ -146,6 +161,7 @@ private:
     EngineError attach(const EngineError& error, const std::string& record, const std::string& scope) const;
 
     std::map<std::string, Scope> scopes_;
+    std::map<std::string, std::string> module_requirements_;  // 定义标识 → 版本需求
     std::string source_;
 };
 

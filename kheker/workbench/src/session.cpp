@@ -2,6 +2,8 @@
 
 #include <ascend/session/project.hpp>
 
+#include <ascend/module_package.hpp>
+
 #include <algorithm>
 #include <filesystem>
 #include <iomanip>
@@ -38,6 +40,34 @@ std::string render_session(const TextCatalog& texts, const std::string& locale, 
 Diagnostic make_diagnostic(ErrorCode code, Reference target, const char* key, const char* fallback,
                            TextRef::Arguments arguments = {}) {
     return Diagnostic{code, std::move(target), session_text(key, fallback, std::move(arguments)), {}, {}, {}};
+}
+
+// 由模块定义标识派生项目内包文件名；路径分隔符等字符替换为下划线。
+std::string package_file_stem(const std::string& definition) {
+    std::string stem;
+    stem.reserve(definition.size());
+    for (const unsigned char ch : definition) {
+        const bool alnum = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                           (ch >= '0' && ch <= '9');
+        if (alnum || ch == '.' || ch == '-' || ch == '_') {
+            stem.push_back(static_cast<char>(ch));
+        } else {
+            stem.push_back('_');
+        }
+    }
+    if (stem.empty()) stem = "module";
+    // 避开 Windows 保留设备名，避免生成无法创建的文件名。
+    std::string upper = stem;
+    for (char& ch : upper) {
+        if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
+    }
+    const std::string base = upper.substr(0, upper.find('.'));
+    const bool reserved =
+        base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" ||
+        (base.size() == 4 && (base.compare(0, 3, "COM") == 0 || base.compare(0, 3, "LPT") == 0) &&
+         base[3] >= '1' && base[3] <= '9');
+    if (reserved) stem = "module-" + stem;
+    return stem;
 }
 
 std::string number_text(double value) {
@@ -853,6 +883,230 @@ std::map<std::string, std::string> Session::used_implementations() const {
     return implementations_for(draft_);
 }
 
+bool Session::add_module_requirements(AssemblyDefinition& assembly) const {
+    if (!model_.modules) return false;
+    std::map<std::string, std::string> current;
+    for (const auto& requirement : assembly.module_requirements()) {
+        current.emplace(requirement.definition, requirement.version);
+    }
+    bool changed = false;
+    for (const auto& scope : assembly.scopes()) {
+        for (const auto& instance : assembly.instances(scope)) {
+            if (!model_.modules->contains(instance.definition)) continue;
+            const auto version = model_.modules->manifest(instance.definition).version;
+            const auto found = current.find(instance.definition);
+            if (found != current.end() && found->second == version) continue;
+            assembly.require_module(instance.definition, version);
+            current[instance.definition] = version;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+bool Session::sync_module_requirements() { return add_module_requirements(draft_); }
+
+void Session::copy_project_packages(const AssemblyDefinition& assembly) {
+    if (!project_ || !model_.modules) return;
+    const std::filesystem::path modules =
+        std::filesystem::path(project_->directory) / project_modules_directory;
+    std::error_code error;
+    std::filesystem::create_directories(modules, error);
+    if (error) {
+        auto diagnostic = make_diagnostic(ErrorCode::io_failure, {}, "session.project.io",
+                                          "Failed to create the project modules directory");
+        diagnostic.source = modules.string();
+        throw EngineError(std::move(diagnostic));
+    }
+    // 项目内已有的定义（含损坏包）先解析；损坏包不能被保存流程静默跳过。
+    struct ExistingPackage {
+        std::string path;
+        std::string version;
+        std::string implementation;
+    };
+    std::map<std::string, ExistingPackage> existing;
+    for (const auto& path : list_module_packages(project_->directory)) {
+        ModulePackage package;
+        try {
+            package = decode_module_package(read_text_file(path));
+        } catch (const EngineError& error) {
+            Diagnostic diagnostic = error.diagnostic();
+            if (diagnostic.source.empty()) diagnostic.source = path;
+            throw EngineError(std::move(diagnostic));
+        }
+        const std::string definition = package.manifest.definition;
+        if (definition.empty()) {
+            throw EngineError(make_diagnostic(
+                ErrorCode::invalid_config, {}, "session.project.package_definition",
+                "The module package '{file}' has no definition identifier", {{"file", path}}));
+        }
+        const auto [found, inserted] = existing.emplace(
+            definition, ExistingPackage{path, package.manifest.version, package.manifest.implementation});
+        if (!inserted) {
+            throw EngineError(make_diagnostic(
+                ErrorCode::invalid_config, Reference{definition, {}},
+                "session.project.package_duplicate",
+                "The project contains more than one module package for '{definition}': {first}, {second}",
+                {{"definition", definition}, {"first", found->second.path}, {"second", path}}));
+        }
+    }
+    for (const auto& requirement : assembly.module_requirements()) {
+        if (!model_.modules->contains(requirement.definition)) continue;
+        const auto& loaded = model_.modules->manifest(requirement.definition);
+        const auto& bytes = model_.modules->package_bytes(requirement.definition);
+        if (const auto found = existing.find(requirement.definition); found != existing.end()) {
+            // 项目包跟随当前载入版本；相同版本不必重写。
+            if (found->second.version == loaded.version &&
+                found->second.implementation == loaded.implementation) {
+                continue;
+            }
+            write_text_file(found->second.path, bytes);
+            found->second.version = loaded.version;
+            found->second.implementation = loaded.implementation;
+            continue;
+        }
+        const std::string stem = package_file_stem(requirement.definition);
+        std::filesystem::path target = modules / (stem + project_module_extension);
+        for (int index = 1; std::filesystem::exists(target); ++index) {
+            target = modules /
+                     (stem + "-" + std::to_string(index) + project_module_extension);
+        }
+        write_text_file(target.string(), bytes);
+        existing.emplace(requirement.definition,
+                         ExistingPackage{target.string(), loaded.version, loaded.implementation});
+    }
+}
+
+std::vector<DiagnosticView> Session::prepare_project_modules(
+    const std::vector<std::string>& package_paths, const AssemblyDefinition& assembly,
+    ModuleLibrary* staged) const {
+    const auto requirements = assembly.module_requirements();
+
+    struct PackageFile {
+        std::string path;
+        std::string bytes;
+        ModuleManifest manifest;
+    };
+    std::map<std::string, PackageFile> available;
+    for (const auto& path : package_paths) {
+        std::string bytes;
+        ModulePackage package;
+        try {
+            bytes = read_text_file(path);
+            package = decode_module_package(bytes);
+        } catch (const EngineError& error) {
+            Diagnostic diagnostic = error.diagnostic();
+            if (diagnostic.source.empty()) diagnostic.source = path;
+            return {view_of(diagnostic, texts_, locale_)};
+        }
+        // 先复制定义标识：随后会移动 manifest 到暂存表，不能保留成员引用。
+        const std::string definition = package.manifest.definition;
+        if (definition.empty()) {
+            return {view_of(make_diagnostic(ErrorCode::invalid_config, {},
+                                            "session.project.package_definition",
+                                            "The module package '{file}' has no definition identifier",
+                                            {{"file", path}}),
+                            texts_, locale_)};
+        }
+        const auto [found, inserted] = available.emplace(
+            definition, PackageFile{path, std::move(bytes), std::move(package.manifest)});
+        if (!inserted) {
+            return {view_of(
+                make_diagnostic(ErrorCode::invalid_config, Reference{definition, {}},
+                                "session.project.package_duplicate",
+                                "The project contains more than one module package for '{definition}': {first}, {second}",
+                                {{"definition", definition},
+                                 {"first", found->second.path},
+                                 {"second", path}}),
+                texts_, locale_)};
+        }
+    }
+
+    // 项目包集合本身必须可唯一解析；即使装配没有模块需求，也不接受损坏或重复的项目包。
+    if (requirements.empty()) return {};
+    if (staged == nullptr) {
+        return {view_of(make_diagnostic(ErrorCode::invalid_config, {},
+                                        "session.project.package_library_missing",
+                                        "This session does not provide a module library for project packages"),
+                        texts_, locale_)};
+    }
+
+    for (const auto& requirement : requirements) {
+        const auto package = available.find(requirement.definition);
+        if (package == available.end()) {
+            const bool needs_version = !requirement.version.empty();
+            return {view_of(
+                make_diagnostic(ErrorCode::unknown_definition, Reference{requirement.definition, {}},
+                                needs_version ? "session.project.package_version_missing"
+                                              : "session.project.package_missing",
+                                needs_version
+                                    ? "The project does not contain the module package '{definition}' required at version {version}"
+                                    : "The project does not contain the module package '{definition}'",
+                                {{"definition", requirement.definition},
+                                 {"version", requirement.version}}),
+                texts_, locale_)};
+        }
+        const auto& manifest = package->second.manifest;
+        const bool version_mismatch =
+            !requirement.version.empty() && manifest.version != requirement.version;
+        if (version_mismatch) {
+            return {view_of(
+                make_diagnostic(ErrorCode::invalid_config, Reference{requirement.definition, {}},
+                                "session.project.package_version",
+                                "Module package '{definition}' has version {found}; the assembly requires {required}",
+                                {{"definition", requirement.definition},
+                                 {"found", manifest.version},
+                                 {"required", requirement.version}}),
+                texts_, locale_)};
+        }
+        if (staged->contains(requirement.definition)) {
+            const auto& loaded = staged->manifest(requirement.definition);
+            if (!requirement.version.empty() && loaded.version != requirement.version) {
+                return {view_of(
+                    make_diagnostic(ErrorCode::invalid_config, Reference{requirement.definition, {}},
+                                    "session.project.package_version",
+                                    "Module package '{definition}' has version {found}; the assembly requires {required}",
+                                    {{"definition", requirement.definition},
+                                     {"found", loaded.version},
+                                     {"required", requirement.version}}),
+                    texts_, locale_)};
+            }
+            // 空版本需求也不静默换用会话中已载入的不同版本；项目包版本必须与已载入版本一致。
+            if (loaded.version != manifest.version) {
+                return {view_of(
+                    make_diagnostic(ErrorCode::invalid_config, Reference{requirement.definition, {}},
+                                    "session.project.package_version_conflict",
+                                    "Project module package '{definition}' has version {project}; the session has version {loaded} loaded",
+                                    {{"definition", requirement.definition},
+                                     {"project", manifest.version},
+                                     {"loaded", loaded.version}}),
+                    texts_, locale_)};
+            }
+            if (loaded.implementation != manifest.implementation) {
+                return {view_of(
+                    make_diagnostic(ErrorCode::invalid_config, Reference{requirement.definition, {}},
+                                    "session.project.package_implementation",
+                                    "The loaded module package '{definition}' does not match the project package implementation",
+                                    {{"definition", requirement.definition}}),
+                    texts_, locale_)};
+            }
+            continue;
+        }
+        try {
+            staged->load(package->second.bytes);
+        } catch (const EngineError& error) {
+            Diagnostic diagnostic = make_diagnostic(
+                ErrorCode::invalid_config, Reference{requirement.definition, {}},
+                "session.project.package_load", "Could not load the project module package '{file}'",
+                {{"file", package->second.path}});
+            diagnostic.source = package->second.path;
+            diagnostic.cause = std::make_shared<Diagnostic>(error.diagnostic());
+            return {view_of(diagnostic, texts_, locale_)};
+        }
+    }
+    return {};
+}
+
 CheckReport Session::run_checks() {
     CheckReport report;
     Engine engine;
@@ -1219,8 +1473,14 @@ OperationResult Session::add_module(std::string definition, std::string instance
                                            texts_, locale_)});
     }
     if (config.is_null()) config = factories_.default_config(definition);  // 定义登记的默认构造配置
+    const std::string requirement_definition = definition;
     try {
         draft_.add_instance(std::move(definition), std::move(instance), std::move(config));
+        // 已载入的模块包随装配登记版本需求；内置定义不写需求。
+        if (model_.modules && model_.modules->contains(requirement_definition)) {
+            draft_.require_module(requirement_definition,
+                                  model_.modules->manifest(requirement_definition).version);
+        }
     } catch (const EngineError& error) {
         return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
     }
@@ -1234,10 +1494,31 @@ OperationResult Session::add_module(std::string definition, std::string instance
 
 OperationResult Session::remove_module(const std::string& instance) {
     if (phase_ == Phase::empty) return reject_without_system();
+    std::string removed_definition;
+    for (const auto& item : draft_.instances("")) {
+        if (item.name == instance) {
+            removed_definition = item.definition;
+            break;
+        }
+    }
     try {
         draft_.remove_instance(instance);
     } catch (const EngineError& error) {
         return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    if (!removed_definition.empty()) {
+        bool still_used = false;
+        for (const auto& scope : draft_.scopes()) {
+            for (const auto& item : draft_.instances(scope)) {
+                if (item.definition == removed_definition) {
+                    still_used = true;
+                    break;
+                }
+            }
+            if (still_used) break;
+        }
+        // 最后一个使用该定义的实例移除后，同步移除模块需求。
+        if (!still_used) draft_.remove_module_requirement(removed_definition);
     }
     ++draft_revision_;
     auto diagnostics = refresh_catalog();
@@ -2214,14 +2495,34 @@ OperationResult Session::open_project(const std::string& directory) {
     } catch (const EngineError& error) {
         return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
     }
+    // 模块包与工厂目录也在临时副本上准备；失败时不改变当前会话、运行、模块库与项目关联。
+    std::optional<ModuleLibrary> staged_library;
+    ModuleLibrary* library = nullptr;
+    if (model_.modules && !parsed.module_requirements().empty()) {
+        staged_library = *model_.modules;
+        library = &*staged_library;
+    }
+    auto module_diagnostics = prepare_project_modules(contents.module_packages, parsed, library);
+    if (!module_diagnostics.empty()) {
+        return finish(false, std::move(module_diagnostics));
+    }
+    ModuleFactoryDirectory staged_factories = model_.factories;
+    if (staged_library) {
+        staged_factories.merge_from(staged_library->factories());
+    } else if (model_.modules) {
+        staged_factories.merge_from(model_.modules->factories());
+    }
     // 先在临时状态完成实例化校验；失败时不改变当前会话、运行与项目关联。
     CatalogView probe_catalog;
     try {
-        Engine engine = parsed.instantiate(factories_);
+        Engine engine = parsed.instantiate(staged_factories);
         probe_catalog = collect_catalog(engine, *adapters_, texts_, locale_, 0);
     } catch (const EngineError& error) {
         return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
     }
+    // 校验通过后才提交模块库与工厂目录。
+    if (staged_library) *model_.modules = std::move(*staged_library);
+    rebuild_factories();
     draft_ = std::move(parsed);
     spec_ = contents.study.spec;
     observations_explicit_ = true;  // 研究文件中的规格为准，不重新推导观测
@@ -2245,8 +2546,12 @@ OperationResult Session::save_project() {
         return reject(session_text("session.project.none", "Open or create a research project first"));
     }
     try {
-        // 装配文件是世界的编辑源；保存写入当前草稿。
-        write_text_file(project_->assembly_path, draft_.to_json());
+        // 在副本上补模块需求并同步包文件；任何一步失败都不改变会话中的草稿与保存状态。
+        AssemblyDefinition candidate = draft_;
+        const bool requirements_changed = add_module_requirements(candidate);
+        copy_project_packages(candidate);
+        // 装配文件是世界的编辑源；保存写入候选草稿。
+        write_text_file(project_->assembly_path, candidate.to_json());
         StudyFile study;
         study.model = system_name_;
         study.assembly = project_->assembly_rel;
@@ -2260,6 +2565,11 @@ OperationResult Session::save_project() {
             project_->current_record = path;
             project_->current_record_name = std::filesystem::path(path).filename().string();
             record_written_ = true;
+        }
+        draft_ = std::move(candidate);
+        if (requirements_changed) {
+            ++draft_revision_;
+            catalog_.revision = draft_revision_;
         }
     } catch (const EngineError& error) {
         return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
@@ -2351,6 +2661,8 @@ OperationResult Session::load_module_package(const std::string& bytes) {
     }
     try {
         model_.modules->load(bytes);
+        // 草稿中已使用的定义补登记版本需求；需求变化属于草稿修订。
+        if (sync_module_requirements()) ++draft_revision_;
     } catch (const EngineError& error) {
         return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
     }

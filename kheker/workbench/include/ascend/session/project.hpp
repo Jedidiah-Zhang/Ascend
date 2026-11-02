@@ -16,6 +16,8 @@ namespace ascend::session {
 inline constexpr const char* project_study_extension = ".aexp";
 inline constexpr const char* project_record_extension = ".arec";
 inline constexpr const char* project_records_directory = "records";
+inline constexpr const char* project_module_extension = ".amod";
+inline constexpr const char* project_modules_directory = "modules";
 inline constexpr const char* project_default_assembly = "world.aasm";
 
 // 一条运行记录的列表项：摘要来自记录 meta 段，不解码轨迹。
@@ -35,6 +37,7 @@ struct ProjectContents {
     StudyFile study;
     std::string assembly_bytes;
     std::vector<ProjectRecordEntry> records;
+    std::vector<std::string> module_packages;  // modules/ 下的 *.amod 绝对路径，按名称排序
 };
 
 // 在目录根查找唯一 `*.aexp`；缺失或存在多个时抛出 EngineError。
@@ -44,10 +47,13 @@ std::string find_study_file(const std::string& directory);
 // 去除尾部空白与点；为空时回退为 "study"。
 std::string project_folder_name(const std::string& name);
 
-// 创建项目：研究文件（引用装配文件）、装配文件与 records/ 目录。
+// 创建项目：研究文件（引用装配文件）、装配文件、records/ 与 modules/ 目录。
 // 目录必须不存在或为空；写入采用临时文件加原子替换；返回研究文件路径。
 std::string create_project(const std::string& directory, const std::string& study_name,
                            const StudyFile& study, const std::string& assembly_bytes);
+
+// 列出项目 modules/ 下的直接 *.amod 文件（不递归），按文件名排序；目录缺失返回空。
+std::vector<std::string> list_module_packages(const std::string& directory);
 
 // 读取项目：研究文件、装配文件与记录清单；缺失或格式非法时抛出 EngineError。
 ProjectContents load_project(const std::string& directory);

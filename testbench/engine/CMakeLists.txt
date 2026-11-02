@@ -76,6 +76,7 @@ foreach(case IN ITEMS
     json_depth
     utf8_serialization
     pointer_paths
+    module_requirements
 )
     add_test(NAME record.${case} COMMAND ascend_assembly_record_tests ${case})
 endforeach()

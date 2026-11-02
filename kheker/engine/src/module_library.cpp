@@ -65,7 +65,8 @@ std::string ModuleLibrary::load(const std::string& bytes) {
         resources.push_back(std::move(text));
     }
     const std::string definition = manifest.definition;
-    loaded_.emplace(definition, Loaded{std::move(package.manifest), std::move(resources)});
+    loaded_.emplace(definition,
+                    Loaded{std::move(package.manifest), std::move(resources), bytes});
     return definition;
 }
 
@@ -110,6 +111,15 @@ const ModuleManifest& ModuleLibrary::manifest(const std::string& definition) con
              Reference{definition, {}});
     }
     return found->second.manifest;
+}
+
+const std::string& ModuleLibrary::package_bytes(const std::string& definition) const {
+    const auto found = loaded_.find(definition);
+    if (found == loaded_.end()) {
+        fail(ErrorCode::invalid_config, "module_library.not_loaded", "The module is not loaded",
+             Reference{definition, {}});
+    }
+    return found->second.bytes;
 }
 
 std::vector<I18nText> ModuleLibrary::resources(const std::string& definition) const {

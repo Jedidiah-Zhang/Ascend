@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QSaveFile>
 
+#include <cstddef>
 #include <utility>
 
 namespace ascend::workbench {
@@ -192,6 +193,7 @@ void SessionController::newProject(const QString& directory, const QString& name
 
 void SessionController::openProject(const QString& directory) {
     emit busyChanged(true);
+    const auto packages_before = session_.module_packages();
     const auto result = session_.open_project(directory.toStdString());
     QString detail;
     if (!result.diagnostics.empty()) detail = QString::fromUtf8(result.diagnostics.front().message);
@@ -201,6 +203,17 @@ void SessionController::openProject(const QString& directory) {
                        view.has_value() ? QString::fromStdString(view->assembly_file) : QString(),
                        result.ok, detail);
     publish(result, true, TraceUpdate::reset);
+    // 打开项目会按装配需求自动载入项目内模块包，界面列表随会话更新；
+    // 本次新载入至少一个包时才沿用 WB-17 的规则打开并切换到模块库页签。
+    if (result.ok) {
+        const auto packages = session_.module_packages();
+        emit modulePackagesChanged(packages);
+        const std::size_t newly_loaded =
+            packages.size() > packages_before.size() ? packages.size() - packages_before.size() : 0;
+        if (newly_loaded > 0) {
+            emit modulePackagesLoaded(static_cast<int>(newly_loaded), 0, QString());
+        }
+    }
 }
 
 void SessionController::saveProject() {

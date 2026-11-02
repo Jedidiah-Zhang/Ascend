@@ -189,6 +189,7 @@ private slots:
     void captureScreenshot();
     void projectRecordRoundTrip();
     void openProjectFailure();
+    void openProjectPackages();
     void modulePackageLoadUnload();
     void modulePackageMultiLoad();
     void modulePackageFolderLoad();
@@ -1047,6 +1048,75 @@ void TestWorkbench::openProjectFailure() {
     QVERIFY(tree != nullptr);
     QVERIFY(wait_until([&] { return tree->model()->rowCount() >= 1; }, 4000));
     QDir(project_dir).removeRecursively();
+}
+
+void TestWorkbench::openProjectPackages() {
+    auto workbench = start_workbench(false);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    // 准备一个含模块包的项目：保存时把已载入包复制进 modules/。
+    const QString base = QDir::tempPath() + QStringLiteral("/ascend-workbench-project-packages");
+    QDir(base).removeRecursively();
+    const QString project_dir = QDir(base).filePath(QStringLiteral("包研究"));
+    const QString package_path = write_example_package(
+        QDir::tempPath() + QStringLiteral("/ascend-workbench-project-source.amod"));
+    QFile package_file(package_path);
+    QVERIFY(package_file.open(QIODevice::ReadOnly));
+    const QByteArray package_bytes = package_file.readAll();
+    {
+        auto adapters = std::make_shared<ascend::session::AdapterRegistry>();
+        ascend::session::Session session(example_template(default_resource_paths()), adapters);
+        QVERIFY(session.new_project(project_dir.toStdString(), QStringLiteral("包研究").toStdString()).ok);
+        QVERIFY(session.load_module_package(
+            std::string(package_bytes.constData(), static_cast<std::size_t>(package_bytes.size()))).ok);
+        QVERIFY(session.add_module(ascend::example::library_source_definition, "source").ok);
+        QVERIFY(session.save_project().ok);
+    }
+    QCOMPARE(QDir(QDir(project_dir).filePath(QStringLiteral("modules")))
+                 .entryList(QStringList{QStringLiteral("*.amod")}, QDir::Files).size(),
+             1);
+
+    // 打开项目：按装配需求自动载入包，模块库数据随之更新。
+    QTimer timer;
+    connect(&timer, &QTimer::timeout, [&] { drive_file_dialog(project_dir); });
+    timer.start(10);
+    window->findChild<QAction*>("openProjectAction")->trigger();
+    QVERIFY(wait_until([&] { return window->currentStatus().phase == ascend::session::Phase::editing; }, 8000));
+    timer.stop();
+    QCOMPARE(window->currentStatus().model_name, QStringLiteral("包研究"));
+
+    auto* table = window->findChild<QTableWidget*>("modulePackageTable");
+    QVERIFY(table != nullptr);
+    QVERIFY(wait_until([&] { return table->rowCount() == 1; }, 4000));
+    QCOMPARE(table->item(0, 0)->text(), QString::fromStdString(ascend::example::library_source_definition));
+    QCOMPARE(table->item(0, 1)->text(), QStringLiteral("1.0"));
+    auto* results = window->findChild<QTabWidget*>("resultsTabs");
+    auto* page = window->findChild<QWidget*>("packagesPage");
+    QVERIFY(results != nullptr && page != nullptr);
+    QVERIFY(wait_until([&] { return results->currentWidget() == page; }, 4000));  // WB-17：载入包后打开并切换
+
+    // 会话已有包但本次项目未新载入任何包：不切换到模块库页签。
+    const QString plain_dir = QDir(base).filePath(QStringLiteral("空项目"));
+    {
+        auto adapters = std::make_shared<ascend::session::AdapterRegistry>();
+        ascend::session::Session session(example_template(default_resource_paths()), adapters);
+        QVERIFY(session.new_project(plain_dir.toStdString(), QStringLiteral("空项目").toStdString()).ok);
+        QVERIFY(session.save_project().ok);
+    }
+    auto* start_page = window->findChild<QWidget*>("startPage");
+    QVERIFY(start_page != nullptr);
+    results->setCurrentWidget(start_page);
+    QTimer plain_timer;
+    connect(&plain_timer, &QTimer::timeout, [&] { drive_file_dialog(plain_dir); });
+    plain_timer.start(10);
+    window->findChild<QAction*>("openProjectAction")->trigger();
+    QVERIFY(wait_until([&] { return window->currentStatus().model_name == QStringLiteral("空项目"); }, 8000));
+    plain_timer.stop();
+    QVERIFY(wait_until([&] { return results->currentWidget() == start_page; }, 4000));
+
+    QDir(base).removeRecursively();
+    QFile::remove(package_path);
 }
 
 void TestWorkbench::modulePackageLoadUnload() {

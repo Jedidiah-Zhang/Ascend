@@ -207,6 +207,29 @@ void AssemblyDefinition::remove_instance(const std::string& name, const std::str
                          target.exports.end());
 }
 
+void AssemblyDefinition::require_module(std::string definition, std::string version) {
+    if (definition.empty()) {
+        fail_assembly(ErrorCode::invalid_assembly, {definition, {}},
+                      {{engine_text_domain, "assembly.module.definition_empty"},
+                       "Module requirement definition must not be empty"},
+                      source_, {});
+    }
+    module_requirements_[std::move(definition)] = std::move(version);
+}
+
+bool AssemblyDefinition::remove_module_requirement(const std::string& definition) {
+    return module_requirements_.erase(definition) > 0;
+}
+
+std::vector<AssemblyModuleRequirement> AssemblyDefinition::module_requirements() const {
+    std::vector<AssemblyModuleRequirement> result;
+    result.reserve(module_requirements_.size());
+    for (const auto& [definition, version] : module_requirements_) {
+        result.push_back({definition, version});
+    }
+    return result;
+}
+
 void AssemblyDefinition::connect(Reference requirement, Reference provider, const std::string& scope) {
     require_scope(scope).connections.push_back({std::move(requirement), std::move(provider)});
 }
@@ -278,6 +301,14 @@ Config AssemblyDefinition::scope_config(const Scope& scope, bool root, const std
     if (root) {
         members.emplace_back("format", Config::string(assembly_format));
         members.emplace_back("version", Config::integer(assembly_format_version));
+        if (!module_requirements_.empty()) {
+            std::vector<std::pair<std::string, Config>> modules;
+            modules.reserve(module_requirements_.size());
+            for (const auto& [definition, version] : module_requirements_) {
+                modules.emplace_back(definition, Config::string(version));
+            }
+            members.emplace_back("modules", Config::object(std::move(modules)));
+        }
     } else {
         members.emplace_back("name", Config::string(scope.name));
     }
@@ -406,9 +437,32 @@ AssemblyDefinition AssemblyDefinition::parse(const std::string& text, std::strin
 void AssemblyDefinition::read_scope(const Config& object, const std::string& record,
                                     const std::string& parent_path, bool root) {
     const std::vector<std::string> allowed =
-        root ? std::vector<std::string>{"format", "version", "instances", "scopes", "connections", "forwards", "exports"}
+        root ? std::vector<std::string>{"format", "version", "modules", "instances", "scopes", "connections", "forwards", "exports"}
              : std::vector<std::string>{"name", "instances", "scopes", "connections", "forwards", "exports"};
     check_keys(object, record, allowed);
+    if (root) {
+        if (const Config* modules = object.find("modules")) {
+            if (modules->kind() != Config::Kind::object) {
+                fail_record(ErrorCode::invalid_assembly, record_join(record, "modules"),
+                            {{engine_text_domain, "assembly.field.modules_type"},
+                             "Field 'modules' must be an object"});
+            }
+            for (const auto& member : modules->members()) {
+                const std::string item = record_join(record_join(record, "modules"), member.first);
+                if (member.first.empty()) {
+                    fail_record(ErrorCode::invalid_assembly, item,
+                                {{engine_text_domain, "assembly.module.definition_empty"},
+                                 "Module requirement definition must not be empty"});
+                }
+                if (member.second.kind() != Config::Kind::string) {
+                    fail_record(ErrorCode::invalid_assembly, item,
+                                {{engine_text_domain, "assembly.field.module_version_type"},
+                                 "Module requirement version must be a string"});
+                }
+                module_requirements_[member.first] = member.second.string();
+            }
+        }
+    }
     std::string name;
     std::string path = parent_path;
     if (!root) {

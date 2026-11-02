@@ -1607,6 +1607,7 @@ void module_library_load_unload() {
     CHECK(library.load(accumulator_bytes) == "library.accumulator");
     CHECK(library.load(relay_bytes) == "library.relay");
     CHECK(library.definitions().size() == 3);
+    CHECK(library.package_bytes("library.source") == source_bytes);
     const auto entries = library.entries();
     CHECK(entries[0].definition == "library.accumulator");
     CHECK(!entries[0].stateless);
@@ -1627,6 +1628,8 @@ void module_library_load_unload() {
             [&] { library.load(source_bytes); });
     CHECK(library.unload("library.source"));
     CHECK(!library.contains("library.source"));
+    failure(ErrorCode::invalid_config, Reference{"library.source", {}},
+            [&] { library.package_bytes("library.source"); });
     CHECK(!library.unload("library.source"));
     CHECK(library.load(source_bytes) == "library.source");
 
