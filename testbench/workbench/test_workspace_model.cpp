@@ -315,6 +315,11 @@ void TestWorkspaceModel::packages_controls() {
     QVERIFY(model.controls().can_unload_package);
     model.applyPackages({package});  // 内容不变：不发通知
     QCOMPARE(notices, 1);
+    // 仅载体变化也必须通知，否则模块库表格会保留旧载体文本。
+    package.dynamic = true;
+    model.applyPackages({package});
+    QCOMPARE(notices, 2);
+    QVERIFY(model.state().packages[0].dynamic);
     model.applyBusy(true);
     QVERIFY(!model.controls().can_unload_package);
 }

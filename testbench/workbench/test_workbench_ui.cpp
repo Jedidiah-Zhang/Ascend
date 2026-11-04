@@ -216,6 +216,7 @@ private slots:
     void openProjectPackages();
     void modulePackageLoadUnload();
     void spaceModulePackage();
+    void dynamicPackageCarrier();
     void modulePackageMultiLoad();
     void modulePackageFolderLoad();
     void systemEditorAssembly();
@@ -1340,6 +1341,27 @@ void TestWorkbench::spaceModulePackage() {
     QVERIFY(editor->findChild<QLineEdit*>("configLeaf_layer") != nullptr);
 
     QFile::remove(path);
+}
+
+void TestWorkbench::dynamicPackageCarrier() {
+    auto workbench = start_workbench(false);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    const QString path = QString::fromUtf8(WORKBENCH_SPACE_PACKAGE);
+    QVERIFY(QFileInfo::exists(path));
+    auto* table = window->findChild<QTableWidget*>("modulePackageTable");
+    QVERIFY(table != nullptr);
+    QCOMPARE(table->rowCount(), 0);
+
+    QTimer load_timer;
+    connect(&load_timer, &QTimer::timeout, [&] { drive_choose_paths_dialog({path}); });
+    load_timer.start(10);
+    window->findChild<QAction*>("loadModulePackageAction")->trigger();
+    QVERIFY(wait_until([&] { return table->rowCount() == 1; }, 8000));
+    load_timer.stop();
+    QCOMPARE(table->item(0, 0)->text(), QStringLiteral("olam.space"));
+    QCOMPARE(table->item(0, 7)->text(), QStringLiteral("C ABI 插件"));
 }
 
 void TestWorkbench::modulePackageMultiLoad() {

@@ -52,6 +52,7 @@ int run(const std::string& plugin_path) {
     CHECK(library.contains(olam::module::space_definition));
     CHECK(library.entries().size() == 1);
     CHECK(library.entries().front().definition == olam::module::space_definition);
+    CHECK(library.entries().front().dynamic);
 
     Engine engine;
     engine.add(library.factories().create(olam::module::space_definition, "yard", Config{}));

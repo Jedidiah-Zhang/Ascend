@@ -26,9 +26,9 @@ bool same_packages(const std::vector<session::ModulePackageView>& left,
         const auto& a = left[index];
         const auto& b = right[index];
         if (std::tie(a.definition, a.version, a.implementation, a.stateless, a.state_contract,
-                     a.declarations, a.requirements, a.resources) !=
+                     a.declarations, a.requirements, a.resources, a.dynamic) !=
             std::tie(b.definition, b.version, b.implementation, b.stateless, b.state_contract,
-                     b.declarations, b.requirements, b.resources)) {
+                     b.declarations, b.requirements, b.resources, b.dynamic)) {
             return false;
         }
     }

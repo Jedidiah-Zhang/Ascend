@@ -24,11 +24,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-      - name: 配置世界库空间切片
+      - name: 配置世界库
         run: cmake -S olam -B build/olam -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: 编译世界库与测试
         run: cmake --build build/olam --config Release --parallel 4
       - name: 运行世界库测试
         run: ctest --test-dir build/olam --build-config Release --output-on-failure
       - name: C ABI 插件冒烟测试
-        run: ctest --test-dir build/olam --build-config Release -R plugin --output-on-failure
+        run: ctest --test-dir build/olam --build-config Release -R plugin --no-tests=error --output-on-failure
