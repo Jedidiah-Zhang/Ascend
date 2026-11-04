@@ -27,6 +27,7 @@ struct ModuleEntry {
     std::size_t declarations = 0;
     std::size_t requirements = 0;
     std::size_t resources = 0;
+    bool dynamic = false;  // 包内 C ABI 插件；否则为内置注册
 };
 
 // 模块库：宿主以代码登记内置实现，或载入含 C ABI 插件的模块包（ENV-18、19）。

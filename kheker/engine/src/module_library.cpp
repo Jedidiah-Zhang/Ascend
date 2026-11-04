@@ -165,6 +165,7 @@ std::vector<ModuleEntry> ModuleLibrary::entries() const {
         summary.declarations = manifest.declarations.size();
         summary.requirements = manifest.requirements.size();
         summary.resources = entry.second.resources.size();
+        summary.dynamic = entry.second.dynamic;
         result.push_back(std::move(summary));
     }
     return result;

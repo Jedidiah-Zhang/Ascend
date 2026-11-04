@@ -18,9 +18,9 @@ jobs:
   test:
     strategy:
       fail-fast: false
-      # macOS 暂未纳入：当前未做兼容，先保证 Linux 与 Windows 通过。
+      # C ABI 插件需要覆盖三大桌面平台；世界库测试在 macOS 上也纳入矩阵。
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -28,5 +28,7 @@ jobs:
         run: cmake -S olam -B build/olam -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: 编译世界库与测试
         run: cmake --build build/olam --config Release --parallel 4
-      - name: 运行空间测试
+      - name: 运行世界库测试
         run: ctest --test-dir build/olam --build-config Release --output-on-failure
+      - name: C ABI 插件冒烟测试
+        run: ctest --test-dir build/olam --build-config Release -R plugin --output-on-failure

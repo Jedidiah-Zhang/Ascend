@@ -44,7 +44,7 @@ PackageLibraryPanel::PackageLibraryPanel(const PanelContext& context, QWidget* p
     layout->addLayout(actions);
     table_ = new QTableWidget(this);
     table_->setObjectName("modulePackageTable");
-    table_->setColumnCount(7);
+    table_->setColumnCount(8);
     table_->setHorizontalHeaderLabels(
         {ui_text(texts, "workbench.table.package_definition", "Definition"),
          ui_text(texts, "workbench.table.package_version", "Version"),
@@ -52,7 +52,8 @@ PackageLibraryPanel::PackageLibraryPanel(const PanelContext& context, QWidget* p
          ui_text(texts, "workbench.table.package_state", "State"),
          ui_text(texts, "workbench.table.package_declarations", "Declarations"),
          ui_text(texts, "workbench.table.package_requirements", "Requirements"),
-         ui_text(texts, "workbench.table.package_resources", "Resources")});
+         ui_text(texts, "workbench.table.package_resources", "Resources"),
+         ui_text(texts, "workbench.table.package_carrier", "Carrier")});
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -77,6 +78,14 @@ void PackageLibraryPanel::render(const std::vector<session::ModulePackageView>& 
         table_->setItem(row, 4, new QTableWidgetItem(QString::number(package.declarations)));
         table_->setItem(row, 5, new QTableWidgetItem(QString::number(package.requirements)));
         table_->setItem(row, 6, new QTableWidgetItem(QString::number(package.resources)));
+        table_->setItem(row, 7,
+                        new QTableWidgetItem(package.dynamic
+                                                 ? ui_text(*context_.texts,
+                                                           "workbench.module.carrier_plugin",
+                                                           "C ABI plugin")
+                                                 : ui_text(*context_.texts,
+                                                           "workbench.module.carrier_builtin",
+                                                           "Built-in")));
     }
 }
 

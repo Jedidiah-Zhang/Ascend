@@ -278,6 +278,9 @@
     "workbench.waveform.observations": "观测",
     "workbench.waveform.overflow": "溢出",
     "workbench.waveform.series": "序列",
-    "workbench.waveform.signal": "信号"
+    "workbench.waveform.signal": "信号",
+    "workbench.table.package_carrier": "载体",
+    "workbench.module.carrier_builtin": "内置",
+    "workbench.module.carrier_plugin": "C ABI 插件"
   }
 }

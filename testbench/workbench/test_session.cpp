@@ -1274,6 +1274,7 @@ void space_module() {
     CHECK(!package.stateless);
     CHECK(package.state_contract == olam::module::space_state_contract);
     CHECK(package.resources == 1);
+    CHECK(!package.dynamic);
     const auto modules = session->available_modules();
     CHECK(std::find(modules.begin(), modules.end(), olam::module::space_definition) != modules.end());
 
@@ -1423,6 +1424,7 @@ void dynamic_module_package() {
     CHECK(session->load_module_package(read_text_file(WORKBENCH_SPACE_PACKAGE)).ok);
     CHECK(session->module_packages().size() == 1);
     CHECK(!session->module_packages().front().stateless);
+    CHECK(session->module_packages().front().dynamic);
 
     CHECK(session->new_system("动态空间系统").ok);
     CHECK(session->add_module(olam::module::space_definition, "yard").ok);

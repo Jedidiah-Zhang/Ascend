@@ -2655,6 +2655,7 @@ std::vector<ModulePackageView> Session::module_packages() const {
         view.declarations = entry.declarations;
         view.requirements = entry.requirements;
         view.resources = entry.resources;
+        view.dynamic = entry.dynamic;
         result.push_back(std::move(view));
     }
     return result;

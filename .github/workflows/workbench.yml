@@ -45,3 +45,5 @@ jobs:
         run: cmake --build build/workbench --config Release --parallel 4
       - name: 运行会话与界面测试
         run: ctest --test-dir build/workbench --build-config Release --output-on-failure
+      - name: C ABI 动态包冒烟测试
+        run: ctest --test-dir build/workbench --build-config Release -R dynamic_module_package --output-on-failure

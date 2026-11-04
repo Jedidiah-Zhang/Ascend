@@ -1297,6 +1297,7 @@ void TestWorkbench::spaceModulePackage() {
     QCOMPARE(table->item(0, 3)->text(), QStringLiteral("olam.space.state.v1"));
     QCOMPARE(table->item(0, 4)->text(), QStringLiteral("13"));
     QCOMPARE(table->item(0, 6)->text(), QStringLiteral("1"));
+    QCOMPARE(table->item(0, 7)->text(), QStringLiteral("内置"));
 
     // 系统编辑器可用该定义添加实例，并按默认配置展开空间字段。
     window->findChild<QAction*>("systemEditorAction")->trigger();

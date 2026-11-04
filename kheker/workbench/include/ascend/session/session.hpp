@@ -285,6 +285,7 @@ struct ModulePackageView {
     std::size_t declarations = 0;
     std::size_t requirements = 0;
     std::size_t resources = 0;
+    bool dynamic = false;
 };
 
 // 一条运行记录的列表项：摘要来自记录 meta 段，不解码轨迹。
