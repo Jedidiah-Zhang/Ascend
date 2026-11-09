@@ -94,14 +94,15 @@ public:
 
     // 在指定作用域新增子作用域；名称非空、不含 '/' 且同层唯一，否则报告 invalid_assembly。
     void add_scope(const std::string& name, const std::string& scope = {});
-    // 移除子作用域及其后代；父作用域中引用该子作用域的连接、转接与导出一并移除。
-    // 名称非法或子作用域不存在报告 invalid_assembly；根作用域不可移除。
+    // 移除子作用域及其后代；父作用域及祖先中引用该子作用域接口的连接、转接与导出
+    // 一并级联移除。名称非法或子作用域不存在报告 invalid_assembly；根作用域不可移除。
     void remove_scope(const std::string& name, const std::string& scope = {});
     // 在指定作用域加入实例；定义标识与实例名在实例化时由工厂核对。
     void add_instance(std::string definition, std::string name, Config config = {},
                       const std::string& scope = {});
     // 移除实例（按名称，取首个）；同名实例不存在报告 invalid_assembly。同一作用域内引用
-    // 该实例的连接、转接与导出一并移除，作用域本身不变。
+    // 该实例的连接、转接与导出一并移除；被移除接口在父作用域及祖先中的引用级联清理。
+    // scope 为实例所在作用域路径，空字符串为根作用域。
     void remove_instance(const std::string& name, const std::string& scope = {});
     // 声明或更新模块包版本需求；定义标识不能为空（invalid_assembly）。
     // 空版本不限定项目包版本；同定义已有不同版本的载入包时由宿主报告冲突。
@@ -117,9 +118,11 @@ public:
     void forward_inherited(std::string requirement, Reference child_requirement,
                            const std::string& scope = {});
     // 移除一条需求转接（按本作用域需求名，取首个）；返回是否存在。
+    // 父作用域及祖先中对该转接的引用级联清理。
     bool remove_forward(const std::string& requirement, const std::string& scope = {});
     void export_symbol(std::string name, Reference child_symbol, const std::string& scope = {});
     // 移除一条接口导出（按本作用域公开名，取首个）；返回是否存在。
+    // 父作用域及祖先中对该导出的引用级联清理。
     bool remove_export(const std::string& name, const std::string& scope = {});
 
     // 读取入口：作用域路径（含根，空字符串）按路径排序；实例快照按加入顺序返回。

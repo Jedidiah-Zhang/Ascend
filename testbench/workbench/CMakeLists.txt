@@ -121,6 +121,7 @@ if(TARGET ascend_workbench_ui)
         modulePackageFolderLoad
         systemEditorAssembly
         nestedSystemEditor
+        deepNestedSystemEditor
         startPageResearch
         recordTabKeepsSampleDetail
         dockTitleDoubleClick
@@ -151,6 +152,7 @@ if(TARGET ascend_workbench_ui)
         workbench.modulePackageFolderLoad
         workbench.systemEditorAssembly
         workbench.nestedSystemEditor
+        workbench.deepNestedSystemEditor
         workbench.startPageResearch
         workbench.recordTabKeepsSampleDetail
         workbench.dockTitleDoubleClick

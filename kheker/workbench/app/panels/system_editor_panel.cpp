@@ -407,6 +407,7 @@ void SystemEditorPanel::render() {
                 }
                 child->setText(2, detail);
                 child->setData(0, kInterfaceRole, QStringLiteral("forward"));
+                child->setData(0, kForwardedRole, link.forward.has_value() ? 1 : 0);
             } else if (link.direct.has_value()) {
                 child->setText(2, reference_text(*link.direct));
             } else if (link.forward.has_value()) {
@@ -438,11 +439,19 @@ void SystemEditorPanel::render() {
                                                             from_utf8(declaration.result_type)));
             if (scope_export) {
                 const auto* symbol_export = find_export(owner_scope, symbol);
-                child->setText(2, symbol_export != nullptr
-                                      ? ui_text(texts, "workbench.editor.export_target", "export → %1")
-                                            .arg(reference_text(symbol_export->target))
-                                      : ui_text(texts, "workbench.editor.export_target", "export → %1")
-                                            .arg(QString()));
+                QString detail = symbol_export != nullptr
+                                     ? ui_text(texts, "workbench.editor.export_target", "export → %1")
+                                           .arg(reference_text(symbol_export->target))
+                                     : ui_text(texts, "workbench.editor.export_target", "export → %1")
+                                           .arg(QString());
+                if (const auto* parent_export = find_export_target(containing_scope, module, symbol);
+                    parent_export != nullptr) {
+                    detail += QStringLiteral(" · ") +
+                              ui_text(texts, "workbench.editor.exported_as", "exported as %1")
+                                  .arg(from_utf8(parent_export->name));
+                    child->setData(0, kExportedRole, 1);
+                }
+                child->setText(2, detail);
                 child->setData(0, kInterfaceRole, QStringLiteral("export"));
             } else if (const auto* source_export =
                            find_export_target(containing_scope, module, symbol);
@@ -647,17 +656,18 @@ void SystemEditorPanel::update_controls(bool closing) {
     const bool instance = kind == QStringLiteral("instance");
     const bool scope = kind == QStringLiteral("scope");
     const QString interface = selected_interface();
-    const bool root_scope = selected_scope().isEmpty();
+    // 转接/导出动作落在连接作用域（父作用域）；作用域接口条目可在父作用域继续转接/导出。
+    const QString connection_scope =
+        item != nullptr ? item->data(0, kScopeRole).toString() : QString();
+    const bool root_scope = connection_scope.isEmpty();
     const bool has_interface_name = !interface_edit_->text().trimmed().isEmpty();
     const bool forwarded = item != nullptr && item->data(0, kForwardedRole).toInt() == 1;
     const bool connected = item != nullptr && item->data(0, kConnectedRole).toInt() == 1;
     const bool exported = item != nullptr && item->data(0, kExportedRole).toInt() == 1;
 
     forward_button_->setEnabled(editable && requirement && !forwarded && !connected &&
-                                interface != QStringLiteral("forward") && !root_scope &&
-                                has_interface_name);
-    export_button_->setEnabled(editable && declaration && !exported &&
-                               interface != QStringLiteral("export") && !root_scope &&
+                                !root_scope && has_interface_name);
+    export_button_->setEnabled(editable && declaration && !exported && !root_scope &&
                                has_interface_name);
     remove_button_->setEnabled(editable && (instance || scope || requirement ||
                                                     (declaration && interface == QStringLiteral("export"))));
@@ -742,7 +752,6 @@ void SystemEditorPanel::disconnect_requirement() {
 void SystemEditorPanel::forward_requirement() {
     QTreeWidgetItem* item = system_tree_->currentItem();
     if (item == nullptr || selected_kind() != QStringLiteral("requirement")) return;
-    if (item->data(0, kInterfaceRole).toString() == QStringLiteral("forward")) return;
     const QString name = interface_edit_->text().trimmed();
     if (name.isEmpty()) return;
     context_.forward_requirement(name, item->data(0, kModuleRole).toString(),
@@ -753,7 +762,6 @@ void SystemEditorPanel::forward_requirement() {
 void SystemEditorPanel::export_symbol() {
     QTreeWidgetItem* item = system_tree_->currentItem();
     if (item == nullptr || selected_kind() != QStringLiteral("declaration")) return;
-    if (item->data(0, kInterfaceRole).toString() == QStringLiteral("export")) return;
     const QString name = interface_edit_->text().trimmed();
     if (name.isEmpty()) return;
     context_.export_symbol(name, item->data(0, kModuleRole).toString(),

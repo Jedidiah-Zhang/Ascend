@@ -1717,6 +1717,32 @@ void nested_system_assembly() {
     CHECK(session->set_spec_observations({{"x", {"plant", "x"}}}).ok);
     CHECK(session->check().passed);
     CHECK(session->apply().ok);
+
+    // 三层作用域：接口可在父作用域继续转接/导出，最终由根作用域使用。
+    auto deep = example_session();
+    CHECK(deep->new_system("三层系统").ok);
+    CHECK(deep->add_scope("outer").ok);
+    CHECK(deep->add_scope("inner", "outer").ok);
+    CHECK(deep->add_module(example::plant_definition, "plant", {}, "outer/inner").ok);
+    CHECK(deep->add_module(example::stimulus_definition, "input").ok);
+    CHECK(deep->forward_requirement("input", {"plant", "input"}, "outer/inner").ok);
+    CHECK(deep->forward_requirement("input", {"inner", "input"}, "outer").ok);
+    CHECK(deep->connect_requirement({"outer", "input"}, {"input", "value"}).ok);
+    CHECK(deep->export_symbol("advance", {"plant", "advance"}, "outer/inner").ok);
+    CHECK(deep->export_symbol("advance", {"inner", "advance"}, "outer").ok);
+    CHECK(deep->export_symbol("x", {"plant", "x"}, "outer/inner").ok);
+    CHECK(deep->export_symbol("x", {"inner", "x"}, "outer").ok);
+    CHECK(deep->set_spec_advance({"outer", "advance"}).ok);
+    CHECK(deep->set_spec_observations({{"x", {"outer", "x"}}}).ok);
+    CHECK(deep->check().passed);
+    CHECK(deep->apply().ok);
+    CHECK(deep->run(1).ok);
+    const auto deep_trace = deep->trace(0);
+    const auto deep_x = std::find(deep_trace.variables.begin(), deep_trace.variables.end(), "x");
+    CHECK(deep_x != deep_trace.variables.end());
+    CHECK(deep_trace.samples.back().observations[
+              static_cast<std::size_t>(deep_x - deep_trace.variables.begin())]
+              .integer == 1);
 }
 
 void system_file() {

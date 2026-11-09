@@ -208,6 +208,8 @@
     "plugin_loader.identity": "插件身份与模块清单不一致",
     "plugin_loader.callbacks": "插件回调表不完整",
     "plugin_loader.state": "有状态插件缺少状态捕获或恢复回调",
-    "plugin_loader.default_config": "插件默认构造配置非法"
+    "plugin_loader.default_config": "插件默认构造配置非法",
+    "assembly.forward.duplicate": "需求转接名称重复：“{name}”",
+    "assembly.export.duplicate": "接口导出名称重复：“{name}”"
   }
 }

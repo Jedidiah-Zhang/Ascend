@@ -45,12 +45,11 @@ void ConfigPanel::render_instances(const std::vector<session::InstanceView>& ins
             instance.scope.empty()
                 ? from_utf8(instance.name)
                 : from_utf8(instance.scope) + QLatin1Char('/') + from_utf8(instance.name);
-        QString object_suffix = from_utf8(instance.name);
-        if (!instance.scope.empty()) {
-            object_suffix = from_utf8(instance.scope);
-            object_suffix.replace(QLatin1Char('/'), QLatin1Char('_'));
-            object_suffix += QLatin1Char('_') + from_utf8(instance.name);
-        }
+        // 根实例名不能包含 '/'，因此完整路径作为对象名不会与根实例冲突。
+        const QString object_suffix =
+            instance.scope.empty()
+                ? from_utf8(instance.name)
+                : from_utf8(instance.scope) + QLatin1Char('/') + from_utf8(instance.name);
         auto* box = new QGroupBox(
             ui_text(texts, "workbench.config.instance_box", "%1 (definition %2)")
                 .arg(display_name, from_utf8(instance.definition)),

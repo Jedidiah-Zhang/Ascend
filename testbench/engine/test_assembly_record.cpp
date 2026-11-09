@@ -452,6 +452,25 @@ void editing_instance() {
     failure(ErrorCode::invalid_assembly, {"", {}}, [&] { removable.remove_scope(""); });
     Engine remaining = removable.instantiate(directory);
     CHECK(remaining.check().empty());
+
+    // 三层作用域：接口逐层转接/导出后由根作用域使用。
+    AssemblyDefinition deep;
+    deep.add_scope("outer");
+    deep.add_scope("inner", "outer");
+    deep.add_instance(kAccumulator, "dut", Config::object({{"initial", Config::integer(0)}}),
+                      "outer/inner");
+    deep.add_instance(kStimulus, "root_input", Config::object({{"value", Config::integer(2)}}));
+    deep.forward_inherited("input", {"dut", "input"}, "outer/inner");
+    deep.forward_inherited("input", {"inner", "input"}, "outer");
+    deep.connect({"outer", "input"}, {"root_input", "value"});
+    deep.export_symbol("advance", {"dut", "advance"}, "outer/inner");
+    deep.export_symbol("advance", {"inner", "advance"}, "outer");
+    deep.export_symbol("output", {"dut", "output"}, "outer/inner");
+    deep.export_symbol("output", {"inner", "output"}, "outer");
+    Engine deep_engine = deep.instantiate(directory);
+    deep_engine.seal();
+    deep_engine.bind_method<void>({"outer", "advance"})();
+    CHECK(deep_engine.bind_value<Integer>({"outer", "output"}).read() == 4);
 }
 
 void config_text() {
@@ -687,6 +706,18 @@ void record_errors() {
 
     // 省略可选数组与配置仍是有效记录。
     parse(R"({"format":"ascend.assembly","version":1})");
+
+    // 转接与导出名称在同一作用域内不得重复。
+    CHECK(failure(ErrorCode::invalid_assembly, {}, [&] {
+        parse(R"JSON({"format":"ascend.assembly","version":1,"scopes":[{"name":"g","forwards":[
+            {"requirement":"input","target":{"module":"m","requirement":"input"}},
+            {"requirement":"input","target":{"module":"n","requirement":"input"}}]}]})JSON");
+    }).path == "/scopes/0/forwards/1/requirement");
+    CHECK(failure(ErrorCode::invalid_assembly, {}, [&] {
+        parse(R"JSON({"format":"ascend.assembly","version":1,"scopes":[{"name":"g","exports":[
+            {"name":"output","target":{"module":"m","symbol":"value"}},
+            {"name":"output","target":{"module":"n","symbol":"value"}}]}]})JSON");
+    }).path == "/scopes/0/exports/1/name");
 }
 
 void builder_errors() {
@@ -706,6 +737,10 @@ void builder_errors() {
     CHECK(rejects([&] { definition.add_instance("example.stimulus", "dut", Config{}, "absent"); }));
     CHECK(rejects([&] { definition.forward_inherited("input", {"dut", "input"}); }));
     CHECK(rejects([&] { definition.export_symbol("output", {"dut", "value"}); }));
+    definition.forward_inherited("input", {"dut", "input"}, "group");
+    CHECK(rejects([&] { definition.forward_inherited("input", {"dut", "input"}, "group"); }));
+    definition.export_symbol("output", {"dut", "value"}, "group");
+    CHECK(rejects([&] { definition.export_symbol("output", {"dut", "value"}, "group"); }));
     definition.add_instance("example.stimulus", "dut", Config{}, "group");
     CHECK(AssemblyDefinition::parse(definition.to_json(), "memory.record").to_json() == definition.to_json());
 }

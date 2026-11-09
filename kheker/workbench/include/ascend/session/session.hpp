@@ -453,13 +453,14 @@ public:
     const std::string& system_name() const noexcept { return system_name_; }
     // 增加子作用域：名称非空、不含 '/' 且在父作用域唯一；scope 为父作用域路径。
     OperationResult add_scope(const std::string& name, const std::string& scope = {});
-    // 移除子作用域及其后代；父作用域中引用它的连接、转接与导出一并移除。
+    // 移除子作用域及其后代；父作用域及祖先中引用其接口的连接、转接与导出一并级联移除。
     OperationResult remove_scope(const std::string& name, const std::string& scope = {});
     // 增加模块实例：定义须可用，实例名非空、不含 '/' 且在 scope 内唯一；
     // 定义来自已载入模块包时登记其版本需求。
     OperationResult add_module(std::string definition, std::string instance, Config config = {},
                                const std::string& scope = {});
-    // 移除模块实例；引用它的连接一并移除，最后一个使用者移除后清除模块需求。
+    // 移除模块实例（scope 为实例所在作用域）；引用它的连接与接口一并移除，父/祖先引用
+    // 级联清理，最后一个使用者移除后清除模块需求。
     OperationResult remove_module(const std::string& instance, const std::string& scope = {});
     // 连接需求到提供方：同一需求已有连接时替换；引用在 scope 内解析。
     OperationResult connect_requirement(const Reference& requirement, const Reference& provider,

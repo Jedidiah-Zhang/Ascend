@@ -390,7 +390,17 @@ void AssemblyDefinition::forward_inherited(std::string requirement, Reference ch
                       {{engine_text_domain, "assembly.root.forward"}, "The root scope cannot forward requirements"},
                       source_, {});
     }
-    require_scope(scope).forwards.push_back({std::move(requirement), std::move(child_requirement)});
+    Scope& target = require_scope(scope);
+    for (const auto& existing : target.forwards) {
+        if (existing.requirement == requirement) {
+            fail_assembly(ErrorCode::invalid_assembly, {scope, requirement},
+                          {{engine_text_domain, "assembly.forward.duplicate"},
+                           "Duplicate forward name '{name}'",
+                           {{"name", requirement}}},
+                          source_, {});
+        }
+    }
+    target.forwards.push_back({std::move(requirement), std::move(child_requirement)});
 }
 
 bool AssemblyDefinition::remove_forward(const std::string& requirement, const std::string& scope) {
@@ -411,7 +421,17 @@ void AssemblyDefinition::export_symbol(std::string name, Reference child_symbol,
                       {{engine_text_domain, "assembly.root.export"}, "The root scope cannot export symbols"},
                       source_, {});
     }
-    require_scope(scope).exports.push_back({std::move(name), std::move(child_symbol)});
+    Scope& target = require_scope(scope);
+    for (const auto& existing : target.exports) {
+        if (existing.name == name) {
+            fail_assembly(ErrorCode::invalid_assembly, {scope, name},
+                          {{engine_text_domain, "assembly.export.duplicate"},
+                           "Duplicate export name '{name}'",
+                           {{"name", name}}},
+                          source_, {});
+        }
+    }
+    target.exports.push_back({std::move(name), std::move(child_symbol)});
 }
 
 bool AssemblyDefinition::remove_export(const std::string& name, const std::string& scope) {
@@ -760,6 +780,14 @@ void AssemblyDefinition::read_scope(const Config& object, const std::string& rec
             if (!target) {
                 fail_record(ErrorCode::invalid_assembly, record_join(item, "target"), {{engine_text_domain, "assembly.field.target_required"}, "Field 'target' is required"});
             }
+            for (const auto& existing : scope.forwards) {
+                if (existing.requirement == requirement->string()) {
+                    fail_record(ErrorCode::invalid_assembly, record_join(item, "requirement"),
+                                {{engine_text_domain, "assembly.forward.duplicate"},
+                                 "Duplicate forward name '{name}'",
+                                 {{"name", requirement->string()}}});
+                }
+            }
             scope.forwards.push_back(
                 {requirement->string(), read_reference(*target, record_join(item, "target"), "requirement")});
         }
@@ -788,6 +816,14 @@ void AssemblyDefinition::read_scope(const Config& object, const std::string& rec
             const Config* target = element.find("target");
             if (!target) {
                 fail_record(ErrorCode::invalid_assembly, record_join(item, "target"), {{engine_text_domain, "assembly.field.target_required"}, "Field 'target' is required"});
+            }
+            for (const auto& existing : scope.exports) {
+                if (existing.name == name_field->string()) {
+                    fail_record(ErrorCode::invalid_assembly, record_join(item, "name"),
+                                {{engine_text_domain, "assembly.export.duplicate"},
+                                 "Duplicate export name '{name}'",
+                                 {{"name", name_field->string()}}});
+                }
             }
             scope.exports.push_back({name_field->string(), read_reference(*target, record_join(item, "target"), "symbol")});
         }
