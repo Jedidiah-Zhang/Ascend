@@ -48,6 +48,7 @@
     "assembly.scope.duplicate": "作用域名重复：“{name}”",
     "assembly.scope.invalid_name": "作用域名必须非空且不含“/”",
     "assembly.scope.missing": "找不到装配作用域",
+    "assembly.scope.remove_missing": "父作用域中找不到要移除的子作用域“{name}”",
     "assembly.scope.object_required": "作用域必须是对象",
     "engine.connection.duplicate": "该需求已经建立连接",
     "engine.connection.forward_empty_name": "转接的需求名称为空",

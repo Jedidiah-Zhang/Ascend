@@ -378,11 +378,80 @@ void editing_instance() {
     composed.connect({"dut", "input"}, {"input", "value"}, "group");
     composed.forward_inherited("input", {"dut", "input"}, "group");
     composed.export_symbol("output", {"dut", "output"}, "group");
+    composed.add_instance(kStimulus, "root_input", Config::object({{"value", Config::integer(2)}}));
+    composed.add_instance(kAccumulator, "sink", Config::object({{"initial", Config::integer(0)}}));
+    composed.connect({"group", "input"}, {"root_input", "value"});
+    composed.connect({"sink", "input"}, {"group", "output"});
+    CHECK(composed.has_scope("group"));
+    CHECK(!composed.has_scope("missing"));
+    CHECK(composed.forwards("group").size() == 1);
+    CHECK(composed.exports("group").size() == 1);
+    CHECK(composed.connections("").size() == 2);
     composed.remove_instance("dut", "group");
     CHECK(composed.instances("group").size() == 1);
+    CHECK(composed.forwards("group").empty());  // 引用被移除实例的转接与导出同时清除
+    CHECK(composed.exports("group").empty());
+    CHECK(composed.connections("").empty());  // 祖先引用随接口移除级联清理
     const std::string composed_text = composed.to_json();
     CHECK(composed_text.find("dut") == std::string::npos);  // 实例、连接、转接与导出均不再引用
     CHECK((AssemblyDefinition::parse(composed_text).scopes() == std::vector<std::string>{"", "group"}));
+
+    // 转接与导出的移除；移除后再加回，保持可编辑；父作用域引用级联清理。
+    composed.forward_inherited("input", {"input", "drive"}, "group");
+    composed.export_symbol("value", {"input", "value"}, "group");
+    composed.connect({"group", "input"}, {"root_input", "drive"});
+    composed.connect({"sink", "input"}, {"group", "value"});
+    CHECK(composed.connections("").size() == 2);
+    CHECK(composed.remove_forward("input", "group"));
+    CHECK(!composed.remove_forward("input", "group"));
+    CHECK(composed.connections("").size() == 1);
+    CHECK(composed.remove_export("value", "group"));
+    CHECK(!composed.remove_export("value", "group"));
+    CHECK(composed.connections("").empty());
+    composed.forward_inherited("input", {"input", "drive"}, "group");
+    composed.export_symbol("value", {"input", "value"}, "group");
+    CHECK(composed.forwards("group").size() == 1);
+    CHECK(composed.exports("group").size() == 1);
+
+    // 移除子作用域：后代、父作用域中的连接/转接/导出一并清除。
+    AssemblyDefinition removable;
+    removable.add_scope("outer");
+    removable.add_scope("inner", "outer");
+    removable.add_instance(kAccumulator, "dut", Config::object({{"initial", Config::integer(0)}}),
+                           "outer/inner");
+    removable.add_instance(kStimulus, "input", Config::object({{"value", Config::integer(2)}}),
+                           "outer/inner");
+    removable.add_instance(kStimulus, "root_input", Config::object({{"value", Config::integer(2)}}));
+    removable.connect({"dut", "input"}, {"input", "value"}, "outer/inner");
+    removable.forward_inherited("input", {"dut", "input"}, "outer/inner");
+    removable.export_symbol("output", {"dut", "output"}, "outer/inner");
+    removable.forward_inherited("input", {"inner", "input"}, "outer");
+    removable.export_symbol("output", {"inner", "output"}, "outer");
+    removable.connect({"outer", "input"}, {"root_input", "value"});
+    removable.add_instance(kAccumulator, "sink", Config::object({{"initial", Config::integer(0)}}));
+    removable.connect({"sink", "input"}, {"outer", "output"});  // 父作用域以子作用域作为提供方
+    CHECK((removable.scopes() == std::vector<std::string>{"", "outer", "outer/inner"}));
+    CHECK(removable.forwards("outer").size() == 1);
+    CHECK(removable.exports("outer").size() == 1);
+    // 删除内层作用域：外层的转接/导出清除，根作用域引用同步级联。
+    removable.remove_scope("inner", "outer");
+    CHECK((removable.scopes() == std::vector<std::string>{"", "outer"}));
+    CHECK(removable.forwards("outer").empty());
+    CHECK(removable.exports("outer").empty());
+    CHECK(removable.connections("").empty());
+    removable.remove_scope("outer");
+    CHECK((removable.scopes() == std::vector<std::string>{""}));
+    CHECK(removable.instances("").size() == 2);  // root_input 与 sink
+    const std::string removable_text = removable.to_json();
+    CHECK(removable_text.find("outer") == std::string::npos);
+    CHECK(removable_text.find("dut") == std::string::npos);
+    removable.remove_instance("sink");
+    CHECK(removable.instances("").size() == 1);
+    failure(ErrorCode::invalid_assembly, {"outer", {}}, [&] { removable.remove_scope("outer"); });
+    failure(ErrorCode::invalid_assembly, {"a/b", {}}, [&] { removable.remove_scope("a/b"); });
+    failure(ErrorCode::invalid_assembly, {"", {}}, [&] { removable.remove_scope(""); });
+    Engine remaining = removable.instantiate(directory);
+    CHECK(remaining.check().empty());
 }
 
 void config_text() {

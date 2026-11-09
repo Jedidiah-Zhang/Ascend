@@ -33,10 +33,20 @@ private:
     void on_system_definition_changed();
     void on_spec_advance_changed();
     void on_spec_observations_changed();
+    void add_scope();
     void add_module();
-    void remove_module();
+    void remove_selected();
     void connect_requirement();
     void disconnect_requirement();
+    void forward_requirement();
+    void export_symbol();
+    // 当前选择所在的父作用域；未选择时为根作用域。
+    QString selected_scope() const;
+    // 当前选择节点的类别与参数；未选择时为空。
+    QString selected_kind() const;
+    QString selected_module() const;
+    QString selected_symbol() const;
+    QString selected_interface() const;
     // 内部刷新：沿用外壳最近一次传入的关闭标记。
     void refresh_controls();
 
@@ -48,11 +58,16 @@ private:
     QComboBox* definition_combo_ = nullptr;
     QLineEdit* instance_edit_ = nullptr;
     QPushButton* add_module_button_ = nullptr;
+    QLineEdit* scope_edit_ = nullptr;
+    QPushButton* add_scope_button_ = nullptr;
+    QLineEdit* interface_edit_ = nullptr;
+    QPushButton* forward_button_ = nullptr;
+    QPushButton* export_button_ = nullptr;
     QTreeWidget* system_tree_ = nullptr;
     QComboBox* provider_combo_ = nullptr;
     QPushButton* connect_button_ = nullptr;
     QPushButton* disconnect_button_ = nullptr;
-    QPushButton* remove_module_button_ = nullptr;
+    QPushButton* remove_button_ = nullptr;
     QPushButton* editor_check_button_ = nullptr;
     QPushButton* editor_apply_button_ = nullptr;
     QComboBox* advance_combo_ = nullptr;
@@ -60,6 +75,7 @@ private:
     QLabel* input_label_ = nullptr;
     bool editor_updating_ = false;
     bool shell_closing_ = false;
+    QString interface_default_;
 };
 
 }  // namespace ascend::workbench

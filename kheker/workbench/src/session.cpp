@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <limits>
 #include <locale>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -198,6 +199,21 @@ CatalogView collect_catalog(const Source& source, const AdapterRegistry& adapter
         view.modules.push_back(std::move(node));
     }
     return view;
+}
+
+// 转接与导出记录来自装配草稿；引擎目录只暴露解析后的需求与公开符号。
+// Engine::scopes() 同时列出实例模块路径，因此单独标记真正的装配作用域。
+void attach_scope_interfaces(CatalogView& view, const AssemblyDefinition& assembly) {
+    for (auto& node : view.modules) {
+        node.scope = assembly.has_scope(node.path);
+        if (!node.scope) continue;
+        for (const auto& forward : assembly.forwards(node.path)) {
+            node.forwards.push_back(ForwardView{forward.requirement, forward.target});
+        }
+        for (const auto& symbol : assembly.exports(node.path)) {
+            node.exports.push_back(ExportView{symbol.name, symbol.target});
+        }
+    }
 }
 
 const DeclarationView* root_declaration(const CatalogView& catalog, const Reference& reference) {
@@ -805,6 +821,7 @@ std::vector<DiagnosticView> Session::refresh_catalog() {
     try {
         Engine engine = draft_.instantiate(factories_);
         catalog_ = collect_catalog(engine, *adapters_, texts_, locale_, draft_revision_);
+        attach_scope_interfaces(catalog_, draft_);
         return {};
     } catch (const EngineError& error) {
         // 保留旧目录：编辑器继续显示上一次可实例化的结构，诊断提示当前草稿的问题。
@@ -814,7 +831,7 @@ std::vector<DiagnosticView> Session::refresh_catalog() {
 
 bool Session::derive_spec_inputs() {
     // 输入映射按公开单参数方法推导；引用未变的既有输入沿用原名（如示例的 "a"）。
-    // 根作用域目录含各实例的公开声明（引用为「实例/符号」）；切片 A 只看根作用域实例。
+    // 根作用域目录含直接实例与子作用域导出的公开声明；嵌套内部只经导出进入规格。
     std::map<Reference, std::string> existing;
     for (const auto& item : spec_.inputs) existing.emplace(item.second, item.first);
     std::vector<std::pair<std::string, Reference>> derived;
@@ -858,11 +875,67 @@ OperationResult Session::reject_without_system() const {
     return reject(session_text("session.system.empty", "Create or open a causal system first"));
 }
 
-bool Session::has_instance(const std::string& name) const {
-    for (const auto& instance : draft_.instances()) {
+std::optional<OperationResult> Session::unknown_scope_result(const std::string& scope) {
+    if (draft_.has_scope(scope)) return std::nullopt;
+    return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, {scope, {}},
+                                                  "session.system.unknown_scope",
+                                                  "No scope '{scope}' in the draft assembly",
+                                                  {{"scope", scope}}),
+                                       texts_, locale_)});
+}
+
+bool Session::has_instance(const std::string& scope, const std::string& name) const {
+    if (!draft_.has_scope(scope)) return false;
+    for (const auto& instance : draft_.instances(scope)) {
         if (instance.name == name) return true;
     }
     return false;
+}
+
+bool Session::has_direct_module(const std::string& scope, const std::string& module) const {
+    if (module.empty() || module.find('/') != std::string::npos) return false;
+    if (has_instance(scope, module)) return true;
+    const std::string path = scope.empty() ? module : scope + "/" + module;
+    return draft_.has_scope(path);
+}
+
+Reference Session::local_reference(const std::string& scope, const Reference& reference) const {
+    if (scope.empty()) return reference;
+    const std::string prefix = scope + "/";
+    if (reference.module.compare(0, prefix.size(), prefix) != 0) return reference;
+    return Reference{reference.module.substr(prefix.size()), reference.symbol};
+}
+
+std::string Session::local_name(const std::string& scope, const std::string& name) const {
+    if (scope.empty()) return name;
+    const std::string prefix = scope + "/";
+    if (name.compare(0, prefix.size(), prefix) != 0) return name;
+    return name.substr(prefix.size());
+}
+
+void Session::prune_module_requirements(const std::set<std::string>& definitions) {
+    if (definitions.empty()) return;
+    std::set<std::string> used;
+    for (const auto& scope : draft_.scopes()) {
+        for (const auto& instance : draft_.instances(scope)) {
+            if (definitions.count(instance.definition) != 0) used.insert(instance.definition);
+        }
+    }
+    for (const auto& requirement : draft_.module_requirements()) {
+        if (definitions.count(requirement.definition) != 0 &&
+            used.count(requirement.definition) == 0) {
+            draft_.remove_module_requirement(requirement.definition);
+        }
+    }
+}
+
+OperationResult Session::finish_structure_edit() {
+    ++draft_revision_;
+    auto diagnostics = refresh_catalog();
+    if (derive_spec_inputs()) ++draft_revision_;
+    if (derive_spec_observations()) ++draft_revision_;
+    catalog_.revision = draft_revision_;
+    return finish(true, std::move(diagnostics));
 }
 
 std::string Session::implementation_of(const std::string& definition) const {
@@ -1136,6 +1209,7 @@ CheckReport Session::run_checks() {
             render_session(texts_, locale_, "session.check.note.diagnostics", "{count} diagnostics",
                            {{"count", std::to_string(diagnostics.size())}})});
         catalog_ = collect_catalog(engine, *adapters_, texts_, locale_, draft_revision_);
+        attach_scope_interfaces(catalog_, draft_);
         return report;
     }
     report.items.push_back(CheckItemView{
@@ -1146,6 +1220,7 @@ CheckReport Session::run_checks() {
         render_session(texts_, locale_, "session.check.note.scopes", "{count} scopes",
                        {{"count", std::to_string(engine.scopes().size())}})});
     catalog_ = collect_catalog(engine, *adapters_, texts_, locale_, draft_revision_);
+    attach_scope_interfaces(catalog_, draft_);
 
     bool passed = true;
 
@@ -1456,8 +1531,50 @@ OperationResult Session::new_system(std::string name) {
 
 std::vector<std::string> Session::available_modules() const { return factories_.definitions(); }
 
-OperationResult Session::add_module(std::string definition, std::string instance, Config config) {
+OperationResult Session::add_scope(const std::string& name, const std::string& scope) {
     if (phase_ == Phase::empty) return reject_without_system();
+    if (auto rejected = unknown_scope_result(scope)) return *rejected;
+    if (has_instance(scope, name)) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly,
+                                                      {scope.empty() ? name : scope + "/" + name, {}},
+                                                      "session.system.duplicate_child",
+                                                      "Scope '{scope}' already has a child named '{name}'",
+                                                      {{"scope", scope}, {"name", name}}),
+                                           texts_, locale_)});
+    }
+    try {
+        draft_.add_scope(name, scope);
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    return finish_structure_edit();
+}
+
+OperationResult Session::remove_scope(const std::string& name, const std::string& scope) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    if (auto rejected = unknown_scope_result(scope)) return *rejected;
+    const std::string path = scope.empty() ? name : scope + "/" + name;
+    const std::string prefix = path + "/";
+    std::set<std::string> removed_definitions;
+    for (const auto& candidate : draft_.scopes()) {
+        if (candidate != path && candidate.rfind(prefix, 0) != 0) continue;
+        for (const auto& instance : draft_.instances(candidate)) {
+            removed_definitions.insert(instance.definition);
+        }
+    }
+    try {
+        draft_.remove_scope(name, scope);
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    prune_module_requirements(removed_definitions);
+    return finish_structure_edit();
+}
+
+OperationResult Session::add_module(std::string definition, std::string instance, Config config,
+                                    const std::string& scope) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    if (auto rejected = unknown_scope_result(scope)) return *rejected;
     if (!factories_.contains(definition)) {
         return finish(false, {view_of(make_diagnostic(ErrorCode::unknown_definition, {instance, {}},
                                                       "session.system.unknown_definition",
@@ -1471,17 +1588,19 @@ OperationResult Session::add_module(std::string definition, std::string instance
                                                       "Instance name must be non-empty and must not contain '/'"),
                                            texts_, locale_)});
     }
-    if (has_instance(instance)) {
-        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, {instance, {}},
-                                                      "session.system.duplicate_instance",
-                                                      "Instance '{instance}' already exists",
-                                                      {{"instance", instance}}),
+    if (has_instance(scope, instance) ||
+        draft_.has_scope(scope.empty() ? instance : scope + "/" + instance)) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly,
+                                                      {scope.empty() ? instance : scope + "/" + instance, {}},
+                                                      "session.system.duplicate_child",
+                                                      "Scope '{scope}' already has a child named '{name}'",
+                                                      {{"scope", scope}, {"name", instance}}),
                                            texts_, locale_)});
     }
     if (config.is_null()) config = factories_.default_config(definition);  // 定义登记的默认构造配置
     const std::string requirement_definition = definition;
     try {
-        draft_.add_instance(std::move(definition), std::move(instance), std::move(config));
+        draft_.add_instance(std::move(definition), std::move(instance), std::move(config), scope);
         // 已载入的模块包随装配登记版本需求；内置定义不写需求。
         if (model_.modules && model_.modules->contains(requirement_definition)) {
             draft_.require_module(requirement_definition,
@@ -1490,85 +1609,236 @@ OperationResult Session::add_module(std::string definition, std::string instance
     } catch (const EngineError& error) {
         return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
     }
-    ++draft_revision_;
-    auto diagnostics = refresh_catalog();
-    if (derive_spec_inputs()) ++draft_revision_;
-    if (derive_spec_observations()) ++draft_revision_;
-    catalog_.revision = draft_revision_;
-    return finish(true, std::move(diagnostics));
+    return finish_structure_edit();
 }
 
-OperationResult Session::remove_module(const std::string& instance) {
+OperationResult Session::remove_module(const std::string& instance, const std::string& scope) {
     if (phase_ == Phase::empty) return reject_without_system();
+    if (auto rejected = unknown_scope_result(scope)) return *rejected;
+    const std::string local = local_name(scope, instance);
     std::string removed_definition;
-    for (const auto& item : draft_.instances("")) {
-        if (item.name == instance) {
+    for (const auto& item : draft_.instances(scope)) {
+        if (item.name == local) {
             removed_definition = item.definition;
             break;
         }
     }
     try {
-        draft_.remove_instance(instance);
+        draft_.remove_instance(local, scope);
     } catch (const EngineError& error) {
         return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
     }
-    if (!removed_definition.empty()) {
-        bool still_used = false;
-        for (const auto& scope : draft_.scopes()) {
-            for (const auto& item : draft_.instances(scope)) {
-                if (item.definition == removed_definition) {
-                    still_used = true;
-                    break;
-                }
-            }
-            if (still_used) break;
+    if (!removed_definition.empty()) prune_module_requirements({removed_definition});
+    return finish_structure_edit();
+}
+
+OperationResult Session::connect_requirement(const Reference& requirement, const Reference& provider,
+                                             const std::string& scope) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    if (auto rejected = unknown_scope_result(scope)) return *rejected;
+    const Reference local_requirement = local_reference(scope, requirement);
+    const Reference local_provider = local_reference(scope, provider);
+    if (local_requirement.symbol.empty() || local_provider.symbol.empty()) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, local_requirement,
+                                                      "session.system.invalid_reference",
+                                                      "A reference must name a direct child and a public interface"),
+                                           texts_, locale_)});
+    }
+    for (const auto& forward : draft_.forwards(scope)) {
+        if (forward.target == local_requirement) {
+            return finish(false, {view_of(make_diagnostic(
+                                               ErrorCode::invalid_assembly, local_requirement,
+                                               "session.system.requirement_forwarded",
+                                               "Requirement '{module}/{symbol}' is already forwarded; remove the forward first",
+                                               {{"module", local_requirement.module},
+                                                {"symbol", local_requirement.symbol}}),
+                                           texts_, locale_)});
         }
-        // 最后一个使用该定义的实例移除后，同步移除模块需求。
-        if (!still_used) draft_.remove_module_requirement(removed_definition);
     }
-    ++draft_revision_;
-    auto diagnostics = refresh_catalog();
-    if (derive_spec_inputs()) ++draft_revision_;
-    if (derive_spec_observations()) ++draft_revision_;
-    catalog_.revision = draft_revision_;
-    return finish(true, std::move(diagnostics));
+    const auto missing = [&](const Reference& reference) {
+        return !has_direct_module(scope, reference.module);
+    };
+    if (missing(local_requirement)) {
+        return finish(false, {view_of(make_diagnostic(
+                                           ErrorCode::invalid_assembly, local_requirement,
+                                           "session.system.missing_module",
+                                           "No module '{module}' in scope '{scope}'",
+                                           {{"module", local_requirement.module}, {"scope", scope}}),
+                                       texts_, locale_)});
+    }
+    if (missing(local_provider)) {
+        return finish(false, {view_of(make_diagnostic(
+                                           ErrorCode::invalid_assembly, local_provider,
+                                           "session.system.missing_module",
+                                           "No module '{module}' in scope '{scope}'",
+                                           {{"module", local_provider.module}, {"scope", scope}}),
+                                       texts_, locale_)});
+    }
+    draft_.disconnect(local_requirement, scope);  // 同一需求已有连接时替换
+    draft_.connect(local_requirement, local_provider, scope);
+    return finish_structure_edit();
 }
 
-OperationResult Session::connect_requirement(const Reference& requirement, const Reference& provider) {
+OperationResult Session::disconnect_requirement(const Reference& requirement,
+                                                const std::string& scope) {
     if (phase_ == Phase::empty) return reject_without_system();
-    if (!has_instance(requirement.module)) {
-        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, requirement,
-                                                      "session.system.missing_instance",
-                                                      "No instance '{instance}' in the draft assembly",
-                                                      {{"instance", requirement.module}}),
+    if (auto rejected = unknown_scope_result(scope)) return *rejected;
+    const Reference local = local_reference(scope, requirement);
+    for (const auto& forward : draft_.forwards(scope)) {
+        if (forward.target == local) {
+            return finish(false, {view_of(make_diagnostic(
+                                               ErrorCode::invalid_assembly, local,
+                                               "session.system.requirement_forwarded",
+                                               "Requirement '{module}/{symbol}' is already forwarded; remove the forward first",
+                                               {{"module", local.module}, {"symbol", local.symbol}}),
                                            texts_, locale_)});
+        }
     }
-    if (!provider.module.empty() && !has_instance(provider.module)) {
-        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, provider,
-                                                      "session.system.missing_instance",
-                                                      "No instance '{instance}' in the draft assembly",
-                                                      {{"instance", provider.module}}),
-                                           texts_, locale_)});
+    if (!draft_.disconnect(local, scope)) {
+        return finish(true);  // 无该连接：无操作成功
     }
-    draft_.disconnect(requirement);  // 同一需求已有连接时替换
-    draft_.connect(requirement, provider);
-    ++draft_revision_;
-    auto diagnostics = refresh_catalog();
-    if (derive_spec_inputs()) ++draft_revision_;
-    if (derive_spec_observations()) ++draft_revision_;
-    catalog_.revision = draft_revision_;
-    return finish(true, std::move(diagnostics));
+    return finish_structure_edit();
 }
 
-OperationResult Session::disconnect_requirement(const Reference& requirement) {
+OperationResult Session::forward_requirement(std::string requirement,
+                                             const Reference& child_requirement,
+                                             const std::string& scope) {
     if (phase_ == Phase::empty) return reject_without_system();
-    if (!draft_.disconnect(requirement)) return finish(true);  // 无该连接：无操作成功
-    ++draft_revision_;
-    auto diagnostics = refresh_catalog();
-    if (derive_spec_inputs()) ++draft_revision_;
-    if (derive_spec_observations()) ++draft_revision_;
-    catalog_.revision = draft_revision_;
-    return finish(true, std::move(diagnostics));
+    if (scope.empty()) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, {requirement, {}},
+                                                      "session.system.root_interface",
+                                                      "The root scope cannot declare forwards or exports"),
+                                           texts_, locale_)});
+    }
+    if (auto rejected = unknown_scope_result(scope)) return *rejected;
+    if (requirement.empty() || requirement.find('/') != std::string::npos) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, {requirement, {}},
+                                                      "session.system.invalid_interface_name",
+                                                      "Interface name must be non-empty and must not contain '/'"),
+                                           texts_, locale_)});
+    }
+    const Reference child = local_reference(scope, child_requirement);
+    if (child.symbol.empty()) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, child,
+                                                      "session.system.invalid_reference",
+                                                      "A reference must name a direct child and a public interface"),
+                                           texts_, locale_)});
+    }
+    if (!has_direct_module(scope, child.module)) {
+        return finish(false, {view_of(make_diagnostic(
+                                           ErrorCode::invalid_assembly, child,
+                                           "session.system.missing_module",
+                                           "No module '{module}' in scope '{scope}'",
+                                           {{"module", child.module}, {"scope", scope}}),
+                                       texts_, locale_)});
+    }
+    for (const auto& forward : draft_.forwards(scope)) {
+        if (forward.requirement == requirement) {
+            return finish(false, {view_of(make_diagnostic(
+                                               ErrorCode::invalid_assembly, {scope, requirement},
+                                               "session.system.duplicate_forward",
+                                               "Scope '{scope}' already declares forward '{name}'",
+                                               {{"scope", scope}, {"name", requirement}}),
+                                           texts_, locale_)});
+        }
+    }
+    for (const auto& connection : draft_.connections(scope)) {
+        if (connection.requirement == child) {
+            return finish(false, {view_of(make_diagnostic(
+                                               ErrorCode::invalid_assembly, child,
+                                               "session.system.requirement_connected",
+                                               "Requirement '{module}/{symbol}' already has a connection; disconnect it first",
+                                               {{"module", child.module}, {"symbol", child.symbol}}),
+                                           texts_, locale_)});
+        }
+    }
+    for (const auto& forward : draft_.forwards(scope)) {
+        if (forward.target == child) {
+            return finish(false, {view_of(make_diagnostic(
+                                               ErrorCode::invalid_assembly, child,
+                                               "session.system.requirement_forwarded",
+                                               "Requirement '{module}/{symbol}' is already forwarded; remove the forward first",
+                                               {{"module", child.module}, {"symbol", child.symbol}}),
+                                           texts_, locale_)});
+        }
+    }
+    try {
+        draft_.forward_inherited(requirement, child, scope);
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    return finish_structure_edit();
+}
+
+OperationResult Session::remove_forward(const std::string& requirement, const std::string& scope) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    if (auto rejected = unknown_scope_result(scope)) return *rejected;
+    if (!draft_.remove_forward(requirement, scope)) return finish(true);
+    return finish_structure_edit();
+}
+
+OperationResult Session::export_symbol(std::string name, const Reference& child_symbol,
+                                       const std::string& scope) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    if (scope.empty()) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, {name, {}},
+                                                      "session.system.root_interface",
+                                                      "The root scope cannot declare forwards or exports"),
+                                           texts_, locale_)});
+    }
+    if (auto rejected = unknown_scope_result(scope)) return *rejected;
+    if (name.empty() || name.find('/') != std::string::npos) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, {name, {}},
+                                                      "session.system.invalid_interface_name",
+                                                      "Interface name must be non-empty and must not contain '/'"),
+                                           texts_, locale_)});
+    }
+    const Reference child = local_reference(scope, child_symbol);
+    if (child.symbol.empty()) {
+        return finish(false, {view_of(make_diagnostic(ErrorCode::invalid_assembly, child,
+                                                      "session.system.invalid_reference",
+                                                      "A reference must name a direct child and a public interface"),
+                                           texts_, locale_)});
+    }
+    if (!has_direct_module(scope, child.module)) {
+        return finish(false, {view_of(make_diagnostic(
+                                           ErrorCode::invalid_assembly, child,
+                                           "session.system.missing_module",
+                                           "No module '{module}' in scope '{scope}'",
+                                           {{"module", child.module}, {"scope", scope}}),
+                                       texts_, locale_)});
+    }
+    for (const auto& symbol : draft_.exports(scope)) {
+        if (symbol.name == name) {
+            return finish(false, {view_of(make_diagnostic(
+                                               ErrorCode::invalid_assembly, {scope, name},
+                                               "session.system.duplicate_export",
+                                               "Scope '{scope}' already declares export '{name}'",
+                                               {{"scope", scope}, {"name", name}}),
+                                           texts_, locale_)});
+        }
+        if (symbol.target == child) {
+            return finish(false, {view_of(make_diagnostic(
+                                               ErrorCode::invalid_assembly, child,
+                                               "session.system.export_already_declared",
+                                               "Public symbol '{module}/{symbol}' is already exported; remove the export first",
+                                               {{"module", child.module}, {"symbol", child.symbol}}),
+                                           texts_, locale_)});
+        }
+    }
+    try {
+        draft_.export_symbol(name, child, scope);
+    } catch (const EngineError& error) {
+        return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
+    }
+    return finish_structure_edit();
+}
+
+OperationResult Session::remove_export(const std::string& name, const std::string& scope) {
+    if (phase_ == Phase::empty) return reject_without_system();
+    if (auto rejected = unknown_scope_result(scope)) return *rejected;
+    if (!draft_.remove_export(name, scope)) return finish(true);
+    return finish_structure_edit();
 }
 
 OperationResult Session::set_spec_advance(const Reference& advance) {
@@ -2523,6 +2793,7 @@ OperationResult Session::open_project(const std::string& directory) {
     try {
         Engine engine = parsed.instantiate(staged_factories);
         probe_catalog = collect_catalog(engine, *adapters_, texts_, locale_, 0);
+        attach_scope_interfaces(probe_catalog, parsed);
     } catch (const EngineError& error) {
         return finish(false, {view_of(error.diagnostic(), texts_, locale_)});
     }

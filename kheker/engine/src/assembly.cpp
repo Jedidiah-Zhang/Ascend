@@ -15,6 +15,16 @@ std::string scope_join(const std::string& parent, const std::string& name) {
     return parent.empty() ? name : parent + '/' + name;
 }
 
+std::string scope_parent(const std::string& path) {
+    const auto slash = path.rfind('/');
+    return slash == std::string::npos ? std::string{} : path.substr(0, slash);
+}
+
+std::string scope_leaf(const std::string& path) {
+    const auto slash = path.rfind('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
 std::string record_join(const std::string& parent, const std::string& segment) {
     return detail::json_pointer_join(parent, segment);
 }
@@ -153,6 +163,87 @@ AssemblyDefinition::Scope& AssemblyDefinition::require_scope(const std::string& 
     return const_cast<Scope&>(std::as_const(*this).require_scope(path));
 }
 
+void AssemblyDefinition::remove_requirement_references(const std::string& scope,
+                                                       const std::string& name) {
+    if (scope.empty()) return;
+    const std::string parent = scope_parent(scope);
+    const std::string child = scope_leaf(scope);
+    Scope& target = require_scope(parent);
+    target.connections.erase(
+        std::remove_if(target.connections.begin(), target.connections.end(),
+                       [&](const AssemblyConnection& connection) {
+                           return connection.requirement.module == child &&
+                                  connection.requirement.symbol == name;
+                       }),
+        target.connections.end());
+    std::vector<std::string> outer;
+    for (auto item = target.forwards.begin(); item != target.forwards.end();) {
+        if (item->target.module == child && item->target.symbol == name) {
+            outer.push_back(item->requirement);
+            item = target.forwards.erase(item);
+        } else {
+            ++item;
+        }
+    }
+    for (const auto& requirement : outer) remove_requirement_references(parent, requirement);
+}
+
+void AssemblyDefinition::remove_export_references(const std::string& scope, const std::string& name) {
+    if (scope.empty()) return;
+    const std::string parent = scope_parent(scope);
+    const std::string child = scope_leaf(scope);
+    Scope& target = require_scope(parent);
+    target.connections.erase(
+        std::remove_if(target.connections.begin(), target.connections.end(),
+                       [&](const AssemblyConnection& connection) {
+                           return connection.provider.module == child &&
+                                  connection.provider.symbol == name;
+                       }),
+        target.connections.end());
+    std::vector<std::string> outer;
+    for (auto item = target.exports.begin(); item != target.exports.end();) {
+        if (item->target.module == child && item->target.symbol == name) {
+            outer.push_back(item->name);
+            item = target.exports.erase(item);
+        } else {
+            ++item;
+        }
+    }
+    for (const auto& symbol : outer) remove_export_references(parent, symbol);
+}
+
+void AssemblyDefinition::remove_child_references(const std::string& parent,
+                                                 const std::string& child) {
+    Scope& target = require_scope(parent);
+    target.connections.erase(
+        std::remove_if(target.connections.begin(), target.connections.end(),
+                       [&](const AssemblyConnection& connection) {
+                           return connection.requirement.module == child ||
+                                  connection.provider.module == child;
+                       }),
+        target.connections.end());
+    std::vector<std::string> forwards;
+    for (auto item = target.forwards.begin(); item != target.forwards.end();) {
+        if (item->target.module == child) {
+            forwards.push_back(item->requirement);
+            item = target.forwards.erase(item);
+        } else {
+            ++item;
+        }
+    }
+    std::vector<std::string> exports;
+    for (auto item = target.exports.begin(); item != target.exports.end();) {
+        if (item->target.module == child) {
+            exports.push_back(item->name);
+            item = target.exports.erase(item);
+        } else {
+            ++item;
+        }
+    }
+    for (const auto& requirement : forwards) remove_requirement_references(parent, requirement);
+    for (const auto& symbol : exports) remove_export_references(parent, symbol);
+}
+
 void AssemblyDefinition::add_scope(const std::string& name, const std::string& scope) {
     Scope& parent = require_scope(scope);
     if (!valid_scope_name(name)) {
@@ -174,6 +265,38 @@ void AssemblyDefinition::add_scope(const std::string& name, const std::string& s
     scopes_.emplace(path, std::move(child));
 }
 
+void AssemblyDefinition::remove_scope(const std::string& name, const std::string& scope) {
+    Scope& parent = require_scope(scope);
+    if (!valid_scope_name(name)) {
+        fail_assembly(ErrorCode::invalid_assembly, {scope_join(scope, name), {}},
+                      {{engine_text_domain, "assembly.scope.invalid_name"},
+                       "Scope name must be non-empty and must not contain '/'"},
+                      source_, {});
+    }
+    const std::string path = scope_join(scope, name);
+    if (scopes_.count(path) == 0) {
+        fail_assembly(ErrorCode::invalid_assembly, {path, {}},
+                      {{engine_text_domain, "assembly.scope.remove_missing"},
+                       "Scope not found in parent scope: {name}",
+                       {{"name", name}}},
+                      source_, {});
+    }
+    // 父作用域中把该子作用域当作模块引用的连接、转接与导出必须随作用域移除，
+    // 并继续向上级联；否则祖先作用域会留下不可见的悬空引用。
+    remove_child_references(scope, name);
+    parent.children.erase(std::remove(parent.children.begin(), parent.children.end(), name),
+                          parent.children.end());
+    // 作用域路径包含自身与全部后代；std::map 按路径排序，前缀匹配即可一次清除。
+    const std::string prefix = path + '/';
+    for (auto item = scopes_.begin(); item != scopes_.end();) {
+        if (item->first == path || item->first.compare(0, prefix.size(), prefix) == 0) {
+            item = scopes_.erase(item);
+        } else {
+            ++item;
+        }
+    }
+}
+
 void AssemblyDefinition::add_instance(std::string definition, std::string name, Config config,
                                       const std::string& scope) {
     require_scope(scope).instances.push_back({std::move(definition), std::move(name), std::move(config)});
@@ -189,8 +312,27 @@ void AssemblyDefinition::remove_instance(const std::string& name, const std::str
                        "Instance not found in scope: {name}", {{"name", name}}},
                       source_, {});
     }
+    // 同一作用域内引用该实例的连接、转接与导出随实例一并移除；被移除的转接与导出
+    // 继续向上级联清理父作用域中的引用。子作用域与其余实例不变。
+    std::vector<std::string> forwards;
+    for (auto item = target.forwards.begin(); item != target.forwards.end();) {
+        if (item->target.module == name) {
+            forwards.push_back(item->requirement);
+            item = target.forwards.erase(item);
+        } else {
+            ++item;
+        }
+    }
+    std::vector<std::string> exports;
+    for (auto item = target.exports.begin(); item != target.exports.end();) {
+        if (item->target.module == name) {
+            exports.push_back(item->name);
+            item = target.exports.erase(item);
+        } else {
+            ++item;
+        }
+    }
     target.instances.erase(found);
-    // 同一作用域内引用该实例的连接、转接与导出随实例一并移除；子作用域与其余实例不变。
     const auto references_instance = [&](const Reference& reference) { return reference.module == name; };
     target.connections.erase(
         std::remove_if(target.connections.begin(), target.connections.end(),
@@ -199,16 +341,8 @@ void AssemblyDefinition::remove_instance(const std::string& name, const std::str
                                   references_instance(connection.provider);
                        }),
         target.connections.end());
-    target.forwards.erase(std::remove_if(target.forwards.begin(), target.forwards.end(),
-                                         [&](const AssemblyForward& forward) {
-                                             return references_instance(forward.target);
-                                         }),
-                          target.forwards.end());
-    target.exports.erase(std::remove_if(target.exports.begin(), target.exports.end(),
-                                        [&](const AssemblyExport& symbol) {
-                                            return references_instance(symbol.target);
-                                        }),
-                         target.exports.end());
+    for (const auto& requirement : forwards) remove_requirement_references(scope, requirement);
+    for (const auto& symbol : exports) remove_export_references(scope, symbol);
 }
 
 void AssemblyDefinition::require_module(std::string definition, std::string version) {
@@ -259,6 +393,18 @@ void AssemblyDefinition::forward_inherited(std::string requirement, Reference ch
     require_scope(scope).forwards.push_back({std::move(requirement), std::move(child_requirement)});
 }
 
+bool AssemblyDefinition::remove_forward(const std::string& requirement, const std::string& scope) {
+    Scope& target = require_scope(scope);
+    const auto found = std::find_if(target.forwards.begin(), target.forwards.end(),
+                                    [&](const AssemblyForward& forward) {
+                                        return forward.requirement == requirement;
+                                    });
+    if (found == target.forwards.end()) return false;
+    target.forwards.erase(found);
+    remove_requirement_references(scope, requirement);
+    return true;
+}
+
 void AssemblyDefinition::export_symbol(std::string name, Reference child_symbol, const std::string& scope) {
     if (scope.empty()) {
         fail_assembly(ErrorCode::invalid_assembly, {name, {}},
@@ -268,6 +414,18 @@ void AssemblyDefinition::export_symbol(std::string name, Reference child_symbol,
     require_scope(scope).exports.push_back({std::move(name), std::move(child_symbol)});
 }
 
+bool AssemblyDefinition::remove_export(const std::string& name, const std::string& scope) {
+    Scope& target = require_scope(scope);
+    const auto found = std::find_if(target.exports.begin(), target.exports.end(),
+                                    [&](const AssemblyExport& symbol) {
+                                        return symbol.name == name;
+                                    });
+    if (found == target.exports.end()) return false;
+    target.exports.erase(found);
+    remove_export_references(scope, name);
+    return true;
+}
+
 std::vector<std::string> AssemblyDefinition::scopes() const {
     std::vector<std::string> result;
     result.reserve(scopes_.size());
@@ -275,8 +433,24 @@ std::vector<std::string> AssemblyDefinition::scopes() const {
     return result;
 }
 
+bool AssemblyDefinition::has_scope(const std::string& scope) const {
+    return scopes_.count(scope) != 0;
+}
+
 std::vector<AssemblyInstance> AssemblyDefinition::instances(const std::string& scope) const {
     return require_scope(scope).instances;
+}
+
+std::vector<AssemblyConnection> AssemblyDefinition::connections(const std::string& scope) const {
+    return require_scope(scope).connections;
+}
+
+std::vector<AssemblyForward> AssemblyDefinition::forwards(const std::string& scope) const {
+    return require_scope(scope).forwards;
+}
+
+std::vector<AssemblyExport> AssemblyDefinition::exports(const std::string& scope) const {
+    return require_scope(scope).exports;
 }
 
 void AssemblyDefinition::set_instance_config(const std::string& name, Config config, const std::string& scope) {

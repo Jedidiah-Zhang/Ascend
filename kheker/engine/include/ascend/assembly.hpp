@@ -94,6 +94,9 @@ public:
 
     // 在指定作用域新增子作用域；名称非空、不含 '/' 且同层唯一，否则报告 invalid_assembly。
     void add_scope(const std::string& name, const std::string& scope = {});
+    // 移除子作用域及其后代；父作用域中引用该子作用域的连接、转接与导出一并移除。
+    // 名称非法或子作用域不存在报告 invalid_assembly；根作用域不可移除。
+    void remove_scope(const std::string& name, const std::string& scope = {});
     // 在指定作用域加入实例；定义标识与实例名在实例化时由工厂核对。
     void add_instance(std::string definition, std::string name, Config config = {},
                       const std::string& scope = {});
@@ -113,11 +116,21 @@ public:
     bool disconnect(const Reference& requirement, const std::string& scope = {});
     void forward_inherited(std::string requirement, Reference child_requirement,
                            const std::string& scope = {});
+    // 移除一条需求转接（按本作用域需求名，取首个）；返回是否存在。
+    bool remove_forward(const std::string& requirement, const std::string& scope = {});
     void export_symbol(std::string name, Reference child_symbol, const std::string& scope = {});
+    // 移除一条接口导出（按本作用域公开名，取首个）；返回是否存在。
+    bool remove_export(const std::string& name, const std::string& scope = {});
 
     // 读取入口：作用域路径（含根，空字符串）按路径排序；实例快照按加入顺序返回。
     std::vector<std::string> scopes() const;
+    // 作用域是否存在；根作用域始终存在。
+    bool has_scope(const std::string& scope) const;
     std::vector<AssemblyInstance> instances(const std::string& scope = {}) const;
+    // 指定作用域的显式连接、需求转接与接口导出（按加入顺序）。
+    std::vector<AssemblyConnection> connections(const std::string& scope = {}) const;
+    std::vector<AssemblyForward> forwards(const std::string& scope = {}) const;
+    std::vector<AssemblyExport> exports(const std::string& scope = {}) const;
     // 替换已有实例的构造配置（同名实例取首个）；实例不存在报 invalid_assembly。
     // 替换不改变实例集合、子作用域、连接、转接与导出。
     void set_instance_config(const std::string& name, Config config, const std::string& scope = {});
@@ -148,6 +161,11 @@ private:
 
     const Scope& require_scope(const std::string& path) const;
     Scope& require_scope(const std::string& path);
+    // 移除父作用域中对子模块 name 的连接、转接与导出；被移除的转接/导出继续向上级联。
+    void remove_child_references(const std::string& parent, const std::string& child);
+    // 子作用域接口移除后，清理父作用域及其祖先对该需求/导出的引用。
+    void remove_requirement_references(const std::string& scope, const std::string& name);
+    void remove_export_references(const std::string& scope, const std::string& name);
     void read_scope(const Config& object, const std::string& record, const std::string& parent_path, bool root);
     Reference read_reference(const Config& value, const std::string& record, const std::string& second) const;
     void check_keys(const Config& object, const std::string& record,

@@ -33,12 +33,24 @@ struct PanelContext {
     std::function<void()> save_system_as;
 
     // 系统编辑器命令：参数由面板从控件读出，外壳负责忙碌簿记与队列提交。
-    std::function<void(const QString& definition, const QString& instance)> add_module;
-    std::function<void(const QString& instance)> remove_module;
+    // scope 为父作用域路径；引用在 scope 内解析。
+    std::function<void(const QString& name, const QString& scope)> add_scope;
+    std::function<void(const QString& name, const QString& scope)> remove_scope;
+    std::function<void(const QString& definition, const QString& instance, const QString& scope)> add_module;
+    std::function<void(const QString& instance, const QString& scope)> remove_module;
     std::function<void(const QString& module, const QString& symbol, const QString& provider_module,
-                       const QString& provider_symbol)>
+                       const QString& provider_symbol, const QString& scope)>
         connect_requirement;
-    std::function<void(const QString& module, const QString& symbol)> disconnect_requirement;
+    std::function<void(const QString& module, const QString& symbol, const QString& scope)>
+        disconnect_requirement;
+    std::function<void(const QString& requirement, const QString& child_module,
+                       const QString& child_symbol, const QString& scope)>
+        forward_requirement;
+    std::function<void(const QString& requirement, const QString& scope)> remove_forward;
+    std::function<void(const QString& name, const QString& child_module,
+                       const QString& child_symbol, const QString& scope)>
+        export_symbol;
+    std::function<void(const QString& name, const QString& scope)> remove_export;
     std::function<void(const QString& module, const QString& symbol)> set_spec_advance;
     std::function<void(const QStringList& references)> set_spec_observations;
 

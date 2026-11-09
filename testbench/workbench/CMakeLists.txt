@@ -56,6 +56,7 @@ foreach(case IN ITEMS
     time_module
     dynamic_module_package
     system_assembly
+    nested_system_assembly
     system_file
     project_workflow
     project_module_packages
@@ -119,6 +120,7 @@ if(TARGET ascend_workbench_ui)
         modulePackageMultiLoad
         modulePackageFolderLoad
         systemEditorAssembly
+        nestedSystemEditor
         startPageResearch
         recordTabKeepsSampleDetail
         dockTitleDoubleClick
@@ -148,6 +150,7 @@ if(TARGET ascend_workbench_ui)
         workbench.modulePackageMultiLoad
         workbench.modulePackageFolderLoad
         workbench.systemEditorAssembly
+        workbench.nestedSystemEditor
         workbench.startPageResearch
         workbench.recordTabKeepsSampleDetail
         workbench.dockTitleDoubleClick

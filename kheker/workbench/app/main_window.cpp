@@ -143,16 +143,41 @@ MainWindow::MainWindow(SessionController* controller, std::shared_ptr<const sess
     context_.save_system = [this] { saveSystem(); };
     context_.save_system_as = [this] { chooseSaveSystemAs(); };
     // 系统编辑器：面板从控件读出参数，外壳方法保持忙碌簿记与队列提交。
-    context_.add_module = [this](const QString& definition, const QString& instance) {
-        addSystemModule(definition, instance);
+    context_.add_scope = [this](const QString& name, const QString& scope) {
+        addSystemScope(name, scope);
     };
-    context_.remove_module = [this](const QString& instance) { removeSystemModule(instance); };
+    context_.remove_scope = [this](const QString& name, const QString& scope) {
+        removeSystemScope(name, scope);
+    };
+    context_.add_module = [this](const QString& definition, const QString& instance,
+                                 const QString& scope) {
+        addSystemModule(definition, instance, scope);
+    };
+    context_.remove_module = [this](const QString& instance, const QString& scope) {
+        removeSystemModule(instance, scope);
+    };
     context_.connect_requirement = [this](const QString& module, const QString& symbol,
-                                          const QString& provider_module, const QString& provider_symbol) {
-        connectSystemRequirement(module, symbol, provider_module, provider_symbol);
+                                          const QString& provider_module, const QString& provider_symbol,
+                                          const QString& scope) {
+        connectSystemRequirement(module, symbol, provider_module, provider_symbol, scope);
     };
-    context_.disconnect_requirement = [this](const QString& module, const QString& symbol) {
-        disconnectSystemRequirement(module, symbol);
+    context_.disconnect_requirement = [this](const QString& module, const QString& symbol,
+                                             const QString& scope) {
+        disconnectSystemRequirement(module, symbol, scope);
+    };
+    context_.forward_requirement = [this](const QString& requirement, const QString& child_module,
+                                          const QString& child_symbol, const QString& scope) {
+        forwardSystemRequirement(requirement, child_module, child_symbol, scope);
+    };
+    context_.remove_forward = [this](const QString& requirement, const QString& scope) {
+        removeSystemForward(requirement, scope);
+    };
+    context_.export_symbol = [this](const QString& name, const QString& child_module,
+                                    const QString& child_symbol, const QString& scope) {
+        exportSystemSymbol(name, child_module, child_symbol, scope);
+    };
+    context_.remove_export = [this](const QString& name, const QString& scope) {
+        removeSystemExport(name, scope);
     };
     context_.set_spec_advance = [this](const QString& module, const QString& symbol) {
         onSpecAdvanceChanged(module, symbol);
@@ -451,14 +476,34 @@ void MainWindow::chooseNewSystem() {
     QMetaObject::invokeMethod(controller_, "newSystem", Qt::QueuedConnection, Q_ARG(QString, name.trimmed()));
 }
 
-void MainWindow::addSystemModule(const QString& definition, const QString& instance) {
+void MainWindow::addSystemScope(const QString& name, const QString& scope) {
+    if (state().busy || closing_) return;
+    beginSystemCommand("addScope");
+    QMetaObject::invokeMethod(controller_, "addScope", Qt::QueuedConnection, Q_ARG(QString, name),
+                              Q_ARG(QString, scope));
+}
+
+void MainWindow::removeSystemScope(const QString& name, const QString& scope) {
+    if (state().busy || closing_) return;
+    const auto answer = QMessageBox::question(
+        this, ui_text(*texts_, "workbench.editor.remove_scope", "Remove scope"),
+        ui_text(*texts_, "workbench.editor.remove_scope_confirm",
+                "Remove scope \"%1\" and all of its contents? Connections referencing it are removed as well.")
+            .arg(name));
+    if (answer != QMessageBox::Yes) return;
+    beginSystemCommand("removeScope");
+    QMetaObject::invokeMethod(controller_, "removeScope", Qt::QueuedConnection, Q_ARG(QString, name),
+                              Q_ARG(QString, scope));
+}
+
+void MainWindow::addSystemModule(const QString& definition, const QString& instance, const QString& scope) {
     if (state().busy || closing_) return;
     beginSystemCommand("addModule");
     QMetaObject::invokeMethod(controller_, "addModule", Qt::QueuedConnection, Q_ARG(QString, definition),
-                              Q_ARG(QString, instance));
+                              Q_ARG(QString, instance), Q_ARG(QString, scope));
 }
 
-void MainWindow::removeSystemModule(const QString& instance) {
+void MainWindow::removeSystemModule(const QString& instance, const QString& scope) {
     if (state().busy || closing_) return;
     const auto answer = QMessageBox::question(
         this, ui_text(*texts_, "workbench.editor.remove", "Remove instance"),
@@ -466,22 +511,54 @@ void MainWindow::removeSystemModule(const QString& instance) {
                 "Remove instance \"%1\"? Connections referencing it are removed as well.").arg(instance));
     if (answer != QMessageBox::Yes) return;
     beginSystemCommand("removeModule");
-    QMetaObject::invokeMethod(controller_, "removeModule", Qt::QueuedConnection, Q_ARG(QString, instance));
+    QMetaObject::invokeMethod(controller_, "removeModule", Qt::QueuedConnection, Q_ARG(QString, instance),
+                              Q_ARG(QString, scope));
 }
 
 void MainWindow::connectSystemRequirement(const QString& module, const QString& symbol, const QString& provider_module,
-                                          const QString& provider_symbol) {
+                                          const QString& provider_symbol, const QString& scope) {
     if (state().busy || closing_) return;
     beginSystemCommand("connectRequirement");
     QMetaObject::invokeMethod(controller_, "connectRequirement", Qt::QueuedConnection, Q_ARG(QString, module),
-                              Q_ARG(QString, symbol), Q_ARG(QString, provider_module), Q_ARG(QString, provider_symbol));
+                              Q_ARG(QString, symbol), Q_ARG(QString, provider_module), Q_ARG(QString, provider_symbol),
+                              Q_ARG(QString, scope));
 }
 
-void MainWindow::disconnectSystemRequirement(const QString& module, const QString& symbol) {
+void MainWindow::disconnectSystemRequirement(const QString& module, const QString& symbol, const QString& scope) {
     if (state().busy || closing_) return;
     beginSystemCommand("disconnectRequirement");
     QMetaObject::invokeMethod(controller_, "disconnectRequirement", Qt::QueuedConnection, Q_ARG(QString, module),
-                              Q_ARG(QString, symbol));
+                              Q_ARG(QString, symbol), Q_ARG(QString, scope));
+}
+
+void MainWindow::forwardSystemRequirement(const QString& requirement, const QString& child_module,
+                                          const QString& child_symbol, const QString& scope) {
+    if (state().busy || closing_) return;
+    beginSystemCommand("forwardRequirement");
+    QMetaObject::invokeMethod(controller_, "forwardRequirement", Qt::QueuedConnection, Q_ARG(QString, requirement),
+                              Q_ARG(QString, child_module), Q_ARG(QString, child_symbol), Q_ARG(QString, scope));
+}
+
+void MainWindow::removeSystemForward(const QString& requirement, const QString& scope) {
+    if (state().busy || closing_) return;
+    beginSystemCommand("removeForward");
+    QMetaObject::invokeMethod(controller_, "removeForward", Qt::QueuedConnection, Q_ARG(QString, requirement),
+                              Q_ARG(QString, scope));
+}
+
+void MainWindow::exportSystemSymbol(const QString& name, const QString& child_module, const QString& child_symbol,
+                                    const QString& scope) {
+    if (state().busy || closing_) return;
+    beginSystemCommand("exportSymbol");
+    QMetaObject::invokeMethod(controller_, "exportSymbol", Qt::QueuedConnection, Q_ARG(QString, name),
+                              Q_ARG(QString, child_module), Q_ARG(QString, child_symbol), Q_ARG(QString, scope));
+}
+
+void MainWindow::removeSystemExport(const QString& name, const QString& scope) {
+    if (state().busy || closing_) return;
+    beginSystemCommand("removeExport");
+    QMetaObject::invokeMethod(controller_, "removeExport", Qt::QueuedConnection, Q_ARG(QString, name),
+                              Q_ARG(QString, scope));
 }
 
 void MainWindow::onSpecAdvanceChanged(const QString& module, const QString& symbol) {

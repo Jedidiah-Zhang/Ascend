@@ -56,13 +56,23 @@ public slots:
     void unloadModulePackage(const QString& definition);
     void requestModulePackages();
     void requestModel();
-    // 因果系统装配（切片 A）：新建、加/删模块、接线与规格，结果随模型快照发布。
+    // 因果系统装配：新建、作用域／模块增删、接线、转接与导出，结果随模型快照发布。
     void newSystem(const QString& name);
-    void addModule(const QString& definition, const QString& instance);
-    void removeModule(const QString& instance);
+    void addScope(const QString& name, const QString& scope);
+    void removeScope(const QString& name, const QString& scope);
+    void addModule(const QString& definition, const QString& instance, const QString& scope);
+    void removeModule(const QString& instance, const QString& scope);
     void connectRequirement(const QString& requirement_module, const QString& requirement_symbol,
-                            const QString& provider_module, const QString& provider_symbol);
-    void disconnectRequirement(const QString& requirement_module, const QString& requirement_symbol);
+                            const QString& provider_module, const QString& provider_symbol,
+                            const QString& scope);
+    void disconnectRequirement(const QString& requirement_module, const QString& requirement_symbol,
+                               const QString& scope);
+    void forwardRequirement(const QString& requirement, const QString& child_module,
+                            const QString& child_symbol, const QString& scope);
+    void removeForward(const QString& requirement, const QString& scope);
+    void exportSymbol(const QString& name, const QString& child_module, const QString& child_symbol,
+                      const QString& scope);
+    void removeExport(const QString& name, const QString& scope);
     void setSpecAdvance(const QString& module, const QString& symbol);
     // 观测项形如「模块/符号」；名称同文本。
     void setSpecObservations(const QStringList& references);

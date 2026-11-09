@@ -220,6 +220,7 @@ private slots:
     void modulePackageMultiLoad();
     void modulePackageFolderLoad();
     void systemEditorAssembly();
+    void nestedSystemEditor();
     void startPageResearch();
     void recordTabKeepsSampleDetail();
     void dockTitleDoubleClick();
@@ -1683,6 +1684,194 @@ void TestWorkbench::systemEditorAssembly() {
     source_value->setText(QStringLiteral("{\"value\": 3}"));
     QTest::keyClick(source_value, Qt::Key_Return);
     QVERIFY(wait_idle(window));
+}
+
+void TestWorkbench::nestedSystemEditor() {
+    auto workbench = start_workbench(false);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    window->findChild<QAction*>("systemEditorAction")->trigger();
+    auto* results = window->findChild<QTabWidget*>("resultsTabs");
+    auto* editor = window->findChild<QWidget*>("systemEditorPage");
+    QVERIFY(results != nullptr && editor != nullptr);
+    QVERIFY(wait_until([&] { return results->indexOf(editor) >= 0; }, 4000));
+
+    QTimer name_timer;
+    connect(&name_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) return;
+        name_timer.stop();
+        dialog->setTextValue(QStringLiteral("嵌套编辑器"));
+        dialog->accept();
+    });
+    name_timer.start(10);
+    window->findChild<QPushButton*>("systemNewButton")->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return window->currentStatus().model_name == "嵌套编辑器"; }, 4000));
+
+    auto* tree = window->findChild<QTreeWidget*>("systemTree");
+    auto* scope_edit = window->findChild<QLineEdit*>("systemScopeEdit");
+    auto* interface_edit = window->findChild<QLineEdit*>("systemInterfaceEdit");
+    auto* definition_combo = window->findChild<QComboBox*>("systemDefinitionCombo");
+    auto* instance_edit = window->findChild<QLineEdit*>("systemInstanceEdit");
+    auto* add_button = window->findChild<QPushButton*>("systemAddButton");
+    auto* add_scope_button = window->findChild<QPushButton*>("systemAddScopeButton");
+    auto* forward_button = window->findChild<QPushButton*>("systemForwardButton");
+    auto* export_button = window->findChild<QPushButton*>("systemExportButton");
+    QVERIFY(tree != nullptr && scope_edit != nullptr && interface_edit != nullptr);
+    QVERIFY(definition_combo != nullptr && instance_edit != nullptr && add_button != nullptr);
+    QVERIFY(add_scope_button != nullptr && forward_button != nullptr && export_button != nullptr);
+
+    const auto find_top = [&](const QString& name) -> QTreeWidgetItem* {
+        for (int index = 0; index < tree->topLevelItemCount(); ++index) {
+            if (tree->topLevelItem(index)->text(0) == name) return tree->topLevelItem(index);
+        }
+        return nullptr;
+    };
+    const auto find_child = [](QTreeWidgetItem* parent, const QString& name) -> QTreeWidgetItem* {
+        if (parent == nullptr) return nullptr;
+        for (int index = 0; index < parent->childCount(); ++index) {
+            if (parent->child(index)->text(0) == name) return parent->child(index);
+        }
+        return nullptr;
+    };
+
+    // 添加作用域，再在作用域内添加模块。
+    scope_edit->setText(QStringLiteral("yard"));
+    add_scope_button->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return find_top(QStringLiteral("yard")) != nullptr; }, 4000));
+    tree->setCurrentItem(find_top(QStringLiteral("yard")));
+    definition_combo->setCurrentText(QStringLiteral("example.plant"));
+    QCOMPARE(instance_edit->text(), QStringLiteral("plant"));
+    add_button->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return find_child(find_top(QStringLiteral("yard")), QStringLiteral("plant")) != nullptr; }, 4000));
+    QVERIFY(window->findChild<QWidget*>("configEditor_yard_plant") != nullptr);
+
+    // 根作用域添加提供方；选择清空后父作用域回到根。
+    tree->setCurrentItem(nullptr);
+    tree->clearSelection();
+    definition_combo->setCurrentText(QStringLiteral("example.stimulus"));
+    instance_edit->setText(QStringLiteral("input"));
+    add_button->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return find_top(QStringLiteral("input")) != nullptr; }, 4000));
+
+    // 嵌套需求转接到 yard 外层。
+    QTreeWidgetItem* plant = find_child(find_top(QStringLiteral("yard")), QStringLiteral("plant"));
+    QTreeWidgetItem* requirement = find_child(plant, QStringLiteral("input"));
+    QVERIFY(requirement != nullptr);
+    tree->setCurrentItem(requirement);
+    QCOMPARE(interface_edit->text(), QStringLiteral("input"));
+    QVERIFY(forward_button->isEnabled());
+    forward_button->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] {
+        return find_child(find_top(QStringLiteral("yard")), QStringLiteral("input")) != nullptr;
+    }, 4000));
+
+    // 已转接的叶子需求不能再直接连接或断开；连接列显示转接目标。
+    requirement = find_child(find_child(find_top(QStringLiteral("yard")), QStringLiteral("plant")),
+                             QStringLiteral("input"));
+    QVERIFY(requirement != nullptr);
+    tree->setCurrentItem(requirement);
+    auto* provider_combo = window->findChild<QComboBox*>("systemProviderCombo");
+    QVERIFY(provider_combo != nullptr);
+    QVERIFY(!provider_combo->isEnabled());
+    QVERIFY(!window->findChild<QPushButton*>("systemConnectButton")->isEnabled());
+    QVERIFY(!window->findChild<QPushButton*>("systemDisconnectButton")->isEnabled());
+    QVERIFY(requirement->text(2).contains(QStringLiteral("转接")));
+
+    // 导出 plant 的 x 与 advance 到 yard。
+    plant = find_child(find_top(QStringLiteral("yard")), QStringLiteral("plant"));
+    QTreeWidgetItem* x_item = find_child(plant, QStringLiteral("x"));
+    QVERIFY(x_item != nullptr);
+    tree->setCurrentItem(x_item);
+    QCOMPARE(interface_edit->text(), QStringLiteral("x"));
+    QVERIFY(export_button->isEnabled());
+    export_button->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] {
+        return find_child(find_top(QStringLiteral("yard")), QStringLiteral("x")) != nullptr;
+    }, 4000));
+    QTreeWidgetItem* yard_export = find_child(find_top(QStringLiteral("yard")), QStringLiteral("x"));
+    QVERIFY(yard_export != nullptr);
+    tree->setCurrentItem(yard_export);
+    QVERIFY(!export_button->isEnabled());
+
+    plant = find_child(find_top(QStringLiteral("yard")), QStringLiteral("plant"));
+    x_item = find_child(plant, QStringLiteral("x"));
+    QVERIFY(x_item != nullptr);
+    tree->setCurrentItem(x_item);
+    QVERIFY(!export_button->isEnabled());  // 源公开项已导出，不能以另一名称重复导出
+
+    plant = find_child(find_top(QStringLiteral("yard")), QStringLiteral("plant"));
+    QTreeWidgetItem* advance_item = find_child(plant, QStringLiteral("advance"));
+    QVERIFY(advance_item != nullptr);
+    tree->setCurrentItem(advance_item);
+    QCOMPARE(interface_edit->text(), QStringLiteral("advance"));
+    export_button->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] {
+        return find_child(find_top(QStringLiteral("yard")), QStringLiteral("advance")) != nullptr;
+    }, 4000));
+
+    // 根作用域连接 yard 的转接需求到 input/value。
+    QTreeWidgetItem* yard_input = find_child(find_top(QStringLiteral("yard")), QStringLiteral("input"));
+    QVERIFY(yard_input != nullptr);
+    tree->setCurrentItem(yard_input);
+    provider_combo = window->findChild<QComboBox*>("systemProviderCombo");
+    QVERIFY(provider_combo != nullptr);
+    QVERIFY(wait_until([&] { return provider_combo->findText(QStringLiteral("input/value")) >= 0; }, 4000));
+    provider_combo->setCurrentText(QStringLiteral("input/value"));
+    window->findChild<QPushButton*>("systemConnectButton")->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] {
+        auto* item = find_child(find_top(QStringLiteral("yard")), QStringLiteral("input"));
+        return item != nullptr && item->text(2).contains(QStringLiteral("input/value"));
+    }, 4000));
+
+    // 规格引用 yard 导出并应用运行。
+    auto* advance_combo = window->findChild<QComboBox*>("systemAdvanceCombo");
+    auto* observation_list = window->findChild<QListWidget*>("systemObservationList");
+    QVERIFY(advance_combo != nullptr && observation_list != nullptr);
+    QVERIFY(wait_until([&] { return advance_combo->findText(QStringLiteral("yard/advance")) >= 0; }, 4000));
+    advance_combo->setCurrentText(QStringLiteral("yard/advance"));
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] {
+        for (int index = 0; index < observation_list->count(); ++index) {
+            if (observation_list->item(index)->text() == QStringLiteral("yard/x")) return true;
+        }
+        return false;
+    }, 4000));
+    for (int index = 0; index < observation_list->count(); ++index) {
+        if (observation_list->item(index)->text() == QStringLiteral("yard/x")) {
+            observation_list->item(index)->setCheckState(Qt::Checked);
+        }
+    }
+    QVERIFY(wait_idle(window));
+    window->findChild<QPushButton*>("systemApplyButton")->click();
+    QVERIFY(wait_until([&] { return window->currentStatus().phase == ascend::session::Phase::runnable; }, 8000));
+    window->findChild<QPushButton*>("stepButton")->click();
+    QVERIFY(wait_idle(window));
+    QCOMPARE(window->currentStatus().tracks.front().frame, std::int64_t{1});
+
+    // 移除作用域（确认对话框）：yard 与其中接口一并消失，根 input 保留。
+    tree->setCurrentItem(find_top(QStringLiteral("yard")));
+    QTimer remove_timer;
+    connect(&remove_timer, &QTimer::timeout, [&] {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (box == nullptr) return;
+        remove_timer.stop();
+        box->button(QMessageBox::Yes)->click();
+    });
+    remove_timer.start(10);
+    window->findChild<QPushButton*>("systemRemoveButton")->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return find_top(QStringLiteral("yard")) == nullptr; }, 4000));
+    QVERIFY(find_top(QStringLiteral("input")) != nullptr);
 }
 
 void TestWorkbench::startPageResearch() {

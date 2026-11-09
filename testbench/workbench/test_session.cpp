@@ -1590,6 +1590,135 @@ void system_assembly() {
     CHECK(probe->observation_names().size() == 3);  // 轨迹与信号树仍用已应用规格
 }
 
+void nested_system_assembly() {
+    // 多层作用域：子作用域、同层重名、需求转接、接口导出与移除清理。
+    auto session = example_session();
+    CHECK(session->new_system("嵌套系统").ok);
+
+    CHECK(session->add_scope("yard").ok);
+    CHECK(!session->add_scope("yard").ok);
+    CHECK(!session->add_scope("a/b").ok);
+    CHECK(!session->add_scope("").ok);
+    CHECK(!session->forward_requirement("input", {"plant", "input"}, "").ok);
+    CHECK(!session->export_symbol("advance", {"plant", "advance"}, "").ok);
+
+    // 同名实例可在不同作用域共存；作用域内重名拒绝。
+    CHECK(session->add_module(example::plant_definition, "plant", {}, "yard").ok);
+    CHECK(!session->add_module(example::plant_definition, "plant", {}, "yard").ok);
+    CHECK(!session->add_scope("plant", "yard").ok);       // 实例与子作用域同层重名
+    CHECK(!session->add_module(example::plant_definition, "yard").ok);  // 实例与子作用域同层重名
+    CHECK(session->add_module(example::plant_definition, "plant").ok);
+    CHECK(session->instances().size() == 2);
+    CHECK(session->remove_module("plant").ok);  // 根作用域同名实例移除，yard 内保留
+
+    CHECK(session->add_module(example::stimulus_definition, "input").ok);
+    // 直接连接与转接互斥：先连接再转接、先转接再连接或断开都被拒绝。
+    CHECK(session->add_scope("check").ok);
+    CHECK(session->add_module(example::plant_definition, "plant", {}, "check").ok);
+    CHECK(session->add_module(example::stimulus_definition, "input", {}, "check").ok);
+    CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}, "check").ok);
+    CHECK(!session->forward_requirement("input", {"plant", "input"}, "check").ok);
+    CHECK(session->remove_scope("check").ok);
+
+    CHECK(session->forward_requirement("input", {"plant", "input"}, "yard").ok);
+    CHECK(!session->forward_requirement("input", {"plant", "input"}, "yard").ok);
+    CHECK(!session->forward_requirement("control", {"plant", "input"}, "yard").ok);
+    CHECK(!session->connect_requirement({"plant", "input"}, {"plant", "x"}, "yard").ok);
+    CHECK(!session->disconnect_requirement({"plant", "input"}, "yard").ok);
+    CHECK(session->export_symbol("advance", {"plant", "advance"}, "yard").ok);
+    CHECK(session->export_symbol("x", {"plant", "x"}, "yard").ok);
+    CHECK(session->export_symbol("y", {"plant", "y"}, "yard").ok);
+    CHECK(session->export_symbol("z", {"plant", "z"}, "yard").ok);
+    CHECK(!session->export_symbol("x", {"plant", "x"}, "yard").ok);
+    CHECK(!session->export_symbol("x2", {"plant", "x"}, "yard").ok);  // 同一公开项不能重复导出
+    CHECK(session->connect_requirement({"yard", "input"}, {"input", "value"}).ok);
+
+    // 目录：根看到 yard 的导出与转接；yard 内保留 plant 的需求与转接记录。
+    const auto catalog = session->catalog();
+    const ModuleNodeView* root = nullptr;
+    const ModuleNodeView* yard = nullptr;
+    for (const auto& node : catalog.modules) {
+        if (node.path.empty()) root = &node;
+        if (node.path == "yard") yard = &node;
+    }
+    CHECK(root != nullptr && yard != nullptr);
+    CHECK(root->requirements.size() == 1);
+    CHECK((root->requirements[0].reference == Reference{"yard", "input"}));
+    CHECK(root->declarations.size() == 6);  // input/value、input/drive 与 yard 的四个导出
+    CHECK(yard->requirements.size() == 1);
+    CHECK((yard->requirements[0].reference == Reference{"yard/plant", "input"}));
+    CHECK(yard->forwards.size() == 1);
+    CHECK(yard->forwards[0].requirement == "input");
+    CHECK((yard->forwards[0].target == Reference{"plant", "input"}));
+    CHECK(yard->exports.size() == 4);
+    CHECK(yard->connections.size() == 1);  // 实例化后的转接记录
+
+    // 规格引用子作用域导出；输入仍按根作用域公开单参数方法推导。
+    CHECK(session->set_spec_advance({"yard", "advance"}).ok);
+    CHECK(session->set_spec_observations(
+              {{"x", {"yard", "x"}}, {"y", {"yard", "y"}}, {"z", {"yard", "z"}}})
+              .ok);
+    CHECK(session->spec().inputs.size() == 1);
+    CHECK((session->spec().inputs[0].second == Reference{"input", "drive"}));
+    CHECK(session->check().passed);
+    CHECK(session->apply().ok);
+    CHECK(session->run(2).ok);
+    const auto trace = session->trace(0);
+    CHECK(trace.samples.back().frame == 2);
+    const auto x_index = std::find(trace.variables.begin(), trace.variables.end(), "x");
+    CHECK(x_index != trace.variables.end());
+    const auto& x_cell = trace.samples.back().observations[
+        static_cast<std::size_t>(x_index - trace.variables.begin())];
+    CHECK(x_cell.integer.has_value() && *x_cell.integer == 2);
+
+    // 移除转接或导出使检查失败；重新声明后恢复。
+    CHECK(session->remove_forward("input", "yard").ok);
+    CHECK(session->disconnect_requirement({"plant", "input"}, "yard").ok);  // 无直接连接：无操作成功
+    CHECK(!session->check().passed);
+    CHECK(session->forward_requirement("input", {"plant", "input"}, "yard").ok);
+    CHECK(session->connect_requirement({"yard", "input"}, {"input", "value"}).ok);  // 转接移除时连接已级联清理
+    CHECK(session->remove_export("z", "yard").ok);
+    CHECK(!session->check().passed);
+    CHECK(session->export_symbol("z", {"plant", "z"}, "yard").ok);
+    CHECK(session->check().passed);
+
+    // 装配文件往返保留作用域、转接与导出；规格不随系统文件保存。
+    const auto encoded = session->encode_system();
+    CHECK(encoded.ok);
+    auto reopened = example_session();
+    CHECK(reopened->new_system("嵌套保存").ok);
+    CHECK(reopened->open_system(encoded.bytes, "嵌套保存").ok);
+    CHECK(reopened->instances().size() == 2);
+    CHECK(reopened->spec().advance == Reference{});
+    std::size_t reopened_scopes = 0;
+    for (const auto& node : reopened->catalog().modules) {
+        if (!node.scope) continue;
+        ++reopened_scopes;
+        if (node.path == "yard") {
+            CHECK(node.forwards.size() == 1);
+            CHECK(node.exports.size() == 4);
+        }
+    }
+    CHECK(reopened_scopes == 2);
+
+    // 移除作用域：后代与根作用域中引用该作用域的连接一并清除。
+    CHECK(session->remove_scope("yard").ok);
+    for (const auto& instance : session->instances()) CHECK(instance.scope != "yard");
+    std::size_t scope_count = 0;
+    for (const auto& node : session->catalog().modules) {
+        if (node.scope) ++scope_count;
+    }
+    CHECK(scope_count == 1);  // 仅根作用域；input 实例路径仍保留在目录
+    CHECK(!session->check().passed);  // 规格仍引用已移除的 yard 导出
+
+    CHECK(session->add_module(example::plant_definition, "plant").ok);
+    CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(session->set_spec_advance({"plant", "advance"}).ok);
+    CHECK(session->set_spec_observations({{"x", {"plant", "x"}}}).ok);
+    CHECK(session->check().passed);
+    CHECK(session->apply().ok);
+}
+
 void system_file() {
     // 因果系统文件（`.aasm`）：编码、重新打开与失败路径；规格属于研究，不随系统保存。
     auto session = example_session();
@@ -2234,6 +2363,7 @@ int main(int argc, char** argv) {
         {"time_module", time_module},
         {"dynamic_module_package", dynamic_module_package},
         {"system_assembly", system_assembly},
+        {"nested_system_assembly", nested_system_assembly},
         {"system_file", system_file},
         {"project_workflow", project_workflow},
         {"project_module_packages", project_module_packages},

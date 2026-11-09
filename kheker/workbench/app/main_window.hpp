@@ -97,11 +97,19 @@ private:
     void hidePanel(const char* id);
     // 系统编辑器命令：参数由 SystemEditorPanel 从控件读出，此处只做忙碌簿记与队列提交。
     void chooseNewSystem();
-    void addSystemModule(const QString& definition, const QString& instance);
-    void removeSystemModule(const QString& instance);
+    void addSystemScope(const QString& name, const QString& scope);
+    void removeSystemScope(const QString& name, const QString& scope);
+    void addSystemModule(const QString& definition, const QString& instance, const QString& scope);
+    void removeSystemModule(const QString& instance, const QString& scope);
     void connectSystemRequirement(const QString& module, const QString& symbol, const QString& provider_module,
-                                  const QString& provider_symbol);
-    void disconnectSystemRequirement(const QString& module, const QString& symbol);
+                                  const QString& provider_symbol, const QString& scope);
+    void disconnectSystemRequirement(const QString& module, const QString& symbol, const QString& scope);
+    void forwardSystemRequirement(const QString& requirement, const QString& child_module,
+                                  const QString& child_symbol, const QString& scope);
+    void removeSystemForward(const QString& requirement, const QString& scope);
+    void exportSystemSymbol(const QString& name, const QString& child_module, const QString& child_symbol,
+                            const QString& scope);
+    void removeSystemExport(const QString& name, const QString& scope);
     void onSpecAdvanceChanged(const QString& module, const QString& symbol);
     void onSpecObservationsChanged(const QStringList& references);
     // 带参数编辑命令的公共簿记：置忙碌标记并排队调用控制层；编辑命令标记研究文件与系统草稿未保存。

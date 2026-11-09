@@ -41,13 +41,23 @@ void ConfigPanel::render_instances(const std::vector<session::InstanceView>& ins
             found->second->setConfig(instance.config);
             continue;
         }
+        const QString display_name =
+            instance.scope.empty()
+                ? from_utf8(instance.name)
+                : from_utf8(instance.scope) + QLatin1Char('/') + from_utf8(instance.name);
+        QString object_suffix = from_utf8(instance.name);
+        if (!instance.scope.empty()) {
+            object_suffix = from_utf8(instance.scope);
+            object_suffix.replace(QLatin1Char('/'), QLatin1Char('_'));
+            object_suffix += QLatin1Char('_') + from_utf8(instance.name);
+        }
         auto* box = new QGroupBox(
             ui_text(texts, "workbench.config.instance_box", "%1 (definition %2)")
-                .arg(from_utf8(instance.name), from_utf8(instance.definition)),
+                .arg(display_name, from_utf8(instance.definition)),
             config_container_);
         auto* layout = new QVBoxLayout(box);
         auto* editor = new ConfigEditor(*context_.adapters, texts, box);
-        editor->setObjectName("configEditor_" + from_utf8(instance.name));
+        editor->setObjectName("configEditor_" + object_suffix);
         editor->setConfig(instance.config);
         const std::string scope = instance.scope;
         const std::string name = instance.name;
@@ -55,7 +65,7 @@ void ConfigPanel::render_instances(const std::vector<session::InstanceView>& ins
             context_.set_instance_config(from_utf8(scope), from_utf8(name), config);
         });
         layout->addWidget(editor);
-        box->setObjectName("instanceBox_" + from_utf8(instance.name));
+        box->setObjectName("instanceBox_" + object_suffix);
         config_layout_->addWidget(box);
         editors.emplace(key, editor);
     }

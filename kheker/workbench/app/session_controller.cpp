@@ -291,24 +291,64 @@ void SessionController::newSystem(const QString& name) {
     publish(session_.new_system(name.toStdString()), true, TraceUpdate::reset);
 }
 
-void SessionController::addModule(const QString& definition, const QString& instance) {
-    publish(session_.add_module(definition.toStdString(), instance.toStdString()), true, TraceUpdate::none);
+void SessionController::addScope(const QString& name, const QString& scope) {
+    publish(session_.add_scope(name.toStdString(), scope.toStdString()), true, TraceUpdate::none);
 }
 
-void SessionController::removeModule(const QString& instance) {
-    publish(session_.remove_module(instance.toStdString()), true, TraceUpdate::none);
+void SessionController::removeScope(const QString& name, const QString& scope) {
+    publish(session_.remove_scope(name.toStdString(), scope.toStdString()), true, TraceUpdate::none);
+}
+
+void SessionController::addModule(const QString& definition, const QString& instance, const QString& scope) {
+    publish(session_.add_module(definition.toStdString(), instance.toStdString(), ascend::Config{},
+                                scope.toStdString()),
+            true, TraceUpdate::none);
+}
+
+void SessionController::removeModule(const QString& instance, const QString& scope) {
+    publish(session_.remove_module(instance.toStdString(), scope.toStdString()), true, TraceUpdate::none);
 }
 
 void SessionController::connectRequirement(const QString& requirement_module, const QString& requirement_symbol,
-                                           const QString& provider_module, const QString& provider_symbol) {
+                                           const QString& provider_module, const QString& provider_symbol,
+                                           const QString& scope) {
     const ascend::Reference requirement{requirement_module.toStdString(), requirement_symbol.toStdString()};
     const ascend::Reference provider{provider_module.toStdString(), provider_symbol.toStdString()};
-    publish(session_.connect_requirement(requirement, provider), true, TraceUpdate::none);
+    publish(session_.connect_requirement(requirement, provider, scope.toStdString()), true,
+            TraceUpdate::none);
 }
 
-void SessionController::disconnectRequirement(const QString& requirement_module, const QString& requirement_symbol) {
+void SessionController::disconnectRequirement(const QString& requirement_module, const QString& requirement_symbol,
+                                              const QString& scope) {
     const ascend::Reference requirement{requirement_module.toStdString(), requirement_symbol.toStdString()};
-    publish(session_.disconnect_requirement(requirement), true, TraceUpdate::none);
+    publish(session_.disconnect_requirement(requirement, scope.toStdString()), true, TraceUpdate::none);
+}
+
+void SessionController::forwardRequirement(const QString& requirement, const QString& child_module,
+                                           const QString& child_symbol, const QString& scope) {
+    publish(session_.forward_requirement(
+                requirement.toStdString(),
+                ascend::Reference{child_module.toStdString(), child_symbol.toStdString()},
+                scope.toStdString()),
+            true, TraceUpdate::none);
+}
+
+void SessionController::removeForward(const QString& requirement, const QString& scope) {
+    publish(session_.remove_forward(requirement.toStdString(), scope.toStdString()), true,
+            TraceUpdate::none);
+}
+
+void SessionController::exportSymbol(const QString& name, const QString& child_module,
+                                     const QString& child_symbol, const QString& scope) {
+    publish(session_.export_symbol(
+                name.toStdString(),
+                ascend::Reference{child_module.toStdString(), child_symbol.toStdString()},
+                scope.toStdString()),
+            true, TraceUpdate::none);
+}
+
+void SessionController::removeExport(const QString& name, const QString& scope) {
+    publish(session_.remove_export(name.toStdString(), scope.toStdString()), true, TraceUpdate::none);
 }
 
 void SessionController::setSpecAdvance(const QString& module, const QString& symbol) {

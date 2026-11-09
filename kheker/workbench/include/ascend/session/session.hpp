@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -83,12 +84,27 @@ struct ConnectionView {
     bool forwarded = false;
 };
 
-// 一个作用域/模块节点：直接子模块的公开项、需求与本作用域连接。
+// 本作用域声明的需求转接：外层需求名指向直接子模块的需求。
+struct ForwardView {
+    std::string requirement;
+    Reference target;
+};
+
+// 本作用域声明的接口导出：外层公开名指向直接子模块的公开符号。
+struct ExportView {
+    std::string name;
+    Reference target;
+};
+
+// 一个作用域/模块节点：直接子模块的公开项、需求、本作用域连接与接口声明。
 struct ModuleNodeView {
-    std::string path;  // 完整路径；根作用域为空
+    std::string path;   // 完整路径；根作用域为空
+    bool scope = false;  // 是否为装配作用域；实例模块路径为 false
     std::vector<DeclarationView> declarations;
     std::vector<RequirementView> requirements;
     std::vector<ConnectionView> connections;
+    std::vector<ForwardView> forwards;
+    std::vector<ExportView> exports;
 };
 
 struct CatalogView {
@@ -428,22 +444,41 @@ public:
     // 卸载已载入模块包；未载入或模板没有模块库时报诊断。
     OperationResult unload_module_package(const std::string& definition);
 
-    // ---- 因果系统装配（切片 A：根作用域；嵌套组合与装配文件保存后续）----
+    // ---- 因果系统装配（多层作用域、需求转接与接口导出）----
     // 新建空因果系统：清空装配草稿与规格，放弃当前运行与记录，进入编辑态。
     OperationResult new_system(std::string name);
     // 可用模块定义（宿主内置与模块库工厂合并后按名称排序）。
     std::vector<std::string> available_modules() const;
     // 当前系统名；为空时显示模板名。
     const std::string& system_name() const noexcept { return system_name_; }
-    // 增加模块实例：定义须可用，实例名非空、不含 '/' 且在根作用域唯一；
+    // 增加子作用域：名称非空、不含 '/' 且在父作用域唯一；scope 为父作用域路径。
+    OperationResult add_scope(const std::string& name, const std::string& scope = {});
+    // 移除子作用域及其后代；父作用域中引用它的连接、转接与导出一并移除。
+    OperationResult remove_scope(const std::string& name, const std::string& scope = {});
+    // 增加模块实例：定义须可用，实例名非空、不含 '/' 且在 scope 内唯一；
     // 定义来自已载入模块包时登记其版本需求。
-    OperationResult add_module(std::string definition, std::string instance, Config config = {});
+    OperationResult add_module(std::string definition, std::string instance, Config config = {},
+                               const std::string& scope = {});
     // 移除模块实例；引用它的连接一并移除，最后一个使用者移除后清除模块需求。
-    OperationResult remove_module(const std::string& instance);
-    // 连接需求到提供方：同一需求已有连接时替换；两端须是草稿中的根作用域实例。
-    OperationResult connect_requirement(const Reference& requirement, const Reference& provider);
+    OperationResult remove_module(const std::string& instance, const std::string& scope = {});
+    // 连接需求到提供方：同一需求已有连接时替换；引用在 scope 内解析。
+    OperationResult connect_requirement(const Reference& requirement, const Reference& provider,
+                                        const std::string& scope = {});
     // 断开需求连接；无该连接时为无操作成功。
-    OperationResult disconnect_requirement(const Reference& requirement);
+    OperationResult disconnect_requirement(const Reference& requirement,
+                                           const std::string& scope = {});
+    // 在 scope 声明需求转接：本作用域的外层需求名指向直接子模块的需求。
+    // 根作用域不能声明转接。
+    OperationResult forward_requirement(std::string requirement, const Reference& child_requirement,
+                                        const std::string& scope = {});
+    // 移除需求转接；无该转接时为无操作成功。
+    OperationResult remove_forward(const std::string& requirement, const std::string& scope = {});
+    // 在 scope 声明接口导出：本作用域的公开名指向直接子模块的公开符号。
+    // 根作用域不能声明导出。
+    OperationResult export_symbol(std::string name, const Reference& child_symbol,
+                                  const std::string& scope = {});
+    // 移除接口导出；无该导出时为无操作成功。
+    OperationResult remove_export(const std::string& name, const std::string& scope = {});
     // 设置推进入口；观测由调用方选择；输入映射按公开单参数方法自动推导。
     OperationResult set_spec_advance(const Reference& advance);
     OperationResult set_spec_observations(std::vector<std::pair<std::string, Reference>> observations);
@@ -491,8 +526,20 @@ private:
     bool derive_spec_observations();
     // 空会话尚未确立系统身份：编辑命令返回诊断且不改变状态。
     OperationResult reject_without_system() const;
-    // 根作用域是否存在该实例。
-    bool has_instance(const std::string& name) const;
+    // 作用域不存在时返回可立即返回的失败结果；存在时为空。
+    std::optional<OperationResult> unknown_scope_result(const std::string& scope);
+    // 指定作用域是否存在实例；name 为作用域内的局部实例名。
+    bool has_instance(const std::string& scope, const std::string& name) const;
+    // 作用域的直接子模块（实例或子作用域）是否存在；module 为局部名。
+    bool has_direct_module(const std::string& scope, const std::string& module) const;
+    // 把完整引用规范化为 scope 内的局部引用；已局部化的引用原样返回。
+    Reference local_reference(const std::string& scope, const Reference& reference) const;
+    // 把完整实例路径规范化为 scope 内的局部实例名。
+    std::string local_name(const std::string& scope, const std::string& name) const;
+    // 结构编辑成功后统一递增修订、刷新目录并重新推导规格。
+    OperationResult finish_structure_edit();
+    // 仅清理候选定义中已无实例使用的模块包版本需求；显式保留的其他需求不变。
+    void prune_module_requirements(const std::set<std::string>& definitions);
     // 当前运行规格：运行或记录存在时以记录快照为准，编辑态使用研究规格。
     const ExperimentSpec& active_spec() const;
     // 宿主已核对实现标识：模板登记优先，其次是已载入模块库清单中的实现；没有返回空。
