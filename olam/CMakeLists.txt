@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(MSVC)
+    # 引擎与插件代理包含较多模板实例；MSVC 目标文件需要大对象支持。
+    add_compile_options(/bigobj)
+endif()
+
 add_library(ascend_olam STATIC src/space.cpp src/time.cpp)
 add_library(ascend::olam ALIAS ascend_olam)
 target_compile_features(ascend_olam PUBLIC cxx_std_17)

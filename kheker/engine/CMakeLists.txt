@@ -14,7 +14,7 @@ target_include_directories(ascend_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/inc
 target_link_libraries(ascend_engine PUBLIC ${CMAKE_DL_LIBS})
 
 if(MSVC)
-    target_compile_options(ascend_engine PRIVATE /W4 /permissive-)
+    target_compile_options(ascend_engine PRIVATE /W4 /permissive- /bigobj)
     target_compile_options(ascend_engine PUBLIC /utf-8)
 else()
     target_compile_options(ascend_engine PRIVATE -Wall -Wextra -Wpedantic)

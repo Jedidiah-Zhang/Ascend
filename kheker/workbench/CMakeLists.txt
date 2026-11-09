@@ -5,6 +5,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(MSVC)
+    add_compile_options(/bigobj)
+endif()
+
 # 以子项目方式复用无界面引擎、示例组件与世界库空间／时钟模块；工作台只需要库目标。
 set(ASCEND_ENGINE_BUILD_EXAMPLES OFF)
 set(ASCEND_ENGINE_BUILD_TESTS OFF)

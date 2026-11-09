@@ -60,7 +60,9 @@ std::filesystem::path temporary_library_path() {
 }
 
 void ensure_executable(const std::filesystem::path& path) {
-#if !defined(_WIN32)
+#if defined(_WIN32)
+    (void)path;
+#else
     if (::chmod(path.c_str(), S_IRUSR | S_IWUSR | S_IXUSR) != 0) {
         fail(ErrorCode::io_failure, "plugin_loader.permissions",
              "Failed to set plugin temporary file permissions", {path.u8string(), {}});
