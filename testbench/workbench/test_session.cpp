@@ -5,6 +5,7 @@
 #include <ascend/session/session.hpp>
 #include <ascend/session/project.hpp>
 #include <olam/module/space_module.hpp>
+#include <olam/module/terrain_module.hpp>
 #include <olam/module/time_module.hpp>
 
 #include <any>
@@ -49,7 +50,9 @@ ModelTemplate example_template() {
     model.implementations = {{example::plant_definition, example::plant_implementation},
                              {example::stimulus_definition, example::stimulus_implementation},
                              {olam::module::space_definition, olam::module::space_implementation},
-                             {olam::module::time_definition, olam::module::time_implementation}};
+                             {olam::module::time_definition, olam::module::time_implementation},
+                             {olam::module::terrain_definition,
+                              olam::module::terrain_implementation}};
     model.resources = core_resources();
     const auto module_resources = example::i18n_resources(WORKBENCH_EXAMPLE_ROOT);
     model.resources.insert(model.resources.end(), module_resources.begin(), module_resources.end());
@@ -58,11 +61,15 @@ ModelTemplate example_template() {
     example::register_module_library(*model.modules);
     olam::module::register_space_module(*model.modules);
     olam::module::register_time_module(*model.modules);
+    olam::module::register_terrain_module(*model.modules);
 #ifdef WORKBENCH_OLAM_I18N
     model.resources.push_back({olam::module::space_text_domain, WORKBENCH_OLAM_I18N});
 #endif
 #ifdef WORKBENCH_OLAM_TIME_I18N
     model.resources.push_back({olam::module::time_text_domain, WORKBENCH_OLAM_TIME_I18N});
+#endif
+#ifdef WORKBENCH_OLAM_TERRAIN_I18N
+    model.resources.push_back({olam::module::terrain_text_domain, WORKBENCH_OLAM_TERRAIN_I18N});
 #endif
     return model;
 }
@@ -1429,6 +1436,110 @@ void time_module() {
     CHECK(replay.complete);
 }
 
+void terrain_module() {
+    // 地形模块：精确实现、默认配置、逐格修改、检查点干预与重放。
+    auto session = example_session();
+    CHECK(session->load().ok);
+    std::vector<ModuleResource> resources;
+#ifdef WORKBENCH_OLAM_TERRAIN_I18N
+    resources.push_back({olam::module::terrain_text_domain, "zh-CN",
+                         read_text_file(WORKBENCH_OLAM_TERRAIN_I18N)});
+#endif
+    CHECK(session->load_module_package(olam::module::terrain_package_bytes(std::move(resources))).ok);
+    CHECK(session->module_packages().size() == 1);
+    const auto package = session->module_packages().front();
+    CHECK(package.definition == olam::module::terrain_definition);
+    CHECK(package.version == olam::module::terrain_version);
+    CHECK(package.implementation == olam::module::terrain_implementation);
+    CHECK(!package.stateless);
+    CHECK(package.state_contract == olam::module::terrain_state_contract);
+
+    CHECK(session->new_system("地形系统").ok);
+    CHECK(session->add_module(olam::module::terrain_definition, "terrain").ok);
+    const auto installed = session->instances();
+    CHECK(installed.size() == 1);
+    CHECK(installed.front().config.find("columns") != nullptr);
+    CHECK(installed.front().config.find("columns")->integer() == 512);
+    CHECK(installed.front().config.find("edits") != nullptr);
+
+    const Config edits = Config::object(
+        {{"5", Config::object({{"elevation", Config::integer(1234)}})}});
+    CHECK(session->set_instance_config(
+                    "", "terrain",
+                    Config::object({{"origin_x", Config::integer(0)},
+                                    {"origin_y", Config::integer(0)},
+                                    {"layer", Config::integer(0)},
+                                    {"columns", Config::integer(16)},
+                                    {"rows", Config::integer(8)},
+                                    {"cell_ticks", Config::integer(1000)},
+                                    {"seed", Config::integer(42)},
+                                    {"octaves", Config::integer(3)},
+                                    {"feature_cells", Config::integer(4)},
+                                    {"base_elevation", Config::integer(0)},
+                                    {"amplitude", Config::integer(1000)},
+                                    {"generator_version", Config::integer(1)},
+                                    {"edits", edits}}))
+              .ok);
+
+    CHECK(session->add_module(example::plant_definition, "plant").ok);
+    CHECK(session->add_module(example::stimulus_definition, "input").ok);
+    CHECK(session->connect_requirement({"plant", "input"}, {"input", "value"}).ok);
+    CHECK(session->set_spec_advance({"plant", "advance"}).ok);
+    CHECK(session->set_spec_observations(
+                    {{"columns", {"terrain", "columns"}},
+                     {"edits", {"terrain", "edit_count"}},
+                     {"edit_sum", {"terrain", "edit_elevation_sum"}},
+                     {"checksum", {"terrain", "base_checksum"}},
+                     {"exact", {"terrain", "exact"}}})
+              .ok);
+    CHECK(session->check().passed);
+    CHECK(session->apply().ok);
+    CHECK(session->run(1).ok);
+
+    const auto trace = session->trace(0);
+    const auto variable_index = [&](const std::string& name) {
+        const auto found = std::find(trace.variables.begin(), trace.variables.end(), name);
+        CHECK(found != trace.variables.end());
+        return static_cast<std::size_t>(found - trace.variables.begin());
+    };
+    const auto columns = variable_index("columns");
+    const auto edits_count = variable_index("edits");
+    const auto edit_sum = variable_index("edit_sum");
+    const auto checksum = variable_index("checksum");
+    const auto exact = variable_index("exact");
+    const auto& last = trace.samples.back();
+    CHECK(last.observations[columns].integer.value() == 16);
+    CHECK(last.observations[edits_count].integer.value() == 1);
+    CHECK(last.observations[edit_sum].integer.value() == 1234);
+    CHECK(last.observations[checksum].integer.has_value());
+    const Integer base_checksum = last.observations[checksum].integer.value();
+    CHECK(last.observations[exact].integer.value() == 1);
+
+    CHECK(session->create_checkpoint().ok);
+    const auto fields = session->state_fields();
+    const bool has_edit_state = std::any_of(fields.begin(), fields.end(), [](const StateFieldView& field) {
+        return field.module == "terrain" && field.field == "edits/5/elevation";
+    });
+    CHECK(has_edit_state);
+
+    // 从检查点修改一个格的高程：基础校验和不匹配不会发生，编辑值进入分支状态。
+    const auto branches = session->create_branches(
+        {{"对照", {}},
+         {"干预", {{"terrain", "edits/5/elevation", Config::integer(4321)}}}});
+    CHECK(branches.ok);
+    CHECK(session->trace(1).samples.front().observations[edit_sum].integer.value() == 1234);
+    CHECK(session->trace(2).samples.front().observations[edit_sum].integer.value() == 4321);
+    CHECK(session->trace(1).samples.front().observations[checksum].integer.value() == base_checksum);
+    CHECK(session->trace(2).samples.front().observations[checksum].integer.value() == base_checksum);
+    CHECK(session->trace(2).interventions.size() == 1);
+    CHECK(session->trace(2).interventions[0].module == "terrain");
+    CHECK(session->trace(2).interventions[0].field == "edits/5/elevation");
+
+    const auto replay = session->replay();
+    CHECK(replay.ok);
+    CHECK(replay.complete);
+}
+
 void dynamic_module_package() {
     // 包内 C ABI 插件覆盖内置实现，完成装配、检查与运行，卸载后恢复内置定义。
     auto session = example_session();
@@ -2422,6 +2533,7 @@ int main(int argc, char** argv) {
         {"module_packages", module_packages},
         {"space_module", space_module},
         {"time_module", time_module},
+        {"terrain_module", terrain_module},
         {"dynamic_module_package", dynamic_module_package},
         {"system_assembly", system_assembly},
         {"nested_system_assembly", nested_system_assembly},

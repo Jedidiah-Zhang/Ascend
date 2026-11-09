@@ -4,6 +4,7 @@
 
 #include <ascend/example/experiment_model.hpp>
 #include <olam/module/space_module.hpp>
+#include <olam/module/terrain_module.hpp>
 #include <olam/module/time_module.hpp>
 
 #include <QCoreApplication>
@@ -31,6 +32,9 @@
 #endif
 #ifndef ASCEND_WORKBENCH_OLAM_TIME_I18N
 #error "ASCEND_WORKBENCH_OLAM_TIME_I18N must be defined by the build"
+#endif
+#ifndef ASCEND_WORKBENCH_OLAM_TERRAIN_I18N
+#error "ASCEND_WORKBENCH_OLAM_TERRAIN_I18N must be defined by the build"
 #endif
 
 namespace ascend::workbench {
@@ -82,6 +86,8 @@ ResourcePaths resource_paths_from(const std::string& base_dir) {
         resolve_runtime_path(base_dir, "resources/olam/module/i18n/zh-CN.json", ASCEND_WORKBENCH_OLAM_I18N),
         resolve_runtime_path(base_dir, "resources/olam/module/i18n/time.zh-CN.json",
                              ASCEND_WORKBENCH_OLAM_TIME_I18N),
+        resolve_runtime_path(base_dir, "resources/olam/module/i18n/terrain.zh-CN.json",
+                             ASCEND_WORKBENCH_OLAM_TERRAIN_I18N),
     };
 }
 
@@ -98,11 +104,14 @@ session::ModelTemplate example_template(const ResourcePaths& paths) {
     model.implementations = {{example::plant_definition, example::plant_implementation},
                              {example::stimulus_definition, example::stimulus_implementation},
                              {olam::module::space_definition, olam::module::space_implementation},
-                             {olam::module::time_definition, olam::module::time_implementation}};
+                             {olam::module::time_definition, olam::module::time_implementation},
+                             {olam::module::terrain_definition,
+                              olam::module::terrain_implementation}};
     model.resources = {{engine_text_domain, paths.engine_i18n},
                        {session::session_text_domain, paths.session_i18n},
                        {olam::module::space_text_domain, paths.olam_i18n},
-                       {olam::module::time_text_domain, paths.olam_time_i18n}};
+                       {olam::module::time_text_domain, paths.olam_time_i18n},
+                       {olam::module::terrain_text_domain, paths.olam_terrain_i18n}};
     const auto module_resources = example::i18n_resources(paths.example_root);
     model.resources.insert(model.resources.end(), module_resources.begin(), module_resources.end());
     model.locale = "zh-CN";
@@ -110,6 +119,7 @@ session::ModelTemplate example_template(const ResourcePaths& paths) {
     example::register_module_library(*model.modules);
     olam::module::register_space_module(*model.modules);
     olam::module::register_time_module(*model.modules);
+    olam::module::register_terrain_module(*model.modules);
     return model;
 }
 

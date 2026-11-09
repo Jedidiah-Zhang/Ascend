@@ -26,6 +26,7 @@ struct ResourcePaths {
     std::string example_root;
     std::string olam_i18n;
     std::string olam_time_i18n;
+    std::string olam_terrain_i18n;
 };
 
 // 以可执行文件所在目录为基准解析运行资源。

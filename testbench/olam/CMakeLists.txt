@@ -11,6 +11,30 @@ foreach(case IN ITEMS
     add_test(NAME space.${case} COMMAND ascend_space_tests ${case})
 endforeach()
 
+add_executable(ascend_terrain_tests test_terrain.cpp)
+target_link_libraries(ascend_terrain_tests PRIVATE ascend::olam)
+foreach(case IN ITEMS
+    create
+    generate
+    edits
+    bounds
+    errors
+)
+    add_test(NAME terrain.${case} COMMAND ascend_terrain_tests ${case})
+endforeach()
+if(TARGET ascend_olam_terrain_preview)
+    add_test(NAME terrain.preview_tool
+             COMMAND ascend_olam_terrain_preview
+                     "${CMAKE_CURRENT_BINARY_DIR}/terrain-preview.pgm"
+                     16 12 7 3 4 0 1000)
+    add_test(NAME terrain.preview_file
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DPGM=${CMAKE_CURRENT_BINARY_DIR}/terrain-preview.pgm"
+                     -P "${CMAKE_CURRENT_SOURCE_DIR}/check_terrain_preview.cmake")
+    set_tests_properties(terrain.preview_file PROPERTIES
+                         DEPENDS terrain.preview_tool)
+endif()
+
 add_executable(ascend_time_tests test_time.cpp)
 target_link_libraries(ascend_time_tests PRIVATE ascend::olam)
 foreach(case IN ITEMS
@@ -36,6 +60,20 @@ if(TARGET ascend_olam_module)
         package
     )
         add_test(NAME space_module.${case} COMMAND ascend_space_module_tests ${case})
+    endforeach()
+
+    add_executable(ascend_terrain_module_tests test_terrain_module.cpp)
+    target_link_libraries(ascend_terrain_module_tests PRIVATE ascend::olam_module)
+    target_compile_definitions(ascend_terrain_module_tests PRIVATE
+        OLAM_TERRAIN_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/terrain.zh-CN.json")
+    foreach(case IN ITEMS
+        values
+        queries
+        state
+        config_errors
+        package
+    )
+        add_test(NAME terrain_module.${case} COMMAND ascend_terrain_module_tests ${case})
     endforeach()
 
     add_executable(ascend_time_module_tests test_time_module.cpp)
@@ -73,6 +111,17 @@ if(TARGET ascend_olam_module)
                      "${time_package_dir}/olam.clock.amod")
     set_tests_properties(time_module.package_file PROPERTIES
                          DEPENDS time_module.package_tool)
+
+    set(terrain_package_dir "${CMAKE_CURRENT_BINARY_DIR}/terrain-package")
+    add_test(NAME terrain_module.package_tool
+             COMMAND ascend_olam_terrain_package
+                     "${terrain_package_dir}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/terrain.zh-CN.json")
+    add_test(NAME terrain_module.package_file
+             COMMAND ascend_terrain_module_tests package_file
+                     "${terrain_package_dir}/olam.terrain.amod")
+    set_tests_properties(terrain_module.package_file PROPERTIES
+                         DEPENDS terrain_module.package_tool)
 
     if(TARGET ascend_olam_space_plugin)
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")

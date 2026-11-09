@@ -112,7 +112,7 @@ After changes, configure, build, and run CTest from the repository root using th
 | Module | Build commands and options | Verification scope |
 | --- | --- | --- |
 | `kheker/engine/` | [Engine build](docs/研究平台/实验环境与声明接入/实现.md#4-构建与运行入口) | [Engine tests](docs/研究平台/实验环境与声明接入/测试.md) |
-| `olam/` | [World-library build](docs/世界/世界框架/空间系统/实现.md#4-构建与运行入口) | [Space and module integration](docs/世界/世界框架/空间系统/测试.md) · [Time](docs/世界/世界框架/时间系统/测试.md) |
+| `olam/` | [World-library build](docs/世界/世界框架/空间系统/实现.md#4-构建与运行入口) | [Space and module integration](docs/世界/世界框架/空间系统/测试.md) · [Time](docs/世界/世界框架/时间系统/测试.md) · [Terrain](docs/世界/世界框架/地形与水文/测试.md) |
 | `kheker/workbench/` | [Workbench build](docs/研究平台/因果建模工作台/实现.md#4-构建与运行入口) | [Session, state layer, and UI](docs/研究平台/因果建模工作台/测试.md) |
 
 Tests live in corresponding `testbench/` subdirectories; build outputs go under the ignored `build/` directory. Platform matrices are maintained in [Engine CI](.github/workflows/engine.yml), [Olam World CI](.github/workflows/olam_world.yml), and [Workbench CI](.github/workflows/workbench.yml). CI configuration is not evidence of an actual passing run.

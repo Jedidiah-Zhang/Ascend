@@ -216,6 +216,7 @@ private slots:
     void openProjectPackages();
     void modulePackageLoadUnload();
     void spaceModulePackage();
+    void terrainModulePackage();
     void dynamicPackageCarrier();
     void modulePackageMultiLoad();
     void modulePackageFolderLoad();
@@ -702,12 +703,14 @@ void TestWorkbench::resourceResolution() {
     QVERIFY(under_app_dir(runtime.example_root));
     QVERIFY(under_app_dir(runtime.olam_i18n));
     QVERIFY(under_app_dir(runtime.olam_time_i18n));
+    QVERIFY(under_app_dir(runtime.olam_terrain_i18n));
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.engine_i18n)));
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.session_i18n)));
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.ui_i18n)));
     QVERIFY(QFileInfo(QString::fromStdString(runtime.example_root)).isDir());
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.olam_i18n)));
     QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.olam_time_i18n)));
+    QVERIFY(QFileInfo::exists(QString::fromStdString(runtime.olam_terrain_i18n)));
 
     // 运行目录缺失时回退编译期源码路径，开发构建仍可直接运行。
     const ResourcePaths fallback = resource_paths_from("/nonexistent/ascend-workbench");
@@ -718,6 +721,7 @@ void TestWorkbench::resourceResolution() {
     QVERIFY(QFileInfo(QString::fromStdString(fallback.example_root)).isDir());
     QVERIFY(QFileInfo::exists(QString::fromStdString(fallback.olam_i18n)));
     QVERIFY(QFileInfo::exists(QString::fromStdString(fallback.olam_time_i18n)));
+    QVERIFY(QFileInfo::exists(QString::fromStdString(fallback.olam_terrain_i18n)));
 
     // 运行目录副本能被会话与界面文案加载（与工作台启动路径一致）。
     const UiTexts texts = load_ui_texts(runtime.ui_i18n, "zh-CN");
@@ -1342,7 +1346,108 @@ void TestWorkbench::spaceModulePackage() {
     QVERIFY(editor->findChild<QLineEdit*>("configLeaf_height") != nullptr);
     QVERIFY(editor->findChild<QLineEdit*>("configLeaf_layer") != nullptr);
 
+    // 卸载静态包后内置定义仍可继续添加实例。
+    QTimer space_unload_timer;
+    connect(&space_unload_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) return;
+        space_unload_timer.stop();
+        dialog->accept();
+    });
+    space_unload_timer.start(10);
+    window->findChild<QAction*>("unloadModulePackageAction")->trigger();
+    QVERIFY(wait_until([&] { return table->rowCount() == 0; }, 8000));
+    space_unload_timer.stop();
+    definition_combo->setCurrentText(QStringLiteral("olam.space"));
+    instance_edit->setText(QStringLiteral("space2"));
+    window->findChild<QPushButton*>("systemAddButton")->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 2; }, 4000));
+
     QFile::remove(path);
+}
+
+void TestWorkbench::terrainModulePackage() {
+    auto workbench = start_workbench(false);
+    MainWindow* window = workbench->window();
+    QVERIFY(wait_idle(window));
+
+    // 载入构建目录中的地形包：验证包生成、资源复制与模块库概要。
+    const QString path = QString::fromUtf8(WORKBENCH_TERRAIN_PACKAGE);
+    QVERIFY(QFileInfo::exists(path));
+    auto* table = window->findChild<QTableWidget*>("modulePackageTable");
+    QVERIFY(table != nullptr);
+    QCOMPARE(table->rowCount(), 0);
+    QTimer load_timer;
+    connect(&load_timer, &QTimer::timeout, [&] { drive_choose_paths_dialog({path}); });
+    load_timer.start(10);
+    window->findChild<QAction*>("loadModulePackageAction")->trigger();
+    QVERIFY(wait_until([&] { return table->rowCount() == 1; }, 8000));
+    load_timer.stop();
+    QCOMPARE(table->item(0, 0)->text(), QStringLiteral("olam.terrain"));
+    QCOMPARE(table->item(0, 1)->text(), QStringLiteral("1.0"));
+    QCOMPARE(table->item(0, 2)->text(), QStringLiteral("olam.terrain.full.v1"));
+    QCOMPARE(table->item(0, 3)->text(), QStringLiteral("olam.terrain.state.v1"));
+    QCOMPARE(table->item(0, 6)->text(), QStringLiteral("1"));
+    QCOMPARE(table->item(0, 7)->text(), QStringLiteral("内置"));
+
+    // 系统编辑器可用地形定义添加实例，并展开默认配置字段。
+    window->findChild<QAction*>("systemEditorAction")->trigger();
+    auto* results = window->findChild<QTabWidget*>("resultsTabs");
+    QVERIFY(results != nullptr);
+    QVERIFY(wait_until([&] { return results->currentWidget()->objectName() == "systemEditorPage"; }, 4000));
+    auto* definition_combo = window->findChild<QComboBox*>("systemDefinitionCombo");
+    QVERIFY(definition_combo != nullptr);
+    QVERIFY(wait_until([&] { return definition_combo->findText(QStringLiteral("olam.terrain")) >= 0; }, 4000));
+
+    QTimer name_timer;
+    connect(&name_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) return;
+        name_timer.stop();
+        dialog->setTextValue(QStringLiteral("地形测试"));
+        dialog->accept();
+    });
+    name_timer.start(10);
+    window->findChild<QPushButton*>("systemNewButton")->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return window->currentStatus().model_name == "地形测试"; }, 4000));
+
+    definition_combo->setCurrentText(QStringLiteral("olam.terrain"));
+    auto* instance_edit = window->findChild<QLineEdit*>("systemInstanceEdit");
+    QVERIFY(instance_edit != nullptr);
+    QCOMPARE(instance_edit->text(), QStringLiteral("terrain"));
+    window->findChild<QPushButton*>("systemAddButton")->click();
+    QVERIFY(wait_idle(window));
+    auto* tree = window->findChild<QTreeWidget*>("systemTree");
+    QVERIFY(tree != nullptr);
+    QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 1; }, 4000));
+    QCOMPARE(tree->topLevelItem(0)->text(0), QStringLiteral("terrain"));
+    auto* editor = window->findChild<QWidget*>("configEditor_terrain");
+    QVERIFY(editor != nullptr);
+    QVERIFY(editor->findChild<QLineEdit*>("configLeaf_columns") != nullptr);
+    QVERIFY(editor->findChild<QLineEdit*>("configLeaf_seed") != nullptr);
+    QVERIFY(editor->findChild<QLineEdit*>("configLeaf_generator_version") != nullptr);
+    QVERIFY(editor->findChild<QLineEdit*>("configLeaf_checksum_limit_cells") != nullptr);
+
+    // 卸载包后恢复内置登记；定义仍可继续使用。
+    QTimer unload_timer;
+    connect(&unload_timer, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        if (dialog == nullptr) return;
+        unload_timer.stop();
+        dialog->accept();
+    });
+    unload_timer.start(10);
+    window->findChild<QAction*>("unloadModulePackageAction")->trigger();
+    QVERIFY(wait_until([&] { return table->rowCount() == 0; }, 8000));
+    unload_timer.stop();
+    QVERIFY(definition_combo->findText(QStringLiteral("olam.terrain")) >= 0);
+    definition_combo->setCurrentText(QStringLiteral("olam.terrain"));
+    instance_edit->setText(QStringLiteral("terrain2"));
+    window->findChild<QPushButton*>("systemAddButton")->click();
+    QVERIFY(wait_idle(window));
+    QVERIFY(wait_until([&] { return tree->topLevelItemCount() == 2; }, 4000));
 }
 
 void TestWorkbench::dynamicPackageCarrier() {
@@ -1511,6 +1616,7 @@ void TestWorkbench::systemEditorAssembly() {
     QVERIFY(definition_combo->findText(QStringLiteral("library.source")) >= 0);
     QVERIFY(definition_combo->findText(QStringLiteral("olam.space")) >= 0);
     QVERIFY(definition_combo->findText(QStringLiteral("olam.clock")) >= 0);
+    QVERIFY(definition_combo->findText(QStringLiteral("olam.terrain")) >= 0);
 
     // 新建系统：命名对话框。
     QTimer name_timer;

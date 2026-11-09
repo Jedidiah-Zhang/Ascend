@@ -10,7 +10,7 @@ if(MSVC)
     add_compile_options(/bigobj)
 endif()
 
-add_library(ascend_olam STATIC src/space.cpp src/time.cpp)
+add_library(ascend_olam STATIC src/space.cpp src/time.cpp src/terrain.cpp)
 add_library(ascend::olam ALIAS ascend_olam)
 target_compile_features(ascend_olam PUBLIC cxx_std_17)
 target_include_directories(ascend_olam PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -20,6 +20,19 @@ if(MSVC)
     target_compile_options(ascend_olam PUBLIC /utf-8)
 else()
     target_compile_options(ascend_olam PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# 地形预览是地形模块自己的独立工具，不接入工作台；宿主可关闭以减小构建量。
+option(ASCEND_OLAM_BUILD_PREVIEW "Build the terrain preview tool" ON)
+if(ASCEND_OLAM_BUILD_PREVIEW)
+    add_executable(ascend_olam_terrain_preview tool/terrain_preview.cpp)
+    target_link_libraries(ascend_olam_terrain_preview PRIVATE ascend::olam)
+    if(MSVC)
+        target_compile_options(ascend_olam_terrain_preview PRIVATE /W4 /permissive-)
+        target_compile_options(ascend_olam_terrain_preview PUBLIC /utf-8)
+    else()
+        target_compile_options(ascend_olam_terrain_preview PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
 endif()
 
 # 声明接入是独立目标：核心空间与时间库仍不依赖声明引擎，只有该目标链接引擎。
@@ -47,7 +60,8 @@ if(ASCEND_OLAM_BUILD_MODULE)
 
     add_library(ascend_olam_module STATIC
         module/src/space_module.cpp
-        module/src/time_module.cpp)
+        module/src/time_module.cpp
+        module/src/terrain_module.cpp)
     add_library(ascend::olam_module ALIAS ascend_olam_module)
     set_target_properties(ascend_olam_module PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_features(ascend_olam_module PUBLIC cxx_std_17)
@@ -67,6 +81,9 @@ if(ASCEND_OLAM_BUILD_MODULE)
 
     add_executable(ascend_olam_time_package module/tool/time_package.cpp)
     target_link_libraries(ascend_olam_time_package PRIVATE ascend::olam_module)
+
+    add_executable(ascend_olam_terrain_package module/tool/terrain_package.cpp)
+    target_link_libraries(ascend_olam_terrain_package PRIVATE ascend::olam_module)
 
     # C ABI 插件：C++ 模块实现留在插件内部，DSO 边界只暴露 ascend_plugin_callbacks。
     add_library(ascend_olam_plugin_support STATIC plugin/src/plugin_support.cpp)

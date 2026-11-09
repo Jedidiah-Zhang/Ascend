@@ -27,7 +27,7 @@ These are parallel tracks, not consecutive project phases. Sharing the world cor
 
 ## Project status
 
-Ascend is in the early stages of a rewrite. The C++ declaration engine and Qt research workbench support small-model assembly, execution, checkpoint-based intervention comparisons, and experiment saving and replay. The world library provides space and basic-clock modules. See the [research platform](docs/研究平台/综述.md) and [world overview](docs/世界/综述.md) for current scope and limitations.
+Ascend is in the early stages of a rewrite. The C++ declaration engine and Qt research workbench support small-model assembly, execution, checkpoint-based intervention comparisons, and experiment saving and replay. The world library provides space, basic-clock, and single-layer terrain modules. See the [research platform](docs/研究平台/综述.md) and [world overview](docs/世界/综述.md) for current scope and limitations.
 
 The full world simulation, AI agents, batch experiment management and research evaluation framework, and a playable game client have not yet been implemented. The Godot client currently contains only a basic startup scene; gameplay is not yet available.
 

@@ -112,7 +112,7 @@ Ascend 兼具双重身份：
 | 模块 | 构建命令与选项 | 验证范围 |
 | --- | --- | --- |
 | `kheker/engine/` | [引擎构建](docs/研究平台/实验环境与声明接入/实现.md#4-构建与运行入口) | [引擎测试](docs/研究平台/实验环境与声明接入/测试.md) |
-| `olam/` | [世界库构建](docs/世界/世界框架/空间系统/实现.md#4-构建与运行入口) | [空间与模块接入](docs/世界/世界框架/空间系统/测试.md) · [时间](docs/世界/世界框架/时间系统/测试.md) |
+| `olam/` | [世界库构建](docs/世界/世界框架/空间系统/实现.md#4-构建与运行入口) | [空间与模块接入](docs/世界/世界框架/空间系统/测试.md) · [时间](docs/世界/世界框架/时间系统/测试.md) · [地形](docs/世界/世界框架/地形与水文/测试.md) |
 | `kheker/workbench/` | [工作台构建](docs/研究平台/因果建模工作台/实现.md#4-构建与运行入口) | [会话、状态层与界面](docs/研究平台/因果建模工作台/测试.md) |
 
 测试位于 `testbench/` 对应子目录，构建产物放在已忽略的 `build/`。平台矩阵以 [Engine CI](.github/workflows/engine.yml)、[Olam World CI](.github/workflows/olam_world.yml)与 [Workbench CI](.github/workflows/workbench.yml)为准；CI 配置不等于实际通过记录。

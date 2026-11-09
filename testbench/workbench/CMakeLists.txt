@@ -18,6 +18,7 @@ target_compile_definitions(ascend_session_tests PRIVATE
     WORKBENCH_SESSION_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../kheker/workbench/i18n/zh-CN.json"
     WORKBENCH_OLAM_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/zh-CN.json"
     WORKBENCH_OLAM_TIME_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/time.zh-CN.json"
+    WORKBENCH_OLAM_TERRAIN_I18N="${CMAKE_CURRENT_SOURCE_DIR}/../../olam/module/i18n/terrain.zh-CN.json"
     WORKBENCH_SPACE_PLUGIN="$<TARGET_FILE:ascend_olam_space_plugin>"
     WORKBENCH_SPACE_PACKAGE="$<TARGET_FILE_DIR:ascend_workbench>/modules/olam.space.amod"
     WORKBENCH_PLUGIN_PLATFORM="${workbench_plugin_platform}")
@@ -54,6 +55,7 @@ foreach(case IN ITEMS
     module_packages
     space_module
     time_module
+    terrain_module
     dynamic_module_package
     system_assembly
     nested_system_assembly
@@ -91,12 +93,16 @@ if(TARGET ascend_workbench_ui)
     add_executable(ascend_workbench_tests test_workbench_ui.cpp)
     target_link_libraries(ascend_workbench_tests PRIVATE ascend_workbench_ui Qt6::Test)
     target_compile_definitions(ascend_workbench_tests PRIVATE
-        WORKBENCH_SPACE_PACKAGE="$<TARGET_FILE_DIR:ascend_workbench>/modules/olam.space.amod")
+        WORKBENCH_SPACE_PACKAGE="$<TARGET_FILE_DIR:ascend_workbench>/modules/olam.space.amod"
+        WORKBENCH_TERRAIN_PACKAGE="$<TARGET_FILE_DIR:ascend_workbench>/modules/olam.terrain.amod")
     # 界面测试同样使用随构建复制的运行目录资源，验证运行时解析路径。
     ascend_workbench_resources_target(ascend_workbench_tests_resources ascend_workbench_tests)
     add_dependencies(ascend_workbench_tests ascend_workbench_tests_resources)
     if(TARGET ascend_workbench_space_package)
         add_dependencies(ascend_workbench_tests ascend_workbench_space_package)
+    endif()
+    if(TARGET ascend_workbench_terrain_package)
+        add_dependencies(ascend_workbench_tests ascend_workbench_terrain_package)
     endif()
     foreach(case IN ITEMS
         windowLoadsExample
@@ -116,6 +122,7 @@ if(TARGET ascend_workbench_ui)
         openProjectPackages
         modulePackageLoadUnload
         spaceModulePackage
+        terrainModulePackage
         dynamicPackageCarrier
         modulePackageMultiLoad
         modulePackageFolderLoad
@@ -147,6 +154,7 @@ if(TARGET ascend_workbench_ui)
         workbench.openProjectPackages
         workbench.modulePackageLoadUnload
         workbench.spaceModulePackage
+        workbench.terrainModulePackage
         workbench.dynamicPackageCarrier
         workbench.modulePackageMultiLoad
         workbench.modulePackageFolderLoad
