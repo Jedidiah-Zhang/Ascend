@@ -74,6 +74,18 @@ std::unique_ptr<Session> make_session(ModelTemplate model) {
 
 std::unique_ptr<Session> example_session() { return make_session(example_template()); }
 
+std::string make_module_package(const ModuleLibrary::Factory& factory, const std::string& definition,
+                                const std::string& implementation) {
+    Engine engine;
+    engine.add(factory("probe", {}));
+    ModulePackage package;
+    package.manifest = export_module_manifest(engine, "", "probe");
+    package.manifest.definition = definition;
+    package.manifest.version = "1.0";
+    package.manifest.implementation = implementation;
+    return encode_module_package(package);
+}
+
 OperationResult set_input(Session& session, const std::string& name, Integer value) {
     return session.set_input(name, std::any(value));
 }
@@ -1743,6 +1755,29 @@ void nested_system_assembly() {
     CHECK(deep_trace.samples.back().observations[
               static_cast<std::size_t>(deep_x - deep_trace.variables.begin())]
               .integer == 1);
+    const auto deep_record = deep->encode_record();
+    CHECK(deep_record.ok);
+    auto replayed = example_session();
+    CHECK(replayed->open_record(deep_record.bytes).ok);
+    CHECK(replayed->replay().ok);
+
+    // 移除嵌套作用域时只清理候选定义中不再使用的模块包需求。
+    auto requirements = example_session();
+    CHECK(requirements->new_system("需求清理").ok);
+    CHECK(requirements->load_module_package(
+              make_module_package(example::module_library_source,
+                                  example::library_source_definition,
+                                  example::library_source_implementation))
+              .ok);
+    CHECK(requirements->add_scope("outer").ok);
+    CHECK(requirements->add_module(example::library_source_definition, "source", {}, "outer").ok);
+    auto required = requirements->encode_system();
+    CHECK(required.ok);
+    CHECK(required.bytes.find(example::library_source_definition) != std::string::npos);
+    CHECK(requirements->remove_scope("outer").ok);
+    required = requirements->encode_system();
+    CHECK(required.ok);
+    CHECK(required.bytes.find(example::library_source_definition) == std::string::npos);
 }
 
 void system_file() {
