@@ -27,7 +27,7 @@
 
 ## 项目现状
 
-项目目前处于早期重构阶段。C++ 声明引擎与 Qt 研究工作台已支持小模型装配、运行、检查点干预对照，以及实验保存与重放；世界库已实现空间基础切片。当前可体验范围与限制见[研究平台](docs/研究平台/综述.md)及[世界模拟](docs/世界/综述.md)。
+项目目前处于早期重构阶段。C++ 声明引擎与 Qt 研究工作台已支持小模型装配、运行、检查点干预对照，以及实验保存与重放；世界库已提供空间与基础时钟模块。当前可体验范围与限制见[研究平台](docs/研究平台/综述.md)及[世界模拟](docs/世界/综述.md)。
 
 完整的世界模拟、AI 智能体、批量实验管理与研究评价体系，以及可玩的游戏客户端仍未实现。Godot 客户端目前仅包含基础启动场景，尚无实际游戏内容。
 
@@ -42,31 +42,9 @@
 
 ## 构建与测试 C++ 原型
 
-以下步骤供开发者使用：它们会构建并运行 C++ 核心、世界库空间与基础时钟切片以及工作台的自动化测试。需要 CMake 3.20 及支持 C++17 的编译器；界面部分还需要 Qt 6.4 及以上。测试在无界面平台下运行，不打开窗口；手动启动界面程序才需要显示环境。请在仓库根目录运行：
+需要 CMake 3.20 与 C++17 编译器；界面另需 Qt 6.4 及以上的 Widgets 与 Test。按需选择[引擎](docs/研究平台/实验环境与声明接入/实现.md#4-构建与运行入口)、[世界库](docs/世界/世界框架/空间系统/实现.md#4-构建与运行入口)或[工作台](docs/研究平台/因果建模工作台/实现.md#4-构建与运行入口)的构建命令，在仓库根目录运行；构建选项与资源部署由这些入口维护，验证范围见[测试导航](CONTRIBUTING.md#测试)。
 
-```bash
-cmake -S kheker/engine -B build/engine -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/engine --config Debug --parallel 4
-ctest --test-dir build/engine --build-config Debug --output-on-failure
-```
-
-世界库空间切片独立构建：
-
-```bash
-cmake -S olam -B build/olam -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/olam --config Debug --parallel 4
-ctest --test-dir build/olam --build-config Debug --output-on-failure
-```
-
-研究工作台（无界面会话库与 Qt 最小界面，需要 Qt 6.4 及以上的 Widgets 与 Test 模块）独立构建：
-
-```bash
-cmake -S kheker/workbench -B build/workbench -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/workbench --config Debug --parallel 4
-ctest --test-dir build/workbench --build-config Debug --output-on-failure
-```
-
-构建产物分别位于 `build/engine/`、`build/olam/` 与 `build/workbench/`；加 `-DASCEND_WORKBENCH_BUILD_GUI=OFF` 可只构建无界面会话库与测试。启动工作台运行 `build/workbench/ascend_workbench`，选择「打开内置示例」体验实验流程；运行资源与操作说明见[工作台实现](docs/研究平台/因果建模工作台/实现.md)。当前测试覆盖范围及限制见[核心测试说明](docs/研究平台/实验环境与声明接入/测试.md)、[空间测试说明](docs/世界/世界框架/空间系统/测试.md)、[时间测试说明](docs/世界/世界框架/时间系统/测试.md)与[工作台测试说明](docs/研究平台/因果建模工作台/测试.md)。
+体验工作台：构建后运行 `build/workbench/ascend_workbench`，选择「打开内置示例」，按[实验操作说明](docs/研究平台/因果建模工作台/实现.md#体验一次实验)进行干预比较与重放。自动化界面测试使用离屏平台，手动启动界面需要显示环境。
 
 ## 参与贡献
 

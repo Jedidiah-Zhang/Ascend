@@ -63,9 +63,10 @@ This section is the maintenance entry for engineering documentation conventions.
 | Leaf `设计.md` | Goals, concepts, behavior, interface semantics, configuration, tradeoffs, acceptance, and open questions |
 | Leaf `实现.md` | Current engineering approach, code structure, delivery, limitations, performance measurements, and build entry points; links to the test document |
 | Leaf `测试.md` | Key guarantees mapped to test entry points, validation purposes, commands, and coverage limits; no per-run results; create when automated test cases exist |
-| Research Overview | Highest research authority; subsequent constraints, formalization, and protocols must be discussed on this basis, without precedence for the old contract |
+| Research Overview | Highest research authority; subsequent constraints, formalization, and protocols must be discussed on this basis |
 
 - Each rule has one owning document. Other documents summarize and link to it. Ownership follows responsibility, not whichever file is higher-level, newer, or more strongly worded.
+- `AGENTS.md` contains task reading paths, essential operational constraints, and verification links, not feature inventories or build commands. Read the owning module first and follow dependencies as needed; do not maintain a duplicate AI knowledge base.
 - README covers positioning, usable milestones, and quick entry points. Parent overviews do not repeat feature inventories, test counts, or implementation history. Update summaries at milestones; the owning implementation document maintains detailed delivery status.
 - World documents define general capabilities and mechanisms; gameplay and save-continuation policies belong to the game platform, experiment locking and research validation to the research platform, and cognition implementation to agents.
 - Record differences between the Research Overview and engineering scope, and unresolved mappings, in the research platform. Do not rewrite the overview to hide a conflict.
@@ -80,18 +81,15 @@ This section is the maintenance entry for engineering documentation conventions.
 
 Headers briefly state status, scope, and navigation; keep detailed scope in the body rather than duplicating feature inventories. Design documents own decision maturity, implementation documents own delivery status and verification scope, and parent overviews retain consistent milestone summaries only.
 
-### Leaf Templates
+### Leaf Organization
 
-Organize `设计.md` around the following topics, combining sections where useful. Link to contracts and failure semantics already defined in confirmed rules rather than repeating them. Keep unstarted documents brief rather than inventing content to fill a template:
+Organize `设计.md` by topic; no fixed section count or empty template sections are required:
 
-1. **Goals and rationale**: problem, use cases, and neighboring responsibilities.
-2. **Goals and acceptance**: goals, checkable criteria, and related rules; label candidate checks separately. Link delivery status to the implementation document and validation entry points to the test document.
-3. **Concepts and terminology**: objects, state, and definitions.
-4. **Confirmed rules**: define each rule once by topic; label provisional decisions and their review conditions separately.
-5. **External contracts**: inputs, outputs, preconditions, effects, effective timing, and failure behavior; semantics before signatures.
-6. **Boundaries and failure behavior**: units, ranges, defaults, mutability, and applicable exceptional cases.
-7. **Tradeoffs and candidates**: reasons, costs, alternatives, and undecided parts.
-8. **Open questions**: impact, whether implementation is blocked, and the responsible module or phase.
+1. **Goals and scope**: the problem, neighboring responsibilities, necessary terminology, and acceptance criteria.
+2. **Current rules**: keep a topic's preconditions, inputs/outputs, timing, boundaries, failure behavior, and necessary rationale together. Do not repeat a contract in separate rule, interface, and boundary sections. Preserve units, ranges, defaults, and exceptions; state review conditions for provisional decisions.
+3. **Active open questions**: state only the unresolved scope, what it blocks, and who owns it; keep candidates separate from current rules.
+
+Link delivery status to implementation and verification entry points to tests. Split long documents by independent responsibility, not arbitrary line counts. Use specific, stable headings and link directly to the owning rule.
 
 Order `实现.md` as: **Design basis → Code structure and engineering approach → Current scope and limitations → Build/run entry points**, with links to test documents; record performance conclusions and measurement conditions here. Focus on component responsibilities, data flow, and source entry points; link behavior contracts to design and complete signatures and field inventories to code. Unimplemented modules may use only design basis and current status; keep candidates in design documents and never invent code paths or commands.
 
@@ -102,33 +100,22 @@ Order `测试.md` as: **Purpose and scope → Commands and verification environm
 - Important rules may have stable module-local IDs for contracts and acceptance references; not every paragraph needs one. Mark illustrative values so they cannot be mistaken for defaults.
 - Use prose for purpose and tradeoffs, and tables or lists for parallel cases and behaviors. Simplification must preserve interface preconditions and failure semantics. Keep rule headings unique and link goal summaries to rules so duplicate headings do not redirect anchors to the wrong section.
 - Replace vague goals such as "deterministic" or "fast" with scoped behavior or measurement targets. Ordinary engineering acceptance does not automatically require research proofs.
-- Record candidates during discussion and update the owning rule when confirmed. At milestones retain the final structure, constraints, and relevant rationale, removing completed migration steps, old-structure comparisons, and conversational corrections. Git/issues preserve ordinary history; use separate decision records only when justified.
+- Current documents exclude superseded designs, rejected candidates, completed migrations, and discussion transcripts; do not move them into a history appendix on the default reading path. Git/issues preserve history. Retain only necessary rationale for decisions likely to be inadvertently reversed.
+- Keep small open questions in the owning design; use on-demand discussion drafts or issues for complex comparisons, explicitly marked as non-requirements. Once confirmed, update the single source, remove obsolete candidates, close resolved questions, and remove discussion drafts. Keep confirmed but unimplemented designs. Record specific design/code conflicts rather than silently replacing design with implementation.
 - Review the owning design, implementation, and test documents on changes, updating only affected semantics, delivery scope, or coverage. Internal refactoring usually only updates implementation entry points. Review consumers for cross-module contract changes, update parent summaries at milestones, repair links/navigation on moves, and maintain bilingual entry points together.
 - Documentation-only changes check whitespace diffs, local links and anchors, navigation, and status consistency. Formatting checks do not establish semantic correctness; avoid unrelated code tests for documentation changes.
 
 ## Testing
 
-The current automated suite covers three parts: the headless C++17 declaration engine in `kheker/engine/`, the world library's space slice in `olam/`, and the workbench in `kheker/workbench/` (the headless session library needs no Qt; the Qt GUI requires Qt 6.4 or newer). All use CMake 3.20 and CTest. After changes, run from the repository root:
+After changes, configure, build, and run CTest from the repository root using the owning module's entry below. Its implementation document owns commands and build options. All three use C++17 and CMake 3.20; the Qt UI additionally requires Qt 6.4 or newer with Widgets and Test.
 
-```bash
-cmake -S kheker/engine -B build/engine -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/engine --config Debug --parallel 4
-ctest --test-dir build/engine --build-config Debug --output-on-failure
-```
+| Module | Build commands and options | Verification scope |
+| --- | --- | --- |
+| `kheker/engine/` | [Engine build](docs/研究平台/实验环境与声明接入/实现.md#4-构建与运行入口) | [Engine tests](docs/研究平台/实验环境与声明接入/测试.md) |
+| `olam/` | [World-library build](docs/世界/世界框架/空间系统/实现.md#4-构建与运行入口) | [Space and module integration](docs/世界/世界框架/空间系统/测试.md) · [Time](docs/世界/世界框架/时间系统/测试.md) |
+| `kheker/workbench/` | [Workbench build](docs/研究平台/因果建模工作台/实现.md#4-构建与运行入口) | [Session, state layer, and UI](docs/研究平台/因果建模工作台/测试.md) |
 
-```bash
-cmake -S olam -B build/olam -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/olam --config Debug --parallel 4
-ctest --test-dir build/olam --build-config Debug --output-on-failure
-```
-
-```bash
-cmake -S kheker/workbench -B build/workbench -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/workbench --config Debug --parallel 4
-ctest --test-dir build/workbench --build-config Debug --output-on-failure
-```
-
-Add `-DASCEND_WORKBENCH_BUILD_GUI=OFF` to the workbench configure command to build only the headless parts. Tests live in `testbench/engine/`, `testbench/olam/`, and `testbench/workbench/`; build outputs go under the ignored `build/` directory. [Engine CI](.github/workflows/engine.yml), [Olam World CI](.github/workflows/olam_world.yml), and [Workbench CI](.github/workflows/workbench.yml) build the corresponding suites on Linux and Windows; macOS is not included yet. Test cases and coverage limits are recorded in the [core test document](docs/研究平台/实验环境与声明接入/测试.md), the [space test document](docs/世界/世界框架/空间系统/测试.md), and the [workbench test document](docs/研究平台/因果建模工作台/测试.md).
+Tests live in corresponding `testbench/` subdirectories; build outputs go under the ignored `build/` directory. Platform matrices are maintained in [Engine CI](.github/workflows/engine.yml), [Olam World CI](.github/workflows/olam_world.yml), and [Workbench CI](.github/workflows/workbench.yml). CI configuration is not evidence of an actual passing run.
 
 ## Commit Conventions
 

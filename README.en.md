@@ -27,7 +27,7 @@ These are parallel tracks, not consecutive project phases. Sharing the world cor
 
 ## Project status
 
-Ascend is in the early stages of a rewrite. The C++ declaration engine and Qt research workbench support small-model assembly, execution, checkpoint-based intervention comparisons, and experiment saving and replay. The world library implements a basic space slice. See the [research platform](docs/研究平台/综述.md) and [world overview](docs/世界/综述.md) for current scope and limitations.
+Ascend is in the early stages of a rewrite. The C++ declaration engine and Qt research workbench support small-model assembly, execution, checkpoint-based intervention comparisons, and experiment saving and replay. The world library provides space and basic-clock modules. See the [research platform](docs/研究平台/综述.md) and [world overview](docs/世界/综述.md) for current scope and limitations.
 
 The full world simulation, AI agents, batch experiment management and research evaluation framework, and a playable game client have not yet been implemented. The Godot client currently contains only a basic startup scene; gameplay is not yet available.
 
@@ -44,31 +44,9 @@ Most detailed design documents are currently available in Chinese.
 
 ## Build and test the C++ prototype
 
-For developers: these commands build and run the automated tests of the C++ core, the world library's space and basic-clock slices, and the workbench. You need CMake 3.20 and a C++17-compatible compiler; the UI part additionally needs Qt 6.4 or later. The tests run on the offscreen platform and do not open windows; launching a UI build manually needs a display. Run them from the repository root:
+You need CMake 3.20 and a C++17 compiler; the UI additionally requires Qt 6.4 or later with Widgets and Test. Choose the [engine](docs/研究平台/实验环境与声明接入/实现.md#4-构建与运行入口), [world library](docs/世界/世界框架/空间系统/实现.md#4-构建与运行入口), or [workbench](docs/研究平台/因果建模工作台/实现.md#4-构建与运行入口) build instructions and run them from the repository root. Those pages maintain build options and runtime resources; see the [test navigation](CONTRIBUTING.en.md#testing) for verification scope.
 
-```bash
-cmake -S kheker/engine -B build/engine -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/engine --config Debug --parallel 4
-ctest --test-dir build/engine --build-config Debug --output-on-failure
-```
-
-The world library's space slice builds independently:
-
-```bash
-cmake -S olam -B build/olam -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/olam --config Debug --parallel 4
-ctest --test-dir build/olam --build-config Debug --output-on-failure
-```
-
-The research workbench (headless session library plus a minimal Qt interface; requires the Widgets and Test modules from Qt 6.4 or later) builds independently:
-
-```bash
-cmake -S kheker/workbench -B build/workbench -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/workbench --config Debug --parallel 4
-ctest --test-dir build/workbench --build-config Debug --output-on-failure
-```
-
-Build outputs go under `build/engine/`, `build/olam/` and `build/workbench/`; pass `-DASCEND_WORKBENCH_BUILD_GUI=OFF` to build only the headless session library and its tests. Launch `build/workbench/ascend_workbench` and choose “打开内置示例” (Open built-in example) to try the experiment workflow. See the [workbench implementation](docs/研究平台/因果建模工作台/实现.md) for runtime resources and usage, and the [core test notes](docs/研究平台/实验环境与声明接入/测试.md), [space test notes](docs/世界/世界框架/空间系统/测试.md), [time test notes](docs/世界/世界框架/时间系统/测试.md), and [workbench test notes](docs/研究平台/因果建模工作台/测试.md) for coverage and limitations.
+To try the workbench, build it, launch `build/workbench/ascend_workbench`, and choose “打开内置示例” (Open built-in example). Follow the [experiment walkthrough](docs/研究平台/因果建模工作台/实现.md#体验一次实验) for intervention comparisons and replay. Automated UI tests use the offscreen platform; launching the UI manually requires a display.
 
 ## Contributing
 
